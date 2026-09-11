@@ -1,33 +1,33 @@
 msgid ""
 msgstr ""
 
-#: lib/evo_dash_web/live/settings_live.ex:2371
+#: lib/evo_dash_web/live/settings_live.ex:2465
 #, elixir-autogen, elixir-format
 msgid "%{action} completed."
 msgstr "اكتمل %{action}."
 
-#: lib/evo_dash_web/live/settings_live.ex:2367
+#: lib/evo_dash_web/live/settings_live.ex:2461
 #, elixir-autogen, elixir-format
 msgid "%{action} failed: %{reason}"
 msgstr "فشل %{action}: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:2358
-#: lib/evo_dash_web/live/settings_live.ex:2361
+#: lib/evo_dash_web/live/settings_live.ex:2452
+#: lib/evo_dash_web/live/settings_live.ex:2455
 #, elixir-autogen, elixir-format
 msgid "%{action} succeeded."
 msgstr "نجح %{action}."
 
-#: lib/evo_dash_web/live/settings_live.ex:2352
+#: lib/evo_dash_web/live/settings_live.ex:2446
 #, elixir-autogen, elixir-format
 msgid "%{action} unavailable — the remote connection subsystem is not running."
 msgstr "%{action} غير متاح — نظام الاتصال البعيد لا يعمل."
 
-#: lib/evo_dash_web/components/task_card_components.ex:434
+#: lib/evo_dash_web/components/task_card_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "%{count}"
 msgstr "%{count}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:138
+#: lib/evo_dash_web/components/task_card_components.ex:160
 #, elixir-autogen, elixir-format
 msgid "%{count} Agents"
 msgstr "%{count} وكلاء"
@@ -105,22 +105,22 @@ msgstr[3] "%{count} تحذيرات تحقق"
 msgstr[4] "%{count} تحذيراً تحقق"
 msgstr[5] "%{count} تحذير تحقق"
 
-#: lib/evo_dash_web/helpers.ex:378
+#: lib/evo_dash_web/helpers.ex:423
 #, elixir-autogen, elixir-format
 msgid "%{count}d ago"
 msgstr "منذ %{count} يوم"
 
-#: lib/evo_dash_web/helpers.ex:377
+#: lib/evo_dash_web/helpers.ex:422
 #, elixir-autogen, elixir-format
 msgid "%{count}h ago"
 msgstr "منذ %{count} ساعة"
 
-#: lib/evo_dash_web/helpers.ex:376
+#: lib/evo_dash_web/helpers.ex:421
 #, elixir-autogen, elixir-format
 msgid "%{count}m ago"
 msgstr "منذ %{count} دقيقة"
 
-#: lib/evo_dash_web/helpers.ex:375
+#: lib/evo_dash_web/helpers.ex:420
 #, elixir-autogen, elixir-format
 msgid "%{count}s ago"
 msgstr "منذ %{count} ثانية"
@@ -130,7 +130,7 @@ msgstr "منذ %{count} ثانية"
 msgid "%{n} slots"
 msgstr "%{n} فتحات"
 
-#: lib/evo_dash_web/live/projects_live.ex:2524
+#: lib/evo_dash_web/live/projects_live.ex:2699
 #: lib/evo_dash_web/live/projects_live/github.ex:321
 #, elixir-autogen, elixir-format
 msgid "%{type} task started with ID: %{id}"
@@ -162,8 +162,8 @@ msgstr "<لا يوجد محتوى نصي>"
 msgid "<strong>Don't see your provider?</strong> You can enter any model string manually in the Model field below using the format <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">provider:model-name</code>. Look up your model at <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> or see <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">supported providers</a>."
 msgstr "<strong>ألا ترى مزوّدك؟</strong> يمكنك إدخال أي اسم نموذج يدويًا في حقل \"النموذج\" أدناه باستخدام التنسيق <code class=\"font-mono bg-base-200 px-1.5 py-0.5 rounded\">مزوّد:اسم-النموذج</code>. ابحث عن نموذجك في <a href=\"https://llmdb.xyz/\" target=\"_blank\" class=\"link link-primary\">llmdb.xyz</a> أو اطّلع على <a href=\"https://req-llm.hexdocs.pm/req_llm/ReqLLM.Providers.html\" target=\"_blank\" class=\"link link-primary\">المزوّدين المدعومين</a>."
 
-#: lib/evo_dash_web/components/task_form_components.ex:563
-#: lib/evo_dash_web/components/task_form_components.ex:675
+#: lib/evo_dash_web/components/task_form_components.ex:688
+#: lib/evo_dash_web/components/task_form_components.ex:800
 #, elixir-autogen, elixir-format
 msgid "A Git commit SHA, branch name, or tag to use as the base. Defaults to HEAD."
 msgstr "SHA الإيداع في Git، أو اسم فرع، أو علامة لاستخدامها كأساس. القيمة الافتراضية هي HEAD."
@@ -183,13 +183,13 @@ msgstr "معرّف فريد لهذا الملف التعريفي"
 msgid "A unique identifier for this repository (e.g., 'original', 'upstream')"
 msgstr "معرّف فريد لهذا المستودع (مثل 'original' أو 'upstream')"
 
-#: lib/evo_dash_web/helpers.ex:661
+#: lib/evo_dash_web/helpers.ex:706
 #: lib/evo_dash_web/live/system_live/status.ex:81
 #, elixir-autogen, elixir-format
 msgid "API Key"
 msgstr "مفتاح API"
 
-#: lib/evo_dash_web/live/settings_live.ex:1553
+#: lib/evo_dash_web/live/settings_live.ex:1587
 #, elixir-autogen, elixir-format
 msgid "API key cannot be empty."
 msgstr "لا يمكن أن يكون مفتاح API فارغاً."
@@ -200,7 +200,7 @@ msgstr "لا يمكن أن يكون مفتاح API فارغاً."
 msgid "API key is already set"
 msgstr "مفتاح API مضبوط مسبقًا"
 
-#: lib/evo_dash_web/live/settings_live.ex:1583
+#: lib/evo_dash_web/live/settings_live.ex:1617
 #, elixir-autogen, elixir-format
 msgid "API key saved successfully."
 msgstr "تم حفظ مفتاح API بنجاح."
@@ -247,14 +247,14 @@ msgstr "إضافة نموذج"
 msgid "Add a profile to get started, or use Quick Setup above."
 msgstr "أضف ملفاً تعريفيّاً للبدء، أو استخدم الإعداد السريع أعلاه."
 
-#: lib/evo_dash_web/components/task_form_components.ex:645
+#: lib/evo_dash_web/components/task_form_components.ex:770
 #, elixir-autogen, elixir-format
 msgid "Advanced Options"
 msgstr "خيارات متقدمة"
 
-#: lib/evo_dash_web/components/task_card_components.ex:261
-#: lib/evo_dash_web/components/task_card_components.ex:792
-#: lib/evo_dash_web/components/task_card_components.ex:881
+#: lib/evo_dash_web/components/task_card_components.ex:324
+#: lib/evo_dash_web/components/task_card_components.ex:923
+#: lib/evo_dash_web/components/task_card_components.ex:1012
 #, elixir-autogen, elixir-format
 msgid "Agent Message"
 msgstr "رسالة الوكيل"
@@ -293,7 +293,7 @@ msgstr "الوكيل غير موجود"
 msgid "Agents"
 msgstr "العملاء"
 
-#: lib/evo_dash_web/components/task_card_components.ex:397
+#: lib/evo_dash_web/components/task_card_components.ex:460
 #, elixir-autogen, elixir-format
 msgid "Agents Spawned"
 msgstr "الوكلاء المنشأون"
@@ -323,13 +323,13 @@ msgstr "جميع المراجعات"
 msgid "All Statuses"
 msgstr "جميع الحالات"
 
-#: lib/evo_dash_web/helpers.ex:636
+#: lib/evo_dash_web/helpers.ex:681
 #: lib/evo_dash_web/live/system_live.ex:317
 #, elixir-autogen, elixir-format
 msgid "All configured"
 msgstr "كل شيء مُهيأ"
 
-#: lib/evo_dash_web/helpers.ex:638
+#: lib/evo_dash_web/helpers.ex:683
 #, elixir-autogen, elixir-format
 msgid "All critical configuration values are set"
 msgstr "تم تعيين جميع قيم التهيئة الحرجة"
@@ -344,7 +344,7 @@ msgstr "سيتم فقدان جميع حالات وقت التشغيل في ال�
 msgid "Analyze the changes in this PR and distill reusable knowledge into EvoGit skills. The agent will examine the diff, identify valuable patterns, and create skill files in .agents/skills/."
 msgstr "حلّل التغييرات في طلب السحب هذا واستخلص المعرفة القابلة لإعادة الاستخدام في مهارات EvoGit. سيفحص الوكيل الفروق، ويحدد الأنماط القيّمة، وينشئ ملفات مهارات في .agents/skills/."
 
-#: lib/evo_dash_web/helpers.ex:772
+#: lib/evo_dash_web/helpers.ex:817
 #, elixir-autogen, elixir-format
 msgid "Analyzes an existing codebase and generates CONTEXT.md spatial contracts for it."
 msgstr "يحلل قاعدة الشفرة الحالية ويُنشئ عقود CONTEXT.md المكانية لها."
@@ -374,7 +374,7 @@ msgstr "بداية الأرشيف"
 msgid "Archive Start Ref"
 msgstr "المرجع الابتدائي للأرشيف"
 
-#: lib/evo_dash_web/components/task_form_components.ex:599
+#: lib/evo_dash_web/components/task_form_components.ex:724
 #, elixir-autogen, elixir-format
 msgid "Archive agent details"
 msgstr "أرشفة تفاصيل الوكيل"
@@ -443,27 +443,27 @@ msgstr "فرع"
 msgid "Browse"
 msgstr "تصفّح"
 
-#: lib/evo_dash_web/components/task_form_components.ex:521
-#: lib/evo_dash_web/live/projects_live.ex:418
+#: lib/evo_dash_web/components/task_form_components.ex:646
+#: lib/evo_dash_web/live/projects_live.ex:431
 #, elixir-autogen, elixir-format
 msgid "Build System"
 msgstr "نظام البناء"
 
 #: lib/evo_dash_web/components/review_components/header.ex:496
-#: lib/evo_dash_web/components/task_card_components.ex:334
+#: lib/evo_dash_web/components/task_card_components.ex:397
 #, elixir-autogen, elixir-format
 msgid "Cache Creation"
 msgstr "إنشاء الخبيئة"
 
 #: lib/evo_dash_web/components/review_components/header.ex:505
-#: lib/evo_dash_web/components/task_card_components.ex:342
+#: lib/evo_dash_web/components/task_card_components.ex:405
 #: lib/evo_dash_web/live/agents_live.html.heex:383
 #, elixir-autogen, elixir-format
 msgid "Cache Hit Rate"
 msgstr "معدل إصابة التخزين المؤقت"
 
 #: lib/evo_dash_web/components/review_components/header.ex:487
-#: lib/evo_dash_web/components/task_card_components.ex:326
+#: lib/evo_dash_web/components/task_card_components.ex:389
 #: lib/evo_dash_web/live/agents_live.html.heex:375
 #, elixir-autogen, elixir-format
 msgid "Cached Tokens"
@@ -474,7 +474,7 @@ msgstr "الوحدات المخبأة"
 #: lib/evo_dash_web/components/project_components.ex:816
 #: lib/evo_dash_web/components/review_components/actions.ex:416
 #: lib/evo_dash_web/components/settings_components/form_footer.ex:26
-#: lib/evo_dash_web/components/task_card_components.ex:152
+#: lib/evo_dash_web/components/task_card_components.ex:174
 #: lib/evo_dash_web/live/agents_live.html.heex:886
 #: lib/evo_dash_web/live/settings_live.ex:565
 #: lib/evo_dash_web/live/settings_live.ex:630
@@ -491,7 +491,7 @@ msgstr "إلغاء"
 msgid "Cancelled"
 msgstr "ملغى"
 
-#: lib/evo_dash_web/live/projects_live.ex:1318
+#: lib/evo_dash_web/live/projects_live.ex:1346
 #, elixir-autogen, elixir-format
 msgid "Cannot remove the primary repository."
 msgstr "لا يمكن إزالة المستودع الرئيسي."
@@ -544,7 +544,7 @@ msgstr "مسح جميع سجلات المهام المكتملة؟ لا يمكن
 
 #: lib/evo_dash_web/components/github_components.ex:74
 #: lib/evo_dash_web/components/project_components.ex:249
-#: lib/evo_dash_web/helpers.ex:706
+#: lib/evo_dash_web/helpers.ex:751
 #: lib/evo_dash_web/live/agents_live.html.heex:826
 #: lib/evo_dash_web/live/agents_live.html.heex:850
 #: lib/evo_dash_web/live/system_live.ex:742
@@ -552,17 +552,17 @@ msgstr "مسح جميع سجلات المهام المكتملة؟ لا يمكن
 msgid "Close"
 msgstr "إغلاق"
 
-#: lib/evo_dash_web/live/projects_live.ex:1608
+#: lib/evo_dash_web/live/projects_live.ex:1702
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' completed:\n%{output}"
 msgstr "اكتمل الأمر '%{command}':\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1616
+#: lib/evo_dash_web/live/projects_live.ex:1710
 #, elixir-autogen, elixir-format
 msgid "Command '%{command}' failed (exit %{code}):\n%{output}"
 msgstr "فشل الأمر '%{command}' (رمز الخروج %{code}):\n%{output}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1581
+#: lib/evo_dash_web/live/projects_live.ex:1675
 #, elixir-autogen, elixir-format
 msgid "Command not found: %{command}"
 msgstr "الأمر غير موجود: %{command}"
@@ -577,7 +577,7 @@ msgstr "تفاصيل الإيداع"
 msgid "Commits"
 msgstr "الإيداعات"
 
-#: lib/evo_dash_web/components/archive_components.ex:189
+#: lib/evo_dash_web/components/archive_components.ex:191
 #: lib/evo_dash_web/components/review_components.ex:417
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:295
 #: lib/evo_dash_web/live/tasks_live.ex:62
@@ -600,8 +600,8 @@ msgstr "الإعدادات"
 msgid "Configuration file"
 msgstr "ملف الإعدادات"
 
-#: lib/evo_dash_web/live/settings_live.ex:1142
-#: lib/evo_dash_web/live/settings_live.ex:1234
+#: lib/evo_dash_web/live/settings_live.ex:1176
+#: lib/evo_dash_web/live/settings_live.ex:1268
 #, elixir-autogen, elixir-format
 msgid "Configuration saved successfully."
 msgstr "تم حفظ الإعدادات بنجاح."
@@ -663,19 +663,20 @@ msgstr "قم بتكوين خادم SSH في `~/.ssh/config` واضبط مصاد�
 
 #: lib/evo_dash_web/live/settings_live.ex:375
 #: lib/evo_dash_web/live/settings_live.ex:395
-#: lib/evo_dash_web/live/settings_live.ex:1852
+#: lib/evo_dash_web/live/settings_live.ex:965
+#: lib/evo_dash_web/live/settings_live.ex:2419
 #, elixir-autogen, elixir-format
 msgid "Connect"
 msgstr "اتصال"
 
 #: lib/evo_dash_web/components/settings_components.ex:484
-#: lib/evo_dash_web/live/settings_live.ex:2400
+#: lib/evo_dash_web/live/settings_live.ex:2494
 #: lib/evo_dash_web/live/welcome_live.ex:384
 #, elixir-autogen, elixir-format
 msgid "Connected"
 msgstr "متصل"
 
-#: lib/evo_dash_web/live/settings_live.ex:2401
+#: lib/evo_dash_web/live/settings_live.ex:2495
 #, elixir-autogen, elixir-format
 msgid "Connecting..."
 msgstr "جارٍ الاتصال..."
@@ -690,17 +691,17 @@ msgstr "اختبار الاتصال"
 msgid "Connection data is stored in `~/.config/genesis/remote_connections.toml`, separate from the main configuration file."
 msgstr "بيانات الاتصال مخزّنة في `~/.config/genesis/remote_connections.toml`، منفصلة عن ملف الإعدادات الرئيسي."
 
-#: lib/evo_dash_web/live/settings_live.ex:1781
+#: lib/evo_dash_web/live/settings_live.ex:1815
 #, elixir-autogen, elixir-format
 msgid "Connection deleted."
 msgstr "تم حذف الاتصال."
 
-#: lib/evo_dash_web/live/settings_live.ex:1787
+#: lib/evo_dash_web/live/settings_live.ex:1821
 #, elixir-autogen, elixir-format
 msgid "Connection not found."
 msgstr "الاتصال غير موجود."
 
-#: lib/evo_dash_web/live/settings_live.ex:1760
+#: lib/evo_dash_web/live/settings_live.ex:1794
 #, elixir-autogen, elixir-format
 msgid "Connection saved."
 msgstr "تم حفظ الاتصال."
@@ -715,12 +716,12 @@ msgstr "السياق"
 msgid "Context Path"
 msgstr "مسار السياق"
 
-#: lib/evo_dash_web/helpers.ex:589
+#: lib/evo_dash_web/helpers.ex:634
 #, elixir-autogen, elixir-format
 msgid "Context tree detected — Evolution mode selected"
 msgstr "تم اكتشاف شجرة سياق — تم اختيار وضع التطوّر"
 
-#: lib/evo_dash_web/helpers.ex:217
+#: lib/evo_dash_web/helpers.ex:262
 #: lib/evo_dash_web/live/tasks_live.ex:111
 #: lib/evo_dash_web/live/tasks_live.ex:195
 #, elixir-autogen, elixir-format
@@ -763,7 +764,7 @@ msgstr "التكلفة"
 msgid "Could not load diff data. The branch may have been modified externally."
 msgstr "تعذّر تحميل بيانات الفرق. ربما تم تعديل الفرع من خارجه."
 
-#: lib/evo_dash_web/components/task_card_components.ex:744
+#: lib/evo_dash_web/components/task_card_components.ex:875
 #, elixir-autogen, elixir-format
 msgid "Crashed"
 msgstr "تعطّل"
@@ -773,7 +774,7 @@ msgstr "تعطّل"
 msgid "Create"
 msgstr "إنشاء"
 
-#: lib/evo_dash_web/helpers.ex:766
+#: lib/evo_dash_web/helpers.ex:811
 #, elixir-autogen, elixir-format
 msgid "Creates a brand new codebase from scratch in an empty directory using your prompt."
 msgstr "ينشئ قاعدة شفرة جديدة كلياً من الصفر في مجلد فارغ باستخدام الموجّه الخاص بك."
@@ -805,7 +806,7 @@ msgstr "الافتراضيات"
 
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:137
 #: lib/evo_dash_web/components/settings_components/model_profiles_editor.ex:128
-#: lib/evo_dash_web/components/task_card_components.ex:210
+#: lib/evo_dash_web/components/task_card_components.ex:232
 #: lib/evo_dash_web/live/settings_live.ex:294
 #, elixir-autogen, elixir-format
 msgid "Delete"
@@ -816,7 +817,7 @@ msgstr "حذف"
 msgid "Delete this model profile?"
 msgstr "حذف هذا الملف التعريفي للنموذج؟"
 
-#: lib/evo_dash_web/components/task_card_components.ex:208
+#: lib/evo_dash_web/components/task_card_components.ex:230
 #, elixir-autogen, elixir-format
 msgid "Delete this task?"
 msgstr "حذف هذه المهمة؟"
@@ -828,12 +829,12 @@ msgstr "حذف هذه المهمة؟"
 msgid "Depth"
 msgstr "العمق"
 
-#: lib/evo_dash_web/components/task_form_components.ex:190
+#: lib/evo_dash_web/components/task_form_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Describe the codebase you want to create..."
 msgstr "صف قاعدة الشيفرة التي تريد إنشاءها..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:187
+#: lib/evo_dash_web/components/task_form_components.ex:190
 #, elixir-autogen, elixir-format
 msgid "Describe what you want to change or improve..."
 msgstr "صِف ما تريد تغييره أو تحسينه..."
@@ -844,7 +845,7 @@ msgstr "صِف ما تريد تغييره أو تحسينه..."
 msgid "Description (optional)"
 msgstr "الوصف (اختياري)"
 
-#: lib/evo_dash_web/components/task_card_components.ex:180
+#: lib/evo_dash_web/components/task_card_components.ex:202
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr "التفاصيل"
@@ -854,8 +855,8 @@ msgstr "التفاصيل"
 msgid "Dev Commands"
 msgstr "أوامر التطوير"
 
-#: lib/evo_dash_web/live/projects_live.ex:2077
-#: lib/evo_dash_web/live/projects_live.ex:2085
+#: lib/evo_dash_web/live/projects_live.ex:2205
+#: lib/evo_dash_web/live/projects_live.ex:2213
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:420
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist: %{path}"
@@ -873,17 +874,17 @@ msgid "Disabled"
 msgstr "معطّل"
 
 #: lib/evo_dash_web/live/settings_live.ex:304
-#: lib/evo_dash_web/live/settings_live.ex:1864
+#: lib/evo_dash_web/live/settings_live.ex:1913
 #, elixir-autogen, elixir-format
 msgid "Disconnect"
 msgstr "قطع الاتصال"
 
-#: lib/evo_dash_web/live/settings_live.ex:2404
+#: lib/evo_dash_web/live/settings_live.ex:2498
 #, elixir-autogen, elixir-format
 msgid "Disconnected"
 msgstr "تم قطع الاتصال"
 
-#: lib/evo_dash_web/live/settings_live.ex:2402
+#: lib/evo_dash_web/live/settings_live.ex:2496
 #, elixir-autogen, elixir-format
 msgid "Disconnecting..."
 msgstr "جارٍ قطع الاتصال..."
@@ -910,7 +911,7 @@ msgstr "تعديل الاتصال"
 msgid "Edit Profile"
 msgstr "تعديل الملف التعريفي"
 
-#: lib/evo_dash_web/helpers.ex:582
+#: lib/evo_dash_web/helpers.ex:627
 #, elixir-autogen, elixir-format
 msgid "Empty directory detected — New Codebase mode selected"
 msgstr "تم اكتشاف مجلد فارغ — تم اختيار وضع قاعدة شفرة جديدة"
@@ -949,13 +950,13 @@ msgstr "أدخل مفتاح API الخاص بك."
 msgid "Enter your API key. It should start with"
 msgstr "أدخل مفتاح API الخاص بك. يجب أن يبدأ بـ"
 
-#: lib/evo_dash_web/components/task_card_components.ex:715
-#: lib/evo_dash_web/live/settings_live.ex:2403
+#: lib/evo_dash_web/components/task_card_components.ex:846
+#: lib/evo_dash_web/live/settings_live.ex:2497
 #, elixir-autogen, elixir-format
 msgid "Error"
 msgstr "خطأ"
 
-#: lib/evo_dash_web/live/projects_live.ex:1627
+#: lib/evo_dash_web/live/projects_live.ex:1721
 #, elixir-autogen, elixir-format
 msgid "Error running '%{command}': %{error}"
 msgstr "خطأ أثناء تشغيل '%{command}': %{error}"
@@ -965,7 +966,7 @@ msgstr "خطأ أثناء تشغيل '%{command}': %{error}"
 msgid "Example model names:"
 msgstr "أمثلة على أسماء النماذج:"
 
-#: lib/evo_dash_web/components/task_card_components.ex:430
+#: lib/evo_dash_web/components/task_card_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "Execution Logs"
 msgstr "سجلات التنفيذ"
@@ -984,14 +985,16 @@ msgstr "تصدير JSON"
 msgid "Extract Skills"
 msgstr "استخراج المهارات"
 
+#: lib/evo_dash_web/helpers.ex:171
+#: lib/evo_dash_web/helpers.ex:172
 #: lib/evo_dash_web/live/home_live/assistant_message.ex:296
 #: lib/evo_dash_web/live/tasks_live.ex:65
 #, elixir-autogen, elixir-format
 msgid "Failed"
 msgstr "فشل"
 
-#: lib/evo_dash_web/live/projects_live.ex:1163
-#: lib/evo_dash_web/live/tasks_live.ex:824
+#: lib/evo_dash_web/live/projects_live.ex:1191
+#: lib/evo_dash_web/live/tasks_live.ex:848
 #, elixir-autogen, elixir-format
 msgid "Failed to cancel task: %{reason}"
 msgstr "فشل إلغاء المهمة: %{reason}"
@@ -1006,8 +1009,8 @@ msgstr "فشل إنشاء طلب سحب. تأكد من تثبيت واجهة س�
 msgid "Failed to expand context: %{reason}"
 msgstr "فشل توسيع السياق: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1217
-#: lib/evo_dash_web/live/review_live.ex:1245
+#: lib/evo_dash_web/live/review_live.ex:1235
+#: lib/evo_dash_web/live/review_live.ex:1263
 #, elixir-autogen, elixir-format
 msgid "Failed to load diff for %{path}: %{reason}"
 msgstr "فشل تحميل الفرق للمسار %{path}: %{reason}"
@@ -1017,22 +1020,22 @@ msgstr "فشل تحميل الفرق للمسار %{path}: %{reason}"
 msgid "Failed to reset key: %{reason}"
 msgstr "فشل إعادة تعيين المفتاح: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1590
+#: lib/evo_dash_web/live/settings_live.ex:1624
 #: lib/evo_dash_web/live/welcome_live.ex:624
 #: lib/evo_dash_web/live/welcome_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Failed to save API key: %{reason}"
 msgstr "فشل حفظ مفتاح API: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1164
-#: lib/evo_dash_web/live/settings_live.ex:1259
-#: lib/evo_dash_web/live/settings_live.ex:1938
+#: lib/evo_dash_web/live/settings_live.ex:1198
+#: lib/evo_dash_web/live/settings_live.ex:1293
+#: lib/evo_dash_web/live/settings_live.ex:1987
 #: lib/evo_dash_web/live/welcome_live.ex:985
 #, elixir-autogen, elixir-format
 msgid "Failed to save configuration: %{reason}"
 msgstr "فشل حفظ الإعدادات: %{reason}"
 
-#: lib/evo_dash_web/live/settings_live.ex:1770
+#: lib/evo_dash_web/live/settings_live.ex:1804
 #, elixir-autogen, elixir-format
 msgid "Failed to save: %{reason}"
 msgstr "فشل الحفظ: %{reason}"
@@ -1042,7 +1045,7 @@ msgstr "فشل الحفظ: %{reason}"
 msgid "Failed to start skill extraction: %{reason}"
 msgstr "فشل بدء استخراج المهارة: %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2545
+#: lib/evo_dash_web/live/projects_live.ex:2725
 #: lib/evo_dash_web/live/projects_live/github.ex:330
 #, elixir-autogen, elixir-format
 msgid "Failed to start task: %{reason}"
@@ -1069,7 +1072,7 @@ msgid "Filter settings..."
 msgstr "تصفية الإعدادات..."
 
 #: lib/evo_dash_web/components/review_components/header.ex:439
-#: lib/evo_dash_web/components/task_card_components.ex:132
+#: lib/evo_dash_web/components/task_card_components.ex:154
 #, elixir-autogen, elixir-format
 msgid "Finished"
 msgstr "مكتمل"
@@ -1094,12 +1097,12 @@ msgstr "لنقاط نهاية البروكسي/المجمّع؛ اتركه فا�
 msgid "Foreign Repositories"
 msgstr "المستودعات الخارجية"
 
-#: lib/evo_dash_web/live/projects_live.ex:1304
+#: lib/evo_dash_web/live/projects_live.ex:1332
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' registered successfully."
 msgstr "تم تسجيل المستودع الخارجي '%{repo_id}' بنجاح."
 
-#: lib/evo_dash_web/live/projects_live.ex:1332
+#: lib/evo_dash_web/live/projects_live.ex:1360
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' removed successfully."
 msgstr "تمت إزالة المستودع الخارجي '%{repo_id}' بنجاح."
@@ -1114,8 +1117,8 @@ msgstr "المستودعات الخارجية هي قواعد كود إضافي�
 msgid "Frequency Penalty"
 msgstr "عقوبة التكرار"
 
-#: lib/evo_dash_web/components/task_card_components.ex:247
-#: lib/evo_dash_web/components/task_card_components.ex:278
+#: lib/evo_dash_web/components/task_card_components.ex:310
+#: lib/evo_dash_web/components/task_card_components.ex:341
 #, elixir-autogen, elixir-format
 msgid "Full"
 msgstr "كامل"
@@ -1146,7 +1149,7 @@ msgstr "جينيسيس"
 msgid "Git"
 msgstr "Git"
 
-#: lib/evo_dash_web/helpers.ex:662
+#: lib/evo_dash_web/helpers.ex:707
 #: lib/evo_dash_web/live/system_live/status.ex:82
 #, elixir-autogen, elixir-format
 msgid "GitHub Username"
@@ -1157,7 +1160,7 @@ msgstr "اسم مستخدم GitHub"
 msgid "Gracefully restart or stop the Erlang VM. Restart tears down and restarts all applications; stop gracefully shuts down the VM and it must be started again manually. In-memory runtime state will be lost in both cases."
 msgstr "إعادة تشغيل سلسة أو إيقاف آلة Erlang الافتراضية. إعادة التشغيل تغلق وتعيد تشغيل جميع التطبيقات؛ الإيقاف يغلق الآلة الافتراضية بشكل سلس ويجب تشغيلها يدوياً مرة أخرى. سيتم فقدان حالة وقت التشغيل في الذاكرة في كلتا الحالتين."
 
-#: lib/evo_dash_web/components/task_card_components.ex:178
+#: lib/evo_dash_web/components/task_card_components.ex:200
 #, elixir-autogen, elixir-format
 msgid "Hide Details"
 msgstr "إخفاء التفاصيل"
@@ -1172,13 +1175,13 @@ msgstr "تجاهل"
 msgid "Ignore this review? It will be dismissed from pending reviews."
 msgstr "تجاهل هذه المراجعة؟ سيتم استبعادها من المراجعات المعلقة."
 
-#: lib/evo_dash_web/helpers.ex:218
+#: lib/evo_dash_web/helpers.ex:263
 #, elixir-autogen, elixir-format
 msgid "Ignored"
 msgstr "تم التجاهل"
 
 #: lib/evo_dash_web/components/review_components/header.ex:532
-#: lib/evo_dash_web/components/task_card_components.ex:370
+#: lib/evo_dash_web/components/task_card_components.ex:433
 #: lib/evo_dash_web/live/agents_live.html.heex:422
 #, elixir-autogen, elixir-format
 msgid "Input Cost"
@@ -1187,14 +1190,14 @@ msgstr "تكلفة الإدخال"
 #: lib/evo_dash_web/components/archive_components.ex:152
 #: lib/evo_dash_web/components/review_components.ex:370
 #: lib/evo_dash_web/components/review_components/header.ex:456
-#: lib/evo_dash_web/components/task_card_components.ex:298
+#: lib/evo_dash_web/components/task_card_components.ex:361
 #: lib/evo_dash_web/live/agents_live.html.heex:348
 #, elixir-autogen, elixir-format
 msgid "Input Tokens"
 msgstr "وحدات الإدخال"
 
-#: lib/evo_dash_web/live/settings_live.ex:1326
-#: lib/evo_dash_web/live/settings_live.ex:1345
+#: lib/evo_dash_web/live/settings_live.ex:1360
+#: lib/evo_dash_web/live/settings_live.ex:1379
 #: lib/evo_dash_web/live/settings_live/search_events.ex:65
 #, elixir-autogen, elixir-format
 msgid "Invalid key path."
@@ -1219,7 +1222,7 @@ msgstr "LLM"
 msgid "LLM Connection"
 msgstr "اتصال LLM"
 
-#: lib/evo_dash_web/helpers.ex:660
+#: lib/evo_dash_web/helpers.ex:705
 #: lib/evo_dash_web/live/system_live/status.ex:80
 #, elixir-autogen, elixir-format
 msgid "LLM Model"
@@ -1302,7 +1305,7 @@ msgid "Merge these changes into the current branch?"
 msgstr "دمج هذه التغييرات في الفرع الحالي؟"
 
 #: lib/evo_dash_web/components/review_components.ex:165
-#: lib/evo_dash_web/helpers.ex:215
+#: lib/evo_dash_web/helpers.ex:260
 #: lib/evo_dash_web/live/tasks_live.ex:105
 #: lib/evo_dash_web/live/tasks_live.ex:191
 #, elixir-autogen, elixir-format
@@ -1310,21 +1313,21 @@ msgid "Merged"
 msgstr "مدمج"
 
 #: lib/evo_dash_web/components/layouts.ex:308
-#: lib/evo_dash_web/helpers.ex:645
+#: lib/evo_dash_web/helpers.ex:690
 #: lib/evo_dash_web/live/settings_live.ex:46
 #, elixir-autogen, elixir-format
 msgid "Missing Configuration"
 msgstr "تكوين مفقود"
 
-#: lib/evo_dash_web/helpers.ex:563
-#: lib/evo_dash_web/helpers.ex:570
+#: lib/evo_dash_web/helpers.ex:608
+#: lib/evo_dash_web/helpers.ex:615
 #, elixir-autogen, elixir-format
 msgid "Mode: %{mode} | %{prompt}"
 msgstr "الوضع: %{mode} | %{prompt}"
 
 #: lib/evo_dash_web/components/review_components/header.ex:417
 #: lib/evo_dash_web/components/settings_components/custom_agents_editor.ex:261
-#: lib/evo_dash_web/components/task_card_components.ex:401
+#: lib/evo_dash_web/components/task_card_components.ex:464
 #: lib/evo_dash_web/live/agents_live.html.heex:180
 #: lib/evo_dash_web/live/system_live/charts.ex:409
 #, elixir-autogen, elixir-format
@@ -1401,14 +1404,14 @@ msgstr "Nix"
 msgid "Nix Environment"
 msgstr "بيئة Nix"
 
-#: lib/evo_dash_web/helpers.ex:585
+#: lib/evo_dash_web/helpers.ex:630
 #, elixir-autogen, elixir-format
 msgid "No CONTEXT.md found — Existing Codebase mode selected"
 msgstr "لم يتم العثور على CONTEXT.md — تم اختيار وضع قاعدة الشفرة الحالية"
 
-#: lib/evo_dash_web/components/task_card_components.ex:770
-#: lib/evo_dash_web/components/task_card_components.ex:781
-#: lib/evo_dash_web/helpers.ex:219
+#: lib/evo_dash_web/components/task_card_components.ex:901
+#: lib/evo_dash_web/components/task_card_components.ex:912
+#: lib/evo_dash_web/helpers.ex:264
 #, elixir-autogen, elixir-format
 msgid "No Changes"
 msgstr "لا تغييرات"
@@ -1473,7 +1476,7 @@ msgstr "لم يتم تكوين أي ملفات تعريف نموذج — أضف 
 msgid "No prefix (hexadecimal)"
 msgstr "بدون بادئة (سداسي عشري)"
 
-#: lib/evo_dash_web/live/projects_live.ex:1124
+#: lib/evo_dash_web/live/projects_live.ex:1152
 #, elixir-autogen, elixir-format
 msgid "No project selected. Please open a project first."
 msgstr "لم يتم تحديد مشروع. يرجى فتح مشروع أولاً."
@@ -1524,7 +1527,7 @@ msgstr "عدد فتحات طلبات LLM المتوازية"
 #: lib/evo_dash_web/components/review_components.ex:70
 #: lib/evo_dash_web/components/review_components.ex:296
 #: lib/evo_dash_web/components/review_components/header.ex:291
-#: lib/evo_dash_web/components/task_card_components.ex:230
+#: lib/evo_dash_web/components/task_card_components.ex:293
 #: lib/evo_dash_web/live/agents_live.html.heex:198
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:56
 #, elixir-autogen, elixir-format
@@ -1534,13 +1537,13 @@ msgstr "الهدف"
 #: lib/evo_dash_web/components/github_components.ex:214
 #: lib/evo_dash_web/components/github_components.ex:226
 #: lib/evo_dash_web/components/project_components.ex:316
-#: lib/evo_dash_web/helpers.ex:214
+#: lib/evo_dash_web/helpers.ex:259
 #: lib/evo_dash_web/live/system_live/runtime_controls.ex:110
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr "فتح"
 
-#: lib/evo_dash_web/components/task_form_components.ex:460
+#: lib/evo_dash_web/components/task_form_components.ex:566
 #, elixir-autogen, elixir-format
 msgid "Open a project to get started"
 msgstr "افتح مشروعاً لتبدأ"
@@ -1551,7 +1554,7 @@ msgid "Optional: Note for the skill extraction agent"
 msgstr "اختياري: ملاحظة للوكيل المستخرِج للمهارات"
 
 #: lib/evo_dash_web/components/review_components/header.ex:541
-#: lib/evo_dash_web/components/task_card_components.ex:376
+#: lib/evo_dash_web/components/task_card_components.ex:439
 #: lib/evo_dash_web/live/agents_live.html.heex:430
 #, elixir-autogen, elixir-format
 msgid "Output Cost"
@@ -1560,7 +1563,7 @@ msgstr "تكلفة الإخراج"
 #: lib/evo_dash_web/components/archive_components.ex:159
 #: lib/evo_dash_web/components/review_components.ex:379
 #: lib/evo_dash_web/components/review_components/header.ex:465
-#: lib/evo_dash_web/components/task_card_components.ex:306
+#: lib/evo_dash_web/components/task_card_components.ex:369
 #: lib/evo_dash_web/live/agents_live.html.heex:356
 #, elixir-autogen, elixir-format
 msgid "Output Tokens"
@@ -1583,7 +1586,7 @@ msgstr "الوكيل الأصلي"
 msgid "Path"
 msgstr "المسار"
 
-#: lib/evo_dash_web/live/projects_live.ex:2283
+#: lib/evo_dash_web/live/projects_live.ex:2411
 #, elixir-autogen, elixir-format
 msgid "Path cannot be empty."
 msgstr "لا يمكن أن يكون المسار فارغاً."
@@ -1615,9 +1618,9 @@ msgstr "قيد المراجعة"
 msgid "Presence Penalty"
 msgstr "عقوبة الظهور"
 
-#: lib/evo_dash_web/live/agents_live.ex:1089
-#: lib/evo_dash_web/live/agents_live.ex:1090
-#: lib/evo_dash_web/live/agents_live.ex:1091
+#: lib/evo_dash_web/live/agents_live.ex:1107
+#: lib/evo_dash_web/live/agents_live.ex:1108
+#: lib/evo_dash_web/live/agents_live.ex:1109
 #, elixir-autogen, elixir-format
 msgid "Primary Repo"
 msgstr "المستودع الرئيسي"
@@ -1708,7 +1711,7 @@ msgstr "جهد الاستدلال"
 msgid "Reject and delete these changes? This cannot be undone."
 msgstr "رفض وحذف هذه التغييرات؟ لا يمكن التراجع عن ذلك."
 
-#: lib/evo_dash_web/helpers.ex:216
+#: lib/evo_dash_web/helpers.ex:261
 #: lib/evo_dash_web/live/tasks_live.ex:108
 #: lib/evo_dash_web/live/tasks_live.ex:193
 #, elixir-autogen, elixir-format
@@ -1726,14 +1729,14 @@ msgstr "اتصالات بعيدة"
 msgid "Remote Path"
 msgstr "المسار البعيد"
 
-#: lib/evo_dash_web/live/projects_live.ex:1258
+#: lib/evo_dash_web/live/projects_live.ex:1286
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' is already registered."
 msgstr "المستودع '%{id}' مسجل بالفعل."
 
-#: lib/evo_dash_web/live/projects_live.ex:1324
-#: lib/evo_dash_web/live/projects_live.ex:1345
-#: lib/evo_dash_web/live/projects_live.ex:1422
+#: lib/evo_dash_web/live/projects_live.ex:1352
+#: lib/evo_dash_web/live/projects_live.ex:1373
+#: lib/evo_dash_web/live/projects_live.ex:1450
 #, elixir-autogen, elixir-format
 msgid "Repo '%{id}' not found."
 msgstr "المستودع '%{id}' غير موجود."
@@ -1744,12 +1747,12 @@ msgstr "المستودع '%{id}' غير موجود."
 msgid "Repo ID"
 msgstr "معرّف المستودع"
 
-#: lib/evo_dash_web/live/projects_live.ex:1240
+#: lib/evo_dash_web/live/projects_live.ex:1268
 #, elixir-autogen, elixir-format
 msgid "Repo ID cannot be empty."
 msgstr "لا يمكن أن يكون معرف المستودع فارغاً."
 
-#: lib/evo_dash_web/live/agents_live.ex:1098
+#: lib/evo_dash_web/live/agents_live.ex:1116
 #, elixir-autogen, elixir-format
 msgid "Repo: %{repo_id}"
 msgstr "المستودع: %{repo_id}"
@@ -1826,8 +1829,8 @@ msgstr "النتيجة"
 msgid "Resume Scheduler"
 msgstr "استئناف المجدول"
 
-#: lib/evo_dash_web/components/task_form_components.ex:578
-#: lib/evo_dash_web/components/task_form_components.ex:692
+#: lib/evo_dash_web/components/task_form_components.ex:703
+#: lib/evo_dash_web/components/task_form_components.ex:817
 #, elixir-autogen, elixir-format
 msgid "Resume from"
 msgstr "استئناف من"
@@ -1862,7 +1865,7 @@ msgstr "محاولة #%{attempt} - البدء بفترة تراجع %{backoff_se
 msgid "Retry attempt %{attempt}"
 msgstr "محاولة إعادة %{attempt}"
 
-#: lib/evo_dash_web/components/task_card_components.ex:164
+#: lib/evo_dash_web/components/task_card_components.ex:186
 #, elixir-autogen, elixir-format
 msgid "Review"
 msgstr "مراجعة"
@@ -1992,7 +1995,7 @@ msgstr "اختر نسخة:"
 msgid "Select an agent to view details"
 msgstr "اختر وكيلاً لعرض التفاصيل"
 
-#: lib/evo_dash_web/live/settings_live.ex:1638
+#: lib/evo_dash_web/live/settings_live.ex:1672
 #, elixir-autogen, elixir-format
 msgid "Selected profile has no model configured."
 msgstr "الملف الشخصي المحدد ليس لديه نموذج مُكوّن."
@@ -2060,24 +2063,24 @@ msgstr "الإيداع الابتدائي"
 msgid "Start a task from the dashboard to see agents here."
 msgstr "ابدأ مهمة من لوحة التحكم لرؤية الوكلاء هنا."
 
-#: lib/evo_dash_web/components/archive_components.ex:183
+#: lib/evo_dash_web/components/archive_components.ex:185
 #: lib/evo_dash_web/components/review_components.ex:411
 #: lib/evo_dash_web/components/review_components/header.ex:433
-#: lib/evo_dash_web/components/task_card_components.ex:127
+#: lib/evo_dash_web/components/task_card_components.ex:149
 #, elixir-autogen, elixir-format
 msgid "Started"
 msgstr "بُدئ"
 
 #: lib/evo_dash_web/components/project_components.ex:669
 #: lib/evo_dash_web/components/project_components.ex:795
-#: lib/evo_dash_web/components/task_form_components.ex:561
-#: lib/evo_dash_web/components/task_form_components.ex:670
+#: lib/evo_dash_web/components/task_form_components.ex:686
+#: lib/evo_dash_web/components/task_form_components.ex:795
 #, elixir-autogen, elixir-format
 msgid "Starting Commit"
 msgstr "الإيداع الابتدائي"
 
-#: lib/evo_dash_web/components/task_form_components.ex:543
-#: lib/evo_dash_web/components/task_form_components.ex:651
+#: lib/evo_dash_web/components/task_form_components.ex:668
+#: lib/evo_dash_web/components/task_form_components.ex:776
 #, elixir-autogen, elixir-format
 msgid "Starting Node"
 msgstr "العقدة الابتدائية"
@@ -2212,8 +2215,8 @@ msgstr "اختبار في الإعدادات"
 msgid "Testing LLM connection..."
 msgstr "جارٍ اختبار اتصال LLM..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:580
-#: lib/evo_dash_web/components/task_form_components.ex:694
+#: lib/evo_dash_web/components/task_form_components.ex:705
+#: lib/evo_dash_web/components/task_form_components.ex:819
 #, elixir-autogen, elixir-format
 msgid "The ID of a previous task to continue from. Injects the previous task's context (commits, objective, and result) into this task's objective."
 msgstr "معرّف المهمة السابقة للاستمرار منها. يُحقن سياق المهمة السابقة (الإيداعات والهدف والنتيجة) في هدف هذه المهمة."
@@ -2228,8 +2231,8 @@ msgstr "اسم مزوّد LLM"
 msgid "The VM will stop and must be restarted manually. All in-memory runtime state (running tasks, scheduler state, in-progress agents) will be lost. This cannot be undone."
 msgstr "ستتوقف الآلة الافتراضية ويجب إعادة تشغيلها يدوياً. سيتم فقدان جميع حالات وقت التشغيل في الذاكرة (المهام الجارية، حالة المجدول، الوكلاء قيد التنفيذ). لا يمكن التراجع عن هذا."
 
-#: lib/evo_dash_web/components/task_card_components.ex:773
-#: lib/evo_dash_web/components/task_card_components.ex:784
+#: lib/evo_dash_web/components/task_card_components.ex:904
+#: lib/evo_dash_web/components/task_card_components.ex:915
 #, elixir-autogen, elixir-format
 msgid "The agent completed without making any changes to the codebase."
 msgstr "أكمل الوكيل المهمة دون إجراء أي تغييرات على قاعدة الكود."
@@ -2244,8 +2247,8 @@ msgstr "أكمل الوكيل عمله دون إجراء أي تغييرات ع�
 msgid "The model name"
 msgstr "اسم النموذج"
 
-#: lib/evo_dash_web/components/task_form_components.ex:545
-#: lib/evo_dash_web/components/task_form_components.ex:654
+#: lib/evo_dash_web/components/task_form_components.ex:670
+#: lib/evo_dash_web/components/task_form_components.ex:779
 #, elixir-autogen, elixir-format
 msgid "The subdirectory within the project to start evolution from. Use './' for root."
 msgstr "الدليل الفرعي داخل المشروع لبدء التطوّر منه. استخدم './' للجذر."
@@ -2273,7 +2276,7 @@ msgid "This will gracefully shut down the Erlang VM. All applications will be st
 msgstr "سيؤدي هذا إلى إيقاف تشغيل سلس لآلة Erlang الافتراضية. سيتم إيقاف جميع التطبيقات بالترتيب."
 
 #: lib/evo_dash_web/components/review_components/header.ex:449
-#: lib/evo_dash_web/components/task_card_components.ex:293
+#: lib/evo_dash_web/components/task_card_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Token & Cost Usage"
 msgstr "استخدام الوحدات والتكلفة"
@@ -2317,7 +2320,7 @@ msgid "Top P"
 msgstr "Top P"
 
 #: lib/evo_dash_web/components/review_components/header.ex:550
-#: lib/evo_dash_web/components/task_card_components.ex:382
+#: lib/evo_dash_web/components/task_card_components.ex:445
 #: lib/evo_dash_web/live/agents_live.html.heex:438
 #, elixir-autogen, elixir-format
 msgid "Total Cost"
@@ -2326,7 +2329,7 @@ msgstr "التكلفة الإجمالية"
 #: lib/evo_dash_web/components/archive_components.ex:166
 #: lib/evo_dash_web/components/review_components.ex:388
 #: lib/evo_dash_web/components/review_components/header.ex:474
-#: lib/evo_dash_web/components/task_card_components.ex:314
+#: lib/evo_dash_web/components/task_card_components.ex:377
 #: lib/evo_dash_web/live/agents_live.html.heex:364
 #, elixir-autogen, elixir-format
 msgid "Total Tokens"
@@ -2347,7 +2350,7 @@ msgstr "جرّب مصطلح بحث مختلف."
 msgid "Try adjusting your filters or search query."
 msgstr "حاول تعديل عوامل التصفية أو استعلام البحث."
 
-#: lib/evo_dash_web/helpers.ex:338
+#: lib/evo_dash_web/helpers.ex:383
 #, elixir-autogen, elixir-format
 msgid "Turn %{turn}"
 msgstr "الدورة %{turn}"
@@ -2358,19 +2361,21 @@ msgid "Type a model string or use Quick Setup above"
 msgstr "اكتب سلسلة النموذج أو استخدم الإعداد السريع أعلاه"
 
 #: lib/evo_dash_web/helpers.ex:84
-#: lib/evo_dash_web/helpers.ex:220
-#: lib/evo_dash_web/helpers.ex:555
-#: lib/evo_dash_web/live/settings_live.ex:2405
+#: lib/evo_dash_web/helpers.ex:179
+#: lib/evo_dash_web/helpers.ex:197
+#: lib/evo_dash_web/helpers.ex:265
+#: lib/evo_dash_web/helpers.ex:600
+#: lib/evo_dash_web/live/settings_live.ex:2499
 #, elixir-autogen, elixir-format
 msgid "Unknown"
 msgstr "غير معروف"
 
-#: lib/evo_dash_web/live/agents_live.ex:1102
+#: lib/evo_dash_web/live/agents_live.ex:1120
 #, elixir-autogen, elixir-format
 msgid "Unknown Repo"
 msgstr "مستودع غير معروف"
 
-#: lib/evo_dash_web/live/settings_live.ex:1402
+#: lib/evo_dash_web/live/settings_live.ex:1436
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:44
 #: lib/evo_dash_web/live/settings_live/model_profile_events.ex:104
 #: lib/evo_dash_web/live/welcome_live.ex:535
@@ -2384,13 +2389,13 @@ msgstr "مزوّد غير معروف."
 msgid "User"
 msgstr "مستخدم"
 
-#: lib/evo_dash_web/helpers.ex:776
+#: lib/evo_dash_web/helpers.ex:821
 #, elixir-autogen, elixir-format
 msgid "Uses a single top-down agent to modify the codebase based on your objective."
 msgstr "يستخدم وكيلاً واحداً من أعلى إلى أسفل لتعديل قاعدة الشفرة بناءً على هدفك."
 
-#: lib/evo_dash_web/live/settings_live.ex:1177
-#: lib/evo_dash_web/live/settings_live.ex:1274
+#: lib/evo_dash_web/live/settings_live.ex:1211
+#: lib/evo_dash_web/live/settings_live.ex:1308
 #, elixir-autogen, elixir-format
 msgid "Validation failed. Please fix the errors below."
 msgstr "فشل التحقق. يُرجى تصحيح الأخطاء أدناه."
@@ -2416,8 +2421,8 @@ msgid "View Full Objective"
 msgstr "عرض الهدف الكامل"
 
 #: lib/evo_dash_web/components/review_components/actions.ex:293
-#: lib/evo_dash_web/components/task_card_components.ex:858
-#: lib/evo_dash_web/components/task_card_components.ex:919
+#: lib/evo_dash_web/components/task_card_components.ex:989
+#: lib/evo_dash_web/components/task_card_components.ex:1050
 #, elixir-autogen, elixir-format
 msgid "View PR"
 msgstr "عرض طلب السحب"
@@ -2461,7 +2466,7 @@ msgstr "نص تهيئة شجرة العمل"
 msgid "Your API key is configured and ready to use."
 msgstr "مفتاح API الخاص بك مُعدّ وجاهز للاستخدام."
 
-#: lib/evo_dash_web/helpers.ex:712
+#: lib/evo_dash_web/helpers.ex:757
 #: lib/evo_dash_web/live/agents_live.html.heex:831
 #: lib/evo_dash_web/live/agents_live.html.heex:855
 #: lib/evo_dash_web/live/agents_live.html.heex:897
@@ -2499,8 +2504,8 @@ msgstr "مثل: claude-sonnet-4-6"
 msgid "e.g. gpt-4o or anthropic/claude-3.5-sonnet"
 msgstr "مثال: gpt-4o أو anthropic/claude-3.5-sonnet"
 
-#: lib/evo_dash_web/components/task_form_components.ex:556
-#: lib/evo_dash_web/components/task_form_components.ex:665
+#: lib/evo_dash_web/components/task_form_components.ex:681
+#: lib/evo_dash_web/components/task_form_components.ex:790
 #, elixir-autogen, elixir-format
 msgid "e.g., ./src/components"
 msgstr "مثال: ./src/components"
@@ -2510,8 +2515,8 @@ msgstr "مثال: ./src/components"
 msgid "e.g., Focus on the deployment workflow and database migration patterns discovered in this PR."
 msgstr "مثال: ركّز على سير عمل النشر وأنماط ترحيل قاعدة البيانات المكتشفة في طلب السحب هذا."
 
-#: lib/evo_dash_web/components/task_form_components.ex:572
-#: lib/evo_dash_web/components/task_form_components.ex:686
+#: lib/evo_dash_web/components/task_form_components.ex:697
+#: lib/evo_dash_web/components/task_form_components.ex:811
 #, elixir-autogen, elixir-format
 msgid "e.g., abc1234 or HEAD"
 msgstr "مثال: abc1234 أو HEAD"
@@ -2565,12 +2570,12 @@ msgid "https://api.my-provider.com/v1"
 msgstr "https://api.my-provider.com/v1"
 
 #: lib/evo_dash_web/components/layouts.ex:442
-#: lib/evo_dash_web/helpers.ex:374
+#: lib/evo_dash_web/helpers.ex:419
 #, elixir-autogen, elixir-format
 msgid "just now"
 msgstr "الآن للتو"
 
-#: lib/evo_dash_web/components/task_card_components.ex:433
+#: lib/evo_dash_web/components/task_card_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "last 20 of %{count}"
 msgstr "آخر 20 من %{count}"
@@ -2611,7 +2616,7 @@ msgstr "top_k"
 msgid "top_p"
 msgstr "top_p"
 
-#: lib/evo_dash_web/components/task_card_components.ex:409
+#: lib/evo_dash_web/components/task_card_components.ex:472
 #, elixir-autogen, elixir-format
 msgid "total agents (incl. subagents)"
 msgstr "إجمالي الوكلاء (بما فيهم الوكلاء الفرعيين)"
@@ -2982,8 +2987,8 @@ msgstr "انتقل إلى لوحة التحكم"
 msgid "Light"
 msgstr "فاتح"
 
-#: lib/evo_dash_web/components/task_form_components.ex:528
-#: lib/evo_dash_web/live/projects_live.ex:420
+#: lib/evo_dash_web/components/task_form_components.ex:653
+#: lib/evo_dash_web/live/projects_live.ex:433
 #, elixir-autogen, elixir-format
 msgid "No build system"
 msgstr "لا يوجد نظام بناء"
@@ -2999,7 +3004,7 @@ msgstr "عقدة"
 msgid "Open Settings"
 msgstr "افتح الإعدادات"
 
-#: lib/evo_dash_web/live/projects_live.ex:2286
+#: lib/evo_dash_web/live/projects_live.ex:2414
 #, elixir-autogen, elixir-format
 msgid "Path must be absolute."
 msgstr "يجب أن يكون المسار مطلقًا."
@@ -3065,12 +3070,12 @@ msgstr "نموذج LLM الخاص بك مُهيَّأ. يمكنك إدارته �
 msgid "completed"
 msgstr "مكتمل"
 
-#: lib/evo_dash_web/live/agents_live.ex:1240
+#: lib/evo_dash_web/live/agents_live.ex:1307
 #, elixir-autogen, elixir-format
 msgid "Failed to send message: %{reason}"
 msgstr "فشل إرسال الرسالة: %{reason}"
 
-#: lib/evo_dash_web/live/agents_live.ex:642
+#: lib/evo_dash_web/live/agents_live.ex:660
 #, elixir-autogen, elixir-format
 msgid "Message sent to agent"
 msgstr "تم إرسال الرسالة إلى الوكيل"
@@ -3107,10 +3112,10 @@ msgid "Agent Report"
 msgstr "تقرير الوكيل"
 
 #: lib/evo_dash_web/live/home_live.ex:406
-#: lib/evo_dash_web/live/projects_live.ex:1017
+#: lib/evo_dash_web/live/projects_live.ex:1045
 #: lib/evo_dash_web/live/review_live.ex:461
-#: lib/evo_dash_web/live/settings_live.ex:1070
-#: lib/evo_dash_web/live/tasks_live.ex:782
+#: lib/evo_dash_web/live/settings_live.ex:1104
+#: lib/evo_dash_web/live/tasks_live.ex:806
 #: lib/evo_dash_web/live/welcome_complete_live.ex:90
 #, elixir-autogen, elixir-format
 msgid "Copied to clipboard"
@@ -3245,7 +3250,7 @@ msgstr "سيؤدي هذا إلى إعادة تشغيل سلسة لآلة Erlang 
 msgid "This will gracefully shut down the remote node's Erlang VM. All applications on the remote node will be stopped in order."
 msgstr "سيؤدي هذا إلى إيقاف تشغيل آلة Erlang الافتراضية على العقدة البعيدة بشكل سلس. سيتم إيقاف جميع التطبيقات على العقدة البعيدة بالترتيب."
 
-#: lib/evo_dash_web/components/task_form_components.ex:610
+#: lib/evo_dash_web/components/task_form_components.ex:735
 #, elixir-autogen, elixir-format
 msgid "Archive agent detail"
 msgstr "أرشفة تفاصيل الوكيل"
@@ -3255,7 +3260,7 @@ msgstr "أرشفة تفاصيل الوكيل"
 msgid "Blank = auto-probe the remote OS/arch"
 msgstr "اتركه فارغًا لاكتشاف نظام التشغيل/البنية تلقائيًا"
 
-#: lib/evo_dash_web/components/task_form_components.ex:612
+#: lib/evo_dash_web/components/task_form_components.ex:737
 #, elixir-autogen, elixir-format
 msgid "Collect per-agent metadata for review"
 msgstr "جمع بيانات تعريفية لكل وكيل للمراجعة"
@@ -3282,8 +3287,8 @@ msgstr "جارٍ التنزيل"
 msgid "Extracting"
 msgstr "جارٍ الاستخراج"
 
-#: lib/evo_dash_web/components/task_form_components.ex:418
-#: lib/evo_dash_web/components/task_form_components.ex:419
+#: lib/evo_dash_web/components/task_form_components.ex:524
+#: lib/evo_dash_web/components/task_form_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Launch"
 msgstr "إطلاق"
@@ -3314,7 +3319,7 @@ msgstr "فتح مشروع عبر المسار"
 msgid "Open a project..."
 msgstr "افتح مشروعًا..."
 
-#: lib/evo_dash_web/components/task_form_components.ex:182
+#: lib/evo_dash_web/components/task_form_components.ex:185
 #, elixir-autogen, elixir-format
 msgid "Optional — leave empty and click Launch to initialize an existing codebase"
 msgstr "اختياري — اتركه فارغًا وانقر على \"إطلاق\" لتهيئة قاعدة كود موجودة"
@@ -3365,7 +3370,7 @@ msgstr "اجتازت جميع الفحوصات الذاتية."
 msgid "Cannot connect to %{name}"
 msgstr "تعذّر الاتصال بـ %{name}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2132
+#: lib/evo_dash_web/live/projects_live.ex:2260
 #: lib/evo_dash_web/live/projects_live/project_flow.ex:446
 #, elixir-autogen, elixir-format
 msgid "Cannot open project: remote node %{name} is not connected. Retry the connection first."
@@ -3440,9 +3445,9 @@ msgid "Connection lost or failed"
 msgstr "انقطع الاتصال أو فشل"
 
 #: lib/evo_dash_web/components/settings_components/model_selection_editor.ex:117
-#: lib/evo_dash_web/components/task_card_components.ex:240
-#: lib/evo_dash_web/components/task_card_components.ex:271
-#: lib/evo_dash_web/live/projects_live.ex:233
+#: lib/evo_dash_web/components/task_card_components.ex:303
+#: lib/evo_dash_web/components/task_card_components.ex:334
+#: lib/evo_dash_web/live/projects_live.ex:245
 #: lib/evo_dash_web/live/tasks_live.ex:342
 #: lib/evo_dash_web/live/tasks_live.ex:364
 #: lib/evo_dash_web/live/welcome_complete_live.ex:57
@@ -3450,7 +3455,7 @@ msgstr "انقطع الاتصال أو فشل"
 msgid "Copy"
 msgstr "نسخ"
 
-#: lib/evo_dash_web/live/projects_live.ex:1902
+#: lib/evo_dash_web/live/projects_live.ex:2030
 #, elixir-autogen, elixir-format
 msgid "Directory does not exist on the remote node: %{path}"
 msgstr "المجلد غير موجود على العقدة البعيدة: %{path}"
@@ -3465,7 +3470,7 @@ msgstr "فعّل أو ثبّت systemd-run. يتطلب الصندوق الرمل
 msgid "Fix the missing or invalid settings in Settings."
 msgstr "أصلح الإعدادات المفقودة أو غير الصالحة في صفحة الإعدادات."
 
-#: lib/evo_dash_web/live/projects_live.ex:217
+#: lib/evo_dash_web/live/projects_live.ex:229
 #, elixir-autogen, elixir-format
 msgid "Hide example"
 msgstr "إخفاء المثال"
@@ -3522,7 +3527,7 @@ msgstr "الدمج في الفرع"
 msgid "Merge these changes into %{target}?"
 msgstr "دمج هذه التغييرات في %{target}؟"
 
-#: lib/evo_dash_web/live/projects_live.ex:214
+#: lib/evo_dash_web/live/projects_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "New to Genesis? Start with an example"
 msgstr "جديد على جينيسيس؟ ابدأ بمثال"
@@ -3617,18 +3622,18 @@ msgstr "اختر نموذجًا أعلاه لتكوين بيانات الاعت�
 msgid "Select a provider and a model above to enter your API key."
 msgstr "حدّد مزوّدًا ونموذجًا أعلاه لإدخال مفتاح API الخاص بك."
 
-#: lib/evo_dash_web/live/projects_live.ex:222
+#: lib/evo_dash_web/live/projects_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Set an end goal, launch, and Genesis builds it — it figures out the architecture, delegates agents, and writes the code."
 msgstr "حدّد هدفًا نهائيًا وشغّل، وسيبني جينيسيس المشروع — فهو يحدد البنية، ويوزّع الوكلاء، ويكتب الكود."
 
-#: lib/evo_dash_web/helpers.ex:516
+#: lib/evo_dash_web/helpers.ex:561
 #: lib/evo_dash_web/live/agents_live/tool_call_display.ex:71
 #, elixir-autogen, elixir-format
 msgid "Shell call"
 msgstr "استدعاء القشرة"
 
-#: lib/evo_dash_web/live/projects_live.ex:216
+#: lib/evo_dash_web/live/projects_live.ex:228
 #, elixir-autogen, elixir-format
 msgid "Show example"
 msgstr "عرض المثال"
@@ -3684,12 +3689,12 @@ msgstr "إجمالي الوكلاء مع عدد قيد التشغيل، والم
 msgid "Try an example task"
 msgstr "جرّب مهمة مثال"
 
-#: lib/evo_dash_web/components/task_form_components.ex:463
+#: lib/evo_dash_web/components/task_form_components.ex:569
 #, elixir-autogen, elixir-format
 msgid "Use the project picker in the top bar to open or create one."
 msgstr "استخدم منتقي المشروع في الشريط العلوي لفتح مشروع أو إنشائه."
 
-#: lib/evo_dash_web/live/projects_live.ex:245
+#: lib/evo_dash_web/live/projects_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "Use this example"
 msgstr "استخدم هذا المثال"
@@ -3808,12 +3813,12 @@ msgstr "جارٍ الإلغاء"
 msgid "Cancelling…"
 msgstr "جارٍ الإلغاء…"
 
-#: lib/evo_dash_web/components/task_card_components.ex:200
+#: lib/evo_dash_web/components/task_card_components.ex:222
 #, elixir-autogen, elixir-format
 msgid "Danger zone"
 msgstr "منطقة الخطر"
 
-#: lib/evo_dash_web/live/tasks_live.ex:869
+#: lib/evo_dash_web/live/tasks_live.ex:893
 #, elixir-autogen, elixir-format
 msgid "Failed to force kill task: %{reason}"
 msgstr "فشل إنهاء المهمة قسريًا: %{reason}"
@@ -3828,7 +3833,8 @@ msgstr "إنهاء قسري"
 msgid "Force Kill Task?"
 msgstr "إنهاء المهمة قسريًا؟"
 
-#: lib/evo_dash_web/components/task_card_components.ex:196
+#: lib/evo_dash_web/components/task_card_components.ex:218
+#: lib/evo_dash_web/helpers.ex:192
 #, elixir-autogen, elixir-format
 msgid "Force kill"
 msgstr "إنهاء قسري"
@@ -3860,13 +3866,13 @@ msgstr "جاهز"
 msgid "Task: %{task_id}"
 msgstr "المهمة: %{task_id}"
 
-#: lib/evo_dash_web/live/projects_live.ex:300
+#: lib/evo_dash_web/live/projects_live.ex:312
 #, elixir-autogen, elixir-format
 msgid "You are viewing a remote node. Tasks launched here will run on the remote machine."
 msgstr "أنت تتصفح عقدة بعيدة. المهام التي يتم إطلاقها هنا ستعمل على الجهاز البعيد."
 
-#: lib/evo_dash_web/live/settings_live.ex:1918
-#: lib/evo_dash_web/live/settings_live.ex:2021
+#: lib/evo_dash_web/live/settings_live.ex:1967
+#: lib/evo_dash_web/live/settings_live.ex:2070
 #, elixir-autogen, elixir-format
 msgid "Could not load configuration from the remote node: %{reason} — the node may be unreachable."
 msgstr "تعذّر تحميل الإعدادات من العقدة البعيدة: %{reason} — قد تكون العقدة غير قابلة للوصول."
@@ -3927,35 +3933,36 @@ msgstr "سيبدأ هذا مهمة وكيل جديدة لدمج التغييرا
 msgid "Advanced settings"
 msgstr "الإعدادات المتقدمة"
 
-#: lib/evo_dash_web/components/task_form_components.ex:238
-#: lib/evo_dash_web/components/task_form_components.ex:239
+#: lib/evo_dash_web/components/task_form_components.ex:308
+#: lib/evo_dash_web/components/task_form_components.ex:309
 #, elixir-autogen, elixir-format
 msgid "Attach file"
 msgstr "إرفاق ملف"
 
-#: lib/evo_dash_web/components/task_form_components.ex:298
-#: lib/evo_dash_web/components/task_form_components.ex:299
+#: lib/evo_dash_web/components/task_form_components.ex:404
+#: lib/evo_dash_web/components/task_form_components.ex:405
 #, elixir-autogen, elixir-format
 msgid "Cancel attach file path"
 msgstr "إلغاء مسار الملف المراد إرفاقه"
 
-#: lib/evo_dash_web/components/task_form_components.ex:279
-#: lib/evo_dash_web/components/task_form_components.ex:280
+#: lib/evo_dash_web/components/task_form_components.ex:385
+#: lib/evo_dash_web/components/task_form_components.ex:386
 #, elixir-autogen, elixir-format
 msgid "Confirm attach file path"
 msgstr "تأكيد مسار الملف المراد إرفاقه"
 
-#: lib/evo_dash_web/live/projects_live/attach_file.ex:78
+#: lib/evo_dash_web/live/projects_live/attach_file.ex:99
+#: lib/evo_dash_web/live/projects_live/attach_file.ex:162
 #, elixir-autogen, elixir-format
 msgid "Failed to attach file: %{reason}"
 msgstr "فشل إرفاق الملف: %{reason}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1558
+#: lib/evo_dash_web/live/projects_live.ex:1604
 #, elixir-autogen, elixir-format
 msgid "File not found: %{path}"
 msgstr "لم يتم العثور على الملف: %{path}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:271
+#: lib/evo_dash_web/components/task_form_components.ex:377
 #, elixir-autogen, elixir-format
 msgid "File path to attach"
 msgstr "مسار الملف المراد إرفاقه"
@@ -3982,12 +3989,12 @@ msgstr "تحريك لأسفل"
 msgid "Move up"
 msgstr "تحريك لأعلى"
 
-#: lib/evo_dash_web/live/projects_live.ex:1553
+#: lib/evo_dash_web/live/projects_live.ex:1599
 #, elixir-autogen, elixir-format
 msgid "Please enter a file path."
 msgstr "يرجى إدخال مسار ملف."
 
-#: lib/evo_dash_web/components/task_form_components.ex:270
+#: lib/evo_dash_web/components/task_form_components.ex:376
 #, elixir-autogen, elixir-format
 msgid "Type a full file path…"
 msgstr "اكتب مسار الملف الكامل…"
@@ -4082,13 +4089,13 @@ msgstr "جارٍ تطبيق التحديث…"
 msgid "Asia/Shanghai"
 msgstr "آسيا/شنغهاي"
 
-#: lib/evo_dash_web/components/task_form_components.ex:391
+#: lib/evo_dash_web/components/task_form_components.ex:497
 #: lib/evo_dash_web/live/home_live.ex:86
 #, elixir-autogen, elixir-format
 msgid "Auto (by rules)"
 msgstr "تلقائي (حسب القواعد)"
 
-#: lib/evo_dash_web/components/task_form_components.ex:361
+#: lib/evo_dash_web/components/task_form_components.ex:467
 #, elixir-autogen, elixir-format
 msgid "Auto (recommended)"
 msgstr "تلقائي (موصى به)"
@@ -4145,17 +4152,17 @@ msgstr "أنشئ وكلاء مخصصين وافهم سكربت اختيار ال
 msgid "Current version: %{version}"
 msgstr "الإصدار الحالي: %{version}"
 
-#: lib/evo_dash_web/components/task_form_components.ex:341
+#: lib/evo_dash_web/components/task_form_components.ex:447
 #, elixir-autogen, elixir-format
 msgid "Custom Agent"
 msgstr "وكيل مخصص"
 
-#: lib/evo_dash_web/live/projects_live.ex:1136
+#: lib/evo_dash_web/live/projects_live.ex:1164
 #, elixir-autogen, elixir-format
 msgid "Custom Agent mode requires selecting a custom agent."
 msgstr "يتطلب وضع الوكيل المخصص اختيار وكيل مخصص."
 
-#: lib/evo_dash_web/helpers.ex:593
+#: lib/evo_dash_web/helpers.ex:638
 #, elixir-autogen, elixir-format
 msgid "Custom Agent mode selected — requires picking a custom agent"
 msgstr "تم تحديد وضع الوكيل المخصص — يتطلب اختيار وكيل مخصص"
@@ -4245,7 +4252,7 @@ msgstr "مثال"
 msgid "Failed to delete custom agent: %{reason}"
 msgstr "فشل حذف الوكيل المخصص: %{reason}"
 
-#: lib/evo_dash_web/live/review_live.ex:1173
+#: lib/evo_dash_web/live/review_live.ex:1191
 #, elixir-autogen, elixir-format
 msgid "Failed to load review data."
 msgstr "تعذّر تحميل بيانات المراجعة."
@@ -4265,7 +4272,7 @@ msgstr "فشل حفظ الوكيل المخصص: %{reason}"
 msgid "Failed to save script: %{reason}"
 msgstr "فشل حفظ البرنامج النصي: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1318
+#: lib/evo_dash_web/live/system_live.ex:1336
 #, elixir-autogen, elixir-format
 msgid "Failed to stop running tasks. The update was not applied."
 msgstr "تعذّر إيقاف المهام قيد التشغيل. لم يتم تطبيق التحديث."
@@ -4347,7 +4354,7 @@ msgstr "جارٍ تحميل السجل…"
 msgid "Loading issues…"
 msgstr "جارٍ تحميل القضايا…"
 
-#: lib/evo_dash_web/live/projects_live.ex:315
+#: lib/evo_dash_web/live/projects_live.ex:327
 #, elixir-autogen, elixir-format
 msgid "Loading project…"
 msgstr "جارٍ تحميل المشروع…"
@@ -4413,7 +4420,7 @@ msgstr "لا توجد قضايا مغلقة"
 msgid "No custom agents defined"
 msgstr "لا توجد وكلاء مخصصون معرّفون"
 
-#: lib/evo_dash_web/components/task_form_components.ex:437
+#: lib/evo_dash_web/components/task_form_components.ex:543
 #, elixir-autogen, elixir-format
 msgid "No custom agents defined. Add one in Settings → Agents to use Custom Agent mode."
 msgstr "لا توجد وكلاء مخصصون معرّفون. أضف واحدًا من الإعدادات ← الوكلاء لاستخدام وضع الوكيل المخصص."
@@ -4519,12 +4526,12 @@ msgstr "إعادة تشغيل وتحديث"
 msgid "Root architect (depth 0)"
 msgstr "المعماري الجذر (عمق 0)"
 
-#: lib/evo_dash_web/helpers.ex:781
+#: lib/evo_dash_web/helpers.ex:826
 #, elixir-autogen, elixir-format
 msgid "Runs a user-defined custom agent as the root agent of an evolution task on this codebase."
 msgstr "يشغّل وكيلًا مخصصًا يعرّفه المستخدم كالوكيل الجذري لمهمة تطوّر على قاعدة البيانات هذه."
 
-#: lib/evo_dash_web/components/task_form_components.ex:445
+#: lib/evo_dash_web/components/task_form_components.ex:551
 #, elixir-autogen, elixir-format
 msgid "Runs the selected custom agent as the root agent of an evolution task."
 msgstr "يشغّل الوكيل المخصص المحدد كوكيل جذري لمهمة تطوّر."
@@ -4670,17 +4677,17 @@ msgstr "تفويض عالٍ"
 msgid "low delegation"
 msgstr "تفويض منخفض"
 
-#: lib/evo_dash_web/components/task_form_components.ex:333
+#: lib/evo_dash_web/components/task_form_components.ex:439
 #, elixir-autogen, elixir-format
 msgid "Create new project"
 msgstr "إنشاء مشروع جديد"
 
-#: lib/evo_dash_web/components/task_form_components.ex:337
+#: lib/evo_dash_web/components/task_form_components.ex:443
 #, elixir-autogen, elixir-format
 msgid "Evolve existing project"
 msgstr "تطوّر مشروع موجود"
 
-#: lib/evo_dash_web/components/task_form_components.ex:329
+#: lib/evo_dash_web/components/task_form_components.ex:435
 #, elixir-autogen, elixir-format
 msgid "Initialize existing project"
 msgstr "تهيئة مشروع موجود"
@@ -4730,7 +4737,7 @@ msgstr "المجلد"
 msgid "Dismiss guide"
 msgstr "إغلاق الدليل"
 
-#: lib/evo_dash_web/live/system_live.ex:1698
+#: lib/evo_dash_web/live/system_live.ex:1716
 #, elixir-autogen, elixir-format
 msgid "Failed to clone the Genesis source."
 msgstr "فشل استنساخ مصدر جينيسيس."
@@ -4750,7 +4757,7 @@ msgstr "فشل بدء المهمة: لم يتم إرجاع معرف المهمة
 msgid "Failed to stop: %{reason}"
 msgstr "فشل الإيقاف: %{reason}"
 
-#: lib/evo_dash_web/live/system_live.ex:1699
+#: lib/evo_dash_web/live/system_live.ex:1717
 #, elixir-autogen, elixir-format
 msgid "Failed to update the Genesis source."
 msgstr "فشل تحديث مصدر جينيسيس."
@@ -4770,18 +4777,18 @@ msgstr "مصدر جينيسيس"
 msgid "Genesis source checkout used by the self-reflective agent."
 msgstr "نسخة مصدر جينيسيس المستخدمة من قبل الوكيل ذاتي التفكير."
 
-#: lib/evo_dash_web/live/system_live.ex:1695
+#: lib/evo_dash_web/live/system_live.ex:1713
 #, elixir-autogen, elixir-format
 msgid "Genesis source cloned."
 msgstr "تم استنساخ مصدر جينيسيس."
 
-#: lib/evo_dash_web/live/system_live.ex:1684
+#: lib/evo_dash_web/live/system_live.ex:1702
 #: lib/evo_dash_web/live/system_live/source_card.ex:105
 #, elixir-autogen, elixir-format
 msgid "Genesis source is not available in this version"
 msgstr "مصدر جينيسيس غير متاح في هذا الإصدار"
 
-#: lib/evo_dash_web/live/system_live.ex:1696
+#: lib/evo_dash_web/live/system_live.ex:1714
 #, elixir-autogen, elixir-format
 msgid "Genesis source updated."
 msgstr "تم تحديث مصدر جينيسيس."
@@ -4838,8 +4845,8 @@ msgid "The conversation was deleted."
 msgstr "تم حذف المحادثة."
 
 #: lib/evo_dash_web/live/home_live.ex:890
-#: lib/evo_dash_web/live/home_live.ex:967
 #: lib/evo_dash_web/live/home_live.ex:999
+#: lib/evo_dash_web/live/home_live.ex:1018
 #, elixir-autogen, elixir-format
 msgid "The task failed."
 msgstr "فشلت المهمة."
@@ -4864,7 +4871,7 @@ msgstr "الإصدار"
 msgid "in use"
 msgstr "قيد الاستخدام"
 
-#: lib/evo_dash_web/live/projects_live.ex:2306
+#: lib/evo_dash_web/live/projects_live.ex:2434
 #, elixir-autogen, elixir-format
 msgid "Base commit %{base_sha} not found in repository: %{path}"
 msgstr "الإيداع الأساسي %{base_sha} غير موجود في المستودع: %{path}"
@@ -4884,12 +4891,12 @@ msgstr "فشل رفض التغييرات في %{count} من أصل %{total} مس
 msgid "Failed: %{detail}"
 msgstr "فشل: %{detail}"
 
-#: lib/evo_dash_web/live/projects_live.ex:1418
+#: lib/evo_dash_web/live/projects_live.ex:1446
 #, elixir-autogen, elixir-format
 msgid "Foreign repo '%{repo_id}' updated successfully."
 msgstr "تم تحديث المستودع الخارجي '%{repo_id}' بنجاح."
 
-#: lib/evo_dash_web/live/projects_live.ex:2289
+#: lib/evo_dash_web/live/projects_live.ex:2417
 #, elixir-autogen, elixir-format
 msgid "Foreign repo path does not exist: %{path}"
 msgstr "مسار المستودع الخارجي غير موجود: %{path}"
@@ -4919,7 +4926,7 @@ msgstr "نتائج الدمج"
 msgid "Merged into %{target}"
 msgstr "تم الدمج في %{target}"
 
-#: lib/evo_dash_web/live/projects_live.ex:2292
+#: lib/evo_dash_web/live/projects_live.ex:2420
 #, elixir-autogen, elixir-format
 msgid "Path is not a git repository: %{path}"
 msgstr "المسار ليس مستودع git: %{path}"
@@ -4934,9 +4941,9 @@ msgstr "نتائج الرفض"
 msgid "Rejected — branch deleted"
 msgstr "مرفوض — تم حذف الفرع"
 
-#: lib/evo_dash_web/components/task_card_components.ex:801
-#: lib/evo_dash_web/components/task_card_components.ex:866
-#: lib/evo_dash_web/components/task_card_components.ex:927
+#: lib/evo_dash_web/components/task_card_components.ex:932
+#: lib/evo_dash_web/components/task_card_components.ex:997
+#: lib/evo_dash_web/components/task_card_components.ex:1058
 #, elixir-autogen, elixir-format
 msgid "Repositories"
 msgstr "المستودعات"
@@ -4959,7 +4966,7 @@ msgstr "المستودعات الخارجية القابلة للكتابة تح
 msgid "branch or SHA, blank = HEAD"
 msgstr "فرع أو SHA، فارغ = HEAD"
 
-#: lib/evo_dash_web/components/task_card_components.ex:671
+#: lib/evo_dash_web/components/task_card_components.ex:802
 #, elixir-autogen, elixir-format
 msgid "no changes"
 msgstr "لا توجد تغييرات"
@@ -5192,7 +5199,7 @@ msgstr "الخميس"
 msgid "Tue"
 msgstr "الثلاثاء"
 
-#: lib/evo_dash_web/live/settings_live.ex:1307
+#: lib/evo_dash_web/live/settings_live.ex:1341
 #, elixir-autogen, elixir-format
 msgid "Unknown accent color."
 msgstr "لون تمييز غير معروف."
@@ -5202,7 +5209,7 @@ msgstr "لون تمييز غير معروف."
 msgid "Update changelog"
 msgstr "تحديث سجل التغييرات"
 
-#: lib/evo_dash_web/live/system_live.ex:1793
+#: lib/evo_dash_web/live/system_live.ex:1811
 #, elixir-autogen, elixir-format
 msgid "View changelog"
 msgstr "عرض سجل التغييرات"
@@ -5362,9 +5369,9 @@ msgstr "بيانات"
 #: lib/evo_dash_web/live/settings_live.ex:350
 #: lib/evo_dash_web/live/settings_live.ex:364
 #: lib/evo_dash_web/live/settings_live.ex:387
-#: lib/evo_dash_web/live/settings_live.ex:962
-#: lib/evo_dash_web/live/settings_live.ex:968
-#: lib/evo_dash_web/live/settings_live.ex:974
+#: lib/evo_dash_web/live/settings_live.ex:989
+#: lib/evo_dash_web/live/settings_live.ex:995
+#: lib/evo_dash_web/live/settings_live.ex:1001
 #, elixir-autogen, elixir-format
 msgid "Install"
 msgstr "تثبيت"
@@ -5383,3 +5390,130 @@ msgstr "إيقاف وإعادة التثبيت"
 #, elixir-autogen, elixir-format
 msgid "The remote daemon is already running. Re-installing it will stop the daemon and any tasks running on the remote."
 msgstr "الخفيّة البعيدة قيد التشغيل بالفعل. ستؤدي إعادة تثبيتها إلى إيقاف الخفيّة وأي مهام تعمل على الخادم البعيد."
+
+#: lib/evo_dash_web/helpers.ex:173
+#, elixir-autogen, elixir-format
+msgid "Agent crashed"
+msgstr "تعطّل الوكيل"
+
+#: lib/evo_dash_web/helpers.ex:191
+#, elixir-autogen, elixir-format
+msgid "Agent monitor"
+msgstr "مراقب الوكيل"
+
+#: lib/evo_dash_web/components/task_form_components.ex:345
+#: lib/evo_dash_web/components/task_form_components.ex:599
+#, elixir-autogen, elixir-format
+msgid "Audio"
+msgstr "صوت"
+
+#: lib/evo_dash_web/live/settings_live.ex:2429
+#, elixir-autogen, elixir-format
+msgid "Connect failed: %{reason}"
+msgstr "فشل الاتصال: %{reason}"
+
+#: lib/evo_dash_web/helpers.ex:193
+#, elixir-autogen, elixir-format
+msgid "Finalization watchdog"
+msgstr "مراقب الإنهاء"
+
+#: lib/evo_dash_web/helpers.ex:174
+#, elixir-autogen, elixir-format
+msgid "Force-killed"
+msgstr "قُتل قسرًا"
+
+#: lib/evo_dash_web/components/task_form_components.ex:334
+#: lib/evo_dash_web/components/task_form_components.ex:598
+#, elixir-autogen, elixir-format
+msgid "Image"
+msgstr "صورة"
+
+#: lib/evo_dash_web/helpers.ex:177
+#, elixir-autogen, elixir-format
+msgid "Lease expired"
+msgstr "انتهت صلاحية الإجارة"
+
+#: lib/evo_dash_web/helpers.ex:195
+#, elixir-autogen, elixir-format
+msgid "Lease sweep"
+msgstr "كنس الإجارات"
+
+#: lib/evo_dash_web/live/projects_live/attach_file.ex:140
+#, elixir-autogen, elixir-format
+msgid "Maximum of %{count} attachments per task"
+msgstr "بحد أقصى %{count} مرفقات لكل مهمة"
+
+#: lib/evo_dash_web/helpers.ex:178
+#: lib/evo_dash_web/helpers.ex:196
+#, elixir-autogen, elixir-format
+msgid "Recheck"
+msgstr "إعادة التحقق"
+
+#: lib/evo_dash_web/live/agents_live.ex:216
+#: lib/evo_dash_web/live/projects_live.ex:1815
+#: lib/evo_dash_web/live/review_live.ex:1149
+#: lib/evo_dash_web/live/system_live.ex:1274
+#: lib/evo_dash_web/live/tasks_live.ex:623
+#, elixir-autogen, elixir-format
+msgid "Remote connect failed: %{reason}"
+msgstr "فشل الاتصال عن بُعد: %{reason}"
+
+#: lib/evo_dash_web/live/agents_live.ex:213
+#: lib/evo_dash_web/live/projects_live.ex:1812
+#: lib/evo_dash_web/live/review_live.ex:1146
+#: lib/evo_dash_web/live/system_live.ex:1271
+#: lib/evo_dash_web/live/tasks_live.ex:620
+#, elixir-autogen, elixir-format
+msgid "Remote connect unavailable — the remote connection subsystem is not running."
+msgstr "الاتصال عن بُعد غير متاح — النظام الفرعي للاتصال عن بُعد لا يعمل."
+
+#: lib/evo_dash_web/components/task_form_components.ex:268
+#: lib/evo_dash_web/components/task_form_components.ex:269
+#, elixir-autogen, elixir-format
+msgid "Remove attachment"
+msgstr "إزالة المرفق"
+
+#: lib/evo_dash_web/helpers.ex:190
+#, elixir-autogen, elixir-format
+msgid "Result handler"
+msgstr "معالج النتائج"
+
+#: lib/evo_dash_web/helpers.ex:176
+#, elixir-autogen, elixir-format
+msgid "Runtime restarted"
+msgstr "أُعيد تشغيل وقت التشغيل"
+
+#: lib/evo_dash_web/components/task_card_components.ex:264
+#, elixir-autogen, elixir-format
+msgid "Source"
+msgstr "المصدر"
+
+#: lib/evo_dash_web/components/task_card_components.ex:277
+#, elixir-autogen, elixir-format
+msgid "Stacktrace"
+msgstr "تتبّع المكدّس"
+
+#: lib/evo_dash_web/helpers.ex:194
+#, elixir-autogen, elixir-format
+msgid "Startup reconcile"
+msgstr "مزامنة بدء التشغيل"
+
+#: lib/evo_dash_web/components/task_form_components.ex:323
+#, elixir-autogen, elixir-format
+msgid "Text / PDF"
+msgstr "نص / PDF"
+
+#: lib/evo_dash_web/helpers.ex:175
+#, elixir-autogen, elixir-format
+msgid "Timed out"
+msgstr "انتهت المهلة"
+
+#: lib/evo_dash_web/live/projects_live.ex:2662
+#, elixir-autogen, elixir-format
+msgid "Too many attachments or an attachment is too large — remove some and try again."
+msgstr "عدد المرفقات كبير جدًا أو أن أحد المرفقات كبير الحجم — احذف بعضًا منها وحاول مرة أخرى."
+
+#: lib/evo_dash_web/live/settings_live.ex:2424
+#, elixir-autogen, elixir-format
+msgid "Unknown error"
+msgstr "خطأ غير معروف"
