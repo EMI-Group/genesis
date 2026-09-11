@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.6] - 2026-09-11
+
+### Added
+
+- Add multi-modal `:attachments` support, allowing image and audio files to be staged and attached to tasks with a kind-aware attach dropdown, removable staged-attachment chips, per-kind extension allowlists, a 15 MiB size cap, and base64-encoded submission
+- Add a read-only `spawn_investigator` probe and expose an `Agent.Usage` archive usage-map reader
+- Add custom ecto strict types for the config DSL vocabulary, and add ecto ~> 3.14 as a dependency of :evo_git
+
+### Changed
+
+- Tool concurrency and sandbox CPU quota defaults are now derived from the machine's CPU thread count instead of hardcoded values
+- Remote node connections now initiate asynchronously, so the UI no longer freezes during connect/retry; status updates are delivered via broadcasts and sync errors are flashed once per attempt
+- Config validation was reworked on an Ecto-based engine, keeping identical validation rules and error messages
+- Failed tasks now show structured error details (kind, source, message, stacktrace) on task cards and in home chat, with error payloads persisted and summarized
+- Agent chat history now shows labels for image and audio content parts instead of blank entries
+- Per-agent archive cost/token tiles now handle string-keyed usage maps correctly, and continuous project accent hues are corrected
+- Japanese translations now render the product name as 啓元 instead of "Genesis"
+
+### Fixed
+
+- Fix staged image and audio attachment chips not rendering in the task form LiveView, including an image/audio staging kind mismatch
+- Fix compile warning by declaring the staged_attachments attribute on the task form component
+- Fix AgentScheduler crashes and SystemSampler crash-loops caused by blocking sandbox-slice resource updates and unguarded scheduler calls, with bounded timeouts, fire-and-forget propagation, and graceful degradation on failures
+
 ## [0.12.5] - 2026-09-08
 
 ### Added
