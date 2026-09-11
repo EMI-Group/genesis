@@ -239,6 +239,17 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
+  Returns the number of CPU threads available on the machine.
+
+  This is the single source of truth for CPU-thread-count-derived defaults
+  (e.g. the scheduler's `max_tool_concurrency` and the sandbox CPU quotas).
+  It wraps `System.schedulers_online/0`, clamped to a minimum of 1 so that
+  callers can safely derive positive values (e.g. `cpu_threads() * 100`).
+  """
+  @spec cpu_threads() :: pos_integer()
+  def cpu_threads, do: max(System.schedulers_online(), 1)
+
+  @doc """
   Returns true if the given path is an absolute path on any platform.
   Handles Unix paths (/foo), Windows drive-letter paths (C:\\foo, D:/bar),
   and UNC paths (\\\\server\\share and //server/share, e.g. WSL paths like

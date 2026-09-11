@@ -33,13 +33,13 @@ defmodule EvoGit do
       write_paths = ["/custom/writable"]
 
       [sandbox.resources]
-      cpu_quota = "1000%"
+      cpu_quota = "800%"   # default = detected CPU thread count × 100%
       cpu_weight = 30
       memory_max = "16G"
       tasks_max = 8196
 
       [sandbox.process]
-      cpu_quota = "800%"
+      cpu_quota = "800%"   # default = detected CPU thread count × 100%
       memory_max = "12G"
       limit_nofile = 65536
       oom_score_adjust = 1000

@@ -34,6 +34,13 @@ defmodule EvoGit.Config.Schema.Definitions do
   """
   @spec schemas() :: [EvoGit.Config.Schema.schema_map()]
   def schemas do
+    # CPU-thread-derived defaults: the tool-concurrency cap and the sandbox CPU
+    # quotas scale with the machine's CPU thread count (see `EvoGit.Platform.cpu_threads/0`).
+    # Computed here (a runtime function body) so that schema display,
+    # reset-to-default and config resolution all agree on the same dynamic value.
+    cpu_threads = EvoGit.Platform.cpu_threads()
+    cpu_quota = "#{cpu_threads * 100}%"
+
     [
       # ── Scheduler ──────────────────────────────────────────────────────
       %{
@@ -49,12 +56,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:scheduler, :max_tool_concurrency],
         type: :pos_integer,
-        default: 2,
+        default: cpu_threads,
         validation: [min: 1],
         category: :scheduler,
         sub_category: nil,
         description:
-          "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Reduce if you encounter system resource pressure."
+          "Maximum number of concurrent tool executions. Controls how many tool calls (bash, file operations, etc.) can run in parallel. Defaults to the detected CPU thread count of the machine. Reduce if you encounter system resource pressure."
       },
       %{
         key_path: [:scheduler, :agent_max_retries],
@@ -300,12 +307,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:sandbox, :resources, :cpu_quota],
         type: :string,
-        default: "1000%",
+        default: cpu_quota,
         validation: [],
         category: :sandbox,
         sub_category: :resources,
         description:
-          "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice."
+          "Aggregate CPU quota for all sandboxed processes combined. Uses systemd CPUQuota format (e.g., '1000%' = 10 CPU cores). This is the total CPU available across the entire sandbox slice. Defaults to the detected CPU thread count of the machine (e.g. '1600%' = 16 cores)."
       },
       %{
         key_path: [:sandbox, :resources, :cpu_weight],
@@ -340,12 +347,12 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:sandbox, :process, :cpu_quota],
         type: :string,
-        default: "800%",
+        default: cpu_quota,
         validation: [],
         category: :sandbox,
         sub_category: :process,
         description:
-          "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time."
+          "Per-process CPU quota for individual tool executions. Uses systemd CPUQuota format (e.g., '800%' = 8 CPU cores). Each tool call (bash, compile, etc.) is limited to this amount of CPU time. Defaults to the detected CPU thread count of the machine (e.g. '1600%' = 16 cores)."
       },
       %{
         key_path: [:sandbox, :process, :memory_max],

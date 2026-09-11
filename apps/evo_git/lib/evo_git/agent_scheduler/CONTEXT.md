@@ -103,7 +103,7 @@ Two independent slot pools tracked as `MapSet`s of agent IDs. Available capacity
 | Pool | State Keys | Capacity | Backoff |
 |------|-----------|----------|---------|
 | LLM slots | `llm_holders`, `llm_waiting`, `llm_backoff_until` | **per-model** `model_concurrency[model_id]` (from `[[llm.models]]` profile `concurrency`, default 3); fallback `default_llm_max_concurrency` (3) for unknown model_ids via `State.concurrency_for/2` | **per-model** 60s cooldown on `:rate_limit` errors (NOT global — one model's rate limit doesn't block others) |
-| Tool slots | `tool_holders`, `tool_waiting` | `max_tool_concurrency` (2) | None |
+| Tool slots | `tool_holders`, `tool_waiting` | `max_tool_concurrency` (default = detected CPU thread count, via `EvoGit.Platform.cpu_threads/0`) | None |
 
 Key functions: `handle_request_llm_slot/3`, `handle_request_tool_slot/3` (grant if capacity available, else enqueue); `handle_release_llm_slot/2`, `handle_release_tool_slot/2` (remove from holder set, grant pending — called via `handle_cast`, fire-and-forget; return `{state, status_updates}`); `release_agent_slots/2` (on agent death `:DOWN`: removes from both holder sets, purges queues, grants pending); `purge_agents_from_queues/2` (removes agents from waiting queues, replies `{:error, :cancelled}` to each); `grant_pending_on_resume/1` (grants all available slots when resuming from pause; also runs at the END of every config update (state.ex), so a 0→N capacity increase (peak exit) grants queued 0-capacity waiters automatically).
 

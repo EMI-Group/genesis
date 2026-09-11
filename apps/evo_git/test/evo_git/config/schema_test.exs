@@ -173,7 +173,7 @@ defmodule EvoGit.Config.SchemaTest do
 
       # Scheduler
       assert defaults.scheduler.default_llm_max_concurrency == 3
-      assert defaults.scheduler.max_tool_concurrency == 2
+      assert defaults.scheduler.max_tool_concurrency == EvoGit.Platform.cpu_threads()
       assert defaults.scheduler.agent_max_retries == 3
       assert defaults.scheduler.max_agent_depth == 8
       assert defaults.scheduler.max_retries == 15
@@ -194,11 +194,11 @@ defmodule EvoGit.Config.SchemaTest do
       # Sandbox
       assert defaults.sandbox.mode == :auto
       assert defaults.sandbox.backend == :auto
-      assert defaults.sandbox.resources.cpu_quota == "1000%"
+      assert defaults.sandbox.resources.cpu_quota == "#{EvoGit.Platform.cpu_threads() * 100}%"
       assert defaults.sandbox.resources.cpu_weight == 30
       assert defaults.sandbox.resources.memory_max == "16G"
       assert defaults.sandbox.resources.tasks_max == 8196
-      assert defaults.sandbox.process.cpu_quota == "800%"
+      assert defaults.sandbox.process.cpu_quota == "#{EvoGit.Platform.cpu_threads() * 100}%"
       assert defaults.sandbox.process.memory_max == "12G"
       assert defaults.sandbox.process.limit_nofile == 65536
       assert defaults.sandbox.process.oom_score_adjust == 1000
@@ -294,6 +294,33 @@ defmodule EvoGit.Config.SchemaTest do
       defaults = Schema.defaults()
       assert Map.has_key?(defaults.llm, :model)
       assert defaults.llm.model == nil
+    end
+
+    test "CPU-thread-derived defaults track the machine's CPU thread count" do
+      cores = EvoGit.Platform.cpu_threads()
+      defaults = Schema.defaults()
+
+      # max_tool_concurrency defaults to the CPU thread count.
+      assert defaults.scheduler.max_tool_concurrency == cores
+
+      # Sandbox CPU quotas default to "<cores * 100>%".
+      assert defaults.sandbox.resources.cpu_quota == "#{cores * 100}%"
+      assert defaults.sandbox.process.cpu_quota == "#{cores * 100}%"
+    end
+
+    test "the schema maps expose the same dynamic defaults the dashboard reads" do
+      cores = EvoGit.Platform.cpu_threads()
+
+      schema_by_path =
+        Map.new(Schema.all_schemas(), fn schema -> {schema.key_path, schema} end)
+
+      assert schema_by_path[[:scheduler, :max_tool_concurrency]].default == cores
+
+      assert schema_by_path[[:sandbox, :resources, :cpu_quota]].default ==
+               "#{cores * 100}%"
+
+      assert schema_by_path[[:sandbox, :process, :cpu_quota]].default ==
+               "#{cores * 100}%"
     end
 
     test "github username has nil default" do

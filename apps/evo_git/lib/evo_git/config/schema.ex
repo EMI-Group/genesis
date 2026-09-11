@@ -176,7 +176,7 @@ defmodule EvoGit.Config.Schema do
       iex> defaults.scheduler.default_llm_max_concurrency
       3
       iex> defaults.sandbox.resources.cpu_quota
-      "1000%"
+      "#{EvoGit.Platform.cpu_threads() * 100}%"
   """
   @spec defaults() :: map()
   def defaults do

@@ -18,7 +18,7 @@
 | `save_credentials/1` | Merges/persists API key map to `credentials.toml`; sets keys via `ReqLLM.put_key` for immediate in-process use. Invalidates cache. `:ok \| {:error, reason}` |
 | `config_status/0` | Diagnostic map `:missing`/`:warnings`/`:ok?`. Checks LLM model presence + API key presence. GitHub username optional — NOT checked (does not affect `:ok?`/`:missing`/`:warnings`). |
 | `credentials/0` | Reads `credentials.toml`, loads each key into ReqLLM's key store, returns parsed map. Cached (put_key runs only on cache miss). |
-| `defaults/0` | Built-in defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode) |
+| `defaults/0` | Built-in defaults (scheduler concurrency/retry settings, empty llm/user maps, sandbox mode). Three values are CPU-thread-derived (see Configuration Levels) |
 | `config_path/0` | Full path to `config.toml` |
 | `config_dir/0` | Platform config dir (XDG/macos/windows). Delegates to `EvoGit.Platform.config_dir("genesis")`. |
 | `credentials_path/0` | Full path to `credentials.toml` |
@@ -98,7 +98,7 @@ description = "Legacy Project"
 | `SOURCE_WORKTREE_PATH` | Parent agent's worktree path (`SOURCE_REPO_PATH` for top-level agents) |
 
 ### Configuration Levels (priority low → high)
-1. **Application defaults** — `defaults/0` (no model, no username)
+1. **Application defaults** — `defaults/0` (no model, no username). Three defaults are **dynamic** (computed at `Definitions.schemas/0` runtime): `[:scheduler, :max_tool_concurrency]` and both sandbox `:cpu_quota` values (`[:sandbox, :resources, :cpu_quota]` and `[:sandbox, :process, :cpu_quota]`) derive from `EvoGit.Platform.cpu_threads/0` (= `max(System.schedulers_online(), 1)`) — the tool-concurrency cap equals the CPU thread count and each quota string is `"#{cores * 100}%"`. Because the value lives on the schema map itself, display, reset-to-default (dashboard) and resolution all agree.
 2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant), parsed with `TomlElixir.decode/1`
 3. **Runtime overrides** — `AgentScheduler` GenServer state via `handle_call({:update_config, opts})`; set by dashboard settings / `RemoteAPI.reload_config` (the CLI makes NO scheduler overrides — concurrency/retry/turn values are config.toml-only, and `-m` is task-level model selection carried in task opts, not a scheduler override).
 
@@ -114,7 +114,7 @@ Platform→Config runtime calls are an established, safe pattern (no compile cyc
 ```toml
 [scheduler]
 default_llm_max_concurrency = 3   # Per-LLM concurrency when a model profile has none
-max_tool_concurrency = 2          # Max concurrent tool executions
+max_tool_concurrency = 8          # Max concurrent tool executions (default = detected CPU thread count)
 agent_max_retries = 3             # Crash-retry limit per agent
 max_agent_depth = 8               # Max subagent recursion depth
 max_retries = 15                  # Max total LLM API retries
@@ -231,7 +231,7 @@ The scalar/rule validator beneath the DSL is **Ecto-backed but Ecto is a VALIDAT
 
 **NOT cached:**
 - **The `resolve/0` pipeline** (deep_merge → atomize_enum_values → migrate_llm_models → Schema.validate) runs on EVERY call — it has a side effect: `Process.put(:evo_git_config_validation_errors, ...)` (config.ex ~153), read by `config_status/0` from the **calling process's** dict (config.ex ~634). Caching would break validation-error propagation.
-- `defaults/0` — pure, cheap.
+- `defaults/0` — cheap (a `deep_put` fold over the schema list; three values are read off `EvoGit.Platform.cpu_threads/0` at call time).
 - `read_toml_file/3` itself (`@doc false`) — `project_config.ex`/`remote_connections.ex` use it for `genesis.toml`/`remote_connections.toml`, which must stay fresh. The cache lives only inside `user_config/0`/`credentials/0`.
 
 `config_status/0` truthfulness: calls `resolve()` + `credentials()` per invocation; the cache only serves validated (mtime+size-matched) content, so missing/warning lists reflect current on-disk state.

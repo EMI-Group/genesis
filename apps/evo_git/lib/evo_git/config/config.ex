@@ -15,7 +15,7 @@ defmodule EvoGit.Config do
 
       [scheduler]
       default_llm_max_concurrency = 3
-      max_tool_concurrency = 2
+      max_tool_concurrency = 8   # default = detected CPU thread count
       agent_max_retries = 3
       max_agent_depth = 8
       max_retries = 15
@@ -39,14 +39,14 @@ defmodule EvoGit.Config do
 
       [sandbox.resources]
       # Slice-level limits (aggregate across all sandboxed processes)
-      cpu_quota = "1000%"      # CPU quota (e.g., "1000%" = 10 cores)
+      cpu_quota = "800%"       # default = detected CPU thread count × 100%
       cpu_weight = 30          # CPU allocation weight (1-10000)
       memory_max = "16G"       # Total memory limit (e.g., "16G", "8G")
       tasks_max = 8196         # Max tasks/processes across the slice
 
       [sandbox.process]
       # Per-process limits (applied to each tool call)
-      cpu_quota = "800%"       # CPU quota per process (e.g., "800%" = 8 cores)
+      cpu_quota = "800%"       # default = detected CPU thread count × 100%
       memory_max = "12G"       # Memory limit per process
       limit_nofile = 65536     # Max open file descriptors
       oom_score_adjust = 1000  # OOM killer preference (-1000 to 1000)
@@ -420,7 +420,7 @@ defmodule EvoGit.Config do
   ## Examples
 
       Config.resolve(:scheduler)
-      #=> %{default_llm_max_concurrency: 3, max_tool_concurrency: 2, ...}
+      #=> %{default_llm_max_concurrency: 3, max_tool_concurrency: 8, ...}
 
       Config.resolve([:scheduler, :default_llm_max_concurrency])
       #=> 3
