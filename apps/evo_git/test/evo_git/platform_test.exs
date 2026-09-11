@@ -374,6 +374,21 @@ defmodule EvoGit.PlatformTest do
     end
   end
 
+  describe "cpu_threads/0" do
+    # Contract test against the OTP primitive itself — deliberately NOT
+    # derived from EvoGit.Platform.cpu_threads via any schema default, so a
+    # silent regression to a constant cannot pass both.
+    test "equals System.schedulers_online/0 clamped to a minimum of 1" do
+      assert Platform.cpu_threads() == max(System.schedulers_online(), 1)
+    end
+
+    test "is always a positive integer" do
+      threads = Platform.cpu_threads()
+      assert is_integer(threads)
+      assert threads >= 1
+    end
+  end
+
   describe "sandbox_backend/0" do
     # Host-dependent by design (availability probing); never assert a specific
     # backend. Pin the environment-agnostic decision chain instead.
