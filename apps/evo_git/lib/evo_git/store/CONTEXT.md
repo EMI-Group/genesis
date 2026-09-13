@@ -93,6 +93,14 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - Indexes (idempotent `IF NOT EXISTS`): `idx_tasks_updated_at ON tasks(updated_at)` (backs the changed-since poll query) and `idx_tasks_started_at ON tasks(started_at)` (backs `safe_select_paginated_tasks`'s `ORDER BY started_at DESC`).
 - Migration: `Schema.migrate_schema/1` adds `error` and `updated_at` via idempotent `ALTER TABLE tasks ADD COLUMN ...` clauses when missing (same pattern as lease_expires_at/model_id/project_path/branch_name); fresh DBs get both from `create_tables/1` DDL directly. Existing pre-`error` deployments need `mix migrate.store` — `Store.init/1` does not auto-migrate.
 
+## `review_status` column (single, task-level)
+
+- `review_status` is a flat `tasks.review_status TEXT` column (schema.ex:47) — ONE value per task, `nil` until reviewed.
+- There is NO per-repo review status storage anywhere: only the `tasks` and `projects` tables exist (`Schema.create_tables/1`), and the result `repos` map carries only `commit_sha`/`branch_name` — no `review_status` sub-key. The review page derives its displayed status from the single `task.review_status` (+ the PRIMARY repo's `branch_name`), so a multi-repo merge/reject sets one task-level status.
+- Encode/decode: `Queries.encode_column_value(:review_status, value)` → `Codec.encode_atom/1` (queries.ex:50); `Codec.decode_atom(review_status)` (codec.ex:177) against the shared `@known_atoms` whitelist (codec.ex:234-238): `:open | :merged | :rejected | :continued | :ignored | :no_changes` (+ type/status atoms). Unknown/corrupt values decode to `nil` + warning.
+- NO dedicated Store update function: writes go through the generic `Store.update_task_columns(store, task_id, review_status: atom)` (`handle_call({:update_task_columns, ...})`, store.ex:704-717 — also bumps `updated_at`); full-row `put_task` writes it too via `encode_task/1`. The caller chain is `TaskRegistry.set_review_status/2` (cast) → `update_task_columns`.
+- `Queries.build_where/1` `:review_status` filter accepts `"all"` (default), `"pending"`, or a bare status string; `"pending"` is a composite predicate (`status = 'completed' AND review_status IS NULL AND branch_name IS NOT NULL`).
+
 ## Canonical result encoding
 
 `encode_result/1` ALWAYS JSON-wraps plain strings (crash fallbacks like `"Task process exited: …"`) with the `__result_tag__` scheme, so every `result` value is valid JSON:
