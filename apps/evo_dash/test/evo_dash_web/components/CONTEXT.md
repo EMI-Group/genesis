@@ -14,10 +14,17 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 - `task_card_components_test.exs` → `EvoDashWeb.TaskCardComponentsTest` — task-card affordances incl. cancel/force-kill button visibility + the failed-task structured-error display (`describe "task_card/1 — failed-task structured error display"`): collapsed error strip (truncated `error.message`, kind-label fallback), expanded detail block (kind + "Source: …" caption chips via `Helpers.task_error_kind_label/1`/`task_error_source_label/1`, full message, last ≤8 stacktrace frames in a `<pre>`), legacy `{:error,_}` result box coexistence, `error: nil`/non-map/16-key-summary-map safety, and the `:failed`-never-renders-a-Review-button pin
 - `setting_card_test.exs` → `EvoDashWeb.SettingCardTest`
 - `model_profiles_editor_test.exs` → `EvoDashWeb.ModelProfilesEditorTest` — render-only peak/off-peak form coverage: peak_concurrency (incl. 0), peak_hours rows, timezone, draft-wins pre-fill, remove-row buttons, PLUS the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading, and a regression guard that start/end/remove-row markup coexists)
+- `category_metadata_test.exs` → `EvoDashWeb.CategoryMetadataTest` — pure units for `SettingsComponents.CategoryMetadata` (`category_display_name/1`/`category_icon/1`/`category_description/1`/`sort_categories/1`, pinned on the `:data` category)
+
+## Coverage Boundary — review-page components
+
+- This tree renders every component in ISOLATION via `render_component/2`; there is **no `live(...)` call anywhere in `test/evo_dash_web/components/`**. Review-page COMPOSITION (what the assembled page looks like) is therefore covered only by `test/evo_dash_web/live/review_live_test.exs`.
+- Only two `EvoDashWeb.ReviewComponents` modules have component-level tests: `DiffViewer` (`diff_viewer_test.exs`, including `diff_viewer/1`, `file_tree_sidebar/1`, `tree_node/1`, `split_diff_layout/1`, `commit_diff_layout/1`, `commit_detail_header/1`, `parse_hunk_header/1`, `build_split_pairs/1`) and `archive_review_section/1` (`archive_tree_test.exs`, describes at lines 80, 110, 124, 282 — string/atom keys, cycle safety, usage tiles).
+- `ReviewComponents.merge_box/1` + `extract_skills_modal/1` + `conflict_files_summary/1` (`review_components/actions.ex`), `page_header/1` + `short_title/1` + `agent_summary/1` + `objective_section/1` + `task_summary/1` (`review_components/header.ex`), `page_tabs/1` + `merge_outcomes_panel/1` + `archive_tree_node/1` (`review_components.ex`), and `diff_stats_bar/1` + `commits_list/1` (`review_components/stats.ex`) have NO dedicated component-test file — they are exercised only through `review_live_test.exs` (hand-built LiveView assigns) or not at all.
 
 ## API Surface
 
-### project_components_test.exs (7 describes, 20 tests)
+### project_components_test.exs (8 describes, 28 tests)
 
 - `project_omnibox/1 rendering` (5 tests): trigger renders active-project name + **path** (`assert html =~ "/home/user/my-project"` — the ONLY path-rendering assertion in this file; no test asserts paths in the open palette's project ROWS, only the collapsed trigger), placeholder, typography classes, `palette_keydown` binding, `phx-click-away="close_project_palette"`.
 - `directory picker browse buttons` (3 tests): regression guards — open-path / new-project / **foreign-repo** browse buttons keep `phx-hook="DirectoryPicker"` and have NO `phx-click` (a leftover `phx-click="pick_directory"` had no handle_event clause and crashed the LiveView in the desktop app).
@@ -29,7 +36,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 
 **Foreign-repo coverage note**: ALL foreign-repo fixtures pass `foreign_repos: []` — no test renders existing foreign-repo ROWS/list items; coverage is limited to the add-form (browse button hook/click contract, PathAutocomplete wiring, remote gating). No test asserts the `show_add_foreign_repo` toggle rendering in the negative (e.g. `false` hides the form).
 
-### task_form_components_test.exs (3 describes, 31 tests)
+### task_form_components_test.exs (3 describes, 39 tests)
 
 - `layout_for/1` (9 tests): 1200-grapheme / 32-line thresholds (`:compact` at boundary, `:expanded` above), non-binary fallback to `:compact`.
 - `task_form/1 rendering` (20 tests): `data-layout` attr; bottom-toolbar DOM order attach "+" (`button#objective-file-button`, first INSIDE `.input-controls`) | mode | (agent) | model | circular send `button#task-launch-button` LAST/rightmost pinned via Floki — the right-aligned cluster [mode | (agent) | model | send] is packed right by the MODE select's `ml-auto` (free space sits after the attach "+", before the cluster), and the launch button carries NO auto margin; compact `select-sm` classes on the mode/agent/model selects; model select label = bare id, "Auto (by rules)" first; disabled state overlay; `flex-nowrap` one-line contract; mode select 4 options (`genesis_existing`/`genesis_new`/`evolve_simple`/`custom_agent`; reflect removed); `data-mode` on the send button; custom_agent agent-select behaviors (Auto hidden, no-agents warning, evolve placeholder); AdaptiveInput + `phx-update="ignore"`, no per-keystroke event; attach-file button (`FilePicker` hook, `data-picker-id="objective_file"`, `type="button"`, hidden when disabled).
