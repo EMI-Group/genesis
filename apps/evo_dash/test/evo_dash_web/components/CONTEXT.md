@@ -36,7 +36,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 
 **Foreign-repo coverage note**: ALL foreign-repo fixtures pass `foreign_repos: []` — no test renders existing foreign-repo ROWS/list items; coverage is limited to the add-form (browse button hook/click contract, PathAutocomplete wiring, remote gating). No test asserts the `show_add_foreign_repo` toggle rendering in the negative (e.g. `false` hides the form).
 
-### task_form_components_test.exs (3 describes, 31 tests)
+### task_form_components_test.exs (3 describes, 39 tests)
 
 - `layout_for/1` (9 tests): 1200-grapheme / 32-line thresholds (`:compact` at boundary, `:expanded` above), non-binary fallback to `:compact`.
 - `task_form/1 rendering` (20 tests): `data-layout` attr; bottom-toolbar DOM order attach "+" (`button#objective-file-button`, first INSIDE `.input-controls`) | mode | (agent) | model | circular send `button#task-launch-button` LAST/rightmost pinned via Floki — the right-aligned cluster [mode | (agent) | model | send] is packed right by the MODE select's `ml-auto` (free space sits after the attach "+", before the cluster), and the launch button carries NO auto margin; compact `select-sm` classes on the mode/agent/model selects; model select label = bare id, "Auto (by rules)" first; disabled state overlay; `flex-nowrap` one-line contract; mode select 4 options (`genesis_existing`/`genesis_new`/`evolve_simple`/`custom_agent`; reflect removed); `data-mode` on the send button; custom_agent agent-select behaviors (Auto hidden, no-agents warning, evolve placeholder); AdaptiveInput + `phx-update="ignore"`, no per-keystroke event; attach-file button (`FilePicker` hook, `data-picker-id="objective_file"`, `type="button"`, hidden when disabled).
