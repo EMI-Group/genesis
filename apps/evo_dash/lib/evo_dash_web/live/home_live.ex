@@ -34,11 +34,20 @@ defmodule EvoDashWeb.HomeLive do
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
 
-  alias EvoDashWeb.HomeLive.{AgentStream, ChatState, Messages, ModelSelect, Transcript}
+  alias EvoDashWeb.HomeLive.{
+    AgentStream,
+    ChatState,
+    Messages,
+    ModelSelect,
+    SourceGate,
+    Transcript
+  }
+
   alias EvoDashWeb.LiveHooks.NodeAware
 
   import EvoDashWeb.HomeLive.ChatMessages
   import EvoDashWeb.HomeLive.ApprovalCard
+  import EvoDashWeb.HomeLive.SourceGate
 
   # Statuses that END a task (finalize the transcript + clear refs). All other
   # statuses mean the task is still alive: badge-only updates, refs kept.
@@ -107,6 +116,16 @@ defmodule EvoDashWeb.HomeLive do
           </button>
         </div>
 
+        <!-- Genesis-source gate: the /help chat runs a repo-less `:reflect`
+             agent whose reference is the managed Genesis source checkout. On a
+             fresh install it is usually not downloaded yet, so a send would only
+             start a doomed task. Pinned BETWEEN the header and the message
+             scroller so it shows for the empty state AND a restored transcript.
+             Local-node only (EvoDashWeb.HomeLive.SourceGate.blocked?/1). -->
+        <%= if SourceGate.blocked?(assigns) do %>
+          <.source_gate source_busy={@source_busy} current_node_id={@current_node_id} />
+        <% end %>
+
         <!-- Messages container (the AgentHistoryAutoScroll hook scrolls this element) -->
         <div
           id="chat-messages"
@@ -114,7 +133,7 @@ defmodule EvoDashWeb.HomeLive do
           class="flex-1 min-h-0 overflow-y-auto scrollbar-thin"
         >
           <%= if @transcript == [] do %>
-            <.empty_state />
+            <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
           <% else %>
             <.message_list
               transcript={@transcript}
@@ -152,7 +171,7 @@ defmodule EvoDashWeb.HomeLive do
               value={@chat_draft}
               phx-keydown="chat_keydown"
               phx-keyup="chat_keyup"
-              disabled={@chat_status != :idle}
+              disabled={@chat_status != :idle or SourceGate.blocked?(assigns)}
               placeholder={gettext("Message Genesis…")}
               rows="1"
               class="w-full min-h-[46px] max-h-40 resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
@@ -162,7 +181,7 @@ defmodule EvoDashWeb.HomeLive do
                  presence/disabled state remains assertable on idle. -->
             <button
               type="submit"
-              disabled={@chat_status != :idle}
+              disabled={@chat_status != :idle or SourceGate.blocked?(assigns)}
               class={"help-send-btn flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-content transition hover:opacity-90 active:scale-95 disabled:opacity-40 disabled:pointer-events-none " <> if(@chat_status == :running, do: "hidden", else: "")}
             >
               <.icon name="hero-paper-airplane" class="size-4" />
@@ -261,6 +280,18 @@ defmodule EvoDashWeb.HomeLive do
       pending_approvals: [],
       model_profiles: [],
       model_selection_enabled: false,
+      # Genesis-source gate (EPHEMERAL — never persisted to ChatState): the
+      # /help chat needs the managed Genesis source checkout, which is usually
+      # absent on a fresh install. `source_available` = the latest availability
+      # result (`nil` unknown | `true` | `false` | `{:unavailable, reason}`) —
+      # only a KNOWN `false` blocks sending; `source_check_loading` mirrors the
+      # in-flight check window; `source_check_seq` is the monotonic stale-guard
+      # counter (SEPARATE from chat_fetch_seq/chat_task_fetch_seq); `source_busy`
+      # is a truthy marker while a download runs. Local-node only.
+      source_available: nil,
+      source_check_loading: false,
+      source_check_seq: 0,
+      source_busy: nil,
       current_path: ~p"/help"
     }
   end
@@ -279,6 +310,28 @@ defmodule EvoDashWeb.HomeLive do
       model_profiles: model_profiles,
       model_selection_enabled: model_selection_enabled
     )
+  end
+
+  # Genesis-source availability check (LOCAL node only, connected socket only).
+  # Bumps the monotonic `:source_check_seq` BEFORE spawning (captured into the
+  # message, so only the latest in-flight result applies), flags the loading
+  # window, and spawns the guarded runner on EvoDash.TaskSupervisor — the
+  # LiveView never blocks on the filesystem probe. Returns the socket.
+  #
+  # `node()` cannot be called from a guard, so the local-node test reuses the
+  # shared `SourceGate.visible?/1` predicate (`current_node in [nil, node()]`,
+  # mirroring EvoDashWeb.SystemLive.SourceCard.visible?/1).
+  defp maybe_check_source(socket) do
+    if connected?(socket) and SourceGate.visible?(socket.assigns[:current_node]) do
+      seq = socket.assigns[:source_check_seq] + 1
+      node = socket.assigns[:current_node] || node()
+
+      SourceGate.spawn_availability_check(self(), seq, node)
+
+      assign(socket, source_check_seq: seq, source_check_loading: true)
+    else
+      socket
+    end
   end
 
   @impl true
@@ -317,6 +370,11 @@ defmodule EvoDashWeb.HomeLive do
       socket
       |> assign_model_select()
       |> assign(current_path: ~p"/help")
+      # Genesis-source availability for the resolved node context: fires on the
+      # connected mount AND on every node-context change (this is the same place
+      # the page reacts to `?node=` switches). Local-node only + connected-only
+      # (a dead render must not spawn a task that sends into a dying process).
+      |> maybe_check_source()
 
     {:noreply, socket}
   end
@@ -404,6 +462,21 @@ defmodule EvoDashWeb.HomeLive do
   @impl true
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
+  end
+
+  # Genesis-source gate: "Download source" on the gate banner. No-op while a
+  # download is already in flight; otherwise mark `source_busy` and spawn the
+  # clone on EvoDash.TaskSupervisor (the runner seam is resolved AT SPAWN TIME
+  # inside SourceGate.spawn_clone/2). The result arrives as an async message —
+  # see the {:source_clone_result, node, result} handle_info clause.
+  @impl true
+  def handle_event("download_source", _params, socket) do
+    if socket.assigns[:source_busy] != nil do
+      {:noreply, socket}
+    else
+      SourceGate.spawn_clone(self(), socket.assigns[:current_node] || node())
+      {:noreply, assign(socket, source_busy: :clone)}
+    end
   end
 
   @impl true
@@ -686,6 +759,56 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
+  # Genesis-source availability result (from SourceGate.spawn_availability_check/3).
+  # Stale-guarded: applies only when no newer check was spawned (source_check_seq)
+  # AND the node the check ran for is still the viewed node. `{:unavailable, _}`
+  # is treated as "unknown" by the gate (never blocks). TOTAL — any result shape
+  # is stored verbatim, so a stray message can never leak or crash the page.
+  @impl true
+  def handle_info({:source_availability_loaded, seq, node, result}, socket) do
+    if seq == socket.assigns[:source_check_seq] and is_atom(node) and
+         NodeAware.event_from_current_node?(socket.assigns, node) do
+      {:noreply, assign(socket, source_available: result, source_check_loading: false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Genesis-source download result (from SourceGate.spawn_clone/2). Node-filtered
+  # and TOTAL: `{:ok, _}` clears the busy marker + re-runs the availability check
+  # (the gate clears on success); `{:error, reason}` clears it + surfaces the
+  # failure; `{:unavailable, _}` clears it and resets the gate to "unknown" with
+  # NO error flash (a backend the user cannot act on); any other shape is a
+  # quiet no-op that still clears the busy marker.
+  @impl true
+  def handle_info({:source_clone_result, node, result}, socket) do
+    if is_atom(node) and NodeAware.event_from_current_node?(socket.assigns, node) do
+      case result do
+        {:ok, _status} ->
+          {:noreply, socket |> assign(source_busy: nil) |> maybe_check_source()}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(source_busy: nil)
+           |> put_flash(
+             :error,
+             gettext("Failed to download the Genesis source: %{reason}",
+               reason: inspect(reason)
+             )
+           )}
+
+        {:unavailable, _reason} ->
+          {:noreply, assign(socket, source_busy: nil, source_available: nil)}
+
+        _other ->
+          {:noreply, assign(socket, source_busy: nil)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
     NodeAware.handle_node_selected(socket, node_id)
@@ -704,7 +827,27 @@ defmodule EvoDashWeb.HomeLive do
 
   # Shared submit path for the Send button and the Enter key. Returns
   # {:noreply, socket}.
+  #
+  # Genesis-source gate: when the GENESIS source is known to be missing on a
+  # LOCAL node, a send would only start a doomed `:reflect` task — block it
+  # (no optimistic bubbles, no start_task, no seq bump) and point the user at
+  # the Download button. Only a KNOWN `false` blocks (see
+  # SourceGate.blocked?/1); the textarea/Send button are disabled in the same
+  # state, so this is the defensive backstop for the Enter-key path.
   defp send_chat(socket, text) do
+    if SourceGate.blocked?(socket.assigns) do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("Download the Genesis source before sending a message.")
+       )}
+    else
+      do_send_chat(socket, text)
+    end
+  end
+
+  defp do_send_chat(socket, text) do
     if socket.assigns[:chat_status] != :idle do
       # Defensive — the input is disabled while running anyway.
       {:noreply, socket}
