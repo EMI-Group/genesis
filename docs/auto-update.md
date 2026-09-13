@@ -1,6 +1,6 @@
 # Auto-Update / Push-Update Design Analysis
 
-**Status:** Design analysis (not yet implemented). Written from the state of the codebase at v0.10.5.
+**Status:** Implemented and shipped via the official `tauri-plugin-updater` v2: the update feed is served from `https://genesis.evox.group/dl/latest.json` (with a GitHub fallback), the minisign public key is baked into `tauri.conf.json`, and apply is manual-click only, gated on task idle. Remaining outstanding items: the Windows Authenticode certificate, Linux apt/dnf repositories, the remote-daemon (`genesis_remote`) update flow, staged rollout/beta channels, and per-platform signed updater payloads requiring the two repo secrets. Written from the state of the codebase at v0.10.5.
 **Scope:** The Genesis desktop app (Tauri shell `desktop/` + Elixir backend release `genesis_desktop`). The `genesis_remote` daemon is covered briefly in §6.
 
 ---
@@ -14,7 +14,7 @@
 2. **Two-phase update with a task-safety gate:**
    - **Phase 1 (safe anytime):** periodic + startup + manual update *check*; download and signature-verify the new bundle in the background.
    - **Phase 2 (only when safe):** apply = stop backend → install → relaunch. Applying is **gated on task idle**: no `:running`/`:pending`/`:cancelling`/`:finalizing` tasks (queried from `TaskRegistry`). If tasks are active, the UI defers and offers **"Apply & gracefully cancel tasks"** — reusing the existing graceful-cancel machinery (3-turn grace budget, worktree git-commit at grace entry, results/archive preserved, final status `:cancelled`). A new `:interrupted` status is recommended so update-induced stops are distinguishable from user cancels.
-3. **Prerequisites before any of this works:** a minisign (Ed25519) keypair for the update feed, Windows Authenticode certificate, macOS `.app` stapling (currently only the DMG is stapled), and a manifest-generation step in `publish-release`.
+3. **Remaining prerequisites:** the Windows Authenticode certificate (currently absent) and the two CI signing secrets (`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) that carry the per-platform signed updater payloads into the release. The minisign (Ed25519) keypair is generated with its public key baked into `tauri.conf.json`, the macOS `.app` is stapled, and the `publish-release` job generates and uploads `dist/latest.json`.
 
 ---
 
