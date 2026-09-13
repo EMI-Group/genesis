@@ -266,7 +266,13 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
   # In-place update of one repo entry's fields inside
   # `socket.assigns.review_repos` (the entry is guaranteed to exist at every
   # call site).
-  defp update_repo(socket, repo_id, fun) do
+  @doc """
+  In-place update of ONE repo entry's fields inside
+  `socket.assigns.review_repos`, identified by `repo_id`. Public so
+  `EvoDashWeb.ReviewLive`'s per-repo merge/reject handlers reuse the same
+  single-entry update logic (no duplicated `Enum.map` update).
+  """
+  def update_repo(socket, repo_id, fun) do
     updated =
       Enum.map(socket.assigns.review_repos, fn
         %{repo_id: ^repo_id} = repo -> fun.(repo)

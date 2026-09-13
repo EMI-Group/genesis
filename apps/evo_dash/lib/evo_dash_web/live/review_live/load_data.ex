@@ -279,6 +279,19 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     branch_exists =
       !!(branch_name && repo_available && branch_exists_on_node?(node, repo_path, branch_name))
 
+    # Load-time resolution seeding: a repo that HAD a branch but whose branch no
+    # longer exists (a merge/reject already deleted it on a previous visit)
+    # renders as already-`:handled`, so reopening a PARTIALLY resolved review is
+    # coherent — the deleted-branch repos show their neutral terminal state and
+    # the still-open ones keep their actions. The `branch_name == nil` "no
+    # changes" case has no branch to resolve and stays `nil` (unresolved).
+    resolution =
+      if is_binary(branch_name) and String.trim(branch_name) != "" and not branch_exists do
+        %{state: :handled}
+      else
+        nil
+      end
+
     review_data =
       cond do
         # Normal case: branch still exists
@@ -344,7 +357,8 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       commits: commits,
       merge_targets: merge_targets,
       default_merge_target: default_merge_target,
-      merge_status: nil
+      merge_status: nil,
+      resolution: resolution
     }
   end
 

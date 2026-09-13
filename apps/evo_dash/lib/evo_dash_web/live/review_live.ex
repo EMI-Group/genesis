@@ -106,12 +106,8 @@ defmodule EvoDashWeb.ReviewLive do
                 <%= cond do %>
                   <% @review_tab == :conversation -> %>
                     <!-- Readability column (GitHub conversation style); the
-                         merge box sits at the BOTTOM of the column. -->
+                         per-repo cards sit at the BOTTOM of the column. -->
                     <div class="max-w-4xl mx-auto w-full space-y-4">
-                      <%= if @merge_outcomes != [] do %>
-                        <EvoDashWeb.ReviewComponents.merge_outcomes_panel outcomes={@merge_outcomes} />
-                      <% end %>
-
                       <EvoDashWeb.ReviewComponents.agent_summary
                         summary={@agent_summary}
                         summary_raw={@summary_raw}
@@ -136,22 +132,22 @@ defmodule EvoDashWeb.ReviewLive do
                         finished_at={@finished_at}
                       />
 
-                      <EvoDashWeb.ReviewComponents.merge_box
-                        repo_id={@active_repo_id}
-                        branch_exists={@branch_exists}
+                      <EvoDashWeb.ReviewComponents.repo_cards
+                        repos={@review_repos}
+                        completion={completion_status(@review_repos, @review_status)}
+                        back_url={with_node_param(~p"/projects", @current_node_id)}
+                      />
+
+                      <EvoDashWeb.ReviewComponents.task_actions
                         can_resume={@can_resume}
+                        loading={@action_loading}
+                        branch_exists={@branch_exists}
                         has_pr={@has_pr}
                         pr_url={@pr_url}
-                        loading={@action_loading}
-                        is_no_changes={@is_no_changes}
-                        merge_targets={@merge_targets}
-                        default_merge_target={@default_merge_target}
-                        merge_status={@merge_status}
-                        repos={@review_repos}
-                        active_repo_id={@active_repo_id}
                         show_export={@archive_metadata not in [nil, []]}
                         export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
                       />
+
                       <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
                     </div>
                   <% @review_tab == :objective -> %>
@@ -298,7 +294,6 @@ defmodule EvoDashWeb.ReviewLive do
         merge_status: nil,
         review_repos: [],
         active_repo_id: "primary",
-        merge_outcomes: [],
         load_generation: 0,
         last_broadcast_task_id: nil
       )
@@ -585,157 +580,77 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("merge", params, socket) do
-    %{task_id: task_id, review_repos: review_repos} = socket.assigns
+    %{current_node: node, review_repos: review_repos} = socket.assigns
 
-    # The submitting repo comes from the merge form's hidden `repo_id` input
-    # (falling back to the currently active repo, then "primary"); whitelist
-    # against the known review-repo ids — never String.to_atom on client input.
-    submitting_repo_id =
-      case params["repo_id"] do
-        repo_id when is_binary(repo_id) and repo_id != "" -> repo_id
-        _ -> socket.assigns.active_repo_id
-      end
+    # Dispatched ONLY by a per-repo merge form submit: the hidden `repo_id`
+    # names the ONE repo this submit acts on. Whitelist against the known
+    # review-repo ids (never String.to_atom on client input); an unknown id OR a
+    # repo already in a TERMINAL resolution is a no-op — never fan out to the
+    # other repos.
+    repo_id = params["repo_id"]
 
-    submitting_repo_id =
-      if Enum.any?(review_repos, &(&1.repo_id == submitting_repo_id)) do
-        submitting_repo_id
-      else
-        "primary"
-      end
+    case find_review_repo(review_repos, repo_id) do
+      nil ->
+        {:noreply, socket}
 
-    # The target branch comes from the merge form's `target_branch` select;
-    # a plain `phx-click="merge"` (legacy path) submits no params.
-    target =
-      case params do
-        %{"target_branch" => target} when is_binary(target) ->
-          case String.trim(target) do
-            "" -> nil
-            trimmed -> trimmed
-          end
+      repo ->
+        if terminal_resolution?(Map.get(repo, :resolution)) do
+          {:noreply, socket}
+        else
+          target = resolve_merge_target(repo, params)
 
-        _ ->
-          nil
-      end
+          # All review git operations run on the node being viewed: local →
+          # direct call, remote → RPC to the remote daemon's filesystem.
+          # RemoteNode returns the verbatim underlying value in both paths.
+          # Test seam: the merge runner is resolved from application env at CALL
+          # time (mirrors MergeCheck's :merge_check_runner) so tests can stub
+          # out the real repo-touching merge.
+          merge_fun =
+            case Application.get_env(:evo_dash, :review_merge_runner, nil) do
+              nil ->
+                fn node, repo_path, branch_name, merge_target ->
+                  if merge_target do
+                    EvoDash.NodeContext.merge_branch(node, repo_path, branch_name, merge_target)
+                  else
+                    EvoDash.NodeContext.merge_branch(node, repo_path, branch_name)
+                  end
+                end
 
-    # Per-repo merge plan: the submitting repo uses the form target (validated
-    # against ITS known branch list, falling back to ITS resolved default);
-    # every other repo merges into its own resolved default (nil → the 3-arity
-    # default-resolving path).
-    plan =
-      Enum.map(review_repos, fn repo ->
-        if repo.repo_id == submitting_repo_id do
-          # Sanity check: when a known branch list was loaded, only accept a
-          # submitted target that is a member of it; otherwise fall back to the
-          # repo's resolved default (or no target).
-          resolved_target =
-            if target != nil and repo.merge_targets != [] and target not in repo.merge_targets do
-              repo.default_merge_target
-            else
-              target
+              fun ->
+                fun
             end
 
-          {repo, resolved_target}
-        else
-          {repo, repo.default_merge_target}
-        end
-      end)
-
-    # The effective target (explicitly chosen or the resolved default) for the
-    # SUBMITTING repo is what its merge actually used — mention it in the
-    # success flash.
-    {submitting_repo, effective_target} =
-      Enum.find(plan, fn {repo, _target} -> repo.repo_id == submitting_repo_id end)
-
-    # All review git operations run on the node being viewed: local → direct
-    # call, remote → RPC to the remote daemon's filesystem. RemoteNode returns
-    # the verbatim underlying value in both paths. Test seam: the merge runner
-    # is resolved from application env at CALL time (mirrors MergeCheck's
-    # :merge_check_runner) so tests can stub out the real repo-touching merge.
-    node = socket.assigns.current_node
-
-    merge_fun =
-      case Application.get_env(:evo_dash, :review_merge_runner, nil) do
-        nil ->
-          fn node, repo_path, branch_name, merge_target ->
-            if merge_target do
-              EvoDash.NodeContext.merge_branch(node, repo_path, branch_name, merge_target)
-            else
-              EvoDash.NodeContext.merge_branch(node, repo_path, branch_name)
-            end
-          end
-
-        fun ->
-          fun
-      end
-
-    results =
-      Enum.map(plan, fn {repo, merge_target} ->
-        result = merge_fun.(node, repo.repo_path, repo.branch_name, merge_target)
-        {repo.repo_id, merge_target, result}
-      end)
-
-    if Enum.all?(results, fn {_repo_id, _target, result} -> match?({:ok, _sha}, result) end) do
-      EvoDash.NodeContext.set_review_status(node, task_id, :merged)
-
-      # The merged task leaves the sidebar's pending-review partition — make the
-      # destination mount COLD so it re-fetches instead of seeding the
-      # pre-action snapshot (see invalidate_active_tasks/1).
-      invalidate_active_tasks(socket)
-
-      success_flash =
-        if effective_target do
-          gettext(
-            "Changes merged successfully into %{target}! Branch %{branch} has been deleted.",
-            target: effective_target,
-            branch: submitting_repo.branch_name
-          )
-        else
-          gettext("Changes merged successfully! Branch %{branch} has been deleted.",
-            branch: submitting_repo.branch_name
-          )
-        end
-
-      {:noreply,
-       socket
-       |> put_flash(:success, success_flash)
-       |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
-    else
-      # Partial success / any failure: report every repo's outcome (merged
-      # ones too — partial-success visibility) and STAY on the page. Never
-      # navigate away from a partially applied merge.
-      outcomes =
-        Enum.map(results, fn {repo_id, merge_target, result} ->
-          case result do
-            {:ok, sha} ->
-              %{repo_id: repo_id, status: :merged, detail: to_string(sha), target: merge_target}
+          case merge_fun.(node, repo.repo_path, repo.branch_name, target) do
+            {:ok, _sha} ->
+              settle_repo_action(
+                socket,
+                repo_id,
+                %{state: :merged, target: target},
+                merged_flash(target, repo.branch_name)
+              )
 
             {:conflict, details} ->
-              %{
-                repo_id: repo_id,
-                status: :conflict,
-                detail: truncate_string(details, 200),
-                target: merge_target
-              }
+              resolve_non_terminal(
+                socket,
+                repo_id,
+                :conflict,
+                truncate_string(details, 200),
+                gettext(
+                  "Merge conflict in %{branch}. Resolve it in the repository, or start an auto-resolve task from the primary repo.",
+                  branch: repo.branch_name
+                )
+              )
 
             {:error, reason} ->
-              %{repo_id: repo_id, status: :error, detail: inspect(reason), target: merge_target}
+              resolve_non_terminal(
+                socket,
+                repo_id,
+                :error,
+                inspect(reason),
+                gettext("Merge failed: %{reason}", reason: inspect(reason))
+              )
           end
-        end)
-
-      failed_count =
-        Enum.count(results, fn {_repo_id, _target, result} -> not match?({:ok, _sha}, result) end)
-
-      {:noreply,
-       socket
-       |> assign(:merge_outcomes, outcomes)
-       |> put_flash(
-         :error,
-         gettext(
-           "Merge failed in %{count} of %{total} repositories. See the merge results below.",
-           count: failed_count,
-           total: length(results)
-         )
-       )}
+        end
     end
   end
 
@@ -743,8 +658,8 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("merge_target_change", params, socket) do
     # The merge form's target-branch select changed: the support module
     # updates the changed repo's default target and re-runs its async dry-run
-    # merge check. Re-project afterwards so merge_box reads the ACTIVE
-    # repo's flat @merge_status / @default_merge_target.
+    # merge check. Re-project afterwards so the flat assigns read the ACTIVE
+    # repo's @merge_status / @default_merge_target.
     socket = EvoDashWeb.ReviewLive.MergeCheck.handle_target_change(socket, params)
     {:noreply, project_active_repo(socket)}
   end
@@ -753,79 +668,90 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("auto_resolve", _params, socket) do
     # Starts a merge-resolution task (guarded on a detected conflict) —
     # see EvoDashWeb.ReviewLive.MergeCheck.handle_auto_resolve/1.
+    #
+    # auto_resolve stays PRIMARY-scoped by design: it reads the `"primary"`
+    # entry's conflict state. A conflict in a FOREIGN repo is surfaced on that
+    # repo's own card (its per-repo resolution + async merge check) and must be
+    # resolved there or in a new task — only the primary's conflict drives this
+    # aggregate action.
     {:noreply, EvoDashWeb.ReviewLive.MergeCheck.handle_auto_resolve(socket)}
   end
 
   @impl true
-  def handle_event("reject", _params, socket) do
-    %{task_id: task_id, review_repos: review_repos} = socket.assigns
+  def handle_event("reject", params, socket) do
+    %{current_node: node, review_repos: review_repos} = socket.assigns
 
-    # Reject (delete) the agent branch in EVERY review repo — the same
-    # broadcast semantics as merge. All review git operations run on the node
-    # being viewed (local → direct call, remote → RPC). Test seam mirrors
-    # :review_merge_runner, resolved at call time.
-    node = socket.assigns.current_node
+    # Dispatched ONLY by a per-repo reject button: `repo_id` names the ONE repo
+    # this click acts on (whitelisted; unknown/Terminal → no-op). Never fan out
+    # to the other repos.
+    repo_id = params["repo_id"]
 
-    reject_fun =
-      Application.get_env(:evo_dash, :review_reject_runner) ||
-        (&EvoDash.NodeContext.reject_branch/3)
+    case find_review_repo(review_repos, repo_id) do
+      nil ->
+        {:noreply, socket}
 
-    results =
-      Enum.map(review_repos, fn repo ->
-        result = reject_fun.(node, repo.repo_path, repo.branch_name)
-        {repo.repo_id, result}
-      end)
+      repo ->
+        if terminal_resolution?(Map.get(repo, :resolution)) do
+          {:noreply, socket}
+        else
+          # All review git operations run on the node being viewed (local →
+          # direct call, remote → RPC). Test seam mirrors :review_merge_runner,
+          # resolved at call time.
+          reject_fun =
+            Application.get_env(:evo_dash, :review_reject_runner) ||
+              (&EvoDash.NodeContext.reject_branch/3)
 
-    if Enum.all?(results, fn {_repo_id, result} -> result == :ok end) do
-      EvoDash.NodeContext.set_review_status(node, task_id, :rejected)
-
-      # The rejected task leaves the sidebar's pending-review partition — make
-      # the destination mount COLD so it re-fetches (see
-      # invalidate_active_tasks/1).
-      invalidate_active_tasks(socket)
-
-      branch_names =
-        review_repos
-        |> Enum.map(& &1.branch_name)
-        |> Enum.reject(&is_nil/1)
-        |> Enum.join(", ")
-
-      {:noreply,
-       socket
-       |> put_flash(
-         :info,
-         gettext("Changes rejected. Branch %{branch} has been deleted.", branch: branch_names)
-       )
-       |> push_navigate(to: with_node_param(~p"/projects", socket.assigns.current_node_id))}
-    else
-      # Partial reject: report every repo's outcome and STAY on the page —
-      # never dismiss a partially applied reject silently.
-      outcomes =
-        Enum.map(results, fn {repo_id, result} ->
-          case result do
+          case reject_fun.(node, repo.repo_path, repo.branch_name) do
             :ok ->
-              %{repo_id: repo_id, status: :rejected}
+              settle_repo_action(
+                socket,
+                repo_id,
+                %{state: :rejected},
+                gettext("Changes rejected. Branch %{branch} has been deleted.",
+                  branch: repo.branch_name
+                )
+              )
 
             {:error, reason} ->
-              %{repo_id: repo_id, status: :error, detail: inspect(reason)}
+              resolve_non_terminal(
+                socket,
+                repo_id,
+                :error,
+                inspect(reason),
+                gettext("Failed to reject changes: %{reason}", reason: inspect(reason))
+              )
+
+            other ->
+              resolve_non_terminal(
+                socket,
+                repo_id,
+                :error,
+                inspect(other),
+                gettext("Failed to reject changes: %{reason}", reason: inspect(other))
+              )
           end
-        end)
+        end
+    end
+  end
 
-      failed_count = Enum.count(results, fn {_repo_id, result} -> result != :ok end)
-
+  @impl true
+  def handle_event("open_repo_diff", %{"repo_id" => repo_id}, socket) do
+    # Per-repo "jump to this repo's diff" button on a repo card: switch the
+    # active repo and land on the Files-changed tab. Whitelist the id against
+    # the known review repos; an unknown id is a harmless no-op.
+    if find_review_repo(socket.assigns.review_repos, repo_id) do
       {:noreply,
        socket
-       |> assign(:merge_outcomes, outcomes)
-       |> put_flash(
-         :error,
-         # zh_CN: 多仓库评审中拒绝（删除分支）失败——"repositories" 指所有可写仓库，下方面板展示各仓库的拒绝结果
-         gettext(
-           "Failed to reject changes in %{count} of %{total} repositories. See the merge results below.",
-           count: failed_count,
-           total: length(results)
-         )
-       )}
+       |> assign(:active_repo_id, repo_id)
+       |> assign(:review_tab, :files_changed)
+       |> project_active_repo()}
+    else
+      {:noreply, socket}
     end
+  end
+
+  def handle_event("open_repo_diff", _params, socket) do
+    {:noreply, socket}
   end
 
   @impl true
@@ -1077,9 +1003,6 @@ defmodule EvoDashWeb.ReviewLive do
           socket =
             socket
             |> assign(assigns_map)
-            # Stale merge outcomes must not survive a reload (a re-fetched page
-            # starts with a clean per-repo outcome report).
-            |> assign(:merge_outcomes, [])
 
           # The merge check MUST be sequenced here, after the loaded assigns
           # (merge_targets/branch_name/branch_exists/...) are in place. load_data
@@ -1116,7 +1039,7 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_info({:merge_check_result, task_id, node, repo_id, target, result}, socket) do
     # Async dry-run merge check finished (tagged per repo). Result-shape
     # validation and stale-message guarding live in the support module;
-    # re-project afterwards so merge_box reads the ACTIVE repo's flat
+    # re-project afterwards so the flat assigns read the ACTIVE repo's
     # @merge_status.
     {:noreply,
      socket
@@ -1415,6 +1338,140 @@ defmodule EvoDashWeb.ReviewLive do
        |> project_active_repo()}
     else
       {:noreply, socket}
+    end
+  end
+
+  # Finds one review-repo entry by its whitelisted id: the untrusted client
+  # string is compared against the known ids (never String.to_atom). A missing
+  # or non-binary id finds nothing.
+  defp find_review_repo(review_repos, repo_id) when is_binary(repo_id) do
+    Enum.find(review_repos, &(&1.repo_id == repo_id))
+  end
+
+  defp find_review_repo(_review_repos, _repo_id), do: nil
+
+  # A repo entry's `:resolution` is TERMINAL once its branch has been merged,
+  # rejected, or is already gone (`:handled`, seeded at load when a branch that
+  # once existed no longer does). Terminal repos offer no further actions and
+  # count toward review completion. NON-terminal values (`nil`, `:error`,
+  # `:conflict`) stay actionable/retryable.
+  defp terminal_resolution?(%{state: state}) when state in [:merged, :rejected, :handled],
+    do: true
+
+  defp terminal_resolution?(_), do: false
+
+  # Resolves the branch a per-repo merge submits into: the trimmed
+  # `target_branch` param, validated against the repo's known target list
+  # (falling back to its resolved default when the submitted value is not a
+  # member — or when the param is blank/absent).
+  defp resolve_merge_target(repo, params) do
+    submitted =
+      case params["target_branch"] do
+        target when is_binary(target) -> String.trim(target)
+        _ -> ""
+      end
+
+    case submitted do
+      "" ->
+        repo.default_merge_target
+
+      target ->
+        if repo.merge_targets != [] and target not in repo.merge_targets do
+          repo.default_merge_target
+        else
+          target
+        end
+    end
+  end
+
+  # Writes one repo's RESOLUTION into @review_repos (clearing branch_exists on a
+  # TERMINAL outcome — the branch was deleted) and re-projects the flat assigns.
+  # Reuses MergeCheck.update_repo/3 (the single per-entry update path).
+  defp set_repo_resolution(socket, repo_id, resolution) do
+    socket
+    |> EvoDashWeb.ReviewLive.MergeCheck.update_repo(repo_id, fn repo ->
+      repo
+      |> Map.put(:resolution, resolution)
+      |> maybe_clear_branch(resolution)
+    end)
+    |> project_active_repo()
+  end
+
+  defp maybe_clear_branch(repo, %{state: state}) when state in [:merged, :rejected],
+    do: %{repo | branch_exists: false}
+
+  defp maybe_clear_branch(repo, _resolution), do: repo
+
+  # Shared tail of a TERMINAL per-repo action (merge/reject succeeded): records
+  # the resolution, then either COMPLETES the whole review (every repo TERMINAL
+  # → persist the aggregate review_status + invalidate the sidebar hub snapshot)
+  # or STAYS on the page with a success flash (other repos still pending).
+  defp settle_repo_action(socket, repo_id, resolution, success_flash) do
+    socket = set_repo_resolution(socket, repo_id, resolution)
+
+    case completion_status(socket.assigns.review_repos, socket.assigns.review_status) do
+      nil ->
+        {:noreply, put_flash(socket, :success, success_flash)}
+
+      status ->
+        EvoDash.NodeContext.set_review_status(
+          socket.assigns.current_node,
+          socket.assigns.task_id,
+          status
+        )
+
+        # The fully-resolved task leaves the sidebar's pending-review partition —
+        # make the destination mount COLD so it re-fetches instead of seeding the
+        # pre-action snapshot (see invalidate_active_tasks/1).
+        invalidate_active_tasks(socket)
+
+        {:noreply,
+         socket
+         |> assign(:review_status, status)
+         |> put_flash(:success, success_flash)}
+    end
+  end
+
+  # Shared tail of a NON-terminal per-repo action (conflict / error): the repo
+  # stays retryable, so record the outcome on its own card and STAY on the page.
+  defp resolve_non_terminal(socket, repo_id, state, detail, error_flash) do
+    socket = set_repo_resolution(socket, repo_id, %{state: state, detail: detail})
+    {:noreply, put_flash(socket, :error, error_flash)}
+  end
+
+  defp merged_flash(target, branch) when is_binary(target) and target != "" do
+    gettext("Changes merged successfully into %{target}! Branch %{branch} has been deleted.",
+      target: target,
+      branch: branch
+    )
+  end
+
+  defp merged_flash(_target, branch) do
+    gettext("Changes merged successfully! Branch %{branch} has been deleted.", branch: branch)
+  end
+
+  # Aggregate completion of a multi-repo review: `nil` until EVERY repo's
+  # resolution is TERMINAL, otherwise the effective review status. Prefers the
+  # already-persisted review_status when it is :merged/:rejected (reload
+  # coherence), else :merged if ANY repo merged, else :rejected. An empty repo
+  # list never completes. Consumed by the render (the completion banner) AND by
+  # settle_repo_action/4 (whether to persist + navigate-cold).
+  defp completion_status([], _review_status), do: nil
+
+  defp completion_status(review_repos, review_status) do
+    if Enum.all?(review_repos, &terminal_resolution?(Map.get(&1, :resolution))) do
+      cond do
+        review_status in [:merged, :rejected] ->
+          review_status
+
+        Enum.any?(review_repos, &match?(%{state: :merged}, Map.get(&1, :resolution))) ->
+          :merged
+
+        true ->
+          :rejected
+      end
+    else
+      nil
     end
   end
 
