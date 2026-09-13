@@ -236,8 +236,49 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     end
   end
 
-  # --- Helpers -------------------------------------------------------------
+  describe "available?/0" do
+    test "true when the app-env override points at a valid checkout" do
+      fixture = genesis_fixture!("avail-app")
+      set_app_env(:self_reflective_source_root, fixture.work)
 
+      assert SelfReflectiveSource.available?()
+    end
+
+    test "false when the app-env override points at a non-existent dir" do
+      set_app_env(:self_reflective_source_root, tmp_path!("avail-missing"))
+
+      refute SelfReflectiveSource.available?()
+    end
+
+    test "false when the OS-env override points at a dir without CONTEXT.md" do
+      dir = tmp_path!("avail-env-plain")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      set_os_env(dir)
+
+      refute SelfReflectiveSource.available?()
+    end
+
+    test "true when a valid managed clone is present" do
+      fixture = genesis_fixture!("avail-managed")
+      set_app_env(:self_reflective_source_dir, fixture.work)
+
+      assert SelfReflectiveSource.reference_path() == fixture.work
+      assert SelfReflectiveSource.available?()
+    end
+
+    test "falls back to cwd when no source is configured" do
+      set_app_env(:self_reflective_source_dir, tmp_path!("avail-nothing"))
+
+      assert SelfReflectiveSource.reference_path() == nil
+      # Under `mix test` the cwd is the umbrella repo root, which carries a
+      # CONTEXT.md — the File.cwd!() fallback therefore resolves to `true`.
+      assert File.regular?(Path.join(File.cwd!(), "CONTEXT.md"))
+      assert SelfReflectiveSource.available?()
+    end
+  end
+
+  # --- Helpers -------------------------------------------------------------
   defp tmp_path!(label) do
     Path.join(System.tmp_dir!(), "selfref-src-#{label}-#{System.unique_integer([:positive])}")
   end

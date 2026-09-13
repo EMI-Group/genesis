@@ -25,6 +25,8 @@ defmodule EvoGit.SelfReflectiveSource do
     * `update/0` — fetches + fast-forwards the managed clone
       (`{:error, :not_cloned}` / `{:error, :not_a_git_repo}` guards).
     * `reference_path/0` — the resolution chain (see below).
+    * `available?/0` — whether a usable Genesis source is available RIGHT NOW
+      (pure local reads, no git subprocess — safe to call on every page load).
   """
 
   alias EvoGit.Adapters.Git
@@ -183,8 +185,30 @@ defmodule EvoGit.SelfReflectiveSource do
     end
   end
 
-  # --- Private helpers ------------------------------------------------------
+  @doc """
+  Whether a usable Genesis source is available to the self-reflective agent
+  RIGHT NOW.
 
+  Resolves the SAME source root the agent will actually use —
+  `reference_path() || File.cwd!()` (the terminal fallback mirrors
+  `EvoGit.Runtime.SelfReflective.source_root/0`) — and validates it is a Genesis
+  checkout: the dir exists AND carries a `CONTEXT.md` at its root (the same
+  validity rule as `status/0`'s `valid` field and `managed_reference/0`).
+
+  Pure local reads ONLY: no git subprocesses (unlike `status/0`), no network,
+  never raises — cheap enough to call on every page load.
+
+  **LOCAL-NODE-ONLY**: resolves against the local BEAM's data dir
+  (`source_dir/0`) + this process's environment; it is meaningless as a
+  cross-node RPC answer (a remote daemon resolves its own source).
+  """
+  @spec available?() :: boolean()
+  def available? do
+    dir = reference_path() || File.cwd!()
+    genesis_checkout?(dir)
+  end
+
+  # --- Private helpers ------------------------------------------------------
   # A managed clone is always a plain checkout, so `.git` is a directory. The
   # dir-based check is preferred over `git rev-parse --git-dir` because the
   # latter walks UP the tree and would report a non-repo dir nested inside
@@ -197,11 +221,17 @@ defmodule EvoGit.SelfReflectiveSource do
   defp managed_reference do
     dir = source_dir()
 
-    if File.dir?(dir) and git_repo?(dir) and File.regular?(Path.join(dir, "CONTEXT.md")) do
+    if git_repo?(dir) and genesis_checkout?(dir) do
       dir
     else
       nil
     end
+  end
+
+  # A usable Genesis source: the dir exists AND carries a CONTEXT.md at its
+  # root. Shared by `managed_reference/0` and `available?/0`.
+  defp genesis_checkout?(dir) do
+    File.dir?(dir) and File.regular?(Path.join(dir, "CONTEXT.md"))
   end
 
   defp commit(_dir, false), do: nil
