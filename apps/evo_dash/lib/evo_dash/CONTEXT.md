@@ -17,6 +17,7 @@ Domain layer for the EvoDash Phoenix application. Contains the OTP `Application`
 - `./attached_file.ex` → `EvoDash.AttachedFile` — attached-objective-file reader (.txt/.md/.docx/.pdf)
 - `./markdown_render.ex` → `EvoDash.MarkdownRender` — MDEx markdown → safe HTML
 - `./settings_utils.ex` → `EvoDash.SettingsUtils` — config form-value helpers
+- `./source_status.ex` → `EvoDash.SourceStatus` — shared guarded wrapper over the optionally-present `EvoGit.SelfReflectiveSource` core backend (status/clone/update/available? with a tri-state `{:unavailable, reason}` degradation)
 
 ## API Surface
 
@@ -101,6 +102,12 @@ Markdown → safe HTML for agent summary output using the non-crashing `MDEx.to_
 ### `EvoDash.SettingsUtils` (`settings_utils.ex`)
 
 Pure config-form helpers used by the settings LiveView: `deep_put/3`, `deep_merge/2`, `deep_delete/2`, `parse_int/1`, `parse_float/1`, `parse_atom/2` (whitelist derived from schema `[in: [...]]` — never `String.to_atom` on untrusted input), `maybe_add_kw/3`.
+
+### `EvoDash.SourceStatus` (`source_status.ex`)
+
+Total (never-raising) shared wrapper around the optionally-present `EvoGit.SelfReflectiveSource` core backend. Guards each call with `Code.ensure_loaded?/1` + `function_exported?/3` (arity 0) and dispatches via `apply/3` — a direct call to a possibly-missing module would emit an "undefined function" compile warning — returning `{:unavailable, reason}` (`:module_missing` | `:function_missing` | `:call_failed`) instead of raising so callers can render a degraded UI.
+Single private `guarded/2` dispatcher keeps all four public wrappers one-liners: `available?/0` → `boolean() | {:unavailable, reason}`; `status/0` → map or `{:unavailable, reason}`; `clone/0` and `update/0` → `{:ok, status} | {:error, reason} | {:unavailable, reason}`.
+Consumers: `EvoDashWeb.SystemLive.SourceCard` + `EvoDashWeb.HomeLive`.
 
 ## Constraints
 
