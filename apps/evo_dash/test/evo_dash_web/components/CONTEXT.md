@@ -24,7 +24,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 
 ## API Surface
 
-### project_components_test.exs (7 describes, 20 tests)
+### project_components_test.exs (8 describes, 28 tests)
 
 - `project_omnibox/1 rendering` (5 tests): trigger renders active-project name + **path** (`assert html =~ "/home/user/my-project"` — the ONLY path-rendering assertion in this file; no test asserts paths in the open palette's project ROWS, only the collapsed trigger), placeholder, typography classes, `palette_keydown` binding, `phx-click-away="close_project_palette"`.
 - `directory picker browse buttons` (3 tests): regression guards — open-path / new-project / **foreign-repo** browse buttons keep `phx-hook="DirectoryPicker"` and have NO `phx-click` (a leftover `phx-click="pick_directory"` had no handle_event clause and crashed the LiveView in the desktop app).
