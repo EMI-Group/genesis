@@ -4,10 +4,12 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
 
   Mirrors the `update_card.ex` support-module pattern: the single-page
   LiveView stays lean while this module hosts the status/clone/update flows
-  backed by the `EvoGit.SelfReflectiveSource` backend module. That module is
-  built by a parallel workstream and may be absent at compile time, so every
-  default runner is guarded with `Code.ensure_loaded?/1` and degrades
-  gracefully to `{:unavailable, :module_missing}` when it is not compiled in.
+  backed by an optionally-present core backend module. That module is built
+  by a parallel workstream and may be absent at compile time; the default
+  runners therefore delegate to the shared `EvoDash.SourceStatus` helper,
+  which owns the guarded dispatch over the backend and returns a tri-state
+  `{:unavailable, reason}` (`:module_missing` / `:function_missing` /
+  `:call_failed`) instead of raising.
 
   The card is local-only by design: a remote `genesis_remote` daemon's
   self-reflective agent reads the REMOTE host's filesystem, so clone/update
@@ -259,34 +261,12 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
     :ok
   end
 
-  # --- Default runners (guarded against the optionally-absent backend) ---
+  # --- Default runners (delegate to the shared domain helper) ---
 
-  # The `node` argument is ignored: `EvoGit.SelfReflectiveSource` acts on the
-  # LOCAL filesystem and the card is local-only (`visible?/1`). The backend is
-  # invoked via `apply/3` (not a direct call) so a build without the module
-  # compiles warning-free — a direct call to a missing module's function emits
-  # an "undefined function" compile warning even inside an ensure_loaded branch.
-  defp default_status(_node) do
-    if Code.ensure_loaded?(EvoGit.SelfReflectiveSource) do
-      apply(EvoGit.SelfReflectiveSource, :status, [])
-    else
-      {:unavailable, :module_missing}
-    end
-  end
-
-  defp default_clone(_node) do
-    if Code.ensure_loaded?(EvoGit.SelfReflectiveSource) do
-      apply(EvoGit.SelfReflectiveSource, :clone, [])
-    else
-      {:unavailable, :module_missing}
-    end
-  end
-
-  defp default_update(_node) do
-    if Code.ensure_loaded?(EvoGit.SelfReflectiveSource) do
-      apply(EvoGit.SelfReflectiveSource, :update, [])
-    else
-      {:unavailable, :module_missing}
-    end
-  end
+  # The `node` argument is ignored: the backend acts on the LOCAL filesystem
+  # and the card is local-only (`visible?/1`). The guarded dispatch over the
+  # optionally-absent core module lives in `EvoDash.SourceStatus`.
+  defp default_status(_node), do: EvoDash.SourceStatus.status()
+  defp default_clone(_node), do: EvoDash.SourceStatus.clone()
+  defp default_update(_node), do: EvoDash.SourceStatus.update()
 end
