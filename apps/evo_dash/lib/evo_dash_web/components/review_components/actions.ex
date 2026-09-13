@@ -7,213 +7,35 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   use EvoDashWeb, :html
 
   # ---------------------------------------------------------------------------
-  # merge_box/1 — GitHub-style merge box: async merge-check strip + actions row
-  # (merge / continue / overflow menu). Replaces the old action_buttons/1.
+  # task_actions/1 — PRIMARY-scoped TASK-level actions row: "Continue task"
+  # (only when can_resume) + the "…" overflow menu. Per-repo merge/reject
+  # live in ReviewComponents.RepoCards.repo_cards/1.
   # ---------------------------------------------------------------------------
 
-  attr(:repo_id, :string, default: "primary")
-  attr(:branch_exists, :boolean, default: true)
   attr(:can_resume, :boolean, default: false)
+  attr(:loading, :boolean, default: false)
+  attr(:branch_exists, :boolean, default: true)
   attr(:has_pr, :boolean, default: false)
   attr(:pr_url, :string, default: nil)
-  attr(:loading, :boolean, default: false)
-  attr(:is_no_changes, :boolean, default: false)
-  attr(:merge_targets, :list, default: [])
-  attr(:default_merge_target, :string, default: nil)
-  attr(:merge_status, :map, default: nil)
-  attr(:repos, :list, default: [])
-  attr(:active_repo_id, :string, default: "primary")
   attr(:show_export, :boolean, default: false)
   attr(:export_url, :string, default: nil)
 
-  def merge_box(assigns) do
+  def task_actions(assigns) do
     ~H"""
-    <div class="rounded-xl border border-base-300 bg-base-100">
-      <%= if @merge_status do %>
-        <div class="p-3 sm:p-4 border-b border-base-300 bg-base-200/30 rounded-t-xl">
-          <.merge_status_block status={@merge_status} loading={@loading} />
-        </div>
+    <div class="rounded-xl border border-base-300 bg-base-100 p-4 flex flex-wrap items-center gap-3">
+      <%= if @can_resume do %>
+        <.continue_task_button loading={@loading} />
       <% end %>
 
-      <%= if @branch_exists do %>
-        <div class="p-4 sm:p-5 flex flex-wrap items-center gap-3">
-          <%= if length(@repos) > 1 do %>
-            <%!-- zh_CN: 切换评审仓库（多仓库任务的下拉切换器） --%>
-            <%!-- Form-level phx-change (sibling of #merge-form; class="contents" keeps the parent flex-wrap row layout): a form-less input-level phx-change never delivers its event — pushInput throws "form events require the input to be inside a form". --%>
-            <form id="repo-switch-form" phx-change="switch_repo" class="contents">
-              <select
-                name="repo_id"
-                phx-change="switch_repo"
-                class="select select-sm rounded-lg border-base-300 max-w-56"
-                aria-label={gettext("Repository")}
-              >
-                <option
-                  :for={repo <- @repos}
-                  value={repo[:repo_id]}
-                  selected={repo[:repo_id] == @active_repo_id}
-                >
-                  {repo[:repo_id]} — {truncate_repo_path(Map.get(repo, :repo_path))}
-                </option>
-              </select>
-            </form>
-          <% end %>
-
-          <%= if @merge_targets != [] do %>
-            <form id="merge-form" phx-submit="merge" phx-change="merge_target_change" class="contents">
-              <input type="hidden" name="repo_id" value={@repo_id} />
-              <label class="flex items-center gap-2">
-                <%!-- zh_CN: 合并到（选择合并目标分支的标签） --%>
-                <span class="text-sm text-base-content/60 whitespace-nowrap">{gettext("Merge into")}</span>
-                <select
-                  name="target_branch"
-                  class="select select-sm rounded-lg border-base-300"
-                  aria-label={gettext("Merge into branch")}
-                  phx-value-repo_id={@repo_id}
-                >
-                  <option
-                    :for={name <- @merge_targets}
-                    value={name}
-                    selected={name == @default_merge_target}
-                  >
-                    {name}
-                  </option>
-                </select>
-              </label>
-              <button
-                type="submit"
-                class="btn btn-success btn-sm rounded-lg gap-1.5"
-                phx-confirm={
-                  gettext("Merge these changes into %{target}?", target: @default_merge_target)
-                }
-                disabled={@loading}
-              >
-                <.icon name="hero-check" class="size-4" />
-                {gettext("Merge")}
-              </button>
-            </form>
-          <% else %>
-            <button
-              class="btn btn-success btn-sm rounded-lg gap-1.5"
-              phx-click="merge"
-              phx-value-repo_id={@repo_id}
-              phx-confirm={gettext("Merge these changes into the current branch?")}
-              disabled={@loading}
-            >
-              <.icon name="hero-check" class="size-4" />
-              {gettext("Merge")}
-            </button>
-          <% end %>
-
-          <.continue_task_button loading={@loading} />
-
-          <.overflow_menu
-            loading={@loading}
-            branch_exists={@branch_exists}
-            has_pr={@has_pr}
-            pr_url={@pr_url}
-            show_export={@show_export}
-            export_url={@export_url}
-          />
-        </div>
-      <% else %>
-        <div class="p-4 sm:p-5 flex flex-wrap items-center gap-3">
-          <div class={[
-            "rounded-lg p-4 w-full",
-            if(@is_no_changes,
-              do: "bg-info/10 border border-info/20",
-              else: "bg-warning/10 border border-warning/20"
-            )
-          ]}>
-            <div class="flex items-center gap-3">
-              <.icon
-                name={
-                  if @is_no_changes, do: "hero-information-circle", else: "hero-exclamation-triangle"
-                }
-                class={"size-5 " <> if(@is_no_changes, do: "text-info", else: "text-warning")}
-              />
-              <span class={[
-                "text-sm font-medium",
-                if(@is_no_changes, do: "text-info", else: "text-warning")
-              ]}>
-                <%= if @is_no_changes do %>
-                  {gettext(
-                    "The agent completed without making any code changes. You can resume from this investigation or dismiss it."
-                  )}
-                <% else %>
-                  {gettext("This branch no longer exists. You can dismiss it with Ignore.")}
-                <% end %>
-              </span>
-            </div>
-          </div>
-
-          <%= if @can_resume do %>
-            <.continue_task_button loading={@loading} />
-          <% end %>
-
-          <.overflow_menu
-            loading={@loading}
-            branch_exists={false}
-            show_export={@show_export}
-            export_url={@export_url}
-          />
-        </div>
-      <% end %>
+      <.overflow_menu
+        loading={@loading}
+        branch_exists={@branch_exists}
+        has_pr={@has_pr}
+        pr_url={@pr_url}
+        show_export={@show_export}
+        export_url={@export_url}
+      />
     </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # merge_status_block/1 — async merge-check result (clean/conflict/checking)
-  # ---------------------------------------------------------------------------
-
-  attr(:status, :map, required: true)
-  attr(:loading, :boolean, default: false)
-
-  defp merge_status_block(assigns) do
-    ~H"""
-    <%= case @status do %>
-      <% %{state: :checking} -> %>
-        <div class="flex items-center gap-2 w-full text-sm text-base-content/60">
-          <span class="loading loading-spinner loading-xs"></span>
-          {gettext("Checking if merge is clean…")}
-        </div>
-      <% %{state: :clean} -> %>
-        <div class="flex items-center gap-2 w-full rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
-          <.icon name="hero-check-circle" class="size-5 shrink-0" />
-          {gettext("Merge check passed — clean merge.")}
-        </div>
-      <% %{state: :conflict, files: files} -> %>
-        <% count = length(files) %>
-        <div class="flex flex-col sm:flex-row sm:items-center gap-3 w-full rounded-lg border border-warning/30 bg-warning/10 p-4">
-          <div class="flex items-start gap-3 min-w-0">
-            <.icon name="hero-exclamation-triangle" class="size-5 text-warning shrink-0 mt-0.5" />
-            <span class="text-sm text-warning break-words">
-              {ngettext(
-                "Merge conflict detected in %{count} file: %{files}",
-                "Merge conflict detected in %{count} files: %{files}",
-                count,
-                count: count,
-                files: conflict_files_summary(files)
-              )}
-            </span>
-          </div>
-          <button
-            class="btn btn-warning rounded-lg px-6 gap-2 shrink-0 sm:ml-auto"
-            phx-click="auto_resolve"
-            phx-confirm={
-              gettext(
-                "This starts a new agent task that will merge the changes and resolve the conflicts. The current task will be marked as continued."
-              )
-            }
-            disabled={@loading}
-          >
-            <.icon name="hero-bolt" class="size-4.5" />
-            <%!-- zh_CN: 自动解决合并冲突（启动新的合并智能体任务） --%>
-            {gettext("Auto-resolve conflict")}
-          </button>
-        </div>
-      <% _ -> %>
-    <% end %>
     """
   end
 
@@ -239,9 +61,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
 
   # ---------------------------------------------------------------------------
   # overflow_menu/1 — "…" dropdown pinned right. When branch_exists it carries
-  # Reject / Create-View PR / Extract Skills; Export JSON renders when
-  # show_export; Ignore is always available as a plain item at the end — no
-  # danger-zone divider.
+  # Create-View PR / Extract Skills; Export JSON renders when show_export;
+  # Ignore is always available as a plain item at the end — no danger-zone
+  # divider. Reject is per-repo (RepoCards), not here.
   # ---------------------------------------------------------------------------
 
   attr(:loading, :boolean, default: false)
@@ -259,18 +81,6 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
       </summary>
       <ul class="menu menu-sm dropdown-content z-50 p-2 shadow-lg bg-base-100 rounded-lg border border-base-200 w-52">
         <%= if @branch_exists do %>
-          <li>
-            <button
-              class="text-error hover:bg-error/10 hover:text-error rounded-md"
-              phx-click="reject"
-              phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
-              disabled={@loading}
-            >
-              <.icon name="hero-x-mark" class="size-4 mr-2" />
-              <%!-- zh_CN: 拒绝并删除该分支的全部变更（不可恢复） --%>
-              {gettext("Reject")}
-            </button>
-          </li>
           <%= if not @has_pr do %>
             <li>
               <button class="rounded-md" phx-click="create_pr" disabled={@loading}>
@@ -333,21 +143,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
     """
   end
 
-  # Repo root path for the switcher label — keep the last ~30 chars with a
-  # leading "…" (the tail of the path is the discriminating part).
-  defp truncate_repo_path(path) when is_binary(path) do
-    if String.length(path) > 30 do
-      "…" <> String.slice(path, -29, 29)
-    else
-      path
-    end
-  end
-
-  defp truncate_repo_path(_), do: ""
-
   # First ~4 conflicting file names joined with ", ", with a "…" suffix when
-  # more exist. Public so review_components.ex (merge_outcomes_panel/1) can
-  # reuse it via defdelegate.
+  # more exist. Public so review_components.ex (merge_outcomes_panel/1) and
+  # RepoCards.merge_status_block/1 can reuse it.
   def conflict_files_summary(files) do
     shown = Enum.take(files, 4)
 

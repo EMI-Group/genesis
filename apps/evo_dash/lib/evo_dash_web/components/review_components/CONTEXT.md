@@ -2,11 +2,11 @@
 
 ## Intent
 
-Sub-component modules of the code review page (GitHub-PR-inspired, Adwaita-styled design): `DiffViewer` (split diff rendering with client-side syntax highlighting, file-tree sidebar, split/commit two-pane layouts), `Header` (compact page header, agent report card, objective card, task-details disclosure), `Actions` (GitHub-style merge box — async merge-check strip, merge-into form, overflow menu — plus the skills-extraction modal), `Stats` (diff stat row, commits list). The parent facade `EvoDashWeb.ReviewComponents` (`../review_components.ex`) delegates to these four and locally owns the page-level tab bar (`page_tabs/1`), the per-repo merge outcome report (`merge_outcomes_panel/1`), and the archive tree (`archive_review_section/1`).
+Sub-component modules of the code review page (GitHub-PR-inspired, Adwaita-styled design): `DiffViewer` (split diff rendering with client-side syntax highlighting, file-tree sidebar, split/commit two-pane layouts), `Header` (compact page header, agent report card, objective card, task-details disclosure), `RepoCards` (one card per repository — per-repo merge/reject controls, per-repo merge-check strip, per-repo resolution state — plus the optional review-completion banner), `Actions` (primary-scoped task-level actions row — Continue task + overflow menu — plus the skills-extraction modal), `Stats` (diff stat row, commits list). The parent facade `EvoDashWeb.ReviewComponents` (`../review_components.ex`) delegates to these five and locally owns the page-level tab bar (`page_tabs/1`), the per-repo merge outcome report (`merge_outcomes_panel/1`), and the archive tree (`archive_review_section/1`).
 
 ## Routing Table
 
-None — leaf directory (four module files: `diff_viewer.ex`, `header.ex`, `actions.ex`, `stats.ex`).
+None — leaf directory (five module files: `diff_viewer.ex`, `header.ex`, `repo_cards.ex`, `actions.ex`, `stats.ex`).
 
 ## API Surface
 
@@ -37,7 +37,64 @@ Fires no events (pure report).
 
 #### Facade delegate list
 
-`page_header`, `task_summary`, `agent_summary`, `objective_section` → `Header`; `merge_box`, `extract_skills_modal`, `conflict_files_summary/1` (function, not component) → `Actions`; `diff_stats_bar`, `commits_list` → `Stats`; `file_tree_sidebar`, `diff_viewer`, `split_diff_layout`, `commit_detail_header`, `commit_diff_layout` → `DiffViewer`.
+`page_header`, `task_summary`, `agent_summary`, `objective_section` → `Header`; `repo_cards` → `RepoCards`; `task_actions`, `extract_skills_modal`, `conflict_files_summary/1` (function, not component) → `Actions`; `diff_stats_bar`, `commits_list` → `Stats`; `file_tree_sidebar`, `diff_viewer`, `split_diff_layout`, `commit_detail_header`, `commit_diff_layout` → `DiffViewer`.
+
+### `RepoCards` (`repo_cards.ex`)
+
+#### `repo_cards/1` — one card per repository
+
+Attrs: `repos` (`:list`, **required**), `completion` (`:atom`, default `nil` — `nil | :merged | :rejected`), `back_url` (`:string`, default `nil`).
+
+Root markup: `<div id="review-repo-cards" class="space-y-4">`. When `completion != nil` its FIRST child is the completion banner `<div id="review-completion-banner">` — success tint (`border-success/30 bg-success/10`) for `:merged`, error tint (`border-error/30 bg-error/10`) for `:rejected` — carrying a check/x icon, a one-line status ("All repositories merged." / "All repositories rejected."), and the "Back to Projects" action `<.link navigate={@back_url} id="review-completion-back">`. Then ONE CARD PER REPO, in `repos` order (primary first).
+
+Each card root is `<div id={"repo-card-" <> repo_id}>` (`rounded-xl border border-base-300 bg-base-100`), with a `bg-base-200/30` header strip (`border-b border-base-300`) containing: the repo id (the `"primary"` entry renders the "Primary repository" label; every other entry renders its id in mono) + the truncated repo path (`title` attr holds the full path), the branch name (mono `badge badge-sm`, hidden when nil), the card's resolution badge `<span id={"repo-resolution-" <> repo_id}>` (empty until resolved; see the state machine), that repo's diff stat read DEFENSIVELY from `repo.review_data` (`+total_additions −total_deletions` + an `ngettext` file count; renders NOTHING when `review_data` is nil), and the jump-to-diff button (`phx-click="open_repo_diff"` + `phx-value-repo_id={repo_id}`, `hero-code-bracket`).
+
+Every repo field is read defensively via `field/3` (atom key → string key → default) so both atom- and string-keyed repo maps render; the diff-stat numbers go through `review_stat/2` (same fallback, default `0`).
+
+#### Resolution state machine
+
+Each card is driven off `repo.resolution` (`nil | %{state: :merged, target: t} | %{state: :rejected} | %{state: :handled} | %{state: :error, detail: d} | %{state: :conflict, detail: d}`; `t` a String or nil, `d` a String) plus `repo.branch_exists`. TERMINAL = `:merged | :rejected | :handled`; NON-TERMINAL = `nil | :error | :conflict`.
+
+1. TERMINAL → resolved/inert: the outcome shows in the resolution badge (`gettext("Merged into %{target}", target: t)` when a target is present, else `gettext("Merged")`; `gettext("Rejected")`; `gettext("Already handled")`) and the card body is a one-line check + outcome — NO merge/reject actions.
+2. NON-TERMINAL (`:error` / `:conflict`) → the `detail` renders in a tinted strip (`border-error/20 bg-error/10 text-error` for `:error`, `border-warning/20 bg-warning/10 text-warning` for `:conflict` — FULL semantic text token, never `-content` on a tint) AND the merge/reject actions stay available (retry).
+3. `resolution == nil && branch_exists` → normal: the per-repo merge-check strip (rendered when `repo.merge_status != nil`) + the target select + Merge + Reject.
+4. `resolution == nil && !branch_exists` → informational only, NO actions: a nil `branch_name` renders the info tint with "The agent completed without making any code changes. You can resume from this investigation or dismiss it.", otherwise the warning tint with "This branch no longer exists.".
+
+#### Per-repo actions row
+
+Rendered in states 2 and 3: a `flex flex-wrap items-center gap-3` row holding the per-repo merge form and a SIBLING Reject button (not inside the form).
+
+- Merge form (when `repo.merge_targets != []`): `<form id={"merge-form-" <> repo_id} phx-submit="merge" phx-change="merge_target_change" class="contents">` — `class="contents"` keeps its children flowing inline in the actions row, and a form-less input-level `phx-change` never delivers its event (LiveView's pushInput throws "form events require the input to be inside a form"). It contains a hidden `<input type="hidden" name="repo_id" value={repo_id}/>`, a "Merge into" label, and `<select name="target_branch" phx-value-repo_id={repo_id}>` — options from `repo.merge_targets`, `selected` on `target = repo.default_merge_target || List.first(repo.merge_targets)` — plus the `btn btn-success btn-sm rounded-lg gap-1.5` submit Merge button (`hero-check`, `phx-confirm` naming the target). It carries NO `disabled` attr (there is no per-repo loading flag).
+- Form-less Merge fallback (when `repo.merge_targets == []`): a `<button class="btn btn-success btn-sm rounded-lg gap-1.5" phx-click="merge" phx-value-repo_id={repo_id} phx-confirm={gettext("Merge these changes into the current branch?")}>` with `hero-check` + "Merge".
+- Reject: `btn btn-outline btn-error btn-sm rounded-lg gap-1.5` + `hero-x-mark`, `phx-click="reject"` + `phx-value-repo_id={repo_id}` + `phx-confirm` ("…This cannot be undone.").
+
+#### `merge_status_block/1` — private
+
+Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checking if merge is clean…"; `%{state: :clean}` → green success strip "Merge check passed — clean merge."; `%{state: :conflict, files: files}` → amber strip with the `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `EvoDashWeb.ReviewComponents.Actions.conflict_files_summary/1`) + the PRIMARY-scoped **`auto_resolve`** button (`btn-warning`, `phx-click="auto_resolve"`, NO `repo_id`, `phx-confirm` explaining the new merge-agent task); any other shape (incl. `state: :error`) → the `_ ->` catch-all renders NOTHING. `merge_status.target` is NOT read by the component (the LiveView uses it for the merge call). Wrapped in a `rounded-lg border border-base-300 bg-base-200/30 p-3` well by its caller.
+
+#### Element ids emitted by this subtree
+
+`review-repo-cards`, `review-completion-banner`, `review-completion-back`, `repo-card-<repo_id>`, `repo-resolution-<repo_id>`, `merge-form-<repo_id>`.
+
+### `Actions` (`actions.ex`)
+
+#### `task_actions/1` — primary-scoped task-level actions row
+
+Attrs: `can_resume` (`:boolean`, default `false`), `loading` (`:boolean`, default `false`), `branch_exists` (`:boolean`, default `true`), `has_pr` (`:boolean`, default `false`), `pr_url` (`:string`, default `nil`), `show_export` (`:boolean`, default `false`), `export_url` (`:string`, default `nil`).
+
+One `rounded-xl border border-base-300 bg-base-100 p-4 flex flex-wrap items-center gap-3` row holding the **Continue task** button — only when `@can_resume` — and the "…" overflow menu (which carries `ml-auto` and is therefore pinned to the row's right edge as its last child).
+
+**`continue_task_button/1`** (private): soft filled (`btn btn-sm rounded-lg gap-1.5 bg-base-200/60 hover:bg-base-200 border-0` — NO outline ring, consistent with the page's ghost-chip language), `hero-arrow-path`, fires **`resume`**.
+
+**`overflow_menu/1`** (private): a native `<details class="dropdown dropdown-end dropdown-top ml-auto">` "…" menu. The row sits near the bottom of the conversation column, so `dropdown-top` opens the menu UPWARD (above the trigger) so it is never clipped below the browser window. Entries: Create GitHub PR (`phx-click="create_pr"`) when `@branch_exists and not @has_pr`; View PR as a plain `<a href={@pr_url} target="_blank">` when `@branch_exists and @has_pr and @pr_url`; Extract Skills (`phx-click="extract_skills"`) when `@branch_exists`; Export JSON as a plain download `<a href={@export_url} download>` when `@show_export`; Ignore renders LAST as a neutral (`rounded-md`) plain menu item — always available as the escape hatch for orphaned/deleted branches, keeping its `phx-confirm`. The `@branch_exists` gate stays because it gates Create-View PR / Extract Skills. Reject is NOT in this menu (it is per-repo, in `RepoCards`); there is no "Danger zone" divider. The `dropdown-content` (`z-50`) paints **outside** the card (the `task_actions` wrapper carries no `overflow-hidden`).
+
+#### `conflict_files_summary/1` — public helper
+
+First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when more exist. Public (delegated from the facade) so `merge_outcomes_panel/1` and `RepoCards.merge_status_block/1` can reuse it.
+
+#### `extract_skills_modal/1`
+
+Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card with an academic-cap tile, explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button).
 
 ### `Header` (`header.ex`)
 
@@ -68,41 +125,6 @@ Same card shell + header contract as `agent_summary`: `rounded-xl border border-
 Attrs: `usage` (`:map`, default `nil`), `agent_count` (`:integer`, default `nil`), `task_type` (`:atom`, default `nil`), `status` (`:atom`, default `nil` — the TASK status), `model_id` (`:string`, default `nil`), `started_at` (`:any`, default `nil`), `finished_at` (`:any`, default `nil`).
 
 A native `<details class="group …">` with a `<summary>` ("Task Details", info icon, chevron that rotates via `group-open:rotate-180`; webkit marker hidden) — zero-JS disclosure. Content: a definition list (`Status` badge via `Helpers.task_status_badge`, `Type`, `Model`, `Agents` via `format_number`, `Started`/`Finished` via `relative_time`), then — gated on `@usage` — the full "Token & Cost Usage" breakdown read **only via `Map.get`** (atom keys): `input_tokens`, `output_tokens`, `total_tokens`; a cache sub-list gated on `cached_tokens > 0 or cache_creation_tokens > 0` showing `cached_tokens`, `cache_creation_tokens`, and "Cache Hit Rate" (`Helpers.format_cache_hit_rate/1` + an inline-computed `progress progress-success` bar, `min(round(cached/input*100), 100)`); then costs `input_cost`/`output_cost`/`total_cost` (`Helpers.format_cost/1`, total in `text-primary-standalone`). Fires no events.
-
-### `Actions` (`actions.ex`)
-
-#### `merge_box/1` — GitHub-style merge box
-
-Attrs: `repo_id` (`:string`, default `"primary"`), `branch_exists` (`:boolean`, default `true`), `can_resume` (`:boolean`, default `false`), `has_pr` (`:boolean`, default `false`), `pr_url` (`:string`, default `nil`), `loading` (`:boolean`, default `false`), `is_no_changes` (`:boolean`, default `false`), `merge_targets` (`:list`, default `[]`), `default_merge_target` (`:string`, default `nil`), `merge_status` (`:map`, default `nil`), `repos` (`:list`, default `[]`), `active_repo_id` (`:string`, default `"primary"`), `show_export` (`:boolean`, default `false`), `export_url` (`:string`, default `nil`).
-
-Structure (one `rounded-xl` card):
-
-- **Merge-check strip** (top, only when `merge_status` present) — `merge_status_block/1` (private):
-  - `%{state: :checking}` → spinner + "Checking if merge is clean…";
-  - `%{state: :clean}` → green success strip "Merge check passed — clean merge.";
-  - `%{state: :conflict, files: files}` → amber strip, `ngettext` "Merge conflict detected in %{count} files: %{files}" (files via the public `conflict_files_summary/1`) + an **`auto_resolve`** button (`btn-warning`, `phx-confirm` explaining the new merge-agent task);
-  - anything else (`state: :error` included) → the `_ ->` catch-all renders **nothing** (silent old-behavior fallback). `merge_status.target` is NOT read by the component (ReviewLive uses it for the merge call).
-- **Actions row** (when `branch_exists`):
-  - repo switcher — `<form id="repo-switch-form" phx-change="switch_repo" class="contents">` (sibling of `#merge-form`; a form-less input-level phx-change never delivers its event — pushInput throws "form events require the input to be inside a form") wrapping `<select name="repo_id" phx-change="switch_repo">` — rendered only when `length(@repos) > 1`; options labeled `"<repo_id> — <path tail ~30 chars>"` (`truncate_repo_path/1`), `selected` on `active_repo_id`;
-  - merge form when `merge_targets != []`: `<form id="merge-form" phx-submit="merge" phx-change="merge_target_change" class="contents">` wrapping a hidden `<input type="hidden" name="repo_id" value={@repo_id}/>`, a "Merge into" label + `<select name="target_branch">` (carrying `phx-value-repo_id={@repo_id}`, pre-selecting `default_merge_target`), and the `btn-success` submit Merge button (`phx-confirm` naming the target, `disabled={@loading}`);
-  - bare Merge button when `merge_targets == []`: `phx-click="merge" phx-value-repo_id={@repo_id}` + confirm;
-  - **Continue task** button (`continue_task_button/1`, private): soft filled (`btn btn-sm rounded-lg gap-1.5 bg-base-200/60 hover:bg-base-200 border-0` — NO outline ring, consistent with the page's ghost-chip language), fires **`resume`**;
-  - **overflow menu** (`overflow_menu/1`, private): a native `<details class="dropdown dropdown-end dropdown-top ml-auto">` "…" menu — the merge box sits at the BOTTOM of the conversation column, so `dropdown-top` opens the menu UPWARD (above the trigger) so it is never clipped below the browser window. Reject (`text-error`, `phx-click="reject"` + confirm) and Create GitHub PR (`phx-click="create_pr"`) only when `branch_exists`; View PR as a plain `<a href={@pr_url} target="_blank">` when `branch_exists and has_pr and pr_url`; Extract Skills (`phx-click="extract_skills"`) when `branch_exists`; Export JSON as a plain download `<a>` when `show_export`; Ignore renders LAST as a neutral (`rounded-md`) plain menu item, always available as the escape hatch for orphaned/deleted branches, keeping its `phx-confirm`. There is no "Danger zone" divider in this menu. The `dropdown-content` (`z-50`) paints **outside** the card: the merge-box wrapper deliberately has NO `overflow-hidden` (top-corner rounding is carried by `rounded-t-xl` on the merge-check strip) so the menu is never clipped in either direction. The review test helper `overflow_menu/1` (review_live_test.exs) pins this exact class string in a regex — keep them in sync when changing the classes.
-- **Notice box** (when `not branch_exists`): info tint + information icon when `is_no_changes` ("completed without making any code changes… resume or dismiss"), warning tint + triangle otherwise ("This branch no longer exists. You can dismiss it with Ignore."); plus the Continue button when `can_resume` and the branch-less overflow menu variant.
-
-Event inventory: `switch_repo` (`repo_id`), `merge` (`target_branch` + `repo_id` via the form / `repo_id` via `phx-value`), `merge_target_change` (`target_branch` + `repo_id`), `resume`, `reject`, `create_pr`, `extract_skills`, `ignore`, `auto_resolve`.
-
-**Per-repo merge/reject semantics** (ReviewLive side, stable contract): the `merge` handler resolves the submitting repo from `params["repo_id"]` (falling back to the active repo, then `"primary"`, whitelisted against the known review-repo ids), builds a per-repo merge plan across `@review_repos` — the submitting repo merges into the form target (validated against ITS branch list, else its resolved default), every other repo merges into its own resolved default — and merges each repo into its own target on the viewed node. `reject` broadcasts the same way, deleting the agent branch in EVERY review repo. Outcomes are reported per-repo: full success sets the task status and navigates away; partial success/failure assigns `:merge_outcomes` (rendered by `merge_outcomes_panel/1`, one row per repo) and STAYS on the page — never dismisses a partially applied merge/reject silently. Data sources (all in `EvoGit.Review`, called with plain `case` on the tuple returns — no try/rescue): `list_branches/1`, `default_merge_target/1`, `merge_branch/3` (`merge_branch/2` is the default-resolving path — do not remove it).
-
-**Single render site + where per-repo data already lives** (load-bearing for any move to per-repo merge boxes): `merge_box/1` is rendered exactly ONCE by `ReviewLive` (`lib/evo_dash_web/live/review_live.ex:139-154`, `:conversation` tab only) — its `repo_id`/`branch_exists`/`merge_targets`/`default_merge_target`/`merge_status` attrs are FLAT assigns projected from the ACTIVE repo (`ReviewLive.project_active_repo/1`), while `repos={@review_repos}` carries every repo. Each `@review_repos` entry ALREADY holds its own `repo_id`/`repo_path`/`branch_name`/`commit_sha`/`base_sha`/`branch_exists`/`merge_targets`/`default_merge_target`/`merge_status` (`review_live/load_data.ex:336-348`), and `MergeCheck` already runs its dry-run and tags results per repo — so rendering N merge boxes needs NO new per-repo data; only the two globally-broadcast handlers (`merge`, `reject`) still operate on all repos at once. The repo-switch selects (`#repo-switch-form`, `#diff-repo-switch-form`, `#commits-repo-switch-form`) exist because repo selection is component-owned, not a page tab.
-
-#### `conflict_files_summary/1` — public helper
-
-First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when more exist. Public (delegated from the facade) so `merge_outcomes_panel/1` can reuse it.
-
-#### `extract_skills_modal/1`
-
-Attrs: `show` (`:boolean`, default `false`) — the only attr; renders nothing when false. Fixed overlay + backdrop (`bg-black/50 backdrop-blur-sm`) + modal card with an academic-cap tile, explanatory copy, and a `<.form phx-submit="confirm_extract_skills">` carrying a `user_note` textarea. Events: **`confirm_extract_skills`** (form submit, param `user_note`), **`cancel_extract_skills`** (backdrop click + Cancel button).
 
 ### `Stats` (`stats.ex`)
 
@@ -187,20 +209,17 @@ The file-tree sidebar's interactivity is **100% server-driven — no `<details>`
 - **`collapse_all_dirs` / `expand_all_dirs`** — ghost buttons acting on the whole tree (ReviewLive resets/populates the `expanded_dirs` map).
 - Sibling sort is explicitly case-insensitive (`String.downcase(name)`), directories first then files (`sort_nodes/1`).
 
-## Removed components
-
-The GitHub-PR redesign replaced the previous top-level surfaces; the facade delegate list reflects only the new names: `review_header/1` → **`page_header/1`** (compact header + meta line + diff-stat row), `action_buttons/1` → **`merge_box/1`** (merge-check strip + actions row + overflow menu), `review_tabs/1` + `repo_tabs/1` → **`page_tabs/1`** (the per-repo switcher now lives inside `merge_box`, the `split_diff_layout` toolbar, and the `commits_list` toolbar instead of a separate tab strip).
-
 ## Field-consumption audit
 
-All components are **purely display** — none re-fetches data (no `EvoDash.NodeContext`/`EvoGit.Review`/`TaskRegistry` calls in the subtree); every event they fire (`switch_tab`, `switch_repo`, `toggle_summary_view`, `toggle_objective_view`, `select_file`, `toggle_file_expansion`, `expand_context`, `toggle_dir`, `filter_files`, `collapse_all_dirs`, `expand_all_dirs`, `inspect_commit`, `merge`, `merge_target_change`, `reject`, `resume`, `create_pr`, `ignore`, `auto_resolve`, `extract_skills`, `confirm_extract_skills`, `cancel_extract_skills`) belongs to the hosting LiveView, which does the actual fetches (`EvoDash.NodeContext.load_file_diff*`, `load_commit_files`, …).
+All components are **purely display** — none re-fetches data (no `EvoDash.NodeContext`/`EvoGit.Review`/`TaskRegistry` calls in the subtree); every event they fire (`switch_tab`, `switch_repo`, `toggle_summary_view`, `toggle_objective_view`, `select_file`, `toggle_file_expansion`, `expand_context`, `toggle_dir`, `filter_files`, `collapse_all_dirs`, `expand_all_dirs`, `inspect_commit`, `open_repo_diff`, `merge`, `merge_target_change`, `reject`, `resume`, `create_pr`, `ignore`, `auto_resolve`, `extract_skills`, `confirm_extract_skills`, `cancel_extract_skills`) belongs to the hosting LiveView, which does the actual fetches (`EvoDash.NodeContext.load_file_diff*`, `load_commit_files`, …).
 
 - **`page_header`**: `title` (via `short_title/1`), `status`/`task_status` atoms only (badge helpers), `task_type` (capitalized), `task_id`/`model_id` (mono, title attr), `repo_path`/`branch_name`/`merge_target` (meta chips), `agent_count` (`format_number`), `started_at`/`finished_at` (`relative_time`), `stats` with atom-OR-string key fallback. `commit_sha` is declared but never referenced in the body. `Map.get` chains / `if`-gated dot access only — nil-safe by construction.
 - **`task_summary`**: `usage` accessed ONLY via `Map.get` (`input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `cache_creation_tokens`, `input_cost`, `output_cost`, `total_cost`; details block gated on `@usage` truthy, cache rows on cached/cache_creation > 0); `status` badge; `task_type`; `model_id`; `agent_count` (`format_number`); `started_at`/`finished_at` (`relative_time`). Summary-map safe.
 - **`agent_summary`**: `summary` only (raw `<pre>` vs `raw(EvoDash.MarkdownRender.render/1)`); `summary_raw` toggle; `model_id`/`finished_at` header meta. `MarkdownRender` runs server-side in the LiveView (in-process, no external fetch).
 - **`objective_section`**: `objective` (markdown/raw bodies + the empty-state gate `@objective in [nil, ""]`) + `objective_raw` toggle.
 - **`page_tabs`**: `active_tab` comparisons + the three count badges + `show_archive` gate.
-- **`merge_box`**: see the attr table above; `merge_status` pattern-matches only `%{state: :checking}` / `%{state: :clean}` / `%{state: :conflict, files: files}` (catch-all renders nothing); repo maps read via `repo[:repo_id]` / `Map.get(repo, :repo_path)`.
+- **`repo_cards`**: `repos` iterated in order; per-entry fields read via the defensive `field/3` (atom → string → default) — `repo_id`, `repo_path`, `branch_name`, `branch_exists`, `review_data`, `merge_targets`, `default_merge_target`, `merge_status`, `resolution`; `review_data`'s `changed_files_count`/`total_additions`/`total_deletions` via `review_stat/2` (same fallback, default `0`; the whole stat block is gated on `review_data` truthy); `merge_status` pattern-matched exactly as in `merge_status_block/1`; `resolution` state machine via `resolution_state/1` + `resolution_badge_text/1` + `resolution_detail_text/1`. `completion` gates the banner; `back_url` is the banner link target.
+- **`task_actions`**: `can_resume` gates Continue task; `loading`/`branch_exists`/`has_pr`/`pr_url`/`show_export`/`export_url` thread into the private `overflow_menu/1`.
 - **`extract_skills_modal`**: `show` gate only — no data fields (`user_note` textarea is client-side).
 - **`diff_stats_bar`**: `files_count`, `additions`, `deletions`, `commits_count` — the component-level consumer of the diff-stat numbers (the `@review_data` top-level keys `changed_files_count`/`total_additions`/`total_deletions` map onto its attrs; `page_header`'s `stats` row shows the same numbers from its `stats` map).
 - **`commits_list`**: per `CommitInfo` — `sha`, `short_sha`, `message`, `author_name`, `date`.
