@@ -18,6 +18,7 @@ The full design specification is documented across the CONTEXT.md tree.
 - `./apps/evo_git/` → Core runtime (agents, scheduler, git adapter, runtime phases)
 - `./apps/evo_dash/` → Web dashboard (LiveView pages, components, task registry)
 - Self-reflective agent / Home chat / guide overlay → `./apps/evo_git/` (agent + repo-less runtime + task-control tools) + `./apps/evo_dash/` (Home chat page `EvoDashWeb.HomeLive` at `GET /help` — the ChatGPT-style chat entry point to the self-reflective agent, reachable via the sidebar **Help** entry; root `/` maps to the Projects page; Projects page at `/projects`; global guide hook/panel) — see "Self-Reflective Agent (repo-less)" section below
+- `./docs/` → Long-form design records & reference documentation (notably `auto-update.md`, the desktop auto-update design record)
 - `./config/` → Environment-based Elixir configuration
 - `./rel/` → Mix release overlays (`rel/genesis/`, `rel/genesis_remote/` — vm.args + env scripts per release; distribution config for SSH remote dev)
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
