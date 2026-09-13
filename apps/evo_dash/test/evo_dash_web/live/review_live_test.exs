@@ -2600,6 +2600,667 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "multi-repo review — overall completion status" do
+    # completion_status/2 is PRIVATE — it is driven here through REAL merge /
+    # reject event dispatches. Once EVERY repo's resolution is terminal the
+    # aggregate status is persisted via NodeContext.set_review_status/3, the
+    # completion banner renders, the sidebar hub snapshot is invalidated — and
+    # the page NEVER navigates on a settle (only Ignore / resume navigate).
+    test "all repos terminal with no merged repo completes as :rejected", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn _node, _path, _branch -> :ok end)
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      # One actionable repo + one ALREADY-terminal repo whose `:handled`
+      # resolution was seeded at load time (a branch that once existed no
+      # longer does).
+      handled =
+        Map.put(review_repo("original", "/nonexistent/foreign/path", []), :resolution, %{
+          state: :handled
+        })
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          handled
+        ])
+
+      wait_hub_warm()
+
+      html = render_click(view, "reject", %{"repo_id" => "primary"})
+
+      # No merged repo anywhere → the aggregate completes as :rejected.
+      refute_redirected(view)
+
+      assert TaskRegistry.get_task(task_id).review_status == :rejected
+      assert html =~ "All repositories rejected."
+      assert html =~ ~s(id="review-completion-banner")
+      assert html =~ ~s(id="review-completion-back")
+      assert assigns(view)[:flash]["success"] =~ "Changes rejected"
+
+      # Completion invalidates the sidebar hub snapshot.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "a mixed merge + reject completes as :merged (≥1 merged wins)", %{conn: conn} do
+      {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:ok, "deadbeef"}
+      end)
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn _n, _p, _b -> :ok end)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :review_merge_runner)
+        Application.delete_env(:evo_dash, :review_reject_runner)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      wait_hub_warm()
+
+      # Merge the primary (one merged entry), then reject the foreign repo:
+      # every repo is terminal, and the ≥1-merged rule beats all-rejected.
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      html = render_click(view, "reject", %{"repo_id" => "original"})
+
+      refute_redirected(view)
+
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+      assert html =~ "All repositories merged."
+      assert html =~ ~s(id="review-completion-banner")
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "a persisted review status wins over a later computed value", %{conn: conn} do
+      {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      # Pre-seed the persisted aggregate as :merged (as a prior visit would
+      # have), then run a REJECT-ONLY resolution: every repo ends :rejected,
+      # but reload coherence keeps the already-persisted :merged.
+      TaskRegistry.set_review_status(task_id, :merged)
+      # Synchronize the cast.
+      TaskRegistry.list_tasks()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn _n, _p, _b -> :ok end)
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      assert assigns(view)[:review_status] == :merged
+
+      render_click(view, "reject", %{"repo_id" => "primary"})
+      html = render_click(view, "reject", %{"repo_id" => "original"})
+
+      refute_redirected(view)
+
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+      assert html =~ "All repositories merged."
+      refute html =~ "All repositories rejected."
+    end
+
+    test "does not complete while one repo stays unresolved", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      html = render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      # The primary resolved, the foreign repo is still `resolution: nil` — NOT
+      # all terminal, so no aggregate status is written and no banner renders.
+      refute_redirected(view)
+      refute html =~ ~s(id="review-completion-banner")
+      assert TaskRegistry.get_task(task_id).review_status == nil
+    end
+
+    test "a non-terminal :conflict entry keeps the review open", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      # :conflict / :error look "resolved" but are NOT terminal — neither counts
+      # toward completion nor triggers the aggregate write.
+      conflict =
+        Map.put(review_repo("original", "/nonexistent/foreign/path", []), :resolution, %{
+          state: :conflict,
+          detail: "boom"
+        })
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          conflict
+        ])
+
+      html = render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      refute_redirected(view)
+      refute html =~ ~s(id="review-completion-banner")
+      assert TaskRegistry.get_task(task_id).review_status == nil
+    end
+  end
+
+  describe "multi-repo review — ActiveTasks hub invalidation" do
+    # invalidate_active_tasks/1 fires ONLY on the completion path
+    # (settle_repo_action/4). A partial resolution stays on the page and must
+    # leave the warmed sidebar snapshot byte-for-byte unchanged.
+    setup do
+      {primary_dir, _foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:ok, "deadbeef"}
+      end)
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn _n, _p, _b -> :ok end)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :review_merge_runner)
+        Application.delete_env(:evo_dash, :review_reject_runner)
+      end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "a partial resolution leaves the hub snapshot unchanged", %{conn: conn, task_id: task_id} do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      wait_hub_warm()
+      assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+
+      # One repo resolved, the other pending → no completion → NO invalidation.
+      assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
+    end
+
+    test "the final terminal resolution invalidates the hub snapshot", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      wait_hub_warm()
+      assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
+
+      # Partial resolution (merge) → the snapshot survives untouched.
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
+
+      # The LAST repo reaching a terminal state completes the review → the
+      # snapshot is invalidated so a later /projects mount comes up cold.
+      render_click(view, "reject", %{"repo_id" => "original"})
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+  end
+
+  describe "open_repo_diff" do
+    setup do
+      task_id = seed_orphaned_review_task!()
+      {:ok, task_id: task_id}
+    end
+
+    test "switches to the named repo's diff on the files-changed tab", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)])
+        ])
+
+      # The default conversation tab renders the per-repo cards, never the diff.
+      assert render(view) =~ ~s(id="repo-card-primary")
+      refute has_element?(view, "#diff-viewer")
+
+      html = render_click(view, "open_repo_diff", %{"repo_id" => "original"})
+
+      # The FOREIGN repo's file list is now the rendered one, the diff viewer is
+      # mounted, and the files-changed toolbar's repo selector marks it active.
+      assert html =~ "src/two.rs"
+      refute html =~ "lib/one.ex"
+      assert html =~ ~s(id="diff-viewer")
+      refute html =~ ~s(id="repo-card-primary")
+      assert repo_select_state(html) == %{values: ["primary", "original"], selected: ["original"]}
+    end
+
+    test "an unknown repo id is a harmless no-op", %{conn: conn, task_id: task_id} do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)]),
+          review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 12, 5)])
+        ])
+
+      html = render_click(view, "open_repo_diff", %{"repo_id" => "ghost"})
+
+      # Not whitelisted → the socket is returned unchanged: still on the
+      # conversation tab, still no repo selector (the diff toolbar never renders).
+      assert html =~ ~s(id="repo-card-primary")
+      refute html =~ ~s(id="diff-viewer")
+      assert repo_select_state(html) == %{values: [], selected: []}
+    end
+
+    test "missing / malformed params hit the catch-all no-op clause", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 30, 10)])
+        ])
+
+      # %{} and %{"other" => _} reach the catch-all clause; a nil id is rejected
+      # by find_review_repo/2 (non-binary) — all three are no-ops.
+      for params <- [%{}, %{"other" => "x"}, %{"repo_id" => nil}] do
+        html = render_click(view, "open_repo_diff", params)
+
+        assert html =~ ~s(id="repo-card-primary")
+        refute html =~ ~s(id="diff-viewer")
+      end
+    end
+  end
+
+  describe "multi-repo review — per-repo action whitelist and terminal guards" do
+    setup do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
+    end
+
+    test "merge with an unknown repo_id never calls the runner", %{conn: conn, task_id: task_id} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      html = render_click(view, "merge", %{"repo_id" => "ghost", "target_branch" => "dev"})
+
+      # Whitelist miss → no runner call, no state change, no navigation.
+      refute_received {:merged_call, _, _, _, _}
+      refute_redirected(view)
+      refute html =~ "Changes merged successfully"
+
+      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
+      assert TaskRegistry.get_task(task_id).review_status == nil
+    end
+
+    test "reject with an unknown repo_id never calls the runner", %{conn: conn, task_id: task_id} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn n, p, b ->
+        send(test_pid, {:reject_call, n, p, b})
+        :ok
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      render_click(view, "reject", %{"repo_id" => "ghost"})
+
+      refute_received {:reject_call, _, _, _}
+      refute_redirected(view)
+      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
+    end
+
+    test "merge/reject on an already-terminal repo are no-ops", %{conn: conn, task_id: task_id} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn n, p, b ->
+        send(test_pid, {:reject_call, n, p, b})
+        :ok
+      end)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :review_merge_runner)
+        Application.delete_env(:evo_dash, :review_reject_runner)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # Resolve the primary, then act on it again — the terminal guard must
+      # short-circuit BEFORE the runner.
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      assert_received {:merged_call, _, _, "task-branch", "dev"}
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      render_click(view, "reject", %{"repo_id" => "primary"})
+
+      refute_received {:merged_call, _, _, _, _}
+      refute_received {:reject_call, _, _, _}
+
+      primary = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "primary"))
+      assert primary.resolution == %{state: :merged, target: "dev"}
+      assert primary.branch_exists == false
+    end
+
+    test "merge/reject on a load-seeded :handled repo are no-ops", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn n, p, b ->
+        send(test_pid, {:reject_call, n, p, b})
+        :ok
+      end)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :review_merge_runner)
+        Application.delete_env(:evo_dash, :review_reject_runner)
+      end)
+
+      handled =
+        Map.put(review_repo("primary", "/nonexistent/repo/path", []), :resolution, %{
+          state: :handled
+        })
+
+      view = mount_with_repos(conn, task_id, [handled])
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      render_click(view, "reject", %{"repo_id" => "primary"})
+
+      refute_received {:merged_call, _, _, _, _}
+      refute_received {:reject_call, _, _, _}
+
+      primary = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "primary"))
+      assert primary.resolution == %{state: :handled}
+    end
+
+    test "a blank or unknown target_branch falls back to the repo's default target", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      foreign_dir: foreign_dir
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # Blank target → the repo's default ("main" here).
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => ""})
+
+      assert_received {:merged_call, _, call_path, "task-branch", "main"}
+      assert call_path == primary_dir
+
+      # Unknown target (not a member of this repo's merge_targets) → the default.
+      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "no-such-branch"})
+
+      assert_received {:merged_call, _, call_path, "task-branch", "main"}
+      assert call_path == foreign_dir
+    end
+  end
+
+  describe "repo card resolution seeding (load-time)" do
+    # build_repo_entry/2 seeds a TERMINAL %{state: :handled} resolution when a
+    # non-blank branch_name is paired with branch_exists: false (the branch
+    # vanished) — rendered as the terminal row with NO merge form / actions.
+    # A blank / nil branch_name NEVER seeds :handled and stays unresolved.
+    test "a vanished branch renders as :handled with no actions", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      card = repo_card_html(html, "primary")
+
+      # The resolution badge carries the terminal :handled label...
+      [badge] = Floki.find(Floki.parse_document!(card), "#repo-resolution-primary")
+      assert Floki.text(badge) |> String.trim() == "Already handled"
+
+      # ...and the card offers neither a merge form nor a Reject button.
+      refute card =~ ~s(id="merge-form-primary")
+      refute card =~ ~s(phx-click="reject")
+      refute card =~ ~s(phx-click="merge")
+    end
+
+    test "a nil branch name stays unresolved and renders no merge form", %{conn: conn} do
+      task_id = "review_test_nil_branch_seeding_#{System.unique_integer([:positive])}"
+
+      # A completed task whose result does not carry a branch_name (an error
+      # tuple) — branch_name is nil, so no :handled resolution is seeded.
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :completed,
+        opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        logs: [],
+        review_status: nil,
+        result: {:error, "Something went wrong"}
+      }
+
+      EvoGit.Store.put_task(EvoGit.Store, task)
+
+      on_exit(fn ->
+        TaskRegistry.delete_task(task_id)
+        # Synchronize the deletion cast.
+        TaskRegistry.list_tasks()
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      card = repo_card_html(html, "primary")
+
+      # `#repo-resolution-<id>` is ALWAYS rendered — empty when unresolved.
+      [badge] = Floki.find(Floki.parse_document!(card), "#repo-resolution-primary")
+      assert Floki.text(badge) |> String.trim() == ""
+
+      refute card =~ ~s(id="merge-form-primary")
+      refute card =~ ~s(phx-click="reject")
+      refute card =~ "Already handled"
+    end
+  end
+
+  describe "multi-repo review — per-repo target selection" do
+    setup do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
+    end
+
+    test "merge_target_change updates only the changed repo's selected target", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # Each card owns its own <select> inside #merge-form-<repo_id>, both
+      # preselecting their own default ("main").
+      assert repo_target_selection(html, "primary") == "main"
+      assert repo_target_selection(html, "original") == "main"
+
+      html =
+        render_change(view, "merge_target_change", %{
+          "repo_id" => "original",
+          "target_branch" => "dev"
+        })
+
+      # Only the foreign repo's select moved to "dev" — the primary's own
+      # default target is untouched (never a shared, page-level target).
+      assert repo_target_selection(html, "original") == "dev"
+      assert repo_target_selection(html, "primary") == "main"
+    end
+
+    test "merge reads the per-repo select value", %{conn: conn, task_id: task_id} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+
+      # Move the FOREIGN repo's select to "dev" through its own per-repo form...
+      render_change(view, "merge_target_change", %{
+        "repo_id" => "original",
+        "target_branch" => "dev"
+      })
+
+      # ...then merge each repo into ITS OWN select value: the primary stays on
+      # "main", the foreign repo on "dev".
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      assert_received {:merged_call, _, primary_path, "task-branch", "main"}
+
+      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
+      assert_received {:merged_call, _, foreign_path, "task-branch", "dev"}
+
+      refute primary_path == foreign_path
+    end
+  end
+
+  describe "component surface pins (repo_cards / task_actions)" do
+    # The components themselves live in the sibling components/ test node
+    # (read-only here), so the surface contract is pinned in this file.
+    test "repo_cards renders the completion banner only when completion is set" do
+      repos = [
+        review_repo("primary", "/repo/path", [file_info("lib/one.ex", 1, 0)]),
+        review_repo("original", "/other/path", [])
+      ]
+
+      back_url = "/projects?node=remote-1"
+
+      none =
+        render_component(&EvoDashWeb.ReviewComponents.repo_cards/1, %{
+          repos: repos,
+          completion: nil,
+          back_url: back_url
+        })
+
+      refute none =~ ~s(id="review-completion-banner")
+      refute none =~ ~s(id="review-completion-back")
+
+      merged =
+        render_component(&EvoDashWeb.ReviewComponents.repo_cards/1, %{
+          repos: repos,
+          completion: :merged,
+          back_url: back_url
+        })
+
+      assert merged =~ ~s(id="review-completion-banner")
+      assert merged =~ "All repositories merged."
+      assert completion_back_href(merged) == back_url
+
+      rejected =
+        render_component(&EvoDashWeb.ReviewComponents.repo_cards/1, %{
+          repos: repos,
+          completion: :rejected,
+          back_url: back_url
+        })
+
+      assert rejected =~ ~s(id="review-completion-banner")
+      assert rejected =~ "All repositories rejected."
+      assert completion_back_href(rejected) == back_url
+    end
+
+    test "repo_cards always renders an empty resolution badge when unresolved" do
+      html =
+        render_component(&EvoDashWeb.ReviewComponents.repo_cards/1, %{
+          repos: [review_repo("primary", "/repo/path", [])],
+          completion: nil,
+          back_url: "/projects"
+        })
+
+      [badge] = Floki.find(Floki.parse_document!(html), "#repo-resolution-primary")
+      assert Floki.text(badge) |> String.trim() == ""
+    end
+
+    test "task_actions renders the primary-scoped set with Reject absent from the menu" do
+      html =
+        render_component(&EvoDashWeb.ReviewComponents.task_actions/1, %{
+          can_resume: true,
+          loading: false,
+          branch_exists: true,
+          has_pr: false,
+          pr_url: nil,
+          show_export: false,
+          export_url: nil
+        })
+
+      assert html =~ ~s(phx-click="resume")
+      assert html =~ "Continue task"
+
+      menu = overflow_menu(html)
+
+      # Reject moved to the per-repo cards — the task-level menu must NOT carry
+      # it, while the primary-scoped actions stay.
+      refute menu =~ ~s(phx-click="reject")
+      refute menu =~ "Reject"
+      assert menu =~ ~s(phx-click="create_pr")
+      assert menu =~ "Create GitHub PR"
+      assert menu =~ ~s(phx-click="extract_skills")
+      assert menu =~ ~s(phx-click="ignore")
+      refute menu =~ "Export JSON"
+    end
+  end
+
   # --- Helpers for the merge-target selector tests ---
 
   # Extracts the review page's "…" overflow menu — the ONLY
@@ -3164,6 +3825,25 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     wait_loop.(wait_loop)
+  end
+
+  # The <option value> preselected inside a SINGLE repo card's own merge form
+  # (#merge-form-<repo_id>). Scoping to the card first (repo_card_html/2) keeps
+  # a sibling card's select out of the match — each card owns its own target.
+  defp repo_target_selection(html, repo_id) do
+    html
+    |> repo_card_html(repo_id)
+    |> target_branch_select()
+    |> selected_option_value()
+  end
+
+  # The href of the completion banner's back link (#review-completion-back), or
+  # nil when the link is absent.
+  defp completion_back_href(html) do
+    case Floki.find(Floki.parse_document!(html), "#review-completion-back") do
+      [link | _] -> link |> Floki.attribute("href") |> List.first()
+      [] -> nil
+    end
   end
 
   # Extracts the "Merge into" target-branch <select> block, or "" if absent.
