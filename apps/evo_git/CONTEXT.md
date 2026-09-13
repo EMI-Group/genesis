@@ -27,6 +27,7 @@ Genesis supports SSH remote development (VSCode Remote-SSH-style): a headless `:
 - Config caching behavior (remote/SSH scenarios) → `./lib/evo_git/config/` (Config Caching)
 - Peak/off-peak hour scheduling → `./lib/evo_git/agent_scheduler/` (Slot Management) + `./lib/evo_git/config/`
 - Cross-node RPC payload profile → `lib/evo_git/CONTEXT.md` (Review/RemoteNode Return-Shape Contract)
+- Review API surface (per-repo-path capability vs task-level-only review state) → `./lib/evo_git/` (`review.ex` + `remote_node.ex`) + `./lib/evo_git/agent_scheduler/` (RemoteAPI mirrors) + `./lib/evo_git/task_registry/` (`set_review_status`/`set_review_metadata`) + `./lib/evo_git/store/` (single `tasks.review_status` column; no per-repo review state exists)
 - Desktop backend port / orphan prevention / task cancellation model / ReqLLMPool sizing / peak-hours / merge-conflict check / native directory picker → root `./CONTEXT.md` (do not duplicate)
 
 ## API Surface
