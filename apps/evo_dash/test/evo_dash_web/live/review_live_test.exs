@@ -23,6 +23,15 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
     on_exit(fn ->
       Application.delete_env(:evo_dash, :merge_check_runner)
+
+      # Reset on EXIT as well as on entry. Every page mount asynchronously
+      # writes a sidebar snapshot into this global hub; the start-of-test reset
+      # above only protects THIS module's tests, so the LAST test's snapshot
+      # (e.g. the sidebar-visible review fixtures) would survive into a later
+      # suite that mounts pages without resetting the hub (PageControllerTest
+      # does a dead render through Layouts.app and reads the hub). Clear it so
+      # this module never leaks hub state into a sibling suite.
+      EvoDash.ActiveTasks.reset()
     end)
 
     :ok
@@ -448,9 +457,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
   describe "async merge check on the review page" do
     # The async dry-run merge check is spawned on mount for mergeable repos.
     # The runner is stubbed via the :merge_check_runner test seam: the
-    # describe-level blocking runner keeps the status at :checking until the
-    # LiveView dies at test end (the spawned task is linked to the view), so
-    # no auto-generated result can race a manually injected
+    # describe-level blocking runner holds the status at :checking for the
+    # whole test (it only unblocks on its long timeout, far beyond any test
+    # here), so no auto-generated result can race a manually injected
     # {:merge_check_result, ...} message. Results are injected directly via
     # send/2, making the state machine fully deterministic.
     setup do
@@ -462,6 +471,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       Application.put_env(:evo_dash, :merge_check_runner, fn _node, _repo, _branch, _target ->
         receive do
           :release_merge_check -> {:ok, :clean}
+        after
+          # Nothing ever sends :release_merge_check, and the spawned check Task
+          # lives on EvoDash.TaskSupervisor (Task.Supervisor.start_child does
+          # NOT link it to the LiveView), so an unbounded receive would block
+          # that process forever — leaking one per test. The bound is far
+          # longer than any test here, so a late result can only ever be sent
+          # to the already-dead view's pid.
+          30_000 -> {:ok, :clean}
         end
       end)
 
@@ -1729,9 +1746,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "multi-repo review — per-repo merge check" do
     # Same deterministic pattern as the single-repo "async merge check" describe:
-    # a BLOCKING :merge_check_runner keeps every repo's status at :checking until
-    # the LiveView dies at test end, so injected 6-tuple results cannot race an
-    # auto-generated message.
+    # a BLOCKING :merge_check_runner holds every repo's status at :checking for
+    # the whole test (it only unblocks on its long timeout, far beyond any test
+    # here), so injected 6-tuple results cannot race an auto-generated message.
     setup do
       {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
         create_multi_repo_review_task!("main", "dev")
@@ -1739,6 +1756,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       Application.put_env(:evo_dash, :merge_check_runner, fn _node, _repo, _branch, _target ->
         receive do
           :release_merge_check -> {:ok, :clean}
+        after
+          # Nothing ever sends :release_merge_check, and the spawned check Task
+          # lives on EvoDash.TaskSupervisor (Task.Supervisor.start_child does
+          # NOT link it to the LiveView), so an unbounded receive would block
+          # that process forever — leaking one per test. The bound is far
+          # longer than any test here, so a late result can only ever be sent
+          # to the already-dead view's pid.
+          30_000 -> {:ok, :clean}
         end
       end)
 
