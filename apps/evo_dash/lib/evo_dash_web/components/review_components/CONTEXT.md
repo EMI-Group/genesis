@@ -2,7 +2,7 @@
 
 ## Intent
 
-Sub-component modules of the code review page (GitHub-PR-inspired, Adwaita-styled design): `DiffViewer` (split diff rendering with client-side syntax highlighting, file-tree sidebar, split/commit two-pane layouts), `Header` (compact page header, agent report card, objective card, task-details disclosure), `RepoCards` (one card per repository — per-repo merge/reject controls, per-repo merge-check strip, per-repo resolution state — plus the optional review-completion banner), `Actions` (primary-scoped task-level actions row — Continue task + overflow menu — plus the skills-extraction modal), `Stats` (diff stat row, commits list). The parent facade `EvoDashWeb.ReviewComponents` (`../review_components.ex`) delegates to these five and locally owns the page-level tab bar (`page_tabs/1`), the per-repo merge outcome report (`merge_outcomes_panel/1`), and the archive tree (`archive_review_section/1`).
+Sub-component modules of the code review page (GitHub-PR-inspired, Adwaita-styled design): `DiffViewer` (split diff rendering with client-side syntax highlighting, file-tree sidebar, split/commit two-pane layouts), `Header` (compact page header, agent report card, objective card, task-details disclosure), `RepoCards` (one card per repository — per-repo merge/reject controls, per-repo merge-check strip, per-repo resolution state — plus the optional review-completion banner), `Actions` (primary-scoped task-level actions row — Continue task + overflow menu — plus the skills-extraction modal), `Stats` (diff stat row, commits list). The parent facade `EvoDashWeb.ReviewComponents` (`../review_components.ex`) delegates to these five and locally owns the page-level tab bar (`page_tabs/1`) and the archive tree (`archive_review_section/1`).
 
 ## Routing Table
 
@@ -19,17 +19,6 @@ All components are function components (`use EvoDashWeb, :html`) invoked through
 Attrs: `active_tab` (`:atom`, **required**), `files_count` (`:integer`, default `0`), `commits_count` (`:integer`, default `0`), `show_archive` (`:boolean`, default `false`), `agents_count` (`:integer`, default `0`).
 
 Renders up to five tabs — Conversation (`hero-chat-bubble-left-right`), Objective (`hero-chat-bubble-bottom-center-text`, **no count badge**, always rendered), Files changed (`hero-code-bracket`, count badge), Commits (`hero-clock`, count badge), Archive (`hero-archive-box-arrow-down`, gated on `show_archive`, agents-count badge) — in a horizontally scrollable `border-b-2` underline bar (active tab = `border-primary-standalone` + semibold; inactive = transparent border, `/70` text with hover). Events: **`switch_tab`** with `phx-value-tab` ∈ `"conversation" | "objective" | "files_changed" | "commits" | "archive"` (one `<button>` per tab). The Objective tab hosts `objective_section/1` (own readability column on the page); placement is owned by ReviewLive.
-
-#### `merge_outcomes_panel/1` — per-repo broadcast merge/reject outcome report
-
-Attrs: `outcomes` (`:list`, default `[]`). Renders nothing when the list is empty. Computes `any_rejected` (`Enum.any?(&(&1[:status] == :rejected))`) to switch the title between "Merge results" and "Reject results". One row per outcome, reading `outcome[:repo_id]` (mono ghost badge), `outcome[:status]`, `outcome[:target]`, `outcome[:detail]`:
-
-- `:merged` — green check + "Merged into %{target}" (or bare "Merged" when `target` nil); a binary `detail` renders as a mono `String.slice(detail, 0..7)` SHA chip.
-- `:rejected` — green check + "Rejected — branch deleted".
-- `:conflict` — amber warning + "Merge conflict"; a non-empty list `detail` renders via the public `conflict_files_summary/1`.
-- `:error` — red x + "Failed: %{detail}" with `format_outcome_detail/1` (binaries as-is, anything else `inspect/1`).
-
-Fires no events (pure report).
 
 #### `archive_review_section/1` + `archive_tree_node/1` — archived agent tree
 
@@ -90,7 +79,7 @@ One `rounded-xl border border-base-300 bg-base-100 p-4 flex flex-wrap items-cent
 
 #### `conflict_files_summary/1` — public helper
 
-First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when more exist. Public (delegated from the facade) so `merge_outcomes_panel/1` and `RepoCards.merge_status_block/1` can reuse it.
+First ~4 conflicting file names joined with `", "`, with a trailing `"…"` when more exist. Public (delegated from the facade) so `RepoCards.merge_status_block/1` can reuse it.
 
 #### `extract_skills_modal/1`
 
@@ -225,11 +214,20 @@ All components are **purely display** — none re-fetches data (no `EvoDash.Node
 - **`commits_list`**: per `CommitInfo` — `sha`, `short_sha`, `message`, `author_name`, `date`.
 - **`commit_detail_header`**: `message`, `sha`, `author_name`, `date`, `back_url`, `task_title`.
 - **`split_diff_layout` / `commit_diff_layout` / `diff_viewer`**: per-`FileInfo` field reads — **`path`** (tree build, header, `file_path_to_id`), **`status`** (header + tree via `file_status_icon/color` — "added"/"deleted"/"modified", catch-all else), **`additions`/`deletions`** (header, tree file node, dir aggregates, toolbar sums), **`language`** (→ `data-language`), **`diff`** (only in `render_diff_content`). Drivers: `expanded_files` (body renders only when true), `file_context_levels` (default 3; `:all` disables expand bars), `selected_file` (tree row highlight only — never referenced in `diff_viewer/1`'s body), `expanded_dirs`/`file_filter` (sidebar). **Lazy diff confirmed**: `render_diff_content` checks `file.diff` twice (`if file.diff, do: parse_diff_lines(file), else: []` and `is_nil(@file.diff)` → "Loading diff…" spinner); ReviewLive swaps in `file.diff` via `update_file_diff_in_socket/4`. Headers/stats render from metadata alone; full diff text renders only for expanded files whose diff has been fetched.
-- **`merge_outcomes_panel`**: outcome maps via `outcome[:key]` access (repo_id/status/target/detail).
 - **`archive_review_section`/`archive_tree_node`**: see the component section above (atom-keyed per-agent maps incl. the nested `usage` sub-map).
 - **Full content rendering**: the ONLY full-content rendering is `render_diff_content` (split-view diff text for expanded files) and `agent_summary`/`objective_section` (markdown/raw). `full_new_content`/`full_old_content` FileInfo fields are never read (inert — see above).
 
 **Locked `EvoDashWeb.Helpers` helpers consumed** (never re-implemented locally): `review_status_badge/icon/label` (page_header), `task_status_badge` (page_header, task_summary), `relative_time` (page_header, task_summary, commits_list, commit_detail_header, archive_tree_node), `format_number` (page_header, task_summary, archive_tree_node), `format_cost` (task_summary, archive_tree_node), `format_cache_hit_rate` (task_summary), `format_datetime` (archive_tree_node).
+
+## Constraints
+
+### `try/rescue` Policy
+
+`try/rescue` is normally an anti-pattern in Elixir. Within these component files:
+
+- **Do NOT** wrap `String.to_existing_atom/1` in `try/rescue`. When normalizing potentially untrusted DB-sourced data (e.g. agent archive maps after a Jason.decode round-trip), use an explicit **whitelist map lookup** (`@known_agent_keys` in `normalize_agent_keys/1`) with `Map.get/3` defaulting to the original key. This avoids dynamic atom creation AND avoids try/rescue.
+- If any new `try/rescue` is introduced, it MUST include a clear inline comment explaining why it is justified.
+mary), `relative_time` (page_header, task_summary, commits_list, commit_detail_header, archive_tree_node), `format_number` (page_header, task_summary, archive_tree_node), `format_cost` (task_summary, archive_tree_node), `format_cache_hit_rate` (task_summary), `format_datetime` (archive_tree_node).
 
 ## Constraints
 

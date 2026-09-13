@@ -144,7 +144,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   end
 
   # First ~4 conflicting file names joined with ", ", with a "…" suffix when
-  # more exist. Public so review_components.ex (merge_outcomes_panel/1) and
+  # more exist. Public (delegated from the facade) so
   # RepoCards.merge_status_block/1 can reuse it.
   def conflict_files_summary(files) do
     shown = Enum.take(files, 4)
