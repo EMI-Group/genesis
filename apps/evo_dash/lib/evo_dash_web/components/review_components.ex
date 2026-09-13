@@ -3,9 +3,8 @@ defmodule EvoDashWeb.ReviewComponents do
   Components for the code review page — GitHub PR-style tab layout with split diff viewer.
 
   Facade module: delegates to the `ReviewComponents.*` sub-modules (Header, Actions,
-  Stats, DiffViewer) and locally owns the page-level tab bar (`page_tabs/1`), the
-  per-repo merge outcome report (`merge_outcomes_panel/1`) and the archive tree
-  (`archive_review_section/1`).
+  Stats, DiffViewer, RepoCards) and locally owns the page-level tab bar (`page_tabs/1`)
+  and the archive tree (`archive_review_section/1`).
   """
 
   # zh_CN: Commit → "提交", Agent → "智能体", Token → "词元"
@@ -18,7 +17,8 @@ defmodule EvoDashWeb.ReviewComponents do
   defdelegate task_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate agent_summary(assigns), to: EvoDashWeb.ReviewComponents.Header
   defdelegate objective_section(assigns), to: EvoDashWeb.ReviewComponents.Header
-  defdelegate merge_box(assigns), to: EvoDashWeb.ReviewComponents.Actions
+  defdelegate repo_cards(assigns), to: EvoDashWeb.ReviewComponents.RepoCards
+  defdelegate task_actions(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate extract_skills_modal(assigns), to: EvoDashWeb.ReviewComponents.Actions
   defdelegate diff_stats_bar(assigns), to: EvoDashWeb.ReviewComponents.Stats
   defdelegate commits_list(assigns), to: EvoDashWeb.ReviewComponents.Stats
@@ -122,108 +122,6 @@ defmodule EvoDashWeb.ReviewComponents do
     </div>
     """
   end
-
-  # ---------------------------------------------------------------------------
-  # merge_outcomes_panel/1 — Per-repo broadcast merge outcome report
-  # ---------------------------------------------------------------------------
-
-  attr(:outcomes, :list, default: [])
-
-  def merge_outcomes_panel(assigns) do
-    # zh_CN: 合并结果/拒绝结果汇总面板标题 — any :rejected outcome switches the panel title
-    assigns =
-      assign(assigns, :any_rejected, Enum.any?(assigns.outcomes, &(&1[:status] == :rejected)))
-
-    ~H"""
-    <%= if @outcomes != [] do %>
-      <div class="rounded-xl border border-base-300 bg-base-100 p-4">
-        <div class="flex items-center gap-3 mb-4">
-          <.icon name="hero-arrow-path" class="size-5 text-base-content/60" />
-          <%= if @any_rejected do %>
-            <%!-- zh_CN: "Reject results" → 拒绝结果（合并结果/拒绝结果汇总面板标题） --%>
-            <h3 class="font-semibold text-base">{gettext("Reject results")}</h3>
-          <% else %>
-            <%!-- zh_CN: "Merge results" → 合并结果 --%>
-            <h3 class="font-semibold text-base">{gettext("Merge results")}</h3>
-          <% end %>
-        </div>
-        <div class="space-y-3">
-          <%= for outcome <- @outcomes do %>
-            <div class="flex items-start gap-3 rounded-lg border border-base-200 bg-base-200/30 p-3">
-              <span class="badge badge-sm badge-ghost font-mono shrink-0 mt-0.5">{outcome[:repo_id]}</span>
-              <%= case outcome[:status] do %>
-                <% :merged -> %>
-                  <div class="flex items-start gap-2 min-w-0 text-sm">
-                    <.icon name="hero-check-circle" class="size-5 text-success shrink-0 mt-0.5" />
-                    <div class="min-w-0">
-                      <span class="font-medium text-success">
-                        <%= if outcome[:target] do %>
-                          <%!-- zh_CN: "Merged into %{target}" → 已合并到 %{target} --%>
-                          {gettext("Merged into %{target}", target: outcome[:target])}
-                        <% else %>
-                          <%!-- zh_CN: "Merged" → 已合并 --%>
-                          {gettext("Merged")}
-                        <% end %>
-                      </span>
-                      <%= if is_binary(outcome[:detail]) do %>
-                        <span class="font-mono text-xs text-base-content/60 ml-2">
-                          {String.slice(outcome[:detail], 0..7)}
-                        </span>
-                      <% end %>
-                    </div>
-                  </div>
-                <% :rejected -> %>
-                  <div class="flex items-start gap-2 min-w-0 text-sm">
-                    <.icon name="hero-check-circle" class="size-5 text-success shrink-0 mt-0.5" />
-                    <div class="min-w-0">
-                      <%!-- zh_CN: "Rejected — branch deleted" → 已拒绝——分支已删除 --%>
-                      <span class="font-medium text-success">{gettext("Rejected — branch deleted")}</span>
-                      <%= if is_binary(outcome[:detail]) do %>
-                        <span class="font-mono text-xs text-base-content/60 ml-2">
-                          {String.slice(outcome[:detail], 0..7)}
-                        </span>
-                      <% end %>
-                    </div>
-                  </div>
-                <% :conflict -> %>
-                  <div class="flex items-start gap-2 min-w-0 text-sm">
-                    <.icon
-                      name="hero-exclamation-triangle"
-                      class="size-5 text-warning shrink-0 mt-0.5"
-                    />
-                    <div class="min-w-0">
-                      <%!-- zh_CN: "Merge conflict" → 合并冲突 --%>
-                      <span class="font-medium text-warning">{gettext("Merge conflict")}</span>
-                      <%= if is_list(outcome[:detail]) and outcome[:detail] != [] do %>
-                        <span class="text-base-content/70 block mt-1 break-words">
-                          {conflict_files_summary(outcome[:detail])}
-                        </span>
-                      <% end %>
-                    </div>
-                  </div>
-                <% :error -> %>
-                  <div class="flex items-start gap-2 min-w-0 text-sm">
-                    <.icon name="hero-x-circle" class="size-5 text-error shrink-0 mt-0.5" />
-                    <div class="min-w-0">
-                      <%!-- zh_CN: "Failed: %{detail}" → 失败：%{detail} --%>
-                      <span class="font-medium text-error">
-                        {gettext("Failed: %{detail}", detail: format_outcome_detail(outcome[:detail]))}
-                      </span>
-                    </div>
-                  </div>
-              <% end %>
-            </div>
-          <% end %>
-        </div>
-      </div>
-    <% end %>
-    """
-  end
-
-  # Error outcome details may be any inspected reason term — render binaries
-  # as-is, everything else via inspect.
-  defp format_outcome_detail(detail) when is_binary(detail), do: detail
-  defp format_outcome_detail(detail), do: inspect(detail)
 
   # ---------------------------------------------------------------------------
   # archive_review_section/1 — Archived agent details with recursive tree
