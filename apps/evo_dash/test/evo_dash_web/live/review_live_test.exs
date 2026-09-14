@@ -3201,6 +3201,304 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "multi-repo review — merge all (accept-all shortcut)" do
+    # The batch shortcut (#merge-all-repositories, phx-click="merge_all", NO
+    # params) folds EVERY unresolved repo through the SHARED merge_one_repo/3
+    # path (the exact same path as the per-repo "merge" event), best-effort per
+    # repo. It is gated on >= 2 repos AND >= 2 still unresolved.
+
+    test "is hidden for a single-repo task", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      html =
+        conn
+        |> mount_with_repos(task_id, [review_repo("primary", "/nonexistent/repo/path", [])])
+        |> render()
+
+      refute html =~ ~s(id="merge-all-repositories")
+      refute html =~ ~s(id="merge-all-toolbar")
+
+      # Sanity: the single repo's own card still rendered.
+      assert html =~ ~s(id="repo-card-primary")
+    end
+
+    test "is hidden when fewer than 2 repos are still unresolved", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      # One actionable repo + one ALREADY-terminal repo (`:handled`): only ONE
+      # unresolved remains, so the shortcut must not render.
+      handled =
+        Map.put(review_repo("original", "/nonexistent/foreign/path", []), :resolution, %{
+          state: :handled
+        })
+
+      html =
+        conn
+        |> mount_with_repos(task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          handled
+        ])
+        |> render()
+
+      refute html =~ ~s(id="merge-all-repositories")
+      refute html =~ ~s(id="merge-all-toolbar")
+    end
+
+    test "renders with a phx-confirm gate, after the banner slot and before the cards", %{
+      conn: conn
+    } do
+      task_id = seed_orphaned_review_task!()
+
+      html =
+        conn
+        |> mount_with_repos(task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+        |> render()
+
+      assert html =~ ~s(id="merge-all-toolbar")
+      assert html =~ ~s(id="merge-all-repositories")
+
+      [button] = Floki.find(Floki.parse_document!(html), "#merge-all-repositories")
+
+      assert Floki.attribute(button, "phx-click") == ["merge_all"]
+      assert Floki.text(button) =~ "Merge all repositories"
+
+      assert Floki.attribute(button, "class") == [
+               "btn btn-success btn-sm rounded-lg gap-1.5"
+             ]
+
+      # Confirmation is attribute-based (phx-confirm), NOT a modal.
+      assert Floki.attribute(button, "phx-confirm") == [
+               "Merge ALL remaining repositories into their target branches? This cannot be undone."
+             ]
+
+      # Ordered INSIDE #review-repo-cards, AFTER the (absent here) completion
+      # banner slot and BEFORE the first repo card.
+      toolbar_index = :binary.match(html, ~s(id="merge-all-toolbar")) |> elem(0)
+      first_card_index = :binary.match(html, ~s(id="repo-card-primary")) |> elem(0)
+      assert toolbar_index < first_card_index
+
+      refute html =~ ~s(id="review-completion-banner")
+    end
+
+    test "a direct merge_all dispatch with zero unresolved repos is a no-op", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        send(test_pid, :merged_call)
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      # Every repo already terminal → nothing to fold (the button is hidden).
+      primary =
+        Map.put(review_repo("primary", "/nonexistent/repo/path", []), :resolution, %{
+          state: :handled
+        })
+
+      foreign =
+        Map.put(review_repo("original", "/nonexistent/foreign/path", []), :resolution, %{
+          state: :merged,
+          target: "main"
+        })
+
+      view = mount_with_repos(conn, task_id, [primary, foreign])
+
+      refute render(view) =~ ~s(id="merge-all-repositories")
+
+      # Event dispatch bypassing the (hidden) button: no runner call, no flash.
+      render_click(view, "merge_all")
+
+      refute_receive :merged_call, 100
+      refute assigns(view)[:flash]["success"]
+      refute assigns(view)[:flash]["error"]
+    end
+
+    test "merges every unresolved repo (one runner call each, respecting per-repo targets)", %{
+      conn: conn
+    } do
+      {primary_dir, foreign_dir, task_id, _primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      wait_hub_warm()
+
+      assert render(view) =~ ~s(id="merge-all-repositories")
+
+      # Both cards default to "main"; move the FOREIGN repo's own select to
+      # "dev" through its per-repo form, so the batch must read each repo's
+      # target independently (never one shared, page-level target).
+      render_change(view, "merge_target_change", %{
+        "repo_id" => "original",
+        "target_branch" => "dev"
+      })
+
+      render_click(view, "merge_all")
+
+      # ONE runner call per unresolved repo, each with ITS OWN target: the
+      # primary on its default "main", the foreign repo on its selected "dev".
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "main"}
+      assert call_node == node()
+      assert call_path == primary_dir
+
+      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
+      assert call_node == node()
+      assert call_path == foreign_dir
+
+      refute_receive {:merged_call, _, _, _, _}, 100
+
+      # Both repos settled :merged into their own target; branches cleared.
+      repos = assigns(view)[:review_repos]
+
+      assert Enum.map(repos, &Map.get(&1, :resolution)) == [
+               %{state: :merged, target: "main"},
+               %{state: :merged, target: "dev"}
+             ]
+
+      assert Enum.all?(repos, &(&1.branch_exists == false))
+
+      # The last repo reaching terminal completes the review (no navigation).
+      refute_redirected(view)
+
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+
+      html = render(view)
+      assert html =~ ~s(id="review-completion-banner")
+      assert html =~ "All repositories merged."
+      assert assigns(view)[:flash]["success"] =~ "Successfully merged 2 repositories."
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "a conflict on one repo settles that card and the others still merge", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+
+        if p == "/nonexistent/foreign/path" do
+          # A real merge returns raw git output (a STRING) as the conflict
+          # detail — truncate_string/2 requires a binary.
+          {:conflict, "CONFLICT (content): merge conflict in foreign_conflict.txt"}
+        else
+          {:ok, "deadbeef"}
+        end
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      html = render_click(view, "merge_all")
+
+      # ONE runner call per repo — the foreign repo's conflict did NOT abort the
+      # primary's merge (best-effort per repo).
+      assert_receive {:merged_call, _, "/nonexistent/repo/path", "evogit/test-branch", nil}
+      assert_receive {:merged_call, _, "/nonexistent/foreign/path", "evogit/test-branch", nil}
+      refute_receive {:merged_call, _, _, _, _}, 100
+
+      primary_card = repo_card_html(html, "primary")
+      foreign_card = repo_card_html(html, "original")
+
+      assert primary_card =~ "Merged"
+      assert foreign_card =~ "Merge conflict"
+      assert foreign_card =~ "foreign_conflict.txt"
+
+      # Partial batch summary overwrites the fold's per-repo flashes.
+      assert assigns(view)[:flash]["error"] =~ "Merged 1 of 2 repositories."
+
+      # The conflict is NON-terminal → the review stays open and the page STAYS.
+      refute_redirected(view)
+      refute html =~ ~s(id="review-completion-banner")
+      assert TaskRegistry.get_task(task_id).review_status == nil
+    end
+
+    test "all repos erroring reports a batch failure and keeps every card retryable", %{
+      conn: conn
+    } do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:error, :boom}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      html = render_click(view, "merge_all")
+
+      assert repo_card_html(html, "primary") =~ "Merge failed"
+      assert repo_card_html(html, "original") =~ "Merge failed"
+
+      assert assigns(view)[:flash]["error"] =~ "Could not merge any of the 2 repositories"
+
+      # No repo reached terminal → no completion, no navigation.
+      refute_redirected(view)
+      refute html =~ ~s(id="review-completion-banner")
+      assert TaskRegistry.get_task(task_id).review_status == nil
+    end
+
+    test "all repos resolving through the shortcut completes the review once", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _n, _p, _b, _t ->
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          review_repo("primary", "/nonexistent/repo/path", []),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      wait_hub_warm()
+      assert {:ok, {_running, _pending}} = EvoDash.ActiveTasks.get(nil, node())
+
+      render_click(view, "merge_all")
+
+      refute_redirected(view)
+
+      # The aggregate review status is written through the shared settle path
+      # (set_review_status/3 — :merged since both landed); completion is the
+      # ONLY path that invalidates the sidebar hub snapshot.
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+
+      html = render(view)
+      assert html =~ ~s(id="review-completion-banner")
+      assert html =~ ~s(id="review-completion-back")
+      assert html =~ "All repositories merged."
+      assert assigns(view)[:flash]["success"] =~ "Successfully merged 2 repositories."
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+  end
+
   describe "component surface pins (repo_cards / task_actions)" do
     # The components themselves live in the sibling components/ test node
     # (read-only here), so the surface contract is pinned in this file.
