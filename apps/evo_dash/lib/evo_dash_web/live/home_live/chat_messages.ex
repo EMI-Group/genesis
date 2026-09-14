@@ -24,8 +24,17 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
 
   alias EvoDashWeb.HomeLive.UserMessage
 
+  attr(:source_gate?, :boolean,
+    default: false,
+    doc:
+      "true when the Genesis-source gate blocks chatting — swaps the suggestion " <>
+        "chips for a short note pointing at the Download button"
+  )
+
   # Renders the empty state (no transcript entries yet): brand logo mark
-  # (light/dark variants), kicker + greeting, and the four suggestion chips.
+  # (light/dark variants), kicker + greeting, and the four suggestion chips —
+  # OR, when the Genesis-source gate blocks chatting, a short note instead of
+  # the chips (chips would only start a doomed `:reflect` task).
   def empty_state(assigns) do
     ~H"""
     <div class="h-full min-h-0 flex flex-col items-center justify-center gap-3 text-center px-6 pb-10">
@@ -52,36 +61,44 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
         )}
       </p>
-      <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
-        <%!-- zh_CN: "解释 Genesis 的架构" --%>
-        <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
-          <.icon
-            name="hero-light-bulb"
-            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
-          />
-        </.suggestion_chip>
-        <%!-- zh_CN: "任务取消是如何工作的？" --%>
-        <.suggestion_chip message={gettext("How does task cancellation work?")}>
-          <.icon
-            name="hero-magnifying-glass"
-            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
-          />
-        </.suggestion_chip>
-        <%!-- zh_CN: "你能帮我做什么？" --%>
-        <.suggestion_chip message={gettext("What can you help me with?")}>
-          <.icon
-            name="hero-puzzle-piece"
-            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
-          />
-        </.suggestion_chip>
-        <%!-- zh_CN: "引导我使用仪表盘" --%>
-        <.suggestion_chip message={gettext("Guide me through the dashboard")}>
-          <.icon
-            name="hero-map"
-            class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
-          />
-        </.suggestion_chip>
-      </div>
+      <%= if @source_gate? do %>
+        <p class="mt-4 max-w-md text-sm text-base-content/70">
+          <%!-- zh_CN: "请先下载 Genesis 源码后再开始对话" --%>{gettext(
+            "Download the Genesis source to start chatting."
+          )}
+        </p>
+      <% else %>
+        <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
+          <%!-- zh_CN: "解释 Genesis 的架构" --%>
+          <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
+            <.icon
+              name="hero-light-bulb"
+              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+            />
+          </.suggestion_chip>
+          <%!-- zh_CN: "任务取消是如何工作的？" --%>
+          <.suggestion_chip message={gettext("How does task cancellation work?")}>
+            <.icon
+              name="hero-magnifying-glass"
+              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+            />
+          </.suggestion_chip>
+          <%!-- zh_CN: "你能帮我做什么？" --%>
+          <.suggestion_chip message={gettext("What can you help me with?")}>
+            <.icon
+              name="hero-puzzle-piece"
+              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+            />
+          </.suggestion_chip>
+          <%!-- zh_CN: "引导我使用仪表盘" --%>
+          <.suggestion_chip message={gettext("Guide me through the dashboard")}>
+            <.icon
+              name="hero-map"
+              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+            />
+          </.suggestion_chip>
+        </div>
+      <% end %>
     </div>
     """
   end

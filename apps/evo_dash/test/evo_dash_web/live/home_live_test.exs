@@ -245,6 +245,26 @@ defmodule EvoDashWeb.HomeLiveTest do
     wait_loop.(wait_loop)
   end
 
+  # Polls until the async Genesis-source availability check has landed on the
+  # socket (its runner resolves at spawn time inside a TaskSupervisor child, so
+  # render_async/2 cannot await it — same reason the file polls other async
+  # assigns) and then syncs the test proxy via render/1.
+  defp await_source_available(view, expected, timeout \\ 2000) do
+    wait_until(fn -> assigns(view)[:source_available] == expected end, timeout)
+    render(view)
+  end
+
+  # Restores an Application env key captured before a test mutated it (a stored
+  # `false`/`nil` is handled correctly). Mirrors system_live_test.exs'
+  # restore_env_value/2.
+  defp restore_env_value(key, original) do
+    if original != nil do
+      Application.put_env(:evo_dash, key, original)
+    else
+      Application.delete_env(:evo_dash, key)
+    end
+  end
+
   # A REAL-shaped history payload (the exact production data path): native
   # %ReqLLM.Message{} structs with a :thinking content part, tool_calls,
   # reasoning_details, a tool message, and a nil-metadata message.
@@ -2395,6 +2415,146 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
   end
 
+  describe "genesis source gate" do
+    # The gate's availability/clone runners are read from the app env AT SPAWN
+    # TIME inside EvoDash.TaskSupervisor children, so tests stub them BEFORE
+    # live/3 and restore the originals in on_exit (the system_live_test.exs
+    # "genesis source card" restore_env_value/2 idiom). The default runners
+    # degrade to {:unavailable, :function_missing} while the core
+    # EvoGit.SelfReflectiveSource backend is absent, so the gate stays OFF for
+    # every test that does not stub it.
+    setup do
+      keys = [:source_availability_runner, :source_clone_runner]
+      originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
+
+      on_exit(fn ->
+        Enum.each(originals, fn {key, original} -> restore_env_value(key, original) end)
+      end)
+
+      :ok
+    end
+
+    test "known-unavailable source shows the gate and blocks the composer", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
+
+      # An unrelated pre-existing row proves a blocked send persists nothing new.
+      fixture_id = insert_task_fixture!(opts: [path: "/tmp/test", objective: "fixture"])
+
+      {:ok, view, _html} = live(conn, "/help")
+      html = await_source_available(view, false)
+
+      # Gate container + Download button render (idle → enabled, "Download source").
+      assert present?(html, "#genesis-source-gate")
+      assert present?(html, "#genesis-source-download")
+      assert html =~ "has not been downloaded yet"
+      assert html =~ "Download source"
+      refute html =~ "Cloning…"
+      refute disabled?(html, "#genesis-source-download")
+      # Secondary node-aware link to the System page (local node → /system).
+      assert present?(html, ~s(#genesis-source-gate a[href="/system"]))
+
+      # The empty state swaps the suggestion chips for the blocked note.
+      assert html =~ "Download the Genesis source to start chatting."
+      refute html =~ "Explain the Genesis architecture"
+
+      # Composer blocked: textarea + Send button disabled.
+      assert disabled?(html, ~s(textarea[name="message"]))
+      assert disabled?(html, ~s(button[type="submit"]))
+
+      # A submit is a defensive no-op: no optimistic bubble, no :reflect task,
+      # error flash pointing at the Download button.
+      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+      assert html =~ "Download the Genesis source before sending a message."
+      refute html =~ "hello genesis"
+      assert assigns(view).chat_task_id == nil
+      assert assigns(view).chat_status == :idle
+      assert assigns(view).transcript == []
+
+      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      assert Enum.filter(tasks, &(&1.type == :reflect)) == []
+      assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
+    end
+
+    test "available source renders no gate and chat works as before", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      html = await_source_available(view, true)
+
+      # No gate, chips intact, composer enabled.
+      refute present?(html, "#genesis-source-gate")
+      refute html =~ "Download the Genesis source to start chatting."
+      assert html =~ "Explain the Genesis architecture"
+      refute disabled?(html, ~s(textarea[name="message"]))
+      refute disabled?(html, ~s(button[type="submit"]))
+
+      # A normal send still starts a repo-less :reflect task.
+      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+      assert html =~ "hello genesis"
+
+      reflect =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
+
+      assert length(reflect) == 1
+      assert opt(hd(reflect), :objective) == "hello genesis"
+      cleanup_task_on_exit(hd(reflect).id)
+    end
+
+    test "a successful download clears the gate (busy → post-clone re-check)", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      html = await_source_available(view, false)
+      assert present?(html, "#genesis-source-gate")
+
+      # The post-clone re-check now reports the source as downloaded. The clone
+      # runner sleeps so the transient busy state is deterministically observable.
+      Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
+
+      Application.put_env(:evo_dash, :source_clone_runner, fn ->
+        Process.sleep(300)
+        {:ok, %{}}
+      end)
+
+      html = render_click(view, "download_source")
+      assert html =~ "Cloning…"
+      assert disabled?(html, "#genesis-source-download")
+
+      # The clone result clears the busy marker and re-runs the availability
+      # check → the gate disappears and the composer is usable again.
+      wait_until(fn -> assigns(view)[:source_busy] == nil end)
+      html = await_source_available(view, true)
+
+      refute present?(html, "#genesis-source-gate")
+      refute html =~ "has not been downloaded yet"
+      refute disabled?(html, ~s(textarea[name="message"]))
+      assert html =~ "Explain the Genesis architecture"
+    end
+
+    test "a failing download flashes the error and keeps the gate", %{conn: conn} do
+      Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
+
+      Application.put_env(:evo_dash, :source_clone_runner, fn ->
+        Process.sleep(200)
+        {:error, :boom}
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      html = await_source_available(view, false)
+      assert present?(html, "#genesis-source-gate")
+
+      render_click(view, "download_source")
+      wait_until(fn -> assigns(view)[:source_busy] == nil end)
+
+      html = render(view)
+      assert html =~ "Failed to download the Genesis source"
+      assert html =~ ":boom"
+      # Still unavailable → the gate stays.
+      assert present?(html, "#genesis-source-gate")
+    end
+  end
+
   describe "node-awareness" do
     # The file-level setup already isolates XDG_CONFIG_HOME per test, so saving
     # a dedicated target here never touches the developer's real config. The
@@ -2490,6 +2650,34 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).current_node == node()
       assert html =~ "Start a conversation"
       assert assigns(view)[:selected_model_id] == "profile-a"
+    end
+
+    test "source gate never renders on a remote node (local-only)", %{conn: conn} do
+      test_pid = self()
+      original = Application.get_env(:evo_dash, :source_availability_runner)
+      on_exit(fn -> restore_env_value(:source_availability_runner, original) end)
+
+      # A loud runner that would flag any invocation — the local-only gate must
+      # NEVER spawn it while viewing a remote node.
+      Application.put_env(:evo_dash, :source_availability_runner, fn ->
+        send(test_pid, :availability_runner_called)
+        false
+      end)
+
+      {:ok, view, _html} = live(conn, "/help?node=test-remote")
+      html = render(view)
+
+      assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
+      # No check is spawned for a remote node → the runner is never called and
+      # source_available stays "unknown".
+      refute_receive :availability_runner_called, 200
+      assert assigns(view).source_available == nil
+
+      # No gate, no blocked note, composer NOT blocked.
+      refute present?(html, "#genesis-source-gate")
+      refute html =~ "Download the Genesis source to start chatting."
+      refute disabled?(html, ~s(textarea[name="message"]))
+      assert html =~ "Explain the Genesis architecture"
     end
   end
 end
