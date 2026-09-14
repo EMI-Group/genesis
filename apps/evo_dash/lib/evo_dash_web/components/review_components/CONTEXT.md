@@ -40,6 +40,12 @@ Each card root is `<div id={"repo-card-" <> repo_id}>` (`rounded-xl border borde
 
 Every repo field is read defensively via `field/3` (atom key → string key → default) so both atom- and string-keyed repo maps render; the diff-stat numbers go through `review_stat/2` (same fallback, default `0`).
 
+#### `show_merge_all?/1` gate + the `merge-all` accept-all shortcut
+
+Gated toolbar (`<div id="merge-all-toolbar">`) holding `<button id="merge-all-repositories">` (`btn btn-success btn-sm rounded-lg gap-1.5`, `hero-check size-4`, label `gettext("Merge all repositories")`, `phx-click="merge_all"` with NO params — fires the hosting LiveView's handler), carrying a `phx-confirm` that names EVERY remaining repository.
+Placement: inside `#review-repo-cards`, between the completion banner and the repo-card list.
+Gate: private `show_merge_all?/1` — `length(repos) >= 2 and Enum.count(repos, &(resolution_state(field(&1, :resolution)) == nil)) >= 2` for a list, `false` otherwise. A single-repo task or fewer than 2 unresolved repos renders NOTHING (no dead/one-repo-redundant button). Reuses `field/3` + `resolution_state/1`, so a nil or absent `:resolution` counts as unresolved.
+
 #### Resolution state machine
 
 Each card is driven off `repo.resolution` (`nil | %{state: :merged, target: t} | %{state: :rejected} | %{state: :handled} | %{state: :error, detail: d} | %{state: :conflict, detail: d}`; `t` a String or nil, `d` a String) plus `repo.branch_exists`. TERMINAL = `:merged | :rejected | :handled`; NON-TERMINAL = `nil | :error | :conflict`.
