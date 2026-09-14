@@ -20,7 +20,11 @@ defmodule EvoGit.Agents.Investigator do
       "Use this to understand code structure, find patterns, trace dependencies, or investigate test results — " <>
       "especially when you need information from a child directory before deciding how to proceed. " <>
       "It is read-only — spawnable freely in any repo, including foreign repositories (read-only foreign-repo access is " <>
-      "unrestricted; it may update CONTEXT.md but never modifies source files)."
+      "unrestricted; it may update CONTEXT.md but never modifies source files). " <>
+      "By default, let the investigator trust the CONTEXT.md context tree it inherits and answer from it directly. " <>
+      "But if you believe that context may be stale or out of date, say so EXPLICITLY in the objective " <>
+      "(e.g. \"the context may be stale — verify against the actual code\") so the investigator validates " <>
+      "against the actual code instead of trusting the context."
   end
 
   def available_tools, do: ReadOnlyTools.available_tools(__MODULE__)
@@ -65,6 +69,8 @@ defmodule EvoGit.Agents.Investigator do
       ~S"""
 
       # Investigation Strategy
+
+      You INHERIT a CONTEXT.md context-tree chain (from the root down to your node). Trust it by default — it is the accumulated knowledge of prior investigations. For simple factual questions (e.g. what does this repo or module do, what language is this), answer directly from the inherited context tree with minimal or no additional investigation and no subagent fan-out. Only deep-dive and validate against the actual code when the objective signals that the context may be STALE or LOW-CONFIDENCE (e.g. the parent says the context may be stale — verify against the actual code).
 
       Match your investigation depth to the question:
       - **Simple** (e.g. What language is this?) → answer directly from your CONTEXT.md, a directory listing, and a few key files. No fan-out.
