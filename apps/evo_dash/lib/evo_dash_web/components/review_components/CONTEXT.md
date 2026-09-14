@@ -34,11 +34,17 @@ Renders up to five tabs — Conversation (`hero-chat-bubble-left-right`), Object
 
 Attrs: `repos` (`:list`, **required**), `completion` (`:atom`, default `nil` — `nil | :merged | :rejected`), `back_url` (`:string`, default `nil`).
 
-Root markup: `<div id="review-repo-cards" class="space-y-4">`. When `completion != nil` its FIRST child is the completion banner `<div id="review-completion-banner">` — success tint (`border-success/30 bg-success/10`) for `:merged`, error tint (`border-error/30 bg-error/10`) for `:rejected` — carrying a check/x icon, a one-line status ("All repositories merged." / "All repositories rejected."), and the "Back to Projects" action `<.link navigate={@back_url} id="review-completion-back">`. Then ONE CARD PER REPO, in `repos` order (primary first).
+Root markup: `<div id="review-repo-cards" class="space-y-4">`. When `completion != nil` its FIRST child is the completion banner `<div id="review-completion-banner">` — success tint (`border-success/30 bg-success/10`) for `:merged`, error tint (`border-error/30 bg-error/10`) for `:rejected` — carrying a check/x icon, a one-line status ("All repositories merged." / "All repositories rejected."), and the "Back to Projects" action `<.link navigate={@back_url} id="review-completion-back">`. Then, gated on `show_merge_all?/1`, the accept-all toolbar (see below). Then ONE CARD PER REPO, in `repos` order (primary first).
 
 Each card root is `<div id={"repo-card-" <> repo_id}>` (`rounded-xl border border-base-300 bg-base-100`), with a `bg-base-200/30` header strip (`border-b border-base-300`) containing: the repo id (the `"primary"` entry renders the "Primary repository" label; every other entry renders its id in mono) + the truncated repo path (`title` attr holds the full path), the branch name (mono `badge badge-sm`, hidden when nil), the card's resolution badge `<span id={"repo-resolution-" <> repo_id}>` (empty until resolved; see the state machine), that repo's diff stat read DEFENSIVELY from `repo.review_data` (`+total_additions −total_deletions` + an `ngettext` file count; renders NOTHING when `review_data` is nil), and the jump-to-diff button (`phx-click="open_repo_diff"` + `phx-value-repo_id={repo_id}`, `hero-code-bracket`).
 
 Every repo field is read defensively via `field/3` (atom key → string key → default) so both atom- and string-keyed repo maps render; the diff-stat numbers go through `review_stat/2` (same fallback, default `0`).
+
+#### `show_merge_all?/1` gate + the `merge-all` accept-all shortcut
+
+Gated toolbar (`<div id="merge-all-toolbar">`) holding `<button id="merge-all-repositories">` (`btn btn-success btn-sm rounded-lg gap-1.5`, `hero-check size-4`, label `gettext("Merge all repositories")`, `phx-click="merge_all"` with NO params — fires the hosting LiveView's handler), carrying a `phx-confirm` that names EVERY remaining repository.
+Placement: inside `#review-repo-cards`, between the completion banner and the repo-card list.
+Gate: private `show_merge_all?/1` — `length(repos) >= 2 and Enum.count(repos, &(resolution_state(field(&1, :resolution)) == nil)) >= 2` for a list, `false` otherwise. A single-repo task or fewer than 2 unresolved repos renders NOTHING (no dead/one-repo-redundant button). Reuses `field/3` + `resolution_state/1`, so a nil or absent `:resolution` counts as unresolved.
 
 #### Resolution state machine
 
@@ -63,7 +69,7 @@ Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checkin
 
 #### Element ids emitted by this subtree
 
-`review-repo-cards`, `review-completion-banner`, `review-completion-back`, `repo-card-<repo_id>`, `repo-resolution-<repo_id>`, `merge-form-<repo_id>`.
+`review-repo-cards`, `review-completion-banner`, `review-completion-back`, `merge-all-toolbar`, `merge-all-repositories`, `repo-card-<repo_id>`, `repo-resolution-<repo_id>`, `merge-form-<repo_id>`.
 
 ### `Actions` (`actions.ex`)
 
@@ -200,14 +206,14 @@ The file-tree sidebar's interactivity is **100% server-driven — no `<details>`
 
 ## Field-consumption audit
 
-All components are **purely display** — none re-fetches data (no `EvoDash.NodeContext`/`EvoGit.Review`/`TaskRegistry` calls in the subtree); every event they fire (`switch_tab`, `switch_repo`, `toggle_summary_view`, `toggle_objective_view`, `select_file`, `toggle_file_expansion`, `expand_context`, `toggle_dir`, `filter_files`, `collapse_all_dirs`, `expand_all_dirs`, `inspect_commit`, `open_repo_diff`, `merge`, `merge_target_change`, `reject`, `resume`, `create_pr`, `ignore`, `auto_resolve`, `extract_skills`, `confirm_extract_skills`, `cancel_extract_skills`) belongs to the hosting LiveView, which does the actual fetches (`EvoDash.NodeContext.load_file_diff*`, `load_commit_files`, …).
+All components are **purely display** — none re-fetches data (no `EvoDash.NodeContext`/`EvoGit.Review`/`TaskRegistry` calls in the subtree); every event they fire (`switch_tab`, `switch_repo`, `toggle_summary_view`, `toggle_objective_view`, `select_file`, `toggle_file_expansion`, `expand_context`, `toggle_dir`, `filter_files`, `collapse_all_dirs`, `expand_all_dirs`, `inspect_commit`, `open_repo_diff`, `merge`, `merge_target_change`, `merge_all`, `reject`, `resume`, `create_pr`, `ignore`, `auto_resolve`, `extract_skills`, `confirm_extract_skills`, `cancel_extract_skills`) belongs to the hosting LiveView, which does the actual fetches (`EvoDash.NodeContext.load_file_diff*`, `load_commit_files`, …).
 
 - **`page_header`**: `title` (via `short_title/1`), `status`/`task_status` atoms only (badge helpers), `task_type` (capitalized), `task_id`/`model_id` (mono, title attr), `repo_path`/`branch_name`/`merge_target` (meta chips), `agent_count` (`format_number`), `started_at`/`finished_at` (`relative_time`), `stats` with atom-OR-string key fallback. `commit_sha` is declared but never referenced in the body. `Map.get` chains / `if`-gated dot access only — nil-safe by construction.
 - **`task_summary`**: `usage` accessed ONLY via `Map.get` (`input_tokens`, `output_tokens`, `total_tokens`, `cached_tokens`, `cache_creation_tokens`, `input_cost`, `output_cost`, `total_cost`; details block gated on `@usage` truthy, cache rows on cached/cache_creation > 0); `status` badge; `task_type`; `model_id`; `agent_count` (`format_number`); `started_at`/`finished_at` (`relative_time`). Summary-map safe.
 - **`agent_summary`**: `summary` only (raw `<pre>` vs `raw(EvoDash.MarkdownRender.render/1)`); `summary_raw` toggle; `model_id`/`finished_at` header meta. `MarkdownRender` runs server-side in the LiveView (in-process, no external fetch).
 - **`objective_section`**: `objective` (markdown/raw bodies + the empty-state gate `@objective in [nil, ""]`) + `objective_raw` toggle.
 - **`page_tabs`**: `active_tab` comparisons + the three count badges + `show_archive` gate.
-- **`repo_cards`**: `repos` iterated in order; per-entry fields read via the defensive `field/3` (atom → string → default) — `repo_id`, `repo_path`, `branch_name`, `branch_exists`, `review_data`, `merge_targets`, `default_merge_target`, `merge_status`, `resolution`; `review_data`'s `changed_files_count`/`total_additions`/`total_deletions` via `review_stat/2` (same fallback, default `0`; the whole stat block is gated on `review_data` truthy); `merge_status` pattern-matched exactly as in `merge_status_block/1`; `resolution` state machine via `resolution_state/1` + `resolution_badge_text/1` + `resolution_detail_text/1`. `completion` gates the banner; `back_url` is the banner link target.
+- **`repo_cards`**: `repos` iterated in order; per-entry fields read via the defensive `field/3` (atom → string → default) — `repo_id`, `repo_path`, `branch_name`, `branch_exists`, `review_data`, `merge_targets`, `default_merge_target`, `merge_status`, `resolution`; `review_data`'s `changed_files_count`/`total_additions`/`total_deletions` via `review_stat/2` (same fallback, default `0`; the whole stat block is gated on `review_data` truthy); `merge_status` pattern-matched exactly as in `merge_status_block/1`; `resolution` state machine via `resolution_state/1` + `resolution_badge_text/1` + `resolution_detail_text/1`. `completion` gates the banner; `back_url` is the banner link target; the `show_merge_all?/1` gate reads `resolution` per entry through the same `field/3` + `resolution_state/1` path.
 - **`task_actions`**: `can_resume` gates Continue task; `loading`/`branch_exists`/`has_pr`/`pr_url`/`show_export`/`export_url` thread into the private `overflow_menu/1`.
 - **`extract_skills_modal`**: `show` gate only — no data fields (`user_note` textarea is client-side).
 - **`diff_stats_bar`**: `files_count`, `additions`, `deletions`, `commits_count` — the component-level consumer of the diff-stat numbers (the `@review_data` top-level keys `changed_files_count`/`total_additions`/`total_deletions` map onto its attrs; `page_header`'s `stats` row shows the same numbers from its `stats` map).
