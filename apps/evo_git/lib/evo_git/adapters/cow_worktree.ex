@@ -7,10 +7,20 @@ defmodule EvoGit.Adapters.CowWorktree do
   reflink/clonefile when available). Only the files that actually differ between
   the source and target commits are left for git to restore via a checkout.
 
-  The module is designed as an **optimization with graceful fallback**: any
-  failure disables the feature (via `:persistent_term`) and returns
-  `{:fallback, reason}` so the caller can fall back to the standard worktree
-  creation method.
+  The module is designed as an **optimization with graceful fallback**: a
+  failure returns `{:fallback, reason}` so the caller falls back to the standard
+  worktree creation method for THAT creation.
+
+  Fallback reasons are classified as transient or permanent:
+
+    * **transient** — an I/O pressure / subprocess / lock failure that may
+      succeed on a later attempt (`:no_source_head`, `:no_source_status`,
+      `:no_changed_files`, `:no_target_tree`, `:worktree_add_failed`,
+      `:cp_failed`, `:checkout_failed`). The caller falls back for this creation
+      only and the feature stays ENABLED, so the next creation retries CoW.
+    * **permanent** — a condition that can never succeed in this VM: the
+      platform has no CoW copy backend (`:unsupported_platform`). This disables
+      the feature persistently via `disable/0`.
   """
 
   require Logger
@@ -38,6 +48,25 @@ defmodule EvoGit.Adapters.CowWorktree do
 
   @doc "Disables CoW worktree creation by setting the persistent-term flag."
   def disable, do: :persistent_term.put(@flag_key, :disabled)
+
+  # ---------------------------------------------------------------------------
+  # Fallback classification
+  # ---------------------------------------------------------------------------
+
+  @doc false
+  def permanent_reason?(:unsupported_platform), do: true
+  def permanent_reason?(_reason), do: false
+
+  @doc false
+  def handle_fallback(reason, detail \\ nil) do
+    if permanent_reason?(reason), do: disable()
+
+    Logger.warning("[CowWorktree] Falling back: #{inspect(reason)}#{format_detail(detail)}")
+    {:fallback, reason}
+  end
+
+  defp format_detail(nil), do: ""
+  defp format_detail(detail), do: " (#{detail})"
 
   # ---------------------------------------------------------------------------
   # Feature gate
@@ -135,46 +164,26 @@ defmodule EvoGit.Adapters.CowWorktree do
 
               :ok
 
-            {:fallback, reason} = fallback ->
+            {:fallback, reason} ->
               cleanup_partial_worktree(repo_root, worktree_path, branch_name)
-              disable()
-              Logger.warning("[CowWorktree] Falling back: #{inspect(reason)}")
-              fallback
+              handle_fallback(reason)
           end
 
-        {:fallback, reason} = fallback ->
-          disable()
-          Logger.warning("[CowWorktree] Falling back: #{inspect(reason)}")
-          fallback
+        {:fallback, reason} ->
+          handle_fallback(reason)
       end
     else
-      {:source_head, _} ->
-        disable()
-        Logger.warning("[CowWorktree] Falling back: :no_source_head")
-        {:fallback, :no_source_head}
+      {:source_head, error} ->
+        handle_fallback(:no_source_head, "failed to resolve source HEAD: #{inspect(error)}")
 
       {:dirty, error} ->
-        disable()
-
-        Logger.warning(
-          "[CowWorktree] Falling back: failed to read source status (#{inspect(error)})"
-        )
-
-        {:fallback, :no_source_status}
+        handle_fallback(:no_source_status, "failed to read source status: #{inspect(error)}")
 
       {:changed, error} ->
-        disable()
-        Logger.warning("[CowWorktree] Falling back: failed to compute diff (#{inspect(error)})")
-        {:fallback, :no_changed_files}
+        handle_fallback(:no_changed_files, "failed to compute diff: #{inspect(error)}")
 
       {:target, error} ->
-        disable()
-
-        Logger.warning(
-          "[CowWorktree] Falling back: failed to list target tree (#{inspect(error)})"
-        )
-
-        {:fallback, :no_target_tree}
+        handle_fallback(:no_target_tree, "failed to list target tree: #{inspect(error)}")
     end
   end
 
@@ -203,7 +212,7 @@ defmodule EvoGit.Adapters.CowWorktree do
         # `Git.add_worktree` fallback (worktrees.ex) can succeed.
         Git.cleanup_failed_worktree_add(repo_root, worktree_path, branch_name)
 
-        Logger.warning("[CowWorktree] worktree add failed: #{inspect(error)}")
+        Logger.debug("[CowWorktree] worktree add failed: #{inspect(error)}")
         {:fallback, :worktree_add_failed}
     end
   end
@@ -225,9 +234,12 @@ defmodule EvoGit.Adapters.CowWorktree do
         # Step 8: checkout remaining files (git stat+hash-skips already-present files)
         checkout_target(worktree_path, target_commit)
 
+      :unsupported_platform ->
+        # Permanent: this platform has no CoW copy backend — never retryable.
+        handle_fallback(:unsupported_platform)
+
       {:error, code, output} ->
-        Logger.warning("[CowWorktree] cp failed (code #{code}): #{output}")
-        {:fallback, :cp_failed}
+        handle_fallback(:cp_failed, "cp failed (code #{code}): #{output}")
     end
   end
 
@@ -239,7 +251,7 @@ defmodule EvoGit.Adapters.CowWorktree do
         :ok
 
       error ->
-        Logger.warning("[CowWorktree] checkout failed: #{inspect(error)}")
+        Logger.debug("[CowWorktree] checkout failed: #{inspect(error)}")
         {:fallback, :checkout_failed}
     end
   end
@@ -260,7 +272,7 @@ defmodule EvoGit.Adapters.CowWorktree do
 
       true ->
         # Other platforms (e.g. Windows) — not CoW-optimizable
-        {:error, -1, "unsupported platform for CoW copy"}
+        :unsupported_platform
     end
   end
 
