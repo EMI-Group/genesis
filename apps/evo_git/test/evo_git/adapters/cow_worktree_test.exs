@@ -480,10 +480,84 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
 
       assert result == {:fallback, :no_source_head}
 
-      # The function calls disable() on this path.
-      assert CowWorktree.flag() == :disabled
+      # :no_source_head is a TRANSIENT reason — a single failure must NOT
+      # permanently disable the feature. The flag stays untouched (:not_set,
+      # never :disabled) so the next creation retries CoW.
+      refute CowWorktree.flag() == :disabled
+      assert CowWorktree.flag() == :not_set
 
       # No worktree should have been created.
+      refute File.dir?(worktree_path)
+    end
+
+    test "a transient fallback does NOT disable CoW, and CoW is still attempted on a later creation" do
+      # First creation: transient fallback because the source repo has no commits.
+      source = make_repo("transient_src")
+
+      target_repo = make_repo("transient_tgt")
+      write_file(target_repo, "file.txt", "content")
+      target_sha = commit_all(target_repo, "Initial")
+
+      fallback_path = make_worktree_path("transient_fallback")
+
+      result =
+        CowWorktree.create_worktree(
+          target_repo,
+          fallback_path,
+          target_sha,
+          "cow-branch-transient-fallback",
+          source
+        )
+
+      assert result == {:fallback, :no_source_head}
+
+      # The transient reason leaves the feature ENABLED (persistent-term flag
+      # survives across calls).
+      refute CowWorktree.flag() == :disabled
+
+      # Second creation: a valid repo/worktree. A :ok return proves CoW was
+      # still enabled AND actually attempted — if the flag were :disabled the
+      # caller (AgentScheduler.Worktrees) would have short-circuited upstream
+      # with {:fallback, :disabled} and this function would never have run.
+      repo = make_repo("transient_ok")
+      worktree_path = make_worktree_path("transient_ok")
+      branch = "cow-branch-transient-ok"
+
+      # Two commits so a shared + a changed file exist for the CoW copy path.
+      write_file(repo, "shared.txt", "same")
+      write_file(repo, "changed.txt", "v1")
+      _sha1 = commit_all(repo, "Initial files")
+      write_file(repo, "changed.txt", "v2")
+      target = commit_all(repo, "Update changed.txt")
+
+      on_exit(fn -> cleanup_worktree(repo, worktree_path) end)
+
+      assert :ok =
+               CowWorktree.create_worktree(repo, worktree_path, target, branch, repo)
+
+      assert File.read!(Path.join(worktree_path, "shared.txt")) == "same"
+      assert File.read!(Path.join(worktree_path, "changed.txt")) == "v2"
+    end
+
+    test "a diff failure is also a transient fallback and does not disable CoW" do
+      repo = make_repo("transient_diff")
+      worktree_path = make_worktree_path("transient_diff")
+      branch = "cow-branch-transient-diff"
+
+      write_file(repo, "file.txt", "content")
+      _target = commit_all(repo, "Initial")
+
+      # A full-hex sha that does not exist — `git diff` cannot resolve it, so the
+      # diff step errors and create_worktree falls back transiently.
+      bogus_sha = String.duplicate("a", 40)
+
+      result =
+        CowWorktree.create_worktree(repo, worktree_path, bogus_sha, branch, repo)
+
+      assert result == {:fallback, :no_changed_files}
+
+      # Transient — the feature stays enabled and no partial worktree remains.
+      refute CowWorktree.flag() == :disabled
       refute File.dir?(worktree_path)
     end
 
@@ -526,6 +600,47 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
 
       # The output should contain the worktree_path.
       assert String.contains?(worktree_list, worktree_path)
+    end
+  end
+
+  # -------------------------------------------------------------------------
+  # Fallback classification (permanent vs transient)
+  # -------------------------------------------------------------------------
+
+  describe "fallback classification" do
+    test "permanent_reason?/1 is true only for :unsupported_platform" do
+      assert CowWorktree.permanent_reason?(:unsupported_platform)
+
+      # Every other reason is transient — a single failure must not kill the
+      # feature, so `permanent_reason?/1` must be false for each of them.
+      for reason <- [
+            :no_source_head,
+            :no_source_status,
+            :no_changed_files,
+            :no_target_tree,
+            :worktree_add_failed,
+            :cp_failed,
+            :checkout_failed
+          ] do
+        refute CowWorktree.permanent_reason?(reason),
+               "expected #{inspect(reason)} to be classified transient"
+      end
+    end
+
+    test "handle_fallback/1 disables CoW only for the permanent reason" do
+      # Permanent: :unsupported_platform returns the fallback AND disables CoW.
+      assert CowWorktree.handle_fallback(:unsupported_platform) ==
+               {:fallback, :unsupported_platform}
+
+      assert CowWorktree.flag() == :disabled
+
+      # Refresh the flag (a new test "session") so the transient case below
+      # cannot inherit the persistent disable.
+      :persistent_term.erase(@flag_key)
+
+      # Transient: :cp_failed returns the fallback but leaves CoW enabled.
+      assert CowWorktree.handle_fallback(:cp_failed) == {:fallback, :cp_failed}
+      refute CowWorktree.flag() == :disabled
     end
   end
 

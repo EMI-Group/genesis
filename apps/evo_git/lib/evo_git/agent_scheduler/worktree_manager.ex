@@ -11,15 +11,26 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     `GenServer.call` uses a 1-hour timeout (`@worktree_call_timeout`); the
     actual I/O is offloaded to a spawned task so this GenServer's message loop
     stays responsive for `:DOWN`/cleanup messages while creation is in flight.
+  - Bounded admission for create pipelines: requests are queued FIFO and at
+    most `max_concurrent_creation/0` (app env
+    `:max_concurrent_worktree_creation`, default 4) create tasks run at once.
+    A permit is held only for the duration of one create pipeline and is
+    always released via the `{:create_finished, ...}` cast, so the queue
+    always drains. This bounds CREATE concurrency only — never the number of
+    live worktrees/agents — and is deadlock-free: a parent parked in
+    `spawn_sub_agents/2` holds its created worktree but no create permit.
   - Process monitoring: every agent process is monitored; when it exits (for
     ANY reason — `:normal` completion or crash), its worktree is destroyed.
     Cleanup is identical for normal and abnormal exits — there is no reuse
     semantics; every run gets a fresh worktree.
   - Deferred cleanup for agents that die while their create task is still in
-    flight (the cleanup runs when the create finishes).
+    flight (the cleanup runs when the create finishes); an agent that dies
+    while its create request is still QUEUED is dropped from the admission
+    queue instead (no create is started for it).
   - Per-agent serialization of re-create requests: a retry Runner arriving
-    while the previous create is still in flight has its request queued in
-    `pending_requests` and is started when the previous create finishes.
+    while the previous request is still `:creating` or still `:queued` has its
+    request queued in `pending_requests` and re-enters the same admission path
+    when the previous request finishes.
   - Crash-restart safety (this GenServer is a one_for_one child of
     `EvoGit.Supervisor` — a crash restarts IT without killing the running
     agent Tasks, which keep running in their live worktrees):
@@ -103,15 +114,22 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   @impl true
   def init(_opts) do
     state = %{
-      # agent_id => %{worktree_path, repo_root, branch_name, creating, monitor_ref}
+      # agent_id => %{worktree_path, repo_root, branch_name, status, monitor_ref}
+      # where status is :queued (waiting for a create permit), :creating (create
+      # pipeline running), or :live (worktree ready for the running agent)
       agents: %{},
       # monitor ref => agent_id
       monitors: %{},
       # agents that died while their create was still in flight
       pending_cleanup: MapSet.new(),
       # agent_id => {from, request_params} — re-create request that arrived
-      # while the previous create was still in flight
-      pending_requests: %{}
+      # while the previous create was still in flight or still queued
+      pending_requests: %{},
+      # number of create pipelines currently running (permits in use)
+      creating_count: 0,
+      # FIFO admission queue of {agent_id, repo_root, worktree_path, spec,
+      # meta, agent_pid, from} — bounded by max_concurrent_creation/0
+      admission_queue: :queue.new()
     }
 
     # Crash-restart path: this GenServer restarts WITHOUT killing the running
@@ -128,10 +146,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
         state
       ) do
     case Map.get(state.agents, agent_id) do
-      %{creating: true} ->
-        # Previous create still in flight (retry-after-crash-during-setup
-        # race). Defer this request — it will be started when the previous
-        # create finishes (the {:create_finished, ...} cast).
+      %{status: status} when status in [:creating, :queued] ->
+        # Previous create still in flight OR still waiting for a create permit
+        # in the admission queue (retry-after-crash-during-setup race). Defer
+        # this request — it is started when the previous request finishes (the
+        # {:create_finished, ...} cast), through the SAME admission queue.
         pending_requests =
           Map.put(
             state.pending_requests,
@@ -141,7 +160,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
         {:noreply, %{state | pending_requests: pending_requests}}
 
-      %{monitor_ref: old_ref} ->
+      %{status: :live, monitor_ref: old_ref} ->
         # Worktree live but the old agent's :DOWN hasn't been processed yet
         # (retry-after-crash race). Drop the stale monitor; the new create
         # task's destroy-before-create handles the old worktree.
@@ -152,7 +171,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           maybe_init_repo(state, repo_root, EvoGit.Core.ForeignRepo.primary?(spec.repo_id))
 
         state =
-          start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+          accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
 
         {:noreply, state}
 
@@ -161,7 +180,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
           maybe_init_repo(state, repo_root, EvoGit.Core.ForeignRepo.primary?(spec.repo_id))
 
         state =
-          start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+          accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
 
         {:noreply, state}
     end
@@ -170,54 +189,56 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   @impl true
   def handle_cast({:create_finished, agent_id}, state) do
     case Map.get(state.agents, agent_id) do
-      nil ->
-        # Stale task (WorktreeManager restarted, or agent already cleaned up)
+      %{status: :creating} = agent_info ->
+        # The create pipeline finished — release its permit (clamped at 0 in
+        # case of an unexpected double cast).
+        state = %{state | creating_count: max(state.creating_count - 1, 0)}
+
+        state =
+          cond do
+            MapSet.member?(state.pending_cleanup, agent_id) ->
+              # The agent died while its create was in flight — the worktree is
+              # now settled (the task has finished), so clean it up inline.
+              destroy_worktree(
+                agent_info.worktree_path,
+                agent_info.repo_root,
+                agent_info.branch_name
+              )
+
+              Process.demonitor(agent_info.monitor_ref, [:flush])
+
+              state = %{
+                state
+                | agents: Map.delete(state.agents, agent_id),
+                  monitors: Map.delete(state.monitors, agent_info.monitor_ref),
+                  pending_cleanup: MapSet.delete(state.pending_cleanup, agent_id)
+              }
+
+              maybe_start_pending_request(state, agent_id)
+
+            Map.has_key?(state.pending_requests, agent_id) ->
+              # The previous agent died while its create was in flight and a
+              # re-create request is queued. Drop the stale monitor (flushes
+              # any queued :DOWN for the dead agent) and start the pending
+              # create — its destroy-before-create cleans the just-created
+              # worktree.
+              Process.demonitor(agent_info.monitor_ref, [:flush])
+              state = %{state | monitors: Map.delete(state.monitors, agent_info.monitor_ref)}
+              maybe_start_pending_request(state, agent_id)
+
+            true ->
+              # Create finished normally — the worktree is live for the
+              # running agent.
+              %{state | agents: Map.put(state.agents, agent_id, %{agent_info | status: :live})}
+          end
+
+        # A permit just freed — admit the next queued request(s).
+        {:noreply, admit_next(state)}
+
+      _ ->
+        # Stale task (WorktreeManager restarted, agent already cleaned up, or a
+        # duplicate cast for a non-:creating agent) — ignore, no count change.
         {:noreply, state}
-
-      %{creating: false} ->
-        # Stale duplicate cast — ignore
-        {:noreply, state}
-
-      %{} = agent_info ->
-        cond do
-          MapSet.member?(state.pending_cleanup, agent_id) ->
-            # The agent died while its create was in flight — the worktree is
-            # now settled (the task has finished), so clean it up inline.
-            destroy_worktree(
-              agent_info.worktree_path,
-              agent_info.repo_root,
-              agent_info.branch_name
-            )
-
-            Process.demonitor(agent_info.monitor_ref, [:flush])
-
-            state = %{
-              state
-              | agents: Map.delete(state.agents, agent_id),
-                monitors: Map.delete(state.monitors, agent_info.monitor_ref),
-                pending_cleanup: MapSet.delete(state.pending_cleanup, agent_id)
-            }
-
-            state = maybe_start_pending_request(state, agent_id)
-            {:noreply, state}
-
-          Map.has_key?(state.pending_requests, agent_id) ->
-            # The previous agent died while its create was in flight and a
-            # re-create request is queued. Drop the stale monitor (flushes
-            # any queued :DOWN for the dead agent) and start the pending
-            # create — its destroy-before-create cleans the just-created
-            # worktree.
-            Process.demonitor(agent_info.monitor_ref, [:flush])
-            state = %{state | monitors: Map.delete(state.monitors, agent_info.monitor_ref)}
-            state = maybe_start_pending_request(state, agent_id)
-            {:noreply, state}
-
-          true ->
-            # Create finished normally — the worktree is live for the
-            # running agent.
-            {:noreply,
-             %{state | agents: Map.put(state.agents, agent_id, %{agent_info | creating: false})}}
-        end
     end
   end
 
@@ -230,12 +251,39 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
       agent_id ->
         case Map.get(state.agents, agent_id) do
-          %{creating: true, monitor_ref: ^ref} ->
+          %{status: :creating, monitor_ref: ^ref} ->
             # Agent died while its create was still in flight — defer the
             # cleanup until the create task finishes.
             {:noreply, %{state | pending_cleanup: MapSet.put(state.pending_cleanup, agent_id)}}
 
-          %{monitor_ref: ^ref, worktree_path: wt, repo_root: repo_root, branch_name: branch_name} ->
+          %{status: :queued, monitor_ref: ^ref} ->
+            # Agent died while its request was still waiting in the admission
+            # queue — drop it from the queue (no create is started for it),
+            # drop the monitor, and remove the registration. No permit to
+            # release (none was held), so creating_count is untouched.
+            queue =
+              :queue.filter(
+                fn {queued_id, _, _, _, _, _, _} -> queued_id != agent_id end,
+                state.admission_queue
+              )
+
+            Process.demonitor(ref, [:flush])
+
+            {:noreply,
+             %{
+               state
+               | agents: Map.delete(state.agents, agent_id),
+                 monitors: Map.delete(state.monitors, ref),
+                 admission_queue: queue
+             }}
+
+          %{
+            status: :live,
+            monitor_ref: ^ref,
+            worktree_path: wt,
+            repo_root: repo_root,
+            branch_name: branch_name
+          } ->
             # Agent exited (normal or abnormal — identical cleanup; every run
             # gets a fresh worktree). Destroy and drop the registration.
             destroy_worktree(wt, repo_root, branch_name)
@@ -379,10 +427,13 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     :ok
   end
 
-  # Registers the agent (monitor + agents/monitors maps) and spawns the
-  # offloaded create task. The reply is deferred to the task; the task
-  # guarantees the {:create_finished, ...} cast via try/after.
-  defp start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from) do
+  # Accepts a create request: registers the agent (monitor + agents/monitors
+  # maps) in the QUEUED state, pushes it onto the FIFO admission queue, then
+  # drains the queue. The reply is deferred until the create pipeline actually
+  # runs (bounded admissibility only DELAYS the reply, never drops it). On a
+  # missing agent-state row the caller is replied an error and NOTHING is
+  # registered.
+  defp accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from) do
     case Store.get_agent_state(agent_id) do
       {:ok, agent_state} ->
         branch_name = Worktrees.branch_name(meta.task_number, agent_state.task_local_id)
@@ -395,16 +446,62 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
                 worktree_path: worktree_path,
                 repo_root: repo_root,
                 branch_name: branch_name,
-                creating: true,
+                status: :queued,
                 monitor_ref: ref
               }),
-            monitors: Map.put(state.monitors, ref, agent_id)
+            monitors: Map.put(state.monitors, ref, agent_id),
+            admission_queue:
+              :queue.in(
+                {agent_id, repo_root, worktree_path, spec, meta, agent_pid, from},
+                state.admission_queue
+              )
+        }
+
+        admit_next(state)
+
+      :error ->
+        GenServer.reply(from, {:error, {:agent_state_missing, agent_id}})
+        state
+    end
+  end
+
+  # Drains the admission queue: while a create permit is free and the queue is
+  # non-empty, admit the next request and start its offloaded create task. The
+  # cap is read at ADMISSION time. Called at accept time and after every
+  # permit release, so the queue always drains (each pipeline terminates and
+  # fires its {:create_finished, ...} cast).
+  defp admit_next(state) do
+    if state.creating_count < max_concurrent_creation() do
+      case :queue.out(state.admission_queue) do
+        {{:value, request}, queue} ->
+          start_create(%{state | admission_queue: queue}, request)
+
+        {:empty, _} ->
+          state
+      end
+    else
+      state
+    end
+  end
+
+  # Starts the offloaded create task for an admitted request. The agent's entry
+  # is flipped :queued -> :creating (SAME monitor_ref — never re-monitored) and
+  # the running-create count is incremented; the permit is released by the
+  # {:create_finished, ...} cast the task fires via try/after (so the permit is
+  # freed even when the create fun raises). Defensively skips a request whose
+  # agent is no longer registered/queued, replying so the caller never blocks.
+  defp start_create(state, {agent_id, repo_root, worktree_path, spec, meta, _agent_pid, from}) do
+    case Map.get(state.agents, agent_id) do
+      %{status: :queued} = agent_info ->
+        state = %{
+          state
+          | agents: Map.put(state.agents, agent_id, %{agent_info | status: :creating}),
+            creating_count: state.creating_count + 1
         }
 
         Task.start(fn ->
           try do
-            result =
-              Worktrees.prepare_new_worktree(agent_id, repo_root, worktree_path, spec, meta)
+            result = create_fun().(agent_id, repo_root, worktree_path, spec, meta)
 
             GenServer.reply(from, result)
           after
@@ -414,13 +511,40 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
         state
 
-      :error ->
-        GenServer.reply(from, {:error, {:agent_state_missing, agent_id}})
-        state
+      _ ->
+        # The agent is no longer queued (it died and was reaped, or the
+        # registration was replaced). Reply so the caller never blocks, then
+        # keep draining — no permit was consumed.
+        GenServer.reply(
+          from,
+          {:error,
+           {:worktree_create_failed,
+            "create request skipped: agent #{agent_id} is no longer queued"}}
+        )
+
+        admit_next(state)
     end
   end
 
-  # Starts a queued re-create request for an agent, if one exists.
+  # Max number of create pipelines running at once. This work is I/O-bound
+  # (git + a full-tree copy), not CPU-bound — 4 keeps the disk pipeline busy
+  # without thrashing the NVMe/disk with dozens of parallel full-tree copies.
+  # Read at ADMISSION time so a test can change the cap without restarting.
+  defp max_concurrent_creation do
+    Application.get_env(:evo_git, :max_concurrent_worktree_creation, 4)
+  end
+
+  # The create pipeline fun, indirected through an app-env test seam so a test
+  # can substitute a blocking probe. Read when the create task starts; the `||`
+  # form makes an explicit `nil` fall back to the real implementation too.
+  defp create_fun do
+    Application.get_env(:evo_git, :worktree_create_fun) ||
+      (&EvoGit.AgentScheduler.Worktrees.prepare_new_worktree/5)
+  end
+
+  # Starts a queued re-create request for an agent, if one exists. The stashed
+  # request is fed through the SAME accept/admission path (never bypassing the
+  # cap).
   defp maybe_start_pending_request(state, agent_id) do
     case Map.pop(state.pending_requests, agent_id) do
       {nil, _} ->
@@ -429,7 +553,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       {{from, {agent_id, repo_root, worktree_path, spec, meta, agent_pid}}, pending_requests} ->
         state = %{state | pending_requests: pending_requests}
 
-        start_create(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
+        accept_request(state, agent_id, repo_root, worktree_path, spec, meta, agent_pid, from)
     end
   end
 
@@ -532,7 +656,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   # Re-monitors a single live agent. The rebuilt entry shape EXACTLY matches
   # what `handle_info({:DOWN, ...})` and `destroy_worktree/3` expect on the
-  # normal path: `%{worktree_path, repo_root, branch_name, creating: false,
+  # normal path: `%{worktree_path, repo_root, branch_name, status: :live,
   # monitor_ref}` plus the reverse `monitors` map entry — so cleanup after the
   # restart is identical to the normal path.
   defp rebuild_monitor(state, agent_id, meta) do
@@ -551,7 +675,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
               worktree_path: worktree,
               repo_root: repo_root || Worktrees.repo_root_from_worktree(worktree),
               branch_name: Worktrees.branch_name(task_number, task_local_id),
-              creating: false,
+              status: :live,
               monitor_ref: ref
             }),
           monitors: Map.put(state.monitors, ref, agent_id)
