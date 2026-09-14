@@ -59,6 +59,14 @@ Standard (non-subagent) tool calls in a batch execute **in parallel**, governed 
 
 **Caveat — parallel committing tools:** `write_context`/`edit_context`/`make_dir` with `commit: true` run git add/commit in the same worktree; parallel execution may contend on git's `index.lock`. `max_tool_concurrency` (default = detected CPU thread count) bounds this; lower it if contention appears.
 
+**No cap on subagent SPAWN COUNT (spawn-count is prompt-driven, not code-enforced).** Nothing in this directory limits how many subagent tool calls one LLM response may carry, or how many subagents may exist at once:
+- `process_regular_tool_calls/3` (`tool_dispatch.ex:786-831`) `Enum.split_with`s the batch's subagent calls and passes the FULL list to `SubagentProcessing.process_subagent_calls/3` — no `Enum.take`/`Enum.slice`/batch limit anywhere in this directory (grep-verified).
+- `SubagentProcessing.process_subagent_calls/3` (`subagent_processing.ex:50-110`) → `build_subagent_specs/3` (`:139` `Enum.map`) builds a spec for EVERY call, then one `AgentScheduler.spawn_sub_agents/2` call spawns them all; `split_valid_subagent_calls/1` only rejects calls missing `path` (per-call error feedback, not a count cap).
+- `subagent_schemas.ex:29-77` emits ONE tool per declared subagent module with a SINGLE `path`+`objective` (+ optional `commit_id`) parameter — to spawn N subagents the model emits N tool calls; there is NO batch/multi-path schema.
+- The only code-enforced recursion limit is DEPTH, not count: `[:scheduler] :max_agent_depth` (default 8, `config/schema/definitions.ex:76-85`), enforced by `runner.ex:566-582` `at_max_depth?/1` (drops subagent tool schemas once `depth >= max_depth`) and `agent_scheduler/subagents.ex:181-191` `validate_subagent_depth/3` (`subagent_depth > state.max_depth`). This bounds the DEPTH of each delegation *branch*, NOT the per-turn or task-wide subagent count.
+- Running-subagent concurrency is throttled only by the shared LLM/tool slot pools; queued subagents are still registered and each holds its own worktree (no per-task subagent-count / batch-size / concurrency config key exists — the scheduler schema has no `max_subagents`/`max_children` key).
+So a "wide fan-out" (5-10 children per level) is bounded by DEPTH × turn budget (`max_turns`) and by prompt guidance — e.g. `agents/manager.ex` states "There is no limit on concurrency" and urges parallel batches — NOT by any spawn-count cap.
+
 ### Grace Period & Graceful Cancellation (runner-side)
 
 Two grace kinds, both entered via `Runner.enter_grace/3` (`runner.ex`, `@doc false`): (1) `maybe_recovery_auto_commit/1` FIRST (best-effort auto-commit of uncommitted work — for cancel this is "save the changes"), (2) optionally appends a recovery message, (3) sets `in_grace_period: true` + the `grace_turns_remaining` budget, then re-enters `loop/1`.
