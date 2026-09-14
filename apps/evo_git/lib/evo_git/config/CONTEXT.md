@@ -115,10 +115,15 @@ Platform→Config runtime calls are an established, safe pattern (no compile cyc
 [scheduler]
 default_llm_max_concurrency = 3   # Per-LLM concurrency when a model profile has none
 max_tool_concurrency = 8          # Max concurrent tool executions (default = detected CPU thread count)
-agent_max_retries = 3             # Crash-retry limit per agent
-max_agent_depth = 8               # Max subagent recursion depth
-max_retries = 15                  # Max total LLM API retries
-
+agent_max_retries = 3             # Crash-retry limit per agent (non_neg_integer, min 0)
+max_agent_depth = 8               # Max subagent recursion depth (pos_integer, min 1)
+max_retries = 15                  # Max total LLM API retries (pos_integer, min 1)
+max_turns = 100                   # Turn cap for SUB-agents (pos_integer, min 1)
+max_turns_root = 1000             # Turn cap for the ROOT agent only (pos_integer, min 1)
+delegation_hint_threshold = 5     # Write-tool calls to a child dir before a delegation nudge (pos_integer, min 1; 0 disables)
+read_delegation_hint_threshold = 8 # Read-tool calls to a child dir before an investigator nudge (pos_integer, min 1; 0 disables)
+max_tool_timeout = 1_800_000      # Hard cap (ms) on any agent-requested tool timeout (pos_integer, min 1)
+default_tool_timeout = 10_000     # Default tool timeout (ms) when the agent omits one (pos_integer, min 1)
 [llm]
 model = "provider:model"          # REQUIRED, e.g. "anthropic:claude-sonnet-4-20250514"
 compression_threshold_tokens = 180_000  # Token limit before context compression
