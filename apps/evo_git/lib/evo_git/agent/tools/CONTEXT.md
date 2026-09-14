@@ -45,11 +45,11 @@ Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `Web
 
 ## Execution Flow
 1. **Registration**: `Tools.schemas/0` aggregates schemas → injected into agent's `available_tools/0`
-2. **Dispatch**: Agent loop calls `Tools.execute(tool_name, args, repo_path, repo_root, node_path)`
+2. **Dispatch**: Agent loop calls `Tools.execute(tool_name, args, repo_path, repo_root, node_path)` — `execute/5` first **normalizes well-known shell-tool aliases** to the platform shell tool: `bash`/`shell`/`sh`/`execute_bash`/`bash_command`/`run_shell`/`shell_command` (plus the platform tool names `run_bash`/`run_powershell` themselves, so case variants like "RUN_BASH" match) are matched case-insensitively and mapped to the compile-time `@shell_tool_name`, so an LLM calling "Bash"/"Shell" runs the real shell tool instead of failing with "Unknown tool". This runs BEFORE the write guards, deliberately: `run_bash`/`run_powershell` are in `@write_tools`, so normalizing after the guards would let a repo-less (or read-only-foreign-repo) agent bypass the write block by calling "Bash".
 3. **Pattern match**: Private `execute_tool/5` dispatches to the correct module's `execute` function
 4. **Write tools**: Validate spatial scope via `Shared.validate_file_scope/3` before writing
 5. **Sandboxed tools**: Call `EvoGit.sandbox_run/4` which wraps commands in `systemd-run`
-6. **Result**: All execute functions return a string (success or error message)
+6. **Result**: All execute functions return a string (success or error message). An unrecognized name falls to the `execute_tool/5` catch-all → dynamic-skill lookup (`skill` tool names), else an **actionable unknown-tool error**: `"Error: Unknown tool '<name>'. Did you mean '<closest>'? Available tools: ..."` — the closest dispatch-registered `@known_tool_names` entry by `String.jaro_distance/2` (suggested when the score ≥ 0.7) followed by the full available-tool list, so the LLM can self-correct next turn instead of repeating the bad call.
 
 ### Web Search Providers (provider-adapter architecture)
 

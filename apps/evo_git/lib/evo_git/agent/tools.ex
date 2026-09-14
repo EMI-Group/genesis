@@ -169,10 +169,53 @@ defmodule EvoGit.Agent.Tools do
   # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
 
+  # Well-known shell-tool aliases (matched case-insensitively). LLMs
+  # sometimes call a shell tool by a familiar external name ("Bash",
+  # "Shell", ...) instead of the platform tool name. All of these normalize
+  # to @shell_tool_name so the call actually runs instead of failing with
+  # "Unknown tool". Includes the platform tool names themselves so
+  # case variants ("RUN_BASH") normalize too.
+  @shell_tool_aliases ~w(
+    bash shell sh
+    execute_bash bash_command run_shell shell_command
+    run_bash run_powershell
+  )
+
+  # Dispatch-registered standard tool names, used to make the unknown-tool
+  # error actionable (closest-match suggestion + available list).
+  @known_tool_names [
+    "read_file",
+    "create_files",
+    "write_file",
+    "edit_file",
+    "make_dir",
+    "read_context",
+    "write_context",
+    "edit_context",
+    @shell_tool_name,
+    "rg",
+    "glob",
+    "list_dir",
+    "search_web",
+    "curl",
+    "search_context",
+    "search_history",
+    "skill_list",
+    "skill_read",
+    "skill_add",
+    "skill_edit",
+    "skill_remove",
+    "skill_enable",
+    "skill_disable",
+    "skill_where"
+  ]
+
+  @unknown_tool_similarity_threshold 0.7
+
   def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
 
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
-    maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path)
+    maybe_block_repo_less(normalize_tool_name(tool_name), args, repo_path, repo_root, node_path)
   end
 
   # Fallback: some LLMs double-encode the ENTIRE arguments object as a JSON
@@ -181,7 +224,13 @@ defmodule EvoGit.Agent.Tools do
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_binary(args) do
     case Jason.decode(args) do
       {:ok, decoded} when is_map(decoded) ->
-        maybe_block_repo_less(tool_name, decoded, repo_path, repo_root, node_path)
+        maybe_block_repo_less(
+          normalize_tool_name(tool_name),
+          decoded,
+          repo_path,
+          repo_root,
+          node_path
+        )
 
       _ ->
         "Error: tool arguments were received as a JSON-encoded string instead of a JSON object. " <>
@@ -189,6 +238,17 @@ defmodule EvoGit.Agent.Tools do
           "e.g. {\"args\": [\"-n\", \"pattern\"]}, not a string."
     end
   end
+
+  # Normalizes well-known shell-tool aliases to the platform's shell tool
+  # name. MUST run at the TOP of execute/5 BEFORE the write guards:
+  # run_bash/run_powershell are in @write_tools, so normalizing after the
+  # guards would let a repo-less (or read-only-foreign-repo) agent bypass
+  # the write block by calling "Bash". Keep this ordering.
+  defp normalize_tool_name(tool_name) when is_binary(tool_name) do
+    if String.downcase(tool_name) in @shell_tool_aliases, do: @shell_tool_name, else: tool_name
+  end
+
+  defp normalize_tool_name(tool_name), do: tool_name
 
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
@@ -367,10 +427,35 @@ defmodule EvoGit.Agent.Tools do
       if EvoGit.Skills.find_skill(skills, unknown_tool) do
         EvoGit.Skills.execute(skills, unknown_tool, args, repo_path)
       else
-        "Error: Unknown tool '#{unknown_tool}'"
+        unknown_tool_error(unknown_tool)
       end
     else
-      "Error: Unknown tool '#{unknown_tool}'"
+      unknown_tool_error(unknown_tool)
+    end
+  end
+
+  # Actionable unknown-tool error: suggest the closest valid tool name so the
+  # LLM can self-correct next turn instead of repeating the bad call, and
+  # list the available tool names as a fallback.
+  defp unknown_tool_error(name) do
+    suggestion =
+      case closest_tool_name(name) do
+        nil -> ""
+        closest -> " Did you mean '#{closest}'?"
+      end
+
+    "Error: Unknown tool '#{name}'.#{suggestion} Available tools: #{Enum.join(@known_tool_names, ", ")}."
+  end
+
+  defp closest_tool_name(name) do
+    name = String.downcase(name)
+
+    @known_tool_names
+    |> Enum.map(&{&1, String.jaro_distance(name, &1)})
+    |> Enum.max_by(&elem(&1, 1), fn -> nil end)
+    |> case do
+      {tool, score} when score >= @unknown_tool_similarity_threshold -> tool
+      _ -> nil
     end
   end
 end
