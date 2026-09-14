@@ -69,7 +69,7 @@ Attrs: `status` (`:map`, required). `%{state: :checking}` → spinner + "Checkin
 
 #### Element ids emitted by this subtree
 
-`review-repo-cards`, `review-completion-banner`, `review-completion-back`, `repo-card-<repo_id>`, `repo-resolution-<repo_id>`, `merge-form-<repo_id>`.
+`review-repo-cards`, `review-completion-banner`, `review-completion-back`, `merge-all-toolbar`, `merge-all-repositories`, `repo-card-<repo_id>`, `repo-resolution-<repo_id>`, `merge-form-<repo_id>`.
 
 ### `Actions` (`actions.ex`)
 
