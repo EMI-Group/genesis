@@ -115,10 +115,15 @@ Platform→Config runtime calls are an established, safe pattern (no compile cyc
 [scheduler]
 default_llm_max_concurrency = 3   # Per-LLM concurrency when a model profile has none
 max_tool_concurrency = 8          # Max concurrent tool executions (default = detected CPU thread count)
-agent_max_retries = 3             # Crash-retry limit per agent
-max_agent_depth = 8               # Max subagent recursion depth
-max_retries = 15                  # Max total LLM API retries
-
+agent_max_retries = 3             # Crash-retry limit per agent (non_neg_integer, min 0)
+max_agent_depth = 8               # Max subagent recursion depth (pos_integer, min 1)
+max_retries = 15                  # Max total LLM API retries (pos_integer, min 1)
+max_turns = 100                   # Turn cap for SUB-agents (pos_integer, min 1)
+max_turns_root = 1000             # Turn cap for the ROOT agent only (pos_integer, min 1)
+delegation_hint_threshold = 5     # Write-tool calls to a child dir before a delegation nudge (pos_integer, min 1; 0 disables)
+read_delegation_hint_threshold = 8 # Read-tool calls to a child dir before an investigator nudge (pos_integer, min 1; 0 disables)
+max_tool_timeout = 1_800_000      # Hard cap (ms) on any agent-requested tool timeout (pos_integer, min 1)
+default_tool_timeout = 10_000     # Default tool timeout (ms) when the agent omits one (pos_integer, min 1)
 [llm]
 model = "provider:model"          # REQUIRED, e.g. "anthropic:claude-sonnet-4-20250514"
 compression_threshold_tokens = 180_000  # Token limit before context compression
@@ -260,6 +265,7 @@ Web search (`[tools.search]`) supports providers `[:tavily, :perplexity, :exa, :
 **Disk shape after save**: `save_user_config/1` (config.ex:491-513) validates first, then `strip_flat_llm_fields/1` (config.ex:531-554) deletes the flat `[llm]` keys (`model, temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty`, config.ex:529) from the written TOML **only when `llm.models` is a non-empty list** — so a config saved with profiles contains NO `[llm] model = ...` line on disk; the flat value reappears purely as a resolve-time mirror. `stringify_keys/1` drops nil values (config.ex:578), so a nil-model profile round-trips as a profile without a `:model` key.
 
 ## Constraints
+- **No config key caps TOTAL agents / live worktrees / subagent spawn breadth.** The full `Definitions.schemas/0` inventory (the ground-truth key list) contains NO `max_agents`/`max_worktrees`/`max_subagents`/breadth key. `[:scheduler, :max_agent_depth]` (default 8) is the ONLY structural limit — it bounds recursion DEPTH (`Subagents.validate_subagent_depth/3`, agent_scheduler/subagents.ex:181-191: reject when `parent.depth + 1 > state.max_depth`), never breadth or count. `spawn_validated_subagents/5` (subagents.ex:34) spawns EVERY validated spec in the batch via `Dispatch.register_agent/7` (dispatch.ex:42), which registers an agent unconditionally — no queue, no cap; each gets a FRESH worktree (`Dispatch.try_dispatch` → WorktreeManager `create_worktree_for_agent/6`). So a wide spawn tree creates one worktree per agent with no upper bound. Per-agent LLM/tool slot pools gate LLM/tool CALLS (and thus indirectly the rate), not worktree creation. The `State` struct's `queue` is a FIFO drained on `resume` for paused schedulers — NOT a worktree-count queue.
 - `save_user_config/1` → `config.toml`; `save_credentials/1` → `credentials.toml`. Both create the config dir if needed.
 - Does NOT depend on `AgentScheduler` — runtime overrides are managed separately.
 - Config dir follows XDG conventions via `EvoGit.Platform.os()`.
