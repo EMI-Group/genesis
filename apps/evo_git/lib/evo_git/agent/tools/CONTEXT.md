@@ -49,7 +49,7 @@ Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `Web
 3. **Pattern match**: Private `execute_tool/5` dispatches to the correct module's `execute` function
 4. **Write tools**: Validate spatial scope via `Shared.validate_file_scope/3` before writing
 5. **Sandboxed tools**: Call `EvoGit.sandbox_run/4` which wraps commands in `systemd-run`
-6. **Result**: All execute functions return a string (success or error message). An unrecognized name falls to the `execute_tool/5` catch-all → dynamic-skill lookup (`skill` tool names), else an **actionable unknown-tool error**: `"Error: Unknown tool '<name>'. Did you mean '<closest>'? Available tools: ..."` — the closest dispatch-registered `@known_tool_names` entry by `String.jaro_distance/2` (suggested when the score ≥ 0.7) followed by the full available-tool list, so the LLM can self-correct next turn instead of repeating the bad call.
+6. **Result**: All execute functions return a string (success or error message). An unrecognized name falls to the `execute_tool/5` catch-all → dynamic-skill lookup (`skill` tool names), else an **actionable unknown-tool error**: `"Error: Unknown tool '<name>'. Did you mean '<closest>'? Available tools: ..."` — the closest name from the tool names DERIVED at runtime from `schemas/0` (`Enum.map(& &1.name)` via the private `available_tool_names/0`) by `String.jaro_distance/2` (suggested when the score ≥ 0.7) followed by the full available-tool list, so the LLM can self-correct next turn instead of repeating the bad call. The list is always current (never hand-maintained): `run_command` stays absent by construction, and the schema-commented-out `curl`/`run_git` are excluded.
 
 ### Web Search Providers (provider-adapter architecture)
 

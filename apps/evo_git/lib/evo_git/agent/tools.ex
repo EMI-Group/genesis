@@ -181,35 +181,6 @@ defmodule EvoGit.Agent.Tools do
     run_bash run_powershell
   )
 
-  # Dispatch-registered standard tool names, used to make the unknown-tool
-  # error actionable (closest-match suggestion + available list).
-  @known_tool_names [
-    "read_file",
-    "create_files",
-    "write_file",
-    "edit_file",
-    "make_dir",
-    "read_context",
-    "write_context",
-    "edit_context",
-    @shell_tool_name,
-    "rg",
-    "glob",
-    "list_dir",
-    "search_web",
-    "curl",
-    "search_context",
-    "search_history",
-    "skill_list",
-    "skill_read",
-    "skill_add",
-    "skill_edit",
-    "skill_remove",
-    "skill_enable",
-    "skill_disable",
-    "skill_where"
-  ]
-
   @unknown_tool_similarity_threshold 0.7
 
   def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
@@ -444,13 +415,23 @@ defmodule EvoGit.Agent.Tools do
         closest -> " Did you mean '#{closest}'?"
       end
 
-    "Error: Unknown tool '#{name}'.#{suggestion} Available tools: #{Enum.join(@known_tool_names, ", ")}."
+    "Error: Unknown tool '#{name}'.#{suggestion} Available tools: #{Enum.join(available_tool_names(), ", ")}."
+  end
+
+  # Advertised tool names, DERIVED at runtime from the real schema set so the
+  # unknown-tool hint can never drift from what coding agents are actually
+  # offered. Evaluated at call time (not a module attribute) because
+  # `schemas/0` reads runtime config (`maybe_append_web_search/1`). This keeps
+  # `run_command` deliberately absent (it is not in `schemas/0`) and excludes
+  # the schema-commented-out `curl`/`run_git`.
+  defp available_tool_names do
+    schemas() |> Enum.map(& &1.name)
   end
 
   defp closest_tool_name(name) do
     name = String.downcase(name)
 
-    @known_tool_names
+    available_tool_names()
     |> Enum.map(&{&1, String.jaro_distance(name, &1)})
     |> Enum.max_by(&elem(&1, 1), fn -> nil end)
     |> case do
