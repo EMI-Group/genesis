@@ -110,6 +110,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # (refresh_seq bumped), the stale message was already processed.
       send(view.pid, {:agents_data_loaded, node(), 0, {:ok, %{agents: [marker_agent()]}}})
       send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
       wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
@@ -127,12 +128,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Trigger an async refresh ({:agents_updated, node()} broadcast) —
       # refresh_seq becomes 1.
       send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
       wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
 
       # A stale refresh result (seq 0 < 1) must be dropped. FIFO fence: the
       # {:agents_updated, node()} event is processed after the stale message.
       send(view.pid, {:agents_refresh_result, 0, node(), {:ok, [marker_agent()], nil}})
       send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
       wait_until(fn -> assigns(view)[:refresh_seq] == 2 end)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
@@ -165,6 +168,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # while leaving its context (message_count) untouched.
       update_agent_status(1, :waiting)
       send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
       wait_until(fn -> render(view) =~ "WAITING" end)
 
       # The refresh applied but the count is unchanged — the carried history is
@@ -196,6 +200,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       ])
 
       send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
       wait_until(fn -> render(view) =~ "Turn 2" end)
 
       assert Agent.get(counter, & &1) == 2
@@ -222,8 +227,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
         summary_agent(id: 2, parent_id: 1, status: :pending, objective: "child objective")
 
       send(view.pid, {:agent_registered, 2, summary, node()})
+      flush_agent_events(view)
 
-      wait_until(fn -> assigns(view)[:new_agent_ids] |> MapSet.member?(2) end)
+      assert assigns(view)[:new_agent_ids] |> MapSet.member?(2)
 
       agents = assigns(view)[:agents]
       assert Enum.map(agents, & &1.id) == [1, 2]
@@ -256,6 +262,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # the handler must fall back to a full async refresh instead of
       # merging a broken row.
       send(view.pid, {:agent_registered, 3, %{id: 3}, node()})
+      flush_agent_events(view)
 
       wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
       wait_until(fn -> assigns(view)[:agents] |> Enum.any?(&(&1.id == 2)) end)
@@ -276,8 +283,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agents_load(view)
 
       send(view.pid, {:agent_updated, 1, [status: :waiting, total_tokens: 21_000], node()})
+      flush_agent_events(view)
 
-      wait_until(fn -> assigns(view)[:previous_statuses][1] == :waiting end)
+      assert assigns(view)[:previous_statuses][1] == :waiting
 
       agent = assigns(view)[:agents] |> Enum.find(&(&1.id == 1))
       assert agent.status == :waiting
@@ -309,10 +317,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end)
 
       send(view.pid, {:agent_updated, 1, [status: :waiting], remote_node})
+      flush_agent_events(view)
 
-      wait_until(fn ->
-        assigns(view)[:agents] |> Enum.find(&(&1.id == 1)) |> Map.get(:status) == :waiting
-      end)
+      assert assigns(view)[:agents] |> Enum.find(&(&1.id == 1)) |> Map.get(:status) == :waiting
     end
 
     test "removed event drops the row (local)", %{conn: conn} do
@@ -323,8 +330,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
 
       send(view.pid, {:agent_removed, 1, node()})
+      flush_agent_events(view)
 
-      wait_until(fn -> assigns(view)[:agents] == [] end)
+      assert assigns(view)[:agents] == []
       refute render(view) =~ "#1"
     end
 
@@ -347,8 +355,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end)
 
       send(view.pid, {:agent_removed, 1, remote_node})
+      flush_agent_events(view)
 
-      wait_until(fn -> assigns(view)[:agents] == [] end)
+      assert assigns(view)[:agents] == []
     end
 
     test "foreign-node events are ignored (tree unchanged, no refresh spawned)", %{conn: conn} do
@@ -399,6 +408,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # The agent's context grew (message_count 1 -> 2) — the event carries
       # the fresh count, so the refetch fires and the second message renders.
       send(view.pid, {:agent_updated, 1, [message_count: 2], node()})
+      flush_agent_events(view)
 
       wait_until(fn -> Agent.get(counter, & &1) == 2 end)
       assert render(view) =~ "fake message 2"
@@ -423,8 +433,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Same message_count — the gate suppresses the refetch (the status
       # change still proves the merge applied).
       send(view.pid, {:agent_updated, 1, [message_count: 1, status: :waiting], node()})
+      flush_agent_events(view)
 
-      wait_until(fn -> render(view) =~ "WAITING" end)
+      assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
     end
 
@@ -447,9 +458,268 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # No :message_count in changed_fields — nothing context-related moved,
       # so no refetch even though the selected agent was updated.
       send(view.pid, {:agent_updated, 1, [status: :waiting], node()})
+      flush_agent_events(view)
 
-      wait_until(fn -> render(view) =~ "WAITING" end)
+      assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
+    end
+  end
+
+  describe "agent event coalescing" do
+    # The production fix buffers the high-frequency "agents" PubSub events and
+    # applies them in ONE trailing-edge flush (EvoDashWeb.AgentsLive.PendingEvents,
+    # 300ms window) instead of merging + re-rendering the whole tree per event.
+    # These tests pin the buffer contract: coalescing, the single-timer rule,
+    # node filtering BEFORE buffering, arrival-order drain, at-most-one
+    # fallback refresh, at-most-one selected-agent history refetch, and the
+    # real trailing-edge timer itself.
+    #
+    # `flush_agent_events/1` (private helper below) bypasses the timer: the
+    # LiveView mailbox is FIFO, so events sent before the flush message are
+    # already buffered when it is handled.
+
+    test "a burst of registered events coalesces into a single flush", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      # Three rapid registrations: two direct sends (the injection shortcut the
+      # node-identity tests use) and ONE REAL PubSub broadcast, proving the
+      # true emitter path is coalesced too — not just direct send/2.
+      send(
+        view.pid,
+        {:agent_registered, 2,
+         summary_agent(id: 2, parent_id: 1, status: :pending, objective: "child two"), node()}
+      )
+
+      send(
+        view.pid,
+        {:agent_registered, 3,
+         summary_agent(id: 3, parent_id: 2, status: :pending, objective: "child three"), node()}
+      )
+
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "agents",
+        {:agent_registered, 4,
+         summary_agent(id: 4, parent_id: 3, status: :pending, objective: "child four"), node()}
+      )
+
+      # Coalescing contract: NOTHING is applied on receipt. The three events
+      # sit in the newest-first buffer and the tree is still the pre-burst one.
+      buffered = :sys.get_state(view.pid).socket.assigns
+      assert length(buffered.pending_agent_events) == 3
+      assert buffered.agent_flush_scheduled == true
+      assert Enum.map(buffered.agents, & &1.id) == [1]
+
+      # ONE flush applies all three, in arrival order.
+      flush_agent_events(view)
+
+      agents = assigns(view)[:agents]
+      assert Enum.map(agents, & &1.id) == [1, 2, 3, 4]
+      assert MapSet.equal?(assigns(view)[:new_agent_ids], MapSet.new([2, 3, 4]))
+
+      # children/has_children are recomputed per insertion (1 → 2 → 3 → 4).
+      assert Enum.find(agents, &(&1.id == 1)).children == [{2, :pending}]
+      assert Enum.find(agents, &(&1.id == 2)).children == [{3, :pending}]
+      assert Enum.find(agents, &(&1.id == 3)).children == [{4, :pending}]
+      assert Enum.find(agents, &(&1.id == 4)).children == []
+
+      for agent <- agents do
+        assert agent.has_children == (agent.children != [])
+      end
+
+      assert render(view) =~ "#4"
+    end
+
+    test "the trailing-edge timer is armed only once per window", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Five rapid updates for the SAME (already-present) agent.
+      for n <- 1..5 do
+        send(view.pid, {:agent_updated, 1, [total_tokens: n], node()})
+      end
+
+      # :sys.get_state is a mailbox fence — all five events were processed
+      # before this reply. The FIRST event armed the single timer; the other
+      # four only appended to the buffer (no second schedule).
+      state = :sys.get_state(view.pid).socket.assigns
+      assert state.agent_flush_scheduled == true
+      assert length(state.pending_agent_events) == 5
+
+      # The buffer is newest-first (prepend); drain restores ARRIVAL order.
+      assert hd(state.pending_agent_events) == {:agent_updated, 1, [total_tokens: 5], node()}
+
+      assert EvoDashWeb.AgentsLive.PendingEvents.drain(state.pending_agent_events) ==
+               for(n <- 1..5, do: {:agent_updated, 1, [total_tokens: n], node()})
+    end
+
+    test "foreign-node events are dropped before buffering", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      foreign = :some_other_node@host
+      assert foreign != node()
+
+      send(view.pid, {:agent_updated, 1, [status: :running], foreign})
+      send(view.pid, {:agent_removed, 1, foreign})
+      send(view.pid, {:agent_registered, 2, summary_agent(id: 2), foreign})
+      send(view.pid, {:agents_updated, foreign})
+
+      # No flush call here: a flush would reset :agent_flush_scheduled itself
+      # and make the assertion vacuous. :sys.get_state is the FIFO fence.
+      state = :sys.get_state(view.pid).socket.assigns
+      assert state.pending_agent_events == []
+      assert state.agent_flush_scheduled == false
+      assert state.pending_agents_refresh == false
+      assert state.refresh_seq == 0
+      assert Enum.map(state.agents, & &1.id) == [1]
+      assert Enum.find(state.agents, &(&1.id == 1)).status == :running
+    end
+
+    test "a burst with missing-agent fallbacks spawns exactly one refresh", %{conn: conn} do
+      # Count the authoritative list reads (the initial async load + refreshes).
+      calls = start_supervised!({Agent, fn -> 0 end})
+
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        Agent.update(calls, &(&1 + 1))
+        [summary_agent(id: 1)]
+      end)
+
+      on_exit(&clear_agents_env/0)
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      # The page load may be entered more than once (dead render + connected
+      # mount), so count the DELTA caused by the burst below.
+      before = Agent.get(calls, & &1)
+      assert assigns(view)[:refresh_seq] == 0
+
+      # Two updates for agent ids NOT in the tree (each ⇒ :fallback) plus one
+      # normal update that merges cleanly. All three coalesce into the SAME
+      # flush, which must spawn exactly ONE async refresh (not one per event).
+      send(view.pid, {:agent_updated, 404, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, 405, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, 1, [status: :waiting], node()})
+
+      flush_agent_events(view)
+
+      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
+
+      # Give a hypothetical SECOND refresh a window to appear, then assert the
+      # burst produced exactly one (refresh_seq is monotonic, never reset).
+      Process.sleep(150)
+      assert assigns(view)[:refresh_seq] == 1
+      assert Agent.get(calls, & &1) == before + 1
+    end
+
+    test "a burst touching the selected agent refetches history at most once", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Selecting the agent fetches its history once (no gate entry yet).
+      view |> element("#agent-card-1") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      # Count only the fetch(es) triggered by the burst below.
+      before = Agent.get(counter, & &1)
+
+      # Three rapid context-growth updates for the SELECTED agent — each
+      # carries :message_count (the contract). The flush must refetch ONCE for
+      # the whole burst, not once per event (refetch_selected_history/1 runs
+      # at most once at the end of the drain).
+      send(view.pid, {:agent_updated, 1, [message_count: 2, status: :waiting], node()})
+      send(view.pid, {:agent_updated, 1, [message_count: 3], node()})
+      send(view.pid, {:agent_updated, 1, [message_count: 4], node()})
+
+      flush_agent_events(view)
+
+      wait_until(fn -> Agent.get(counter, & &1) == before + 1 end)
+
+      # No extra fetch may follow (a second flush/spawn would show up here).
+      Process.sleep(150)
+      assert Agent.get(counter, & &1) == before + 1
+    end
+
+    test "a burst without :message_count triggers no history refetch", %{conn: conn} do
+      seed_agent(1, [
+        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
+      ])
+
+      counter = start_history_counter()
+      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-1") |> render_click()
+      wait_until(fn -> render(view) =~ "fake message 1" end)
+      assert Agent.get(counter, & &1) == 1
+
+      before = Agent.get(counter, & &1)
+
+      # The inverse contract: changed_fields WITHOUT :message_count never means
+      # "the context grew", so the selected-agent history is left alone (no
+      # refetch) even though the agent's row merges.
+      send(view.pid, {:agent_updated, 1, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, 1, [total_tokens: 123], node()})
+      send(view.pid, {:agent_updated, 1, [status: :running], node()})
+
+      flush_agent_events(view)
+
+      # The merge still applied (last event → :running, tokens folded in)…
+      assert assigns(view)[:previous_statuses][1] == :running
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == 1))
+      assert agent.total_tokens == 123
+
+      # …but no history fetch was spawned by the burst.
+      Process.sleep(150)
+      assert Agent.get(counter, & &1) == before
+    end
+
+    test "the trailing-edge timer applies the buffer without a manual flush", %{conn: conn} do
+      seed_agent(1, [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      send(
+        view.pid,
+        {:agent_registered, 2, summary_agent(id: 2, parent_id: 1, status: :pending), node()}
+      )
+
+      # Armed, not applied — the merge is deferred to the timer.
+      assert assigns(view)[:pending_agent_events] != []
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1]
+
+      # Let the REAL 300ms trailing-edge timer fire (no manual flush here).
+      Process.sleep(400)
+
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [1, 2]
+      assert assigns(view)[:pending_agent_events] == []
+      assert assigns(view)[:agent_flush_scheduled] == false
+      assert render(view) =~ "#2"
     end
   end
 
@@ -724,6 +994,24 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "will be added on the agent&#39;s next turn"
       # ...and the success flash is shown.
       assert html =~ "Message sent to agent"
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # This is the ONE test in the file that performs a REAL core write:
+      # `send_agent_message` → AgentScheduler → Store.put_agent_state/2,
+      # which emits a synchronous {:agent_updated, 1, [pending_user_messages:
+      # ...]} delta AND (via broadcast_agents_updated/0) a THROTTLED
+      # {:agents_updated, node} bulk signal ~200ms later
+      # (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted into a LATER
+      # test's socket, the bulk signal would set that test's
+      # :pending_agents_refresh, arm a 300ms flush, and its authoritative
+      # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
+      # merge — the historical cross-test flake on this file.
+      #
+      # Sleeping past the throttle and flushing here makes both broadcasts
+      # land on THIS socket (which is torn down at the end of the test), so
+      # nothing leaks past teardown. The assertions above already ran.
+      Process.sleep(250)
+      flush_agent_events(view)
     end
 
     test "missing agent shows a failure flash instead of a false success", %{conn: conn} do
@@ -1000,6 +1288,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
         "timed out waiting for the async agents load to finish",
         timeout
       )
+
+  # Triggers the AgentsLive coalescing flush directly (bypassing the 300ms
+  # trailing-edge timer). The LiveView processes its mailbox in FIFO order,
+  # so any agent events sent before this message have been buffered and are
+  # applied by the time this flush is handled.
+  defp flush_agent_events(view) do
+    send(view.pid, :flush_agent_events)
+    render(view)
+  end
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
   # Used to synchronize on LiveView state changes that follow directly-sent
