@@ -25,6 +25,25 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         <.completion_banner completion={@completion} back_url={@back_url} />
       <% end %>
 
+      <%= if show_merge_all?(@repos) do %>
+        <div id="merge-all-toolbar" class="flex flex-wrap items-center gap-3">
+          <button
+            id="merge-all-repositories"
+            class="btn btn-success btn-sm rounded-lg gap-1.5"
+            phx-click="merge_all"
+            phx-confirm={
+              gettext(
+                "Merge ALL remaining repositories into their target branches? This cannot be undone."
+              )
+            }
+          >
+            <.icon name="hero-check" class="size-4" />
+            <%!-- zh_CN: 一次合并所有仍未处理的仓库（接受全部） --%>
+            {gettext("Merge all repositories")}
+          </button>
+        </div>
+      <% end %>
+
       <.repo_card :for={repo <- @repos} repo={repo} />
     </div>
     """
@@ -396,6 +415,17 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
 
   defp resolution_state(resolution) when is_map(resolution), do: Map.get(resolution, :state)
   defp resolution_state(_resolution), do: nil
+
+  # Accept-all shortcut gate: only meaningful when the task has at least two
+  # repositories AND at least two of them are still unresolved (resolution nil).
+  # `field/3` tolerates a missing `:resolution` key and `resolution_state(nil)`
+  # is nil, so nil/absent resolutions both count as unresolved.
+  defp show_merge_all?(repos) when is_list(repos) do
+    length(repos) >= 2 and
+      Enum.count(repos, &(resolution_state(field(&1, :resolution)) == nil)) >= 2
+  end
+
+  defp show_merge_all?(_repos), do: false
 
   defp resolution_badge_class(nil), do: []
 
