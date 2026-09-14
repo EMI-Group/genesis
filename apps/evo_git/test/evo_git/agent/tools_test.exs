@@ -4,6 +4,11 @@ defmodule EvoGit.Agent.ToolsTest do
 
   @moduletag :tmp_dir
 
+  # The platform-specific shell tool name (POSIX `run_bash` / Windows
+  # `run_powershell`), mirroring the private `@shell_tool_name` in
+  # `EvoGit.Agent.Tools`. Shell-tool aliases normalize to this name.
+  @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
+
   describe "schemas/0" do
     test "returns a list of tool schemas" do
       schemas = Tools.schemas()
@@ -740,6 +745,75 @@ defmodule EvoGit.Agent.ToolsTest do
       result = Tools.execute("unknown_tool", %{}, tmp_dir)
       assert result =~ "Unknown tool"
     end
+
+    test "suggests the closest tool name for a near miss", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("read_fil", %{}, tmp_dir)
+      assert result =~ "Unknown tool 'read_fil'"
+      assert result =~ "Did you mean 'read_file'"
+    end
+
+    test "lists the available tools when there is no close match", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("zzz_missing_zzz", %{}, tmp_dir)
+      assert result =~ "Unknown tool 'zzz_missing_zzz'"
+      assert result =~ "Available tools:"
+    end
+  end
+
+  describe "execute/5 - shell tool alias normalization" do
+    test "normalizes well-known shell aliases to the platform shell tool", %{tmp_dir: tmp_dir} do
+      for alias_name <- ~w(
+            Bash bash BASH Shell shell sh
+            execute_bash bash_command run_shell shell_command
+          ) do
+        result = Tools.execute(alias_name, %{"command" => "echo alias-ok"}, tmp_dir, tmp_dir)
+
+        assert result =~ "alias-ok",
+               "expected alias #{inspect(alias_name)} to execute the shell command, got: #{inspect(result)}"
+
+        refute result =~ "Unknown tool",
+               "expected alias #{inspect(alias_name)} NOT to be reported as an unknown tool, got: #{inspect(result)}"
+      end
+    end
+
+    test "normalizes a case-variant of the platform shell tool name", %{tmp_dir: tmp_dir} do
+      result = Tools.execute("RUN_BASH", %{"command" => "echo upper-ok"}, tmp_dir, tmp_dir)
+
+      assert result =~ "upper-ok"
+      refute result =~ "Unknown tool"
+    end
+
+    test "runs the other platform's shell tool name too", %{tmp_dir: tmp_dir} do
+      other = if @shell_tool_name == "run_bash", do: "run_powershell", else: "run_bash"
+
+      result = Tools.execute(other, %{"command" => "echo cross-platform-ok"}, tmp_dir, tmp_dir)
+
+      assert result =~ "cross-platform-ok"
+      refute result =~ "Unknown tool"
+    end
+
+    test "normalizes the alias through the JSON-encoded whole-args fallback", %{tmp_dir: tmp_dir} do
+      args = Jason.encode!(%{"command" => "echo json-ok"})
+
+      result = Tools.execute("Bash", args, tmp_dir, tmp_dir)
+
+      assert result =~ "json-ok"
+      refute result =~ "Unknown tool"
+    end
+  end
+
+  describe "execute/5 - shell alias honors the write guards" do
+    test "a shell alias is blocked for repo-less agents (normalized before the guard)", %{
+      tmp_dir: tmp_dir
+    } do
+      Process.put(:repo_less, true)
+      on_exit(fn -> Process.delete(:repo_less) end)
+
+      result = Tools.execute("Bash", %{"command" => "echo should-not-run"}, tmp_dir, tmp_dir)
+
+      assert is_binary(result)
+      assert result =~ "read-only access to the system"
+      refute result =~ "should-not-run"
+    end
   end
 
   describe "execute/4 - whole args as JSON string fallback" do
@@ -811,6 +885,7 @@ defmodule EvoGit.Agent.ToolsTest do
                %{"file_path" => "test.txt", "old_string" => "a", "new_string" => "b"}},
               {"write_context", %{"dir_path" => "lib", "content" => "x"}},
               {"run_bash", %{"command" => "echo hi"}},
+              {"Bash", %{"command" => "echo hi"}},
               {"run_git", %{"args" => ["status"]}},
               {"curl", %{"url" => "https://example.com", "output" => "x.html"}}
             ] do
