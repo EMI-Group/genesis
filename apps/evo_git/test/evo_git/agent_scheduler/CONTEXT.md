@@ -16,7 +16,8 @@ ExUnit tests for the `EvoGit.AgentScheduler` subsystem — scheduling (no worktr
 
 ## Constraints
 
-- `agent_scheduler_test.exs`, `lifecycle_test.exs`, `worktrees_test.exs`, `slots_test.exs`, `store_test.exs`, `state_test.exs`, `remote_api_test.exs`, `pubsub_test.exs` are `async: false` (global ETS / live scheduler); `subagents_test.exs`, `dispatch_test.exs`, `worktree_retry_test.exs` are `async: true`.
+- `agent_scheduler_test.exs`, `lifecycle_test.exs`, `worktrees_test.exs`, `worktree_admission_test.exs`, `slots_test.exs`, `store_test.exs`, `state_test.exs`, `remote_api_test.exs`, `pubsub_test.exs` are `async: false` (global ETS / live scheduler / global app-env seams); `subagents_test.exs`, `dispatch_test.exs`, `worktree_retry_test.exs` are `async: true`.
+- The admission-queue seams `:max_concurrent_worktree_creation` and `:worktree_create_fun` are GLOBAL app env (read by the manager at admission/create time) — `worktree_admission_test.exs` must stay `async: false` and save/restore both in `on_exit`.
 - SchedMeta seeding idiom for sched-meta tests: `:ets.insert(:evogit_sched_meta, {id, %SchedMeta{...}})`; plain maps work where lib only dot-accesses one key (`Store.get_sched_meta` matches `%{}`).
 - `WorktreeManager.maybe_init_repo/3` is PRIVATE — per-repo init scoping tests exercise it through the public `create_worktree_for_agent/6` with a spec `repo_id` ("primary" vs foreign id), each test needing a fresh temp repo (persistent per-repo `:evogit_worktree_repos` marker skips the wipe on subsequent inits).
 - `EvoGit.Core.ForeignRepo` struct requires `root:` (no default) when building test structs.
