@@ -1,4 +1,9 @@
 defmodule EvoGit.CLITest do
+  # async: true is safe — this module only exercises PURE helpers
+  # (do_parse_foreign_repos/do_parse_model_flag/do_add_model_profile/
+  # resolve_model_id/Config.Schema) plus CLI error paths that return before any
+  # enqueue. It never mutates env vars/app env, never touches the Store or the
+  # scheduler, and `capture_io` is process-local.
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
