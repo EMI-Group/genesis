@@ -58,15 +58,45 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   @create_entry_timeout 10_000
   @release_timeout 10_000
 
-  setup %{tmp_dir: tmp_dir} do
+  # Every test starts from the SAME committed repo state (one commit on the
+  # default branch with a single README.md). Building it from scratch costs
+  # ~38ms of git-subprocess time per test, so we build ONE committed template
+  # ONCE per module run in setup_all and hand each test a private copy via
+  # File.cp_r/2 (pure BEAM, no git subprocess — ~8ms) — the template is never
+  # mutated. (Mirrors the established pattern in remote_api_test.exs.)
+  setup_all do
+    template_dir = unique_tmp_dir("evogit_worktree_admission_tpl_")
+
     # Real git repo so the manager's lazy per-repo init (rm_rf workers dir +
     # prune + orphaned-branch cleanup) and its :DOWN cleanup (rm_rf + prune +
-    # branch delete) run cleanly and warning-free.
-    {:ok, _} = Git.init(tmp_dir)
-    File.write!(Path.join(tmp_dir, "README.md"), "# test")
-    {:ok, _} = Git.add(tmp_dir, "README.md")
-    {:ok, _} = Git.commit(tmp_dir, "initial commit")
-    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    # branch delete) run cleanly and warning-free. Built exactly like the old
+    # per-test setup (no explicit git identity — the commit relies on
+    # EvoGit.GitEnv's fallback via the adapter).
+    File.mkdir_p!(template_dir)
+    {:ok, _} = Git.init(template_dir)
+    File.write!(Path.join(template_dir, "README.md"), "# test")
+    {:ok, _} = Git.add(template_dir, "README.md")
+    {:ok, _} = Git.commit(template_dir, "initial commit")
+    {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand. Dropping them shrinks each per-test
+    # File.cp_r/2 (8ms vs 20ms).
+    File.rm_rf!(Path.join(template_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(template_dir, ".git/logs"))
+
+    on_exit(fn -> File.rm_rf!(template_dir) end)
+
+    {:ok, template_dir: template_dir, base_sha: base_sha}
+  end
+
+  setup %{tmp_dir: tmp_dir, template_dir: template_dir, base_sha: base_sha} do
+    # Private copy of the committed template repo (real git repo so the
+    # manager's lazy per-repo init ... run cleanly and warning-free). The
+    # ExUnit :tmp_dir fixture dir already exists — replace its contents with
+    # the template copy.
+    File.rm_rf!(tmp_dir)
+    {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
@@ -287,6 +317,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:evo_git, key)
   defp restore_app_env(key, value), do: Application.put_env(:evo_git, key, value)
+
+  defp unique_tmp_dir(prefix) do
+    Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
+  end
 
   # --------------------------------------------------------------------------
   # ETS helpers (mirrors worktrees_test.exs)

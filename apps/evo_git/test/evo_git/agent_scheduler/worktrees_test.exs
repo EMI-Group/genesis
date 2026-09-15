@@ -26,18 +26,51 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   # --------------------------------------------------------------------------
   # Shared temp git-repo setup (mirrors test/evo_git/runtime/helpers_test.exs)
   # --------------------------------------------------------------------------
-  setup do
+  #
+  # Every test starts from the SAME committed repo state (one commit on the
+  # default branch with a single README.md). Building it from scratch costs
+  # ~38ms of git-subprocess time per test, so we build ONE committed template
+  # ONCE per module run in setup_all and hand each test a private copy via
+  # File.cp_r/2 (pure BEAM, no git subprocess — ~8ms). Tests still mutate only
+  # their own throw-away copy (worktrees under `<repo>/.genesis/workers`,
+  # branches, genesis.toml, chmods) — the template is never touched.
+  #
+  # The template is built EXACTLY like the old per-test setup (no explicit git
+  # identity — the commit relies on EvoGit.GitEnv's fallback via the adapter),
+  # so the commit identity and sha are identical, and the copy is a valid repo.
+  setup_all do
+    template_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_worktrees_tpl_" <> to_string(System.unique_integer())
+      )
+
+    File.mkdir_p!(template_dir)
+    {:ok, _} = Git.init(template_dir)
+
+    # Create an initial commit so HEAD exists and branches can be created.
+    File.write!(Path.join(template_dir, "README.md"), "# test")
+    {:ok, _} = Git.add(template_dir, "README.md")
+    {:ok, _} = Git.commit(template_dir, "initial commit")
+    {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand and the worktree/branch operations below behave
+    # identically. Dropping them shrinks each per-test File.cp_r/2 (8ms vs
+    # 20ms).
+    File.rm_rf!(Path.join(template_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(template_dir, ".git/logs"))
+
+    on_exit(fn -> File.rm_rf!(template_dir) end)
+
+    {:ok, template_dir: template_dir, base_sha: base_sha}
+  end
+
+  setup %{template_dir: template_dir, base_sha: base_sha} do
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_worktrees_" <> to_string(System.unique_integer()))
 
-    File.mkdir_p!(tmp_dir)
-    {:ok, _} = Git.init(tmp_dir)
-
-    # Create an initial commit so HEAD exists and branches can be created.
-    File.write!(Path.join(tmp_dir, "README.md"), "# test")
-    {:ok, _} = Git.add(tmp_dir, "README.md")
-    {:ok, _} = Git.commit(tmp_dir, "initial commit")
-    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
