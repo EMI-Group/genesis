@@ -12,7 +12,7 @@ ExUnit test suite for the `:evo_git` OTP application. Validates core domain logi
 ## API Surface
 
 ### Top-level files
-- **`test_helper.exs`** — Minimal bootstrap: calls `ExUnit.start()`.
+- **`test_helper.exs`** — Bootstrap: redirects `XDG_DATA_HOME` to a temp dir (belt-and-suspenders against the production DB), disables nix integration globally via `Application.put_env(:evo_git, :nix_enabled, false)` (see "Nix integration in tests"), then calls `ExUnit.start(capture_log: true)`.
 - **`evo_git_test.exs`** — `EvoGitTest`: `EvoGit.sandbox_args/4` and `sandbox_run/4` (direct exec in test env). Lib `sandbox_args` arities: 2/3/4.
 - **`mix/tasks/bump_version_test.exs`** — `Mix.Tasks.Bump.VersionTest` (`async: false`): `mix bump.version` bumps `VERSION`/desktop manifests, commits exactly the touched files when confirmed, no-op when current, warns (no crash) when commit fails, changelog generation on confirm.
 - **`mix/tasks/changelog_test.exs`** — `Mix.Tasks.ChangelogTest` (`async: false`, stubbed summarizer/aggregator via the `:changelog_summarizer`/`:changelog_pr_summarizer`/`:changelog_aggregator` app-env seams): creates/replaces CHANGELOG.md sections, defaults range to last tag, merge→one-PR stage-1 grouping, version-bump/mechanical-commit exclusion.
@@ -95,7 +95,7 @@ ExUnit test suite for the `:evo_git` OTP application. Validates core domain logi
 - **`bwrap_test.exs`** — `EvoGit.Sandbox.BwrapTest` (`async: false`, 42 tests): pure `args/4` generation for the bwrap backend — NO real bwrap execution (`Bwrap.enabled?/0` false in test env via the `@mix_env == :test` gate). Pins namespace flags, tmp/writable binds (defaults/configured/`[]`/`~`), git-metadata binds (linked-worktree `gitdir:` pointer → COMMON dir), 12-entry deny list, chdir + `--`, nix integration, TMPDIR setenv, git identity env, bash `-c` tail.
 - **`linux_test.exs`** — `EvoGit.Sandbox.LinuxTest`: systemd-run backend `args/4` — TMPDIR forwarding, ReadWritePaths, PATH/HOME, nix, GIT_EDITOR injection, bash wrapping for stdin.
 - **`macos_test.exs`** — `EvoGit.Sandbox.MacOSTest` (`async: false`): hardened `sandbox-exec` profile — deny-by-default + root-wide read allow, sensitive-dir deny rules in both symlink spellings, `(limit number 200)` + fail-safe stripping wiring, `resolve_tmpdir/0`. XDG_CONFIG_HOME redirected in setup. (Known flaky under full-suite parallel load — see Known Issues.)
-- **`none_test.exs`** — `EvoGit.Sandbox.NoneTest`: passthrough backend (run/4, resolve_executable, stdin redirection, GIT_EDITOR).
+- **`none_test.exs`** — `EvoGit.Sandbox.NoneTest`: passthrough backend (run/4, resolve_executable, stdin redirection, GIT_EDITOR). Its `None.run/4` paths consult `Nix.active?()`, so they no longer shell out to real `nix print-dev-env` thanks to the global `:nix_enabled` default in `test_helper.exs` (see "Nix integration in tests") — this module stays `async: true` and carries no local guard.
 - **`behaviour_test.exs`** — `EvoGit.Sandbox.BehaviourTest`: behaviour conformance of backend modules.
 - **`helpers_test.exs`** — `EvoGit.Sandbox.HelpersTest`: `shell_escape/1`, `truncate_output/2`, `read_tempfile/2`, `system_cmd/2`.
 - **`nix_test.exs`** — `EvoGit.NixTest`: `dev_env_state/0`, `active?/0`, `wrap_command/2` (shell escaping + graceful fallback), `reset_state/0`, `nix_env_vars/0`.
@@ -142,7 +142,7 @@ ExUnit test suite for the `:evo_git` OTP application. Validates core domain logi
 - **`self_reflective_source_test.exs`** — `EvoGit.SelfReflectiveSourceTest`: `status/0` (pure local read), `clone/0`, `update/0`, `reference_path/0` chain precedence.
 - **`skills_test.exs`** — `EvoGit.SkillsTest` (57 tests): skills subsystem — frontmatter/YAML parsing, `substitute_params/3`, `validate_skill_text/1`, `to_tool_schemas/1`, `find_skill/2`, `skill_names/1`, `execute/4`, `load_skills/1`, CRUD.
 - **`skills_hierarchical_test.exs`** — `EvoGit.SkillsHierarchicalTest`: `extract_context_skill_names/1`, `strip_front_matter/1`, `filter_skills/2`, `skill_names_at_dir/1`, `where_enabled/2`, `enable_skill/3`, `disable_skill/3`, hierarchical inheritance.
-- **`system_check_test.exs`** — `EvoGit.SystemCheckTest` (45 tests): `tool_check/0`, `config_check/0`, `sandbox_check/0`, `supervisor_check/0`, `nix_check/0`, `run_all_checks/0`.
+- **`system_check_test.exs`** — `EvoGit.SystemCheckTest` (45 tests): `tool_check/0`, `config_check/0`, `sandbox_check/0`, `supervisor_check/0`, `nix_check/0`, `run_all_checks/0`. `setup` only calls `Nix.reset_state/0` (restored on exit); the real-nix shell-out that `nix_check/0` (and `run_all_checks/0`) would otherwise trigger is prevented by the global `:nix_enabled` default in `test_helper.exs` (see "Nix integration in tests"). Assertions only check types/booleans/keys.
 - **`utf8_test.exs`** — `EvoGit.UTF8Test`: `ensure_utf8/1` (em-dash truncation bug scenario).
 - **`worktree_main_head_safety_test.exs`** — `EvoGit.WorktreeMainHeadSafetyTest` (`async: false`): end-to-end **writable-foreign-repo main-HEAD safety** through the full worktree lifecycle (worktree create → `assign_and_prepare_worktree/3` + phylo_node bind → agent commit inside the worktree → destroy → `merge_and_report/4` per-repo branch create → review pre-merge reads): the foreign main copy stays on its original branch with a clean tree throughout, the `genesis/agent_*` branch exists but is never checked out, and `load_review_data`/`check_merge` report a non-empty diff + `:clean` while HEAD is on the original branch.
 
@@ -157,8 +157,16 @@ ExUnit test suite for the `:evo_git` OTP application. Validates core domain logi
 
 ## Known Issues & Test Env Notes
 
-### RemoteConnection test notes
-- The `connect/1` test emits a `Failed to enable distribution` warning (`:net_kernel` can't start in test env) — harmless; the test only asserts the error is NOT `:local_node_not_distributed`.
+### Distribution warning (boot-time — NOT silenceable test-side)
+- The `Failed to enable distribution: ...` warning originates in `EvoGit.Distribution.enable/1` (`lib/evo_git/distribution.ex`), reached at APPLICATION BOOT via `EvoGit.Application.start/2` → `Distribution.maybe_enable/0`, which reads the developer's REAL `~/.config/genesis/config.toml` (`[node] enabled = true`).
+- It is printed BEFORE `ExUnit.start/1`, so `capture_log: true` in `test_helper.exs` cannot capture it and NO test-side change can silence it (a per-test `XDG_CONFIG_HOME` redirect runs too late). It is NOT emitted by any test — it appears identically for unrelated test files, and `mix test --no-start <file>` removes it entirely.
+- Canonical fix (outside this node — needs umbrella-root `config/` or a lib change): make the boot-time config test-safe, e.g. a test-env `[node] enabled = false` default.
+- The `enable_for_remote/1` path logs a DIFFERENT message containing `"for remote:"`; its tests run inside ExUnit and are normally captured. The `connect/1` test in `distribution_test.exs` only asserts the failure is NOT `:local_node_not_distributed` (distribution is unavailable in the test BEAM).
+
+### Nix integration in tests
+- `EvoGit.Nix.enabled?/0` reads app env `:nix_enabled` first; when unset it falls back to the REAL user config (`[nix]` + `~/.config/genesis/flake.nix`). Any test whose code path reaches `Nix.active?()`/`wrap_command/2`/`ensure_dev_env/0` therefore shells out to real `nix print-dev-env`, leaking `evaluating derivation ...` + dot progress to stderr on a nix-configured host.
+- The suite disables it with ONE deterministic, race-free global default: `test_helper.exs` sets `Application.put_env(:evo_git, :nix_enabled, false)` before `ExUnit.start/1`. It runs after app boot but before any test, and nix is only consulted LAZILY during tests, so it covers every module — crucially including the `async: true` ones, which must NEVER mutate this BEAM-global app env themselves for this purpose.
+- Tests that specifically need nix enable it explicitly (e.g. `sandbox/bwrap_test.exs` flips `:nix_enabled` to `true` for its nix-integration cases). A few older serial modules (`evo_git_test.exs`, `sandbox/{linux,bwrap,macos,nix}_test.exs`) still carry a local `setup` guard that puts the same value and restores the original on exit — harmless and now redundant given the global default.
 
 ### SystemSampler test env
 - The `:evo_git` app — incl. the REGISTERED `EvoGit.SystemSampler` (3000 ms tick default via `:system_sample_interval_ms` app env, read at init) — starts BEFORE `test_helper.exs`; `Application.put_env` in test_helper is too late. A test subscribing to `"system"` must silence it: set the env, then `Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.SystemSampler)` + explicit `Supervisor.restart_child/2` so `init/1` re-reads it (`system_sampler_test.exs` does this in `setup_all`). Canonical fix (needs umbrella-root approval — `config/` is outside this node): `config :evo_git, :system_sample_interval_ms, 86_400_000` in `config/test.exs`.
