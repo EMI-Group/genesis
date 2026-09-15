@@ -28,7 +28,8 @@ A module MUST be `async: false` when any test redirects a process-wide env var r
 A module MUST also be `async: false` when any test touches the global `EvoGit.AgentScheduler`, the global `:evogit_*` ETS tables, the app-level `EvoGit.Store` / `EvoGit.TaskRegistry` singletons, the `EvoGit.RemoteConnection` Registry/DynamicSupervisor, or a shared PubSub topic it asserts on without node/id filtering.
 Any module that `use`s `EvoGit.TaskRegistryCase` MUST be `async: false` — that case terminates and restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry` singletons (its moduledoc states this).
 Every forced-`async: false` module carries an in-file comment/`@moduledoc` naming the exact BEAM-global that forces serialization — keep it accurate when the forcing state changes.
-
+The async setting is **per MODULE, not per file** — two files carry two test modules each: `command_shell_test.exs` = `EvoGit.CommandShellTest` (`EvoGit.TaskRegistryCase`, sync) + `EvoGit.CommandShellParsingTest` (`async: true`), and `command_approval_test.exs` = `EvoGit.CommandApprovalTest` (`EvoGit.TaskRegistryCase`, sync) + `EvoGit.CommandApproval.RequestTest` (`async: false`). A one-`use`-line-per-file scan misclassifies both.
+Inventory at `2ec39de4a`: 131 test modules — 65 `async: true`, 66 serialized (64 `async: false` + 2 untagged-by-default `agent/tools_test.exs` / `evo_git_test.exs`); 14 of the serialized modules use `EvoGit.TaskRegistryCase`.
 ## Shared Infrastructure
 `test_helper.exs` runs after app boot and before any test: it redirects `XDG_DATA_HOME` to a temp dir as a fallback guard against the production DB, sets the one global `:nix_enabled = false` default (nix is only consulted lazily, so setting it here is race-free for every async module; a few `async: false` sandbox modules still set it locally), then calls `ExUnit.start(capture_log: true)`.
 The canonical DB guard is `config/test.exs` pinning `:evo_git, :data_dir` (see Known Issues).
