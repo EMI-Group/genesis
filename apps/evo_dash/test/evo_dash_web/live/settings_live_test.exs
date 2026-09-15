@@ -517,7 +517,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # app-env seams (checked FIRST by PlatformInfo), so the result is
     # deterministic on ANY host. `overrides` win per-key for tests that want a
     # different value than the current env computes.
-    defp default_node_results(view, overrides \\ %{}) do
+    defp default_node_results(view, overrides) do
       overrides = Map.new(overrides)
       assigns = assigns(view)
       node = assigns[:current_node]
@@ -2118,7 +2118,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
       with_os_override(:windows)
 
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = live(conn, ~p"/settings")
 
       # The platform-filtered schemas arrive with the async NodeData result —
       # deliver it deterministically (the real task computes the same values
@@ -2142,7 +2142,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # platform-FILTERED schemas — deliver the async result first. On Windows
       # "sandbox" is not a known category → falls back to the active category
       # (:llm). No crash.
-      {:ok, view, html} = live(conn, ~p"/settings?category=sandbox")
+      {:ok, view, _html} = live(conn, ~p"/settings?category=sandbox")
       html = deliver_node_data(view, "sandbox")
 
       assert assigns(view).active_category == :llm
@@ -2223,7 +2223,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "nix binary available → nix category shown even with no config", %{conn: conn} do
       with_nix_available_override(true)
 
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = live(conn, ~p"/settings")
 
       # Deliver the async NodeData result (nix visible under the override) so
       # the platform-filtered schemas are in place before the gated asserts.
@@ -2242,7 +2242,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_nix_available_override(false)
       seed_nix_enabled(true)
 
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = live(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       assert html =~ ~s(phx-value-category="nix")
@@ -2255,7 +2255,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_nix_available_override(false)
       seed_nix_enabled(false)
 
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = live(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       # An explicit false counts as "configured" — the section must stay
@@ -2271,7 +2271,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     } do
       with_nix_available_override(false)
 
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = live(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       # Sidebar entry and content section are both gone.
@@ -2304,7 +2304,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # platform-FILTERED schemas — deliver the async result first. With nix
       # hidden, "nix" is not a known category → falls back to the active
       # category (:llm). No crash.
-      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+      {:ok, view, _html} = live(conn, ~p"/settings?category=nix")
       html = deliver_node_data(view, "nix")
 
       assert assigns(view).active_category == :llm
@@ -2996,7 +2996,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # Full form-field param map for the add/edit remote-connection form
     # (mirrors a submitted DOM — the advanced inputs stay in the page inside a
     # CSS-hidden container and keep submitting). `overrides` win per-key.
-    defp remote_form_params(overrides \\ %{}) do
+    defp remote_form_params(overrides) do
       Map.merge(
         %{
           "_id" => "",

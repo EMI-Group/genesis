@@ -169,7 +169,12 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   defp model_profile_edit_form(assigns) do
     ~H"""
+    <%!-- At most ONE profile is in edit mode at a time (the editor renders this
+         form only for the profile whose id == @editing_profile_id), so a
+         constant id stays unique on the page. LiveView requires an id on
+         forms carrying phx-change. --%>
     <form
+      id="model-profile-edit-form"
       phx-submit="save_model_profile"
       phx-change="model_profile_form_change"
       class="p-4 rounded-lg border-2 border-primary-standalone/40 bg-base-100 space-y-4"

@@ -176,6 +176,7 @@ Plain maps with keys: `id, status, review_status, result, started_at, finished_a
 - **Dot access (`task.field`) is safe ONLY for contract keys.** On a plain map, a missing key raises `KeyError`; on a struct it returns nil. So any dot access to a non-contract key crashes once a summary map is fed in.
 - **`Map.get(task, field)` is safe for any key** (returns nil when absent).
 - **Non-contract heavy fields** (`logs`, `usage`, `archive_metadata`) must be guarded: `Map.get(task, :logs) not in [nil, []]`, `Map.get(task, :usage)`, `Map.get(task, :archive_metadata) not in [nil, []]`. Guarded sections simply hide on summary maps (correct — the dashboard sidebar never renders these fields) and render on full structs.
+- **Sidebar grouping is deliberately TOTAL against non-map entries** — `group_tasks_by_project/2` (`layouts.ex`) filters the combined `running_tasks ++ pending_tasks` list to `is_map/1` entries BEFORE `Enum.group_by/3`, so a stray non-map element (possible because `@running_tasks`/`@pending_tasks` are seeded from the shape-agnostic `EvoDash.ActiveTasks` hub) is omitted from the sidebar instead of crashing the page with `Map.get(:c, :project_path, nil)` → `BadMapError`. Do NOT remove this filter (the row loop at ~L195 then only ever sees maps).
 
 ### Task detail view — flattened Objective / Agent Message cards (expanded card + zoom modals)
 
