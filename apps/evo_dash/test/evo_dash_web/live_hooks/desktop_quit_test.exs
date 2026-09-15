@@ -4,10 +4,13 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
   # desktop-quit events (before the LiveView's own handle_event/3) and drives
   # the shared app layout's `@desktop_quit_confirm` modal on any page.
   #
-  # async: false — every test injects a global fake stop function via
+  # async: true — every test injects a global fake stop function via
   # Application.put_env(:evo_dash, :desktop_quit_stop_fun, ...) so the REAL
-  # System.stop/0 (which would shut down the test VM) is NEVER invoked.
-  use EvoDashWeb.ConnCase, async: false
+  # System.stop/0 (which would shut down the test VM) is NEVER invoked. The
+  # prior value is SAVED and RESTORED in on_exit (never a blind delete_env) so
+  # a sibling suite relying on that seam is unaffected. This file does NOT
+  # isolate TaskRegistry/Store nor XDG_CONFIG_HOME, so it may run concurrently.
+  use EvoDashWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
@@ -15,6 +18,10 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
     # The fake messages the TEST process (captured at setup time) — the seam
     # function runs inside the LiveView process, so self() there would be wrong.
     test_pid = self()
+
+    # Save the prior seam value so we RESTORE it (a blind delete_env could
+    # leave the VM-killing default in place for a sibling suite).
+    original_stop_fun = Application.get_env(:evo_dash, :desktop_quit_stop_fun)
 
     Application.put_env(:evo_dash, :desktop_quit_stop_fun, fn ->
       send(test_pid, :desktop_stopped)
@@ -26,7 +33,11 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
     EvoDash.ActiveTasks.reset()
 
     on_exit(fn ->
-      Application.delete_env(:evo_dash, :desktop_quit_stop_fun)
+      if is_nil(original_stop_fun) do
+        Application.delete_env(:evo_dash, :desktop_quit_stop_fun)
+      else
+        Application.put_env(:evo_dash, :desktop_quit_stop_fun, original_stop_fun)
+      end
     end)
 
     :ok

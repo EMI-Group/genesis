@@ -1,7 +1,10 @@
 defmodule EvoDash.DesktopLifetimeTest do
-  # async: false — the EVOGIT_LIFETIME_PORT env var and the application-env
-  # test seam are global; tests must not race each other.
-  use ExUnit.Case, async: false
+  # async: true — the EVOGIT_LIFETIME_PORT env var and the :parent_stop_fun
+  # app-env seam are written only here and snapshot-restored in on_exit below;
+  # no async: true module reads them (the other EvoDash.DesktopLifetime users,
+  # live_hooks/desktop_quit_test and live_hooks/update_status_test, are
+  # async: false). Tests inside this module always run serially.
+  use ExUnit.Case, async: true
 
   @stop_message :lifetime_stopped
   # Small retry budget for the connect-failure tests.

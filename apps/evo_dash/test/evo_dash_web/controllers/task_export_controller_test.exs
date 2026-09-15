@@ -1,5 +1,8 @@
 defmodule EvoDashWeb.TaskExportControllerTest do
-  use EvoDashWeb.ConnCase, async: false
+  # async: true — this suite writes only uniquely-id'd `export_test_*` rows to
+  # the shared Store (cleaned up in on_exit) and isolates XDG_CONFIG_HOME per
+  # test; no async: true module reads either the Store or the config dir.
+  use EvoDashWeb.ConnCase, async: true
 
   alias EvoGit.TaskRegistry
   alias EvoGit.TaskInfo

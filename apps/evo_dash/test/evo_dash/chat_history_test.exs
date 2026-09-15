@@ -1,13 +1,13 @@
 defmodule EvoDash.ChatHistoryTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoDash.ChatHistory
 
   # The store is a single shared global GenServer + ETS table started by
-  # EvoDash.Application. async: false (same convention as update_status_test /
-  # directory_picker_test for shared global GenServers): with async: true the
-  # per-test setup reset/0 would wipe the shared table while sibling tests in
-  # this module are mid-assertion.
+  # EvoDash.Application. async: true is safe: tests inside ONE module always
+  # run serially (so a sibling's setup reset/0 can never race an assertion),
+  # and the only other consumer of the table — home_live_test.exs — is
+  # async: false, which ExUnit never runs concurrently with async modules.
   setup do
     ChatHistory.reset()
     :ok

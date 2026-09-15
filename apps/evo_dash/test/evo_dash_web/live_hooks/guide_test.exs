@@ -1,15 +1,15 @@
 defmodule EvoDashWeb.LiveHooks.GuideTest do
-  # Tests for the global Guide on-mount hook (EvoDashWeb.LiveHooks.Guide):
+  # LiveView integration tests for the global Guide on-mount hook
+  # (EvoDashWeb.LiveHooks.Guide) on the Tasks page (one of the 7 owned pages
+  # that pass `guide={@guide}` to `Layouts.app`): the floating "Genesis Guide"
+  # panel renders from `{:guide_updated, ...}` broadcasts, foreign-node
+  # broadcasts are dropped, the `guide_highlight` push carries EXACTLY
+  # `%{selector: selector}` (assert_push_event pins the payload), dismissal
+  # clears the panel and pushes `guide_cleared`, and the Go link renders
+  # only when `page` is set.
   #
-  # 1. Unit tests for the pure `normalize_guide/2` + `relevant?/2` helpers —
-  #    no LiveView needed.
-  # 2. LiveView integration on the Tasks page (one of the 7 owned pages that
-  #    pass `guide={@guide}` to `Layouts.app`): the floating "Genesis Guide"
-  #    panel renders from `{:guide_updated, ...}` broadcasts, foreign-node
-  #    broadcasts are dropped, the `guide_highlight` push carries EXACTLY
-  #    `%{selector: selector}` (assert_push_event pins the payload), dismissal
-  #    clears the panel and pushes `guide_cleared`, and the Go link renders
-  #    only when `page` is set.
+  # The pure `normalize_guide/2` + `relevant?/2` unit tests live in the
+  # `async: true` EvoDashWeb.LiveHooks.GuidePureTest module.
   #
   # TasksLive is used because it is the stated preference and its isolated
   # Store/TaskRegistry setup is the established convention in
@@ -20,72 +20,11 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
   #
   # async: false — the integration setup terminates the production
   # TaskRegistry/Store children and starts isolated ones (global mutation,
-  # same justification as tasks_live_test.exs); the unit tests are pure but
-  # share the module.
+  # same justification as tasks_live_test.exs).
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
-  alias EvoDashWeb.LiveHooks.Guide
   alias EvoGit.TaskRegistry
-
-  describe "normalize_guide/2" do
-    test "atom-keyed payload → exact canonical map" do
-      assert Guide.normalize_guide("g1", %{
-               message: "hello",
-               page: "/system",
-               selector: "#el",
-               dismissible: true
-             }) == %{
-               id: "g1",
-               message: "hello",
-               page: "/system",
-               selector: "#el",
-               dismissible: true
-             }
-    end
-
-    test "string-keyed payload → same canonical map" do
-      assert Guide.normalize_guide("g1", %{
-               "message" => "hello",
-               "page" => "/system",
-               "selector" => "#el",
-               "dismissible" => true
-             }) == %{
-               id: "g1",
-               message: "hello",
-               page: "/system",
-               selector: "#el",
-               dismissible: true
-             }
-    end
-
-    test "partial payload → safe defaults (missing message → \"\", missing page/selector → nil)" do
-      assert Guide.normalize_guide("g1", %{}) ==
-               %{id: "g1", message: "", page: nil, selector: nil, dismissible: false}
-    end
-
-    test "non-boolean dismissible → false" do
-      assert Guide.normalize_guide("g1", %{message: "m", dismissible: "yes"}) ==
-               %{id: "g1", message: "m", page: nil, selector: nil, dismissible: false}
-    end
-
-    test "non-map payload (nil) → safe defaults" do
-      assert Guide.normalize_guide("g1", nil) ==
-               %{id: "g1", message: "", page: nil, selector: nil, dismissible: false}
-    end
-  end
-
-  describe "relevant?/2" do
-    test "matching node → true (explicit current_node and missing-assign fallback)" do
-      assert Guide.relevant?(%{current_node: node()}, node())
-      assert Guide.relevant?(%{}, node())
-    end
-
-    test "foreign node → false" do
-      refute Guide.relevant?(%{current_node: node()}, :guide_other_node)
-      refute Guide.relevant?(%{}, :guide_other_node)
-    end
-  end
 
   describe "Genesis Guide panel (Tasks page integration)" do
     setup do

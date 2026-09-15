@@ -1,5 +1,10 @@
 defmodule EvoDash.DirectoryPickerTest do
-  use ExUnit.Case, async: false
+  # async: true — tests inside one module always run serially, so the shared
+  # EvoDash.DirectoryPicker GenServer's global "busy" gate is never contended
+  # within this file. No async: true module ever calls DirectoryPicker.pick
+  # (the only other caller, projects_live_test.exs, is async: false), so the
+  # :directory_picker / :directory_picker_wx app-env overrides below are safe.
+  use ExUnit.Case, async: true
 
   alias EvoDash.DirectoryPicker
   alias EvoDash.DirectoryPicker.Wx.Fake, as: FakeWx
