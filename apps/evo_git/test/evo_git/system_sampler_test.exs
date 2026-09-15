@@ -259,7 +259,9 @@ defmodule EvoGit.SystemSamplerTest do
     log.("llm_last_granted", st.llm_last_granted)
 
     for key <- diff_keys, agent_id <- Map.get(st.llm_holders, key, MapSet.new()) do
-      IO.puts("[LEAK-DIAG] #{context} | leaked holder agent ##{agent_id} in model #{inspect(key)}:")
+      IO.puts(
+        "[LEAK-DIAG] #{context} | leaked holder agent ##{agent_id} in model #{inspect(key)}:"
+      )
 
       IO.puts(
         "[LEAK-DIAG] #{context} |   agent_state = #{inspect(dump_agent_state(agent_id), limit: :infinity)}"

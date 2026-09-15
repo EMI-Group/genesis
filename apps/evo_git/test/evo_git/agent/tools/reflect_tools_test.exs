@@ -90,6 +90,18 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   describe "StartTask" do
     test "starts a reflect task and returns the new task id" do
       without_model_profiles(fn ->
+        # Subscribe BEFORE starting the task so its terminal `"tasks"`
+        # broadcast cannot be missed. StartTask enqueues the task
+        # asynchronously (`Task.Supervisor`) and returns immediately, so the
+        # wrapper can still be dispatching when without_model_profiles/1
+        # restores the developer's real model profiles — it would then reach
+        # the scheduler with real profiles and hold a REAL LLM slot for the
+        # duration of a real (failing, retrying) LLM call, leaking a live
+        # holder into the shared global scheduler that outlives this test.
+        # Awaiting the terminal status INSIDE this block guarantees the
+        # wrapper finished against the emptied profile list.
+        subscribe_tasks()
+
         output = StartTask.execute(%{"task_type" => "reflect", "objective" => "hi"}, nil, nil)
 
         assert output =~ "started (type: reflect)"
@@ -98,6 +110,8 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
         # The tool embeds the new task id in the success message.
         [task_id] = Regex.run(~r/^Task (\S+) started/, output, capture: :all_but_first)
         assert task_id != ""
+
+        assert :ok = await_terminal_status(task_id)
 
         task = TaskRegistry.get_task(task_id)
         assert task != nil
@@ -525,6 +539,32 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       owner: self(),
       mfa: {EvoGit.TaskRegistry.TaskExecutor, :execute_task, [:genesis, [], "test"]}
     }
+  end
+
+  # Subscribes this process to the registry's "tasks" broadcast topic so a task
+  # wrapper's terminal-status broadcast can be awaited (see
+  # await_terminal_status/1).
+  defp subscribe_tasks do
+    Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+  end
+
+  # Waits for the registry's terminal `"tasks"` broadcast for `task_id`
+  # (:completed/:failed/:cancelled), bounded to 5s. The registry also emits a
+  # non-terminal `{:task_updated, id, :running, node}` first, so non-terminal
+  # statuses for the SAME id are ignored; broadcasts for other task ids cannot
+  # match the pinned `^task_id`. Must be called from a process already
+  # subscribed to "tasks" and INSIDE without_model_profiles/1, so the profile
+  # list is only restored after the task wrapper has finished.
+  defp await_terminal_status(task_id) do
+    receive do
+      {:task_updated, ^task_id, status, _node} when status in [:completed, :failed, :cancelled] ->
+        :ok
+
+      {:task_updated, ^task_id, _status, _node} ->
+        await_terminal_status(task_id)
+    after
+      5_000 -> flunk("task #{task_id} did not reach a terminal status in time")
+    end
   end
 
   # The scheduler is running in tests (started with the :evo_git app), so

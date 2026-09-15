@@ -1,3 +1,94 @@
+defmodule EvoGit.LeakDump do
+  @moduledoc "TEMPORARY helper module for zz_leak_watch_test.exs (remove before committing)."
+
+  def agent_state(agent_id) do
+    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
+      {:ok, s} ->
+        %{
+          model_id: Map.get(s, :model_id),
+          llm_model: inspect(Map.get(s, :llm_model)),
+          objective: Map.get(s, :objective),
+          repo_id: Map.get(s, :repo_id),
+          repo_root: Map.get(s, :repo_root),
+          task_local_id: Map.get(s, :task_local_id),
+          parent_id: Map.get(s, :parent_id),
+          turn: Map.get(s, :turn)
+        }
+
+      other ->
+        other
+    end
+  catch
+    _, r -> {:error, r}
+  end
+
+  def sched_meta(agent_id) do
+    case EvoGit.AgentScheduler.Store.get_sched_meta(agent_id) do
+      {:ok, m} ->
+        spec = m.spec
+
+        %{
+          task_id: m.task_id,
+          status: m.status,
+          task_number: m.task_number,
+          parent_id: m.parent_id,
+          retries: m.retries,
+          worktree: m.worktree,
+          spec_repo_id: spec && spec.repo_id,
+          spec_context_node: spec && inspect(spec.context_node),
+          spec_objective: spec && spec.objective,
+          spec_model_id: spec && spec.model_id,
+          spec_agent_module: spec && inspect(spec.agent_module)
+        }
+
+      other ->
+        other
+    end
+  catch
+    _, r -> {:error, r}
+  end
+
+  def all_agent_states do
+    :ets.tab2list(:evogit_agent_state)
+    |> Enum.map(fn {id, s} ->
+      {id,
+       %{
+         model_id: Map.get(s, :model_id),
+         objective: Map.get(s, :objective),
+         repo_id: Map.get(s, :repo_id),
+         repo_root: Map.get(s, :repo_root),
+         task_local_id: Map.get(s, :task_local_id),
+         parent_id: Map.get(s, :parent_id)
+       }}
+    end)
+  end
+
+  def all_sched_metas do
+    :ets.tab2list(:evogit_sched_meta)
+    |> Enum.map(fn {id, m} ->
+      spec = m.spec
+
+      {id,
+       %{
+         task_id: m.task_id,
+         status: m.status,
+         parent_id: m.parent_id,
+         spec_repo_id: spec && spec.repo_id,
+         spec_objective: spec && spec.objective,
+         spec_agent_module: spec && inspect(spec.agent_module)
+       }}
+    end)
+  end
+
+  def ets_ids(tab) do
+    if :ets.whereis(tab) == :undefined do
+      :undefined
+    else
+      :ets.tab2list(tab) |> Enum.map(fn {k, _} -> k end)
+    end
+  end
+end
+
 defmodule EvoGit.LeakWatchTest do
   @moduledoc """
   TEMPORARY leak hunter (remove before committing).
@@ -14,8 +105,6 @@ defmodule EvoGit.LeakWatchTest do
   nil `model_id`) WITHOUT first pinning `model_profiles`.
   """
   use ExUnit.Case, async: false
-
-  # --- Suite-wide watcher installed at load time --------------------------
 
   baseline_profiles =
     try do
@@ -73,43 +162,29 @@ defmodule EvoGit.LeakWatchTest do
 
                 if new != [] do
                   IO.puts(
-                    "\n[LEAK-WATCH] !!! leaked holder(s) under developer model " <>
-                      "#{inspect(model_id)} used=#{used} agent_ids=#{inspect(agent_ids)} new=#{inspect(new)}"
+                    "\n[LEAK-WATCH] !!! LEAK model=#{inspect(model_id)} used=#{used} " <>
+                      "agent_ids=#{inspect(agent_ids)} new=#{inspect(new)}"
                   )
 
-                  IO.puts(
-                    "[LEAK-WATCH] model_profiles = " <>
-                      inspect(EvoGit.AgentScheduler.get_config(:model_profiles))
-                  )
-
-                  for agent_id <- agent_ids do
+                  for agent_id <- new do
                     IO.puts(
-                      "[LEAK-WATCH] agent ##{agent_id} agent_state = " <>
-                        inspect(LeakWatch.agent_state(agent_id), limit: :infinity)
+                      "[LEAK-WATCH]   agent ##{agent_id} state=#{inspect(EvoGit.LeakDump.agent_state(agent_id))}"
                     )
 
                     IO.puts(
-                      "[LEAK-WATCH] agent ##{agent_id} sched_meta  = " <>
-                        inspect(LeakWatch.sched_meta(agent_id), limit: :infinity)
+                      "[LEAK-WATCH]   agent ##{agent_id} meta=#{inspect(EvoGit.LeakDump.sched_meta(agent_id))}"
                     )
                   end
 
                   IO.puts(
-                    "[LEAK-WATCH] ALL agent_state rows = " <>
-                      inspect(LeakWatch.all_agent_states(), limit: :infinity)
+                    "[LEAK-WATCH]   ALL agent_states=#{inspect(EvoGit.LeakDump.all_agent_states())}"
                   )
 
                   IO.puts(
-                    "[LEAK-WATCH] ALL sched_meta rows  = " <>
-                      inspect(LeakWatch.all_sched_metas(), limit: :infinity)
+                    "[LEAK-WATCH]   ALL sched_metas=#{inspect(EvoGit.LeakDump.all_sched_metas())}"
                   )
 
-                  IO.puts(
-                    "[LEAK-WATCH] cancelling ids = " <>
-                      inspect(LeakWatch.ets_ids(:evogit_cancelling_tasks))
-                  )
-
-                  IO.puts("[LEAK-WATCH] !!! end leak\n")
+                  IO.puts("[LEAK-WATCH] !!! END LEAK\n")
                 end
 
                 Enum.reduce(new, acc, fn id, a -> MapSet.put(a, {model_id, id}) end)
@@ -122,100 +197,9 @@ defmodule EvoGit.LeakWatchTest do
       loop.(loop, MapSet.new())
     end)
 
-  # Stop the watcher when the suite finishes so it can never hold the VM open.
   ExUnit.after_suite(fn _ -> send(watcher, :stop) end)
 
-  # A trivial test so the module is a real (async: false) ExUnit module.
   test "leak watcher placeholder" do
     assert true
-  end
-
-  defmodule LeakWatch do
-    def agent_state(agent_id) do
-      case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
-        {:ok, s} ->
-          %{
-            model_id: Map.get(s, :model_id),
-            llm_model: inspect(Map.get(s, :llm_model)),
-            objective: Map.get(s, :objective),
-            repo_id: Map.get(s, :repo_id),
-            repo_root: Map.get(s, :repo_root),
-            context_node: inspect(Map.get(s, :context_node)),
-            task_local_id: Map.get(s, :task_local_id),
-            parent_id: Map.get(s, :parent_id),
-            turn: Map.get(s, :turn)
-          }
-
-        other ->
-          other
-      end
-    catch
-      _, r -> {:error, r}
-    end
-
-    def sched_meta(agent_id) do
-      case EvoGit.AgentScheduler.Store.get_sched_meta(agent_id) do
-        {:ok, m} ->
-          spec = m.spec
-
-          %{
-            task_id: m.task_id,
-            status: m.status,
-            task_number: m.task_number,
-            parent_id: m.parent_id,
-            retries: m.retries,
-            worktree: m.worktree,
-            spec_repo_id: spec && spec.repo_id,
-            spec_context_node: spec && inspect(spec.context_node),
-            spec_objective: spec && spec.objective,
-            spec_agent_module: spec && inspect(spec.agent_module)
-          }
-
-        other ->
-          other
-      end
-    catch
-      _, r -> {:error, r}
-    end
-
-    def all_agent_states do
-      :ets.tab2list(:evogit_agent_state)
-      |> Enum.map(fn {id, s} ->
-        {id,
-         %{
-           model_id: Map.get(s, :model_id),
-           objective: Map.get(s, :objective),
-           repo_id: Map.get(s, :repo_id),
-           repo_root: Map.get(s, :repo_root),
-           task_local_id: Map.get(s, :task_local_id),
-           parent_id: Map.get(s, :parent_id)
-         }}
-      end)
-    end
-
-    def all_sched_metas do
-      :ets.tab2list(:evogit_sched_meta)
-      |> Enum.map(fn {id, m} ->
-        spec = m.spec
-
-        {id,
-         %{
-           task_id: m.task_id,
-           status: m.status,
-           parent_id: m.parent_id,
-           spec_repo_id: spec && spec.repo_id,
-           spec_objective: spec && spec.objective,
-           spec_agent_module: spec && inspect(spec.agent_module)
-         }}
-      end)
-    end
-
-    def ets_ids(tab) do
-      if :ets.whereis(tab) == :undefined do
-        :undefined
-      else
-        :ets.tab2list(tab) |> Enum.map(fn {k, _} -> k end)
-      end
-    end
   end
 end
