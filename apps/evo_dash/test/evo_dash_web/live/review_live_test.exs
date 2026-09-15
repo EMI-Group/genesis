@@ -1125,23 +1125,25 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # equivalent to the broadcast for handle_info.
       send(view.pid, {:task_updated, "some_other_task_id", :finalizing, node()})
 
-      # Past the 300ms trailing-edge debounce. The sidebar reload must have
-      # run by now (tasks_reload_pending cleared) — otherwise the unchanged
-      # generation assertion below would be vacuous.
-      Process.sleep(400)
+      # `assigns/1` is a `:sys.get_state` round-trip, so the broadcast sent
+      # above has already been processed: the 300ms trailing-edge debounce is
+      # scheduled (pending true). Poll for it to fire and the sidebar reload to
+      # run — otherwise the unchanged generation assertion below would be
+      # vacuous.
+      assert assigns(view)[:tasks_reload_pending] == true
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       # No new load was started: the broadcast-guard skipped the reload for
       # a non-reviewed task.
       assert assigns(view)[:load_generation] == gen_before
 
-      # A stale result from the old generation is still dropped.
+      # A stale result from the old generation is still dropped. The
+      # `assigns/1` read in the assertion below is itself the synchronization
+      # (FIFO mailbox: the send is processed before the :sys.get_state request).
       send(
         view.pid,
         {:review_data_loaded, task_id, node(), gen_before - 1, {:ok, %{title: "INJECTED"}}}
       )
-
-      Process.sleep(100)
 
       assert assigns(view)[:title] == "Test objective"
 
@@ -1162,12 +1164,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       gen_before = assigns(view)[:load_generation]
 
       # The reviewed task's own broadcast (from the viewed node) warrants a
-      # page reload.
+      # page reload. The generation is bumped only once the 300ms debounce has
+      # fired and start_async_load ran, so polling for it is the event-driven
+      # wait (no fixed pre-sleep).
       send(view.pid, {:task_updated, task_id, :finalizing, node()})
 
-      # Past the 300ms debounce — wait for the new load to have started
-      # (generation incremented by start_async_load).
-      Process.sleep(400)
       wait_until(fn -> assigns(view)[:load_generation] == gen_before + 1 end)
 
       # Flush the reload and assert the page still renders the review content.
@@ -1192,10 +1193,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # reload may fire.
       send(view.pid, {:task_updated, task_id, :finalizing, :remote@elsewhere})
 
-      # Past the 300ms debounce window.
-      Process.sleep(400)
-
       # No debounce was ever scheduled and no review-data load was started.
+      # `assigns/1` (:sys.get_state) is the synchronization: FIFO mailbox means
+      # the send was already processed (and dropped) before this read.
       refute assigns(view)[:tasks_reload_pending]
       assert assigns(view)[:load_generation] == gen_before
 
@@ -1219,10 +1219,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # set, only the sidebar refresh runs (matching node).
       send(view.pid, {:task_deleted, task_id, node()})
 
-      # Past the 300ms trailing-edge debounce. The sidebar reload must have
-      # run by now (tasks_reload_pending cleared) — otherwise the unchanged
-      # generation assertion below would be vacuous.
-      Process.sleep(400)
+      # The broadcast has been processed (assigns/1 syncs): the 300ms
+      # trailing-edge debounce is scheduled. Poll for the sidebar reload to
+      # run — otherwise the unchanged generation assertion below would be
+      # vacuous.
+      assert assigns(view)[:tasks_reload_pending] == true
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       # No new load was started: deleted tasks are never stashed.
@@ -4192,7 +4193,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
         :ok
 
       {:error, _, _} when attempts > 1 ->
-        Process.sleep(50)
+        Process.sleep(20)
         rm_rf_retry(path, attempts - 1)
 
       other ->
@@ -4326,7 +4327,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
                 "hub assertions in this test would be vacuous"
             )
           else
-            Process.sleep(20)
+            Process.sleep(10)
             wait_loop.(wait_loop)
           end
       end

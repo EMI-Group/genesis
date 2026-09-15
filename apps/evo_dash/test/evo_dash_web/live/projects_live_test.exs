@@ -218,7 +218,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
         _ ->
           if System.monotonic_time(:millisecond) < deadline do
-            Process.sleep(50)
+            Process.sleep(20)
             loop.(loop)
           else
             :ok
@@ -411,7 +411,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
             "wait_for_fake_callers timed out. Callers: #{inspect(GenServer.call(fake, :callers))}"
           )
         else
-          Process.sleep(20)
+          Process.sleep(10)
           wait_for_fake_callers(fake, predicate, attempts - 1)
         end
 
@@ -1543,9 +1543,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       render_hook(view, "delete_task", %{"task_id" => task.id})
 
-      # delete_task is a cast — give the registry time to process the store
-      # deletion before the reload snapshot.
-      Process.sleep(50)
+      # delete_task is a cast — a synchronous registry call afterwards
+      # guarantees the store deletion was processed before the reload snapshot.
+      EvoGit.TaskRegistry.list_tasks()
 
       send(view.pid, :node_aware_reload_tasks)
       render(view)

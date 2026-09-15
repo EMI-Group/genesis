@@ -2103,8 +2103,13 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/help")
       send(view.pid, {:task_updated, "reflect_side", :pending, node()})
       send(view.pid, {:task_updated, "reflect_side", :running, node()})
-      # Let the 300ms debounce fire and the async sidebar fetch complete.
-      Process.sleep(600)
+
+      # The broadcast has been processed (assigns/1 is a :sys.get_state
+      # round-trip), so the 300ms trailing-edge debounce is scheduled. Poll
+      # until it has fired and the sidebar reload ran — no fixed sleep.
+      assert assigns(view)[:tasks_reload_pending] == true
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
       html = render(view)
       assert html =~ "Active Tasks"
       assert html =~ "New message"
@@ -2136,7 +2141,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/help")
       send(view.pid, {:task_updated, "reflect_a", :completed, node()})
       send(view.pid, {:task_updated, "reflect_b", :completed, node()})
-      Process.sleep(600)
+
+      # The broadcasts have been processed (assigns/1 syncs), so the 300ms
+      # trailing-edge debounce is scheduled. Poll until it fired and the
+      # sidebar reload ran (exercise partition_active_tasks/1 with the
+      # nil-timestamp rows) — no fixed sleep.
+      assert assigns(view)[:tasks_reload_pending] == true
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
       html = render(view)
       assert html =~ "Chat with Genesis"
     end
@@ -2524,12 +2536,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
 
-      # The post-clone re-check now reports the source as downloaded. The clone
-      # runner sleeps so the transient busy state is deterministically observable.
+      # The post-clone re-check now reports the source as downloaded. A short
+      # artificial delay simulates an in-flight clone; the busy state asserted
+      # below comes from render_click/1's synchronous render (source_busy is
+      # assigned in the event handler), so it only needs to outlive that call.
       Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
 
       Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(300)
+        Process.sleep(50)
         {:ok, %{}}
       end)
 
@@ -2552,7 +2566,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
 
       Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(200)
+        Process.sleep(50)
         {:error, :boom}
       end)
 

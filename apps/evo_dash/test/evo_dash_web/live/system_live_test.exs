@@ -975,10 +975,10 @@ defmodule EvoDashWeb.SystemLiveTest do
       # The initial seed failed — the one-shot retry is scheduled.
       assert await_view_assign(view, :chart_seed_retried, true) == :ok
 
-      # The retry fires once (3s later), fails again, and gives up: no third
-      # call is ever made and the buffer stays empty.
+      # The retry fires once (3s later), fails again, and gives up: the second
+      # failure schedules no further call (the failure handler is gated on
+      # chart_seed_retried), so no third call can ever be made.
       assert await_ets_count(table, :calls, 2, 6_000) == :ok
-      Process.sleep(200)
       assert :ets.lookup_element(table, :calls, 2) == 2
       assert assigns(view)[:chart_samples] == []
     end
@@ -2117,8 +2117,11 @@ defmodule EvoDashWeb.SystemLiveTest do
       cloned = source_status(%{commit: "cafebabe"})
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
+      # A short artificial delay simulates an in-flight clone; the busy state
+      # asserted below comes from render_click/1's synchronous render (source_busy
+      # is assigned in the event handler), so it only needs to outlive that call.
       Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        Process.sleep(300)
+        Process.sleep(50)
         {:ok, cloned}
       end)
 
@@ -2149,7 +2152,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
       Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        Process.sleep(300)
+        Process.sleep(50)
         {:error, "clone failed"}
       end)
 
@@ -2175,7 +2178,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> original end)
 
       Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        Process.sleep(300)
+        Process.sleep(50)
         {:ok, updated}
       end)
 
@@ -2202,7 +2205,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
 
       Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        Process.sleep(300)
+        Process.sleep(50)
         {:error, "update failed"}
       end)
 
