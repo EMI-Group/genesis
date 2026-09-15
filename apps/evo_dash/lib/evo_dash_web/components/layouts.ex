@@ -451,7 +451,9 @@ defmodule EvoDashWeb.Layouts do
   # Returns a list of {project_name, tasks} tuples sorted alphabetically by
   # project name, with unpathed tasks at the top as "Other".
   defp group_tasks_by_project(running_tasks, pending_tasks) do
-    all = running_tasks ++ pending_tasks
+    # Defense-in-depth: the sidebar lists are seeded from the shape-agnostic
+    # ActiveTasks hub, so skip any non-map entry instead of crashing the page.
+    all = (running_tasks ++ pending_tasks) |> Enum.filter(&is_map/1)
 
     grouped =
       Enum.group_by(all, fn task ->
