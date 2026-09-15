@@ -3499,6 +3499,149 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  describe "multi-repo review — no-change repos" do
+    # A repo whose `branch_name` is nil/blank produced no changes. Such a repo
+    # must NEVER be handed to the merge runner (the core crashes with a
+    # FunctionClauseError on a nil branch), must not count toward the accept-all
+    # gate, and must not block aggregate completion — while a task with NO
+    # changes in ANY repo is dismissed via the promoted "Mark as read" action.
+
+    test "merge_all merges only the change-bearing repos and still completes the review", %{
+      conn: conn
+    } do
+      task_id = seed_orphaned_review_task!()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      no_change_primary =
+        Map.put(review_repo("primary", "/nonexistent/repo/path", []), :branch_name, nil)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          no_change_primary,
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      # Only ONE change-bearing unresolved repo → the accept-all shortcut is
+      # hidden, but a direct dispatch still folds the repos that DO have changes.
+      refute render(view) =~ ~s(id="merge-all-repositories")
+
+      html = render_click(view, "merge_all")
+
+      # EXACTLY ONE runner call — for the foreign (change-bearing) repo. The
+      # nil-branch primary is skipped entirely, so its nil branch never reaches
+      # the runner (which would crash in the core).
+      assert_receive {:merged_call, call_node, path, "evogit/test-branch", _target}
+      assert call_node == node()
+      assert path == "/nonexistent/foreign/path"
+      refute_receive {:merged_call, _, _, _, _}, 100
+
+      # Completion fires despite the primary never resolving: the no-change repo
+      # needs no action, so it never blocks the aggregate.
+      refute_redirected(view)
+      assert TaskRegistry.get_task(task_id).review_status == :merged
+      assert html =~ ~s(id="review-completion-banner")
+      assert html =~ "All repositories merged."
+    end
+
+    test "a no-change repo never blocks aggregate completion", %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      Application.put_env(:evo_dash, :review_reject_runner, fn _node, _path, _branch -> :ok end)
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+
+      no_change_primary =
+        Map.put(review_repo("primary", "/nonexistent/repo/path", []), :branch_name, nil)
+
+      view =
+        mount_with_repos(conn, task_id, [
+          no_change_primary,
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+
+      html = render_click(view, "reject", %{"repo_id" => "original"})
+
+      # Rejecting the ONLY change-bearing repo completes the review as
+      # :rejected — the no-change primary never holds it open.
+      refute_redirected(view)
+      assert TaskRegistry.get_task(task_id).review_status == :rejected
+      assert html =~ ~s(id="review-completion-banner")
+      assert html =~ "All repositories rejected."
+    end
+
+    test "the accept-all shortcut is hidden when fewer than two CHANGE-BEARING repos are unresolved",
+         %{conn: conn} do
+      task_id = seed_orphaned_review_task!()
+
+      # THREE repos but only ONE change-bearing: neither a nil branch nor a
+      # blank ("") branch counts, so the >= 2 change-bearing gate fails.
+      html =
+        conn
+        |> mount_with_repos(task_id, [
+          Map.put(review_repo("primary", "/nonexistent/repo/path", []), :branch_name, nil),
+          Map.put(review_repo("extra", "/nonexistent/extra/path", []), :branch_name, ""),
+          review_repo("original", "/nonexistent/foreign/path", [])
+        ])
+        |> render()
+
+      refute html =~ ~s(id="merge-all-repositories")
+      refute html =~ ~s(id="merge-all-toolbar")
+
+      # Sanity: the no-change primary card still rendered.
+      assert html =~ ~s(id="repo-card-primary")
+    end
+
+    test "a fully no-change task renders 'Mark as read' as the primary action and keeps the info notice",
+         %{conn: conn} do
+      task_id = seed_no_change_review_task!()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      html = flush_review_load(view)
+
+      # NO repo has a branch → the whole review is a no-change review.
+      assert assigns(view)[:is_no_changes] == true
+
+      # The dismissal is promoted to a PRIMARY "Mark as read" action carrying
+      # the same ignore event + its own confirmation copy.
+      [button] = Floki.find(Floki.parse_document!(html), "button[phx-click='ignore']")
+      assert Floki.text(button) =~ "Mark as read"
+
+      assert Floki.attribute(button, "phx-confirm") == [
+               "Mark this review as read? It will be dismissed from pending reviews."
+             ]
+
+      # The redundant overflow Ignore item is suppressed.
+      refute html =~ "Ignore this review?"
+
+      # The informational no-changes notice is still shown.
+      assert html =~ "The agent completed without making any code changes."
+    end
+  end
+
+  describe "RepoCards.repo_has_changes?/1" do
+    alias EvoDashWeb.ReviewComponents.RepoCards
+
+    test "true iff branch_name is a non-blank binary (atom- or string-keyed)" do
+      assert RepoCards.repo_has_changes?(%{branch_name: "task-branch"})
+      assert RepoCards.repo_has_changes?(%{"branch_name" => "task-branch"})
+
+      refute RepoCards.repo_has_changes?(%{branch_name: nil})
+      refute RepoCards.repo_has_changes?(%{branch_name: ""})
+      refute RepoCards.repo_has_changes?(%{branch_name: "   "})
+      refute RepoCards.repo_has_changes?(%{"branch_name" => nil})
+      refute RepoCards.repo_has_changes?(%{branch_name: :not_a_binary})
+      refute RepoCards.repo_has_changes?(nil)
+      refute RepoCards.repo_has_changes?(%{})
+      refute RepoCards.repo_has_changes?("nope")
+    end
+  end
+
   describe "component surface pins (repo_cards / task_actions)" do
     # The components themselves live in the sibling components/ test node
     # (read-only here), so the surface contract is pinned in this file.
@@ -4082,6 +4225,19 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end)
 
     task_id
+  end
+
+  # Seeds a completed review task in which NO repo produced changes: the top
+  # result carries a STRING-keyed `repos` map whose primary entry has both a nil
+  # commit_sha and a nil branch_name (no `foreign_repos` → no normalize work).
+  # Drives the fully-no-change review state (`is_no_changes` → "Mark as read").
+  defp seed_no_change_review_task! do
+    seed_multi_repo_task!(
+      "/nonexistent/repo/path",
+      nil,
+      [],
+      %{"primary" => %{"commit_sha" => nil, "branch_name" => nil}}
+    )
   end
 
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
