@@ -2,7 +2,7 @@
 
 ## Intent
 
-Unit/integration tests for the `:evo_dash` domain modules (`./apps/evo_dash/lib/evo_dash/`): `EvoDash.ActiveTasks`, `EvoDash.DirectoryPicker`, `EvoDash.NodeContext`, `EvoDash.AttachedFile`, `EvoDash.SettingsUtils`, `EvoDash.DesktopLifetime`, `EvoDash.MarkdownRender`, `EvoDash.UpdateStatus`. (Store/TaskRegistry domain tests live in `:evo_git`, not here.)
+Unit/integration tests for the `:evo_dash` domain modules (`./apps/evo_dash/lib/evo_dash/`): `EvoDash.ActiveTasks`, `EvoDash.ChatHistory`, `EvoDash.DirectoryPicker`, `EvoDash.NodeContext`, `EvoDash.AttachedFile`, `EvoDash.SettingsUtils`, `EvoDash.DesktopLifetime`, `EvoDash.MarkdownRender`, `EvoDash.UpdateStatus`. (Store/TaskRegistry domain tests live in `:evo_git`, not here.)
 
 ## Routing Table
 
