@@ -17,6 +17,32 @@ defmodule EvoGit.SandboxProcessRegistryTest do
     :ok
   end
 
+  # release/1's cast is asynchronous, but the registry observes a monitored
+  # process's death via a runtime-delivered :DOWN message that is NOT sent by
+  # this test process — so there is no per-sender ordering guarantee against a
+  # later :sys.get_state/1. Poll (bounded) until the entry is gone instead of
+  # sleeping a fixed amount.
+  defp wait_until_entry_gone(unit, timeout \\ 1_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until_entry_gone(unit, deadline, timeout)
+  end
+
+  defp do_wait_until_entry_gone(unit, deadline, timeout) do
+    state = :sys.get_state(SandboxProcessRegistry)
+
+    cond do
+      not Map.has_key?(state, unit) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("registry still holds #{inspect(unit)} after #{timeout}ms")
+
+      true ->
+        Process.sleep(5)
+        do_wait_until_entry_gone(unit, deadline, timeout)
+    end
+  end
+
   describe "register/0" do
     test "returns a unique unit name matching evogit-run-* pattern" do
       unit = SandboxProcessRegistry.register()
@@ -71,9 +97,9 @@ defmodule EvoGit.SandboxProcessRegistryTest do
       unit = SandboxProcessRegistry.register()
       assert SandboxProcessRegistry.release(unit) == :ok
 
-      # Cast is async, give it a moment to be processed
-      Process.sleep(50)
-
+      # release/1 is a cast, but :sys.get_state/1 is a synchronous call issued
+      # from this same process — per-sender ordering guarantees the cast is
+      # processed before the get_state reply, so no settle-sleep is needed.
       state = :sys.get_state(SandboxProcessRegistry)
       refute Map.has_key?(state, unit)
     end
@@ -103,8 +129,9 @@ defmodule EvoGit.SandboxProcessRegistryTest do
       # Wait for the process to actually die
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1000
 
-      # Give SandboxProcessRegistry time to process the DOWN message
-      Process.sleep(50)
+      # Wait (bounded) for SandboxProcessRegistry to process the runtime-
+      # delivered DOWN message before inspecting its state.
+      wait_until_entry_gone(unit)
 
       state = :sys.get_state(SandboxProcessRegistry)
       refute Map.has_key?(state, unit)
@@ -130,8 +157,8 @@ defmodule EvoGit.SandboxProcessRegistryTest do
       Process.exit(pid, :kill)
       assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1000
 
-      # Give the DOWN message time to be processed
-      Process.sleep(50)
+      # Wait (bounded) for the DOWN message to be processed
+      wait_until_entry_gone(unit)
 
       # Registry should still be responsive — register/0 returns immediately
       new_unit = SandboxProcessRegistry.register()

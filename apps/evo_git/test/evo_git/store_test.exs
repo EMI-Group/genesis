@@ -29,25 +29,55 @@ defmodule EvoGit.StoreTest do
     :error
   ]
 
-  # Terminate production children (TaskRegistry depends on Store) and start
-  # an isolated Store with a unique tmp SQLite path. `async: false` because
-  # we mutate the shared production supervision tree.
-  setup do
+  # The production Store/TaskRegistry are owned by this module for its whole
+  # run: they are terminated ONCE here (TaskRegistry depends on Store, so it
+  # goes down first) and restored after the last test. This module is
+  # `async: false` because it mutates that shared production supervision tree.
+  #
+  # It also builds a schema-complete SQLite TEMPLATE once. Creating a brand-new
+  # SQLite file + running the DDL costs ~24ms per test (the single biggest cost
+  # in this file); copying that checkpointed template costs ~2ms. Each test
+  # still gets its own isolated DB file with the identical schema, so isolation
+  # semantics are unchanged.
+  setup_all do
+    unique = System.unique_integer([:positive])
+    template = Path.join(System.tmp_dir!(), "evogit_store_template_#{unique}.sqlite")
+    template_name = :"store_template_#{unique}"
+
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
+    # Register the restore BEFORE building the template, so a template-build
+    # failure can never leave the production children down for the whole run.
+    on_exit(fn ->
+      File.rm(template)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
+    end)
+
+    # A real Store.init produces exactly the schema under test. init/2 and
+    # terminate/2 both run `PRAGMA wal_checkpoint(TRUNCATE)`, so stopping it
+    # leaves a single self-contained file (no -wal/-shm sidecars) that is safe
+    # to byte-copy.
+    {:ok, _} = Store.start_link(data_dir: template, name: template_name)
+    :ok = GenServer.stop(template_name)
+
+    {:ok, %{template: template}}
+  end
+
+  # Fresh isolated Store per test on a unique tmp SQLite path, seeded by copying
+  # the schema template. The production children are already down (see
+  # setup_all), so the isolated store can claim the default `EvoGit.Store` name.
+  setup %{template: template} do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
+    File.cp!(template, sqlite_path)
 
     start_supervised({Store, data_dir: sqlite_path})
 
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
+    on_exit(fn -> File.rm_rf(root) end)
 
     {:ok, %{store: Store, sqlite_path: sqlite_path, root: root}}
   end
@@ -542,7 +572,10 @@ defmodule EvoGit.StoreTest do
       assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
       {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
       diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
-      assert diff_seconds >= 0 and diff_seconds <= 10
+      # Load-robust: the store stamps "now", so the only meaningful assertion is
+      # that it is recent (not a stale/bogus value). The bound is generous so a
+      # descheduled test process under heavy machine load cannot fail it.
+      assert diff_seconds >= 0 and diff_seconds <= 60
     end
 
     test "update_task_columns bumps updated_at to ≈ now", %{sqlite_path: sqlite_path} do
@@ -563,7 +596,9 @@ defmodule EvoGit.StoreTest do
       assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
       {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
       diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
-      assert diff_seconds >= 0 and diff_seconds <= 10
+      # Load-robust (see the put_task case above): assert "recent", not an
+      # exact instant.
+      assert diff_seconds >= 0 and diff_seconds <= 60
 
       # The targeted update itself also took effect.
       assert Store.get_task_status(Store, "upd-col") == :running

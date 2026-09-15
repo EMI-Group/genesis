@@ -1,5 +1,10 @@
 defmodule EvoGit.StoreSchemaMigrationTest do
-  use ExUnit.Case, async: false
+  # `async: true` is safe here: every test uses RAW Xqlite connections against
+  # its own private temp DB, and the one Store it starts is registered under a
+  # per-test unique name — the production `EvoGit.Store`/`EvoGit.TaskRegistry`
+  # are never touched, and no BEAM-global state (app env, `:persistent_term`,
+  # global ETS, `Mix.shell`) is mutated.
+  use ExUnit.Case, async: true
 
   alias EvoGit.Store
   alias EvoGit.Store.{Codec, Schema}
