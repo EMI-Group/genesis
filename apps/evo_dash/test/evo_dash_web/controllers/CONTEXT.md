@@ -14,8 +14,8 @@ Test suites for the classic (non-LiveView) HTTP controllers and error templates 
 
 | File | Module | Lines | Tests | async |
 |------|--------|-------|-------|-------|
-| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 197 | 7 | `async: true` (explicit, line 5) |
-| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 101 | 3 | `async: false` (ConnCase default — NO `async:` option is passed) |
+| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 203 | 7 | `async: false` (explicit — mutates the process-global `XDG_CONFIG_HOME`) |
+| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 101 | 3 | `async: false` (ConnCase default — NO `async:` option is passed; same `XDG_CONFIG_HOME` mutation) |
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 15 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
 
