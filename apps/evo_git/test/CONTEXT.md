@@ -1,7 +1,8 @@
 # Test Directory
 
 ## Intent
-ExUnit test suite for the `:evo_git` OTP application. Validates core domain logic, git adapter operations, agent tooling, and context node handling using real git operations on temporary filesystem sandboxes — no mocks. Test module names mirror the source module path under test. Full inventory: 118 `*_test.exs` files under this directory (incl. `evo_git_test.exs` and `mix/tasks/*`).
+ExUnit test suite for the `:evo_git` OTP application. Validates core domain logic, git adapter operations, agent tooling, and context node handling using real git operations on temporary filesystem sandboxes — no mocks. Test module names mirror the source module path under test. Full inventory: 127 `*_test.exs` files under this directory (incl. `evo_git_test.exs` and `mix/tasks/*`).
+Async census: 51 `async: true` modules, 66 explicit `async: false`, 10 sync-by-default (`use ExUnit.Case` with no `async:` option — `coder_test`, `coder_2_test`, `glob_test`, `ripgrep_test`, `search_context_test`, `search_history_test`, `tools_test`, `context_node_test`, `phylo_graph_node_test`, `evo_git_test`).
 
 ## Routing Table
 - `evo_git/` → Test files mirroring source structure (full inventory in API Surface)
