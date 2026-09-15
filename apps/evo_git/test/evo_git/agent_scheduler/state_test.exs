@@ -17,65 +17,22 @@ defmodule EvoGit.AgentScheduler.StateTest do
 
   Pure-function style, matching the sibling `slots_test.exs`: real
   `GenServer.from` tuples `{self(), make_ref()}` and `assert_received` for
-  grant replies. `async: false` because the global named ETS tables are
-  shared.
+  grant replies. Each test builds a `%State{}` in-process and calls the
+  `State`/`Slots` functions directly — no live scheduler GenServer. The
+  exercised code paths only READ the global named ETS tables (`Store`:
+  `:evogit_agent_state` for the model id, `:evogit_sched_meta` for depth /
+  sched-meta status) and never write them, so no concurrently running module
+  can observe state written here — hence `async: true`.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
-  alias EvoGit.AgentScheduler.AgentState
-  alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.Slots
   alias EvoGit.AgentScheduler.State
-  alias EvoGit.AgentSpec
-  alias EvoGit.Core.ContextNode
-  alias EvoGit.Core.PhyloGraphNode
 
   @default_model "default"
 
   # --- Helpers (mirror slots_test.exs conventions) ---
-
-  defp create_ets_if_missing(name) do
-    if :ets.whereis(name) == :undefined do
-      :ets.new(name, [:set, :named_table, :public])
-    end
-  end
-
-  defp put_meta(agent_id, depth) do
-    meta = %SchedMeta{id: agent_id, depth: depth, spec: agent_spec()}
-    :ets.insert(:evogit_sched_meta, {agent_id, meta})
-    :ok
-  end
-
-  defp put_agent_state(agent_id, model_id) do
-    state = %AgentState{
-      context_node: context_node(),
-      llm_model: "test:model",
-      model_id: model_id,
-      max_retries: 15,
-      max_depth: 8
-    }
-
-    :ets.insert(:evogit_agent_state, {agent_id, state})
-    :ok
-  end
-
-  defp context_node do
-    %ContextNode{path: "./", repo: "/tmp/test"}
-  end
-
-  defp phylo_node do
-    %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"}
-  end
-
-  defp agent_spec do
-    %AgentSpec{
-      context_node: context_node(),
-      phylo_node: phylo_node(),
-      agent_module: __MODULE__,
-      objective: "test"
-    }
-  end
 
   defp profile(id, concurrency) do
     %{id: id, model: "provider:#{id}", concurrency: concurrency}
@@ -96,12 +53,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
   # --- Setup ---
 
   setup do
-    create_ets_if_missing(:evogit_sched_meta)
-    create_ets_if_missing(:evogit_agent_state)
-    :ets.delete_all_objects(:evogit_sched_meta)
-    :ets.delete_all_objects(:evogit_agent_state)
-    on_exit(fn -> :ets.delete_all_objects(:evogit_sched_meta) end)
-
     # `do_update_config/2` ends with an unconditional
     # `Phoenix.PubSub.broadcast(EvoGit.PubSub, ...)`. Under `mix test` the
     # :evo_git app is started, so EvoGit.PubSub is already running. If the app
@@ -120,9 +71,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
     test "queued waiter is granted when profile concurrency is raised (B1 deadlock regression)" do
       ref = make_ref()
       from = {self(), ref}
-      put_meta(3, 0)
-      put_agent_state(3, @default_model)
-
       state = full_default_state()
       assert {:noreply, state2, [{3, :blocked}]} = Slots.handle_request_llm_slot(3, from, state)
 
@@ -140,9 +88,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
     test "queued waiter survives a concurrency-unchanged profile re-save" do
       ref = make_ref()
       from = {self(), ref}
-      put_meta(3, 0)
-      put_agent_state(3, @default_model)
-
       state = full_default_state()
       assert {:noreply, state2, [{3, :blocked}]} = Slots.handle_request_llm_slot(3, from, state)
 
@@ -292,9 +237,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
     test "raises capacity of a live pool and grants its queued waiter (with profiles)" do
       ref = make_ref()
       from = {self(), ref}
-      put_meta(3, 0)
-      put_agent_state(3, @default_model)
-
       state = full_default_state()
       assert {:noreply, state2, [{3, :blocked}]} = Slots.handle_request_llm_slot(3, from, state)
 
@@ -312,7 +254,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
     test "grants queued waiter when only the fallback default exists (no profiles)" do
       ref = make_ref()
       from = {self(), ref}
-      put_meta(3, 0)
 
       state =
         State.from_model_profiles([], default_llm_max_concurrency: 2)
@@ -392,9 +333,6 @@ defmodule EvoGit.AgentScheduler.StateTest do
     test "queued waiter is granted when :model_concurrency raises capacity (grant sweep)" do
       ref = make_ref()
       from = {self(), ref}
-      put_meta(3, 0)
-      put_agent_state(3, @default_model)
-
       state = full_default_state()
       assert {:noreply, state2, [{3, :blocked}]} = Slots.handle_request_llm_slot(3, from, state)
 
