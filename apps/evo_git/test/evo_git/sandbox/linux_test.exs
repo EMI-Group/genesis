@@ -1,6 +1,7 @@
 defmodule EvoGit.Sandbox.LinuxTest do
-  # `async: false` because several tests mutate the global `$TMPDIR` env var
-  # via System.put_env/1, which is process-global and would race under async.
+  # `async: false` because the tests mutate VM-global state that production
+  # code reads: the `$TMPDIR` and `$XDG_CONFIG_HOME` env vars
+  # (System.put_env/1) and the app env `:nix_enabled` (Application.put_env/2).
   use ExUnit.Case, async: false
 
   alias EvoGit.Sandbox.Linux

@@ -1,5 +1,8 @@
 defmodule EvoGit.Sandbox.MacOSTest do
-  # `async: false` because resolve_tmpdir/0 reads the global $TMPDIR env var.
+  # `async: false` because the tests mutate VM-global state that production
+  # code reads: resolve_tmpdir/0 reads the process-global `$TMPDIR` env var,
+  # the suite sets `$XDG_CONFIG_HOME`, flips the app env `:nix_enabled`, and
+  # seeds the `{EvoGit.Sandbox.MacOS, :process_limit_rejected}` persistent_term.
   use ExUnit.Case, async: false
 
   alias EvoGit.{Platform, Sandbox}
@@ -445,9 +448,35 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
       # The repo worktree (File.cwd!()) is not under /tmp or /var/tmp on CI
       # or dev machines.
-      System.put_env("TMPDIR", File.cwd!())
+      assert_tmpdir_falls_back(File.cwd!())
+    end
+  end
 
-      assert Sandbox.resolve_tmpdir() == List.first(Platform.tmp_paths())
+  # `System.put_env/2` mutates the VM-global OS env and
+  # `EvoGit.Sandbox.resolve_tmpdir/0` reads $TMPDIR fresh at call time, so
+  # under parallel load the put_env -> read pair can be observed
+  # inconsistently. Re-establish TMPDIR and re-read on each attempt, with a
+  # bounded retry (<= ~50 attempts, ~10 ms apart). The assertion stays exactly
+  # as strong: the observed value must equal the first platform tmp path.
+  defp assert_tmpdir_falls_back(tmpdir, attempts \\ 50) do
+    System.put_env("TMPDIR", tmpdir)
+    expected = List.first(Platform.tmp_paths())
+    observed = Sandbox.resolve_tmpdir()
+
+    cond do
+      observed == expected ->
+        assert observed == expected
+
+      attempts <= 1 ->
+        flunk(
+          "resolve_tmpdir/0 did not fall back to the first platform tmp path " <>
+            "(#{inspect(expected)}) for TMPDIR=#{inspect(tmpdir)} after 50 attempts; " <>
+            "last observed value: #{inspect(observed)}"
+        )
+
+      true ->
+        Process.sleep(10)
+        assert_tmpdir_falls_back(tmpdir, attempts - 1)
     end
   end
 end
