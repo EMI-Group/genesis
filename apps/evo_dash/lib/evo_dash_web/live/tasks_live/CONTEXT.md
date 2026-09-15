@@ -106,7 +106,7 @@ direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRe
 - **`list_tasks_changed_since/2`** — not called anywhere in the dashboard (change detection is broadcast-driven).
 
 **Store projections (3 shapes)** — `EvoGit.Store` summary queries never decode the result blob:
-- *Summary* (16 keys, no result): `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error` — `error` is the structured failure record map (ATOM-keyed after decode, `nil` unless the task is `:failed`; see "Failed-task error rendering"); consumed by the NodeAware sidebar loader and `show_review_button?/1` (column-based on `branch_name`).
+- *Summary* (16 keys, no result): `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error` — `error` is the structured failure record map (ATOM-keyed after decode, `nil` unless the task is `:failed`; see "Failed-task error rendering"); consumed by the NodeAware sidebar loader and `show_review_button?/1` (summary-based on `status`/`type`).
 - *Id-only*: `list_task_ids/2` — id+status+updated_at, no result/opts decode.
 - *Full*: `list_tasks_paginated/2` / `get_task/1` — `Codec.decode_result` (rebuilds `%Usage{}` + archive_records) runs per row.
 
@@ -118,7 +118,7 @@ Two two-step server-side confirmation-modal flows (SystemLive warning-modal patt
 - **Force kill** (card's three-dot dropdown, visible `[:running, :cancelling]`, "Danger zone" divider): `open_force_kill_modal` → assign `:confirm_force_kill_task_id`; `confirm_force_kill_task` → `EvoDash.NodeContext.force_kill_task(current_node, task_id)` (BRUTAL — kills all agents, result nil'd; escalation from `:cancelling`); same `:ok` collapse+reload / error-flash handling. Modal: title `gettext("Force Kill Task?")`, confirm `gettext("Force Kill")` (`btn-error`).
 - **Modal-state lifecycle**: both assigns seeded `nil` in `mount/3`, MUTUALLY EXCLUSIVE (opening one clears the other), cleared on node switch in `handle_params/3`. Nil-guarded confirms are no-ops.
 - **Status filter**: includes `gettext("Cancelling")` (`value="cancelling"`); pure SQL string comparison (`EvoGit.Store.Queries.build_where`), so `:cancelling` round-trips — no evo_dash-side atom whitelist.
-- **`:cancelled` reviewability**: gracefully-cancelled tasks ARE reviewable (`show_review_button?/1` matches `:cancelled` with a preserved branch/no_changes result; `:cancelled` without a branch renders as no-changes).
+- **`:cancelled` reviewability**: gracefully-cancelled tasks ARE reviewable — the card Review button shows for every `:completed`/`:cancelled` task (repo-less `:reflect` excluded); a `:cancelled` task without a branch still opens the review page (no-changes).
 
 ## ModalHelpers
 
@@ -181,10 +181,10 @@ It is `nil` on every non-`:failed` row and rides on BOTH read paths: the full
   `inspect(reason, limit: :infinity)` (task_card_components.ex:995).
   The only UI entry to the modal is the "Full" button inside an EXPANDED card's
   Agent Message section (task_card_components.ex:270-278).
-- `show_review_button?/1` (task_card_components.ex:1012-1022, private) only
-  matches `:completed`/`:cancelled` with `{:ok, %{branch_name: non-empty binary}}`
-  or `{:ok, %{no_changes: true}}` — a `:failed` task NEVER gets a Review
-  link/navigation on this page (test-pinned `tasks_live_test.exs:859-873`).
+- `show_review_button?/1` (task_card_components.ex, private) matches EVERY
+  `:completed`/`:cancelled` task except repo-less `:reflect` (`type: :reflect`)
+  — a `:failed` task NEVER gets a Review link/navigation on this page
+  (test-pinned in `tasks_live_test.exs`).
   Legacy error text is reachable only via the Details toggle and the modal.
 - Legacy result decoded-shape note (evo_git codec contract, codec.ex):
   `{:error, reason}` persists tagged `{"__result_tag__":"error","reason":...}`;
