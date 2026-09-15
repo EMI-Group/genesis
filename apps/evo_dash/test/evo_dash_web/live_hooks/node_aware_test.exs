@@ -460,9 +460,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
   describe "partition_active_tasks/1 — pure partitioning" do
     # Pure function tests (no socket, no store) — partition_active_tasks/1 only
-    # reads `status` for the running filter, and status/review_status/
-    # branch_name for the pending (review-candidate) filter.
-
+    # reads `status` for the running filter, and status/review_status/type for
+    # the pending (review-candidate) filter.
     test "a :cancelling summary lands in the running partition" do
       {running, pending} = NodeAware.partition_active_tasks([%{id: "t1", status: :cancelling}])
 
@@ -489,6 +488,64 @@ defmodule EvoDashWeb.NodeAwareTest do
       {running, pending} = NodeAware.partition_active_tasks(summaries)
 
       assert Enum.map(running, & &1.id) |> Enum.sort() == ["f1", "p1", "r1"]
+      assert pending == []
+    end
+
+    test "a COMPLETED task with NO primary branch lands in the pending partition" do
+      # Review candidacy no longer inspects the result/branch — a task that made
+      # no changes in its PRIMARY repo but changed writable FOREIGN repos is
+      # still reviewable. Column/summary-based: only status/review_status/type.
+      summaries = [
+        %{
+          id: "done-no-branch",
+          status: :completed,
+          review_status: nil,
+          type: :evolve,
+          branch_name: nil,
+          started_at: nil,
+          finished_at: nil
+        }
+      ]
+
+      {running, pending} = NodeAware.partition_active_tasks(summaries)
+
+      assert running == []
+      assert Enum.map(pending, & &1.id) == ["done-no-branch"]
+    end
+
+    test "a COMPLETED :reflect task is EXCLUDED from the pending partition" do
+      # Repo-less self-reflective tasks have no code review — excluded
+      # explicitly (previously only incidental via the branch check).
+      summaries = [
+        %{
+          id: "reflect-1",
+          status: :completed,
+          review_status: nil,
+          type: :reflect,
+          branch_name: nil
+        }
+      ]
+
+      {running, pending} = NodeAware.partition_active_tasks(summaries)
+
+      assert running == []
+      assert pending == []
+    end
+
+    test "a COMPLETED task with a non-nil review_status is NOT a review candidate" do
+      summaries = [
+        %{
+          id: "already-reviewed",
+          status: :completed,
+          review_status: :merged,
+          type: :evolve,
+          branch_name: "feature-1"
+        }
+      ]
+
+      {running, pending} = NodeAware.partition_active_tasks(summaries)
+
+      assert running == []
       assert pending == []
     end
   end
