@@ -219,7 +219,7 @@ defmodule EvoDashWeb.TasksLive do
         <% end %>
 
         <!-- Task List -->
-        <div class="space-y-4 lg:space-y-5">
+        <div id="tasks-list" class="space-y-4 lg:space-y-5">
           <%= if @tasks_loading do %>
             <div class="text-center py-12 sm:py-16 text-base-content/70">
               <.icon
