@@ -1,4 +1,10 @@
 defmodule EvoGit.Runtime.SelfReflectiveTest do
+  @moduledoc """
+  Mutates process-global state observable by production and concurrently running modules →
+  `async: false`: the `:self_reflective_source_root`/`:self_reflective_source_dir` app env and
+  the `GENESIS_SOURCE_ROOT` env var (read by `EvoGit.Runtime.SelfReflective.source_root/0` /
+  `EvoGit.SelfReflectiveSource.reference_path/0`), plus the live scheduler's `model_profiles`.
+  """
   use ExUnit.Case, async: false
 
   alias EvoGit.Runtime.SelfReflective

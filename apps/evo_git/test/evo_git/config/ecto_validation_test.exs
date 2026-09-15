@@ -11,7 +11,8 @@ defmodule EvoGit.Config.EctoValidationTest do
   nil ≡ absent, type-then-rule error ordering, byte-exact messages/rules/
   key_paths, unknown-key survival, integer-indexed profile recursion with
   PeakHours-delegated peak fields, crash resilience, and public-API stability.
-  All modules under test are pure (no ETS, processes, or app-env reads), so
+  All modules under test are pure (no ETS, processes, or shared-state
+  mutation — the timezone-database lookup is a read-only app-env default), so
   this file mirrors `schema_test.exs`'s `async: true`.
   """
 

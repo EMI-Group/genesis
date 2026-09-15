@@ -1,14 +1,12 @@
 defmodule EvoGit.Agents.CustomTest do
+  @moduledoc """
+  `async: false` because `setup/0` mutates the BEAM-global `XDG_CONFIG_HOME` env
+  var (`System.put_env/2`) so `EvoGit.CustomAgents` never touches the real
+  `~/.config/genesis/` directory.
+  """
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
-
-  # `EvoGit.Agents.Custom` resolves its definition at runtime from
-  # `EvoGit.CustomAgents`. Until that module lands (parallel implementation), the
-  # whole suite is skipped instead of erroring on UndefinedFunctionError.
-  unless Code.ensure_loaded?(EvoGit.CustomAgents) do
-    @moduletag :skip
-  end
 
   # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
   # touches the real ~/.config/genesis/ directory.
