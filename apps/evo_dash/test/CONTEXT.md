@@ -172,7 +172,7 @@ Coverage of the event-driven async remote-connect flow (lib contract: `NodeAware
 
 ## Notes for Agents — async policy
 
-Most of the 55 test modules in this tree are `async: true`; the following are `async: false`, each for a documented process-wide global-state reason (18 modules total).
+Of the 54 test modules in this tree, 36 are `async: true`; the following 18 are `async: false`, each for a documented process-wide global-state reason.
 ExUnit drains ALL `async: true` modules before running any `async: false` one, so a flip is unsafe only when the module shares global state with ANOTHER module in the async cohort (async-vs-sync overlap is impossible).
 - **`XDG_CONFIG_HOME`** (process-global `System.put_env`; the only config-isolation seam — `EvoGit.Config.config_dir/0` derives from it with no `Application.get_env` override — so it cannot be made per-test/per-process): `evo_dash_web/live/projects_live_test.exs`, `settings_live_test.exs`, `review_live_test.exs`, `home_live_test.exs`, `system_live_test.exs`, `welcome_live_test.exs`, `welcome_complete_live_test.exs`, `settings_live_agents_test.exs`, `live_hooks/appearance_test.exs`, `live/projects_live/project_test.exs`, `evo_dash_web/controllers/page_controller_test.exs`, `evo_dash_web/controllers/task_export_controller_test.exs`, `evo_dash/node_context_test.exs`. Every module that SETS it is sync — including the export suite, whose `?node=` tests would otherwise mutate the env var underneath a concurrently-reading async module.
 - **Global `EvoGit.Store`/`EvoGit.TaskRegistry` terminate+restart juggling**: `live_hooks/node_aware_test.exs`, `live_hooks/guide_test.exs`, and `tasks_live_test.exs` (plus `home_live_test`/`node_context_test`, already sync for config reasons).
