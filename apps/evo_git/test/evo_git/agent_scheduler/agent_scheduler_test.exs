@@ -248,18 +248,8 @@ defmodule EvoGit.AgentSchedulerTest do
   end
 
   test "get_foreign_repo_commits returns %{} for an agent with no SchedMeta row" do
-    # INTENDED hardened contract: for an unknown agent id the function must
-    # return %{} instead of crashing. The lib regressed in 7ed94d3a5 ("replace
-    # raw ETS calls with Store in public functions"): the original hardened
-    # implementation (f7703da34) was `case :ets.lookup(...) do
-    # [{^agent_id, %{foreign_repo_commits: frc}}] when is_map(frc) -> frc;
-    # _ -> %{} end`, but the current lib does `{:ok, meta} =
-    # Store.get_sched_meta(agent_id)`, which MatchErrors when Store returns
-    # :error for a missing row.
-    #
-    # THIS TEST CURRENTLY FAILS at HEAD (MatchError: `{:ok, meta} = :error`).
-    # It is kept to pin the intended contract; the lib fix is out of scope for
-    # this node (test-only write scope).
+    # Contract: an unknown agent id yields %{} — the lib's `:error -> %{}`
+    # branch of `case Store.get_sched_meta(agent_id)`.
     agent_id = :erlang.unique_integer([:positive])
 
     assert AgentScheduler.get_foreign_repo_commits(agent_id) == %{}
