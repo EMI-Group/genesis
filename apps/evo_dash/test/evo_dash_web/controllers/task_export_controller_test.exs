@@ -17,8 +17,6 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       conn = get(conn, ~p"/tasks/#{task_id}/export")
 
       assert response(conn, 404) =~ "No archive data"
-
-      cleanup_task(task_id)
     end
 
     test "returns 404 when task exists but archive_metadata is empty", %{conn: conn} do
@@ -27,8 +25,6 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       conn = get(conn, ~p"/tasks/#{task_id}/export")
 
       assert response(conn, 404) =~ "No archive data"
-
-      cleanup_task(task_id)
     end
 
     test "returns downloadable JSON when task has archive_metadata", %{conn: conn} do
@@ -91,8 +87,6 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       second = Enum.find(records, fn record -> record["agent_id"] == "T2_A1" end)
       assert second["parent_id"] == "T1_A1"
       assert second["objective"] == "Implement module X"
-
-      cleanup_task(task_id)
     end
   end
 
@@ -155,13 +149,19 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       conn = get(conn, "/tasks/#{task_id}/export?node=local")
 
       assert response(conn, 200)
-
-      cleanup_task(task_id)
     end
   end
 
   # Seeds a completed task with the given archive_metadata into the production
   # Store, returns the task id. Uses unique ids to avoid collisions.
+  #
+  # The Store/TaskRegistry are NOT isolated in this file (they are the shared
+  # production children backed by the shared test SQLite database), so the row
+  # must be removed explicitly. Registering the cleanup via `on_exit/1` here —
+  # at seed time, on the test process — makes removal UNCONDITIONAL: the row is
+  # deleted even when a test fails, raises, or crashes before reaching its end,
+  # so no leftover `export_test_*` row can ever leak into a later test or run
+  # (a leaked row previously broke `evo_git`'s `list_tasks_paginated/2`).
   defp seed_completed_task(archive_metadata) do
     task_id = "export_test_#{System.unique_integer([:positive])}"
 
@@ -180,6 +180,8 @@ defmodule EvoDashWeb.TaskExportControllerTest do
     }
 
     EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn -> cleanup_task(task_id) end)
 
     task_id
   end
