@@ -69,6 +69,10 @@ defmodule EvoDashWeb.TasksLiveTest do
         timeout
       )
 
+  # Renders only the task-list container (#tasks-list), scoping list-content
+  # assertions away from the sidebar, which now also lists completed tasks.
+  defp render_tasks_list(view), do: view |> element("#tasks-list") |> render()
+
   # Polls `fun` every 10ms until it returns truthy (or the timeout elapses).
   # Used to observe the PubSub-driven debounce phases (:tasks_reload_pending
   # true → false) without fixed sleeps.
@@ -107,11 +111,13 @@ defmodule EvoDashWeb.TasksLiveTest do
       flush_tasks_load(view)
 
       _html = render_hook(view, "search_tasks", %{"search_query" => "database"})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "write a database migration"
-      refute html =~ "build a web app"
-      refute html =~ "refactor the auth module"
+      # The sidebar now lists every completed task pending review, so
+      # list-content assertions must be scoped to the #tasks-list container.
+      assert render_tasks_list(view) =~ "write a database migration"
+      refute render_tasks_list(view) =~ "build a web app"
+      refute render_tasks_list(view) =~ "refactor the auth module"
     end
 
     test "search_tasks handler filters tasks by objective text", %{conn: conn} do
@@ -122,10 +128,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       flush_tasks_load(view)
 
       _html = render_hook(view, "search_tasks", %{"search_query" => "login"})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "fix the login bug"
-      refute html =~ "add dark mode toggle"
+      assert render_tasks_list(view) =~ "fix the login bug"
+      refute render_tasks_list(view) =~ "add dark mode toggle"
     end
 
     test "search_tasks handler filters tasks by task ID", %{conn: conn} do
@@ -136,10 +142,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       flush_tasks_load(view)
 
       _html = render_hook(view, "search_tasks", %{"search_query" => id1})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "alpha task"
-      refute html =~ "beta task"
+      assert render_tasks_list(view) =~ "alpha task"
+      refute render_tasks_list(view) =~ "beta task"
     end
 
     test "clearing the search query restores all tasks", %{conn: conn} do
@@ -241,10 +247,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       flush_tasks_load(view)
 
       _html = render_hook(view, "filter_tasks", %{"status_filter" => "failed"})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "failed one"
-      refute html =~ "completed one"
+      assert render_tasks_list(view) =~ "failed one"
+      refute render_tasks_list(view) =~ "completed one"
     end
 
     test "filter_tasks handler 'all' shows everything", %{conn: conn} do
@@ -358,29 +364,29 @@ defmodule EvoDashWeb.TasksLiveTest do
       # hidden by the reveal preference (it passes the SQL filter but is
       # dropped by visible_tasks/2).
       _html = render_hook(view, "search_tasks", %{"search_query" => "MARKER KEEPS VISIBLE"})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
-      refute html =~ "MARKER EXCLUDED NORMAL TASK"
-      refute html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+      assert render_tasks_list(view) =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      refute render_tasks_list(view) =~ "MARKER EXCLUDED NORMAL TASK"
+      refute render_tasks_list(view) =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
 
       # Toggling reveal ON adds the matching :reflect row without disturbing
       # the search query — the excluded normal task stays excluded.
       _html = render_hook(view, "toggle_reflect_tasks", %{"show_reflect_tasks" => "true"})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
-      assert html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
-      refute html =~ "MARKER EXCLUDED NORMAL TASK"
+      assert render_tasks_list(view) =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      assert render_tasks_list(view) =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+      refute render_tasks_list(view) =~ "MARKER EXCLUDED NORMAL TASK"
 
       # Toggling reveal back OFF (an unchecked box sends no param) hides only
       # the :reflect row; the search query is still intact.
       _html = render_hook(view, "toggle_reflect_tasks", %{})
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert html =~ "MARKER KEEPS VISIBLE NORMAL TASK"
-      refute html =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
-      refute html =~ "MARKER EXCLUDED NORMAL TASK"
+      assert render_tasks_list(view) =~ "MARKER KEEPS VISIBLE NORMAL TASK"
+      refute render_tasks_list(view) =~ "MARKER KEEPS VISIBLE REFLECT CHAT TASK"
+      refute render_tasks_list(view) =~ "MARKER EXCLUDED NORMAL TASK"
     end
 
     test "empty store renders the first-run nudge, not the adjust-filters hint", %{conn: conn} do
@@ -500,10 +506,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Showing 1–25 of 26 tasks"
 
       # The most recent tasks (indices 25..1) should be on page 1.
-      assert html =~ "task number 25"
-      assert html =~ "task number 1"
+      assert render_tasks_list(view) =~ "task number 25"
+      assert render_tasks_list(view) =~ "task number 1"
       # Index 0 (oldest) is on page 2.
-      refute html =~ "task number 0"
+      refute render_tasks_list(view) =~ "task number 0"
     end
 
     test "navigating to ?page=2 shows the next set", %{conn: conn} do
@@ -515,9 +521,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Page 2 of 2"
 
       # Page 2 shows the oldest task (index 0).
-      assert html =~ "task number 0"
+      assert render_tasks_list(view) =~ "task number 0"
       # Page 2 should NOT show the newest (index 25).
-      refute html =~ "task number 25"
+      refute render_tasks_list(view) =~ "task number 25"
     end
 
     test "invalid page params clamp and do not crash", %{conn: conn} do
@@ -595,12 +601,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Showing 1–10 of 10 tasks"
 
       # The failed prompts should appear.
-      assert html =~ "failed task number 9"
-      assert html =~ "failed task number 0"
+      assert render_tasks_list(view) =~ "failed task number 9"
+      assert render_tasks_list(view) =~ "failed task number 0"
 
       # The completed prompts should NOT appear.
-      refute html =~ "completed task number 19"
-      refute html =~ "completed task number 0"
+      refute render_tasks_list(view) =~ "completed task number 19"
+      refute render_tasks_list(view) =~ "completed task number 0"
     end
   end
 
@@ -818,10 +824,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ ~r/<option value="cancelling"[^>]*>\s*Cancelling\s*<\/option>/
 
       _filtered = render_hook(view, "filter_tasks", %{"status_filter" => "cancelling"})
-      filtered = flush_tasks_load(view)
+      flush_tasks_load(view)
 
-      assert filtered =~ "cancelling one"
-      refute filtered =~ "completed one"
+      assert render_tasks_list(view) =~ "cancelling one"
+      refute render_tasks_list(view) =~ "completed one"
     end
   end
 
