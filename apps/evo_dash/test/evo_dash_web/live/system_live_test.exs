@@ -2075,21 +2075,30 @@ defmodule EvoDashWeb.SystemLiveTest do
       test_pid = self()
       status = source_status()
 
+      # The runner BLOCKS until the test releases it (instead of sleeping a
+      # fixed window): the loading spinner is then observable for a genuinely
+      # deterministic window, not a wall-clock race against `await_checks_done/1`
+      # (which can easily exceed a fixed sleep under load).
       Application.put_env(:evo_dash, :source_status_runner, fn _ ->
-        send(test_pid, :source_status_task_started)
-        Process.sleep(500)
-        status
+        send(test_pid, {:source_status_task_started, self()})
+
+        receive do
+          :release_source_status -> status
+        after
+          5_000 -> status
+        end
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      # The runner signals it started, then sleeps — the loading spinner is
+      # The runner signals it started, then blocks — the loading spinner is
       # observable for a deterministic window.
-      assert_receive :source_status_task_started, 1_000
+      assert_receive {:source_status_task_started, runner_pid}, 1_000
       await_checks_done(view)
       html = render(view)
       assert html =~ "Loading…"
 
+      send(runner_pid, :release_source_status)
       await_view_assign(view, :source_status, status)
       html = render(view)
       refute html =~ "Loading…"
