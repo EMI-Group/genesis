@@ -321,7 +321,7 @@ defmodule EvoGit.RemoteBootstrapTest do
 
       # shared libs are distinguished from static-pie binaries by NEEDED deps
       assert script =~
-               ~S|"$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null \| grep -q NEEDED|
+               ~S("$PATCH_DIR/bintools/bin/readelf" -d "$file" 2>/dev/null | grep -q NEEDED)
 
       assert script =~ ~S|echo "nixos-patch: setting rpath on $file"|
       assert script =~ ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-rpath "$RPATH" "$file"|
