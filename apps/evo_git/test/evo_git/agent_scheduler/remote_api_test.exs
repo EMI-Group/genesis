@@ -815,17 +815,37 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
   # ── Review delegates (real temp git repos) ─────────────────────────
   #
-  # Replicates the repo-building helpers from review_test.exs (which are
-  # private to that module): init + identity config, commit_file,
-  # rename_current_branch. The delegates are thin wrappers over
-  # EvoGit.Review, so the assertions pin pass-through delegation.
+  # The delegates are thin wrappers over EvoGit.Review, so the assertions pin
+  # pass-through delegation against REAL git repos. The repo-building helpers
+  # mirror the ones private to review_test.exs (init + identity config,
+  # commit_file, rename_current_branch).
+  #
+  # Building a starting repo from scratch (git init + identity config + initial
+  # commit + rev-parse) costs ~35ms of git subprocess time per test, yet every
+  # review-delegate test starts from the SAME state: one commit on `main`. So we
+  # build each needed starting state ONCE per module run in `setup_all` and hand
+  # each test a private copy via `File.cp_r/2` (pure BEAM, no git subprocess).
+  # Tests still mutate only their own throw-away repository — the template is
+  # never touched.
 
-  defp review_repo do
-    tmp_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "evo_git_remote_api_review_" <> to_string(System.unique_integer())
-      )
+  setup_all do
+    templates = %{
+      # One commit on `main` — the starting point for most tests.
+      base: build_template_repo([{"base.txt", "base\n"}]),
+      # "file.txt" with two lines — needed by the diff-content assertion.
+      lines: build_template_repo([{"file.txt", "line1\nline2\n"}])
+    }
+
+    on_exit(fn -> Enum.each(templates, fn {_name, tpl} -> File.rm_rf!(tpl.dir) end) end)
+
+    {:ok, review_templates: templates}
+  end
+
+  # Builds a committed template repository and renames its branch to `main` (so
+  # tests don't depend on the machine's `init.defaultBranch`). Returns
+  # `%{dir: path, sha: <HEAD sha>}`.
+  defp build_template_repo(files) do
+    tmp_dir = unique_tmp_dir("evo_git_remote_api_tpl_")
 
     File.mkdir_p!(tmp_dir)
     {:ok, _} = Git.init(tmp_dir)
@@ -833,9 +853,39 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
     System.cmd("git", ["config", "user.name", "Test"], cd: tmp_dir)
 
+    Enum.each(files, fn {path, content} ->
+      full_path = Path.join(tmp_dir, path)
+      File.mkdir_p!(Path.dirname(full_path))
+      File.write!(full_path, content)
+    end)
+
+    {:ok, _} = Git.add(tmp_dir, ".")
+    {:ok, _} = Git.commit(tmp_dir, "Initial commit")
+    {:ok, sha} = Git.rev_parse(tmp_dir, "HEAD")
+    rename_current_branch(tmp_dir, "main")
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand. Dropping them halves the files each per-test
+    # `File.cp_r/2` has to copy (14 of 27 files).
+    File.rm_rf!(Path.join(tmp_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(tmp_dir, ".git/logs"))
+
+    %{dir: tmp_dir, sha: sha}
+  end
+
+  # Copies a template repo into a per-test throw-away directory (removed in
+  # `on_exit`) and returns `{tmp_dir, base_sha}`.
+  defp review_repo(template) do
+    tmp_dir = unique_tmp_dir("evo_git_remote_api_review_")
+
+    {:ok, _} = File.cp_r(template.dir, tmp_dir)
     on_exit(fn -> File.rm_rf!(tmp_dir) end)
 
-    tmp_dir
+    {tmp_dir, template.sha}
+  end
+
+  defp unique_tmp_dir(prefix) do
+    Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
   end
 
   # Writes a file (creating parent dirs), stages, and commits it. Returns
@@ -859,9 +909,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   end
 
   describe "review delegates" do
-    test "list_branches/1 and branch_exists?/2 delegate to Review" do
-      tmp_dir = review_repo()
-      {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    test "list_branches/1 and branch_exists?/2 delegate to Review", %{review_templates: tpl} do
+      {tmp_dir, _base_sha} = review_repo(tpl.base)
       System.cmd("git", ["branch", "alpha"], cd: tmp_dir)
 
       assert {:ok, branches} = RemoteAPI.list_branches(tmp_dir)
@@ -873,17 +922,16 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.branch_exists?(tmp_dir, "nope") == false
     end
 
-    test "default_merge_target/1 resolves main" do
-      tmp_dir = review_repo()
-      {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
-      rename_current_branch(tmp_dir, "main")
+    test "default_merge_target/1 resolves main", %{review_templates: tpl} do
+      {tmp_dir, _base_sha} = review_repo(tpl.base)
 
       assert {:ok, "main"} = RemoteAPI.default_merge_target(tmp_dir)
     end
 
-    test "load_review_metadata/2 returns the same map as a direct Review call" do
-      tmp_dir = review_repo()
-      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+    test "load_review_metadata/2 returns the same map as a direct Review call", %{
+      review_templates: tpl
+    } do
+      {tmp_dir, base_sha} = review_repo(tpl.base)
 
       Git.create_branch(tmp_dir, "feature", base_sha)
       Git.checkout(tmp_dir, "feature")
@@ -896,10 +944,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert via_api.changed_files_count == 1
     end
 
-    test "merge_branch/2 merges into the default target and deletes the branch" do
-      tmp_dir = review_repo()
-      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
-      rename_current_branch(tmp_dir, "main")
+    test "merge_branch/2 merges into the default target and deletes the branch", %{
+      review_templates: tpl
+    } do
+      {tmp_dir, base_sha} = review_repo(tpl.base)
 
       Git.create_branch(tmp_dir, "agent_branch", base_sha)
       Git.checkout(tmp_dir, "agent_branch")
@@ -910,10 +958,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
     end
 
-    test "merge_branch/3 merges into a non-default target branch" do
-      tmp_dir = review_repo()
-      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
-      rename_current_branch(tmp_dir, "main")
+    test "merge_branch/3 merges into a non-default target branch", %{review_templates: tpl} do
+      {tmp_dir, base_sha} = review_repo(tpl.base)
       System.cmd("git", ["branch", "dev"], cd: tmp_dir)
 
       Git.create_branch(tmp_dir, "agent_branch", base_sha)
@@ -925,18 +971,16 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
     end
 
-    test "reject_branch/2 deletes the branch" do
-      tmp_dir = review_repo()
-      {:ok, base_sha} = commit_file(tmp_dir, "base.txt", "base\n", "Initial commit")
+    test "reject_branch/2 deletes the branch", %{review_templates: tpl} do
+      {tmp_dir, base_sha} = review_repo(tpl.base)
       Git.create_branch(tmp_dir, "agent_branch", base_sha)
 
       assert :ok = RemoteAPI.reject_branch(tmp_dir, "agent_branch")
       assert RemoteAPI.branch_exists?(tmp_dir, "agent_branch") == false
     end
 
-    test "list_commits/2 and load_file_diff/4 delegate to Review" do
-      tmp_dir = review_repo()
-      {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "line1\nline2\n", "Initial commit")
+    test "list_commits/2 and load_file_diff/4 delegate to Review", %{review_templates: tpl} do
+      {tmp_dir, base_sha} = review_repo(tpl.lines)
 
       Git.create_branch(tmp_dir, "feature", base_sha)
       Git.checkout(tmp_dir, "feature")
