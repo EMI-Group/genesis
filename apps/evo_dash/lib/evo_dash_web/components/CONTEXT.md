@@ -198,6 +198,12 @@ Task results (the runtime `{:ok, %{...}}` value inside `result`) may carry a top
 - **Render sites** (all `Map.get`-guarded, summary-map safe): (1) collapsed task card — compact indicator row between the objective and the bottom row, hidden when `@show_details` (the expanded detail already shows the full section — no duplication); (2) expanded detail view — a `gettext("Repositories")` h5 section inside `render_result/2` for both the success-with-commit_sha clause AND the `no_changes: true` clause (a no-changes primary can still carry foreign commits); (3) the Full Result zoom modal (`render_result_full/1` → `truncate: false` branch). TasksLive itself never reads `repos` — it passes the full decoded `result` through, and the component stays contract-safe.
 - **File-size note**: `task_card_components.ex` grew from 869 to ~1024 lines with this feature — deliberate (extend, don't split; per-file policy threshold is ~1000, and the card surface is cohesive).
 
+### Task-card Review button candidacy
+
+`show_review_button?/1` (private) decides whether the collapsed card's primary-colored Review link renders — TasksLive invokes `task_card/1` with full `%TaskInfo{}` structs.
+Candidacy is deliberately RESULT-AGNOSTIC: EVERY `:completed` or `:cancelled` task shows the Review button, because a multi-repo task may have changed only writable FOREIGN repos — requiring a non-empty primary `branch_name` or a `no_changes: true` result would hide those legitimate review candidates.
+The ONLY exclusion is `:reflect` (repo-less) tasks — no code to review; their `type` is read defensively via `Map.get/2`, and pending/running/finalizing/failed tasks never render the button.
+
 ### Field-usage audit — conclusions
 
 | Component / render path | Fields | Access | Contract-fed by |
