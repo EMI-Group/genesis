@@ -443,12 +443,34 @@ defmodule EvoGit.SystemSamplerTest do
 
         assert sample.llm_capacity == expected_totals.llm_capacity
         assert sample.tool_capacity == expected_totals.tool_capacity
+
+        # Real-plumbing coverage for the DEFAULT (no-seam) llm_slots path: no
+        # seam is set here, so the sampler reads the LIVE scheduler every tick
+        # and the broadcast value must equal a fresh live read. Compared
+        # against the live read (never a hard-coded profile set) because the
+        # scheduler's `model_concurrency` is shared global state that
+        # PeakHourEngine may mutate asynchronously.
+        assert sample.llm_slots == AgentScheduler.get_llm_slot_status()
       end
     end
 
     test "sampled llm_slots reports per-model entries with live effective capacities on every broadcast" do
-      # Deterministic two-profile scheduler config — real per-model pools with
-      # known capacities (overrides any developer user config; restored below).
+      # Deterministic two-model per-model slot map injected through the
+      # per-tick seam (`@llm_slots_seam_key`) — the sampler must thread it into
+      # EVERY broadcast verbatim.
+      #
+      # Why a seam instead of mutating the global scheduler config: the real
+      # per-model map comes from `EvoGit.AgentScheduler.get_llm_slot_status/0`,
+      # whose `model_concurrency` is shared, module-global state. The
+      # supervised `EvoGit.PeakHourEngine` subscribes to the "scheduler_config"
+      # PubSub topic and asynchronously re-applies a map computed from the live
+      # `model_profiles`; a check still in flight from a previous test's config
+      # reload (e.g. `RemoteAPI.reload_config/0`) can land AFTER this test
+      # mutates `model_profiles`, clobbering `model_concurrency` back to the
+      # developer's real user-config profiles. Reading through the seam makes
+      # this assertion independent of that shared mutable state. The DEFAULT
+      # (no-seam) live-scheduler path stays covered by the broadcast-contract
+      # and capacity-config-cache tests below.
       #
       # Real holders/waiters (used/waiting > 0) are NOT fabricated here:
       # creating them would require running agents through the public slot
@@ -456,22 +478,12 @@ defmodule EvoGit.SystemSamplerTest do
       # presence + effective capacity + used/waiting at their honest zero
       # baseline; real used/waiting occupancy values are covered by the
       # AgentScheduler-level (state-built) tests.
-      cfg = RemoteAPI.get_config()
-      restore_config_on_exit(cfg)
-
       expected_llm_slots = %{
         "sys-sampler-llm-slots-a" => %{used: 0, waiting: 0, capacity: 2},
         "sys-sampler-llm-slots-b" => %{used: 0, waiting: 0, capacity: 5}
       }
 
-      :ok =
-        AgentScheduler.update_config(
-          model_profiles: [
-            %{id: "sys-sampler-llm-slots-a", concurrency: 2},
-            %{id: "sys-sampler-llm-slots-b", concurrency: 5}
-          ],
-          max_tool_concurrency: 4
-        )
+      put_seam(@llm_slots_seam_key, fn -> expected_llm_slots end)
 
       :ok = Phoenix.PubSub.subscribe(EvoGit.PubSub, "system")
       on_exit(fn -> Phoenix.PubSub.unsubscribe(EvoGit.PubSub, "system") end)
@@ -516,25 +528,16 @@ defmodule EvoGit.SystemSamplerTest do
     end
 
     test "ring-buffer samples carry per-model llm_slots entries with live capacities" do
-      # Same deterministic two-profile config as the broadcast per-model test;
-      # every stored sample must carry the live per-model llm_slots map
-      # (see that test's comment about used/waiting key-presence coverage).
-      cfg = RemoteAPI.get_config()
-      restore_config_on_exit(cfg)
-
+      # Same seam-injected per-model slot map as the broadcast per-model test;
+      # every stored sample must carry it verbatim. The seam keeps the
+      # assertion independent of the shared global scheduler config that
+      # PeakHourEngine mutates asynchronously (see that test's comment).
       expected_llm_slots = %{
         "sys-sampler-llm-slots-a" => %{used: 0, waiting: 0, capacity: 2},
         "sys-sampler-llm-slots-b" => %{used: 0, waiting: 0, capacity: 5}
       }
 
-      :ok =
-        AgentScheduler.update_config(
-          model_profiles: [
-            %{id: "sys-sampler-llm-slots-a", concurrency: 2},
-            %{id: "sys-sampler-llm-slots-b", concurrency: 5}
-          ],
-          max_tool_concurrency: 4
-        )
+      put_seam(@llm_slots_seam_key, fn -> expected_llm_slots end)
 
       pid = start_unregistered_sampler()
 
