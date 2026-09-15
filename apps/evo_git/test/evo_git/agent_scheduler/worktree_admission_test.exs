@@ -50,15 +50,53 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   # cleanup cannot race the assertions.
   @caller_stop_timeout 60_000
 
-  setup %{tmp_dir: tmp_dir} do
+  # The injected create fun reports entry and then blocks until the test
+  # releases it, so tests control exactly when each create completes (no
+  # time-based sleeps). Both bounds are generous safety nets — a wedged
+  # handshake fails the test loudly instead of hanging until the ExUnit
+  # timeout.
+  @create_entry_timeout 10_000
+  @release_timeout 10_000
+
+  # Every test starts from the SAME committed repo state (one commit on the
+  # default branch with a single README.md). Building it from scratch costs
+  # ~38ms of git-subprocess time per test, so we build ONE committed template
+  # ONCE per module run in setup_all and hand each test a private copy via
+  # File.cp_r/2 (pure BEAM, no git subprocess — ~8ms) — the template is never
+  # mutated. (Mirrors the established pattern in remote_api_test.exs.)
+  setup_all do
+    template_dir = unique_tmp_dir("evogit_worktree_admission_tpl_")
+
     # Real git repo so the manager's lazy per-repo init (rm_rf workers dir +
     # prune + orphaned-branch cleanup) and its :DOWN cleanup (rm_rf + prune +
-    # branch delete) run cleanly and warning-free.
-    {:ok, _} = Git.init(tmp_dir)
-    File.write!(Path.join(tmp_dir, "README.md"), "# test")
-    {:ok, _} = Git.add(tmp_dir, "README.md")
-    {:ok, _} = Git.commit(tmp_dir, "initial commit")
-    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    # branch delete) run cleanly and warning-free. Built exactly like the old
+    # per-test setup (no explicit git identity — the commit relies on
+    # EvoGit.GitEnv's fallback via the adapter).
+    File.mkdir_p!(template_dir)
+    {:ok, _} = Git.init(template_dir)
+    File.write!(Path.join(template_dir, "README.md"), "# test")
+    {:ok, _} = Git.add(template_dir, "README.md")
+    {:ok, _} = Git.commit(template_dir, "initial commit")
+    {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand. Dropping them shrinks each per-test
+    # File.cp_r/2 (8ms vs 20ms).
+    File.rm_rf!(Path.join(template_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(template_dir, ".git/logs"))
+
+    on_exit(fn -> File.rm_rf!(template_dir) end)
+
+    {:ok, template_dir: template_dir, base_sha: base_sha}
+  end
+
+  setup %{tmp_dir: tmp_dir, template_dir: template_dir, base_sha: base_sha} do
+    # Private copy of the committed template repo (real git repo so the
+    # manager's lazy per-repo init ... run cleanly and warning-free). The
+    # ExUnit :tmp_dir fixture dir already exists — replace its contents with
+    # the template copy.
+    File.rm_rf!(tmp_dir)
+    {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
@@ -85,20 +123,29 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   describe "bounded worktree-creation admission queue" do
     test "(a) create concurrency never exceeds the cap", %{tmp_dir: tmp_dir, base_sha: base_sha} do
       install_cap(2)
+      parent = self()
 
       # Shared overlap tracker. The Agent serializes updates, so the recorded
       # max is the true peak number of concurrently-running create pipelines.
       {:ok, tracker} = Agent.start_link(fn -> %{current: 0, max: 0} end)
 
-      install_create_fun(fn _agent_id, _repo_root, wt_path, _spec, _meta ->
+      install_create_fun(fn agent_id, _repo_root, wt_path, _spec, _meta ->
         Agent.update(tracker, fn s ->
           current = s.current + 1
           %{s | current: current, max: max(s.max, current)}
         end)
 
-        # Hold the permit long enough that any over-cap admission would be
-        # observed as a peak > cap.
-        Process.sleep(100)
+        # Event-driven hold: report entry (AFTER counting), then block until the
+        # test releases THIS create. Because a create only completes when the
+        # test says so, an over-cap admission surfaces as extra entered messages
+        # (tracker peak > cap) instead of racing a fixed timer.
+        send(parent, {:create_entered, agent_id, self()})
+
+        receive do
+          :release -> :ok
+        after
+          @release_timeout -> :ok
+        end
 
         Agent.update(tracker, fn s -> %{s | current: s.current - 1} end)
         {:ok, wt_path}
@@ -111,6 +158,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
           {spec, meta, wt_path} = register_agent(id, tmp_dir, base_sha, i)
           {id, spawn_caller(id, tmp_dir, wt_path, spec, meta)}
         end
+
+      # Release the creates in cap-sized waves: only releasing a create frees a
+      # permit, so at most `cap` creates are ever in flight at once.
+      release_waves(length(ids), 2)
 
       results = collect_results(ids)
       assert_all_ok_once(results, ids)
@@ -127,9 +178,20 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
       base_sha: base_sha
     } do
       install_cap(2)
+      parent = self()
 
-      install_create_fun(fn _agent_id, _repo_root, wt_path, _spec, _meta ->
-        Process.sleep(100)
+      install_create_fun(fn agent_id, _repo_root, wt_path, _spec, _meta ->
+        # Hold each create until the test releases it, so the cap is genuinely
+        # saturated and the remaining requests really sit in the admission
+        # queue (rather than racing a fixed sleep).
+        send(parent, {:create_entered, agent_id, self()})
+
+        receive do
+          :release -> :ok
+        after
+          @release_timeout -> :ok
+        end
+
         {:ok, wt_path}
       end)
 
@@ -140,6 +202,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
           {spec, meta, wt_path} = register_agent(id, tmp_dir, base_sha, i)
           {id, spawn_caller(id, tmp_dir, wt_path, spec, meta)}
         end
+
+      # Drive the creates in cap-sized waves so the queue is drained wave by
+      # wave (2 in flight, the rest queued).
+      release_waves(length(ids), 2)
 
       # Queuing only DELAYS the reply, never drops it — 6 queued requests at a
       # cap of 2 must all drain well within a sane bound.
@@ -251,6 +317,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:evo_git, key)
   defp restore_app_env(key, value), do: Application.put_env(:evo_git, key, value)
+
+  defp unique_tmp_dir(prefix) do
+    Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
+  end
 
   # --------------------------------------------------------------------------
   # ETS helpers (mirrors worktrees_test.exs)
@@ -399,6 +469,30 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
     assert map_size(grouped) == length(expected_ids),
            "unexpected extra reply ids: #{inspect(Map.keys(grouped) -- expected_ids)}"
+  end
+
+  # Releases create pipelines in waves of `wave_size`. Waiting for a FULL wave
+  # to report entry BEFORE releasing it is what pins the observed peak to the
+  # cap: the manager can only have `wave_size` creates in flight, and an
+  # over-cap admission would deliver extra `:create_entered` messages.
+  defp release_waves(remaining, wave_size) when remaining > 0 do
+    n = min(remaining, wave_size)
+    n |> await_create_entries() |> Enum.each(&send(&1, :release))
+    release_waves(remaining - n, wave_size)
+  end
+
+  defp release_waves(_remaining, _wave_size), do: :ok
+
+  defp await_create_entries(n, acc \\ [])
+  defp await_create_entries(0, acc), do: acc
+
+  defp await_create_entries(n, acc) do
+    receive do
+      {:create_entered, _agent_id, pid} -> await_create_entries(n - 1, [pid | acc])
+    after
+      @create_entry_timeout ->
+        flunk("timed out waiting for a create to enter (#{n} still outstanding)")
+    end
   end
 
   # --------------------------------------------------------------------------

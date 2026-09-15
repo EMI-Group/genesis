@@ -1,10 +1,15 @@
 defmodule EvoGit.ReqLLMPoolTest do
-  use ExUnit.Case, async: false
+  # async: true — this module never touches BEAM-global state: no
+  # Application.put_env / System.put_env / :persistent_term, and it drives
+  # ReqLLMPool against a PRIVATE standalone Finch (`TestReqLLMPoolFinch` /
+  # `FreshTestFinch`, names used nowhere else) instead of the production
+  # `ReqLLM.Finch`. The only "network" is a connect-refused request to
+  # 127.0.0.1:1 (loopback, no traffic).
+  use ExUnit.Case, async: true
 
   alias EvoGit.ReqLLMPool
 
-  # A tiny standalone Finch (NOT ReqLLM.Finch) so we can exercise the real
-  # materialization / set_pool_count path against a live pool without touching
+  # A tiny standalone Finch (NOT ReqLLM.Finch) so we can exercise the real  # materialization / set_pool_count path against a live pool without touching
   # the production pool. `start_pool_metrics?: true` is REQUIRED for
   # `Finch.get_pool_status(finch_name, :default)` to enumerate materialized
   # origins (see deps/finch/lib/finch/pool/manager.ex `track_default?`).

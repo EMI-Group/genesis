@@ -1,4 +1,8 @@
 defmodule EvoGit.ConfigTest do
+  # async: false — several tests mutate BEAM-global state observable by every
+  # concurrently running module: System.put_env ("XDG_CONFIG_HOME",
+  # "GOOGLE_API_KEY"/"TEST_CRED_KEY") and Application.put_env/delete_env on the
+  # shared :req_llm credential keys. Serializing avoids cross-test interference.
   use ExUnit.Case, async: false
 
   alias EvoGit.Config

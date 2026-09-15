@@ -34,6 +34,12 @@ defmodule EvoGit.Agent.ToolDispatch do
   # :recovery_failed) instead of crashing or spinning forever.
   @max_no_tool_call_nudges 3
 
+  # Base (ms) of the LLM retry exponential backoff. Overridable at call time via
+  # the app env `:llm_retry_backoff_base_ms` (mirrors the other app-env test
+  # seams such as `:peak_hours_now_fun` / `:worktree_create_fun`); when unset the
+  # default below applies, so production behavior is unchanged.
+  @default_retry_backoff_ms 1_000
+
   # --- Model & Generation Params ---
 
   @doc false
@@ -268,7 +274,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   # from the block are retried per the `atoms: [:error]` default.
   def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
     retry with:
-            exponential_backoff(1_000)
+            exponential_backoff(retry_backoff_base_ms())
             |> randomize()
             |> cap(60_000)
             |> Stream.take(max_retries),
@@ -312,6 +318,12 @@ defmodule EvoGit.Agent.ToolDispatch do
 
         {:error, reason}
     end
+  end
+
+  # Retry backoff base (ms) — call-time app-env seam so tests can shrink the
+  # exponential-backoff sleeps; defaults to `@default_retry_backoff_ms`.
+  defp retry_backoff_base_ms do
+    Application.get_env(:evo_git, :llm_retry_backoff_base_ms, @default_retry_backoff_ms)
   end
 
   @doc false

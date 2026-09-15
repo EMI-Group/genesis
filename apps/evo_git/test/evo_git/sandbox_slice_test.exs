@@ -3,6 +3,13 @@ defmodule EvoGit.SandboxSliceTest do
 
   alias EvoGit.SandboxSlice
 
+  # Fixture reference for the bounded-runner timeout test: the slow runner
+  # outlives the timeout by a wide margin. It is KILLED by
+  # run_systemctl_bounded/4 the moment the bound fires, so the test never
+  # actually waits this long — the value only sets the "would have taken"
+  # reference the promptness assertion is measured against.
+  @slow_runner_ms 1_000
+
   setup do
     # Ensure the GenServer is running (Application may not have started it on non-Linux CI)
     case GenServer.whereis(SandboxSlice) do
@@ -166,7 +173,7 @@ defmodule EvoGit.SandboxSliceTest do
 
       runner = fn _cmd, _args ->
         send(test_pid, {:runner_started, self()})
-        Process.sleep(200)
+        Process.sleep(@slow_runner_ms)
         {:ok, "slow"}
       end
 
@@ -180,12 +187,14 @@ defmodule EvoGit.SandboxSliceTest do
           )
         end)
 
-      # The 50ms bound fires while the runner is still sleeping (200ms), so the
-      # result proves the timeout — not the runner's completion — won.
+      # The 50ms bound fires while the runner is still sleeping, so the result
+      # proves the timeout — not the runner's completion — won.
       assert result == {:error, :timeout}
 
-      # Returned promptly: far under the runner's 200ms sleep.
-      assert elapsed_us < 150_000
+      # Returned promptly: half the runner's own sleep, i.e. well under it even
+      # on a heavily loaded machine (a non-bounded implementation would have
+      # blocked for @slow_runner_ms and returned {:ok, "slow"} instead).
+      assert elapsed_us < div(@slow_runner_ms, 2) * 1_000
 
       assert_receive {:runner_started, runner_pid}
       # The runner process was killed by the timeout, not left to sleep on.

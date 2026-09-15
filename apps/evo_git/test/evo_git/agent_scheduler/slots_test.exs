@@ -7,9 +7,11 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   pending waiter gets granted, `GenServer.reply(from, :ok)` sends `{ref, :ok}`
   to `self()`, which we assert with `assert_received`.
 
-  Uses `async: false` to match sibling tests in this directory, and because
-  tests manipulate the global named `:evogit_sched_meta` ETS table (required
-  for depth lookups in priority-based LLM slot selection).
+  Uses `async: false` because the tests create and mutate the global named
+  `:evogit_sched_meta` and `:evogit_agent_state` ETS tables — the former backs the
+  depth lookups used by priority-based LLM slot selection, the latter the per-agent
+  `model_id` read by `resolve_model_id/2`. Concurrent test processes would otherwise
+  see each other's rows (and the tables are normally owned by the running application).
   """
 
   use ExUnit.Case, async: false

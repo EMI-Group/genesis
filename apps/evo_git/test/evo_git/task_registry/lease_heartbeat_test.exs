@@ -1,4 +1,11 @@
 defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
+  @moduledoc """
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
+  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
+  re-registers them under their global names, so a concurrently running module
+  would observe the swapped singletons.
+  """
+
   use EvoGit.TaskRegistryCase, async: false
 
   describe "lease & heartbeat" do

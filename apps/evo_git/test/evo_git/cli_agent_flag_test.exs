@@ -1,4 +1,8 @@
 defmodule EvoGit.CLI.AgentFlagTest do
+  # async: false is FORCED by two pieces of BEAM-global state: (1) the setup
+  # below redirects the process-wide `XDG_CONFIG_HOME` env var (agents.toml /
+  # config.toml resolution), and (2) `without_model_profiles/1` temporarily
+  # rewrites the live `EvoGit.AgentScheduler` `:model_profiles` config.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO

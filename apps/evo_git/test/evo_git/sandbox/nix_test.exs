@@ -1,4 +1,8 @@
 defmodule EvoGit.NixTest do
+  # `async: false` because the tests mutate VM-global state that production
+  # code reads: the app env `:nix_enabled` (Application.put_env/2) and the
+  # `:evogit_nix_dev_env_state` persistent_term cache (`Nix.reset_state/0` and
+  # the `:persistent_term.put` seeds).
   use ExUnit.Case, async: false
 
   alias EvoGit.Nix

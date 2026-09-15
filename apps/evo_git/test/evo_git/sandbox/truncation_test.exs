@@ -87,27 +87,34 @@ defmodule EvoGit.Sandbox.TruncationTest do
     test "does not leave temp files behind after completion", %{tmp_dir: tmp_dir} do
       partial_dir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_partial_outputs")
 
-      # Count files before
-      before_count =
-        case File.ls(partial_dir) do
-          {:ok, files} -> length(files)
-          {:error, :enoent} -> 0
-        end
+      # Snapshot the CURRENT file SET rather than its size. This directory is
+      # SHARED with the concurrently-running `async: true` module none_test.exs
+      # (and any other backend test that calls run_with_partial/6), which
+      # creates and deletes its own temp file here at arbitrary instants — a
+      # single before/after count comparison races with that interleaving.
+      # Comparing the SET DIFFERENCE against the pre-run baseline, with a
+      # bounded wait for our own temp file to disappear, is immune to the
+      # interleaving while still failing on a genuine leftover.
+      before = current_files(partial_dir)
 
+      # 20_000 bytes with max_bytes=5000 genuinely exceeds the bound, so the
+      # command's output is redirected to the shared temp file and read back
+      # truncated — the partial-output/temp-file path is really exercised.
       file = Path.join(tmp_dir, "cleanup_test.txt")
-      File.write!(file, "some content\n")
+      File.write!(file, String.duplicate("C", 20_000))
+      max_bytes = 5000
 
-      {:ok, _output, 0} = None.run_with_partial(tmp_dir, "cat", [file], nil, 5000, 1000)
+      {:ok, output, 0} = None.run_with_partial(tmp_dir, "cat", [file], nil, 5000, max_bytes)
 
-      # Count files after — should be the same (no leftovers)
-      after_count =
-        case File.ls(partial_dir) do
-          {:ok, files} -> length(files)
-          {:error, :enoent} -> 0
-        end
+      # Proves the temp-file path actually ran before we assert cleanup.
+      assert output =~
+               "[WARNING: Output exceeded #{max_bytes} bytes and was truncated to #{@truncate_size} bytes]"
 
-      assert after_count == before_count,
-             "Expected temp file count to remain #{before_count}, got #{after_count}"
+      leftover = wait_for_no_leftover(partial_dir, before)
+
+      assert leftover == MapSet.new(),
+             "Expected no new temp files beyond the baseline in #{partial_dir}, " <>
+               "but found leftovers: #{inspect(MapSet.to_list(leftover))}"
     end
   end
 
@@ -137,6 +144,31 @@ defmodule EvoGit.Sandbox.TruncationTest do
       {:ok, output, 0} = None.run_with_partial(tmp_dir, "cat", [file], nil, 5000, 100)
 
       assert output == content
+    end
+  end
+
+  # The current file set of `dir` (empty when the dir does not exist yet).
+  defp current_files(dir) do
+    case File.ls(dir) do
+      {:ok, files} -> MapSet.new(files)
+      {:error, :enoent} -> MapSet.new()
+    end
+  end
+
+  # Polls the shared partial-output dir until no entry beyond `baseline`
+  # remains (the real "no leftover" condition), ~5 ms steps up to ~1 s total.
+  # The bounded wait exists because the directory is shared with the
+  # concurrently-running `async: true` module none_test.exs, whose transient
+  # temp file can briefly appear here. Returns the leftover set — empty on
+  # success, still non-empty if a genuine leftover never disappears.
+  defp wait_for_no_leftover(dir, baseline, attempts \\ 200) do
+    leftover = MapSet.difference(current_files(dir), baseline)
+
+    if MapSet.size(leftover) == 0 or attempts == 0 do
+      leftover
+    else
+      Process.sleep(5)
+      wait_for_no_leftover(dir, baseline, attempts - 1)
     end
   end
 end
