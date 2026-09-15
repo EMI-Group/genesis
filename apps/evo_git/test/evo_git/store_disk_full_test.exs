@@ -35,6 +35,10 @@ defmodule EvoGit.StoreDiskFullTest do
   the test's synchronous calls.
   """
 
+  # `async: false`: EvoGit.TaskRegistryCase terminates and restarts the SHARED
+  # production `EvoGit.Store`/`EvoGit.TaskRegistry` (re-registering them under
+  # their canonical names), so this module must never run concurrently with any
+  # other test.
   use EvoGit.TaskRegistryCase, async: false
 
   import ExUnit.CaptureLog
