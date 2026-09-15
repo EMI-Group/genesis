@@ -872,7 +872,11 @@
             {gettext("Your message will be added to the agent's context on its next turn.")}
           </p>
 
-          <form phx-submit="send_agent_message" phx-change="validate_send_message">
+          <form
+            id={"send-message-form-" <> to_string(@send_message_agent_id)}
+            phx-submit="send_agent_message"
+            phx-change="validate_send_message"
+          >
             <input type="hidden" name="agent_id" value={@send_message_agent_id} />
             <textarea
               class="textarea textarea-bordered w-full min-h-32"
