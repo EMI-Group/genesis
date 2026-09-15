@@ -416,13 +416,36 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
   defp resolution_state(resolution) when is_map(resolution), do: Map.get(resolution, :state)
   defp resolution_state(_resolution), do: nil
 
+  # A repo "HAS changes" iff its `branch_name` is a non-blank binary — nil/""/
+  # whitespace mean the repo produced no changes. Public because the hosting
+  # LiveView shares this EXACT predicate: the merge_all fold and the per-repo
+  # merge/reject guards act only on change-bearing repos, and
+  # `completion_status/2` treats a no-change repo as needing no action (it never
+  # blocks aggregate completion and is dismissed via "Mark as read", not
+  # merge/reject). `field/3` tolerates atom- or string-keyed repo maps.
+  def repo_has_changes?(repo) when is_map(repo) do
+    case field(repo, :branch_name) do
+      branch when is_binary(branch) -> String.trim(branch) != ""
+      _ -> false
+    end
+  end
+
+  def repo_has_changes?(_repo), do: false
+
   # Accept-all shortcut gate: only meaningful when the task has at least two
-  # repositories AND at least two of them are still unresolved (resolution nil).
-  # `field/3` tolerates a missing `:resolution` key and `resolution_state(nil)`
-  # is nil, so nil/absent resolutions both count as unresolved.
+  # repositories AND at least two of them still HAVE changes AND are unresolved
+  # (resolution nil). A no-change repo (nil/blank branch) needs no action, so it
+  # never counts toward the gate. `field/3` tolerates a missing `:resolution` key
+  # and `resolution_state(nil)` is nil, so nil/absent resolutions both count as
+  # unresolved.
   defp show_merge_all?(repos) when is_list(repos) do
-    length(repos) >= 2 and
-      Enum.count(repos, &(resolution_state(field(&1, :resolution)) == nil)) >= 2
+    unresolved_with_changes =
+      Enum.count(
+        repos,
+        &(repo_has_changes?(&1) and resolution_state(field(&1, :resolution)) == nil)
+      )
+
+    length(repos) >= 2 and unresolved_with_changes >= 2
   end
 
   defp show_merge_all?(_repos), do: false
