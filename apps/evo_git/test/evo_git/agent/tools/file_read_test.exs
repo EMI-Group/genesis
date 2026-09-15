@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.Tools.FileReadTest do
+  @moduledoc """
+  `async: true` — each test reads/writes only its own per-test tmp dir
+  (`System.tmp_dir!()` + a unique integer suffix); no BEAM-global state.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.FileRead

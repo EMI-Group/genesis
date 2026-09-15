@@ -26,6 +26,14 @@ defmodule EvoGit.RemoteConnectionTest do
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
+    # Speed up the post-launch daemon-health polling (`verify_daemon_healthy/3`
+    # → `wait_daemon_active/5`, whose first act is a sleep BEFORE its initial
+    # check): the production default is 1000ms, but these tests only care about
+    # the poll ordering, not the wall-clock delay. `async: false`, so the
+    # BEAM-global app-env write is safe.
+    original_health_delay = Application.get_env(:evo_git, :remote_daemon_health_delay_ms)
+    Application.put_env(:evo_git, :remote_daemon_health_delay_ms, 20)
+
     on_exit(fn ->
       # Terminate any connection managers started during this test so they
       # don't leak into sibling tests (the DynamicSupervisor is app-level).
@@ -40,6 +48,12 @@ defmodule EvoGit.RemoteConnectionTest do
       end
 
       File.rm_rf!(tmp_xdg)
+
+      if original_health_delay do
+        Application.put_env(:evo_git, :remote_daemon_health_delay_ms, original_health_delay)
+      else
+        Application.delete_env(:evo_git, :remote_daemon_health_delay_ms)
+      end
     end)
 
     :ok

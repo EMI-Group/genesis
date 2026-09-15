@@ -1,4 +1,14 @@
 defmodule EvoGit.Agent.ToolDispatchTest do
+  @moduledoc """
+  Unit tests for `EvoGit.Agent.ToolDispatch`.
+
+  `async: true` is safe here: the module mutates only process-local state
+  (`Process.put/2` for `:evogit_agent_id` / `:repo_path` / `:genesis_repo_root`),
+  registers agent state under unique agent ids, and uses unique temp dirs — so it
+  touches no BEAM-global state (no `Application.put_env`, no `:persistent_term`,
+  no shared fixed-path files) that could race with a concurrently running test.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.LoopState
@@ -455,7 +465,13 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       lines = File.read!(Path.join(repo_root, "markers.txt")) |> String.split("\n", trim: true)
       assert Enum.sort(lines) == ["end1", "end2", "start1", "start2"]
       assert Enum.find_index(lines, &(&1 == "start2")) < Enum.find_index(lines, &(&1 == "end1"))
-      assert elapsed < 1_800
+
+      # Concurrency is PROVEN by the marker interleaving above (a serialized run
+      # could never emit start2 before end1), so the strict machine-speed bound
+      # (< 2s) was dropped: it flakes under full-suite parallel load. This
+      # generous ceiling now only guards against a pathological stall/misrun
+      # (e.g. the tools never returning or the run taking ~10x a 1s sleep).
+      assert elapsed < 10_000
     end
   end
 

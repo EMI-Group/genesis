@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.ResultTest do
+  @moduledoc """
+  `async: true` — pure `EvoGit.Agent.Result.new/3` struct construction/option
+  handling; no shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Result

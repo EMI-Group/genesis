@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.TurnWarningTest do
+  @moduledoc """
+  `async: true` — pure positional/middle turn-warning level and countdown
+  helpers in `EvoGit.Agent.TurnWarning`; no shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.TurnWarning

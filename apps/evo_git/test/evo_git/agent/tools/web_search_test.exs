@@ -1,6 +1,10 @@
 defmodule EvoGit.Agent.Tools.WebSearchTest do
-  # `async: false` — the execute-level tests mutate global app env
-  # (`:web_search_http_runner` seam and the `:req_llm` API-key store).
+  @moduledoc """
+  `async: false` — the execute-level tests mutate BEAM-global app env observable
+  by production code: the `:web_search_http_runner` seam and the shared
+  `:req_llm` API-key store (`ReqLLM.put_key/2` on `:tavily_api_key`).
+  """
+
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.Tools.WebSearch

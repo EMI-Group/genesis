@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.Tools.MakeDirTest do
+  @moduledoc """
+  `async: true` — each test operates on its own per-test tmp git repo (a unique
+  `System.tmp_dir!()` path); no BEAM-global state or shared ETS.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.MakeDir

@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.UsageTest do
+  @moduledoc """
+  `async: true` — pure `EvoGit.Agent.Usage` struct arithmetic (`zero/0`,
+  `from_response_usage/1`, `add/2`, `cache_hit_rate/1`, archive maps); no
+  shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Usage
