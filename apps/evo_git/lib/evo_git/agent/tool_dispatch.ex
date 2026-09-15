@@ -38,16 +38,42 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def current_model do
-    agent_id = EvoGit.AgentScheduler.current_agent_id()
-    {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+    agent_state = fetch_current_agent_state!(:current_model)
     agent_state.llm_model
   end
 
   @doc false
   def current_generation_params do
-    agent_id = EvoGit.AgentScheduler.current_agent_id()
-    {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+    agent_state = fetch_current_agent_state!(:current_generation_params)
     agent_state.llm_generation_params
+  end
+
+  # Shared lookup for current_model/0 + current_generation_params/0. Raises a
+  # descriptive ArgumentError instead of a context-free MatchError when the
+  # calling process is not a scheduled agent (no :evogit_agent_id) or the
+  # scheduler has no ETS state for it — the latter typically means the agent
+  # was purged/cancelled mid-call or the scheduler restarted while the process
+  # was blocked waiting for an LLM slot.
+  defp fetch_current_agent_state!(caller) do
+    case AgentScheduler.current_agent_id() do
+      nil ->
+        raise ArgumentError,
+              "#{inspect(caller)}: current process is not a scheduled agent (no " <>
+                ":evogit_agent_id in the process dictionary), so the scheduler has " <>
+                "no agent state to read"
+
+      agent_id ->
+        case AgentScheduler.get_agent_state(agent_id) do
+          {:ok, agent_state} ->
+            agent_state
+
+          :error ->
+            raise ArgumentError,
+                  "#{inspect(caller)}: the scheduler has no agent state for agent " <>
+                    "#{inspect(agent_id)} — the agent was likely purged or cancelled " <>
+                    "mid-call, or the scheduler restarted"
+        end
+    end
   end
 
   # --- Commit Syncing ---

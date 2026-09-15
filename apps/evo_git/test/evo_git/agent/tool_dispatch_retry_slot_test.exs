@@ -80,6 +80,50 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     end)
   end
 
+  # Runs the given zero-arity fun in a fresh process with `:evogit_agent_id`
+  # REMOVED from its process dictionary — current_model/0 and
+  # current_generation_params/0 read AgentScheduler.current_agent_id() from the
+  # calling process's dictionary, so assertions about the "not a scheduled
+  # agent" path must run where that key is absent (and must not leak into the
+  # test process of this async:false file).
+  #
+  # Both helpers catch (and re-report, never swallow) the raised exception —
+  # a raise inside the Task's process escapes as an EXIT the caller can only
+  # receive as a linked crash, so assert_raise cannot observe it directly.
+  # Returns `{:ok, result}` or `{:raised, exception}`.
+  defp in_unscheduled_process(fun) do
+    in_fresh_process(fn ->
+      Process.delete(:evogit_agent_id)
+      fun.()
+    end)
+  end
+
+  # Runs the given zero-arity fun in a fresh process with the given agent id in
+  # its process dictionary (no ETS row is registered unless the fun does it).
+  defp in_agent_process(agent_id, fun) do
+    in_fresh_process(fn ->
+      Process.put(:evogit_agent_id, agent_id)
+      fun.()
+    end)
+  end
+
+  defp in_fresh_process(fun) do
+    Task.async(fn ->
+      try do
+        {:ok, fun.()}
+      rescue
+        e -> {:raised, e}
+      end
+    end)
+    |> Task.await(5_000)
+  end
+
+  # assert_raise can only observe exceptions raised in the calling process, so
+  # the fresh-process helpers report `{:raised, exception}` and tests re-raise
+  # it in-process for assert_raise to pin the type + match the message.
+  defp re_raise({:raised, e}), do: raise(e)
+  defp re_raise({:ok, result}), do: flunk("expected a raise, got: #{inspect(result)}")
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
 
@@ -223,5 +267,67 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
       Task.shutdown(task, :brutal_kill)
       AgentScheduler.release_llm_slot(agent_id)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Descriptive errors from current_model/0 + current_generation_params/0
+
+  # Both helpers raise a descriptive ArgumentError (naming the agent id, or
+  # stating the process is not a scheduled agent) instead of the old
+  # context-free MatchError ("no match of right hand side value: :error") when
+  # the scheduler has no state for the calling process — e.g. the agent was
+  # purged/cancelled mid-call or the scheduler restarted while the process was
+  # blocked waiting for an LLM slot. assert_raise pins the exception TYPE, so a
+  # regression back to MatchError fails these tests.
+  # ---------------------------------------------------------------------------
+
+  test "current_model/0 raises a descriptive error when the process is not a scheduled agent" do
+    assert_raise ArgumentError, ~r/not a scheduled agent/, fn ->
+      re_raise(in_unscheduled_process(&ToolDispatch.current_model/0))
+    end
+  end
+
+  test "current_generation_params/0 raises a descriptive error when the process is not a scheduled agent" do
+    assert_raise ArgumentError, ~r/not a scheduled agent/, fn ->
+      re_raise(in_unscheduled_process(&ToolDispatch.current_generation_params/0))
+    end
+  end
+
+  test "current_model/0 raises a descriptive error naming the agent id when its state is gone" do
+    assert_raise ArgumentError,
+                 ~r/no agent state for agent 999.*purged or cancelled.*scheduler restarted/s,
+                 fn ->
+                   re_raise(in_agent_process(999, &ToolDispatch.current_model/0))
+                 end
+  end
+
+  test "current_generation_params/0 raises a descriptive error naming the agent id when its state is gone" do
+    assert_raise ArgumentError,
+                 ~r/no agent state for agent 999.*purged or cancelled.*scheduler restarted/s,
+                 fn ->
+                   re_raise(in_agent_process(999, &ToolDispatch.current_generation_params/0))
+                 end
+  end
+
+  test "current_model/0 and current_generation_params/0 return the registered state on the happy path" do
+    agent_id = 104
+
+    state = %AgentState{
+      context_node: %ContextNode{path: "./", repo: "/tmp/genesis-retry-slot-test"},
+      llm_model: refused_model(),
+      llm_generation_params: [temperature: 0.7, max_tokens: 128],
+      max_retries: 2,
+      max_depth: 1,
+      model_id: "default"
+    }
+
+    Store.put_agent_state(agent_id, state)
+    on_exit(fn -> Store.delete_agent_state(agent_id) end)
+
+    assert {:ok, model} = in_agent_process(agent_id, &ToolDispatch.current_model/0)
+    assert model == refused_model()
+
+    assert {:ok, [temperature: 0.7, max_tokens: 128]} =
+             in_agent_process(agent_id, &ToolDispatch.current_generation_params/0)
   end
 end
