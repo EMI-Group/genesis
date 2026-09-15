@@ -1,4 +1,16 @@
 defmodule EvoGit.Config.SchemaTest do
+  @moduledoc """
+  Pins the end-to-end contract of `EvoGit.Config.Schema` — `all_schemas/0`,
+  `schemas_by_category/0`, `defaults/0`, `validate/1`, and the `Schema.LLM.*`
+  helpers used by the runtime.
+
+  `async: true` is safe: everything under test is pure data transformation
+  (`Schema`, `EctoValidation`, `EctoTypes`, the pure `EvoGit.PeakHours`
+  validators) plus the read-only `EvoGit.Platform.cpu_threads/0`. No test here
+  mutates app env, `:persistent_term`, ETS, or any application singleton, and
+  none subscribes to a shared PubSub topic.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Config.Schema
