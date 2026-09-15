@@ -88,7 +88,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -173,7 +173,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -248,7 +248,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
         result: {:error, "Something went wrong"}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -318,7 +318,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -629,7 +629,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -2114,7 +2114,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
            }}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -3114,7 +3114,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
         result: {:error, "Something went wrong"}
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      put_task_watched!(task)
 
       on_exit(fn ->
         TaskRegistry.delete_task(task_id)
@@ -3968,7 +3968,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    put_task_watched!(task)
 
     on_exit(fn ->
       TaskRegistry.delete_task(task_id)
@@ -4005,7 +4005,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    put_task_watched!(task)
 
     on_exit(fn ->
       TaskRegistry.delete_task(task_id)
@@ -4173,7 +4173,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    put_task_watched!(task)
 
     on_exit(fn ->
       TaskRegistry.delete_task(task_id)
@@ -4182,6 +4182,25 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end)
 
     task_id
+  end
+
+  # TEMPORARY DIAGNOSTIC (removed before finishing): writes the fixture file
+  # through the CHECKED writer and registers the row with the deletion watcher
+  # so a row that disappears mid-test is captured with evidence.
+  defp put_task_watched!(task) do
+    case EvoGit.Store.put_task(EvoGit.Store, task) do
+      :ok ->
+        EvoDashWeb.ReviewLiveTest.FlakeWatch.watch(task.id)
+
+      other ->
+        File.write!(
+          "/tmp/flake_watch.log",
+          "PUT_FAILED id=#{task.id} result=#{inspect(other)}\n",
+          [:append]
+        )
+
+        flunk("TEMPORARY DIAGNOSTIC: fixture put_task failed for #{task.id}: #{inspect(other)}")
+    end
   end
 
   # Removes a temp repo dir with retries (defense in depth): a spawned merge
@@ -4229,7 +4248,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    put_task_watched!(task)
 
     on_exit(fn ->
       TaskRegistry.delete_task(task_id)
@@ -4268,7 +4287,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
          }}
     }
 
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    put_task_watched!(task)
 
     on_exit(fn ->
       TaskRegistry.delete_task(task_id)
@@ -4456,6 +4475,126 @@ defmodule EvoDashWeb.ReviewLiveTest do
       _ ->
         nil
     end
+  end
+end
+
+defmodule EvoDashWeb.ReviewLiveTest.FlakeWatch do
+  @moduledoc """
+  TEMPORARY DIAGNOSTIC (removed before finishing). Polls every watched fixture
+  row and records — with evidence — the moment it disappears, distinguishing a
+  legitimate end-of-test deletion (test process already dead) from a mid-test
+  disappearance (test process still alive) that would make the test flake.
+  """
+  use GenServer
+
+  @log "/tmp/flake_watch.log"
+  @tick 5
+
+  def watch(task_id) do
+    ensure_started()
+    GenServer.cast(__MODULE__, {:watch, task_id, self()})
+  end
+
+  def ensure_started do
+    case Process.whereis(__MODULE__) do
+      nil ->
+        case GenServer.start(__MODULE__, %{}, name: __MODULE__) do
+          {:ok, _} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  @impl true
+  def init(_) do
+    if Process.whereis(EvoGit.PubSub), do: Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+    Process.send_after(self(), :tick, @tick)
+    {:ok, %{watched: %{}}}
+  end
+
+  @impl true
+  def handle_cast({:watch, id, test_pid}, state) do
+    log(
+      "WATCH id=#{id} store=#{inspect(Process.whereis(EvoGit.Store))} " <>
+        "finished_rows=#{length(safe_finished_ids())} test_pid=#{inspect(test_pid)}"
+    )
+
+    {:noreply, put_in(state, [:watched, id], test_pid)}
+  end
+
+  @impl true
+  def handle_info({:task_deleted, id, node}, state) do
+    if Map.has_key?(state.watched, id) do
+      log("DELETE_BROADCAST id=#{id} node=#{inspect(node)}")
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info(:tick, state) do
+    state =
+      try do
+        {state, _} =
+          Enum.reduce(state.watched, {state, nil}, fn {id, test_pid}, {state, _} ->
+            if EvoGit.Store.get_task_status(EvoGit.Store, id) == nil do
+              log_vanished(id, test_pid)
+              {update_in(state, [:watched], &Map.delete(&1, id)), :ok}
+            else
+              {state, nil}
+            end
+          end)
+
+        state
+      rescue
+        e ->
+          log("TICK_CRASH #{inspect(e)}")
+          state
+      catch
+        :exit, e ->
+          log("TICK_EXIT #{inspect(e)}")
+          state
+      end
+
+    Process.send_after(self(), :tick, @tick)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  defp log_vanished(id, test_pid) do
+    alive? = Process.alive?(test_pid)
+
+    {:current_stacktrace, trace} =
+      case Process.info(test_pid, :current_stacktrace) do
+        {:current_stacktrace, t} -> {:current_stacktrace, t}
+        _ -> {:current_stacktrace, []}
+      end
+
+    log(
+      "VANISHED id=#{id} test_alive=#{alive?} " <>
+        "store=#{inspect(Process.whereis(EvoGit.Store))} " <>
+        "registry=#{inspect(Process.whereis(EvoGit.TaskRegistry))} " <>
+        "finished_rows=#{length(safe_finished_ids())} " <>
+        "test_pid=#{inspect(test_pid)}\n" <>
+        "  test_stacktrace=#{inspect(trace, limit: 14)}"
+    )
+  end
+
+  defp safe_finished_ids do
+    EvoGit.Store.select_finished_task_ids(EvoGit.Store)
+  rescue
+    _ -> []
+  end
+
+  defp log(line) do
+    File.write!(
+      @log,
+      "#{DateTime.utc_now()} [#{inspect(self())}] #{line}\n",
+      [:append]
+    )
   end
 end
 
