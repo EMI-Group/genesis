@@ -295,10 +295,11 @@ defmodule EvoGit.Review do
   is only deleted on a successful merge.
 
   Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
-  Returns `{:error, :no_branch}` when `branch_name` is nil or blank.
+  Returns `{:error, :no_branch}` when either `branch_name` or `target_branch` is
+  nil or blank.
   """
   def merge_branch(repo_path, branch_name, target_branch) do
-    if valid_branch_name?(branch_name) do
+    if valid_branch_name?(branch_name) and valid_branch_name?(target_branch) do
       case Git.rev_parse(repo_path, branch_name) do
         {:ok, commit_sha} ->
           case Git.current_branch(repo_path) do
