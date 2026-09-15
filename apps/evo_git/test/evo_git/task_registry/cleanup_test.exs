@@ -1,19 +1,23 @@
 defmodule EvoGit.TaskRegistry.CleanupTest do
+  @moduledoc """
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and re-registers them under their global names, so a concurrently running module would observe the swapped singletons.
+  """
+
   use EvoGit.TaskRegistryCase, async: false
 
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
-      config = EvoGit.Config.resolve()
-      # task_history section may not exist — defaults applied at runtime via Map.Merge
-      task_history = config[:task_history]
+      # `Cleanup.task_history_config/0` merges `%{max_tasks: 100, max_age_days: 14}`
+      # with `EvoGit.Config.resolve()[:task_history]`, so a developer's real
+      # `~/.config/genesis/config.toml` may override the values — assert only the
+      # guaranteed shape (both keys present, positive integers), never 100/14.
+      config = EvoGit.TaskRegistry.Cleanup.task_history_config()
 
-      if task_history == nil do
-        # Defaults will be %{max_tasks: 100, max_age_days: 14} in task_history_config/0
-        assert true
-      else
-        assert is_integer(task_history[:max_tasks])
-        assert is_integer(task_history[:max_age_days])
-      end
+      assert is_map(config)
+      assert Map.has_key?(config, :max_tasks)
+      assert Map.has_key?(config, :max_age_days)
+      assert is_integer(config.max_tasks) and config.max_tasks > 0
+      assert is_integer(config.max_age_days) and config.max_age_days > 0
     end
   end
 

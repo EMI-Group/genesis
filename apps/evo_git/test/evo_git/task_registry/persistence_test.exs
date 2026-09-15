@@ -1,4 +1,8 @@
 defmodule EvoGit.TaskRegistry.PersistenceTest do
+  @moduledoc """
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and re-registers them under their global names, so a concurrently running module would observe the swapped singletons.
+  """
+
   use EvoGit.TaskRegistryCase, async: false
 
   describe "set_review_metadata/3" do
@@ -1405,7 +1409,16 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
       send(EvoGit.TaskRegistry, {:recheck_task, task_id})
-      refute_receive {:task_updated, _, _, _}, 200
+
+      # The recheck handler RESCHEDULES when any sched_meta entry remains, so it
+      # must not emit a broadcast. Sync against the SAME registry with a call
+      # (queued strictly AFTER the recheck message, so once it returns the recheck
+      # handler has fully run); any broadcast that handler emitted was sent
+      # registry→test-process BEFORE the call reply, and same-sender→same-receiver
+      # signal order is guaranteed — so it is already in the mailbox and a
+      # zero-window refute is sufficient (no blind 200ms timeout needed).
+      TaskRegistry.list_tasks()
+      refute_receive {:task_updated, _, _, _}, 0
 
       fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
       assert fetched.status == :running
@@ -1578,8 +1591,29 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # status-update path (double-broadcast elimination).
       assert_receive {:task_updated, ^task_id, :cancelling, _}, 1_000
 
-      refute_receive {:task_updated, _, _, _}, 200
-      refute_receive {:task_deleted, _, _}, 200
+      # Exactly one broadcast (the :cancelling one) may be emitted. A single shared
+      # 200ms quiet window covers both message shapes so the check costs one window
+      # instead of two — flunking on the FIRST unexpected message.
+      msg =
+        receive do
+          m -> m
+        after
+          200 -> nil
+        end
+
+      case msg do
+        nil ->
+          :ok
+
+        {:task_updated, _, _, _} = m ->
+          flunk("unexpected extra task_updated broadcast: #{inspect(m)}")
+
+        {:task_deleted, _, _} = m ->
+          flunk("unexpected task_deleted broadcast: #{inspect(m)}")
+
+        other ->
+          flunk("unexpected broadcast: #{inspect(other)}")
+      end
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :cancelling
