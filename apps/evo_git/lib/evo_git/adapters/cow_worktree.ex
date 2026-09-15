@@ -263,11 +263,17 @@ defmodule EvoGit.Adapters.CowWorktree do
   defp copy_shared_files(source_path, worktree_path, files) do
     cond do
       EvoGit.Platform.os() == :linux ->
-        Logger.debug("[CowWorktree] Copying #{length(files)} files via Linux cp --reflink=auto")
+        Logger.debug(
+          "[CowWorktree] Copying #{length(files)} files via Linux cp --reflink=auto --preserve=timestamps"
+        )
+
         copy_files_linux(source_path, worktree_path, files)
 
       EvoGit.Platform.os() == :macos ->
-        Logger.debug("[CowWorktree] Copying #{length(files)} files via macOS cp -c (clonefile)")
+        Logger.debug(
+          "[CowWorktree] Copying #{length(files)} files via macOS cp -cp (clonefile, preserved timestamps)"
+        )
+
         copy_files_macos(source_path, worktree_path, files)
 
       true ->
@@ -280,7 +286,8 @@ defmodule EvoGit.Adapters.CowWorktree do
     files
     |> Enum.chunk_every(@batch_size)
     |> Enum.reduce_while(:ok, fn batch, _acc ->
-      args = ["--reflink=auto", "--parents" | batch] ++ [worktree_path <> "/"]
+      args =
+        ["--reflink=auto", "--preserve=timestamps", "--parents" | batch] ++ [worktree_path <> "/"]
 
       case System.cmd("cp", args, cd: source_path, stderr_to_stdout: true) do
         {_output, 0} ->
@@ -304,9 +311,10 @@ defmodule EvoGit.Adapters.CowWorktree do
         :ok ->
           # Copy files in this batch — one `cp` invocation per distinct parent
           # directory. BSD `cp` accepts multiple sources with an existing
-          # directory target (the dirs are pre-created above), and `-c`
-          # (clonefile) CoW semantics apply per file. This reduces process
-          # spawns from N files to D distinct directories.
+          # directory target (the dirs are pre-created above); `-c` (clonefile)
+          # CoW semantics apply per file while `-p` preserves the source
+          # timestamps. This reduces process spawns from N files to D distinct
+          # directories.
           result =
             batch
             |> Enum.group_by(&Path.dirname/1)
@@ -315,7 +323,7 @@ defmodule EvoGit.Adapters.CowWorktree do
 
               case System.cmd(
                      "cp",
-                     ["-c" | dir_files] ++ [dest],
+                     ["-cp" | dir_files] ++ [dest],
                      cd: source_path,
                      stderr_to_stdout: true
                    ) do
