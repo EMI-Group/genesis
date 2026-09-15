@@ -7,6 +7,10 @@ defmodule EvoDashWeb.ReviewLive do
   """
   use EvoDashWeb, :live_view
 
+  # `RepoCards.repo_has_changes?/1` is the SINGLE source of the "does this repo
+  # have changes?" test (also used by RepoCards' own merge-all gate).
+  alias EvoDashWeb.ReviewComponents.RepoCards
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -146,6 +150,7 @@ defmodule EvoDashWeb.ReviewLive do
                         pr_url={@pr_url}
                         show_export={@archive_metadata not in [nil, []]}
                         export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
+                        no_changes={@is_no_changes}
                       />
 
                       <EvoDashWeb.ReviewComponents.extract_skills_modal show={@show_extract_modal} />
@@ -582,9 +587,9 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("merge", params, socket) do
     # Dispatched ONLY by a per-repo merge form submit: the hidden `repo_id`
     # names the ONE repo this submit acts on. Whitelist against the known
-    # review-repo ids (never String.to_atom on client input); an unknown id OR a
-    # repo already in a TERMINAL resolution is a no-op — never fan out to the
-    # other repos.
+    # review-repo ids (never String.to_atom on client input); an unknown id, a
+    # repo already in a TERMINAL resolution, OR a repo with NO changes (nil/blank
+    # branch — nothing to merge) is a no-op — never fan out to the other repos.
     repo_id = params["repo_id"]
 
     case find_review_repo(socket.assigns.review_repos, repo_id) do
@@ -592,7 +597,8 @@ defmodule EvoDashWeb.ReviewLive do
         {:noreply, socket}
 
       repo ->
-        if terminal_resolution?(Map.get(repo, :resolution)) do
+        if terminal_resolution?(Map.get(repo, :resolution)) or
+             not RepoCards.repo_has_changes?(repo) do
           {:noreply, socket}
         else
           target = resolve_merge_target(repo, params)
@@ -603,14 +609,22 @@ defmodule EvoDashWeb.ReviewLive do
 
   @impl true
   def handle_event("merge_all", _params, socket) do
-    # Batch shortcut on a multi-repo review (rendered only when >= 2 repos are
-    # still unresolved): merge EVERY unresolved repo into its own target,
-    # BEST-EFFORT per repo. Each repo settles independently — a conflict/error
-    # surfaces on THAT repo's card while the others still merge, and the shared
-    # completion routine (settle_repo_action/4) persists the aggregate
-    # review_status once the last one reaches terminal. No navigation: the page
-    # stays mounted with one batch summary flash.
-    case Enum.filter(socket.assigns.review_repos, &(Map.get(&1, :resolution) == nil)) do
+    # Batch shortcut on a multi-repo review (rendered only when >= 2
+    # CHANGE-BEARING repos are still unresolved): merge EVERY unresolved repo
+    # that HAS changes into its own target, BEST-EFFORT per repo. A no-change
+    # repo (nil/blank branch) is excluded — it has nothing to merge and needs no
+    # action. Each repo settles independently — a conflict/error surfaces on THAT
+    # repo's card while the others still merge, and the shared completion routine
+    # (settle_repo_action/4) persists the aggregate review_status once the last
+    # one reaches terminal. No navigation: the page stays mounted with one batch
+    # summary flash.
+    actionable =
+      Enum.filter(
+        socket.assigns.review_repos,
+        &(Map.get(&1, :resolution) == nil and RepoCards.repo_has_changes?(&1))
+      )
+
+    case actionable do
       [] ->
         # Nothing left to merge (the button is hidden in this state anyway).
         {:noreply, socket}
@@ -666,8 +680,8 @@ defmodule EvoDashWeb.ReviewLive do
     %{current_node: node, review_repos: review_repos} = socket.assigns
 
     # Dispatched ONLY by a per-repo reject button: `repo_id` names the ONE repo
-    # this click acts on (whitelisted; unknown/Terminal → no-op). Never fan out
-    # to the other repos.
+    # this click acts on (whitelisted; unknown/Terminal/no-changes → no-op).
+    # Never fan out to the other repos.
     repo_id = params["repo_id"]
 
     case find_review_repo(review_repos, repo_id) do
@@ -675,7 +689,8 @@ defmodule EvoDashWeb.ReviewLive do
         {:noreply, socket}
 
       repo ->
-        if terminal_resolution?(Map.get(repo, :resolution)) do
+        if terminal_resolution?(Map.get(repo, :resolution)) or
+             not RepoCards.repo_has_changes?(repo) do
           {:noreply, socket}
         else
           # All review git operations run on the node being viewed (local →
@@ -1529,28 +1544,39 @@ defmodule EvoDashWeb.ReviewLive do
     gettext("Changes merged successfully! Branch %{branch} has been deleted.", branch: branch)
   end
 
-  # Aggregate completion of a multi-repo review: `nil` until EVERY repo's
-  # resolution is TERMINAL, otherwise the effective review status. Prefers the
-  # already-persisted review_status when it is :merged/:rejected (reload
-  # coherence), else :merged if ANY repo merged, else :rejected. An empty repo
-  # list never completes. Consumed by the render (the completion banner) AND by
-  # settle_repo_action/4 (whether to persist + navigate-cold).
+  # Aggregate completion of a multi-repo review: `nil` until EVERY CHANGE-BEARING
+  # repo's resolution is TERMINAL, otherwise the effective review status. A
+  # no-change repo (nil/blank branch) needs no action, so it never blocks
+  # completion nor counts toward the aggregate — merging/rejecting all the
+  # change-bearing repos still completes the review. A task with NO changes in
+  # ANY repo is NEVER reported as :rejected (dismissed via "Mark as read"
+  # instead) → `nil`. Prefers the already-persisted review_status when it is
+  # :merged/:rejected (reload coherence), else :merged if ANY repo merged, else
+  # :rejected. An empty repo list never completes. Consumed by the render (the
+  # completion banner) AND by settle_repo_action/4 (whether to persist).
   defp completion_status([], _review_status), do: nil
 
   defp completion_status(review_repos, review_status) do
-    if Enum.all?(review_repos, &terminal_resolution?(Map.get(&1, :resolution))) do
-      cond do
-        review_status in [:merged, :rejected] ->
-          review_status
+    actionable = Enum.filter(review_repos, &RepoCards.repo_has_changes?/1)
 
-        Enum.any?(review_repos, &match?(%{state: :merged}, Map.get(&1, :resolution))) ->
-          :merged
+    cond do
+      actionable == [] ->
+        nil
 
-        true ->
-          :rejected
-      end
-    else
-      nil
+      Enum.all?(actionable, &terminal_resolution?(Map.get(&1, :resolution))) ->
+        cond do
+          review_status in [:merged, :rejected] ->
+            review_status
+
+          Enum.any?(actionable, &match?(%{state: :merged}, Map.get(&1, :resolution))) ->
+            :merged
+
+          true ->
+            :rejected
+        end
+
+      true ->
+        nil
     end
   end
 

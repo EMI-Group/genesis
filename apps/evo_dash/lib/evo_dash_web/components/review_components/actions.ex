@@ -10,6 +10,12 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   # task_actions/1 — PRIMARY-scoped TASK-level actions row: "Continue task"
   # (only when can_resume) + the "…" overflow menu. Per-repo merge/reject
   # live in ReviewComponents.RepoCards.repo_cards/1.
+  #
+  # `no_changes` (a task with NO changes in ANY repo) promotes the dismissal to
+  # the PRIMARY action as "Mark as read" (the existing `ignore` event) — there
+  # are no merge/reject actions when nothing has a branch. The "…" menu then
+  # keeps only its surviving secondary item(s) with the now-redundant Ignore
+  # suppressed, and is omitted entirely when nothing is left to show.
   # ---------------------------------------------------------------------------
 
   attr(:can_resume, :boolean, default: false)
@@ -19,23 +25,67 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:pr_url, :string, default: nil)
   attr(:show_export, :boolean, default: false)
   attr(:export_url, :string, default: nil)
+  attr(:no_changes, :boolean, default: false)
 
   def task_actions(assigns) do
     ~H"""
     <div class="rounded-xl border border-base-300 bg-base-100 p-4 flex flex-wrap items-center gap-3">
-      <%= if @can_resume do %>
-        <.continue_task_button loading={@loading} />
-      <% end %>
+      <%= if @no_changes do %>
+        <.mark_as_read_button loading={@loading} />
 
-      <.overflow_menu
-        loading={@loading}
-        branch_exists={@branch_exists}
-        has_pr={@has_pr}
-        pr_url={@pr_url}
-        show_export={@show_export}
-        export_url={@export_url}
-      />
+        <%= if @can_resume do %>
+          <.continue_task_button loading={@loading} />
+        <% end %>
+
+        <%= if @show_export do %>
+          <.overflow_menu
+            loading={@loading}
+            branch_exists={@branch_exists}
+            has_pr={@has_pr}
+            pr_url={@pr_url}
+            show_export={@show_export}
+            export_url={@export_url}
+            show_ignore={false}
+          />
+        <% end %>
+      <% else %>
+        <%= if @can_resume do %>
+          <.continue_task_button loading={@loading} />
+        <% end %>
+
+        <.overflow_menu
+          loading={@loading}
+          branch_exists={@branch_exists}
+          has_pr={@has_pr}
+          pr_url={@pr_url}
+          show_export={@show_export}
+          export_url={@export_url}
+        />
+      <% end %>
     </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # mark_as_read_button/1 — PRIMARY action for a review with NO changes: the
+  # dismissal (the SAME `ignore` event the overflow menu used to carry), just
+  # relabeled + promoted.
+  # ---------------------------------------------------------------------------
+
+  attr(:loading, :boolean, default: false)
+
+  defp mark_as_read_button(assigns) do
+    ~H"""
+    <button
+      class="btn btn-primary btn-sm rounded-lg gap-1.5"
+      phx-click="ignore"
+      phx-confirm={gettext("Mark this review as read? It will be dismissed from pending reviews.")}
+      disabled={@loading}
+    >
+      <.icon name="hero-check" class="size-4" />
+      <%!-- zh_CN: 标记为已读 — 确认并归档一次未产生任何代码变更的评审（等同于忽略/忽略该评审） --%>
+      {gettext("Mark as read")}
+    </button>
     """
   end
 
@@ -62,8 +112,9 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   # ---------------------------------------------------------------------------
   # overflow_menu/1 — "…" dropdown pinned right. When branch_exists it carries
   # Create-View PR / Extract Skills; Export JSON renders when show_export;
-  # Ignore is always available as a plain item at the end — no danger-zone
-  # divider. Reject is per-repo (RepoCards), not here.
+  # Ignore is available as a plain item at the end (suppressed via
+  # `show_ignore: false` once it has been promoted to the primary "Mark as read"
+  # action) — no danger-zone divider. Reject is per-repo (RepoCards), not here.
   # ---------------------------------------------------------------------------
 
   attr(:loading, :boolean, default: false)
@@ -72,6 +123,7 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
   attr(:pr_url, :string, default: nil)
   attr(:show_export, :boolean, default: false)
   attr(:export_url, :string, default: nil)
+  attr(:show_ignore, :boolean, default: true)
 
   defp overflow_menu(assigns) do
     ~H"""
@@ -126,18 +178,20 @@ defmodule EvoDashWeb.ReviewComponents.Actions do
             </a>
           </li>
         <% end %>
-        <li>
-          <button
-            class="rounded-md"
-            phx-click="ignore"
-            phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
-            disabled={@loading}
-          >
-            <.icon name="hero-eye-slash" class="size-4 mr-2" />
-            <%!-- zh_CN: 忽略该评审并从待评审列表中移除 --%>
-            {gettext("Ignore")}
-          </button>
-        </li>
+        <%= if @show_ignore do %>
+          <li>
+            <button
+              class="rounded-md"
+              phx-click="ignore"
+              phx-confirm={gettext("Ignore this review? It will be dismissed from pending reviews.")}
+              disabled={@loading}
+            >
+              <.icon name="hero-eye-slash" class="size-4 mr-2" />
+              <%!-- zh_CN: 忽略该评审并从待评审列表中移除 --%>
+              {gettext("Ignore")}
+            </button>
+          </li>
+        <% end %>
       </ul>
     </details>
     """
