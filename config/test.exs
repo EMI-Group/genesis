@@ -24,9 +24,23 @@ config :phoenix_live_view,
 # The XDG_DATA_HOME redirect in test_helper.exs serves as a belt-and-suspenders
 # fallback, but this config key is the canonical guard.
 #
+# The directory is UNIQUE PER BEAM (OS pid + a positive unique integer) so
+# concurrent `mix test` runs — sibling Genesis worker worktrees on one machine,
+# or a CI shard — can never share the same tasks.sqlite and contaminate each
+# other's whole-table assertions. Both apps in one umbrella run share the single
+# unique dir (intended); only cross-run isolation is added. Each run's
+# after_suite hook removes ONLY its own dir, never the shared parent.
+#
 # NOTE: Store and TaskRegistry were migrated from evo_dash to evo_git, so the
 # key must be :evo_git (the Store reads Application.get_env(:evo_git, :data_dir)).
-config :evo_git, :data_dir, Path.join(System.tmp_dir!(), "evogit_test_data/genesis")
+# This app-env override must stay ABOVE any file-config fallback (it is the test
+# isolation guard — no user/TOML `[data] dir` value may shadow it).
+config :evo_git,
+       :data_dir,
+       Path.join(
+         System.tmp_dir!(),
+         "evogit_test_data/genesis-#{System.pid()}-#{:erlang.unique_integer([:positive])}"
+       )
 
 # SystemSampler tick disabled in tests (the sampler's own test suite manages its interval)
 config :evo_git, :system_sample_interval_ms, 86_400_000

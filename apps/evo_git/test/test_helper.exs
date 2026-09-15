@@ -14,3 +14,12 @@ File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 Application.put_env(:evo_git, :nix_enabled, false)
 
 ExUnit.start(capture_log: true)
+
+ExUnit.after_suite(fn _ ->
+  # Remove ONLY this run's unique data dir (from the app env). Never remove the
+  # shared parent `System.tmp_dir!()/evogit_test_data`: a concurrently running
+  # `mix test` owns a sibling unique dir under it, so deleting the parent would
+  # nuke that run's SQLite database mid-flight.
+  test_data_dir = Application.get_env(:evo_git, :data_dir)
+  if is_binary(test_data_dir), do: File.rm_rf(test_data_dir)
+end)
