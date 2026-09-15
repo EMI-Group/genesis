@@ -1055,6 +1055,25 @@ defmodule EvoDashWeb.NodeAwareTest do
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
     end
 
+    test "a malformed hub snapshot is SANITIZED on the mount seed (non-maps dropped)" do
+      # The hub is shape-agnostic and lives outside this node, so a stored
+      # snapshot may carry non-map entries (e.g. written by an older/foreign
+      # writer). The mount seed must sanitize on read — a non-map entry would
+      # otherwise reach Layouts.app/1's group_tasks_by_project/2 and raise
+      # BadMapError on project_path dot-access.
+      valid_map = %{status: :running, project_path: "/tmp/proj"}
+
+      EvoDash.ActiveTasks.put(nil, node(), [:c, valid_map], [])
+
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, mount_socket())
+
+      assert socket.assigns.running_tasks == [valid_map]
+      assert socket.assigns.pending_tasks == []
+
+      # Dead render → still no mount fetch.
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+    end
+
     test "a stored {[], []} snapshot for a PENDING context seeds [] and still renders (no crash, no leak)" do
       # A pending-remote context whose last fetch applied {[], []} (the
       # pending-remote guard's empty result). Stored-empty IS a real snapshot
@@ -1351,6 +1370,31 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert EvoDash.ActiveTasks.get("other-target", :"other_remote@127.0.0.1") == :empty
       # The socket's own (local) context is also untouched by the stale write.
       assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "an applied result drops non-map entries from the assigns AND the hub write" do
+      # The hub is deliberately shape-agnostic (stores whatever lists it is
+      # given, verbatim), so a malformed payload must be sanitized HERE —
+      # before both the assigns (which Layouts.app/1 dot-accesses, raising
+      # BadMapError on a non-map) and the hub write (which would otherwise
+      # poison every later mount on this context). Only non-map entries are
+      # dropped; well-formed summary maps pass through unchanged.
+      valid_map = %{status: :running, project_path: "/tmp/proj"}
+
+      sock = socket(%{current_node: node(), current_node_id: nil, tasks_load_seq: 1})
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 1, nil, node(), {[:c, valid_map], [:d]}}
+        )
+
+      # Non-map entries are dropped from the applied assigns...
+      assert result.assigns.running_tasks == [valid_map]
+      assert result.assigns.pending_tasks == []
+
+      # ...and the hub is written SANITIZED — never the malformed payload.
+      assert EvoDash.ActiveTasks.get(nil, node()) == {:ok, {[valid_map], []}}
     end
   end
 
