@@ -23,8 +23,11 @@ defmodule EvoGit.AgentSchedulerTest do
   defmodule DummyAgent do
     # Sleeps so the in-flight registration is observable. MUST NOT call the
     # Runner or request a worktree — this test pins the scheduler contract.
+    # 100ms is ample: the observing `wait_until` poll starts immediately after
+    # `Task.async` and re-checks every 15ms, and registration happens before
+    # this sleep begins.
     def run(_objective, _ctx) do
-      Process.sleep(300)
+      Process.sleep(100)
       {:ok, :done}
     end
   end
@@ -167,6 +170,32 @@ defmodule EvoGit.AgentSchedulerTest do
   end
 
   test "update_config reconciles the LLM pool without crashing" do
+    # Capture the live floor so the default_llm_max_concurrency bump below is
+    # not leaked onto the global scheduler — it raises every pool's capacity
+    # for the rest of the run (cross-file order-dependent flakiness).
+    original_default =
+      GenServer.call(EvoGit.AgentScheduler, {:get_config, :default_llm_max_concurrency})
+
+    # The app-supervised PeakHourEngine re-applies a FLOORED model_concurrency
+    # map from the LIVE model_profiles on every "scheduler_config" PubSub
+    # broadcast — it can land AFTER this test's update_config and clobber the
+    # assertion below. Suspend it for this test's duration (same idiom as the
+    # hard-pause / get_llm_slot_status describes). This test is not guarded by
+    # a describe-level suspend, so there is no double-suspend risk.
+    engine = Process.whereis(EvoGit.PeakHourEngine)
+    if engine, do: :sys.suspend(engine)
+
+    on_exit(fn ->
+      # Restore the leaked floor FIRST (while the engine is still suspended, so
+      # the restore cannot be raced by a re-derived floor), then resume it.
+      GenServer.call(
+        EvoGit.AgentScheduler,
+        {:update_config, [default_llm_max_concurrency: original_default]}
+      )
+
+      if engine, do: :sys.resume(engine)
+    end)
+
     # Hook A: a successful update_config (with model_profiles) reconciles the
     # ReqLLM Finch pool. In test env no origins are materialized, so reconcile
     # no-ops — this pins that the hook never crashes and returns :ok.

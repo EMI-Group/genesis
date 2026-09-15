@@ -50,6 +50,14 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   # cleanup cannot race the assertions.
   @caller_stop_timeout 60_000
 
+  # The injected create fun reports entry and then blocks until the test
+  # releases it, so tests control exactly when each create completes (no
+  # time-based sleeps). Both bounds are generous safety nets — a wedged
+  # handshake fails the test loudly instead of hanging until the ExUnit
+  # timeout.
+  @create_entry_timeout 10_000
+  @release_timeout 10_000
+
   setup %{tmp_dir: tmp_dir} do
     # Real git repo so the manager's lazy per-repo init (rm_rf workers dir +
     # prune + orphaned-branch cleanup) and its :DOWN cleanup (rm_rf + prune +
@@ -85,20 +93,29 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   describe "bounded worktree-creation admission queue" do
     test "(a) create concurrency never exceeds the cap", %{tmp_dir: tmp_dir, base_sha: base_sha} do
       install_cap(2)
+      parent = self()
 
       # Shared overlap tracker. The Agent serializes updates, so the recorded
       # max is the true peak number of concurrently-running create pipelines.
       {:ok, tracker} = Agent.start_link(fn -> %{current: 0, max: 0} end)
 
-      install_create_fun(fn _agent_id, _repo_root, wt_path, _spec, _meta ->
+      install_create_fun(fn agent_id, _repo_root, wt_path, _spec, _meta ->
         Agent.update(tracker, fn s ->
           current = s.current + 1
           %{s | current: current, max: max(s.max, current)}
         end)
 
-        # Hold the permit long enough that any over-cap admission would be
-        # observed as a peak > cap.
-        Process.sleep(100)
+        # Event-driven hold: report entry (AFTER counting), then block until the
+        # test releases THIS create. Because a create only completes when the
+        # test says so, an over-cap admission surfaces as extra entered messages
+        # (tracker peak > cap) instead of racing a fixed timer.
+        send(parent, {:create_entered, agent_id, self()})
+
+        receive do
+          :release -> :ok
+        after
+          @release_timeout -> :ok
+        end
 
         Agent.update(tracker, fn s -> %{s | current: s.current - 1} end)
         {:ok, wt_path}
@@ -111,6 +128,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
           {spec, meta, wt_path} = register_agent(id, tmp_dir, base_sha, i)
           {id, spawn_caller(id, tmp_dir, wt_path, spec, meta)}
         end
+
+      # Release the creates in cap-sized waves: only releasing a create frees a
+      # permit, so at most `cap` creates are ever in flight at once.
+      release_waves(length(ids), 2)
 
       results = collect_results(ids)
       assert_all_ok_once(results, ids)
@@ -127,9 +148,20 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
       base_sha: base_sha
     } do
       install_cap(2)
+      parent = self()
 
-      install_create_fun(fn _agent_id, _repo_root, wt_path, _spec, _meta ->
-        Process.sleep(100)
+      install_create_fun(fn agent_id, _repo_root, wt_path, _spec, _meta ->
+        # Hold each create until the test releases it, so the cap is genuinely
+        # saturated and the remaining requests really sit in the admission
+        # queue (rather than racing a fixed sleep).
+        send(parent, {:create_entered, agent_id, self()})
+
+        receive do
+          :release -> :ok
+        after
+          @release_timeout -> :ok
+        end
+
         {:ok, wt_path}
       end)
 
@@ -140,6 +172,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
           {spec, meta, wt_path} = register_agent(id, tmp_dir, base_sha, i)
           {id, spawn_caller(id, tmp_dir, wt_path, spec, meta)}
         end
+
+      # Drive the creates in cap-sized waves so the queue is drained wave by
+      # wave (2 in flight, the rest queued).
+      release_waves(length(ids), 2)
 
       # Queuing only DELAYS the reply, never drops it — 6 queued requests at a
       # cap of 2 must all drain well within a sane bound.
@@ -399,6 +435,30 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
     assert map_size(grouped) == length(expected_ids),
            "unexpected extra reply ids: #{inspect(Map.keys(grouped) -- expected_ids)}"
+  end
+
+  # Releases create pipelines in waves of `wave_size`. Waiting for a FULL wave
+  # to report entry BEFORE releasing it is what pins the observed peak to the
+  # cap: the manager can only have `wave_size` creates in flight, and an
+  # over-cap admission would deliver extra `:create_entered` messages.
+  defp release_waves(remaining, wave_size) when remaining > 0 do
+    n = min(remaining, wave_size)
+    n |> await_create_entries() |> Enum.each(&send(&1, :release))
+    release_waves(remaining - n, wave_size)
+  end
+
+  defp release_waves(_remaining, _wave_size), do: :ok
+
+  defp await_create_entries(n, acc \\ [])
+  defp await_create_entries(0, acc), do: acc
+
+  defp await_create_entries(n, acc) do
+    receive do
+      {:create_entered, _agent_id, pid} -> await_create_entries(n - 1, [pid | acc])
+    after
+      @create_entry_timeout ->
+        flunk("timed out waiting for a create to enter (#{n} still outstanding)")
+    end
   end
 
   # --------------------------------------------------------------------------

@@ -494,9 +494,11 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
-      # Deterministic serialization probe: a sleeping worktree init script
-      # keeps the first create in flight long enough to observe the deferral.
-      # The script is a /bin/sh script — skip on Windows.
+      # Deterministic serialization probe: an init script that BLOCKS on a
+      # marker file (gate) the test creates only AFTER it has observed the
+      # deferral keeps the first create in flight for as long as needed —
+      # deterministic and fast (no fixed sleep). The script is a /bin/sh
+      # script — skip on Windows.
       if EvoGit.Platform.windows?() do
         :ok
       else
@@ -505,9 +507,17 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
         branch = "evogit-agent-T1-A1"
 
+        # The gate lives inside tmp_dir so the shared setup's on_exit
+        # `File.rm_rf!(tmp_dir)` removes it. The script polls for it with a
+        # BOUNDED wait (200 × 0.05s = 10s) so a failure can never hang: if the
+        # gate never appears the create just finishes after the bound (and the
+        # deferral assertion below has already flunked well before then).
+        gate = Path.join(tmp_dir, "worktree_gate")
+
         File.write!(
           Path.join(tmp_dir, "genesis.toml"),
-          "[worktree]\nscript = \"#!/bin/sh\\nsleep 2\"\n"
+          "[worktree]\nscript = \"#!/bin/sh\\n" <>
+            "i=0; while [ ! -f #{gate} ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\"\n"
         )
 
         parent = self()
@@ -529,7 +539,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
           end)
 
         # The dir exists once the create task has finished the git part and is
-        # inside the init-script sleep (~2s) — i.e. the create is still in
+        # blocked inside the gate-script poll — i.e. the create is still in
         # flight (creating: true in the manager).
         wait_until(fn -> File.dir?(wt_path) end)
 
@@ -543,6 +553,23 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         # caller) so the resulting registration can be drained
         # deterministically before teardown (see spawn_agent/6 doc).
         agent = spawn_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+
+        # The deferral is GENUINELY OBSERVED (not just inferred from the end
+        # state): while the gate file has NOT yet been created the first create
+        # is still :creating and the re-create sits in pending_requests. Poll
+        # (bounded) until the manager has processed the second request — the
+        # un-created gate guarantees the first create cannot have finished, so
+        # this cannot race.
+        wait_until(fn ->
+          state = :sys.get_state(WorktreeManager)
+
+          match?(%{status: :creating}, Map.get(state.agents, agent_id)) and
+            Map.has_key?(state.pending_requests, agent_id)
+        end)
+
+        # Release the gate — the first (dead-agent) create finishes, the
+        # deferred re-create is admitted, and it succeeds.
+        File.write!(gate, "go")
 
         assert_receive {:agent_ready, ^agent, {:ok, ^wt_path}}, 30_000
 
