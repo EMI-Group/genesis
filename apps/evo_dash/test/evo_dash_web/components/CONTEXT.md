@@ -45,6 +45,10 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 
 **NO foreign-repo / multi-repo coverage**: grep for `foreign|repo|path` (case-insensitive) matches nothing — the task form tests never reference foreign repos, repo paths, or any multi-repo UI.
 
+### layouts_test.exs (1 describe, 2 tests)
+
+`app/1 — sidebar task grouping` — the ONLY suite here that renders the full app shell instead of a leaf component: `render_component(&Layouts.app/1, ...)` with just `flash: %{}` plus a stubbed `inner_block` slot (`inner_block: [%{inner_block: fn _changed, _arg -> "Page content" end}]`; every other `attr` takes its declared default — required slot/assigns are the only stubs needed, and the embedded `NodeSelectorComponent` `live_component` renders fine outside a LiveView). Group headers are extracted with `Floki.find("span.sidebar-label:has(.hero-folder)")` (the folder icon makes group headers the only such spans — "Active Tasks" and the task-label containers are excluded), task links via `[data-sidebar-task-link]` and labels via the inner `span.truncate`. Coverage: non-map `running_tasks`/`pending_tasks` entries (`:junk_atom`, a binary) are silently OMITTED (no crash) while a valid task still renders under `Path.basename(project_path)`; well-formed entries keep `nil` path → `"Other"` first, then case-insensitive alphabetical group order with running-before-pending inside a group. Helpers: `render_app/1`, `sidebar_group_names/1`, `sidebar_task_links/1`, `sidebar_task_labels/1`, `task/1` (map fixture with `status`/`project_path`/`opts: [objective:]`).
+
 ## Known Issues / Notes for Agents
 
 - `EvoDashWeb.ProjectComponentsTest` test "trigger renders the active project name and path" passes `active_project: %{name: ..., path: "/home/user/my-project"}` — the palette row-rendering path is UNTESTED (open palette with a project list is never rendered in any test).
