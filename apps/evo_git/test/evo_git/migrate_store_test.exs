@@ -13,6 +13,8 @@ defmodule EvoGit.MigrateStoreTest do
 
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureIO
+
   @moduletag :tmp_dir
 
   alias EvoGit.Store.Codec
@@ -186,8 +188,14 @@ defmodule EvoGit.MigrateStoreTest do
 
   defp close_conn!(conn), do: :ok = XqliteNIF.close(conn)
 
+  # The task prints its migration progress via `Mix.shell().info/1` (banner,
+  # JSON1 status, per-step lines, final schema, completion note). That output
+  # is intentional for the `mix migrate.store` CLI, so here we swallow stdout
+  # instead of polluting the test console. `with_io/1` returns
+  # `{result, output}`.
   defp run_task!(path) do
-    assert :ok = Mix.Tasks.Migrate.Store.run([path])
+    {result, _io} = with_io(fn -> Mix.Tasks.Migrate.Store.run([path]) end)
+    assert result == :ok
   end
 
   defp columns(path) do
