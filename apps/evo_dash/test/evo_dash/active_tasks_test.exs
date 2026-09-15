@@ -10,6 +10,10 @@ defmodule EvoDash.ActiveTasksTest do
   # setup so tests are independent.
   setup do
     ActiveTasks.reset()
+    # Reset again on exit so this suite's shape-agnostic atom sentinels (e.g.
+    # `[:a, :b]`) never survive the suite and reach a later whole-page mount's
+    # sidebar seed (which would crash on a non-task-summary shape).
+    on_exit(fn -> ActiveTasks.reset() end)
     :ok
   end
 
