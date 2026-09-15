@@ -129,39 +129,10 @@ defmodule EvoGit.RemoteConnectionTest do
   end
 
   describe "bootstrap/1" do
-    test "auto-download path: no local_binary_path probes the remote (fails on unreachable host)" do
-      ensure_registry_and_supervisor()
-      target_id = save_test_target()
-
-      assert {:error, {:probe_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
-
-      cleanup_connections()
-    end
-
-    test "set-but-missing local_binary_path falls back to auto-download (probe fails)" do
-      ensure_registry_and_supervisor()
-      target_id = save_test_target(local_binary_path: "/nonexistent/path/to/tarball.tar.xz")
-
-      assert {:error, {:probe_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
-
-      cleanup_connections()
-    end
-
-    test "platform override skips the probe and fails at download" do
-      ensure_registry_and_supervisor()
-      target_id = save_test_target(platform: "linux_x64")
-
-      # download_url/1 is deterministic (direct Cloudflare-worker "smart
-      # download" URL, no API query), so the remote download (curl first, wget
-      # fallback) always
-      # fails at the ssh level ({:download_failed, {:exit_status, _}}) — the
-      # release asset doesn't exist — and the local curl fallback also fails
-      # ({:download_failed, {:local, _}}). Keep the assertion broad.
-      assert {:error, {:download_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
-
-      cleanup_connections()
-    end
-
+    # Platform validation runs in the pre-flight `resolve_platform/2` BEFORE any
+    # SSH/down/download I/O, so these stay fully hermetic. The staging flows
+    # themselves (probe success, upload, auto-download, NixOS patch, daemon
+    # lifecycle) are covered by the fake-tool suite below.
     test "invalid platform override fails fast" do
       ensure_registry_and_supervisor()
       target_id = save_test_target(platform: "bogus")
@@ -177,26 +148,6 @@ defmodule EvoGit.RemoteConnectionTest do
 
       assert {:error, :unsupported_platform} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-      cleanup_connections()
-    end
-
-    test "local_binary_path that exists still uploads (scp fails on unreachable host)" do
-      ensure_registry_and_supervisor()
-
-      tmp =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-test-tarball-#{System.unique_integer([:positive])}.tar.xz"
-        )
-
-      File.write!(tmp, "fake tarball")
-      # platform override skips the pre-flight SSH probe (which would fail
-      # first on the unreachable host) so the flow reaches the scp stage.
-      target_id = save_test_target(local_binary_path: tmp, platform: "linux_x64")
-
-      assert {:error, {:scp_failed, _}} = EvoGit.RemoteConnection.bootstrap(target_id)
-
-      File.rm!(tmp)
       cleanup_connections()
     end
   end
@@ -854,12 +805,6 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
-  describe "build_tunnel_command/1 — internal behavior" do
-    # The function is private, but we can test the port-separation logic
-    # by verifying the GenServer's connection flow doesn't produce port conflicts.
-    # For now, verify that find_free_port is used and tested independently.
-  end
-
   # The fake ssh below is a POSIX shell script on PATH, which cannot emulate
   # ssh.exe on Windows — the argv contract is covered on the platforms where
   # this runs.
@@ -975,7 +920,10 @@ defmodule EvoGit.RemoteConnectionTest do
       # simulate the race where a daemon starts between the pre-flight check
       # and the launch point), :remote_config_exists? (the fake reports the
       # remote config.toml/credentials.toml as already present, so the
-      # :copying_config stage skips their upload). The fake `scp` captures
+      # :copying_config stage skips their upload), :probe_exit (the pre-flight
+      # `uname -s && uname -m` probe exits non-zero, simulating an unreachable
+      # remote) and :scp_exit (the fake scp exits non-zero, simulating a failed
+      # upload). The fake `scp` captures
       # every uploaded payload into the tmp dir under its DESTINATION basename
       # (config.toml / credentials.toml / genesis_remote.tar.xz) — the tmp dir
       # is returned as `:scp_dir` — so tests can assert what actually "landed
@@ -1005,7 +953,7 @@ defmodule EvoGit.RemoteConnectionTest do
           counter="__COUNTER__"
           printf '%s\n' "$2" >> "$log"
           case "$2" in
-            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; exit 0 ;;
+            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; exit __PROBE_EXIT__ ;;
             *"uname -s"*) printf '__OS__\n'; exit 0 ;;
             *"systemctl --user stop"*) rm -f "$marker"; exit 0 ;;
             *"systemctl --user is-active"*) if [ -n "__DAEMON_ACTIVE_AFTER__" ]; then count=$(cat "$counter" 2>/dev/null || echo 0); count=$((count + 1)); echo "$count" > "$counter"; if [ "$count" -gt __DAEMON_ACTIVE_AFTER__ ]; then printf 'active\n'; else printf 'inactive\n'; fi; elif [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
@@ -1041,6 +989,10 @@ defmodule EvoGit.RemoteConnectionTest do
           |> String.replace("__OS__", Keyword.get(opts, :os, "Linux"))
           |> String.replace("__DETECT__", Keyword.get(opts, :detect, "no"))
           |> String.replace(
+            "__PROBE_EXIT__",
+            Integer.to_string(Keyword.get(opts, :probe_exit, 0))
+          )
+          |> String.replace(
             "__PATCH_OUTPUT__",
             Keyword.get(opts, :patch_output, "nixos-patch: patched 0 ELF files")
           )
@@ -1067,9 +1019,10 @@ defmodule EvoGit.RemoteConnectionTest do
           ~S"""
           #!/bin/sh
           cp "$1" "__SCP_DIR__/$(basename "$2")"
-          exit 0
+          exit __SCP_EXIT__
           """
           |> String.replace("__SCP_DIR__", tmp)
+          |> String.replace("__SCP_EXIT__", Integer.to_string(Keyword.get(opts, :scp_exit, 0)))
 
         File.write!(scp_path, scp_script)
         File.chmod!(scp_path, 0o755)
@@ -1595,6 +1548,46 @@ defmodule EvoGit.RemoteConnectionTest do
           assert {:ok, remote_accent} = fetch_accent_from(uploaded)
           refute remote_accent == local_accent
           assert remote_accent in @accent_palette
+
+          cleanup_connections()
+        end)
+      end
+
+      test "probe failure (no platform override) propagates {:error, {:probe_failed, _}}" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux", probe_exit: 9], fn _ctx ->
+          # With no platform override the pre-flight runs the
+          # `uname -s && uname -m` probe; the fake ssh exits non-zero, so
+          # bootstrap fails before any staging or broadcast.
+          target_id = save_test_target()
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:error, {:probe_failed, {:exit_status, 9}}} =
+                   EvoGit.RemoteConnection.bootstrap(target_id)
+
+          # No staging stage was ever broadcast — only the terminal error
+          # status (bootstrap_stage: nil) is pushed.
+          assert collect_stages(target_id) == [nil]
+
+          cleanup_connections()
+        end)
+      end
+
+      test "scp upload failure propagates {:error, {:scp_failed, _}}" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux", scp_exit: 1], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:error, {:scp_failed, 1}} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          # The probe + daemon check ran, the upload was attempted, but the
+          # fake scp failed — so no extract/patch/start followed.
+          log_content = File.read!(log)
+          assert log_content =~ "uname -s && uname -m"
+          refute log_content =~ "tar -xJf"
 
           cleanup_connections()
         end)
