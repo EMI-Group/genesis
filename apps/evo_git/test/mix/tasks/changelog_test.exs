@@ -1,10 +1,25 @@
 defmodule Mix.Tasks.ChangelogTest do
+  @moduledoc """
+  Tests for `mix changelog`.
+
+  MUST stay `async: false` — the exercised task and this suite rely on
+  process-/VM-global state that concurrent test modules would corrupt:
+
+    * `Mix.shell/0` is process-global: assertions drain `{:mix_shell, ...}`
+      messages from the test-process mailbox after switching to
+      `Mix.Shell.Process`.
+    * `File.cd!/2` changes the VM-wide working directory via the file server
+      (the task shells out `System.cmd("git", ...)` in the VM's cwd).
+    * the `:changelog_summarizer` / `:changelog_pr_summarizer` /
+      `:changelog_aggregator` application-env seams are mutated per test.
+
+  The `receive ... after 0` collectors below are non-blocking mailbox drains —
+  they introduce no timing dependence.
+  """
   use ExUnit.Case, async: false
 
   alias Mix.Tasks.Changelog
 
-  # The task runs `System.cmd("git", ...)` in the VM's current directory and
-  # uses Mix.shell/0, both of which are process-global — hence async: false.
   @new_version "0.2.0"
 
   # Deterministic entries returned by the summarizer stubs.
