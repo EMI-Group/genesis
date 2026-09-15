@@ -548,35 +548,16 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "resets the chat to the idle empty state", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      render_submit(view, "send_message", %{"message" => "hello"})
+      # Synthetic running chat (seed + terminal event) — the real reflect
+      # runtime must never run in this suite (with credentials it makes real
+      # LLM calls; without, the agent crashes). The seeded "hello" user entry
+      # gives new_chat a non-empty transcript to reset, exactly like the real
+      # send used to.
+      seed_running_chat(view)
 
-      # ALWAYS register the ETS sweep — the reflect agent may remain
-      # alive/blocked in the scheduler ETS even after the task itself fails
-      # fast: the `:failed` task event clears the view's chat_task_id (and the
-      # status goes :idle) while the agent row persists as :running. Gating the
-      # cleanup on chat_task_id would skip it exactly when the agent is still
-      # registered, leaking the row into agents_live_test.exs (which expects an
-      # empty agent registry). The persisted reflect row's id is authoritative
-      # (the sched_meta task_id is the same string).
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      if reflect != [] do
-        cleanup_task_on_exit(hd(reflect).id)
-      end
-
-      # The real reflect task fails fast in the test env (no LLM config), so it
-      # may already have cleared the task refs by the time render_submit
-      # returns. Branch on that: nil → already :idle; otherwise inject a
-      # deterministic :failed terminal event to drive it back to :idle.
-      case chat_task_id(view) do
-        nil ->
-          :ok
-
-        id ->
-          finalize_failed(view, id)
-      end
+      # Deterministically drive the chat to a terminal state via the same
+      # {:task_updated, ...} event shape the core broadcasts.
+      finalize_failed(view, "t1")
 
       assert assigns(view).chat_status == :idle
 
@@ -592,14 +573,13 @@ defmodule EvoDashWeb.HomeLiveTest do
       old_id = assigns(view).chat_id
       assert old_id != nil
 
-      render_submit(view, "send_message", %{"message" => "hello"})
+      # Synthetic running chat (seed + terminal event) — same rationale as the
+      # "resets the chat" test above.
+      seed_running_chat(view)
 
-      # Deterministically drive the chat to a terminal state (same branch as
-      # the reset test above).
-      case chat_task_id(view) do
-        nil -> :ok
-        id -> finalize_failed(view, id)
-      end
+      # Deterministically drive the chat to a terminal state (same event
+      # shape as the reset test above).
+      finalize_failed(view, "t1")
 
       old_state = EvoDash.ChatHistory.get_state(old_id)
       assert old_state != nil
@@ -1521,22 +1501,39 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/help")
       chat_id = assigns(view).chat_id
       assert chat_id != nil
-      render_submit(view, "send_message", %{"message" => "persist me please"})
-      # ALWAYS register the cleanup for the real reflect task (see the
-      # "new chat" describe for the rationale).
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
 
-      if reflect != [] do
-        cleanup_task_on_exit(hd(reflect).id)
-      end
+      # Fully SYNTHETIC running chat: seed the state a real send would produce
+      # (the user entry "persist me please" + an empty streaming assistant
+      # entry, refs set) via seed_chat_state — the real reflect runtime must
+      # never run in this suite (with credentials it makes real LLM calls;
+      # without, the agent crashes with MatchError from ToolDispatch
+      # .current_model/0). seed_chat_state bypasses __changed__ tracking, so
+      # the seeded transcript is materialized into rendered html by the same
+      # real assign path the badge/persistence tests use (a matching task
+      # event), then finalized with the exact {:task_updated, ...} shape the
+      # core broadcasts.
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: "t_persist",
+        chat_agent_id: 1001,
+        chat_node: node(),
+        transcript: [
+          %{id: "1", role: :user, text: "persist me please", streaming: false},
+          %{id: "2", role: :assistant, text: "", streaming: true}
+        ]
+      })
 
-      # Deterministically drive the chat to a terminal state.
-      case chat_task_id(view) do
-        nil -> :ok
-        id -> finalize_failed(view, id)
-      end
+      # Materialize the seeded state (a matching non-terminal task event runs
+      # handle_task_event's assign/persist path) and persist the running state
+      # into ChatHistory through the REAL persist point.
+      send(view.pid, {:task_updated, "t_persist", :running, node()})
+      render(view)
+      assert assigns(view).chat_status == :running
+      assert EvoDash.ChatHistory.get_state(chat_id).chat_status == :running
+
+      # Deterministic terminal event (the same event the finalize_failed
+      # helper drives): :failed finalizes the transcript and clears the refs.
+      finalize_failed(view, "t_persist")
 
       assert assigns(view).chat_status == :idle
       # The terminal event persisted the full state into ChatHistory.
