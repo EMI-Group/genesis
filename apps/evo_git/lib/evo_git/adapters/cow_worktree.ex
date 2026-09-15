@@ -231,7 +231,9 @@ defmodule EvoGit.Adapters.CowWorktree do
     # Step 7: copy shared files from source to worktree
     case copy_shared_files(source_path, worktree_path, shared_files) do
       :ok ->
-        # Step 8: checkout remaining files (git stat+hash-skips already-present files)
+        # Step 8: checkout the target tree. NOTE: the index is EMPTY after
+        # `worktree add --no-checkout`, so this re-extracts EVERY path — it also
+        # rewrites the files (and mtimes) just copied in step 7.
         checkout_target(worktree_path, target_commit)
 
       :unsupported_platform ->
