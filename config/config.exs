@@ -75,7 +75,12 @@ config :req_llm,
   # Streaming metadata collection timeout
   metadata_timeout: 600_000,
   # Extended timeout for reasoning models
-  thinking_timeout: 1_000_000
+  thinking_timeout: 1_000_000,
+  # Genesis model ids are user-configured (config.toml `[[llm.models]]`
+  # profiles, per-task `-m` flag), so they never appear in ReqLLM's LLMDB
+  # catalog and its "Using unverified model" warning would print on EVERY
+  # LLM call — pure noise in every environment. Documented global opt-out.
+  warn_unverified_models: false
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

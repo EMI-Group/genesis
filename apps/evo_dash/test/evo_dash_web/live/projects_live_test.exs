@@ -156,11 +156,26 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   end
 
   # Extracts the task id from the "task started with ID: <id>" flash of a
-  # task_submit render, cancels it immediately (stops the spawned wrapper),
-  # registers on_exit cancel+delete cleanup (the shared SQLite store persists
-  # across tests in this file), and returns the id so the test can inspect the
-  # persisted task's opts. Mirrors the inline pattern used by the existing
-  # launch tests.
+  # task_submit render, registers on_exit cancel+delete cleanup (the shared
+  # SQLite store persists across tests in this file), waits (bounded) for the
+  # task to reach a terminal status, and returns the id so the test can
+  # inspect the persisted task's opts. Mirrors the inline pattern used by the
+  # existing launch tests.
+  #
+  # The wait is the load-bearing part: the wrapper's short life runs git ports
+  # under tmp_dir, and if the setup on_exit File.rm_rf!(tmp_dir) fired while a
+  # port was still spawning there, ERTS prints an uncatchable
+  # "spawn: Could not cd to <tmp_dir>" line on stderr — test-output noise. The
+  # wait returns almost immediately: on a SEEDED git repo (make_git_repo!/1)
+  # the doomed wrapper runs one instant `git rev-parse` port and then dies at
+  # node-path validation. Callers that call wait_for_task_terminal/2
+  # themselves just wait a second time (a no-op once terminal).
+  #
+  # No in-body cancel_task/1: the wrapper is already terminal by the time the
+  # wait returns, and cancelling a live wrapper would drag the scheduler's
+  # graceful-cancel machinery (marker writes, broadcasts, grace turns) into
+  # the test for zero assertion value. The on_exit cancel is a rescued safety
+  # net only (on a terminal row it is a no-op {:error, :not_running}).
   defp cleanup_launched_task(html) do
     [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
@@ -179,15 +194,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       end
     end)
 
-    EvoGit.TaskRegistry.cancel_task(id)
+    wait_for_task_terminal(id)
+
     id
   end
 
   # Waits (bounded) for a launched task to reach a terminal status so its
-  # wrapper process has stopped writing under the project's `.genesis/`
-  # directory — otherwise the setup's on_exit File.rm_rf!(tmp_dir) can
-  # race a still-running wrapper and raise EEXIST. Best-effort: on timeout
-  # the test proceeds (the on_exit cleanups are rescued).
+  # wrapper process has finished spawning git ports under the project's
+  # directory — otherwise the setup's on_exit File.rm_rf!(tmp_dir) can race a
+  # still-spawning port and ERTS prints an uncatchable "spawn: Could not cd to
+  # <tmp_dir>" line on stderr. Best-effort: on timeout the test proceeds (the
+  # on_exit cleanups are rescued).
   defp wait_for_task_terminal(id, timeout_ms \\ 10_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
@@ -282,6 +299,81 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end)
 
     {path, String.trim(sha)}
+  end
+
+  # Seeds `path` as a REAL git repository with an initial (empty) commit —
+  # synchronously, in the test process — before a task is launched against it.
+  # This is the quiet-launch contract shared by every launch test in this file.
+  #
+  # The task-form launch tests submit `node_path: "./nonexistent-dir"`: the
+  # spawned wrapper dies AT VALIDATION, by design, BEFORE any agent dispatch —
+  # `EvoGit.Runtime.Helpers.validate_node_path/2` runs after ensure_repo and
+  # starting-commit resolution but before run_mode spawns any agent — so no
+  # LLM call can ever happen. That matters because the scheduler's model
+  # profiles come from the boot-time ambient config, NOT the per-test
+  # XDG_CONFIG_HOME isolation: a VALID node path would proceed to
+  # AgentScheduler.run_agent and reach the real LLM, which is exactly why the
+  # invalid path is load-bearing and must stay.
+  #
+  # The seeded repo keeps the doomed wrapper's brief life pure validation: a
+  # pre-existing .git directory short-circuits Runtime.ensure_repo/1 (no
+  # `git init`/`add`/`commit` ports under tmp_dir, no repo mutation) and
+  # `git rev-parse HEAD` succeeds, so the wrapper spawns a couple of instant
+  # ports and then returns the node-path error. Without the seed the wrapper
+  # git-inits the project itself — port spawns racing the setup's on_exit
+  # rm_rf! printed uncatchable "spawn: Could not cd to <tmp_dir>" lines, and
+  # the repo mutation bought no assertion anything.
+  defp make_git_repo!(path) do
+    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd(
+        "git",
+        [
+          "-c",
+          "user.email=t@example.com",
+          "-c",
+          "user.name=t",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init"
+        ],
+        cd: path,
+        stderr_to_stdout: true
+      )
+
+    path
+  end
+
+  # Stubs the async GitHub-upstream check (Project.GitHub.maybe_check/1
+  # spawns it on every non-genesis_new project activation, and the default
+  # runner shells out to `git remote get-url origin` in the project path).
+  # Tests whose tmp_dir is non-empty (foreign-repo fixtures, staged .png
+  # files) activate as genesis_existing/evolve_simple and would otherwise
+  # spawn a REAL git port under tmp_dir that can still be starting when the
+  # setup on_exit rm_rf! fires — ERTS prints an uncatchable
+  # "spawn: Could not cd to <tmp_dir>" line. These tests assert nothing
+  # GitHub-related, so the stub is pure noise elimination.
+  #
+  # Called per-test/per-helper at the EXPOSED activation sites only (the
+  # GitHub-issue-integration describe stubs its own seams via
+  # put_github_seams/1 and must not be clobbered; an empty tmp_dir
+  # auto-detects genesis_new, which never checks). Conflict-free: nothing
+  # else in this file reads :github_runner, the assertion surface is
+  # unchanged (an :error status renders no GitHub UI), and the file's
+  # mounting suites are all async: false so the global env stub cannot
+  # race another suite.
+  defp stub_github_upstream_check! do
+    Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
+      {:error, :no_github_upstream}
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :github_runner)
+    end)
+
+    :ok
   end
 
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
@@ -1502,11 +1594,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_change(view, "restore_state", %{"task_prompt" => "build me a thing"})
       assert assigns(view)[:task_prompt] == "build me a thing"
 
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (see make_git_repo!/1): ensure_repo short-circuits, rev-parse HEAD
+      # succeeds, and the wrapper dies at node-path validation before any
+      # agent dispatch — no LLM calls, no worktrees, no agents (which matters
+      # because the scheduler's model profiles come from the boot-time
+      # ambient config, not the per-test XDG_CONFIG_HOME isolation).
+      make_git_repo!(tmp_dir)
+
       # Launch an evolve task with a nonexistent node_path. The task still
-      # launches successfully (start_task returns {:ok, task}), but the
-      # spawned worker fails fast in EvoGit.Runtime.Evolution (invalid node
-      # path is validated BEFORE any agent dispatch) — no LLM calls, no
-      # worktrees, nothing that can leak into the shared test runtime.
+      # launches successfully (start_task returns {:ok, task}); the spawned
+      # wrapper then fails fast in EvoGit.Runtime.Evolution at the invalid
+      # node path.
       html =
         view
         |> element("#task-form")
@@ -1529,8 +1628,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "clear_prompt", %{})
 
       # The launch spawned a real task (which fails fast on the invalid node
-      # path); cancel and delete it so it never leaks into other tests sharing
-      # the SQLite store.
+      # path — terminal long before this point); register the on_exit
+      # cancel+delete cleanup and wait for the terminal status so the wrapper
+      # has finished spawning ports before the setup on_exit rm_rf!(tmp_dir).
       [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
       on_exit(fn ->
@@ -1548,7 +1648,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         end
       end)
 
-      EvoGit.TaskRegistry.cancel_task(id)
+      wait_for_task_terminal(id)
     end
   end
 
@@ -2965,6 +3065,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
+      # The fixture makes tmp_dir non-empty, so activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
@@ -2982,6 +3087,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         "base_sha" => head_sha
       })
 
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
       html =
         view
         |> element("#task-form")
@@ -2993,12 +3102,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       assert html =~ "task started with ID:"
       task_id = cleanup_launched_task(html)
-
-      # cancel_task/1 is graceful+async: the wrapper runs its grace turns and
-      # only then persists the terminal status. Wait for the terminal status so
-      # the wrapper has stopped writing under tmp_dir/.genesis/ before the
-      # setup's on_exit File.rm_rf!(tmp_dir) runs.
-      wait_for_task_terminal(task_id)
 
       # Re-fetch AFTER the wait — the wrapper's final-status persistence may
       # rewrite the row (the codec round-trip of :foreign_repos is unchanged).
@@ -3423,7 +3526,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     # staging tests that launch a task (or exercise the enabled-form flow)
     # open a project first — exactly like the existing task_submit /
     # custom-agent tests.
+    #
+    # Every caller writes staging files (a .png/.mp3 fixture) into tmp_dir
+    # BEFORE activating, so detect_mode/1 resolves genesis_existing and the
+    # activation spawns the REAL `git remote get-url origin` GitHub-upstream
+    # check under tmp_dir — the spawn: "Could not cd" noise source. Stub the
+    # :github_runner seam here (all 5 callers stage files; none stubs its own
+    # GitHub seams) so this shared helper stays the single wiring point.
     defp open_staging_project(view, tmp_dir) do
+      stub_github_upstream_check!()
       clear_recent_projects()
 
       render_click(view, "open_project_palette", %{})
@@ -3746,6 +3857,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>>
       File.write!(png_path, png_bytes)
 
+      # The staged .png makes tmp_dir non-empty → activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
       open_staging_project(view, tmp_dir)
 
@@ -3760,9 +3876,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
                }
              ]
 
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — the invalid node_path kills the wrapper at
+      # validation, before any agent dispatch (no LLM calls, no worktrees, no
+      # agents — see the "task_submit clears the prompt" describe).
+      make_git_repo!(tmp_dir)
+
       # Launch an evolve task with a nonexistent node_path — the task launches
-      # successfully but the worker fails fast before any agent/LLM work (see
-      # the "task_submit clears the prompt" describe).
+      # successfully but the wrapper fails fast at validation.
       html =
         view
         |> element("#task-form")
@@ -3779,18 +3900,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       id = cleanup_launched_task(html)
 
-      # cancel_task/1 is graceful+async: the wrapper runs its grace turns and
-      # only then persists the terminal status. Wait for the terminal status so
-      # the wrapper has stopped writing under tmp_dir/.genesis/ before the
-      # setup's on_exit File.rm_rf!(tmp_dir) runs.
-      wait_for_task_terminal(id)
-
       # The persisted task opts carry the attachment as BASE64 (raw bytes never
       # cross the task-opts boundary — this is the whole point of encoding at
       # submit). The :attachments opt key is not codec-whitelisted, so it
       # round-trips as the STRING "attachments" — read tolerantly for either
-      # key shape. Re-fetch AFTER the wait — the wrapper's final-status
-      # persistence may rewrite the row.
+      # key shape.
       task = EvoGit.TaskRegistry.get_task(id)
       opts_map = Map.new(task.opts || [])
       attachments = Map.get(opts_map, "attachments") || Map.get(opts_map, :attachments)
@@ -3878,6 +3992,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
 
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1): the invalid node_path kills it at validation,
+      # before any agent dispatch (see "task_submit clears the prompt").
+      make_git_repo!(tmp_dir)
+
       html =
         view
         |> element("#task-form")
@@ -3905,6 +4024,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       view
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
 
       html =
         view
@@ -4022,6 +4145,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> render_submit(%{path: tmp_dir})
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
 
       html =
         view
@@ -4156,6 +4283,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ "Auto (by rules)"
       assert html =~ ~s(<option value="" selected)
 
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
       html =
         view
         |> element("#task-form")
@@ -4197,6 +4328,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       render_change(view, "select_model", %{"model_id" => "profile-a"})
       assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
 
       html =
         view
@@ -4240,6 +4375,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       html = render(view)
       refute html =~ "Auto (by rules)"
       assert html =~ ~s(<option value="profile-a" selected)
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
 
       html =
         view
@@ -4622,10 +4761,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       make_evolve_project(tmp_dir)
 
-      # A non-gitfile `.git` file makes the spawned Evolution worker fail fast
-      # in Runtime.ensure_repo (git init exits 128) — no agent dispatch, no
-      # LLM calls, nothing that can leak into the shared test runtime.
-      File.write!(Path.join(tmp_dir, ".git"), "not a gitfile\n")
+      # Seed an EMPTY (initialized, zero-commit) git repo so the spawned
+      # wrapper dies BEFORE any agent dispatch, by design: ensure_repo
+      # short-circuits on the pre-existing .git directory (no git init/add/
+      # commit ports, no repo mutation), then resolve_starting_commit fails
+      # on the unborn HEAD (rev-parse HEAD errors) — Evolution returns the
+      # error before node-path validation and run_mode, so no LLM is ever
+      # reachable (which matters because the scheduler's model profiles come
+      # from the boot-time ambient config, not the per-test XDG_CONFIG_HOME
+      # isolation). The fix flow builds its opts WITHOUT a node_path (it is
+      # not a task-form param), so "./" validation would always pass — the
+      # unborn-HEAD lever is what keeps this launch LLM-safe.
+      {_, 0} = System.cmd("git", ["init", tmp_dir], stderr_to_stdout: true)
 
       markdown =
         "# GitHub Issue #42: Fix the thing\n" <>
@@ -4673,6 +4820,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
+      # Register the on_exit cancel+delete cleanup, then wait for the terminal
+      # status BEFORE the test returns (mirrors cleanup_launched_task/1): the
+      # wrapper's brief life spawns git ports under tmp_dir, and a port still
+      # spawning when the setup on_exit File.rm_rf!(tmp_dir) fires prints
+      # uncatchable "spawn: Could not cd to <tmp_dir>" lines on stderr. On the
+      # unborn-HEAD repo the wrapper is already terminal long before this
+      # point, so the wait returns almost immediately.
       on_exit(fn ->
         # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
         try do
@@ -4687,6 +4841,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
           _ -> :ok
         end
       end)
+
+      wait_for_task_terminal(id)
 
       task = EvoGit.TaskRegistry.get_task(id)
 
