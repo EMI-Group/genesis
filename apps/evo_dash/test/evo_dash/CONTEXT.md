@@ -22,3 +22,20 @@ Unit/integration tests for the `:evo_dash` domain modules (`./apps/evo_dash/lib/
 - **`foreign_repos` appears NOWHERE** in node_context.ex or this test dir (rg: zero matches). Multi-repo opt threading is untested at the NodeContext layer.
 - **Remote `:erpc` delegation path largely untested here** — most tests call with `node()` (local direct); the remote transport envelope (`{:error, {kind, reason}}`) is exercised ONLY for `approval_response/3` (nonexistent-node transport failure). All other remote delegates are never exercised in this suite.
 - **Picker: no `:cancelled` result-kind test, no path normalization/existence assertions** — the fake always delivers literal `/fake/picked/dir` | `/fake/picked/file.txt` binaries; downstream path normalization is covered in `evo_dash_web/live/projects_live/project_flow_test.exs`, not here.
+
+## Notes for Agents — `async: false` rationale per suite (async-conversion map)
+
+Tests inside ONE module always run serially, so `async:` decides only whether a MODULE runs concurrently with OTHER modules — and `async: false` modules never run concurrently with `async: true` ones (ExUnit guarantees sync modules start only after every async module finished).
+
+Cross-module facts that decide flippability:
+- NO `async: true` module in `apps/evo_dash/test` calls `EvoDash.ActiveTasks.*`, `EvoDash.UpdateStatus.*`, `EvoDash.ChatHistory.*`, or `EvoDash.DirectoryPicker.pick/enabled?`.
+- The one hidden cross-module hook into a hub is `EvoDashWeb.ConnCase`'s setup — `EvoDash.ActiveTasks.reset()` + an `on_exit` reset (`support/conn_case.ex:47-48`) — executed by the two `async: true` ConnCase users (`error_html_test` / `error_json_test`, 2 tests each).
+- Nothing terminates/restarts `EvoDash.ChatHistory`, `EvoDash.UpdateStatus`, or `EvoDash.DirectoryPicker`; they are stable `EvoDash.Application` children.
+
+Per-suite blocker:
+- `active_tasks_test.exs` — the shared boot-created `:evo_dash_active_tasks` ETS table (application-owned, no process) read/written/reset directly; the only concurrent resetters are the two async ConnCase users above (a rare `put`→`get` wipe race). Flips safely only if ConnCase's unconditional `ActiveTasks.reset()` is dropped.
+- `chat_history_test.exs` — the shared `EvoDash.ChatHistory` table; the only other consumer is `home_live_test.exs` (async: false ⇒ never concurrent), so the flip is safe. The file's setup comment blaming an intra-module race is wrong (sibling tests in one module never run concurrently); the real constraint is "no concurrent chat creator", which holds.
+- `desktop_lifetime_test.exs` — process-global `EVOGIT_LIFETIME_PORT` (`System` env) + `:parent_stop_fun` (app env), snapshotted/restored in `setup`/`on_exit`; no other module reads either key. `EvoDash.DesktopLifetime` registers its module name, which only clashes if the app itself booted it (both env vars set at boot).
+- `directory_picker_test.exs` — process-global app env `:directory_picker` (`enabled: true`) + `:directory_picker_wx` = `EvoDash.DirectoryPicker.Wx.Fake`, the app-started picker's global busy flag, and `FakeWx` `:persistent_term` mode/gate. No async module touches the picker, but the override transiently voids the suite-wide "never pop a real dialog" guarantee (`config/test.exs:40` + `test_helper.exs:11`).
+- `node_context_test.exs` — MUST stay sync: `Supervisor.terminate_child/restart_child(EvoGit.Supervisor, EvoGit.Store | EvoGit.TaskRegistry)` (lines 9-10, 25-26) juggles the GLOBAL singletons on every test, plus a process-global `XDG_CONFIG_HOME` swap (lines 165-171). Same mechanism as the documented full-suite flake in `../CONTEXT.md` → "Known Issues".
+- `update_status_test.exs` — the shared `EvoDash.UpdateStatus` hub (reset in `setup`; its one PubSub subscription is on `"updates"`) plus app env `:update_notify_only_override` / `:desktop_release` / `EVOGIT_DESKTOP`; the other consumers (`system_live_test`, `live_hooks/update_status_test`) are async: false and reset the hub themselves ⇒ the flip is safe.
