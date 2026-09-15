@@ -230,11 +230,16 @@ defmodule EvoGit.Review do
   @doc """
   Merges the branch into the default merge target branch and deletes the branch.
   Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
+  Returns `{:error, :no_branch}` when `branch_name` is nil or blank.
   """
   def merge_branch(repo_path, branch_name) do
-    case default_merge_target(repo_path) do
-      {:ok, target} -> merge_branch(repo_path, branch_name, target)
-      {:error, _} = error -> error
+    if valid_branch_name?(branch_name) do
+      case default_merge_target(repo_path) do
+        {:ok, target} -> merge_branch(repo_path, branch_name, target)
+        {:error, _} = error -> error
+      end
+    else
+      {:error, :no_branch}
     end
   end
 
@@ -262,18 +267,23 @@ defmodule EvoGit.Review do
       list of conflicted file paths.
     * `{:error, reason}` — a missing/unresolvable ref, a conflicted merge with
       no detectable conflict files, or any other git failure (`{tag, output}`,
-      per the `EvoGit.Adapters.Git` return contract).
+      per the `EvoGit.Adapters.Git` return contract). `{:error, :no_branch}` is
+      returned when either `branch_or_sha` or `target_branch` is nil or blank.
   """
   def check_merge(repo_path, branch_or_sha, target_branch) do
-    with {:ok, branch_sha} <- Git.rev_parse(repo_path, branch_or_sha),
-         {:ok, target_sha} <- Git.rev_parse(repo_path, target_branch) do
-      if branch_sha == target_sha do
-        {:ok, :clean}
+    if valid_branch_name?(branch_or_sha) and valid_branch_name?(target_branch) do
+      with {:ok, branch_sha} <- Git.rev_parse(repo_path, branch_or_sha),
+           {:ok, target_sha} <- Git.rev_parse(repo_path, target_branch) do
+        if branch_sha == target_sha do
+          {:ok, :clean}
+        else
+          check_merge_with_merge_tree(repo_path, branch_sha, target_sha)
+        end
       else
-        check_merge_with_merge_tree(repo_path, branch_sha, target_sha)
+        error -> error
       end
     else
-      error -> error
+      {:error, :no_branch}
     end
   end
 
@@ -285,24 +295,29 @@ defmodule EvoGit.Review do
   is only deleted on a successful merge.
 
   Returns {:ok, merged_sha} or {:conflict, details} or {:error, reason}.
+  Returns `{:error, :no_branch}` when `branch_name` is nil or blank.
   """
   def merge_branch(repo_path, branch_name, target_branch) do
-    case Git.rev_parse(repo_path, branch_name) do
-      {:ok, commit_sha} ->
-        case Git.current_branch(repo_path) do
-          {:ok, current} ->
-            if target_branch == current do
-              merge_into_current(repo_path, branch_name, commit_sha)
-            else
-              merge_into_other(repo_path, branch_name, target_branch, current, commit_sha)
-            end
+    if valid_branch_name?(branch_name) do
+      case Git.rev_parse(repo_path, branch_name) do
+        {:ok, commit_sha} ->
+          case Git.current_branch(repo_path) do
+            {:ok, current} ->
+              if target_branch == current do
+                merge_into_current(repo_path, branch_name, commit_sha)
+              else
+                merge_into_other(repo_path, branch_name, target_branch, current, commit_sha)
+              end
 
-          other ->
-            other
-        end
+            other ->
+              other
+          end
 
-      other ->
-        other
+        other ->
+          other
+      end
+    else
+      {:error, :no_branch}
     end
   end
 
@@ -334,6 +349,14 @@ defmodule EvoGit.Review do
   """
   def list_branches(repo_path) do
     Git.list_branches(repo_path)
+  end
+
+  # A branch name / ref is usable only when it is a non-blank binary. A
+  # multi-repo task whose repo produced no changes carries `branch_name: nil`;
+  # such values must never reach the Git adapter, whose functions are
+  # `is_binary`-guarded and would raise a FunctionClauseError on nil.
+  defp valid_branch_name?(value) do
+    is_binary(value) and String.trim(value) != ""
   end
 
   # Merges the agent tip into the currently checked-out branch (no switching
@@ -472,11 +495,16 @@ defmodule EvoGit.Review do
   @doc """
   Rejects the changes by deleting the branch.
   Returns :ok or {:error, reason}.
+  Returns `{:error, :no_branch}` when `branch_name` is nil or blank.
   """
   def reject_branch(repo_path, branch_name) do
-    case Git.delete_branch(repo_path, branch_name) do
-      {:ok, _} -> :ok
-      {:error, {code, output}} -> {:error, {code, output}}
+    if valid_branch_name?(branch_name) do
+      case Git.delete_branch(repo_path, branch_name) do
+        {:ok, _} -> :ok
+        {:error, {code, output}} -> {:error, {code, output}}
+      end
+    else
+      {:error, :no_branch}
     end
   end
 
