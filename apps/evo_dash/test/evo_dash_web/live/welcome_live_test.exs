@@ -872,6 +872,23 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
 
     test "typed API key is saved before the connection test runs", %{conn: conn} do
+      # `save_typed_key_for_test/2` → `EvoGit.Config.save_credentials/1` registers
+      # the key process-wide via `ReqLLM.put_key/2` (a `:req_llm` app-env write
+      # that the per-test XDG_CONFIG_HOME isolation does NOT cover). Snapshot +
+      # restore it so the bogus key can never leak into a later test — notably
+      # the keyless "testing state renders the spinner" test, whose spawned
+      # `EvoGit.SystemCheck.llm_test/1` must keep failing fast at request-build
+      # time (no key) instead of issuing a real provider request.
+      previous_key = Application.get_env(:req_llm, :anthropic_api_key)
+
+      on_exit(fn ->
+        if previous_key do
+          Application.put_env(:req_llm, :anthropic_api_key, previous_key)
+        else
+          Application.delete_env(:req_llm, :anthropic_api_key)
+        end
+      end)
+
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})

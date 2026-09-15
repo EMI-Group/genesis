@@ -38,6 +38,49 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
+  # Mounts the Settings page and waits for the async node-data load that mount
+  # kicks off (`EvoDashWeb.SettingsLive.NodeData`, a supervised
+  # `EvoDash.TaskSupervisor` child) to have been SENT before returning. Its
+  # result handler re-assigns the MOUNT-TIME snapshot of `:custom_agents` /
+  # `:model_selection_script` / `:script_status` and resets `:editing_agent_id`
+  # / `:script_save_error` / `:script_test_results`, so a result landing after a
+  # test's own hook would clobber what that hook just set (the source of a rare
+  # full-suite flake: `script_test_results` reads back as `[]`).
+  #
+  # A task leaves the supervisor only AFTER its `send(parent, ...)` ran, so once
+  # the tasks observed at mount are gone, the result message is already queued
+  # in the LiveView's mailbox — and every request the test sends afterwards is
+  # therefore processed AFTER it, making the assertion race-free without a fixed
+  # sleep. Only the tasks present at mount are waited for, so an unrelated
+  # lingering task can never stall the suite.
+  defp mount_settings(conn, url \\ "/settings?category=agents") do
+    result = live(conn, url)
+    mounted_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor)
+    wait_until(fn -> Enum.all?(mounted_tasks, &(not Process.alive?(&1))) end, 2_000)
+    result
+  end
+
+  # Best-effort bounded poll on an observable end state: returns as soon as
+  # `fun` holds (or the deadline passes, leaving the previous behavior).
+  defp wait_until(fun, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_until(fun, deadline)
+  end
+
+  defp do_wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :ok
+
+      true ->
+        Process.sleep(5)
+        do_wait_until(fun, deadline)
+    end
+  end
+
   defp save_agent(view, attrs) do
     params =
       Map.merge(
@@ -59,7 +102,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
   describe "agents category rendering" do
     test "renders the custom agents and script editors", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/settings?category=agents")
+      {:ok, _view, html} = mount_settings(conn)
 
       # Add Agent button, empty state, script editor controls.
       assert html =~ "Add Agent"
@@ -71,7 +114,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "renders the sidebar entry", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/settings?category=agents")
+      {:ok, _view, html} = mount_settings(conn)
 
       # Pseudo-categories render as sidebar buttons with phx-value-category
       # (same shape as :remote_connections — no id="category-..." wrapper).
@@ -82,7 +125,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
   describe "custom agent CRUD" do
     test "add flow: draft form appears and saving persists the agent", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       html = render_hook(view, "add_custom_agent", %{})
       assert html =~ "New Agent"
@@ -99,7 +142,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "duplicate id is rejected with the duplicate message", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       save_agent(view, %{"name" => "Dup Agent"})
 
@@ -112,7 +155,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "empty name is rejected (core :missing_name)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       render_hook(view, "add_custom_agent", %{})
       html = save_agent(view, %{"name" => "  "})
@@ -122,7 +165,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "edit flow: form pre-fills and saving updates the agent", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
       save_agent(view, %{})
 
       html = render_hook(view, "edit_custom_agent", %{"id" => "code_reviewer"})
@@ -148,7 +191,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "delete flow: removes the agent", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
       save_agent(view, %{})
 
       html = render_hook(view, "delete_custom_agent", %{"id" => "code_reviewer"})
@@ -161,7 +204,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
   describe "model selection script" do
     test "saving a valid script persists it across page reloads", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       script = ~s(if agent.depth == 0, do: "default", else: "fast")
       html = render_hook(view, "save_model_selection_script", %{"script" => script})
@@ -175,13 +218,13 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # otherwise serve a stale compile) and remount to verify persistence.
       EvoGit.CustomAgents.reload()
 
-      {:ok, _view2, html2} = live(conn, "/settings?category=agents")
+      {:ok, _view2, html2} = mount_settings(conn)
       assert html2 =~ "agent.depth == 0"
       refute html2 =~ "Script error"
     end
 
     test "a broken script saves but surfaces the compile error", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       # Broken scripts save as :ok — the compile status only surfaces via
       # ModelSelector.status/0 after the reload.
@@ -194,12 +237,12 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
       EvoGit.CustomAgents.reload()
 
-      {:ok, _view2, html2} = live(conn, "/settings?category=agents")
+      {:ok, _view2, html2} = mount_settings(conn)
       assert html2 =~ "Script error"
     end
 
     test "test script button returns the 3 sample results for a valid script", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       # The script body is wrapped as `fn agent -> ... end` by the core, so a
       # constant script must be the quoted string literal `"fast"` (the bare
@@ -219,7 +262,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     end
 
     test "test script button shows error tuples for a broken script", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=agents")
+      {:ok, view, _html} = mount_settings(conn)
 
       render_hook(view, "save_model_selection_script", %{"script" => "this is ( not elixir"})
       html = render_hook(view, "test_model_selection_script", %{})
@@ -264,7 +307,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, html} = live(conn, "/settings?node=" <> id <> "&category=agents")
+      {:ok, view, html} = mount_settings(conn, "/settings?node=" <> id <> "&category=agents")
 
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
       assert assigns(view)[:custom_agents] == []

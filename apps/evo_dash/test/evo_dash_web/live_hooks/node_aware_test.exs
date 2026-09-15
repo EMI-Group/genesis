@@ -35,7 +35,6 @@ defmodule EvoDashWeb.NodeAwareTest do
   # manager in the shared EvoGit.RemoteConnection.Registry, so they must not
   # run concurrently with other test files.
   use ExUnit.Case, async: false
-  use ExUnit.Case, async: false
 
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo
