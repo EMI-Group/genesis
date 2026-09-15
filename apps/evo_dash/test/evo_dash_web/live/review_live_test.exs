@@ -3616,7 +3616,12 @@ defmodule EvoDashWeb.ReviewLiveTest do
                "Mark this review as read? It will be dismissed from pending reviews."
              ]
 
-      # The redundant overflow Ignore item is suppressed.
+      # NB: this fixture carries no archive metadata, so `show_export` is false
+      # and the overflow menu is never rendered at all — this refute is only a
+      # page-level sanity check, NOT a real exercise of the menu-item
+      # suppression. The actual `show_ignore: false` contract (menu rendered but
+      # WITHOUT the Ignore item) is pinned by the component-level test in the
+      # "component surface pins (repo_cards / task_actions)" describe block.
       refute html =~ "Ignore this review?"
 
       # The informational no-changes notice is still shown.
@@ -3724,6 +3729,52 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert menu =~ ~s(phx-click="extract_skills")
       assert menu =~ ~s(phx-click="ignore")
       refute menu =~ "Export JSON"
+    end
+
+    test "task_actions with no_changes promotes 'Mark as read' and drops the menu's Ignore item" do
+      base = %{
+        can_resume: false,
+        loading: false,
+        branch_exists: false,
+        has_pr: false,
+        pr_url: nil,
+        show_export: true,
+        export_url: "/tasks/x/export"
+      }
+
+      # `no_changes: true` promotes the dismissal to a PRIMARY "Mark as read"
+      # action (the `ignore` event). With `show_export: true` the overflow menu
+      # IS still rendered — but it MUST NOT carry the now-redundant Ignore item.
+      no_changes =
+        render_component(
+          &EvoDashWeb.ReviewComponents.task_actions/1,
+          Map.put(base, :no_changes, true)
+        )
+
+      assert no_changes =~ "Mark as read"
+
+      [button] = Floki.find(Floki.parse_document!(no_changes), "button[phx-click='ignore']")
+      assert Floki.text(button) =~ "Mark as read"
+
+      menu = overflow_menu(no_changes)
+      assert menu =~ "Export JSON"
+      refute menu =~ "Ignore this review?"
+      refute menu =~ ~s(phx-click="ignore")
+
+      # POSITIVE CONTROL: with the default `no_changes: false` the overflow menu
+      # still carries the plain Ignore item — proving the refute above keys off
+      # the promotion, not a missing menu/helper.
+      control =
+        render_component(
+          &EvoDashWeb.ReviewComponents.task_actions/1,
+          Map.put(base, :no_changes, false)
+        )
+
+      refute control =~ "Mark as read"
+
+      control_menu = overflow_menu(control)
+      assert control_menu =~ "Ignore this review?"
+      assert control_menu =~ ~s(phx-click="ignore")
     end
   end
 
