@@ -11,14 +11,7 @@ defmodule EvoGit.SystemCheckTest do
 
   setup do
     Nix.reset_state()
-    original = Application.get_env(:evo_git, :nix_enabled)
-    Application.put_env(:evo_git, :nix_enabled, false)
-
-    on_exit(fn ->
-      Nix.reset_state()
-      Application.put_env(:evo_git, :nix_enabled, original)
-    end)
-
+    on_exit(fn -> Nix.reset_state() end)
     :ok
   end
 

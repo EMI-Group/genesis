@@ -3,13 +3,6 @@ defmodule EvoGit.Sandbox.NoneTest do
 
   alias EvoGit.Sandbox.None
 
-  setup do
-    original = Application.get_env(:evo_git, :nix_enabled)
-    Application.put_env(:evo_git, :nix_enabled, false)
-    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
-    :ok
-  end
-
   describe "enabled?/0" do
     test "always returns false" do
       assert None.enabled?() == false
