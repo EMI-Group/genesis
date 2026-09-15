@@ -583,6 +583,70 @@ defmodule EvoGit.ReviewTest do
     end
   end
 
+  describe "nil/blank branch guards" do
+    test "merge_branch/2 returns {:error, :no_branch} for a nil or blank branch",
+         %{tmp_dir: tmp_dir} do
+      {:ok, _sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert Review.merge_branch(tmp_dir, nil) == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "") == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "   ") == {:error, :no_branch}
+    end
+
+    test "merge_branch/3 returns {:error, :no_branch} for a nil or blank branch",
+         %{tmp_dir: tmp_dir} do
+      {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+
+      assert Review.merge_branch(tmp_dir, nil, "main") == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "", "main") == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "   ", "main") == {:error, :no_branch}
+    end
+
+    test "merge_branch/3 returns {:error, :no_branch} for a nil or blank target",
+         %{tmp_dir: tmp_dir} do
+      {:ok, base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+      Git.create_branch(tmp_dir, "agent_branch", base_sha)
+
+      assert Review.merge_branch(tmp_dir, "agent_branch", nil) == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "agent_branch", "") == {:error, :no_branch}
+      assert Review.merge_branch(tmp_dir, "agent_branch", "   ") == {:error, :no_branch}
+    end
+
+    test "check_merge/3 returns {:error, :no_branch} for a nil or blank branch ref",
+         %{tmp_dir: tmp_dir} do
+      {:ok, _sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert Review.check_merge(tmp_dir, nil, "main") == {:error, :no_branch}
+      assert Review.check_merge(tmp_dir, "", "main") == {:error, :no_branch}
+      assert Review.check_merge(tmp_dir, "   ", "main") == {:error, :no_branch}
+    end
+
+    test "check_merge/3 returns {:error, :no_branch} for a nil or blank target ref",
+         %{tmp_dir: tmp_dir} do
+      {:ok, _sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert Review.check_merge(tmp_dir, "main", nil) == {:error, :no_branch}
+      assert Review.check_merge(tmp_dir, "main", "") == {:error, :no_branch}
+      assert Review.check_merge(tmp_dir, "main", "   ") == {:error, :no_branch}
+    end
+
+    test "reject_branch/2 returns {:error, :no_branch} for a nil or blank branch",
+         %{tmp_dir: tmp_dir} do
+      {:ok, _sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+      rename_current_branch(tmp_dir, "main")
+
+      assert Review.reject_branch(tmp_dir, nil) == {:error, :no_branch}
+      assert Review.reject_branch(tmp_dir, "") == {:error, :no_branch}
+      assert Review.reject_branch(tmp_dir, "   ") == {:error, :no_branch}
+    end
+  end
+
   test "review pre-merge reads show a non-empty diff and stay non-mutating while HEAD is on the original branch",
        %{tmp_dir: tmp_dir} do
     {:ok, base_sha} = commit_file(tmp_dir, "shared.txt", "base\n", "Initial commit")
