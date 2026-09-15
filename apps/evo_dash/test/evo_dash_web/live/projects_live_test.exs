@@ -420,6 +420,65 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  # Waits until every `EvoDash.TaskSupervisor` child started by THIS LiveView
+  # process has exited, then flushes their result messages into the view.
+  #
+  # `EvoDashWeb.ProjectsLive.AsyncLoad.maybe_spawn/2` starts ONE supervised
+  # task per connected `handle_params` run. Its result
+  # (`{:async_project_load, node, prev_node_id, path, results}`) is applied by
+  # `handle_result/5`, whose stale-guard compares ONLY the captured node and
+  # the active project path. A LOCAL mount spawns with `node = node()` and
+  # `path = nil`; after a `?node=` switch to a `:connecting` target
+  # `current_node` is STILL the local node and `active_project_path` is back to
+  # nil — so a mount-time result that lands AFTER the switch passes the guard
+  # and re-applies the mount-time `recent_projects`, clobbering the
+  # just-cleared assigns. Draining the mount-time tasks before the test drives
+  # events removes that race deterministically.
+  #
+  # `Task.Supervisor` records the spawning process in the child's `$callers`
+  # process-dictionary entry, so matching it against the view pid targets
+  # exactly this mount's tasks — a leftover task from another test is never
+  # waited on (and cannot block the mount). (Copied from
+  # review_live_test.exs / settings_live_test.exs, where the same pattern fixed
+  # an intermittent full-suite flake.)
+  defp await_mount_async_loads(view) do
+    view.pid
+    |> mount_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      # A task that already exited delivers its :DOWN immediately (reason
+      # :noproc); the send/2 that carries its result always happens BEFORE the
+      # process exits, so the message is queued by the time the monitor fires.
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+
+    _ = render(view)
+    :ok
+  end
+
+  defp mount_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_, pid, _, _} when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
+  end
+
   describe "dashboard without active project" do
     setup do
       # Clear all recent projects so auto-load doesn't activate a stale project
@@ -1669,6 +1728,16 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       )
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Settle the MOUNT-time async load before driving events: its result
+      # carries the mount-time `recent_projects` and is dropped only when the
+      # captured node/path changed — after the `?node=` switch below the
+      # captured local node + nil path still match (a `:connecting` target
+      # keeps `current_node` local and the switch clears the active path back
+      # to nil), so a late arrival would re-populate the just-cleared
+      # `recent_projects` with the local recents registered below. Draining it
+      # first makes the cleared-state assertions deterministic.
+      await_mount_async_loads(view)
 
       # Open a local project and fill in form state
       render_click(view, "open_project_palette", %{})
