@@ -5,6 +5,13 @@ defmodule EvoGit.Application do
 
   use Application
 
+  # Compile-time Mix env — safe in releases (Mix.env/0 is evaluated at compile
+  # time; in prod releases it resolves to :prod). Used to skip boot-time
+  # distribution enabling in the test environment, where a developer's real
+  # [node] enabled = true config would otherwise attempt to start
+  # :net_kernel/EPMD on a non-distributed BEAM.
+  @mix_env Mix.env()
+
   @impl true
   def start(_type, _args) do
     # Create ETS tables owned by the application process so they survive
@@ -56,7 +63,15 @@ defmodule EvoGit.Application do
     # This must happen before starting RemoteConnection-related children,
     # since RemoteConnection needs the local node in distributed mode to
     # connect to remote nodes via SSH tunnels.
-    EvoGit.Distribution.maybe_enable()
+    #
+    # Skipped in the test env: a developer's real [node] enabled = true config
+    # would make this attempt to start :net_kernel/EPMD, which fails with
+    # :nodistribution on a non-distributed BEAM and logs a spurious warning at
+    # app boot (before ExUnit starts, so it cannot be captured test-side).
+    # Tests that need distribution start it on demand via enable_for_remote/1.
+    if @mix_env != :test do
+      EvoGit.Distribution.maybe_enable()
+    end
 
     # Use the IANA tz database (bundled with the tz dep) as Elixir's global
     # time zone database so per-profile peak-hour `timezone` fields (IANA
