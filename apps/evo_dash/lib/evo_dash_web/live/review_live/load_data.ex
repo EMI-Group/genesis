@@ -118,15 +118,25 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
 
     rs = task.review_status
 
+    # The persisted review_status wins; otherwise the review is simply :open.
+    # NO forcing to :no_changes merely because the primary produced no branch —
+    # a task whose primary made no changes but whose FOREIGN repos DID gets a
+    # NORMAL/OPEN review state (and the fully-no-change task is dismissed via
+    # "Mark as read" — see `is_no_changes`).
     review_status =
-      cond do
-        primary.branch_name == nil -> :no_changes
-        rs != nil -> rs
-        not primary.branch_exists -> :open
-        true -> :open
+      if rs != nil do
+        rs
+      else
+        :open
       end
 
-    is_no_changes = primary.branch_name == nil && task.status in [:completed, :cancelled]
+    # "No changes anywhere": NO repo in @review_repos produced a branch. This is
+    # the single predicate driving the page's no-change dismissal (the "Mark as
+    # read" primary action in task_actions). Uses the shared component helper so
+    # the "has changes?" definition never diverges.
+    is_no_changes =
+      review_repos != [] and
+        not Enum.any?(review_repos, &EvoDashWeb.ReviewComponents.RepoCards.repo_has_changes?/1)
 
     # Persist SHAs when loading from branch (for future post-merge access).
     # PRIMARY-scoped by design: task.base_sha/commit_sha are the primary's;
