@@ -1,8 +1,14 @@
 defmodule EvoDashWeb.TaskExportControllerTest do
-  # async: true — this suite writes only uniquely-id'd `export_test_*` rows to
-  # the shared Store (cleaned up in on_exit) and isolates XDG_CONFIG_HOME per
-  # test; no async: true module reads either the Store or the config dir.
-  use EvoDashWeb.ConnCase, async: true
+  # async: false — the `?node=` describe isolates XDG_CONFIG_HOME so the
+  # `EvoGit.RemoteConnections.save/1` call cannot pollute the developer's real
+  # `~/.config/genesis`. That env var is process-global and is the ONLY config-dir
+  # seam (`EvoGit.Config.config_dir/0` derives the path from it; there is no
+  # injectable override), so an async module reading config concurrently could
+  # observe this suite's temp dir instead of the real one. The Store write is
+  # safe either way (uniquely-id'd `export_test_*` rows, deleted unconditionally
+  # in on_exit) — it is the env mutation that forces sync, exactly like
+  # page_controller_test / node_context_test.
+  use EvoDashWeb.ConnCase, async: false
 
   alias EvoGit.TaskRegistry
   alias EvoGit.TaskInfo
