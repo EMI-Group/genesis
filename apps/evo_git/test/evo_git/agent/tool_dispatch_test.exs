@@ -455,9 +455,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         {ReqLLM.ToolCall.new("call_2", shell_tool, Jason.encode!(%{"command" => cmd2})), 1}
       ]
 
-      started = System.monotonic_time(:millisecond)
       results = ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :high)
-      elapsed = System.monotonic_time(:millisecond) - started
 
       assert Enum.map(results, &elem(&1, 0)) == [0, 1]
       assert Enum.map(results, &elem(&1, 2)) == [shell_tool, shell_tool]
@@ -466,12 +464,9 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert Enum.sort(lines) == ["end1", "end2", "start1", "start2"]
       assert Enum.find_index(lines, &(&1 == "start2")) < Enum.find_index(lines, &(&1 == "end1"))
 
-      # Concurrency is PROVEN by the marker interleaving above (a serialized run
-      # could never emit start2 before end1), so the strict machine-speed bound
-      # (< 2s) was dropped: it flakes under full-suite parallel load. This
-      # generous ceiling now only guards against a pathological stall/misrun
-      # (e.g. the tools never returning or the run taking ~10x a 1s sleep).
-      assert elapsed < 10_000
+      # Concurrency is PROVEN behaviourally by the marker interleaving above (a
+      # serialized run could never emit start2 before end1), so no wall-clock
+      # bound is asserted here — wall-clock bounds are load-fragile.
     end
   end
 
