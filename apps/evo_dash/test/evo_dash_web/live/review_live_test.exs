@@ -4293,14 +4293,68 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  defp flush_review_load(view, timeout \\ 5000),
-    do:
-      EvoDashWeb.TestHelpers.flush_loading(
-        view,
-        "Loading review data...",
-        "timed out waiting for the async review-data load to finish",
-        timeout
-      )
+  defp flush_review_load(view, timeout \\ 5000) do
+    # Settle the mount-time async load BEFORE polling the loading marker: the
+    # review page spawns a supervised EvoDash.TaskSupervisor child at mount
+    # (ReviewLive.LoadData.load/3) whose result message is applied to the view
+    # when it arrives. Draining it first (see await_mount_async_loads/1) keeps
+    # the apply from landing mid-test and clobbering assigns a test has just
+    # driven past its first event — the same mount-funnel guarantee
+    # settings_live_test.exs uses.
+    await_mount_async_loads(view)
+
+    EvoDashWeb.TestHelpers.flush_loading(
+      view,
+      "Loading review data...",
+      "timed out waiting for the async review-data load to finish",
+      timeout
+    )
+  end
+
+  # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
+  # process has exited, then flushes their result messages into the view.
+  # Task.Supervisor records the spawning process in the child's `$callers`
+  # process-dictionary entry, so matching it against the view pid targets exactly
+  # this mount's tasks — a leftover task from another test is never waited on
+  # (and cannot block the mount). (Copied from settings_live_test.exs, where the
+  # same pattern fixed an intermittent full-suite flake.)
+  defp await_mount_async_loads(view) do
+    view.pid
+    |> mount_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      # A task that already exited delivers its :DOWN immediately (reason
+      # :noproc); the send/2 that carries its result always happens BEFORE the
+      # process exits, so the message is queued by the time the monitor fires.
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+
+    _ = render(view)
+    :ok
+  end
+
+  defp mount_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_, pid, _, _} when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
+  end
 
   # Polls the LOCAL EvoDash.ActiveTasks hub key ({nil, node()}) until the
   # connected-mount sidebar fetch has landed and written its snapshot (see
