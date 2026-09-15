@@ -1,14 +1,16 @@
 defmodule EvoGit.Runtime.PullRequestTest do
+  @moduledoc """
+  Mutates the process-global `XDG_CONFIG_HOME` env var (read by `EvoGit.Config`) → `async: false`.
+  """
   use ExUnit.Case, async: false
 
   alias EvoGit.Config
   alias EvoGit.Runtime.PullRequest
 
-  # Redirect XDG_CONFIG_HOME to a fresh temp dir (with NO genesis/config.toml)
-  # so that EvoGit.Config.resolve([:llm, :model]) resolves to nil. This keeps
-  # generate_title/2 on the pure nil-model path and prevents any accidental
-  # real-LLM call if the host machine has a configured model. The env var is
-  # process-global, hence async: false.
+  # Redirect XDG_CONFIG_HOME to a fresh temp dir (with NO genesis/config.toml) so
+  # EvoGit.Config.resolve([:llm, :model]) resolves to nil. This keeps generate_title/2
+  # on the pure nil-model path and prevents any accidental real-LLM call if the host
+  # machine has a configured model.
   setup do
     original_xdg = System.get_env("XDG_CONFIG_HOME")
 

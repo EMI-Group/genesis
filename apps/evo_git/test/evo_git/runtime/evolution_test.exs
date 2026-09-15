@@ -1,4 +1,9 @@
 defmodule EvoGit.Runtime.EvolutionTest do
+  @moduledoc """
+  Mutates process-global state observable by concurrently running modules → `async: false`:
+  the `XDG_CONFIG_HOME` env var (read by `EvoGit.Config`/`EvoGit.CustomAgents`), the live
+  scheduler's `model_profiles` (`AgentScheduler.update_config/1`), and the global `Logger` level.
+  """
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
