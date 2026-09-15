@@ -69,7 +69,8 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   `load_running_and_pending_tasks/1` is the delegating public entry point used
   by `on_mount/4`, `assign_node/2`, `reload_tasks/1`, and ProjectsLive's
   task-mutation event handlers. `show_review_button?/1` is public and
-  column-based (`branch_name`), so summary maps are NEVER read for `result`.
+  summary/map-based (reads `status`/`type`, never `result`), so summary maps
+  are NEVER read for `result`.
   """
 
   import Phoenix.Component, only: [assign: 3, assign_new: 3]
@@ -406,15 +407,19 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   end
 
   @doc """
-  Returns `true` when the completed task has a branch ready for review.
+  Returns `true` when the completed task is a review candidate.
 
-  Column-based: reads the denormalized `branch_name` summary column (populated
-  at write time from `result.branch_name` by `EvoGit.Store.Codec`). Must NEVER
-  read `result` from summary maps — the summary projection drops it.
+  Deliberately does NOT inspect the task result for changes (a task whose
+  primary repo is unchanged but whose writable foreign repos changed is still
+  reviewable). Any `:completed` task whose `review_status` is nil qualifies —
+  the caller gates on `review_status` — EXCEPT repo-less `:reflect` tasks,
+  which have no code review and are excluded explicitly.
+
+  Summary/map-based: reads only the summary contract keys (`status`, `type`).
+  Must NEVER read `result` from summary maps — the summary projection drops it.
   """
-  def show_review_button?(%{status: :completed, branch_name: branch})
-      when is_binary(branch) and branch != "",
-      do: true
+  def show_review_button?(%{status: :completed, type: :reflect}), do: false
+  def show_review_button?(%{status: :completed}), do: true
 
   def show_review_button?(_), do: false
 
