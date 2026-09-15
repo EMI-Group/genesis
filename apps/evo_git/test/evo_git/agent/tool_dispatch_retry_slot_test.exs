@@ -6,6 +6,12 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   whole retry sequence and `AgentScheduler.pause/0` takes effect at the next slot
   re-acquisition.
 
+  The production exponential-backoff sleeps (1s base) dominate this file's
+  runtime, so the setup shrinks the CALL-TIME app-env seam
+  `:llm_retry_backoff_base_ms` to `@retry_backoff_base_ms` and every wait below is
+  a real scheduler condition (`AgentScheduler.get_llm_slot_status/0` / `paused?/0`)
+  rather than a fixed sleep — see the synchronization notes above the constants.
+
   `async: false` — touches the global `EvoGit.AgentScheduler` GenServer (config
   update, pause/resume) and the shared scheduler ETS tables.
   """
@@ -17,6 +23,38 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
+
+  # --- Retry/slot synchronization constants -------------------------------
+
+  # Base (ms) of the production exponential-backoff between retry attempts,
+  # overridden per test through the call-time app-env seam
+  # `:llm_retry_backoff_base_ms` read by `ToolDispatch` at call time. 250ms is
+  # chosen so that (a) the retry sequences that used to cost ~3s / ~1s / ~7s
+  # collapse to ~0.75s / ~0.25s / ~1.75s, and (b) every backoff window stays far
+  # longer than the ~10-30ms a connection-refused attempt needs against a warmed
+  # Finch pool — and far longer than a scheduler round trip — so the
+  # deterministic waits below (anchored on slot/queue STATE, never on the clock)
+  # cannot race the window.
+  @retry_backoff_base_ms 250
+
+  # The model pool every retry test drives: a SINGLE-slot pool, pinned by the
+  # setup (`model_profiles: [%{id: "default", ..., concurrency: 1}]`).
+  @model_id "default"
+
+  # Agent id the TEST process uses to hold that only slot. Holding it makes the
+  # retrying agent's FIRST attempt provably QUEUED at slot acquisition — a
+  # persistent state, so there is no short "hold window" to catch by polling —
+  # and the release then grants that attempt inside the SAME scheduler state
+  # transition (`Slots.handle_release_llm_slot/2` removes the holder and grants
+  # the waiters together), so the first "slot free again" observation can only be
+  # that attempt's OWN release. Together the two replace the old
+  # `Process.sleep(150)`/"give the first attempt time to fail" guess with
+  # certainty.
+  @slot_owner_agent_id 99
+
+  # Agent id of the second agent that probes whether the retrying agent's slot is
+  # FREE between attempts (unchanged from the pre-optimization test).
+  @probe_agent_id 2
 
   # A model spec whose base_url points at a closed loopback port (1). ReqLLM
   # fails fast with a connection-refused transport error, so the OUTER retry loop
@@ -124,6 +162,71 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   defp re_raise({:raised, e}), do: raise(e)
   defp re_raise({:ok, result}), do: flunk("expected a raise, got: #{inspect(result)}")
 
+  # --- Deterministic slot/retry waits (no fixed sleeps) -------------------
+
+  # Grants `@model_id`'s only LLM slot to `agent_id` FROM THE TEST PROCESS — a
+  # real scheduler grant (no ETS agent row is needed: an unknown id resolves to
+  # the default model). Registered as an `on_exit` release so a failed assertion
+  # can never leak a holder that would wedge the single-slot pool for sibling
+  # tests.
+  defp acquire_llm_slot(agent_id) do
+    on_exit(fn -> AgentScheduler.release_llm_slot(agent_id) end)
+    assert :ok = AgentScheduler.request_llm_slot(agent_id, 5_000)
+  end
+
+  # Waits until `expected` agents are QUEUED for `@model_id`'s slot — the
+  # scheduler's `:blocked` path (paused scheduler or 0-capacity model), i.e.
+  # until an attempt is blocked at slot acquisition.
+  defp await_llm_waiting(expected, description) do
+    await_llm_slot(:waiting, expected, description)
+  end
+
+  # Waits until `@model_id`'s slot has no holder left.
+  defp await_llm_slot_free(description) do
+    await_llm_slot(:used, 0, description)
+  end
+
+  # Polls the live per-model slot status until `field` matches `expected`, or
+  # flunks with the last observed status.
+  #
+  # `used`/`waiting` are PERSISTENT scheduler states (a queued waiter stays
+  # queued until it is granted; a released slot stays released) — or a state the
+  # caller has arranged to be unreachable until it holds — so neither poll can
+  # race a short-lived window. The 1ms poll interval only bounds the detection
+  # latency (each status read is a µs-scale scheduler call).
+  defp await_llm_slot(field, expected, description, deadline_ms \\ 5_000) do
+    await_llm_slot_until(
+      field,
+      expected,
+      description,
+      System.monotonic_time(:millisecond) + deadline_ms
+    )
+  end
+
+  defp await_llm_slot_until(field, expected, description, deadline) do
+    status = llm_slot_status()
+
+    cond do
+      Map.fetch!(status, field) == expected ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk(
+          "timed out waiting for #{description}; " <>
+            "last #{@model_id} slot status: #{inspect(status)}"
+        )
+
+      true ->
+        Process.sleep(1)
+        await_llm_slot_until(field, expected, description, deadline)
+    end
+  end
+
+  defp llm_slot_status do
+    AgentScheduler.get_llm_slot_status()
+    |> Map.get(@model_id, %{used: 0, waiting: 0, capacity: 0})
+  end
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
 
@@ -142,6 +245,16 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
+    # Shrink the retry loop's exponential-backoff base through the call-time
+    # app-env seam `:llm_retry_backoff_base_ms` (read by
+    # `ToolDispatch.call_llm_with_retry/5` on every call) so each backoff sleep
+    # is ~250ms instead of ~1s — the retry sequences below shrink from
+    # ~3s / ~1s / ~7s to ~0.75s / ~0.25s / ~1.75s without touching lib. The value
+    # is restored (or removed when it had none) in `on_exit`, keeping the seam out
+    # of sibling tests.
+    original_backoff_base = Application.get_env(:evo_git, :llm_retry_backoff_base_ms)
+    Application.put_env(:evo_git, :llm_retry_backoff_base_ms, @retry_backoff_base_ms)
+
     # Single-slot "default" pool: while the retrying agent holds the slot NO other
     # agent can be granted — makes the between-retries release observable.
     AgentScheduler.update_config(
@@ -153,6 +266,12 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     on_exit(fn ->
       AgentScheduler.resume()
       AgentScheduler.update_config(model_profiles: original_profiles)
+
+      if original_backoff_base do
+        Application.put_env(:evo_git, :llm_retry_backoff_base_ms, original_backoff_base)
+      else
+        Application.delete_env(:evo_git, :llm_retry_backoff_base_ms)
+      end
 
       if original_api_key do
         Application.put_env(:req_llm, :openai_api_key, original_api_key)
@@ -168,26 +287,37 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     agent_id = 101
     register_agent(agent_id)
 
+    # The test process takes the model's only slot first, which forces the
+    # retrying agent's first attempt to QUEUE at slot acquisition (see the
+    # `@slot_owner_agent_id` notes above).
+    acquire_llm_slot(@slot_owner_agent_id)
+
     retrying = start_retrying_agent(agent_id, 2)
 
-    # Give the first attempt time to fail (connection refused, ~ms after the pool
-    # warm-up) and enter the ~1s exponential-backoff sleep.
-    Process.sleep(150)
+    assert await_llm_waiting(1, "the first retry attempt to queue for the model's slot")
+
+    # Releasing our hold grants that attempt within the SAME scheduler state
+    # transition, so the next "slot free" state observable is the attempt's OWN
+    # release: the retrying agent is now provably in its backoff sleep with the
+    # slot FREE.
+    AgentScheduler.release_llm_slot(@slot_owner_agent_id)
+    assert await_llm_slot_free("the retrying agent to release its slot into the backoff sleep")
 
     # While the retrying agent sleeps between attempts, a second agent must be
-    # able to acquire the model's only LLM slot. If the slot were held for the
-    # whole retry sequence (old behavior) this request would block past its
-    # 500ms timeout.
-    probe =
-      Task.async(fn ->
-        AgentScheduler.request_llm_slot(2, 500)
-      end)
+    # able to acquire the model's only LLM slot. The 5s bound inside
+    # `acquire_llm_slot/1` is only a safety net: the STRUCTURAL proof that the
+    # slot was free BETWEEN attempts is the re-queue assertion below — a slot held
+    # for the whole retry sequence (old behavior) never produces a second slot
+    # request.
+    acquire_llm_slot(@probe_agent_id)
 
-    assert Task.await(probe, 2_000) == :ok
+    # The retrying agent's NEXT attempt queues behind the probe: it re-requests
+    # the slot it released instead of holding it across the retry sequence.
+    assert await_llm_waiting(1, "the next retry attempt to re-request the model's slot")
 
     # Release the probe's slot so the retrying agent can proceed with its next
     # attempt once its sleep ends.
-    AgentScheduler.release_llm_slot(2)
+    AgentScheduler.release_llm_slot(@probe_agent_id)
 
     # All retries exhaust (connection refused is not a rate limit), returning
     # {:error, reason} — the caller (prompt_until_tools_or_limit/5) raises on this.
@@ -198,20 +328,39 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     agent_id = 102
     register_agent(agent_id)
 
-    # max_retries = 1 → two attempts total: first attempt, ~1s sleep, final
-    # attempt. Without the fix (slot held across the whole sequence) the task
-    # finishes in ~1s regardless of pause.
-    retrying = start_retrying_agent(agent_id, 1)
+    # Same deterministic hand-off as in the previous test: the test process holds
+    # the only slot so the first attempt is provably queued, and the release
+    # (which grants it atomically) is followed by the attempt's own release.
+    acquire_llm_slot(@slot_owner_agent_id)
 
-    # Let the first attempt fail fast and enter the ~1s backoff sleep, then pause.
-    Process.sleep(150)
+    # max_retries = 2 → three attempts total. The extra attempt buys the headroom
+    # this test needs: the pause below must land before the retrying agent has
+    # spent its whole retry stream (its remaining backoff windows are the grace
+    # period for the pause). Without the fix (slot held across the whole
+    # sequence) the agent never re-requests the slot, so the wait below can never
+    # be satisfied regardless of how many attempts are left.
+    retrying = start_retrying_agent(agent_id, 2)
+
+    assert await_llm_waiting(1, "the first retry attempt to queue for the model's slot")
+
+    AgentScheduler.release_llm_slot(@slot_owner_agent_id)
+    assert await_llm_slot_free("the retrying agent to release its slot into the backoff sleep")
+
+    # The retrying agent has RUN an attempt and is now sleeping between attempts —
+    # the pause lands BETWEEN attempts, as the old fixed `Process.sleep(150)` +
+    # pause aimed to arrange.
     AgentScheduler.pause()
     assert AgentScheduler.paused?()
 
-    # After the first sleep elapses, the agent's next attempt blocks on slot
-    # re-acquisition (queued as :blocked) instead of retrying. The task must
-    # still be alive well past the point where the un-paused retry would finish.
-    assert Task.yield(retrying, 1_500) == nil
+    # Its next attempt blocks on slot RE-acquisition (queued as :blocked) instead
+    # of retrying.
+    assert await_llm_waiting(1, "the next retry attempt to be blocked at slot re-acquisition")
+
+    # The task is still alive: it is blocked in the scheduler's waiting queue, not
+    # finished (this replaces the old `Task.yield(retrying, 1_500)` fixed wait —
+    # a queued, unanswered request cannot complete, so no wall-clock bound is
+    # needed to prove it).
+    assert Task.yield(retrying, 0) == nil
 
     # Resume: the blocked slot request is granted and the retry stream exhausts.
     AgentScheduler.resume()
@@ -240,10 +389,14 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
     try do
       # A 0-capacity slot request is ENQUEUED (blocking-like-paused), not
-      # rejected: the task blocks at slot acquisition instead of raising the
-      # old "0 LLM slots" error, and no retry has run yet (Task.yield returns
-      # nil because the task is still alive, not finished).
-      assert Task.yield(task, 500) == nil
+      # rejected: the request shows up in the model's waiting queue instead of
+      # raising the old "0 LLM slots" error.
+      assert await_llm_waiting(1, "the 0-capacity slot request to be enqueued, not rejected")
+
+      # No retry has run yet: the task is blocked at slot acquisition (this
+      # replaces the old `Task.yield(task, 500) == nil` fixed wait — the enqueued,
+      # unanswered request proves the task cannot have completed an attempt).
+      assert Task.yield(task, 0) == nil
 
       # Restore capacity: the end-of-update grant_pending_on_resume sweep
       # grants the queued slot request and the retry sequence runs against the
