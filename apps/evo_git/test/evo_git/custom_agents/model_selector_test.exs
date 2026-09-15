@@ -1,6 +1,12 @@
 defmodule EvoGit.CustomAgents.ModelSelectorTest do
   use ExUnit.Case, async: false
 
+  # async: false — this module mutates two pieces of BEAM-global state that
+  # other concurrently running test modules read: the `XDG_CONFIG_HOME` env
+  # var (consumed by `EvoGit.Config.config_dir/0` / `EvoGit.CustomAgents`) and
+  # the process-wide `:persistent_term` compile cache cleared by
+  # `EvoGit.CustomAgents.ModelSelector.invalidate/0`.
+
   # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
   # touches the real ~/.config/genesis/ directory.
   setup do
