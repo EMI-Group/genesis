@@ -16,9 +16,11 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
 
   Three platform-specific scripts are provided per build system:
 
-    - **Linux** — uses GNU `cp -R --reflink=auto` (copy-on-write: fast on
-      btrfs/xfs, falls back to a full copy otherwise).
-    - **macOS** — uses BSD `cp -cR` (`-c` = `clonefile`, APFS copy-on-write).
+    - **Linux** — uses GNU `cp -R --preserve=timestamps --reflink=auto`
+      (copy-on-write: fast on btrfs/xfs, falls back to a full copy otherwise;
+      `--preserve=timestamps` keeps source mtimes so build caches stay valid).
+    - **macOS** — uses BSD `cp -cRp` (`-c` = `clonefile`, APFS copy-on-write;
+      `-p` preserves mode/ownership/timestamps).
     - **Windows** — uses PowerShell `Copy-Item -Recurse -Force`.
 
   ## Environment Variables
@@ -39,20 +41,20 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       #!/usr/bin/env bash
       # Copy Elixir dependencies and build artifacts
       if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
       fi
       if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
       #!/usr/bin/env bash
       # Copy Elixir dependencies and build artifacts
       if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-        cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
       fi
       if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-        cp -cR "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -73,14 +75,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       #!/usr/bin/env bash
       # Copy Node.js dependencies
       if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
       #!/usr/bin/env bash
       # Copy Node.js dependencies
       if [ -d "$SOURCE_REPO_PATH/node_modules" ]; then
-        cp -cR "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/node_modules" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -98,14 +100,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       #!/usr/bin/env bash
       # Copy Python virtual environment
       if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
       #!/usr/bin/env bash
       # Copy Python virtual environment
       if [ -d "$SOURCE_REPO_PATH/.venv" ]; then
-        cp -cR "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/.venv" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -123,14 +125,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       #!/usr/bin/env bash
       # Copy Rust build artifacts
       if [ -d "$SOURCE_REPO_PATH/target" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
       #!/usr/bin/env bash
       # Copy Rust build artifacts
       if [ -d "$SOURCE_REPO_PATH/target" ]; then
-        cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -148,14 +150,14 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       #!/usr/bin/env bash
       # Copy Go vendored dependencies
       if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
-        cp -R --reflink=auto "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
+        cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       macos_script: """
       #!/usr/bin/env bash
       # Copy Go vendored dependencies
       if [ -d "$SOURCE_REPO_PATH/vendor" ]; then
-        cp -cR "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
+        cp -cRp "$SOURCE_REPO_PATH/vendor" "$TARGET_WORKTREE_PATH/"
       fi
       """,
       windows_script: """
@@ -182,8 +184,9 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
     - `:id` — atom identifier (`:elixir`, `:node`, `:python`, `:rust`, `:go`, `:none`)
     - `:name` — display name for CLI menus
     - `:dirs` — list of directories the script copies
-    - `:linux_script` — shell script for Linux (GNU `cp --reflink=auto`)
-    - `:macos_script` — shell script for macOS (BSD `cp -c`)
+    - `:linux_script` — shell script for Linux (GNU
+      `cp -R --preserve=timestamps --reflink=auto`)
+    - `:macos_script` — shell script for macOS (BSD `cp -cRp`)
     - `:windows_script` — PowerShell script for Windows
   """
   @spec build_systems() :: [map()]
