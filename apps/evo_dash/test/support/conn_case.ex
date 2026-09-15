@@ -32,6 +32,20 @@ defmodule EvoDashWeb.ConnCase do
   end
 
   setup _tags do
+    # `EvoDash.ActiveTasks` is a boot-created (idempotent), process-wide public
+    # ETS table (`:evo_dash_active_tasks`, owned by the long-lived application
+    # process) shared by ALL suites in one `mix test` run. A whole-page mount
+    # through ConnCase seeds the sidebar from it, so reset it here: a snapshot
+    # (or junk sentinel value) leaked by an earlier suite would otherwise be
+    # inherited by a later mount — `reset/0` is a no-op before the app boots.
+    # Reset again in `on_exit` so this suite's own writes never leak onward.
+    #
+    # Safe with the `async: true` ConnCase users (error_html_test /
+    # error_json_test): ExUnit runs `async: false` modules only after all
+    # `async: true` ones finish (never concurrently), and those two async users
+    # are pure render tests that never read the hub.
+    EvoDash.ActiveTasks.reset()
+    on_exit(fn -> EvoDash.ActiveTasks.reset() end)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end
