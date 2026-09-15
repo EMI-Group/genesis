@@ -78,6 +78,7 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
 
       assert [form] = Floki.find(parse(html), ~s(form[phx-submit="save_model_profile"]))
       assert attribute(form, "phx-change") == ["model_profile_form_change"]
+      assert attribute(form, "id") == ["model-profile-edit-form"]
     end
 
     test "timezone input renders with placeholder and pre-fills the saved timezone" do
