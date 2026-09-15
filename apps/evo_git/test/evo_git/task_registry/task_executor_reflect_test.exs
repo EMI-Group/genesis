@@ -17,6 +17,11 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   profiles emptied, `AgentScheduler.run_agent/1` replies
   `{:error, :llm_not_configured}` immediately instead of dispatching a real
   LLM-backed agent.
+
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
+  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
+  re-registers them under their global names, so a concurrently running module
+  would observe the swapped singletons.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -54,10 +59,17 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   describe "end-to-end :reflect task via TaskRegistry" do
     test "start_task(:reflect, opts) without :path completes :failed with llm_not_configured" do
       without_model_profiles(fn ->
+        # Subscribe BEFORE starting the task so the registry's `{:task_updated,
+        # id, :running, node}` and terminal broadcasts cannot be missed. The wait
+        # is then driven by the PubSub event instead of polling.
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
+
         assert {:ok, %TaskInfo{} = task} =
                  TaskRegistry.start_task(:reflect, objective: "introspect")
 
-        task = wait_for_terminal(task.id)
+        assert :ok = await_terminal_status(task.id)
+
+        task = TaskRegistry.get_task(task.id)
         assert task.status == :failed
         assert task.result == {:error, :llm_not_configured}
       end)
@@ -122,23 +134,22 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
     end
   end
 
-  # Polls TaskRegistry.get_task/1 until the task reaches a terminal status
-  # (:completed/:failed/:cancelled), bounded to ~5s. The :reflect wrapper
-  # completes almost instantly once the scheduler replies (empty model
-  # profiles), so this is reliable. The poll runs INSIDE
-  # without_model_profiles/1 so the profiles are only restored after the
-  # wrapper has finished.
-  defp wait_for_terminal(task_id, attempts \\ 100) do
-    case TaskRegistry.get_task(task_id) do
-      %TaskInfo{status: status} when status in [:completed, :failed, :cancelled] ->
-        TaskRegistry.get_task(task_id)
+  # Waits for the registry's terminal `"tasks"` broadcast for `task_id`
+  # (:completed/:failed/:cancelled), bounded to 5s. The registry also emits a
+  # non-terminal `{:task_updated, id, :running, node}` first, so non-terminal
+  # statuses for the SAME task id are ignored; broadcasts for other task ids
+  # cannot match the pinned `^task_id`. Must be called from a process already
+  # subscribed to `"tasks"` and INSIDE without_model_profiles/1 so the profiles
+  # are only restored after the wrapper has finished.
+  defp await_terminal_status(task_id) do
+    receive do
+      {:task_updated, ^task_id, status, _node} when status in [:completed, :failed, :cancelled] ->
+        :ok
 
-      _ when attempts > 0 ->
-        Process.sleep(50)
-        wait_for_terminal(task_id, attempts - 1)
-
-      _ ->
-        flunk("task #{task_id} did not reach a terminal status in time")
+      {:task_updated, ^task_id, _status, _node} ->
+        await_terminal_status(task_id)
+    after
+      5_000 -> flunk("task #{task_id} did not reach a terminal status in time")
     end
   end
 end

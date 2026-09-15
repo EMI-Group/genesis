@@ -19,6 +19,11 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
   - a late wrapper `{ref, result}` / `{:DOWN, ...}` after resolution is a NO-OP
     (the task_refs entry is gone → row preserved, no `:completed` broadcast),
   - `false` disables the watchdog entirely (the row stays `:finalizing`).
+
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
+  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
+  re-registers them under their global names, so a concurrently running module
+  would observe the swapped singletons.
   """
 
   @env_key :finalizing_watchdog_grace_minutes
@@ -192,8 +197,14 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       assert after_late.result == watchdog_result
       assert after_late.finished_at == finished_at
 
-      # The late result must never surface as a :completed broadcast.
-      refute_receive {:task_updated, ^task_id, :completed, _}, 150
+      # The late result must never surface as a :completed broadcast. The
+      # preceding `TaskRegistry.list_tasks/0` is a synchronous GenServer.call to
+      # the SAME registry process, so both late messages are guaranteed to have
+      # been handled before it returns; any broadcast those handlers emitted was
+      # sent registry→test-process BEFORE the call reply (same sender→receiver ⇒
+      # FIFO ordered), hence it is already in our mailbox. A zero-timeout check
+      # is therefore complete evidence and needs no extra wall-clock window.
+      refute_receive {:task_updated, ^task_id, :completed, _}, 0
 
       cleanup_process(wrapper_pid)
     end
@@ -202,6 +213,8 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       set_grace(false)
       task_id = "watchdog_disabled_#{System.unique_integer([:positive])}"
       seed_task(task_id, :running)
+
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
@@ -214,11 +227,12 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :finalizing
 
-      # Comfortably longer than an immediate-fire watchdog would need; with the
-      # feature disabled the row must remain :finalizing (this distinguishes
-      # `false` from the default-60-min timer).
-      Process.sleep(300)
-      TaskRegistry.list_tasks()
+      # With grace `false` NO timer is scheduled at all, so the quiet window only
+      # needs to outlast an immediate (0-minute) timer's fire latency — 150ms is
+      # far beyond that. `refute_receive` makes the check behavioural (no
+      # `:failed` broadcast was emitted) instead of a blind sleep, covering BOTH
+      # the broadcast shape and the persisted row (re-asserted below).
+      refute_receive {:task_updated, ^task_id, :failed, _}, 150
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :finalizing
