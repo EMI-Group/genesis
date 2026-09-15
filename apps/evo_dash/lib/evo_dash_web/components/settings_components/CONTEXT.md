@@ -28,7 +28,9 @@ None — leaf directory (eleven module files).
 
 ## Notes for Agents — Model Profiles Editor: Peak Hours (optional)
 
-The profile edit form (`ModelProfilesEditor.model_profile_edit_form/1`, private) renders an optional **"Peak hours"** section directly under the concurrency field. Each `[[llm.models]]` profile may carry two OPTIONAL fields (absent/nil/empty = disabled; the parse side omits the keys from the profile map so TOML omits them):
+The profile edit form (`ModelProfilesEditor.model_profile_edit_form/1`, private) carries the STABLE constant DOM id `model-profile-edit-form` (required by LiveView for forms with `phx-change`; the editor renders this form for at most ONE profile at a time — only the profile whose id equals `@editing_profile_id` — so the constant id is unique on the page).
+
+It renders an optional **"Peak hours"** section directly under the concurrency field. Each `[[llm.models]]` profile may carry two OPTIONAL fields (absent/nil/empty = disabled; the parse side omits the keys from the profile map so TOML omits them):
 
 - `peak_concurrency` — non-negative int, concurrency used during peak hours (`0` = hard pause — zero LLM slots during peak). `<input type="number" name="peak_concurrency" min="0">`; pre-filled via `profile_param/2` (atom-or-string key tolerant), blank (`""`) when absent.
 - `peak_hours` — list of daily time-window maps `[%{start: "HH:MM", end: "HH:MM"}]`, 24h local time. Rendered as indexed rows of `<input type="time">` pairs named `peak_hours[<index>][start]` / `peak_hours[<index>][end]` (Phoenix parses these into the nested map the parse side consumes). Absent/`[]` → a single blank row so users can start adding.
