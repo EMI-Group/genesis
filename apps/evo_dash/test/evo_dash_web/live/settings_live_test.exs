@@ -1838,6 +1838,21 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # through EvoGit.RemoteNode.llm_test/3 when remote_config is true (testing
     # the REMOTE node's LLM) or EvoGit.SystemCheck.llm_test/2 when false
     # (testing the LOCAL LLM). Both branches set status to :testing.
+    #
+    # NOTE on the profile fixture: these tests only assert the handler's
+    # SYNCHRONOUS behaviour (status → :testing + a spawned task). The handler
+    # spawns a detached `Task.Supervisor` child that runs the real
+    # `SystemCheck.llm_test/2`, which would make an actual streaming provider
+    # request. That task outlives the test, so its ReqLLM
+    # "Streaming provider/API request failed" warning is logged after ExUnit's
+    # log-capture window and leaks into the console as test noise (and the
+    # request is pure waste in a unit test). An EMPTY model value still takes
+    # the handler's "profile has a model" branch (`""` is truthy) but makes
+    # `SystemCheck.guarded_llm_test/3` short-circuit to
+    # `{:error, "No LLM model configured"}` BEFORE any network I/O — so no
+    # request goes out and nothing is logged, while every assertion (and its
+    # intent: the found-profile branch proceeds, unlike the `model: nil` case
+    # below) is preserved.
 
     test "test_llm handler routes through remote node when remote_config is true" do
       alias EvoDashWeb.SettingsLive
@@ -1845,7 +1860,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
         |> put_in([:llm, :models], [
-          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+          %{id: "test_profile", model: ""}
         ])
 
       socket = %Phoenix.LiveView.Socket{
@@ -1875,7 +1890,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       file_config =
         EvoDashWeb.SettingsLive.ConfigIO.load_file_config()
         |> put_in([:llm, :models], [
-          %{id: "test_profile", model: "anthropic:claude-sonnet-4-20250514"}
+          %{id: "test_profile", model: ""}
         ])
 
       socket = %Phoenix.LiveView.Socket{
