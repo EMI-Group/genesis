@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.ToolsTest do
+  @moduledoc """
+  `async: false` — the web-search tests mutate the BEAM-global `XDG_CONFIG_HOME`
+  env var (via the private `with_isolated_config/1` helper) and the `:req_llm`
+  application env, both of which are observable by concurrently running modules.
+  """
+
   use ExUnit.Case
   alias EvoGit.Agent.Tools
 

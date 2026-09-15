@@ -1,21 +1,26 @@
 defmodule EvoGit.Agent.CancelGraceTest do
-  # Graceful-cancellation grace-period behavior for the agent Runner loop.
-  #
-  # Covers the runner-side contract of graceful cancellation (spec D2 + D3):
-  #   - the ETS `cancel_requested` flag is drained at the top of `loop/1` and
-  #     the agent enters cancel-grace (budget 3, no extra recovery message —
-  #     the cancel message arrives via the pending_user_messages drain);
-  #   - the `grace_turns_remaining` budget semantics: 3 for cancel, 1 for
-  #     turn-limit (which keeps its exact pre-budget behavior);
-  #   - the budget-aware grace hard-stop checks;
-  #   - `maybe_recovery_auto_commit` fires on cancel-grace entry (shared with
-  #     turn-limit recovery);
-  #   - `complete_task` during cancel-grace succeeds with a dirty workspace
-  #     (the grace dirty-check skip).
-  #
-  # `async: false` because the ETS-based tests manipulate the global named
-  # `:evogit_agent_state` / `:evogit_sched_meta` tables (same convention as
-  # `agent_scheduler/store_test.exs`).
+  @moduledoc """
+  Graceful-cancellation grace-period behavior for the agent Runner loop.
+
+  Covers the runner-side contract of graceful cancellation (spec D2 + D3):
+    - the ETS `cancel_requested` flag is drained at the top of `loop/1` and
+      the agent enters cancel-grace (budget 3, no extra recovery message —
+      the cancel message arrives via the pending_user_messages drain);
+    - the `grace_turns_remaining` budget semantics: 3 for cancel, 1 for
+      turn-limit (which keeps its exact pre-budget behavior);
+    - the budget-aware grace hard-stop checks;
+    - `maybe_recovery_auto_commit` fires on cancel-grace entry (shared with
+      turn-limit recovery);
+    - `complete_task` during cancel-grace succeeds with a dirty workspace
+      (the grace dirty-check skip).
+
+  `async: false` — the ETS-based tests mutate the global named
+  `:evogit_agent_state` / `:evogit_sched_meta` / `:evogit_archive_records`
+  tables by calling `:ets.delete_all_objects/1` on them, and several tests use
+  the fixed `agent_id = 1` (a process-shared key); both make these tests
+  unsafe to run concurrently with other modules touching those tables (same
+  convention as `agent_scheduler/store_test.exs`).
+  """
   use ExUnit.Case, async: false
 
   @moduletag :tmp_dir

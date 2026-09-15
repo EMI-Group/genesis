@@ -1,5 +1,11 @@
 defmodule EvoGit.Agent.CoderTest do
-  use ExUnit.Case
+  @moduledoc """
+  `async: true` — every test writes and reads only inside its own `:tmp_dir`
+  fixture directory via `EvoGit.Agent.ContextBuilder.build_dynamic_context/1`;
+  no shared/global state is touched.
+  """
+
+  use ExUnit.Case, async: true
   alias EvoGit.Agent
 
   @moduletag :tmp_dir

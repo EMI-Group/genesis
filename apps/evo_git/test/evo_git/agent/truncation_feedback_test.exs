@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.TruncationFeedbackTest do
+  @moduledoc """
+  `async: true` — pure `EvoGit.Agent.TruncationFeedback` helpers
+  (`is_rate_limit_error?/1`, `append_truncation_feedback/3`); no shared/global
+  state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.TruncationFeedback

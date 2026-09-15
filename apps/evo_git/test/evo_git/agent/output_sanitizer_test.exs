@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.OutputSanitizerTest do
+  @moduledoc """
+  `async: true` — pure string transforms in `EvoGit.Agent.OutputSanitizer`
+  (`strip_ansi/1`, `strip_progress_bars/1`, `truncate/3`,
+  `sanitize_and_truncate/3`); no shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.OutputSanitizer
