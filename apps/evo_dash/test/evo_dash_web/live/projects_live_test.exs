@@ -346,6 +346,27 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     path
   end
 
+  # Stubs the async GitHub-upstream check (Project.GitHub.maybe_check/1
+  # spawns it on every non-genesis_new project activation, and the default
+  # runner shells out to `git remote get-url origin` in the project path).
+  # Tests whose tmp_dir is non-empty (foreign-repo fixtures, staged .png
+  # files) activate as genesis_existing/evolve_simple and would otherwise
+  # spawn a REAL git port under tmp_dir that can still be starting when the
+  # setup on_exit rm_rf! fires — ERTS prints an uncatchable
+  # "spawn: Could not cd to <tmp_dir>" line. These tests assert nothing
+  # GitHub-related, so the stub is pure noise elimination.
+  defp stub_github_upstream_check! do
+    Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
+      {:error, :no_github_upstream}
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :github_runner)
+    end)
+
+    :ok
+  end
+
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as welcome_live_test.exs / settings_live_test.exs).
