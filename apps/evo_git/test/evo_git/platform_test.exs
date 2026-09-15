@@ -1,4 +1,7 @@
 defmodule EvoGit.PlatformTest do
+  # async: false — the data-dir/config-dir tests mutate the BEAM-global
+  # System.put_env ("XDG_CONFIG_HOME" / "XDG_DATA_HOME"), which every
+  # concurrently running module would observe. Serializing avoids interference.
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
   alias EvoGit.Platform
