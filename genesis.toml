@@ -21,20 +21,22 @@
 [worktree]
 script.linux = '''#!/usr/bin/env bash
 # Copy Elixir dependencies and build artifacts
+# Preserve timestamps so Mix's mtime-based build cache stays warm.
 if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-  cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+  cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
 fi
 if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-  cp -R --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+  cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
 fi
 '''
 script.macos = '''#!/usr/bin/env bash
 # Copy Elixir dependencies and build artifacts
+# Preserve timestamps so Mix's mtime-based build cache stays warm.
 if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-  cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+  cp -cRp "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
 fi
 if [ -d "$SOURCE_REPO_PATH/_build" ]; then
-  cp -cR "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+  cp -cRp "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
 fi
 '''
 script.windows = '''# Copy Elixir dependencies and build artifacts
