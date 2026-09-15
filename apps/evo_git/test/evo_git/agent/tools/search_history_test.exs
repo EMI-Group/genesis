@@ -1,5 +1,10 @@
 defmodule EvoGit.Agent.Tools.SearchHistoryTest do
-  use ExUnit.Case
+  @moduledoc """
+  `async: true` — `EvoGit.Agent.Tools.execute/4` "search_history" against a
+  per-test git repo in the ExUnit `:tmp_dir` fixture; no BEAM-global state.
+  """
+
+  use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools
 
   @moduletag :tmp_dir

@@ -6,6 +6,9 @@ defmodule EvoGit.Agent.Tools.SpawnInvestigatorProbeTest do
 
   Pure filesystem tests over real tmp git fixtures; no LLM, no store, no
   TaskRegistry.
+
+  `async: true` — each test builds its own fixture in the ExUnit `:tmp_dir`;
+  the probe is read-only and touches no BEAM-global state.
   """
 
   use ExUnit.Case, async: true

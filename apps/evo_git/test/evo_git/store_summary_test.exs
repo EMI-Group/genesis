@@ -42,24 +42,52 @@ defmodule EvoGit.StoreSummaryTest do
   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
   """
 
-  # Same isolation pattern as store_test.exs: stop the app's Store/TaskRegistry,
-  # start an isolated Store on a temp SQLite file, restore on exit.
-  setup do
+  # Same isolation pattern as store_test.exs: the production Store/TaskRegistry
+  # are owned by this module for its whole run — terminated ONCE here
+  # (TaskRegistry depends on Store) and restored after the last test. This
+  # module is `async: false` because it mutates that shared production
+  # supervision tree.
+  #
+  # It also builds a schema-complete SQLite TEMPLATE once. Creating a brand-new
+  # SQLite file + running the DDL costs ~24ms per test; copying that
+  # checkpointed template costs ~2ms. Each test still gets its own isolated DB
+  # file with the identical schema, so isolation semantics are unchanged.
+  setup_all do
+    unique = System.unique_integer([:positive])
+    template = Path.join(System.tmp_dir!(), "evogit_summary_template_#{unique}.sqlite")
+    template_name = :"summary_template_#{unique}"
+
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
+    # Register the restore BEFORE building the template, so a template-build
+    # failure can never leave the production children down for the whole run.
+    on_exit(fn ->
+      File.rm(template)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
+      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
+    end)
+
+    # init/2 and terminate/2 both run `PRAGMA wal_checkpoint(TRUNCATE)`, so a
+    # stopped Store leaves a single self-contained file (no -wal/-shm) that is
+    # safe to byte-copy.
+    {:ok, _} = Store.start_link(data_dir: template, name: template_name)
+    :ok = GenServer.stop(template_name)
+
+    {:ok, %{template: template}}
+  end
+
+  # Fresh isolated Store per test, seeded by copying the schema template (the
+  # production children are already down).
+  setup %{template: template} do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_summary_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
+    File.cp!(template, sqlite_path)
 
     start_supervised({Store, data_dir: sqlite_path})
-
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
+    on_exit(fn -> File.rm_rf(root) end)
 
     {:ok, %{sqlite_path: sqlite_path}}
   end

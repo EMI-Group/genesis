@@ -3,8 +3,9 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   Tests for the crash-retry logic in `EvoGit.AgentScheduler.Lifecycle.handle_agent_crash/3`,
   the cancellation logic in `cancel_agent/2`, and the defensive handling for missing ETS entries.
 
-  Uses `async: false` because the tests manipulate global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`).
+  Uses `async: false` because the tests read and write the application's global named ETS
+  tables (`:evogit_agent_state`, `:evogit_sched_meta`, `:evogit_cancelling_tasks` and
+  `:evogit_archive_records`) — concurrent test processes would clobber each other's rows.
   """
 
   use ExUnit.Case, async: false
@@ -98,6 +99,23 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     case :ets.lookup(:evogit_agent_state, agent_id) do
       [{^agent_id, state}] -> {:ok, state}
       [] -> :missing
+    end
+  end
+
+  # --- Process-death observation ---
+
+  # Deterministic replacement for a blind `Process.sleep/1` after a cancellation:
+  # waits for the observable consequence (the stand-in agent process is actually
+  # gone) and fails loudly instead of racing it.
+  defp await_process_death(pid, timeout \\ 5_000) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+    after
+      timeout ->
+        Process.demonitor(ref, [:flush])
+        flunk("expected the agent process #{inspect(pid)} to be dead within #{timeout}ms")
     end
   end
 
@@ -252,7 +270,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert Lifecycle.cancel_agent(state, agent_id) == state
 
       # Task process should be dead
-      Process.sleep(50)
+      await_process_death(task.pid)
       refute Process.alive?(task.pid)
 
       # ETS entry deleted
@@ -342,7 +360,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       state = base_state([])
       assert Lifecycle.cancel_agent(state, agent_id) == state
 
-      Process.sleep(50)
+      await_process_death(task.pid)
       refute Process.alive?(task.pid)
 
       assert get_sched_meta(agent_id) == :missing

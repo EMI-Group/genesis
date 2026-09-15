@@ -1,4 +1,8 @@
 defmodule EvoGit.Core.ForeignRepoTest do
+  @moduledoc """
+  Pure: exercises `ForeignRepo` constructors/normalizers/resolvers on in-memory
+  data only — no filesystem, git, env, or BEAM-global mutation — so `async: true`.
+  """
   use ExUnit.Case, async: true
   alias EvoGit.Core.ForeignRepo
 

@@ -1,11 +1,14 @@
 defmodule EvoGit.Skills.ExecutorSecurityTest do
-  # Security tests for the skills execution path: positional-parameter
-  # substitution (values passed as argv, never inlined) and sandbox routing.
-  #
-  # NOTE: This file lives in the skills node (lib tree) temporarily — it will
-  # be relocated to the app test tree by the parent. It is a normal ExUnit
-  # test file and can run from either location.
-  use ExUnit.Case, async: false
+  @moduledoc """
+  Security tests for the skills execution path: positional-parameter substitution
+  (values passed as argv, never inlined) and sandbox routing.
+
+  Runs `async: true`: every test uses its own unique temp dir under
+  `System.tmp_dir!()` and mutates no BEAM-global state. In the test env the
+  sandbox is disabled (`@mix_env == :test`), so `Executor.execute/4` shells out
+  to plain bash; the `:nix_enabled` app-env read is read-only.
+  """
+  use ExUnit.Case, async: true
 
   alias EvoGit.Skills.Executor
   alias EvoGit.Skills.Skill

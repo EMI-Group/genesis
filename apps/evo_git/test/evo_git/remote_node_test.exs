@@ -15,6 +15,13 @@ defmodule EvoGit.RemoteNodeTest do
   Note: the evo_git application auto-starts via `mod: {EvoGit.Application, []}`,
   so `EvoGit.TaskRegistry` IS running during tests. The local-path tests verify
   delegation succeeds and returns expected defaults for an empty registry.
+
+  Async safety (`async: true`): this is the only `async: true` module that
+  writes rows into the shared `EvoGit.Store` and overrides the
+  `:remote_rpc_timeout` app env. Both are safe — store rows use unique ids,
+  reads are filtered by id, and every write is removed in `on_exit`; the
+  timeout override is restored in `on_exit` and is read only on the remote RPC
+  path, for which this module is the sole concurrent reader.
   """
 
   use ExUnit.Case, async: true
@@ -441,11 +448,17 @@ defmodule EvoGit.RemoteNodeTest do
       # succeeds when given enough time, proving the timeout value is what
       # differentiates. This mirrors the production shape: a remote function
       # that sleeps longer than the RPC timeout.
+      #
+      # Load robustness: the sleeper runs much longer than the timeout
+      # (1000ms vs 100ms) so the elapsed bound has a wide margin under
+      # parallel-suite load. `caught` is the correctness signal (a broken
+      # timeout would return :ok, not {:erpc, :timeout}); the elapsed check
+      # merely proves the call returned before the sleeper could finish.
       started = System.monotonic_time(:millisecond)
 
       caught =
         try do
-          :erpc.call(node(), :timer, :sleep, [500], 100)
+          :erpc.call(node(), :timer, :sleep, [1000], 100)
           nil
         catch
           kind, reason -> {kind, reason}
@@ -453,7 +466,7 @@ defmodule EvoGit.RemoteNodeTest do
 
       elapsed = System.monotonic_time(:millisecond) - started
       assert caught == {:error, {:erpc, :timeout}}
-      assert elapsed < 400
+      assert elapsed < 800
 
       # Control: a generous timeout lets the same call complete.
       assert :ok = :erpc.call(node(), :timer, :sleep, [10], 5_000)

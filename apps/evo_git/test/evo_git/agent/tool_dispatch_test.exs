@@ -1,4 +1,14 @@
 defmodule EvoGit.Agent.ToolDispatchTest do
+  @moduledoc """
+  Unit tests for `EvoGit.Agent.ToolDispatch`.
+
+  `async: true` is safe here: the module mutates only process-local state
+  (`Process.put/2` for `:evogit_agent_id` / `:repo_path` / `:genesis_repo_root`),
+  registers agent state under unique agent ids, and uses unique temp dirs — so it
+  touches no BEAM-global state (no `Application.put_env`, no `:persistent_term`,
+  no shared fixed-path files) that could race with a concurrently running test.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.LoopState
@@ -445,9 +455,7 @@ defmodule EvoGit.Agent.ToolDispatchTest do
         {ReqLLM.ToolCall.new("call_2", shell_tool, Jason.encode!(%{"command" => cmd2})), 1}
       ]
 
-      started = System.monotonic_time(:millisecond)
       results = ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :high)
-      elapsed = System.monotonic_time(:millisecond) - started
 
       assert Enum.map(results, &elem(&1, 0)) == [0, 1]
       assert Enum.map(results, &elem(&1, 2)) == [shell_tool, shell_tool]
@@ -455,7 +463,10 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       lines = File.read!(Path.join(repo_root, "markers.txt")) |> String.split("\n", trim: true)
       assert Enum.sort(lines) == ["end1", "end2", "start1", "start2"]
       assert Enum.find_index(lines, &(&1 == "start2")) < Enum.find_index(lines, &(&1 == "end1"))
-      assert elapsed < 1_800
+
+      # Concurrency is PROVEN behaviourally by the marker interleaving above (a
+      # serialized run could never emit start2 before end1), so no wall-clock
+      # bound is asserted here — wall-clock bounds are load-fragile.
     end
   end
 

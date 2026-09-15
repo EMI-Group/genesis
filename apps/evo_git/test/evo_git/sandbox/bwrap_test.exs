@@ -1,8 +1,9 @@
 defmodule EvoGit.Sandbox.BwrapTest do
-  # `async: false` because several tests mutate the global `$TMPDIR` and
-  # `$XDG_CONFIG_HOME` env vars via System.put_env/1 (process-global, would
-  # race under async), and the nix tests mutate the VM-global
-  # `:evogit_nix_dev_env_state` persistent_term.
+  # `async: false` because the tests mutate VM-global state that production
+  # code reads: the `$TMPDIR` and `$XDG_CONFIG_HOME` env vars
+  # (System.put_env/1), the app env `:nix_enabled` and the `:bwrap_capability`
+  # test seam (Application.put_env/2), and the `:evogit_nix_dev_env_state` /
+  # `{EvoGit.Sandbox.Bwrap, :capability}` persistent_term caches.
   use ExUnit.Case, async: false
 
   # Git-metadata fixtures for the linked-worktree describe use the per-test

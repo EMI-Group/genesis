@@ -628,6 +628,13 @@ defmodule EvoGit.SystemSamplerTest do
   # and must not spam the log. The failing seams exit with the same
   # {:timeout, {GenServer, :call, ...}} shape a bounded call raises — what
   # `safe_scheduler_call/1` catches.
+  #
+  # The log captures below deliberately carry NO settle-sleep: the sampler logs
+  # from its own process while handling the synchronous `:tick` GenServer.call,
+  # and ExUnit's `:logger` handler runs SYNCHRONOUSLY in that same emitting
+  # process — so the message is already in the capture buffer once the call
+  # returns (capture_log then flushes and closes it). A fixed sleep would only
+  # add wall-clock without making the capture any more reliable.
 
   describe "scheduler-call failure resilience (seams)" do
     test "(a) a failed config fetch degrades to a zero-capacity sample, logs a warning, and never crashes the sampler" do
@@ -642,7 +649,6 @@ defmodule EvoGit.SystemSamplerTest do
       log =
         capture_log(fn ->
           :ok = GenServer.call(pid, :tick)
-          Process.sleep(20)
         end)
 
       # The sampler survives the cross-GenServer :exit...
@@ -748,7 +754,6 @@ defmodule EvoGit.SystemSamplerTest do
       log =
         capture_log(fn ->
           :ok = GenServer.call(pid, :tick)
-          Process.sleep(20)
         end)
 
       # Failure → %{} for that tick (the documented scheduler-dead shape) + a
@@ -780,8 +785,6 @@ defmodule EvoGit.SystemSamplerTest do
           for _ <- 1..10 do
             :ok = GenServer.call(pid, :tick)
           end
-
-          Process.sleep(20)
         end)
 
       assert occurrences(log, "SystemSampler: AgentScheduler get_config call failed") == 1
@@ -802,8 +805,6 @@ defmodule EvoGit.SystemSamplerTest do
           for _ <- 1..10 do
             :ok = GenServer.call(pid, :tick)
           end
-
-          Process.sleep(20)
         end)
 
       assert seam_calls(counter) == 10
@@ -816,7 +817,6 @@ defmodule EvoGit.SystemSamplerTest do
       log2 =
         capture_log(fn ->
           :ok = GenServer.call(pid, :tick)
-          Process.sleep(20)
         end)
 
       assert seam_calls(counter) == 11

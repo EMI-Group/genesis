@@ -162,6 +162,11 @@ defmodule EvoGit.RemoteConnection do
   # the OS TCP timeout. The tunnel wait budget itself is the hard cap either way.
   @ssh_connect_timeout_ms 8_000
   @launch_receive_timeout_ms 5_000
+  # Delay between daemon-health polls after launch (`verify_daemon_healthy/3`),
+  # giving the BEAM VM time to boot. Overridable at runtime via the app-env
+  # seam :remote_daemon_health_delay_ms (read per call) so tests do not burn a
+  # mandatory second per daemon-start bootstrap.
+  @default_daemon_health_delay_ms 1_000
   # 900s — bootstrap now stages the release either by uploading a local tarball
   # (scp) OR by probing the remote platform and downloading the release tarball
   # (curl then wget on the remote, with a local curl + scp fallback); both can
@@ -1736,7 +1741,7 @@ defmodule EvoGit.RemoteConnection do
   # times with a short delay so the BEAM VM has time to boot. Returns :ok or
   # {:error, {:daemon_not_healthy, details}}.
   defp verify_daemon_healthy(ssh_target, os, target) do
-    case wait_daemon_active(ssh_target, os, 3, 1000, target) do
+    case wait_daemon_active(ssh_target, os, 3, daemon_health_delay_ms(), target) do
       :ok ->
         :ok
 
@@ -1744,6 +1749,10 @@ defmodule EvoGit.RemoteConnection do
         details = fetch_daemon_status(ssh_target, os, target)
         {:error, {:daemon_not_healthy, details}}
     end
+  end
+
+  defp daemon_health_delay_ms do
+    Application.get_env(:evo_git, :remote_daemon_health_delay_ms, @default_daemon_health_delay_ms)
   end
 
   defp wait_daemon_active(_ssh_target, _os, 0, _delay, _target), do: :not_active

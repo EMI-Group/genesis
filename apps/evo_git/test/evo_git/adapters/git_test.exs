@@ -1,4 +1,20 @@
 defmodule EvoGit.Adapters.GitTest do
+  @moduledoc """
+  Exercises the real `git` CLI through `EvoGit.Adapters.Git` on temp-dir repos
+  (no mocks, no Mox/Meck).
+
+  `async: true` because the module mutates no BEAM-global state observable by
+  other modules — the only global write is an idempotent
+  `:persistent_term.erase({EvoGit.GitEnv, :true_path})`, a memo cache whose
+  re-resolution yields the same path.
+
+  Temp-dir names use `System.unique_integer/1` with explicit `File.rm_rf!`
+  guards for the origin/clone dirs, because that integer repeats across VM runs
+  and a leftover dir would carry a stale `.git`. The test repos themselves need
+  no local identity config: `EvoGit.GitEnv` injects the commit identity into
+  every git invocation.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Adapters.Git

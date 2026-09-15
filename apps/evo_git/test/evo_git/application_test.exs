@@ -33,12 +33,19 @@ defmodule EvoGit.ApplicationTest do
   }
 
   setup do
-    # The :evo_git app and its supervision tree (EvoGit.Supervisor) are started
-    # automatically by Mix before the test suite runs, so the scheduler and ETS
-    # tables already exist. However, other async tests (e.g. CompleteTaskTest)
-    # may delete a table in their on_exit cleanup, leaving it undefined by the
-    # time this serial test runs. Recreate any missing table so we can reliably
-    # exercise the crash/restart survival behaviour below.
+    # EvoGit.Application.start/2 creates these three :public named ETS tables at
+    # boot (owned by the application process), and the :evo_git app plus its
+    # supervision tree are started by Mix before the suite runs. A :public table,
+    # however, can be destroyed by ANY process, and another test module does
+    # destroy one: EvoGit.Agent.Tools.CompleteTaskTest deletes
+    # :evogit_archive_records outright and replaces it with a table owned by its
+    # own per-test process, which dies when that test ends. ExUnit gives no
+    # ordering guarantee between `async: false` modules (the run order follows
+    # test-file registration, not path order), so this module can start with a
+    # table already missing. Recreate any missing table so the assertions below
+    # exercise boot-time creation + crash/restart survival instead of failing on
+    # unrelated pollution from another module. (The recreated table belongs to
+    # this test process, so ensure_tables/0 runs again for every test here.)
     ensure_tables()
 
     on_exit(fn ->

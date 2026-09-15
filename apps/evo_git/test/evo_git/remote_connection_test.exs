@@ -26,6 +26,14 @@ defmodule EvoGit.RemoteConnectionTest do
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
+    # Speed up the post-launch daemon-health polling (`verify_daemon_healthy/3`
+    # → `wait_daemon_active/5`, whose first act is a sleep BEFORE its initial
+    # check): the production default is 1000ms, but these tests only care about
+    # the poll ordering, not the wall-clock delay. `async: false`, so the
+    # BEAM-global app-env write is safe.
+    original_health_delay = Application.get_env(:evo_git, :remote_daemon_health_delay_ms)
+    Application.put_env(:evo_git, :remote_daemon_health_delay_ms, 20)
+
     on_exit(fn ->
       # Terminate any connection managers started during this test so they
       # don't leak into sibling tests (the DynamicSupervisor is app-level).
@@ -40,6 +48,12 @@ defmodule EvoGit.RemoteConnectionTest do
       end
 
       File.rm_rf!(tmp_xdg)
+
+      if original_health_delay do
+        Application.put_env(:evo_git, :remote_daemon_health_delay_ms, original_health_delay)
+      else
+        Application.delete_env(:evo_git, :remote_daemon_health_delay_ms)
+      end
     end)
 
     :ok
@@ -368,7 +382,24 @@ defmodule EvoGit.RemoteConnectionTest do
           # The manager is stopped with :normal + restart: :transient → NOT
           # restarted: no stale state, no live manager child, no worker left.
           assert EvoGit.RemoteConnection.status(target_id).phase == :disconnected
-          assert DynamicSupervisor.which_children(EvoGit.RemoteConnection.Supervisor) == []
+
+          # Load-robust leak check scoped to THIS target. The Registry and
+          # DynamicSupervisor are app-level (started by EvoGit.Application) and
+          # shared with sibling tests, so a hard
+          # `DynamicSupervisor.which_children(sup) == []` flakes when another
+          # test's manager is still winding down under parallel full-suite
+          # load. Instead wait (bounded) for THIS target's Registry entry — and
+          # with it its manager + linked connect worker — to disappear, which
+          # proves this test leaked no manager/worker for its own target_id.
+          wait_until(
+            fn ->
+              if Map.has_key?(EvoGit.RemoteConnection.list_connections(), target_id),
+                do: :retry,
+                else: {:ok, :drained}
+            end,
+            2_000,
+            "connection manager for #{target_id} was left behind after disconnect"
+          )
         end)
       end
     end
@@ -388,9 +419,12 @@ defmodule EvoGit.RemoteConnectionTest do
           # CURRENT phase, no second worker/tunnel spawned, no state clobber.
           assert {:ok, :connecting} = EvoGit.RemoteConnection.connect(target_id)
 
-          # Give a wrongly-spawned second worker time to write its invocation,
-          # then prove exactly one ssh was spawned.
-          Process.sleep(300)
+          # Wait (bounded) for the single worker to log its ssh invocation,
+          # then prove no second tunnel was spawned: the duplicate connect hit
+          # the idempotent :connecting guard and returned WITHOUT spawning a
+          # worker. Polling the log is equivalent to the old blind
+          # Process.sleep(300) but returns as soon as the invocation lands.
+          assert wait_for_ssh_invocation(log) >= 1
           assert ssh_invocation_count(log) == 1
 
           cleanup_connections()
@@ -1749,6 +1783,24 @@ defmodule EvoGit.RemoteConnectionTest do
       {:ok, contents} -> contents |> String.split("\n", trim: true) |> length()
       {:error, _} -> 0
     end
+  end
+
+  # Waits (bounded) for the fake ssh to log its first invocation, returning the
+  # count seen (>= 1). Replaces the old blind `Process.sleep(300)` with a
+  # load-independent poll that returns as soon as the invocation lands while
+  # still allowing a (wrongly-spawned) second worker to log — the subsequent
+  # `ssh_invocation_count(log) == 1` assertion proves none did.
+  defp wait_for_ssh_invocation(log, timeout \\ 2_000) do
+    wait_until(
+      fn ->
+        case ssh_invocation_count(log) do
+          n when n >= 1 -> {:ok, n}
+          _ -> :retry
+        end
+      end,
+      timeout,
+      "fake ssh never logged an invocation"
+    )
   end
 
   # Waits (bounded) for the fake ssh's log to contain its first argv line and

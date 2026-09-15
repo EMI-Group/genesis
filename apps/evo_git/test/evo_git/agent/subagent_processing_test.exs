@@ -1,5 +1,13 @@
 defmodule EvoGit.Agent.SubagentProcessingTest do
-  use ExUnit.Case, async: true
+  @moduledoc """
+  `async: false` — the two `build_subagent_specs/3` describes insert/delete
+  parent `AgentState` rows (fixed agent ids 99_998/99_999) in the app-owned
+  BEAM-global `:evogit_agent_state` ETS table, which is shared state; the
+  remaining tests use per-test `:tmp_dir` git repos. Kept sync per the
+  async-safety policy, matching the other ETS-touching modules.
+  """
+
+  use ExUnit.Case, async: false
 
   @moduletag :tmp_dir
 

@@ -1,4 +1,17 @@
 defmodule EvoGit.Config.VersionStateTest do
+  @moduledoc """
+  Pins `EvoGit.Config.VersionState` (version-state TOML file, cache, upgrade and
+  onboarding detection).
+
+  `async: false` is REQUIRED — each test mutates two BEAM-global resources that
+  every other concurrently running test observes: the `XDG_CONFIG_HOME` env var
+  (resolved by `EvoGit.Platform.config_dir/0`, which `VersionState.path/0`
+  reads) and the `{EvoGit.Config.VersionState, :version_state}`
+  `:persistent_term` cache served by `VersionState.get_version/0`. The
+  `:evo_dash` tests (`welcome_complete_live_test`, `page_controller_test`, …)
+  read that same singleton.
+  """
+
   use ExUnit.Case, async: false
 
   alias EvoGit.Config.VersionState

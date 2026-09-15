@@ -3,11 +3,12 @@ defmodule EvoGit.CommandShellTest do
   Tests for the `EvoGit.CommandShell` command-shell dispatcher — the single
   entry point behind the self-reflective agent's `run_command` tool.
 
-  The pure parser/validation/guardrail tests in the "parsing" and "security"
-  describe blocks have no registry side effects. The dispatch tests exercise
-  every registered command against the real TaskRegistry (isolated via
-  `EvoGit.TaskRegistryCase`), asserting the same handler outputs the old
-  per-tool tests asserted.
+  This module owns the DISPATCH tests: they exercise every registered command
+  against the real TaskRegistry (isolated via `EvoGit.TaskRegistryCase`),
+  asserting the same handler outputs the old per-tool tests asserted. The pure
+  parser/validation/guardrail/security-level tests — which never reach a
+  handler — live in the sibling `EvoGit.CommandShellParsingTest` module, which
+  skips the per-test registry/Store setup entirely.
 
   Since the security-level feature, level-2/3 dispatch-success tests route
   through the blocking `EvoGit.CommandApproval` gate: a separate responder
@@ -17,25 +18,15 @@ defmodule EvoGit.CommandShellTest do
   the 120 s default.
   """
 
+  # async: false is FORCED by `EvoGit.TaskRegistryCase`: its setup terminates /
+  # restarts the app-level `EvoGit.Store` and `EvoGit.TaskRegistry` supervision
+  # children (and re-registers their global names) on every test, and the shell
+  # handlers read the globally registered `EvoGit.Store`.
   use EvoGit.TaskRegistryCase, async: false
 
   @moduletag :tmp_dir
 
   alias EvoGit.CommandShell
-
-  # The full registered command catalog (sorted, as returned by list_commands/0).
-  @all_commands ~w(
-    CancelTask.cancel_task
-    DeleteTask.delete_task
-    ForceKillTask.force_kill_task
-    GetTask.get_task
-    GuideUser.guide_user
-    ListRecentProjects.list_recent_projects
-    ListTasks.list_tasks
-    SpawnInvestigator.spawn_investigator
-    StartTask.start_task
-    SystemInfo.system_info
-  )
 
   # Level-2/3 commands (StartTask/CancelTask/ForceKillTask/DeleteTask/GuideUser)
   # now BLOCK on the EvoGit.CommandApproval gate. Shrink the approval window so
@@ -90,209 +81,6 @@ defmodule EvoGit.CommandShellTest do
       # stays a positional token and binds to task_id verbatim.
       assert {:ok, output} = CommandShell.execute("GetTask.get_task hello=world")
       assert output == "Task hello=world not found."
-    end
-
-    test "duplicate key=value arguments are rejected" do
-      assert CommandShell.execute("GetTask.get_task task_id=a task_id=b") ==
-               {:error, "Duplicate argument 'task_id' for 'GetTask.get_task'."}
-    end
-
-    test "extra positional arguments are rejected" do
-      assert CommandShell.execute("GetTask.get_task a b") ==
-               {:error,
-                "Too many positional arguments for 'GetTask.get_task': expected at most 1."}
-    end
-
-    test "missing required arguments are rejected" do
-      assert CommandShell.execute("GetTask.get_task") ==
-               {:error, "Missing required argument 'task_id' for 'GetTask.get_task'."}
-    end
-
-    test "unknown commands are rejected with a help hint" do
-      assert CommandShell.execute("task.nonexistent") ==
-               {:error,
-                "Unknown command 'task.nonexistent'. Run 'help' to list available commands."}
-    end
-
-    test "empty and whitespace-only commands are rejected" do
-      assert CommandShell.execute("") ==
-               {:error, "Empty command. Run 'help' to list available commands."}
-
-      assert CommandShell.execute("   ") ==
-               {:error, "Empty command. Run 'help' to list available commands."}
-    end
-
-    test "unterminated double quotes are rejected" do
-      assert CommandShell.execute(~s(GetTask.get_task "abc)) ==
-               {:error, "Unterminated double quote in command."}
-    end
-
-    test "non-string input is rejected" do
-      assert CommandShell.execute(123) == {:error, "Command must be a string."}
-      assert CommandShell.execute(nil) == {:error, "Command must be a string."}
-      assert CommandShell.execute(%{}) == {:error, "Command must be a string."}
-    end
-  end
-
-  describe "execute/1 - guardrails" do
-    test "commands longer than 4000 characters are rejected" do
-      command = String.duplicate("a", 4001)
-
-      assert CommandShell.execute(command) ==
-               {:error, "Command exceeds the maximum length of 4000 characters."}
-    end
-
-    test "commands with more than 40 tokens are rejected" do
-      command = Enum.join(List.duplicate("a", 41), " ")
-
-      assert CommandShell.execute(command) ==
-               {:error, "Command has too many tokens (maximum 40)."}
-    end
-
-    test "tokens longer than 2000 characters are rejected" do
-      command = String.duplicate("a", 2001)
-
-      assert CommandShell.execute(command) ==
-               {:error, "Command token exceeds the maximum length of 2000 characters."}
-    end
-
-    test "exact boundary values pass the guardrails and reach dispatch" do
-      # 2000-char single token: at the exact token-length cap the check passes
-      # and dispatch runs — the unknown path is rejected by the registry, not
-      # the guardrail.
-      command = String.duplicate("a", 2000)
-
-      assert {:error, message} = CommandShell.execute(command)
-      assert message =~ "Unknown command"
-
-      # Exactly 40 tokens: at the exact token-count cap the check passes and
-      # dispatch runs — the command's own argument validation rejects the extra
-      # positionals.
-      command = Enum.join(["GetTask.get_task" | List.duplicate("a", 39)], " ")
-
-      assert {:error, message} = CommandShell.execute(command)
-      assert message =~ "Too many positional arguments"
-    end
-  end
-
-  describe "execute/1 - help" do
-    test "help returns the catalog listing all 10 commands" do
-      assert {:ok, output} = CommandShell.execute("help")
-      assert output =~ "Available commands:"
-
-      for command <- @all_commands do
-        assert output =~ command, "expected help catalog to list #{inspect(command)}"
-      end
-
-      assert output =~ "help [command]"
-    end
-
-    test "help <command> returns the per-command detail" do
-      assert {:ok, output} = CommandShell.execute("help GetTask.get_task")
-      assert output =~ "GetTask.get_task"
-      assert output =~ "Usage: GetTask.get_task <task_id>"
-
-      assert {:ok, output} = CommandShell.execute("help StartTask.start_task")
-      assert output =~ "Usage: StartTask.start_task <task_type>"
-    end
-
-    test "help with an unknown command path returns an error" do
-      assert CommandShell.execute("help task.nonexistent") ==
-               {:error,
-                "Unknown command 'task.nonexistent'. Run 'help' to list available commands."}
-    end
-
-    test "help accepts at most one command path" do
-      assert CommandShell.execute("help GetTask.get_task ListTasks.list_tasks") ==
-               {:error, "help accepts at most one command path argument."}
-    end
-  end
-
-  describe "list_commands/0 and help/1" do
-    test "list_commands/0 returns the 10 registered paths sorted" do
-      assert CommandShell.list_commands() == @all_commands
-      assert length(CommandShell.list_commands()) == 10
-    end
-
-    test "help/1 returns a detail tuple or an error tuple" do
-      assert {:ok, detail} = CommandShell.help("ListTasks.list_tasks")
-      assert detail =~ "statuses"
-
-      assert CommandShell.help("nope") ==
-               {:error, "Unknown command 'nope'. Run 'help' to list available commands."}
-    end
-  end
-
-  describe "execute/1 - security" do
-    test "code evaluation strings are rejected as unknown commands" do
-      assert {:error, message} = CommandShell.execute(~s|Code.eval_string("1+1")|)
-      assert message =~ "Unknown command"
-
-      assert {:error, message} = CommandShell.execute(~s|String.to_atom("x")|)
-      assert message =~ "Unknown command"
-    end
-
-    test "dynamic-dispatch-looking paths are rejected" do
-      for command <- ["elixir.apply", "apply", "Code.eval", "System.cmd", "task.nonexistent"] do
-        assert {:error, message} = CommandShell.execute(command)
-        assert message =~ "Unknown command '#{command}'"
-      end
-    end
-
-    test "enum arguments reject invalid values listing the valid ones" do
-      assert CommandShell.execute("StartTask.start_task bogus") ==
-               {:error,
-                "Invalid value 'bogus' for argument 'task_type' of 'StartTask.start_task'; valid values: genesis, evolve, reflect, extract_skills."}
-
-      assert CommandShell.execute("ListTasks.list_tasks statuses=bogus") ==
-               {:error,
-                "Invalid value 'bogus' for argument 'statuses' of 'ListTasks.list_tasks'; valid values: pending, running, finalizing, completed, failed, cancelled, cancelling."}
-    end
-
-    test "bool arguments reject invalid values" do
-      assert CommandShell.execute("GuideUser.guide_user m dismissible=maybe") ==
-               {:error,
-                "Invalid boolean value 'maybe' for argument 'dismissible' of 'GuideUser.guide_user'; use 'true' or 'false'."}
-    end
-  end
-
-  describe "security_level/1" do
-    test "level-1 read-only commands (and the built-in help) map to 1" do
-      for path <- ~w(
-        ListTasks.list_tasks
-        GetTask.get_task
-        ListRecentProjects.list_recent_projects
-        SystemInfo.system_info
-        SpawnInvestigator.spawn_investigator
-      ) do
-        assert CommandShell.security_level(path) == 1
-      end
-
-      assert CommandShell.security_level("help") == 1
-      assert CommandShell.security_level("Help") == 1
-    end
-
-    test "GuideUser.guide_user maps to level 2" do
-      assert CommandShell.security_level("GuideUser.guide_user") == 2
-    end
-
-    test "side-effect commands map to level 3" do
-      for path <- ~w(
-        StartTask.start_task
-        CancelTask.cancel_task
-        ForceKillTask.force_kill_task
-        DeleteTask.delete_task
-      ) do
-        assert CommandShell.security_level(path) == 3
-      end
-    end
-
-    test "unknown and non-binary paths map to 1" do
-      assert CommandShell.security_level("task.nonexistent") == 1
-      assert CommandShell.security_level("") == 1
-      assert CommandShell.security_level(123) == 1
-      assert CommandShell.security_level(nil) == 1
-      assert CommandShell.security_level(%{}) == 1
     end
   end
 
@@ -378,8 +166,10 @@ defmodule EvoGit.CommandShellTest do
       assert {:ok, output} = CommandShell.execute("CancelTask.cancel_task ghost", approval: :auto)
       assert output == "Error cancelling task ghost: task not found"
 
-      # No approval request was ever opened.
-      refute_receive {:approval_requested, _}, 200
+      # No approval request was ever opened. The handler ran synchronously in
+      # THIS process, so a request broadcast would already be in our mailbox —
+      # a zero-timeout refute is exact, not a race.
+      refute_received {:approval_requested, _}
     end
 
     test "level-3 StartTask enqueues a reflect task without any approval" do
@@ -720,6 +510,9 @@ defmodule EvoGit.CommandShellTest do
   # Seeds a :running task and injects a live wrapper process into the registry's
   # task_refs (the only way force_kill_task sees a genuinely killable task — a
   # bare seeded row has no ref). Returns {task_id, wrapper_pid}.
+  #
+  # The wrapper is a deliberately parked process; `force_kill_task` terminates it
+  # via `Task.shutdown(task_ref, :brutal_kill)`, so no process is leaked.
   defp seed_running_task_with_wrapper! do
     task_id = "reflect_kill_#{System.unique_integer([:positive])}"
     wrapper = spawn(fn -> Process.sleep(:infinity) end)
@@ -830,6 +623,248 @@ defmodule EvoGit.CommandShellTest do
 
       _other ->
         approval_responder_loop(decision)
+    end
+  end
+end
+
+defmodule EvoGit.CommandShellParsingTest do
+  @moduledoc """
+  Pure `EvoGit.CommandShell` parser / validation / guardrail / security-level
+  tests.
+
+  Every assertion here is decided BEFORE dispatch — a parse error, an argument
+  validation error, a guardrail rejection, an unknown command, or a pure
+  introspection call (`list_commands/0`, `help/1`, `security_level/1`). No
+  Store, TaskRegistry or approval-gate state is touched, so the module skips the
+  per-test `EvoGit.TaskRegistryCase` setup (isolated Store + TaskRegistry
+  start/terminate cycle) that the dispatch tests in `EvoGit.CommandShellTest`
+  need. The dispatch tests that DO reach a handler stay there.
+
+  `async: true` is safe here: the module reads no BEAM-global state (the
+  command registry and the parser are pure compile-time data) and mutates
+  nothing.
+  """
+
+  use ExUnit.Case, async: true
+
+  alias EvoGit.CommandShell
+
+  # The full registered command catalog (sorted, as returned by list_commands/0).
+  @all_commands ~w(
+    CancelTask.cancel_task
+    DeleteTask.delete_task
+    ForceKillTask.force_kill_task
+    GetTask.get_task
+    GuideUser.guide_user
+    ListRecentProjects.list_recent_projects
+    ListTasks.list_tasks
+    SpawnInvestigator.spawn_investigator
+    StartTask.start_task
+    SystemInfo.system_info
+  )
+
+  describe "execute/1 - parsing" do
+    test "duplicate key=value arguments are rejected" do
+      assert CommandShell.execute("GetTask.get_task task_id=a task_id=b") ==
+               {:error, "Duplicate argument 'task_id' for 'GetTask.get_task'."}
+    end
+
+    test "extra positional arguments are rejected" do
+      assert CommandShell.execute("GetTask.get_task a b") ==
+               {:error,
+                "Too many positional arguments for 'GetTask.get_task': expected at most 1."}
+    end
+
+    test "missing required arguments are rejected" do
+      assert CommandShell.execute("GetTask.get_task") ==
+               {:error, "Missing required argument 'task_id' for 'GetTask.get_task'."}
+    end
+
+    test "unknown commands are rejected with a help hint" do
+      assert CommandShell.execute("task.nonexistent") ==
+               {:error,
+                "Unknown command 'task.nonexistent'. Run 'help' to list available commands."}
+    end
+
+    test "empty and whitespace-only commands are rejected" do
+      assert CommandShell.execute("") ==
+               {:error, "Empty command. Run 'help' to list available commands."}
+
+      assert CommandShell.execute("   ") ==
+               {:error, "Empty command. Run 'help' to list available commands."}
+    end
+
+    test "unterminated double quotes are rejected" do
+      assert CommandShell.execute(~s(GetTask.get_task "abc)) ==
+               {:error, "Unterminated double quote in command."}
+    end
+
+    test "non-string input is rejected" do
+      assert CommandShell.execute(123) == {:error, "Command must be a string."}
+      assert CommandShell.execute(nil) == {:error, "Command must be a string."}
+      assert CommandShell.execute(%{}) == {:error, "Command must be a string."}
+    end
+  end
+
+  describe "execute/1 - guardrails" do
+    test "commands longer than 4000 characters are rejected" do
+      command = String.duplicate("a", 4001)
+
+      assert CommandShell.execute(command) ==
+               {:error, "Command exceeds the maximum length of 4000 characters."}
+    end
+
+    test "commands with more than 40 tokens are rejected" do
+      command = Enum.join(List.duplicate("a", 41), " ")
+
+      assert CommandShell.execute(command) ==
+               {:error, "Command has too many tokens (maximum 40)."}
+    end
+
+    test "tokens longer than 2000 characters are rejected" do
+      command = String.duplicate("a", 2001)
+
+      assert CommandShell.execute(command) ==
+               {:error, "Command token exceeds the maximum length of 2000 characters."}
+    end
+
+    test "exact boundary values pass the guardrails and reach dispatch" do
+      # 2000-char single token: at the exact token-length cap the check passes
+      # and dispatch runs — the unknown path is rejected by the registry, not
+      # the guardrail.
+      command = String.duplicate("a", 2000)
+
+      assert {:error, message} = CommandShell.execute(command)
+      assert message =~ "Unknown command"
+
+      # Exactly 40 tokens: at the exact token-count cap the check passes and
+      # dispatch runs — the command's own argument validation rejects the extra
+      # positionals.
+      command = Enum.join(["GetTask.get_task" | List.duplicate("a", 39)], " ")
+
+      assert {:error, message} = CommandShell.execute(command)
+      assert message =~ "Too many positional arguments"
+    end
+  end
+
+  describe "execute/1 - help" do
+    test "help returns the catalog listing all 10 commands" do
+      assert {:ok, output} = CommandShell.execute("help")
+      assert output =~ "Available commands:"
+
+      for command <- @all_commands do
+        assert output =~ command, "expected help catalog to list #{inspect(command)}"
+      end
+
+      assert output =~ "help [command]"
+    end
+
+    test "help <command> returns the per-command detail" do
+      assert {:ok, output} = CommandShell.execute("help GetTask.get_task")
+      assert output =~ "GetTask.get_task"
+      assert output =~ "Usage: GetTask.get_task <task_id>"
+
+      assert {:ok, output} = CommandShell.execute("help StartTask.start_task")
+      assert output =~ "Usage: StartTask.start_task <task_type>"
+    end
+
+    test "help with an unknown command path returns an error" do
+      assert CommandShell.execute("help task.nonexistent") ==
+               {:error,
+                "Unknown command 'task.nonexistent'. Run 'help' to list available commands."}
+    end
+
+    test "help accepts at most one command path" do
+      assert CommandShell.execute("help GetTask.get_task ListTasks.list_tasks") ==
+               {:error, "help accepts at most one command path argument."}
+    end
+  end
+
+  describe "list_commands/0 and help/1" do
+    test "list_commands/0 returns the 10 registered paths sorted" do
+      assert CommandShell.list_commands() == @all_commands
+      assert length(CommandShell.list_commands()) == 10
+    end
+
+    test "help/1 returns a detail tuple or an error tuple" do
+      assert {:ok, detail} = CommandShell.help("ListTasks.list_tasks")
+      assert detail =~ "statuses"
+
+      assert CommandShell.help("nope") ==
+               {:error, "Unknown command 'nope'. Run 'help' to list available commands."}
+    end
+  end
+
+  describe "execute/1 - security" do
+    test "code evaluation strings are rejected as unknown commands" do
+      assert {:error, message} = CommandShell.execute(~s|Code.eval_string("1+1")|)
+      assert message =~ "Unknown command"
+
+      assert {:error, message} = CommandShell.execute(~s|String.to_atom("x")|)
+      assert message =~ "Unknown command"
+    end
+
+    test "dynamic-dispatch-looking paths are rejected" do
+      for command <- ["elixir.apply", "apply", "Code.eval", "System.cmd", "task.nonexistent"] do
+        assert {:error, message} = CommandShell.execute(command)
+        assert message =~ "Unknown command '#{command}'"
+      end
+    end
+
+    test "enum arguments reject invalid values listing the valid ones" do
+      assert CommandShell.execute("StartTask.start_task bogus") ==
+               {:error,
+                "Invalid value 'bogus' for argument 'task_type' of 'StartTask.start_task'; valid values: genesis, evolve, reflect, extract_skills."}
+
+      assert CommandShell.execute("ListTasks.list_tasks statuses=bogus") ==
+               {:error,
+                "Invalid value 'bogus' for argument 'statuses' of 'ListTasks.list_tasks'; valid values: pending, running, finalizing, completed, failed, cancelled, cancelling."}
+    end
+
+    test "bool arguments reject invalid values" do
+      assert CommandShell.execute("GuideUser.guide_user m dismissible=maybe") ==
+               {:error,
+                "Invalid boolean value 'maybe' for argument 'dismissible' of 'GuideUser.guide_user'; use 'true' or 'false'."}
+    end
+  end
+
+  describe "security_level/1" do
+    test "level-1 read-only commands (and the built-in help) map to 1" do
+      for path <- ~w(
+        ListTasks.list_tasks
+        GetTask.get_task
+        ListRecentProjects.list_recent_projects
+        SystemInfo.system_info
+        SpawnInvestigator.spawn_investigator
+      ) do
+        assert CommandShell.security_level(path) == 1
+      end
+
+      assert CommandShell.security_level("help") == 1
+      assert CommandShell.security_level("Help") == 1
+    end
+
+    test "GuideUser.guide_user maps to level 2" do
+      assert CommandShell.security_level("GuideUser.guide_user") == 2
+    end
+
+    test "side-effect commands map to level 3" do
+      for path <- ~w(
+        StartTask.start_task
+        CancelTask.cancel_task
+        ForceKillTask.force_kill_task
+        DeleteTask.delete_task
+      ) do
+        assert CommandShell.security_level(path) == 3
+      end
+    end
+
+    test "unknown and non-binary paths map to 1" do
+      assert CommandShell.security_level("task.nonexistent") == 1
+      assert CommandShell.security_level("") == 1
+      assert CommandShell.security_level(123) == 1
+      assert CommandShell.security_level(nil) == 1
+      assert CommandShell.security_level(%{}) == 1
     end
   end
 end

@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.Tools.ShellToolTest do
+  @moduledoc """
+  `async: true` — pure formatting/detection helpers plus `ShellTool.execute/3`
+  against a per-test `:tmp_dir` git repo; no BEAM-global state.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.ShellTool

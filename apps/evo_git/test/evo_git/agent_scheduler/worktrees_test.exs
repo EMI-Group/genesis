@@ -26,18 +26,51 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   # --------------------------------------------------------------------------
   # Shared temp git-repo setup (mirrors test/evo_git/runtime/helpers_test.exs)
   # --------------------------------------------------------------------------
-  setup do
+  #
+  # Every test starts from the SAME committed repo state (one commit on the
+  # default branch with a single README.md). Building it from scratch costs
+  # ~38ms of git-subprocess time per test, so we build ONE committed template
+  # ONCE per module run in setup_all and hand each test a private copy via
+  # File.cp_r/2 (pure BEAM, no git subprocess — ~8ms). Tests still mutate only
+  # their own throw-away copy (worktrees under `<repo>/.genesis/workers`,
+  # branches, genesis.toml, chmods) — the template is never touched.
+  #
+  # The template is built EXACTLY like the old per-test setup (no explicit git
+  # identity — the commit relies on EvoGit.GitEnv's fallback via the adapter),
+  # so the commit identity and sha are identical, and the copy is a valid repo.
+  setup_all do
+    template_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_worktrees_tpl_" <> to_string(System.unique_integer())
+      )
+
+    File.mkdir_p!(template_dir)
+    {:ok, _} = Git.init(template_dir)
+
+    # Create an initial commit so HEAD exists and branches can be created.
+    File.write!(Path.join(template_dir, "README.md"), "# test")
+    {:ok, _} = Git.add(template_dir, "README.md")
+    {:ok, _} = Git.commit(template_dir, "initial commit")
+    {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand and the worktree/branch operations below behave
+    # identically. Dropping them shrinks each per-test File.cp_r/2 (8ms vs
+    # 20ms).
+    File.rm_rf!(Path.join(template_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(template_dir, ".git/logs"))
+
+    on_exit(fn -> File.rm_rf!(template_dir) end)
+
+    {:ok, template_dir: template_dir, base_sha: base_sha}
+  end
+
+  setup %{template_dir: template_dir, base_sha: base_sha} do
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_worktrees_" <> to_string(System.unique_integer()))
 
-    File.mkdir_p!(tmp_dir)
-    {:ok, _} = Git.init(tmp_dir)
-
-    # Create an initial commit so HEAD exists and branches can be created.
-    File.write!(Path.join(tmp_dir, "README.md"), "# test")
-    {:ok, _} = Git.add(tmp_dir, "README.md")
-    {:ok, _} = Git.commit(tmp_dir, "initial commit")
-    {:ok, base_sha} = Git.rev_parse(tmp_dir)
+    {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
@@ -494,9 +527,11 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       tmp_dir: tmp_dir,
       base_sha: base_sha
     } do
-      # Deterministic serialization probe: a sleeping worktree init script
-      # keeps the first create in flight long enough to observe the deferral.
-      # The script is a /bin/sh script — skip on Windows.
+      # Deterministic serialization probe: an init script that BLOCKS on a
+      # marker file (gate) the test creates only AFTER it has observed the
+      # deferral keeps the first create in flight for as long as needed —
+      # deterministic and fast (no fixed sleep). The script is a /bin/sh
+      # script — skip on Windows.
       if EvoGit.Platform.windows?() do
         :ok
       else
@@ -505,9 +540,17 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         wt_path = Path.join(Worktrees.workers_dir(tmp_dir), "worker_T1_A1")
         branch = "evogit-agent-T1-A1"
 
+        # The gate lives inside tmp_dir so the shared setup's on_exit
+        # `File.rm_rf!(tmp_dir)` removes it. The script polls for it with a
+        # BOUNDED wait (200 × 0.05s = 10s) so a failure can never hang: if the
+        # gate never appears the create just finishes after the bound (and the
+        # deferral assertion below has already flunked well before then).
+        gate = Path.join(tmp_dir, "worktree_gate")
+
         File.write!(
           Path.join(tmp_dir, "genesis.toml"),
-          "[worktree]\nscript = \"#!/bin/sh\\nsleep 2\"\n"
+          "[worktree]\nscript = \"#!/bin/sh\\n" <>
+            "i=0; while [ ! -f #{gate} ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\"\n"
         )
 
         parent = self()
@@ -529,7 +572,7 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
           end)
 
         # The dir exists once the create task has finished the git part and is
-        # inside the init-script sleep (~2s) — i.e. the create is still in
+        # blocked inside the gate-script poll — i.e. the create is still in
         # flight (creating: true in the manager).
         wait_until(fn -> File.dir?(wt_path) end)
 
@@ -543,6 +586,23 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         # caller) so the resulting registration can be drained
         # deterministically before teardown (see spawn_agent/6 doc).
         agent = spawn_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+
+        # The deferral is GENUINELY OBSERVED (not just inferred from the end
+        # state): while the gate file has NOT yet been created the first create
+        # is still :creating and the re-create sits in pending_requests. Poll
+        # (bounded) until the manager has processed the second request — the
+        # un-created gate guarantees the first create cannot have finished, so
+        # this cannot race.
+        wait_until(fn ->
+          state = :sys.get_state(WorktreeManager)
+
+          match?(%{status: :creating}, Map.get(state.agents, agent_id)) and
+            Map.has_key?(state.pending_requests, agent_id)
+        end)
+
+        # Release the gate — the first (dead-agent) create finishes, the
+        # deferred re-create is admitted, and it succeeds.
+        File.write!(gate, "go")
 
         assert_receive {:agent_ready, ^agent, {:ok, ^wt_path}}, 30_000
 

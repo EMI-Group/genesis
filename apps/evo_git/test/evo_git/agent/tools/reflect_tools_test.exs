@@ -4,6 +4,10 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   CancelTask, ForceKillTask, DeleteTask, GuideUser, SpawnInvestigator,
   ListRecentProjects, SystemInfo, plus the repo-less write guard in
   `EvoGit.Agent.Tools.execute/5`.
+
+  `async: false` — the module `use`s `EvoGit.TaskRegistryCase`, which
+  terminates/restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry`
+  singletons (and the shared `:evogit_*` ETS tables) for isolation.
   """
 
   use EvoGit.TaskRegistryCase, async: false

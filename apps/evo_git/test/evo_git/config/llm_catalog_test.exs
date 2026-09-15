@@ -1,4 +1,14 @@
 defmodule EvoGit.Config.LLMCatalogTest do
+  @moduledoc """
+  Pins the static provider/model catalog surface (`EvoGit.Config.LLMCatalog`):
+  provider entries, model id display-name resolution, credential keys, and
+  `base_url` / variant rules.
+
+  `async: true` is safe: the catalog is compile-time static data and every
+  function under test is a pure lookup — no app env, `:persistent_term`, ETS,
+  process, or other shared state is read or written.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Config.LLMCatalog

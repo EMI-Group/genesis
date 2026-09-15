@@ -9,9 +9,14 @@ defmodule EvoGit.MigrateStoreTest do
   `EvoGit.Store`. All assertions here go through raw Xqlite connections (or
   `Codec.decode_*` round-trips) against the private temp DB, so the task's own
   connection semantics are what is exercised.
+
+  `async: true` because the module touches NO BEAM-global state: each test gets
+  its own `@moduletag :tmp_dir` DB path, and `Mix.shell().info/1` output is
+  captured from stdout (the default Mix.Shell.IO) instead of swapping the
+  process-global Mix shell.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
 
@@ -137,13 +142,17 @@ defmodule EvoGit.MigrateStoreTest do
       before_rows = task_rows(path)
       before_cols = columns(path)
 
-      msgs = with_process_shell(fn -> run_task!(path) end)
+      # The task prints its progress with `Mix.shell().info/1`, which the default
+      # Mix.Shell.IO writes to stdout — captured WITHOUT swapping the global Mix
+      # shell (the old Mix.shell(Mix.Shell.Process) swap mutated BEAM-global
+      # `Mix.State`, which is incompatible with `async: true`).
+      output = run_task_capturing_output!(path)
 
       # All guarded steps print 0 on the second run.
-      assert "[4/8] Result rewrite → canonical JSON — ok (rows rewritten: 0)" in msgs
-      assert "[5/8] Opts rewrite → JSON object — ok (rows rewritten to JSON object: 0)" in msgs
-      assert "[6/8] branch_name backfill — ok (rows backfilled: 0)" in msgs
-      assert "[7/8] updated_at backfill — ok (rows backfilled: 0)" in msgs
+      assert output =~ "[4/8] Result rewrite → canonical JSON — ok (rows rewritten: 0)"
+      assert output =~ "[5/8] Opts rewrite → JSON object — ok (rows rewritten to JSON object: 0)"
+      assert output =~ "[6/8] branch_name backfill — ok (rows backfilled: 0)"
+      assert output =~ "[7/8] updated_at backfill — ok (rows backfilled: 0)"
 
       # DB state is byte-identical after the second run.
       assert task_rows(path) == before_rows
@@ -415,23 +424,12 @@ defmodule EvoGit.MigrateStoreTest do
 
   # --- Mix shell capture ---
 
-  # Swaps the Mix shell for Mix.Shell.Process, runs `fun`, and returns all
-  # `:info` messages the task printed. The previous shell is restored via
-  # on_exit — Mix.shell/1 writes to the project stack, which outlives the
-  # test process.
-  defp with_process_shell(fun) do
-    previous = Mix.shell()
-    Mix.shell(Mix.Shell.Process)
-    on_exit(fn -> Mix.shell(previous) end)
-    fun.()
-    collect_info_messages()
-  end
-
-  defp collect_info_messages(acc \\ []) do
-    receive do
-      {:mix_shell, :info, [msg]} -> collect_info_messages([msg | acc])
-    after
-      0 -> Enum.reverse(acc)
-    end
+  # Runs the task and returns everything it printed via `Mix.shell().info/1`.
+  # No global Mix shell swap: the default Mix.Shell.IO writes to `:stdio`, which
+  # `with_io/1` (ExUnit.CaptureIO) captures from the calling process.
+  defp run_task_capturing_output!(path) do
+    {result, io} = with_io(fn -> Mix.Tasks.Migrate.Store.run([path]) end)
+    assert result == :ok
+    io
   end
 end

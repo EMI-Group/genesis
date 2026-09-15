@@ -59,11 +59,18 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
         "cow_test_#{prefix}_#{System.unique_integer([:positive])}"
       )
 
+    # System.unique_integer([:positive]) repeats across VM runs, so wipe any
+    # leftover dir from an aborted earlier run first — a stale `.git` would
+    # carry stale branches that break `refute Git.branch_exists?(...)`.
+    File.rm_rf!(dir)
     File.mkdir_p!(dir)
     Git.init(dir)
-    # Set local git identity so commits work even without global config.
-    Git.run(["config", "user.email", "test@example.com"], dir)
-    Git.run(["config", "user.name", "Test User"], dir)
+
+    # No per-repo identity config needed: `EvoGit.GitEnv.git_env/1` injects the
+    # commit identity into every git invocation as GIT_AUTHOR_*/GIT_COMMITTER_*
+    # env vars, falling back to "Genesis"/"noreply@evogit.ai" when nothing is
+    # configured anywhere. `commit.gpgsign false` is deliberate insurance so a
+    # developer's global `commit.gpgsign = true` cannot make commits fail.
     Git.run(["config", "commit.gpgsign", "false"], dir)
 
     # Clean up the repo dir after the test so leftover dirs can't collide with
@@ -87,15 +94,22 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   end
 
   defp make_worktree_path(prefix) do
-    Path.join(
-      System.tmp_dir!(),
-      "cow_wt_#{prefix}_#{System.unique_integer([:positive])}"
-    )
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "cow_wt_#{prefix}_#{System.unique_integer([:positive])}"
+      )
+
+    # Same stale-dir guard as make_repo/1: a leftover worktree dir from a
+    # previous VM run would silently turn create_worktree/5 into a fallback.
+    File.rm_rf!(path)
+    path
   end
 
   defp cleanup_worktree(repo, worktree_path) do
+    # `worktree remove --force` already deregisters the worktree, so a
+    # follow-up `worktree prune` would be a redundant no-op (dropped).
     Git.run(["worktree", "remove", "--force", worktree_path], repo)
-    Git.run(["worktree", "prune"], repo)
     File.rm_rf!(worktree_path)
   end
 

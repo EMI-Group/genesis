@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.Tools.SharedTest do
+  @moduledoc """
+  `async: true` — pure `EvoGit.Agent.Tools.Shared` functions plus process-local
+  `:foreign_repos` state (set and cleared within each test); no BEAM-global
+  state, tmp dirs, or shared ETS.
+  """
+
   use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools.Shared
 

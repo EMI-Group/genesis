@@ -1,28 +1,29 @@
 defmodule EvoGit.CommandApprovalTest do
   @moduledoc """
-  Tests for `EvoGit.CommandApproval` — the human-in-the-loop approval gate for
-  the self-reflective agent's command shell — and for the shell-level security
-  gating of level-2/3 commands (`EvoGit.CommandShell` + `EvoGit.CommandApproval`).
-
-  The pure approval-service tests (request/respond/timeout/task-lifecycle
-  broadcasts) exercise the supervised GenServer directly through spawned caller
-  processes (the caller BLOCKS inside `CommandApproval.request/5`, so it can
-  never run in the test process itself). The shell-gating tests run real
-  level-2/3 commands through `CommandShell.execute/1` while a separate
-  responder process approves or denies the request.
+  Shell-level security-gating tests for the human-in-the-loop approval gate:
+  real level-2/3 commands run through `EvoGit.CommandShell.execute/1` while a
+  separate responder process approves or denies the request.
 
   `EvoGit.TaskRegistryCase` provides the isolated TaskRegistry/Store the
   shell-gating tests need (cancel a seeded task); `EvoGit.CommandApproval` and
   `EvoGit.PubSub` are app-booted supervision children that stay running.
+
+  The pure approval-service tests (request/respond/timeout/task-lifecycle
+  broadcasts) live in the sibling `EvoGit.CommandApproval.RequestTest` module
+  below — they need neither the isolated Store nor the registry, so they skip
+  the `EvoGit.TaskRegistryCase` per-test setup entirely.
 
   The `setup` below shrinks the approval window (app env
   `[:evo_git, :command_approval_timeout]`, default 120_000 ms) so any request
   that is never resolved times out in seconds instead of minutes.
   """
 
+  # async: false is FORCED by `EvoGit.TaskRegistryCase`: its setup terminates /
+  # restarts the app-level `EvoGit.Store` and `EvoGit.TaskRegistry` supervision
+  # children (and re-registers their global names) on every test, and the shell
+  # command handlers read the globally registered `EvoGit.Store`.
   use EvoGit.TaskRegistryCase, async: false
 
-  alias EvoGit.CommandApproval
   alias EvoGit.CommandShell
 
   setup do
@@ -88,8 +89,111 @@ defmodule EvoGit.CommandApprovalTest do
       assert {:ok, _output} = CommandShell.execute("ListTasks.list_tasks")
       assert {:ok, _output} = CommandShell.execute("SystemInfo.system_info")
 
-      refute_receive {:approval_requested, _}, 200
+      # `execute/1` dispatches synchronously in THIS process, so a request
+      # broadcast (were one ever opened) is already in our mailbox when it
+      # returns — a zero-timeout refute is exact, not a race.
+      refute_received {:approval_requested, _}
     end
+  end
+
+  # --- Helpers -------------------------------------------------------------
+
+  # Runs CommandShell.execute/1 while a background responder approves every
+  # approval request. The shell call blocks the TEST process, so the responder
+  # must be a SEPARATE process subscribed to "approvals".
+  defp execute_approved!(command) do
+    responder = start_approval_responder(:approve)
+
+    try do
+      CommandShell.execute(command)
+    after
+      Process.exit(responder, :kill)
+    end
+  end
+
+  # Spawns a responder that subscribes to "approvals" and replies `decision` to
+  # every request it observes. Signals readiness with a handshake message so the
+  # caller never races the subscription. Returns the responder pid.
+  defp start_approval_responder(decision) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+        send(parent, {:approval_responder_ready, self()})
+        approval_responder_loop(decision)
+      end)
+
+    receive do
+      {:approval_responder_ready, ^pid} -> :ok
+    after
+      2_000 -> flunk("approval responder failed to subscribe in time")
+    end
+
+    pid
+  end
+
+  defp approval_responder_loop(decision) do
+    receive do
+      {:approval_requested, %{request_id: request_id}} ->
+        EvoGit.CommandApproval.respond(request_id, decision)
+        approval_responder_loop(decision)
+
+      _other ->
+        approval_responder_loop(decision)
+    end
+  end
+
+  # Seeds a task row directly into the isolated Store (bypassing the registry).
+  defp seed_task!(attrs \\ []) do
+    task =
+      struct(
+        TaskInfo,
+        Keyword.merge(
+          [
+            id: "approval_task_#{System.unique_integer([:positive])}",
+            type: :genesis,
+            status: :pending,
+            opts: [path: "/tmp/test", objective: "hello"],
+            project_path: "/tmp/test",
+            started_at: DateTime.utc_now()
+          ],
+          attrs
+        )
+      )
+
+    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+    task
+  end
+end
+
+defmodule EvoGit.CommandApproval.RequestTest do
+  @moduledoc """
+  Pure `EvoGit.CommandApproval` service tests: request/respond, the approval
+  window timeout, task-lifecycle auto-resolution and the `approval_requested`
+  broadcast shape.
+
+  These exercise the app-booted approval GenServer directly through spawned
+  caller processes (the caller BLOCKS inside `CommandApproval.request/5`, so it
+  can never run in the test process itself). No Store/TaskRegistry state is
+  involved, so this module skips the `EvoGit.TaskRegistryCase` setup.
+
+  The `setup` below shrinks the approval window (app env
+  `[:evo_git, :command_approval_timeout]`, default 120_000 ms) so any request
+  that is never resolved times out in seconds instead of minutes.
+  """
+
+  # async: false is FORCED: the tests mutate the BEAM-global app env
+  # `[:evo_git, :command_approval_timeout]` and one briefly unregisters the
+  # app-booted `EvoGit.CommandApproval` process name.
+  use ExUnit.Case, async: false
+
+  alias EvoGit.CommandApproval
+
+  setup do
+    Application.put_env(:evo_git, :command_approval_timeout, 5_000)
+    on_exit(fn -> Application.delete_env(:evo_git, :command_approval_timeout) end)
+    :ok
   end
 
   describe "request/respond" do
@@ -188,9 +292,14 @@ defmodule EvoGit.CommandApprovalTest do
         {:task_updated, "T123", :running, node()}
       )
 
+      # Deterministic barrier: a synchronous system call is processed by the
+      # GenServer AFTER every already-queued message, so once it returns the
+      # broadcast above has definitely been handled. No wall-clock wait needed.
+      sync_approval_server!()
+
       # Still waiting: no resolved broadcast, caller still blocked.
-      refute_receive {:approval_resolved, ^request_id, _}, 200
-      refute_receive {:call_result, _}, 100
+      refute_received {:approval_resolved, ^request_id, _}
+      refute_received {:call_result, _}
 
       # Cleanup: resolve the request ourselves so nothing leaks.
       assert CommandApproval.respond(request_id, :approve) == :ok
@@ -214,8 +323,11 @@ defmodule EvoGit.CommandApprovalTest do
         {:task_updated, "T123", :cancelled, :some_other_node@host}
       )
 
-      refute_receive {:approval_resolved, ^request_id, _}, 200
-      refute_receive {:call_result, _}, 100
+      # Same deterministic barrier as above.
+      sync_approval_server!()
+
+      refute_received {:approval_resolved, ^request_id, _}
+      refute_received {:call_result, _}
 
       assert CommandApproval.respond(request_id, :approve) == :ok
       assert_receive {:call_result, :approved}
@@ -261,50 +373,13 @@ defmodule EvoGit.CommandApprovalTest do
 
   # --- Helpers -------------------------------------------------------------
 
-  # Runs CommandShell.execute/1 while a background responder approves every
-  # approval request. The shell call blocks the TEST process, so the responder
-  # must be a SEPARATE process subscribed to "approvals".
-  defp execute_approved!(command) do
-    responder = start_approval_responder(:approve)
-
-    try do
-      CommandShell.execute(command)
-    after
-      Process.exit(responder, :kill)
-    end
-  end
-
-  # Spawns a responder that subscribes to "approvals" and replies `decision` to
-  # every request it observes. Signals readiness with a handshake message so the
-  # caller never races the subscription. Returns the responder pid.
-  defp start_approval_responder(decision) do
-    parent = self()
-
-    pid =
-      spawn(fn ->
-        Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
-        send(parent, {:approval_responder_ready, self()})
-        approval_responder_loop(decision)
-      end)
-
-    receive do
-      {:approval_responder_ready, ^pid} -> :ok
-    after
-      2_000 -> flunk("approval responder failed to subscribe in time")
-    end
-
-    pid
-  end
-
-  defp approval_responder_loop(decision) do
-    receive do
-      {:approval_requested, %{request_id: request_id}} ->
-        EvoGit.CommandApproval.respond(request_id, decision)
-        approval_responder_loop(decision)
-
-      _other ->
-        approval_responder_loop(decision)
-    end
+  # Flushes the approval GenServer's mailbox deterministically: `:sys.get_state/1`
+  # is a synchronous system request handled in normal message order, so all
+  # messages already sent to it (e.g. a just-broadcast `{:task_updated, ...}`)
+  # have been processed by the time it replies.
+  defp sync_approval_server! do
+    _ = :sys.get_state(EvoGit.CommandApproval)
+    :ok
   end
 
   # Spawns a process that BLOCKS in CommandApproval.request/5 and reports the
@@ -316,27 +391,5 @@ defmodule EvoGit.CommandApprovalTest do
       result = EvoGit.CommandApproval.request(command, args, level, agent_id, task_id)
       send(parent, {:call_result, result})
     end)
-  end
-
-  # Seeds a task row directly into the isolated Store (bypassing the registry).
-  defp seed_task!(attrs \\ []) do
-    task =
-      struct(
-        TaskInfo,
-        Keyword.merge(
-          [
-            id: "approval_task_#{System.unique_integer([:positive])}",
-            type: :genesis,
-            status: :pending,
-            opts: [path: "/tmp/test", objective: "hello"],
-            project_path: "/tmp/test",
-            started_at: DateTime.utc_now()
-          ],
-          attrs
-        )
-      )
-
-    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
-    task
   end
 end

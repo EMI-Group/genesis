@@ -1,4 +1,7 @@
 defmodule EvoGit.Runtime.RootAgentHelpersTest do
+  @moduledoc """
+  Mutates the process-global `XDG_CONFIG_HOME` env var (read by `EvoGit.CustomAgents`) → `async: false`.
+  """
   use ExUnit.Case, async: false
 
   # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
