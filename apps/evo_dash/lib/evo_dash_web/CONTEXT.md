@@ -69,6 +69,10 @@ Dashboard combined-mode strings (`"genesis_new"`/`"genesis_existing"`/`"evolve_s
 
 **:reflect (repo-less chat) facts**: reflect tasks carry NO `:path` in opts and run with nil `project_path`; result shape `{:ok, %{result: <text>, commit_sha: nil, branch_name: nil, tag: nil}}`. `:reflect` IS in `EvoGit.Store.Codec` `@known_atoms` (store/codec.ex:217-218). `TaskExecutor.execute_task(:reflect, ...)` routes directly to `Runtime.SelfReflective.run`, deliberately bypassing `build_common_runtime_opts` (which `Keyword.fetch!(:path)`-raises) — `RuntimeOpts.mode_atom/2` needs no reflect clause. Full chat/send-flow detail: `live/home_live/CONTEXT.md`; core agent/runtime: `apps/evo_git/CONTEXT.md` "Self-Reflective Agent (repo-less)".
 
+## i18n / Gettext Backend
+
+`EvoDashWeb.Gettext` (`gettext.ex`) is the umbrella's only Gettext backend and is deliberately declared with `split_module_by: [:locale, :domain]` — Gettext then emits one small `EvoDashWeb.Gettext.T_<locale>_<domain>` module per locale (compiled in parallel) instead of a single ~16k-clause module, keeping the evo_dash compile fast. Keep this option; the public API (`gettext`/`lgettext`/`put_locale`/`known_locales` and every `use Gettext, backend: EvoDashWeb.Gettext` site) is unchanged.
+
 ## Constraints
 - All web modules use `use EvoDashWeb, <role>` as their entrypoint — do not bypass the shared `__using__` macro.
 - New interactive pages should be LiveViews in `live/`, not controllers in `controllers/`.
