@@ -1,5 +1,10 @@
 defmodule EvoGit.Agent.Tools.SearchContextTest do
-  use ExUnit.Case
+  @moduledoc """
+  `async: true` — `EvoGit.Agent.Tools.execute/4` "search_context" over the
+  ExUnit per-test `:tmp_dir` fixture; no BEAM-global state.
+  """
+
+  use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools
 
   @moduletag :tmp_dir

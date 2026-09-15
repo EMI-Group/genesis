@@ -33,6 +33,6 @@ Every module carries an `@moduledoc` (or leading comment) naming why it is
   (`use EvoGit.TaskRegistryCase` → terminates/restarts the app-level
   `EvoGit.Store` + `EvoGit.TaskRegistry`); `complete_task_test.exs` (inserts/deletes
   rows in the shared `:evogit_sched_meta` / `:evogit_agent_state` tables and
-  DELELTES + recreates the global `:evogit_archive_records` table).
+  DELETES + recreates the global `:evogit_archive_records` table).
 - **`async: true`** — all other files: pure helpers, per-test `:tmp_dir` fixtures,
   or process-local `Process.put` state only.

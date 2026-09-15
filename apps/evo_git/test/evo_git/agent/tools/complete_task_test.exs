@@ -1,5 +1,12 @@
 defmodule EvoGit.Agent.Tools.CompleteTaskTest do
-  use ExUnit.Case, async: true
+  @moduledoc """
+  `async: false` — the `complete/5` + archive tests mutate the shared,
+  app-owned named ETS tables: they insert/delete rows in `:evogit_sched_meta` /
+  `:evogit_agent_state` and DELETE + recreate the global `:evogit_archive_records`
+  table (a whole-table operation observable by other modules).
+  """
+
+  use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.CompleteTask
