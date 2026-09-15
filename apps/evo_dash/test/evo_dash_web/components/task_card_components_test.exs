@@ -175,6 +175,91 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  # Review-button candidacy is RESULT-AGNOSTIC: every completed/cancelled task
+  # is reviewable (a multi-repo task may have changed ONLY writable foreign
+  # repos, making no primary-repo changes), while `:reflect` (repo-less) tasks
+  # are excluded explicitly.
+  describe "task_card/1 — Review button candidacy" do
+    test "a completed task with no primary branch renders the Review button" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :completed,
+              result: {:ok, %{result: "nothing to do", no_changes: true}}
+            )
+        )
+
+      assert html =~ "Review"
+      assert html =~ "/review/"
+    end
+
+    test "a completed multi-repo task that changed only a foreign repo renders the Review button" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task:
+            review_task(
+              status: :completed,
+              result:
+                {:ok,
+                 %{
+                   result: "foreign-only change",
+                   commit_sha: nil,
+                   branch_name: nil,
+                   repos: %{
+                     "primary" => %{commit_sha: "aaaaaaa1", branch_name: nil},
+                     "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "evogit-agent_1"}
+                   }
+                 }}
+            )
+        )
+
+      assert html =~ "Review"
+      assert html =~ "/review/"
+    end
+
+    test "a cancelled task with no primary branch renders the Review button" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: review_task(status: :cancelled, result: {:ok, %{result: "stopped"}})
+        )
+
+      assert html =~ "Review"
+      assert html =~ "/review/"
+    end
+
+    test "a completed :reflect (repo-less) task never renders the Review button" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: review_task(type: :reflect, status: :completed, result: {:ok, %{result: "chat"}})
+        )
+
+      refute html =~ "/review/"
+      refute html =~ "hero-eye"
+    end
+
+    test "a cancelled :reflect task never renders the Review button" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: review_task(type: :reflect, status: :cancelled, result: {:ok, %{result: "chat"}})
+        )
+
+      refute html =~ "/review/"
+      refute html =~ "hero-eye"
+    end
+
+    test "non-reviewable statuses never render the Review button" do
+      for status <- [:pending, :running, :finalizing, :failed] do
+        html =
+          render_component(&TaskCardComponents.task_card/1,
+            task: review_task(status: status, result: {:ok, %{branch_name: "genesis/agent_1"}})
+          )
+
+        refute html =~ "/review/"
+      end
+    end
+  end
+
   # Rendering tests for the structured failed-task error record (TaskInfo
   # `error` field, ATOM-keyed map after the Store Codec decode). Contract:
   #   - ONLY `status: :failed` rows carry `error` (nil for all others/legacy).
@@ -387,6 +472,24 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         agent_count: 1,
         model_id: nil,
         opts: [prompt: "Fix the failing feature", mode: "simple"]
+      },
+      Map.new(overrides)
+    )
+  end
+
+  # A minimal completed/terminal TaskInfo-shaped map for Review-button
+  # candidacy tests (ATOM keys, the post-Codec-decoded shape).
+  defp review_task(overrides) do
+    Map.merge(
+      %{
+        id: "t_review",
+        type: :evolve,
+        status: :completed,
+        started_at: DateTime.utc_now(),
+        finished_at: DateTime.utc_now(),
+        agent_count: 1,
+        model_id: nil,
+        opts: [prompt: "Review candidacy task", mode: "simple"]
       },
       Map.new(overrides)
     )

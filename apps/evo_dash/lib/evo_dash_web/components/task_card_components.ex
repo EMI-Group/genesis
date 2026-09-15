@@ -1145,15 +1145,16 @@ defmodule EvoDashWeb.TaskCardComponents do
     "badge badge-primary font-mono min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none"
   end
 
-  defp show_review_button?(%{status: :completed, result: {:ok, %{branch_name: branch}}})
-       when is_binary(branch) and branch != "", do: true
+  # Review candidacy is deliberately RESULT-AGNOSTIC: EVERY completed/cancelled
+  # task is reviewable. A task may have made no changes in its PRIMARY repo but
+  # did change writable FOREIGN repos (multi-repo), so detecting a non-empty
+  # branch_name / `no_changes` here would hide legitimate review candidates.
+  # The only exclusion is `:reflect` (repo-less) tasks — no code to review.
+  # `:type` is read defensively (`Map.get/2`) so summary maps without it stay
+  # KeyError-safe.
+  defp show_review_button?(%{status: :completed} = task), do: Map.get(task, :type) != :reflect
 
-  defp show_review_button?(%{status: :cancelled, result: {:ok, %{branch_name: branch}}})
-       when is_binary(branch) and branch != "", do: true
-
-  defp show_review_button?(%{status: :completed, result: {:ok, %{no_changes: true}}}), do: true
-
-  defp show_review_button?(%{status: :cancelled, result: {:ok, %{no_changes: true}}}), do: true
+  defp show_review_button?(%{status: :cancelled} = task), do: Map.get(task, :type) != :reflect
 
   defp show_review_button?(_), do: false
 end
