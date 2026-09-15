@@ -1,6 +1,9 @@
 defmodule EvoGit.AgentScheduler.SubagentsTest do
   use ExUnit.Case, async: true
 
+  @moduletag :tmp_dir
+
+  alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Subagents
@@ -70,6 +73,22 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       agent_module: DummyReadWriteAgent,
       foreign_repos: [%ForeignRepo{id: repo_id, root: repo, writable: true}]
     )
+  end
+
+  # A real git repo with one commit. The spawn path runs
+  # `validate_subagent_not_ignored` → `Git.check_ignore(repo, ...)` on every
+  # spec, spawning the `git` executable with `cd: <repo path>` — a missing
+  # fixture directory makes the ERTS port program print
+  # `spawn: Could not cd to <path>` straight to stderr (invisible to
+  # ExUnit.CaptureLog), so fixture repos used through `spawn_validated_subagents/5`
+  # must exist on disk.
+  defp fixture_repo(root) do
+    File.mkdir_p!(root)
+    {:ok, _} = Git.init(root)
+    File.write!(Path.join(root, "README.md"), "# fixture repo\n")
+    {:ok, _} = Git.add(root, "README.md")
+    {:ok, _} = Git.commit(root, "initial commit")
+    root
   end
 
   # --- Cross-repo delegation ---
@@ -365,31 +384,49 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
   end
 
   describe "spawn_validated_subagents/5 — writable foreign repo one-at-a-time gating" do
-    setup do
+    setup %{tmp_dir: tmp_dir} do
+      # Real temp git repos — the spawn path runs `Git.check_ignore` with
+      # `cd: <repo path>` on every spec; a missing fixture dir makes the ERTS
+      # port program print `spawn: Could not cd to <path>` to stderr.
+      primary = fixture_repo(Path.join(tmp_dir, "primary"))
+      original = fixture_repo(Path.join(tmp_dir, "original"))
+      reference = fixture_repo(Path.join(tmp_dir, "reference"))
+
       ensure_ets_table(:evogit_sched_meta)
       ensure_ets_table(:evogit_agent_state)
 
       on_exit(fn ->
+        File.rm_rf!(primary)
+        File.rm_rf!(original)
+        File.rm_rf!(reference)
+
         for id <- [9000, 9100, 9101] do
           :ets.delete(:evogit_sched_meta, id)
           :ets.delete(:evogit_agent_state, id)
         end
       end)
 
-      :ok
+      %{
+        primary: primary,
+        original: original,
+        reference: reference
+      }
     end
 
-    test "accepts a single writable foreign spec in a batch (no false rejection)" do
+    test "accepts a single writable foreign spec in a batch (no false rejection)", %{
+      primary: primary,
+      original: original
+    } do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
       :ets.insert(:evogit_agent_state, {
         9000,
-        parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+        parent_state(path: "./", repo: primary, repo_id: "primary")
       })
 
       specs = [
-        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original")
+        writable_foreign_spec(path: "./src", repo: original, repo_id: "original")
       ]
 
       state = %State{next_agent_id: 9100}
@@ -411,18 +448,22 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert :ets.lookup_element(:evogit_sched_meta, 9100, 2).parent_id == 9000
     end
 
-    test "rejects the second writable foreign spec in a batch (one-at-a-time)" do
+    test "rejects the second writable foreign spec in a batch (one-at-a-time)", %{
+      primary: primary,
+      original: original,
+      reference: reference
+    } do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 0}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
       :ets.insert(:evogit_agent_state, {
         9000,
-        parent_state(path: "./", repo: "/home/user/primary", repo_id: "primary")
+        parent_state(path: "./", repo: primary, repo_id: "primary")
       })
 
       specs = [
-        writable_foreign_spec(path: "./src", repo: "/home/user/original", repo_id: "original"),
-        writable_foreign_spec(path: "./src", repo: "/home/user/reference", repo_id: "reference")
+        writable_foreign_spec(path: "./src", repo: original, repo_id: "original"),
+        writable_foreign_spec(path: "./src", repo: reference, repo_id: "reference")
       ]
 
       state = %State{next_agent_id: 9100}
@@ -455,13 +496,15 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       assert :ets.lookup(:evogit_agent_state, 9101) == []
     end
 
-    test "accepts multiple same-repo writable specs within a foreign repo (no serialization)" do
+    test "accepts multiple same-repo writable specs within a foreign repo (no serialization)", %{
+      original: original
+    } do
       parent_meta = %{base_sched_meta(9000, %{}) | depth: 1}
       :ets.insert(:evogit_sched_meta, {9000, parent_meta})
 
       :ets.insert(:evogit_agent_state, {
         9000,
-        parent_state(path: "./", repo: "/home/user/original", repo_id: "original")
+        parent_state(path: "./", repo: original, repo_id: "original")
       })
 
       # Two writable specs targeting the SAME foreign repo the parent runs in —
@@ -469,21 +512,17 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       specs = [
         spec(
           path: "./src",
-          repo: "/home/user/original",
+          repo: original,
           repo_id: "original",
           agent_module: DummyReadWriteAgent,
-          foreign_repos: [
-            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
-          ]
+          foreign_repos: [%ForeignRepo{id: "original", root: original, writable: true}]
         ),
         spec(
           path: "./lib",
-          repo: "/home/user/original",
+          repo: original,
           repo_id: "original",
           agent_module: DummyReadWriteAgent,
-          foreign_repos: [
-            %ForeignRepo{id: "original", root: "/home/user/original", writable: true}
-          ]
+          foreign_repos: [%ForeignRepo{id: "original", root: original, writable: true}]
         )
       ]
 
