@@ -125,7 +125,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "elixir linux script uses GNU cp reflink" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+      assert scripts.linux =~ ~r/cp -R --preserve=timestamps --reflink=auto/
     end
 
     test "elixir macos script has bash shebang and copies deps and _build" do
@@ -141,7 +141,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "elixir macos script uses BSD cp clonefile" do
       scripts = WorktreeInitScript.scripts_for(:elixir)
 
-      assert scripts.macos =~ ~r/cp -cR/
+      assert scripts.macos =~ ~r/cp -cRp/
     end
 
     test "elixir windows script uses PowerShell syntax" do
@@ -165,7 +165,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "node linux script uses GNU cp reflink" do
       scripts = WorktreeInitScript.scripts_for(:node)
 
-      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+      assert scripts.linux =~ ~r/cp -R --preserve=timestamps --reflink=auto/
     end
 
     test "node macos script has bash shebang and copies node_modules" do
@@ -180,7 +180,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "node macos script uses BSD cp clonefile" do
       scripts = WorktreeInitScript.scripts_for(:node)
 
-      assert scripts.macos =~ ~r/cp -cR/
+      assert scripts.macos =~ ~r/cp -cRp/
     end
 
     test "node windows script uses PowerShell syntax" do
@@ -203,7 +203,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "python linux script uses GNU cp reflink" do
       scripts = WorktreeInitScript.scripts_for(:python)
 
-      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+      assert scripts.linux =~ ~r/cp -R --preserve=timestamps --reflink=auto/
     end
 
     test "python macos script has bash shebang and copies .venv" do
@@ -218,7 +218,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "python macos script uses BSD cp clonefile" do
       scripts = WorktreeInitScript.scripts_for(:python)
 
-      assert scripts.macos =~ ~r/cp -cR/
+      assert scripts.macos =~ ~r/cp -cRp/
     end
 
     test "python windows script uses PowerShell syntax" do
@@ -241,7 +241,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "rust linux script uses GNU cp reflink" do
       scripts = WorktreeInitScript.scripts_for(:rust)
 
-      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+      assert scripts.linux =~ ~r/cp -R --preserve=timestamps --reflink=auto/
     end
 
     test "rust macos script has bash shebang and copies target" do
@@ -256,7 +256,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "rust macos script uses BSD cp clonefile" do
       scripts = WorktreeInitScript.scripts_for(:rust)
 
-      assert scripts.macos =~ ~r/cp -cR/
+      assert scripts.macos =~ ~r/cp -cRp/
     end
 
     test "rust windows script uses PowerShell syntax" do
@@ -279,7 +279,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "go linux script uses GNU cp reflink" do
       scripts = WorktreeInitScript.scripts_for(:go)
 
-      assert scripts.linux =~ ~r/cp -R --reflink=auto/
+      assert scripts.linux =~ ~r/cp -R --preserve=timestamps --reflink=auto/
     end
 
     test "go macos script has bash shebang and copies vendor" do
@@ -294,7 +294,7 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
     test "go macos script uses BSD cp clonefile" do
       scripts = WorktreeInitScript.scripts_for(:go)
 
-      assert scripts.macos =~ ~r/cp -cR/
+      assert scripts.macos =~ ~r/cp -cRp/
     end
 
     test "go windows script uses PowerShell syntax" do

@@ -318,7 +318,7 @@ defmodule EvoGit.ProjectConfigTest do
   describe "write_worktree_script/2" do
     @scripts %{
       linux: "#!/bin/bash\ncp -R \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
-      macos: "#!/bin/bash\ncp -cR \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
+      macos: "#!/bin/bash\ncp -cRp \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\n",
       windows:
         "# Copy deps\nCopy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n"
     }
@@ -478,12 +478,12 @@ defmodule EvoGit.ProjectConfigTest do
 
         # Copy Rust build artifacts for warm cache
         if [ -d "$SOURCE_REPO_PATH/target" ]; then
-          cp -R --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+          cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
         fi
 
         # Copy deps
         if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-          cp -R --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+          cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
         fi
         """,
         macos: """
@@ -491,11 +491,11 @@ defmodule EvoGit.ProjectConfigTest do
         set -euo pipefail
 
         if [ -d "$SOURCE_REPO_PATH/target" ]; then
-          cp -cR "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
+          cp -cRp "$SOURCE_REPO_PATH/target" "$TARGET_WORKTREE_PATH/"
         fi
 
         if [ -d "$SOURCE_REPO_PATH/deps" ]; then
-          cp -cR "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
+          cp -cRp "$SOURCE_REPO_PATH/deps" "$TARGET_WORKTREE_PATH/"
         fi
         """,
         windows: """
@@ -554,9 +554,9 @@ defmodule EvoGit.ProjectConfigTest do
     } do
       multi_line_scripts = %{
         linux:
-          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -R --reflink=auto \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
+          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -R --preserve=timestamps --reflink=auto \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
         macos:
-          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -cR \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
+          "#!/bin/bash\nif [ -d \"$SOURCE_REPO_PATH/deps\" ]; then\n  cp -cRp \"$SOURCE_REPO_PATH/deps\" \"$TARGET_WORKTREE_PATH/\"\nfi\n",
         windows:
           "if (Test-Path \"$env:SOURCE_REPO_PATH/deps\") {\n  Copy-Item -Recurse \"$env:SOURCE_REPO_PATH/deps\" \"$env:TARGET_WORKTREE_PATH/\"\n}\n"
       }
