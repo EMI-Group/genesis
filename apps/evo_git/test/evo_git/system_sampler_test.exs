@@ -229,115 +229,6 @@ defmodule EvoGit.SystemSamplerTest do
     end)
   end
 
-  # --- TEMPORARY leak diagnostics (removed before commit) ---
-
-  # Dumps everything needed to attribute a leaked LLM-slot holder to its
-  # creating test. Called ONLY when a live `llm_slots` read mismatches the
-  # expected map, so a green suite stays quiet.
-  defp leak_dump(context, actual, expected) do
-    st = :sys.get_state(EvoGit.AgentScheduler)
-
-    diff_keys =
-      (Map.keys(actual) ++ Map.keys(expected))
-      |> Enum.uniq()
-      |> Enum.reject(fn k -> Map.get(actual, k) == Map.get(expected, k) end)
-
-    log = fn label, value ->
-      IO.puts("[LEAK-DIAG] #{context} | #{label} = #{inspect(value, limit: :infinity)}")
-    end
-
-    IO.puts("\n[LEAK-DIAG] ==================== #{context} ====================")
-    log.("actual", actual)
-    log.("expected", expected)
-    log.("diff_keys", diff_keys)
-    log.("model_profiles", AgentScheduler.get_config(:model_profiles))
-    log.("model_concurrency", st.model_concurrency)
-    log.("default_llm_max_concurrency", st.default_llm_max_concurrency)
-    log.("llm_holders", st.llm_holders)
-    log.("llm_waiting", st.llm_waiting)
-    log.("llm_backoff_until", st.llm_backoff_until)
-    log.("llm_last_granted", st.llm_last_granted)
-
-    for key <- diff_keys, agent_id <- Map.get(st.llm_holders, key, MapSet.new()) do
-      IO.puts(
-        "[LEAK-DIAG] #{context} | leaked holder agent ##{agent_id} in model #{inspect(key)}:"
-      )
-
-      IO.puts(
-        "[LEAK-DIAG] #{context} |   agent_state = #{inspect(dump_agent_state(agent_id), limit: :infinity)}"
-      )
-
-      IO.puts(
-        "[LEAK-DIAG] #{context} |   sched_meta  = #{inspect(dump_sched_meta(agent_id), limit: :infinity)}"
-      )
-    end
-
-    log.("all_agent_state_ids", ets_ids(:evogit_agent_state))
-    log.("all_sched_meta_ids", ets_ids(:evogit_sched_meta))
-    log.("cancelling_task_ids", ets_ids(:evogit_cancelling_tasks))
-    IO.puts("[LEAK-DIAG] ==================== end #{context} ====================\n")
-  end
-
-  defp assert_llm_slots!(actual, expected, context) do
-    if actual != expected, do: leak_dump(context, actual, expected)
-    assert actual == expected
-  end
-
-  defp dump_agent_state(agent_id) do
-    case EvoGit.AgentScheduler.Store.get_agent_state(agent_id) do
-      {:ok, s} ->
-        %{
-          model_id: s.model_id,
-          llm_model: inspect(s.llm_model),
-          objective: s.objective,
-          repo_id: s.repo_id,
-          repo_root: s.repo_root,
-          context_node: inspect(s.context_node),
-          task_local_id: s.task_local_id,
-          parent_id: s.parent_id,
-          turn: s.turn
-        }
-
-      other ->
-        other
-    end
-  catch
-    _, r -> {:error, r}
-  end
-
-  defp dump_sched_meta(agent_id) do
-    case EvoGit.AgentScheduler.Store.get_sched_meta(agent_id) do
-      {:ok, m} ->
-        spec = m.spec
-
-        %{
-          task_id: m.task_id,
-          status: m.status,
-          task_number: m.task_number,
-          parent_id: m.parent_id,
-          retries: m.retries,
-          worktree: m.worktree,
-          spec_repo_id: spec && spec.repo_id,
-          spec_context_node: spec && inspect(spec.context_node),
-          spec_objective: spec && spec.objective,
-          spec_agent_module: spec && inspect(spec.agent_module)
-        }
-
-      other ->
-        other
-    end
-  catch
-    _, r -> {:error, r}
-  end
-
-  defp ets_ids(tab) do
-    if :ets.whereis(tab) == :undefined do
-      :undefined
-    else
-      :ets.tab2list(tab) |> Enum.map(fn {k, _} -> k end)
-    end
-  end
-
   # --- Setup ---
 
   # Silence the app-registered sampler for the whole module: set the env FIRST,
@@ -717,19 +608,14 @@ defmodule EvoGit.SystemSamplerTest do
 
         if tick_n in [2, 10] do
           assert capacities_of(last_sample(pid)) == baseline_totals
-
-          assert_llm_slots!(
-            last_sample(pid).llm_slots,
-            live_llm_slots,
-            "config-cache tick#{tick_n}"
-          )
+          assert last_sample(pid).llm_slots == live_llm_slots
         end
       end
 
       # (e) Tick 11 (rem(11, 10) == 1) refreshes from the live config.
       :ok = GenServer.call(pid, :tick)
       assert capacities_of(last_sample(pid)) == %{llm_capacity: 7, tool_capacity: 5}
-      assert_llm_slots!(last_sample(pid).llm_slots, live_llm_slots, "config-cache tick11")
+      assert last_sample(pid).llm_slots == live_llm_slots
     end
   end
 
@@ -882,7 +768,7 @@ defmodule EvoGit.SystemSamplerTest do
       Application.delete_env(:evo_git, @llm_slots_seam_key)
 
       :ok = GenServer.call(pid, :tick)
-      assert_llm_slots!(last_sample(pid).llm_slots, expected_llm_slots, "seam-d")
+      assert last_sample(pid).llm_slots == expected_llm_slots
       assert Process.alive?(pid)
     end
 
