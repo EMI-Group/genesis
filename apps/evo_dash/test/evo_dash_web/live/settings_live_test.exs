@@ -48,15 +48,90 @@ defmodule EvoDashWeb.SettingsLiveTest do
     :ok
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Mount helper — deterministic settle of the page's ASYNC loads
+  # ───────────────────────────────────────────────────────────────────────────
+  #
+  # Every Settings page mount kicks off an async load on EvoDash.TaskSupervisor:
+  # `SettingsLive.NodeData.start/3` (from handle_params/3) reads config.toml and
+  # reports back `{:settings_node_data_loaded, node, category, results}`, whose
+  # handler REPLACES the `:file_config` assign with the snapshot it read; the
+  # NodeAware hook additionally spawns its sidebar fetch. The node-data task
+  # reads the config at its START but only sends the message after its remaining
+  # work, so under scheduler load the apply routinely lands AFTER the first event
+  # a test drives — reverting the state the test just mutated (that is what
+  # intermittently broke the editor/save/list-editing assertions in full-suite
+  # runs: `current_models/1` came back empty, and the editor render lost the
+  # profile being edited).
+  #
+  # `mount_settings/2` funnels every mount in this file through a deterministic
+  # settle: wait for THIS mount's async tasks to exit, then drain their result
+  # messages (render/1 performs a synchronous round-trip, so everything queued
+  # before it — including the node-data apply — is processed first). Only then is
+  # the view handed to the test, so no stale apply can arrive mid-test.
+  #
+  # The ORIGINAL mount HTML is returned unchanged: the "shell seeding (async
+  # platform gating)" describe asserts on the seed-shell render that live/3
+  # always returns.
+  defp mount_settings(conn, path) do
+    {:ok, view, html} = Phoenix.LiveViewTest.live(conn, path)
+    await_mount_async_loads(view)
+    {:ok, view, html}
+  end
+
+  # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
+  # process has exited, then flushes their result messages into the view.
+  # Task.Supervisor records the spawning process in the child's `$callers`
+  # process-dictionary entry, so matching it against the view pid targets exactly
+  # this mount's tasks — a leftover task from another test is never waited on
+  # (and cannot block the mount).
+  defp await_mount_async_loads(view) do
+    view.pid
+    |> mount_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      # A task that already exited delivers its :DOWN immediately (reason
+      # :noproc); the send/2 that carries its result always happens BEFORE the
+      # process exits, so the message is queued by the time the monitor fires.
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+
+    _ = render(view)
+    :ok
+  end
+
+  defp mount_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_, pid, _, _} when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
+  end
+
   describe "settings search" do
     test "renders the search input", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/settings")
+      {:ok, _view, html} = mount_settings(conn, ~p"/settings")
 
       assert html =~ "Filter settings..."
     end
 
     test "search handler with 'value' key updates search_text and shows results", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # The search handler expects %{"value" => text} (the input name is "value").
       # A mismatched key (e.g. %{"search" => text}) would silently fail to match.
@@ -68,7 +143,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "search handler shows 'no settings found' for a non-matching term", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "search", %{"value" => "zzz_nonexistent_xyz"})
 
@@ -76,7 +151,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "clearing search returns to category view", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # First type a search term
       _html = render_hook(view, "search", %{"value" => "scheduler"})
@@ -89,7 +164,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "search input is inside a form (required for phx-change in LiveView)", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/settings")
+      {:ok, _view, html} = mount_settings(conn, ~p"/settings")
 
       # The search input must be wrapped in a <form> for phx-change to work
       # in Phoenix LiveView (pushInput throws if inputEl.form is null).
@@ -110,7 +185,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # foreign-node events are ignored (socket unchanged).
 
     test "broadcast from the current node refreshes the :scheduler_config assign", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Mount seeds the assign from the scheduler — flip the paused flag so the
       # refreshed config observably differs from the mount-time snapshot.
@@ -158,7 +233,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         end
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Mount snapshot was paused — the final assertion below means "unchanged
       # from the snapshot" (the foreign event was dropped).
@@ -202,7 +277,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Ensure no credentials.toml exists.
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       assert provider(:deepseek).models != []
@@ -230,7 +305,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         File.rm(creds_file())
       end)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       # The API key form only renders once a model is selected.
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
@@ -250,7 +325,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Ensure no credentials.toml exists.
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
       assert html =~ "Select a model above to configure credentials."
 
@@ -267,7 +342,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model selection highlights the button and enables the Save Model form", %{conn: conn} do
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       html = render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
@@ -290,7 +365,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "save_quick_setup persists the selected profile", %{conn: conn} do
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
       render_hook(view, "select_llm_model", %{"model_string" => model_string(:deepseek)})
 
@@ -313,7 +388,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "changing provider resets the selected model", %{conn: conn} do
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "google"})
 
       assert provider(:google).models != []
@@ -330,7 +405,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "unknown model_string clears the selection instead of crashing", %{conn: conn} do
       File.rm(creds_file())
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "deepseek"})
 
       html =
@@ -346,7 +421,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
   describe "boolean field rendering (nix.enabled)" do
     test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "nix"})
 
       # The hidden field (value="false") must appear BEFORE the checkbox so that
@@ -368,7 +443,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "toggle is unchecked when value is false/nil (default)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "nix"})
 
       # Default for nix.enabled is false, so the checkbox should NOT have 'checked'
@@ -379,7 +454,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "toggle uses DaisyUI toggle classes", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "nix"})
 
       assert html =~ ~s(class="toggle toggle-primary toggle-sm")
@@ -391,7 +466,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # English source strings (matching what the en translation returns).
 
     test "renders custom model form for OpenRouter", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
@@ -408,7 +483,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "renders custom model form for OpenAI-Compatible (with base URL and warning)", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
@@ -424,7 +499,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "saving OpenRouter custom model stores map spec and pre-fills on re-render", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
@@ -444,7 +519,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
@@ -470,7 +545,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "rejects empty model name", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
@@ -484,7 +559,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "rejects empty base URL for OpenAI-compatible", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
@@ -568,7 +643,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown category does not crash select_category", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "select_category", %{"category" => "totally_fake_category"})
 
@@ -579,7 +654,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown category in URL params does not crash", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/settings?category=bogus_category")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=bogus_category")
 
       # Unknown category in handle_params → keeps current category (:llm).
       assert assigns(view).active_category == :llm
@@ -587,7 +662,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "valid category conversion still works", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "select_category", %{"category" => "nix"})
 
@@ -596,7 +671,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown provider does not crash select_llm_provider", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
 
@@ -607,7 +682,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "valid provider conversion still works", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
@@ -615,7 +690,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown variant does not crash select_llm_variant", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       render_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
 
@@ -624,7 +699,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown variant after valid provider does not crash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
       render_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
@@ -633,7 +708,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "valid variant conversion still works", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
 
       html = render_hook(view, "select_llm_variant", %{"variant_id" => "global"})
@@ -644,7 +719,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "unknown key path does not crash reset_key", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
 
@@ -661,7 +736,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "renders the editor with Add Model button and empty state", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "llm"})
 
       assert html =~ "Model Profiles"
@@ -672,7 +747,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_model_profile creates a new profile with generated id and enters edit mode", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "add_model_profile", %{})
 
@@ -685,7 +760,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "add_model_profile generates sequential unique ids", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Add + save the first profile to persist it
       render_hook(view, "add_model_profile", %{})
@@ -707,7 +782,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "edit_model_profile toggles the edit form", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       # add_model_profile already enters edit mode — cancel first
       render_hook(view, "cancel_edit_model_profile", %{})
@@ -720,7 +795,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "edit_model_profile toggles off when clicked again", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       # add_model_profile enters edit mode for profile-1
       assert assigns(view).editing_profile_id == "profile-1"
@@ -731,7 +806,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "cancel_edit_model_profile clears editing state", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       # add_model_profile enters edit mode for profile-1
       render_hook(view, "add_model_profile", %{})
       assert assigns(view).editing_profile_id == "profile-1"
@@ -742,7 +817,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile updates the profile with typed params", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -769,7 +844,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile clears editing state after save", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -785,7 +860,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile rejects empty id", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -802,7 +877,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile rejects duplicate id", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "save_model_profile", %{
@@ -828,7 +903,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile keeps same id when unchanged (no false duplicate)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -847,7 +922,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "delete_model_profile removes the profile", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "save_model_profile", %{
@@ -876,7 +951,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "select_llm_model_shortcut adds a profile and mirrors flat model", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
         render_hook(view, "select_llm_model_shortcut", %{
@@ -896,7 +971,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
         render_hook(view, "save_custom_model", %{
@@ -911,7 +986,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile composes map spec with provider, id, and base_url", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -935,7 +1010,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile rejects empty model id", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -951,7 +1026,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile persists provider_options at profile level", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -974,7 +1049,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile rejects invalid provider_options JSON", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -991,7 +1066,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile rejects non-object provider_options", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1008,7 +1083,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile then edit pre-fills provider_options from profile", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "save_model_profile", %{
@@ -1029,7 +1104,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_custom_model with base_url for OpenAI-compatible produces map spec", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
@@ -1051,7 +1126,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "save_model_profile", %{
@@ -1072,7 +1147,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_custom_model rejects empty name", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
         render_hook(view, "save_custom_model", %{
@@ -1084,7 +1159,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_custom_model rejects empty base URL for OpenAI-compatible", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html =
         render_hook(view, "save_custom_model", %{
@@ -1117,7 +1192,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile moves a profile up", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1128,7 +1203,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile moves a profile down", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1140,7 +1215,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile is a no-op when moving the first profile up", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1152,7 +1227,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile is a no-op when moving the last profile down", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1164,7 +1239,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile persists the reordered config to disk", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1184,7 +1259,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1220,7 +1295,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "model_profile_form_change stores the whole form as a draft", %{conn: conn} do
       # add_model_profile enters edit mode for profile-1 immediately.
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1246,7 +1321,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "model_profile_form_change stores off_peak_days and per-window days in the draft", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1281,7 +1356,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # exactly one checkbox is submitted (`off_peak_days=weekends`). The draft
       # must normalize it (the raw binary crashed the render's
       # `Enum.member?(off_peak_days, value)` with an Enumerable protocol error).
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1312,7 +1387,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "model_profile_form_change with all-unchecked days ([] seed entry only)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1336,7 +1411,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "model_profile_form_change never crashes on partial/odd params", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html = render_hook(view, "model_profile_form_change", %{"peak_hours" => "garbage"})
@@ -1346,7 +1421,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "add_peak_hours_row preserves typed values from the draft", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1381,7 +1456,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "add_peak_hours_row preserves off-peak days and per-window days from the draft", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1423,7 +1498,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "remove_peak_hours_row preserves the remaining typed values", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1450,7 +1525,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "remove_peak_hours_row preserves the remaining windows' days and off-peak days", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       render_hook(view, "model_profile_form_change", %{
@@ -1486,7 +1561,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "profile_form_draft is cleared on cancel and on save", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -1533,7 +1608,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "profile_form_draft is cleared when opening a different profile's edit form", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
@@ -1556,7 +1631,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "save_model_profile rejects a negative peak_concurrency with the updated flash", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -1576,7 +1651,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile stores a non-blank timezone and omits a blank one", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1610,7 +1685,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile persists off_peak_days and per-window days", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1649,7 +1724,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Plug collapses a repeated form param to a bare string when exactly one
       # chip is checked. Save-time parsing must wrap it — previously the day
       # was silently dropped (list-only normalization).
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1678,7 +1753,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "save_model_profile omits off_peak_days and per-window days when empty", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
 
       html =
@@ -1775,7 +1850,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "connection test with a map model renders the formatted string, not the raw map",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "llm"})
 
       # Simulate the LLM connection test result being delivered by the async task
@@ -1964,7 +2039,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "sandbox category renders the write_paths card without crashing", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Regression: the sandbox category used to hard-filter to [:sandbox, :mode],
@@ -1979,7 +2054,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "search for write_paths renders the card", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "search", %{"value" => "write_paths"})
 
@@ -1990,7 +2065,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "add_list_entry appends a blank entry to the in-memory config", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html = render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
@@ -2003,7 +2078,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "add_list_entry with an unknown key path flashes an error", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "add_list_entry", %{"key_path" => "nope.nope"})
 
@@ -2013,7 +2088,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_list_entry removes the entry at the given index", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
@@ -2029,7 +2104,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_list_entry with malformed or out-of-range index is a no-op", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Malformed index → Integer.parse fails → treated as -1 → no-op
@@ -2051,7 +2126,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "save_category persists the edited list to the config file", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
@@ -2077,7 +2152,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "blank-only list saves as an explicit empty list", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # The UI flow: add one blank entry, then save. The form submits the hidden
@@ -2098,7 +2173,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "absent write_paths on save keeps nil (no key introduced)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
@@ -2133,7 +2208,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
       with_os_override(:windows)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # The platform-filtered schemas arrive with the async NodeData result —
       # deliver it deterministically (the real task computes the same values
@@ -2157,7 +2232,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # platform-FILTERED schemas — deliver the async result first. On Windows
       # "sandbox" is not a known category → falls back to the active category
       # (:llm). No crash.
-      {:ok, view, _html} = live(conn, ~p"/settings?category=sandbox")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=sandbox")
       html = deliver_node_data(view, "sandbox")
 
       assert assigns(view).active_category == :llm
@@ -2173,7 +2248,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # (an unset/nil value renders only the "Not set" hint, no name attribute).
       seed_write_paths(["/tmp/a"])
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
@@ -2193,7 +2268,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Linux override keeps the Linux Security sub-section", %{conn: conn} do
       with_os_override(:linux)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       # Deliver the async platform-filtered schemas before selecting the
       # category (the seed shell shows the UNFILTERED map).
       deliver_node_data(view)
@@ -2229,7 +2304,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     # Seed an explicit `[nix] enabled` in the RAW user config file (under the
     # file-level setup's isolated XDG_CONFIG_HOME dir). Must be called BEFORE
-    # live(conn, ~p"/settings") so mount sees it.
+    # mount_settings(conn, ~p"/settings") so mount sees it.
     defp seed_nix_enabled(bool) do
       File.mkdir_p!(Path.dirname(EvoGit.Config.config_path()))
       File.write!(EvoGit.Config.config_path(), "[nix]\nenabled = #{bool}\n")
@@ -2238,7 +2313,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "nix binary available → nix category shown even with no config", %{conn: conn} do
       with_nix_available_override(true)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       # Deliver the async NodeData result (nix visible under the override) so
       # the platform-filtered schemas are in place before the gated asserts.
@@ -2257,7 +2332,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_nix_available_override(false)
       seed_nix_enabled(true)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       assert html =~ ~s(phx-value-category="nix")
@@ -2270,7 +2345,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       with_nix_available_override(false)
       seed_nix_enabled(false)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       # An explicit false counts as "configured" — the section must stay
@@ -2286,7 +2361,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     } do
       with_nix_available_override(false)
 
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = deliver_node_data(view)
 
       # Sidebar entry and content section are both gone.
@@ -2319,7 +2394,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # platform-FILTERED schemas — deliver the async result first. With nix
       # hidden, "nix" is not a known category → falls back to the active
       # category (:llm). No crash.
-      {:ok, view, _html} = live(conn, ~p"/settings?category=nix")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=nix")
       html = deliver_node_data(view, "nix")
 
       assert assigns(view).active_category == :llm
@@ -2348,7 +2423,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # the last message processed).
 
     test "non-gated ?category=agents renders the agents section immediately", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/settings?category=agents")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=agents")
 
       # Seeded directly by seed_category/2 — no async result needed. The real
       # task's re-resolution lands on :agents too, so this holds in both states.
@@ -2366,7 +2441,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # :llm — the sandbox section is NOT rendered on the first paint, even
       # though the UNFILTERED sidebar still lists the sandbox entry. (html-only
       # asserts: the real task may have already re-resolved to :sandbox.)
-      {:ok, view, html} = live(conn, ~p"/settings?category=sandbox")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=sandbox")
 
       assert html =~ ~s(id="category-llm")
       refute html =~ ~s(id="category-sandbox")
@@ -2382,7 +2457,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "gated ?category=nix seeds :llm, then resolves :nix after delivery", %{conn: conn} do
       # nix binary available (file-level setup default) → nix visible post-result.
-      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
 
       assert html =~ ~s(id="category-llm")
       refute html =~ ~s(id="category-nix")
@@ -2399,7 +2474,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Seed shell: the UNFILTERED sidebar still shows the nix entry, but the
       # active category seeds :llm (nix is potentially-gated). The post-result
       # state coincides (:llm — nix hidden), so the assigns assert is race-free.
-      {:ok, view, html} = live(conn, ~p"/settings?category=nix")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
 
       assert assigns(view).active_category == :llm
       assert html =~ ~s(id="category-llm")
@@ -2454,7 +2529,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
+      {:ok, view, _html} = mount_settings(conn, "/settings?node=" <> id)
 
       # The node context resolved to the (unreachable) remote node.
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
@@ -2494,7 +2569,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
          {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
       )
 
-      {:ok, view, _html} = live(conn, "/settings?node=" <> id)
+      {:ok, view, _html} = mount_settings(conn, "/settings?node=" <> id)
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
 
       # Deliver a result tagged with a DIFFERENT node than the one currently
@@ -2530,7 +2605,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "local node keeps remote_config_error nil and shows no error banner", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings")
 
       assert assigns(view)[:remote_config_error] == nil
       refute html =~ "Remote Configuration Unavailable"
@@ -2599,7 +2674,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "bootstrapping renders the five-step bar with the mapped stage", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
 
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2620,7 +2695,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "the five step labels render for a bootstrapping target", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2658,7 +2733,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       for {stage, expected_idx} <- mappings do
         {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-        {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+        {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
         send(
           view.pid,
@@ -2679,7 +2754,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "unknown stage atom highlights no step", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2695,7 +2770,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "a broadcast for a different target preserves the active entry", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2715,7 +2790,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2747,7 +2822,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2789,7 +2864,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(
         view.pid,
@@ -2832,7 +2907,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "bootstrap failure before any stage broadcast renders error text with an unhighlighted bar",
          %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:error, "early failure"}})
       html = render(view)
@@ -2855,7 +2930,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # 200ms delay: keep the fake's reply in flight so the immediate
       # assertion above does not race the async {:bootstrap_complete, ...}
       {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       html = render_click(view, "bootstrap_remote_target", %{"id" => id})
 
@@ -2887,7 +2962,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # delay the fake's reply so the first bootstrap is still in flight when
       # the second click lands — the active-entry guard must block it
       {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "bootstrap_remote_target", %{"id" => id})
       render_click(view, "bootstrap_remote_target", %{"id" => id})
@@ -2912,7 +2987,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       # an active bootstrap entry is showing...
       send(
@@ -2949,7 +3024,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # immediate "progress re-activated" assertion below does not race the
       # async {:bootstrap_complete, ...}.
       {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
       render(view)
@@ -2990,7 +3065,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "cancel_bootstrap_restart dismisses the dialog without bootstrapping", %{conn: conn} do
       {id, manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
       render(view)
@@ -3039,7 +3114,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "Remote Connections category renders the two-step Install/Connect explainer", %{
       conn: conn
     } do
-      {:ok, _view, html} = live(conn, "/settings?category=remote_connections")
+      {:ok, _view, html} = mount_settings(conn, "/settings?category=remote_connections")
 
       assert html =~ "Remote Connections"
       assert html =~ "first install the remote daemon on the server, then connect to it"
@@ -3049,7 +3124,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "disconnected target card action buttons read Install and Connect", %{conn: conn} do
       save_target!()
 
-      {:ok, _view, html} = live(conn, "/settings?category=remote_connections")
+      {:ok, _view, html} = mount_settings(conn, "/settings?category=remote_connections")
 
       labels = button_labels(html)
       assert "Install" in labels
@@ -3059,7 +3134,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "bootstrap completion flashes Install succeeded", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:ok, :daemon_started}})
       html = render(view)
@@ -3069,7 +3144,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "Add form auto-fills Name from the SSH Target while Name is untouched", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       html = render_click(view, "add_remote_target", %{})
       assert html =~ "Add Connection"
@@ -3119,7 +3194,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "direct submit with a blank Name persists Name == SSH Target", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
       render_click(view, "add_remote_target", %{})
 
       html =
@@ -3141,7 +3216,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "custom Name is kept verbatim once typed, never clobbered by SSH Target edits", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
       render_click(view, "add_remote_target", %{})
 
       # Type into SSH Target while Name is untouched → Name auto-tracks.
@@ -3202,7 +3277,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       on_exit(fn -> EvoGit.RemoteConnections.delete(id) end)
 
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "edit_remote_target", %{"id" => id})
       assert assigns(view)[:remote_form_target][:name] == "My Server"
@@ -3308,7 +3383,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "no premature flash on Connect click; info flash exactly once on the :connected broadcast",
          %{conn: conn} do
       {id, manager} = connect_target!()
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       html = render_click(view, "connect_remote_target", %{"id" => id})
 
@@ -3332,7 +3407,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "duplicate :connected broadcast does not flash a second time (marker consumed)",
          %{conn: conn} do
       {id, manager} = connect_target!()
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
 
@@ -3357,7 +3432,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test ":connecting broadcast neither flashes nor consumes the marker; the later terminal still flashes",
          %{conn: conn} do
       {id, manager} = connect_target!()
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
 
@@ -3385,7 +3460,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "error broadcast flashes the last_error once; a duplicate error broadcast is silent",
          %{conn: conn} do
       {id, manager} = connect_target!()
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
 
@@ -3409,7 +3484,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # 200ms reply delay keeps the first connect in flight while the second
       # click lands — the per-target pending marker must block the duplicate.
       {id, manager} = connect_target!(delay_ms: 200)
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
       render_click(view, "connect_remote_target", %{"id" => id})
@@ -3422,7 +3497,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "sync connect error (never broadcast) clears the marker and flashes via the self-message",
          %{conn: conn} do
       {id, _manager} = connect_target!(connect_result: {:error, :subsystem_down})
-      {:ok, view, _html} = live(conn, "/settings?category=remote_connections")
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
 
@@ -3450,7 +3525,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
   describe "copy-to-clipboard" do
     test "config-path copy button renders with the ClipboardCopy hook", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/settings")
+      {:ok, _view, html} = mount_settings(conn, ~p"/settings")
 
       assert html =~ ~s(id="settings-config-path-copy")
       assert html =~ ~s(phx-hook="ClipboardCopy")
@@ -3458,7 +3533,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "copied event flashes the confirmation message", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "copied", %{})
 
@@ -3488,7 +3563,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "selecting the appearance category renders 10 swatches and the hidden accent input", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "appearance"})
 
       assert assigns(view).active_category == :appearance
@@ -3512,7 +3587,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "saving the appearance category persists the selected accent color", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "appearance"})
 
       # The real form submits the hidden input's name/value pair inside the
@@ -3533,7 +3608,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "swatch click marks the accent active and updates the hidden input (draft)", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "appearance"})
 
       html = render_hook(view, "select_appearance_accent", %{"accent" => "teal"})
@@ -3572,7 +3647,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "unknown accent values are rejected (whitelist via SettingCard.accent_name?/1)", %{
       conn: conn
     } do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "select_category", %{"category" => "appearance"})
 
       html = render_hook(view, "select_appearance_accent", %{"accent" => "chartreuse"})
@@ -3612,7 +3687,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     #    column/form ITSELF is the scroll container. Only the generic `:else`
     #    path buries the scroll body behind the non-`min-h-0` form.
     test "content columns size by flex-1, never h-full", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/settings")
+      {:ok, view, html} = mount_settings(conn, ~p"/settings")
 
       # Default load renders the :llm category section, already on the
       # flex-1-only pattern.
@@ -3650,7 +3725,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "search results column carries overflow-y-auto on the form", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/settings")
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
       html = render_hook(view, "search", %{"value" => "scheduler"})
       doc = Floki.parse_document!(html)
