@@ -161,6 +161,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # across tests in this file), and returns the id so the test can inspect the
   # persisted task's opts. Mirrors the inline pattern used by the existing
   # launch tests.
+  #
+  # The helper also waits (bounded) for the launched task to reach a terminal
+  # status BEFORE returning: the wrapper's ensure_repo/startup work runs git
+  # ports under tmp_dir, and if the setup on_exit File.rm_rf!(tmp_dir) fires
+  # while a port is still spawning there, ERTS prints an uncatchable
+  # "spawn: Could not cd to <tmp_dir>" line on stderr — test-output noise.
+  # Callers that already call wait_for_task_terminal/2 themselves just wait a
+  # second time (a no-op once terminal).
   defp cleanup_launched_task(html) do
     [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
@@ -180,6 +188,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end)
 
     EvoGit.TaskRegistry.cancel_task(id)
+    wait_for_task_terminal(id)
     id
   end
 
@@ -1504,9 +1513,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # Launch an evolve task with a nonexistent node_path. The task still
       # launches successfully (start_task returns {:ok, task}), but the
-      # spawned worker fails fast in EvoGit.Runtime.Evolution (invalid node
-      # path is validated BEFORE any agent dispatch) — no LLM calls, no
-      # worktrees, nothing that can leak into the shared test runtime.
+      # spawned wrapper fails fast in EvoGit.Runtime.Evolution: the invalid
+      # node path is validated BEFORE any agent dispatch — no LLM calls, no
+      # worktrees, no agents (which matters because the scheduler's model
+      # profiles come from the boot-time ambient config, not the per-test
+      # XDG_CONFIG_HOME isolation).
       html =
         view
         |> element("#task-form")
@@ -1530,7 +1541,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # The launch spawned a real task (which fails fast on the invalid node
       # path); cancel and delete it so it never leaks into other tests sharing
-      # the SQLite store.
+      # the SQLite store. The cancel_task/1 call below races nothing — the
+      # wrapper already errored out before validation reached the agent layer.
       [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
       on_exit(fn ->
@@ -1547,6 +1559,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
           _ -> :ok
         end
       end)
+
+      # wait_for_task_terminal/2 first (see its comment): it keeps the wrapper
+      # from still running git/ensure_repo work when the setup on_exit
+      # File.rm_rf!(tmp_dir) fires — that race printed uncatchable
+      # "spawn: Could not cd to <tmp_dir>" lines on stderr.
+      wait_for_task_terminal(id)
 
       EvoGit.TaskRegistry.cancel_task(id)
     end
@@ -3761,8 +3779,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
              ]
 
       # Launch an evolve task with a nonexistent node_path — the task launches
-      # successfully but the worker fails fast before any agent/LLM work (see
-      # the "task_submit clears the prompt" describe).
+      # successfully but the wrapper fails fast BEFORE any agent dispatch (no
+      # LLM calls, no worktrees, no agents — the scheduler's model profiles
+      # come from the boot-time ambient config, not the per-test
+      # XDG_CONFIG_HOME isolation; see the "task_submit clears the prompt"
+      # describe for the full rationale).
       html =
         view
         |> element("#task-form")
@@ -4673,8 +4694,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
+      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
       on_exit(fn ->
-        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
         try do
           EvoGit.TaskRegistry.cancel_task(id)
         rescue
@@ -4687,6 +4708,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
           _ -> :ok
         end
       end)
+
+      # Stop the task BEFORE the test returns (mirrors cleanup_launched_task/1):
+      # the spawned wrapper runs ensure_repo git work under tmp_dir, and a
+      # wrapper still alive when the setup on_exit File.rm_rf!(tmp_dir) fires
+      # races it — ERTS prints uncatchable "spawn: Could not cd to <tmp_dir>"
+      # lines on stderr, and a wrapper that survives to agent dispatch could
+      # hit the boot-time ambient LLM config. The graceful cancel maps the
+      # already-:running task to :cancelled; wait_for_task_terminal/2 bounds
+      # the wait so the wrapper's git work is done before teardown.
+      :ok = EvoGit.TaskRegistry.cancel_task(id)
+      wait_for_task_terminal(id)
 
       task = EvoGit.TaskRegistry.get_task(id)
 
