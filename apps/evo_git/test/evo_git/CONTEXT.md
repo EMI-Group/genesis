@@ -1,78 +1,44 @@
 # evo_git — Test Tree
 
 ## Intent
-
-ExUnit suites for the `:evo_git` core runtime.
-Each file mirrors its source module path under `apps/evo_git/lib/evo_git/`.
-Full per-file inventory lives one level up in `../CONTEXT.md` — do not duplicate it here.
+ExUnit suites mirroring the source tree under `apps/evo_git/lib/evo_git/`.
+The top-level `*.exs` files in THIS directory cover whole subsystems (CLI, remote, review, store, config, peak hours, system sampler, …); subdirectory files mirror lib paths and are documented by the child CONTEXT.md files below — do not duplicate that per-file detail here.
+All suites use real git operations on temp dirs; none use mocks.
 
 ## Routing Table
+- `./adapters/` → Git / GitHub / CoW-worktree / GitEnv adapter tests → `./adapters/CONTEXT.md`
+- `./agent/` → agent loop, context builder/compression, tool dispatch, subagent processing → `./agent/CONTEXT.md`
+- `./agent/tools/` → per-tool tests → `./agent/tools/CONTEXT.md`
+- `./agent_scheduler/` → scheduler dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI → `./agent_scheduler/CONTEXT.md`
+- `./agents/` → agent implementation tests (`EvoGit.Agents.Custom`) — no own CONTEXT.md
+- `./config/` → config schema / LLM catalog / version-state / ecto validation — no own CONTEXT.md
+- `./core/` → `ContextNode`, `PhyloGraphNode`, `ForeignRepo` → `./core/CONTEXT.md`
+- `./custom_agents/` → custom-agents store + model-selection script → `./custom_agents/CONTEXT.md`
+- `./runtime/` → Genesis / Evolution / Helpers / Prompts / SelfReflective runtimes → `./runtime/CONTEXT.md`
+- `./sandbox/` → sandbox backends (systemd-run, bwrap, sandbox-exec, none) → `./sandbox/CONTEXT.md`
+- `./skills/` → skills subsystem → `./skills/CONTEXT.md`
+- `./store/` → SQLite store queries / errors → `./store/CONTEXT.md`
+- `./task_registry/` → TaskRegistry lifecycle, runtime-opts, merge/resume context, `:reflect` executor → `./task_registry/CONTEXT.md`
+- Top-level `*.exs` in THIS directory → the async-safety map + notes below.
 
-- `./adapters/` → Git / GitHub / CoW-worktree / GitEnv adapter tests
-- `./agent/` → Agent loop, tools, context builder/compression, subagent processing (`./agent/tools/` for per-tool tests)
-- `./agent_scheduler/` → Scheduler: dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI
-- `./agents/` → Agent implementation tests (Manager, Custom, …)
-- `./config/` → Config schema / LLM catalog / version-state tests
-- `./core/` → `ContextNode`, `PhyloGraphNode`, `ForeignRepo`
-- `./custom_agents/` → Custom-agents store + model-selection script tests
-- `./runtime/` → Genesis / Evolution / Helpers / Prompts / SelfReflective runtimes
-- `./sandbox/` → Sandbox backends (systemd-run, bwrap, sandbox-exec, none)
-- `./skills/` → Skills subsystem
-- `./store/` → SQLite store queries / errors
-- `./task_registry/` → TaskRegistry lifecycle, runtime-opts, merge/resume context
-- Top-level `*_test.exs` → module-level suites (CLI, RemoteNode/RemoteConnection, Review, SystemSampler, Platform, PeakHours, …)
-
-## Notes for Agents
-
-- **`EvoGit.PeakHourEngine` asynchronously rewrites the global scheduler's `model_concurrency`.**
-  The app-supervised engine subscribes to the `"scheduler_config"` PubSub topic and, on every
-  `{:scheduler_config_updated, node}`, recomputes an effective map from the LIVE `model_profiles`
-  and re-applies it via `AgentScheduler.update_config(model_concurrency: …)` — possibly landing
-  after a test's own `update_config`. A pending engine check (e.g. issued during another file's
-  `RemoteAPI.reload_config/0`, which pushes the REAL user config) can therefore clobber
-  `model_concurrency` back to the developer's real profiles mid-test.
-  Consequence: do NOT assert exact equality against live scheduler-derived values
-  (`AgentScheduler.get_llm_slot_status/0`, `model_concurrency`) after mutating global config.
-  Either inject the value through a per-call seam, or compare against a FRESH live read.
-  `agent_scheduler_test.exs` instead suspends `PeakHourEngine` per test.
-- **`EvoGit.SystemSampler` has per-call test seams** `:system_sampler_llm_slots_fun` and
-  `:system_sampler_config_fun` (0-arity funs read from app env PER CALL; defaults are the real
-  bounded scheduler reads). `system_sampler_test.exs` uses them via `put_seam/2`, which deletes the
-  env key in `on_exit`; the module `setup` also defensively deletes both keys.
-- **The test SQLite DB is shared across runs AND across umbrella apps**
-  (`System.tmp_dir!()/evogit_test_data/genesis`, set in `config/test.exs`). Rows left by an
-  `evo_dash` test run persist and can break `:evo_git` tests — e.g. `EvoGit.RemoteNodeTest`
-  "list_tasks_paginated/2" fails when a leftover `export_test_*` row (seeded by
-  `apps/evo_dash/test/evo_dash_web/controllers/task_export_controller_test.exs`) is present.
-  Re-run the suspect file in isolation before treating such a failure as a regression.
-- **Full-suite parallel-run flakiness** is documented (pre-existing, timing-sensitive, passes in
-  isolation) one level up in `../CONTEXT.md` → "Known Issues & Test Env Notes". Confirmed by
-  re-running the suspect file in isolation.
-- **The test SQLite DB is shared across worktrees** (`config/test.exs` pins `:data_dir` to
-  `System.tmp_dir!()/evogit_test_data/genesis`, and `System.tmp_dir!()` reads `TMPDIR`).
-  Two parallel `mix test` runs therefore contend on the same DB file. Run with a private dir
-  (`TMPDIR=$(mktemp -d) mix test ...`) to isolate a run.
-
-## Top-Level `.exs` Modules — Async-Safety Map
-
-The modules directly in THIS directory are owned by this node.
-Every `async: false` module carries an in-file comment/`@moduledoc` naming the exact BEAM-global that forces serialization — keep it accurate when the forcing state changes.
+## Top-Level Modules — Async-Safety Map
+Applies the policy in `../CONTEXT.md` → "Async-Safety Policy".
 Do NOT flip these to `async: true`:
-- **XDG / OS-env redirectors** (`System.put_env` `XDG_CONFIG_HOME`, or `PATH` for `EvoGit.FakeGh`): `config_test`, `custom_agents_test`, `custom_agents_rpc_test`, `remote_connections_test`, `remote_connection_test`, `platform_test`, `distribution_test`, `git_env_test`, `remote_node_github_test`.
-- **Shared app singletons / global ETS**: `system_sampler_test` + `peak_hour_engine_test` (`AgentScheduler` config + `:evogit_*` ETS), `worktree_main_head_safety_test`, `application_test` (ETS ownership + `AgentScheduler` child), `sandbox_slice_test` + `sandbox_process_registry_test` (app-level slice/registry GenServers), `self_reflective_source_test` (`:self_reflective_source_*` app env + `GENESIS_SOURCE_ROOT`), `system_check_test` (global supervisor/sandbox/nix state).
-- **`EvoGit.TaskRegistryCase`** (terminates/restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry`): `command_shell_test`, `command_approval_test`, `cli_task_routing_test`, `cli_agent_flag_test`, `store_disk_full_test`. ANY module `use`ing that case MUST stay `async: false`.
-- **`store_test` / `store_summary_test`** also terminate/restart the app-level `EvoGit.Store` + `EvoGit.TaskRegistry` and register an isolated Store under the canonical name.
-
-Genuinely `async: true` (verified to mutate no shared global): `attachments_test`, `cli_test`, `epmd_dist_test`, `executable_test`, `path_suggestions_test`, `peak_hours_test`, `powershell_test`, `project_config_test`, `prompt_file_test`, `remote_bootstrap_test`, `remote_node_test`, `review_test`, `skills_test`, `skills_hierarchical_test`, `utf8_test`, `req_llm_pool_test` (drives a private standalone Finch, never the production `ReqLLM.Finch`), `store_schema_migration_test` + `migrate_store_test` (raw Xqlite on private temp DBs only).
+- XDG / OS-env redirectors (`System.put_env` on `XDG_CONFIG_HOME`, or `PATH` for `EvoGit.FakeGh`): `config_test`, `custom_agents_test`, `custom_agents_rpc_test`, `remote_connections_test`, `remote_connection_test`, `platform_test`, `distribution_test`, `git_env_test`, `remote_node_github_test`, `cli_agent_flag_test` (also rewrites the live scheduler `:model_profiles`).
+- Shared app singletons / global ETS / global scheduler config: `system_sampler_test`, `peak_hour_engine_test`, `worktree_main_head_safety_test`, `application_test`, `sandbox_slice_test`, `sandbox_process_registry_test`, `self_reflective_source_test`, `system_check_test`.
+- `EvoGit.TaskRegistryCase` (terminates/restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry`): `command_shell_test`, `command_approval_test`, `cli_task_routing_test`, `store_disk_full_test`. ANY module `use`ing that case MUST stay `async: false`.
+- `store_test` / `store_summary_test` also terminate/restart the app-level `EvoGit.Store` + `EvoGit.TaskRegistry` and register an isolated Store under the canonical name.
+- `evo_git_test.exs` (repo-root file, no `async:` option → serial) mutates `XDG_CONFIG_HOME` + `:nix_enabled`.
+Genuinely `async: true` (verified to mutate no shared global): `attachments_test`, `cli_test`, `epmd_dist_test`, `executable_test`, `migrate_store_test`, `path_suggestions_test`, `peak_hours_test`, `powershell_test`, `project_config_test`, `prompt_file_test`, `remote_bootstrap_test`, `remote_node_test`, `req_llm_pool_test` (drives a private standalone Finch, never the production `ReqLLM.Finch`), `review_test`, `skills_hierarchical_test`, `skills_test`, `store_schema_migration_test` (raw Xqlite on private temp DBs), `utf8_test`.
 
 ### store_test / store_summary_test — schema template
 Both build a schema-complete SQLite file ONCE in `setup_all` (a real `Store.init` + `GenServer.stop`) and `File.cp!/2` it per test, instead of re-running the DDL per test (~24ms → ~2ms each).
 The production `Store`/`TaskRegistry` are terminated for the whole module and restored once.
 Do NOT switch these to a single shared DB truncated between tests — several tests mutate the schema (e.g. the projects skip-and-log test re-creates `projects` with INTEGER columns) and inject malformed rows, which would corrupt later tests.
 
-## Notes for Agents — `remote_connection_test.exs` runtime
-
-`bootstrap/1` tests that start the daemon each burn ~1.0s of real time.
-The cause is PRODUCTION code, not the test helper: `EvoGit.RemoteConnection.verify_daemon_healthy/3` calls `wait_daemon_active(ssh_target, os, 3, 1000, target)`, whose first act is `Process.sleep(1000)` BEFORE the initial `daemon_running?` check (`apps/evo_git/lib/evo_git/remote_connection.ex`, ~lines 1738-1759).
-The test-side `collect_stages/1` helper drains with `after 0` and does NOT wait for anything — do not look there for the cost.
-Removing it needs a lib change (check `daemon_running?` first and sleep only between retries, or make the initial delay injectable) — outside this node's write scope; escalate.
+## Notes for Agents
+- `EvoGit.PeakHourEngine` asynchronously rewrites the global scheduler's `model_concurrency`: it subscribes to the `"scheduler_config"` PubSub topic and re-applies an effective map from the LIVE `model_profiles`, possibly after a test's own `AgentScheduler.update_config/1`. So do NOT assert exact equality against live scheduler-derived values (`get_llm_slot_status/0`, `model_concurrency`) after mutating global config — inject a per-call seam or compare against a FRESH live read. `agent_scheduler_test.exs` instead suspends `PeakHourEngine` per test.
+- `EvoGit.SystemSampler` exposes per-call app-env seams `:system_sampler_llm_slots_fun` and `:system_sampler_config_fun` (0-arity funs read PER CALL; defaults are the real bounded scheduler reads). `system_sampler_test.exs` injects them via `put_seam/2` and deletes the keys in `on_exit`; its `setup` also defensively deletes both.
+- LLM retry-backoff timing is injectable via the app-env seam `:llm_retry_backoff_base_ms` (read per call by `EvoGit.Agent.ToolDispatch.retry_backoff_base_ms/0`); `agent/tool_dispatch_retry_slot_test.exs` sets it to shrink waits.
+- Remote daemon-health polling delay is injectable via the app-env seam `:remote_daemon_health_delay_ms` (default 1000ms, read per call by `EvoGit.RemoteConnection.daemon_health_delay_ms/0`); `remote_connection_test.exs` sets it to 20ms so each bootstrap test no longer burns a mandatory second.
+- The test SQLite DB is shared across runs AND across umbrella apps (see `../CONTEXT.md` → "Known Issues"); re-run a suspect file in isolation before treating a failure as a regression, or run with a private `TMPDIR` to isolate the run.
