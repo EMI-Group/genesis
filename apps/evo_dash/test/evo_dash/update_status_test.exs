@@ -1,5 +1,11 @@
 defmodule EvoDash.UpdateStatusTest do
-  use ExUnit.Case, async: false
+  # async: true — the only other consumers of the shared EvoDash.UpdateStatus
+  # hub / the :update_notify_only_override + :desktop_release app-env seams and
+  # the EVOGIT_DESKTOP env var (live_hooks/update_status_test, system_live_test)
+  # are async: false, so ExUnit never runs them concurrently with this module.
+  # No async: true module touches any of them; every seam is snapshot-restored
+  # in on_exit below.
+  use ExUnit.Case, async: true
 
   alias EvoDash.UpdateStatus
 
