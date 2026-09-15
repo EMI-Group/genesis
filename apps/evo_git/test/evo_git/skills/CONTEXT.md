@@ -9,7 +9,7 @@ None — leaf directory.
 
 ## API Surface
 
-- `executor_security_test.exs` — `EvoGit.Skills.ExecutorSecurityTest` (`async: false`, 13 tests): skill-executor injection safety + sandbox routing. Three describe blocks:
+- `executor_security_test.exs` — `EvoGit.Skills.ExecutorSecurityTest` (`async: true`, 13 tests): skill-executor injection safety + sandbox routing. Async-safe because each test only writes to its own unique temp dir under `System.tmp_dir!()` and mutates no BEAM-global state; in the test env the sandbox is disabled (`@mix_env == :test`) so `Executor.execute/4` shells out to plain bash (the `:nix_enabled` read is read-only). Three describe blocks:
   - `substitute_params/3 (legacy raw substitution)` — pins the legacy behavior: values inlined verbatim (byte-for-byte, NOT execution-safe, shell metacharacters pass through).
   - `build_positional_script/3` — the injection-safe substitution scheme: double-quoted positional `$1`-style references, 1-indexed in parameters order, all placeholder occurrences replaced, defaults / empty-string fallbacks.
   - `Executor.execute/4 injection resistance (full path)` — end-to-end through real bash: semicolon / backtick / `$()` / quote+metacharacter payloads pass through as literal data and cannot delete sentinel files or create marker files.
