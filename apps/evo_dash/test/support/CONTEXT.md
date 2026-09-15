@@ -14,6 +14,8 @@ None — leaf directory (test support modules only).
 
 An ExUnit `CaseTemplate` for tests requiring a Phoenix connection. Uses `Phoenix.ConnTest`, sets `@endpoint EvoDashWeb.Endpoint`, and imports `Plug.Conn` and `Phoenix.ConnTest` conveniences.
 
+Its `setup` also resets the shared `EvoDash.ActiveTasks` sidebar hub: `EvoDash.ActiveTasks.reset()` in setup plus an `on_exit` reset, so a snapshot (or junk sentinel) leaked by an earlier suite never seeds a later whole-page mount and this suite's own writes never leak onward.
+
 ### `EvoDashWeb.TestHelpers`
 
 Shared test helpers (no test logic). `flush_loading/4` waits for an async `Task.Supervisor`-backed LiveView load to finish: it polls `Phoenix.LiveViewTest.render/1` until a loading marker string disappears from the HTML (10ms interval, default 5000ms timeout) and returns the rendered HTML, or `flunk`s with the given message on timeout — `render_async/2` does NOT await TaskSupervisor children. Used by `agents_live_test.exs`, `review_live_test.exs`, and `tasks_live_test.exs` (each keeps a one-line local delegate with its marker/flunk message).
