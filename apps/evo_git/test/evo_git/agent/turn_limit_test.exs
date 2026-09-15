@@ -1,4 +1,9 @@
 defmodule EvoGit.Agent.TurnLimitTest do
+  @moduledoc """
+  `async: true` — pure turn-limit recovery trigger/budget checks over an
+  in-memory `EvoGit.Agent.LoopState`; no shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent

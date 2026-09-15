@@ -1,4 +1,12 @@
 defmodule EvoGit.Agent.ContextCompressionTest do
+  @moduledoc """
+  `async: true` — exercises the pure `compression_instruction/0` text and the
+  threshold-gating/usage-accumulation paths of `compress_if_needed/2` with
+  in-memory `LoopState`/`ReqLLM.Response` values; the below-threshold gate
+  performs only a read-only `EvoGit.Config.resolve/1` and never acquires an LLM
+  slot. No shared/global state is mutated.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ContextCompression

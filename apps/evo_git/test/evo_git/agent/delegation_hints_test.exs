@@ -1,4 +1,10 @@
 defmodule EvoGit.Agent.DelegationHintsTest do
+  @moduledoc """
+  `async: true` — pure `EvoGit.Agent.DelegationHints` path/hint helpers plus a
+  read-only delegation-hint config accessor suite (no config mutation); no
+  shared/global state is touched.
+  """
+
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.DelegationHints

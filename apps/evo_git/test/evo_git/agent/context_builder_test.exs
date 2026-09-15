@@ -6,6 +6,9 @@ defmodule EvoGit.Agent.ContextBuilderTest do
 
   Timestamps are Unix seconds (`System.system_time(:second)`). Idempotence
   assertions use deterministic pre-stamped values so they never race with `now`.
+
+  `async: true` — every case is a pure function over in-memory values; no
+  shared/global state is touched.
   """
 
   use ExUnit.Case, async: true
