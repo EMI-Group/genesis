@@ -11,6 +11,16 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
   The TaskExecutor integration hook (`execute_task(:evolve, ...)`) is
   deliberately NOT tested here — it would invoke the full Evolution runtime
   (LLM). The pure `MergeContext` functions are the coverage.
+
+  The pure `build_merge_context_block/2` tests now live in
+  `EvoGit.TaskRegistry.MergeContextBlockTest` (`async: true`) — they build a
+  local `%TaskInfo{}` and never touch the Store or the registry, so they do not
+  need this module's heavy fixture.
+
+  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
+  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
+  re-registers them under their global names, so a concurrently running module
+  would observe the swapped singletons.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -320,56 +330,9 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
     end
   end
 
-  describe "build_merge_context_block/2" do
-    test "includes task id, shas, branch, merge target, goal, and hints" do
-      task = build_task()
-      block = MergeContext.build_merge_context_block(task, "main")
-
-      assert block =~ "--- Merge Conflict Resolution Context ---"
-      assert block =~ "Previous task id: #{task.id}"
-      assert block =~ "Base sha: base111"
-      assert block =~ "End (commit) sha: commit222"
-      assert block =~ "Task branch name: genesis/agent_prev"
-      assert block =~ "Merge target branch: main"
-      assert block =~ "Goal:"
-      assert block =~ "incremental milestone merges"
-      assert block =~ "uncommitted"
-      assert block =~ "`git log/diff"
-      assert block =~ "--- End Merge Conflict Resolution Context ---"
-    end
-
-    test "omits the base sha line when base_sha is nil" do
-      task = build_task(base_sha: nil)
-      block = MergeContext.build_merge_context_block(task, "main")
-
-      refute block =~ "Base sha:"
-      assert block =~ "End (commit) sha: commit222"
-    end
-
-    test "uses unknown for a nil branch name" do
-      task = build_task(branch_name: nil)
-      block = MergeContext.build_merge_context_block(task, "main")
-
-      assert block =~ "Task branch name: unknown"
-    end
-
-    test "uses unknown for a nil merge target" do
-      task = build_task()
-      block = MergeContext.build_merge_context_block(task, nil)
-
-      assert block =~ "Merge target branch: unknown"
-    end
-
-    test "returns an empty string for non-TaskInfo input" do
-      assert MergeContext.build_merge_context_block(nil, "main") == ""
-      assert MergeContext.build_merge_context_block("not-a-task", "main") == ""
-      assert MergeContext.build_merge_context_block(%{id: "x"}, "main") == ""
-    end
-  end
-
   # --- fixtures ---
 
-  defp build_task(overrides \\ []) do
+  defp build_task(overrides) do
     unique = System.unique_integer([:positive])
 
     base = %TaskInfo{
