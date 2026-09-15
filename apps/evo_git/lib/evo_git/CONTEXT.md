@@ -24,7 +24,7 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 | Module | Description |
 |---|---|
 | `EvoGit` | Sandboxing utilities, safe shell command execution |
-| `EvoGit.Application` | OTP application callback — starts AgentScheduler |
+| `EvoGit.Application` | OTP application callback — starts AgentScheduler. Creates the app-owned ETS tables, then calls `EvoGit.Distribution.maybe_enable/0` to enable distribution at boot when `[node] enabled=true` — **guarded by a compile-time `@mix_env != :test` gate** (see "Boot-time distribution" note) |
 | `EvoGit.Agent` | Behaviour module — `use EvoGit.Agent` injects agent loop, tool dispatch, subagent management |
 | `EvoGit.AgentSpec` | Structured spec for spawning agents (context_node, agent_module, objective, repo_id) |
 | `EvoGit.AgentScheduler` | GenServer — scheduling only (agent lifecycle, subagent spawning, ETS state, foreign repo registry); worktree lifecycle owned by `EvoGit.AgentScheduler.WorktreeManager` |
