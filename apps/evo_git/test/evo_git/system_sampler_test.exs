@@ -117,8 +117,23 @@ defmodule EvoGit.SystemSamplerTest do
     {:ok, pid} =
       EvoGit.SystemSampler.start_link(name: nil, interval_ms: @high_interval)
 
-    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+    on_exit(fn -> safe_stop(pid) end)
     pid
+  end
+
+  # Stops an unregistered sampler from an on_exit cleanup, idempotently.
+  #
+  # The sampler is LINKED to the test process, so it is already dead (or dying)
+  # by the time the on_exit runs — which happens in a separate OnExitHandler
+  # process, so a `Process.alive?/1` guard races against the link teardown: the
+  # check can still see the process alive, and the following GenServer.stop/3
+  # then exits with `:noproc` ("no process"). Catching ONLY that `:exit` makes
+  # the cleanup race-safe without hiding anything else — stopping an already
+  # dead, already-linked process is a legitimate no-op, not a swallowed error.
+  defp safe_stop(pid) do
+    GenServer.stop(pid)
+  catch
+    :exit, _ -> :ok
   end
 
   # Restarts the app-registered sampler so its init re-reads the (already
