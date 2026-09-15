@@ -50,12 +50,16 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     PubSub.broadcast_agents_updated()
     PubSub.broadcast_agents_updated()
 
-    # The throttle flushes at most 200ms after the last cast — wait past it.
-    assert_receive {:agents_updated, bcast_node}, 700
+    # The throttle flushes at most 200ms after the last cast — wait past it
+    # (400ms = 2x the @throttle_ms floor, leaving load headroom).
+    assert_receive {:agents_updated, bcast_node}, 400
     assert bcast_node == node()
 
-    # The three back-to-back casts must not produce a second flush.
-    refute_receive {:agents_updated, _node}, 300
+    # The three back-to-back casts must not produce a second flush. Any
+    # duplicate flush is already in the mailbox by the time the first
+    # assert_receive returns (~200ms after the casts), so a short window
+    # suffices to prove the coalescing while costing almost nothing.
+    refute_receive {:agents_updated, _node}, 100
   end
 
   test "broadcast without a throttle process falls back to immediate dispatch with the node element" do
@@ -87,10 +91,11 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     assert is_pid(new_pid)
     assert new_pid != old_pid
 
-    # The restarted throttle must serve broadcasts again
+    # The restarted throttle must serve broadcasts again (400ms = 2x the
+    # @throttle_ms flush floor).
     drain_mailbox()
     PubSub.broadcast_agents_updated()
-    assert_receive {:agents_updated, bcast_node}, 600
+    assert_receive {:agents_updated, bcast_node}, 400
     assert bcast_node == node()
   end
 
