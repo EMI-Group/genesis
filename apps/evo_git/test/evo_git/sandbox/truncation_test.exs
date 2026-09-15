@@ -6,10 +6,6 @@ defmodule EvoGit.Sandbox.TruncationTest do
   @truncate_size 8192
 
   setup do
-    original = Application.get_env(:evo_git, :nix_enabled)
-    Application.put_env(:evo_git, :nix_enabled, false)
-    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
-
     tmp_dir =
       Path.join(
         System.tmp_dir!(),

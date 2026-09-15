@@ -4,4 +4,13 @@
 System.put_env("XDG_DATA_HOME", Path.join(System.tmp_dir!(), "evogit_test_data"))
 File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 
+# Default nix integration OFF for the whole suite. EvoGit.Nix.enabled?/0 reads this
+# app env first; when unset it falls back to the developer's REAL ~/.config/genesis
+# config and shells out to real `nix print-dev-env`, leaking its inherited stderr
+# progress ("evaluating derivation ..." + dots) to the test console. Nix is only
+# consulted LAZILY during tests (sandbox/None paths), so setting it here — after app
+# boot but before any test runs — is effective and race-free for every async module.
+# Tests that specifically need nix enable it explicitly (e.g. sandbox/bwrap_test.exs).
+Application.put_env(:evo_git, :nix_enabled, false)
+
 ExUnit.start(capture_log: true)
