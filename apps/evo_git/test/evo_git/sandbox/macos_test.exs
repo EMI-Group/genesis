@@ -465,7 +465,7 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
     cond do
       observed == expected ->
-        assert observed == expected
+        :ok
 
       attempts <= 1 ->
         flunk(
