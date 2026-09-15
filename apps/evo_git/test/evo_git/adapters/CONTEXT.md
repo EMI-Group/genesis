@@ -34,6 +34,9 @@ and the **permanent-vs-transient fallback classification** (see Design Decisions
 - Transient-fallback tests must trigger a real failure through the public API (e.g. a source repo with `git init` and no commits → `:no_source_head`; a non-existent 40-hex `target_commit` → `:no_changed_files`). The step order is source HEAD → source status → diff → target tree, so an unresolvable target commit fails at the diff step, not the target-tree step.
 - A `:ok` return from `create_worktree/5` is what proves the CoW path was actually attempted — a disabled flag short-circuits upstream in `EvoGit.AgentScheduler.Worktrees` and this function is never reached.
 - Keep the existing helpers (`make_repo/1`, `write_file/3`, `commit_all/2`, `make_worktree_path/1`, `cleanup_worktree/2`) and route every created worktree through `on_exit(fn -> cleanup_worktree(repo, path) end)` so temp dirs do not leak.
+- Test repos here rely on `EvoGit.GitEnv`'s injected commit identity (`GIT_AUTHOR_*`/`GIT_COMMITTER_*`, `Genesis`/`noreply@evogit.ai` fallback) — do NOT re-add per-repo `git config user.name`/`user.email`.
+- `make_repo/1` and `make_worktree_path/1` both `File.rm_rf!` their target path first, since `System.unique_integer/1` repeats across VM runs and stale leftovers would break branch assertions or silently force a `create_worktree/5` fallback.
+- `cleanup_worktree/2` relies on `git worktree remove --force` alone (it already deregisters the worktree); no `git worktree prune` — it would be a redundant no-op before the repo dir is `rm_rf`'d.
 
 ## Constraints
 
