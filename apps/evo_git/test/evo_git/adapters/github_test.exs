@@ -1,20 +1,22 @@
 defmodule EvoGit.Adapters.GitHubTest do
   @moduledoc """
-  Tests pinning the `EvoGit.Adapters.GitHub` contract (gh-CLI adapter).
+  Tests pinning the `EvoGit.Adapters.GitHub` contract (the `gh`-CLI adapter).
 
-  Note: `EvoGit.Adapters.GitHub` is developed in a coordinated parallel
-  change — this file will not compile/run standalone until that lib change
-  lands. The tests assert the agreed contract for `github_upstream/1`,
-  `list_github_issues/2` and `github_issue_markdown/2`: origin URL parsing
-  (https/ssh, `.git` suffix), gh argv forwarding (defaults and opts), JSON
-  normalization, error shapes, and the exact markdown composition.
+  Covers origin-URL parsing (https/ssh, `.git` suffix), `gh` argv forwarding
+  (defaults and opts), JSON normalization, error shapes, the exact markdown
+  composition, and the `EvoGit.AgentScheduler.RemoteAPI` delegation.
+
+  `async: false` because these tests mutate BEAM-global state visible to all
+  processes: `PATH` + `GH_FAKE_MODE`/`GH_FAKE_LOG` (via `EvoGit.FakeGh`, which
+  saves and restores them) and a direct `System.put_env("PATH", …)` in the
+  gh-missing test.
+
+  The fake `gh` is a POSIX shell script on `PATH` and cannot emulate `gh.exe`
+  on Windows, so the gh-dependent tests are wrapped in
+  `if not match?({:win32, _}, :os.type())`.
   """
 
   use ExUnit.Case, async: false
-
-  # async: false because several tests manipulate global VM state via
-  # System.put_env (PATH / GH_FAKE_*), which is visible to all processes.
-  # Serializing this file avoids cross-test interference.
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Adapters.GitHub
