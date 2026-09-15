@@ -355,6 +355,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # setup on_exit rm_rf! fires — ERTS prints an uncatchable
   # "spawn: Could not cd to <tmp_dir>" line. These tests assert nothing
   # GitHub-related, so the stub is pure noise elimination.
+  #
+  # Called per-test/per-helper at the EXPOSED activation sites only (the
+  # GitHub-issue-integration describe stubs its own seams via
+  # put_github_seams/1 and must not be clobbered; an empty tmp_dir
+  # auto-detects genesis_new, which never checks). Conflict-free: nothing
+  # else in this file reads :github_runner, the assertion surface is
+  # unchanged (an :error status renders no GitHub UI), and the file's
+  # mounting suites are all async: false so the global env stub cannot
+  # race another suite.
   defp stub_github_upstream_check! do
     Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
       {:error, :no_github_upstream}
@@ -3056,6 +3065,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
 
+      # The fixture makes tmp_dir non-empty, so activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
+
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       render_click(view, "open_project_palette", %{})
@@ -3512,7 +3526,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     # staging tests that launch a task (or exercise the enabled-form flow)
     # open a project first — exactly like the existing task_submit /
     # custom-agent tests.
+    #
+    # Every caller writes staging files (a .png/.mp3 fixture) into tmp_dir
+    # BEFORE activating, so detect_mode/1 resolves genesis_existing and the
+    # activation spawns the REAL `git remote get-url origin` GitHub-upstream
+    # check under tmp_dir — the spawn: "Could not cd" noise source. Stub the
+    # :github_runner seam here (all 5 callers stage files; none stubs its own
+    # GitHub seams) so this shared helper stays the single wiring point.
     defp open_staging_project(view, tmp_dir) do
+      stub_github_upstream_check!()
       clear_recent_projects()
 
       render_click(view, "open_project_palette", %{})
@@ -3834,6 +3856,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       png_path = Path.join(tmp_dir, "pic.png")
       png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>>
       File.write!(png_path, png_bytes)
+
+      # The staged .png makes tmp_dir non-empty → activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
 
       {:ok, view, _html} = live(conn, ~p"/projects")
       open_staging_project(view, tmp_dir)
