@@ -422,6 +422,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   # Waits until every `EvoDash.TaskSupervisor` child started by THIS LiveView
   # process has exited, then flushes their result messages into the view.
+  # Used for the mount-time load AND for a later `?node=` patch's load.
   #
   # `EvoDashWeb.ProjectsLive.AsyncLoad.maybe_spawn/2` starts ONE supervised
   # task per connected `handle_params` run. Its result
@@ -430,18 +431,20 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # the active project path. A LOCAL mount spawns with `node = node()` and
   # `path = nil`; after a `?node=` switch to a `:connecting` target
   # `current_node` is STILL the local node and `active_project_path` is back to
-  # nil — so a mount-time result that lands AFTER the switch passes the guard
-  # and re-applies the mount-time `recent_projects`, clobbering the
-  # just-cleared assigns. Draining the mount-time tasks before the test drives
-  # events removes that race deterministically.
+  # nil — so a result that lands AFTER the switch passes the guard and
+  # re-applies its captured `recent_projects`, clobbering the just-cleared
+  # assigns. (The `?node=` patch's own task is the ONLY writer of the cleared
+  # `recent_projects` for a `:connecting` target, and `render_patch/2` does not
+  # wait for it either.) Draining the tasks before asserting removes that race
+  # deterministically.
   #
   # `Task.Supervisor` records the spawning process in the child's `$callers`
   # process-dictionary entry, so matching it against the view pid targets
-  # exactly this mount's tasks — a leftover task from another test is never
+  # exactly this view's tasks — a leftover task from another test is never
   # waited on (and cannot block the mount). (Copied from
   # review_live_test.exs / settings_live_test.exs, where the same pattern fixed
   # an intermittent full-suite flake.)
-  defp await_mount_async_loads(view) do
+  defp await_async_loads(view) do
     view.pid
     |> mount_async_task_pids()
     |> Enum.map(&Process.monitor/1)
@@ -1737,7 +1740,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # to nil), so a late arrival would re-populate the just-cleared
       # `recent_projects` with the local recents registered below. Draining it
       # first makes the cleared-state assertions deterministic.
-      await_mount_async_loads(view)
+      await_async_loads(view)
 
       # Open a local project and fill in form state
       render_click(view, "open_project_palette", %{})
@@ -1759,6 +1762,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # Switch to the remote node context: handle_params re-runs and clears all
       # persisted/project state (each node context owns its own session state).
       html = render_patch(view, "/projects?node=" <> id)
+
+      # This handle_params run spawns its OWN `AsyncLoad` task. For a
+      # `:connecting` target it is the ONLY thing that clears `recent_projects`
+      # to `[]` (the node-switch clearing owns the form/project assigns, not
+      # recents; `AsyncLoad.load_recent_projects/3` returns `[]` whenever
+      # `current_node_id` is a binary) — and `render_patch/2` does not wait for
+      # it. Wait for the spawned task and drain its queued
+      # `{:async_project_load, ...}` apply before asserting, otherwise a slow
+      # task leaves the pre-switch local recents (the project opened above) in
+      # place.
+      await_async_loads(view)
 
       assert assigns(view)[:current_node_id] == id
       assert assigns(view)[:task_prompt] == ""
