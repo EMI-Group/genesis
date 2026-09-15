@@ -367,9 +367,18 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
       # writes the hub: only successfully applied results are last-known state.
       socket
     else
-      # Applied. Record the snapshot in the hub FIRST (keyed by the message's
-      # own node context — the authoritative context of the fetch) so a
-      # remounting LiveView for this node context seeds instantly; then assign.
+      # Applied. Drop non-map entries BEFORE the hub write AND the assign —
+      # `EvoDash.ActiveTasks` is shape-agnostic (stores whatever it is given)
+      # and lives outside this node, so a malformed payload must be made safe
+      # here: neither rendered by `Layouts.app/1` (which would crash with a
+      # `BadMapError` in `group_tasks_by_project/2`) nor allowed to poison the
+      # hub for later mounts.
+      running = sanitize_tasks(running)
+      pending = sanitize_tasks(pending)
+
+      # Record the snapshot in the hub FIRST (keyed by the message's own node
+      # context — the authoritative context of the fetch) so a remounting
+      # LiveView for this node context seeds instantly; then assign.
       EvoDash.ActiveTasks.put(node_id, node, running, pending)
 
       socket
@@ -542,13 +551,34 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   # context, defaulting to `{[], []}` when the context has never been written
   # (`:empty`). Used by the mount seeds — a direct `:ets` read of the
   # boot-created named public table (owned by the `EvoDash.Application`
-  # process, always up in prod and under `mix test`).
+  # process, always up in prod and under `mix test`). Both lists are run
+  # through `sanitize_tasks/1` so a malformed stored snapshot (the hub is
+  # shape-agnostic and lives outside this node) can never hand a non-map entry
+  # to `Layouts.app/1`.
   defp hub_snapshot(node_id, node) do
     case EvoDash.ActiveTasks.get(node_id, node) do
-      {:ok, {running, pending}} -> {running, pending}
+      {:ok, {running, pending}} -> {sanitize_tasks(running), sanitize_tasks(pending)}
       :empty -> {[], []}
     end
   end
+
+  # Sanitizer for the sidebar task lists. Returns a LIST containing only the
+  # `is_map/1` entries of a term, and `[]` when the term is not a list. The
+  # sidebar assigns `:running_tasks`/`:pending_tasks` are consumed by
+  # `Layouts.app/1` via `group_tasks_by_project/2`, which dot-accesses
+  # `project_path` on each entry — a non-map entry there raises `BadMapError`.
+  # `EvoDash.ActiveTasks` is deliberately shape-agnostic (it stores whatever
+  # `{running, pending}` lists it is given, verbatim) and lives outside this
+  # node, so this loader sanitizes at BOTH of its boundaries: the hub read
+  # (`hub_snapshot/2`) and the async apply (`handle_tasks_result/2`, before
+  # both the hub write and the assign) — a bad payload is neither rendered nor
+  # allowed to poison the hub. Only non-map entries are dropped; well-formed
+  # summary maps pass through byte-identically.
+  defp sanitize_tasks(tasks) when is_list(tasks) do
+    Enum.filter(tasks, &is_map/1)
+  end
+
+  defp sanitize_tasks(_), do: []
 
   # Derives the `:remote_status` assign for a remote node param from the
   # connection manager's current status. `EvoDash.NodeContext.connection_status/1`
