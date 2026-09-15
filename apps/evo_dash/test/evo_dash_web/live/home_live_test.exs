@@ -1,7 +1,9 @@
 # HomeLive (chat page) test suite.
 #
-# Covers the idle render, the send-message flow (real reflect tasks against
-# the isolated Store+TaskRegistry), new-chat + ChatHistory store semantics,
+# Covers the idle render, the send-message flow (deterministic fail-fast
+# reflect tasks against the isolated Store+TaskRegistry — see the setup's
+# "fail-fast" block: every real spawn is rejected at the AgentScheduler, so
+# no LLM endpoint is ever contacted), new-chat + ChatHistory store semantics,
 # the onboarding dead-render redirect, streaming display (REAL-shaped core
 # payloads: integer agent ids, KEYWORD-LIST changed_fields, real
 # %ReqLLM.Message{} structs), completion/error rendering, the assistant
@@ -39,6 +41,26 @@ defmodule EvoDashWeb.HomeLiveTest do
       {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
     )
 
+    # Fail-fast scheduler config: run_agent clause (a) (agent_scheduler.ex)
+    # rejects every spawn synchronously with {:error, :llm_not_configured} when
+    # model_profiles is [] — BEFORE any agent registration, ETS row, or LLM
+    # HTTP call. This suite is a dashboard-layer suite: the real reflect
+    # runtime (core suites cover it) must never run here. On this machine the
+    # ambient config carries a REAL (expired) API key — a live send would spam
+    # 403 network errors; on a machine with no key at all the agent crashes
+    # with a MatchError instead. The empty-profiles rejection makes every
+    # send deterministic-and-quiet in both worlds (the executor maps the
+    # {:error, _} to a persisted :failed row, with no network I/O). The same
+    # seam is the documented idiom in evo_git's own suites
+    # (evolution_test.exs without_model_profiles/1, agent_scheduler_test.exs).
+    # Per-send cleanup below still runs (the row + wrapper must be reaped);
+    # with the fail-fast in place no agent ETS rows can exist, so the
+    # cleanup's ETS sweep is a cheap no-op.
+    original_model_profiles =
+      GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_profiles})
+
+    GenServer.call(EvoGit.AgentScheduler, {:update_config, model_profiles: []})
+
     # ChatHistory is a global GenServer under EvoDash.Application that is NOT
     # terminated by the Store/TaskRegistry isolation above — reset it so the
     # chats persisted by one test never leak into the next (the
@@ -70,6 +92,12 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     on_exit(fn ->
+      # Restore the ambient scheduler config FIRST (before the per-test Store
+      # child dies — update_config only touches the global scheduler, and the
+      # eviction sweep in State.do_update_config reads :evogit_sched_meta via
+      # :ets.whereis, so a missing table is a safe no-op).
+      restore_model_profiles(original_model_profiles)
+
       if original_xdg do
         System.put_env("XDG_CONFIG_HOME", original_xdg)
       else
@@ -106,9 +134,6 @@ defmodule EvoDashWeb.HomeLiveTest do
   defp opt(task, key), do: Map.get(Map.new(task.opts || []), key)
   defp has_opt?(task, key), do: Map.has_key?(Map.new(task.opts || []), key)
 
-  # The chat task id the view is currently tracking (nil when idle).
-  defp chat_task_id(view), do: assigns(view)[:chat_task_id]
-
   # Inserts a task directly into the SQLite store (bypasses the async task
   # spawn that `start_task/2` triggers). Lets a test prove that an unrelated
   # pre-existing row is untouched by an event.
@@ -140,14 +165,22 @@ defmodule EvoDashWeb.HomeLiveTest do
     id
   end
 
+  # Restores the scheduler's model_profiles captured by setup. update_config
+  # rejects a nil llm_model but accepts model_profiles lists unconditionally;
+  # the original value is whatever the ambient config resolved at boot.
+  defp restore_model_profiles(original) do
+    GenServer.call(EvoGit.AgentScheduler, {:update_config, model_profiles: original})
+  end
+
   # Cancels + deletes a launched reflect task in on_exit so its persisted row
-  # (and any still-running wrapper) never leaks into other tests. The reflect
-  # task runs the REAL runtime — with no LLM credentials it fails fast after
-  # retries, with the user's real config its agent may block on an LLM slot —
-  # so the cancel is what unblocks/cleans it up regardless of which happened.
-  # Additionally sweeps the agent's scheduler ETS rows (cancel/delete do not
-  # remove them), so the blocked agent cannot leak into agents_live_test.exs
-  # (which expects an empty agent registry).
+  # never leaks into other tests. Under the setup's fail-fast scheduler config
+  # the wrapper already returned {:error, :llm_not_configured} → the row is
+  # terminal :failed, so the cancel call is a defensive no-op; delete is what
+  # reaps the row (only relevant for suites reading this file's leftovers,
+  # since each test's Store is rm_rf'd anyway). Additionally sweeps the
+  # scheduler ETS rows (cancel/delete do not remove them) — with the fail-fast
+  # in place no agent is ever registered, so this sweep is a cheap no-op kept
+  # for safety if the config seam is ever relaxed.
   #
   # Cleanup in on_exit: ExUnit terminates the test supervisor (stopping the
   # isolated Store + TaskRegistry) BEFORE running on_exit callbacks, so the
@@ -387,16 +420,24 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "send message" do
-    test "starts a reflect task with the right opts", %{conn: conn} do
+    # THE canonical real-send pin (every other send in this file is deduped
+    # against it or the model-selector describes). Under the setup's fail-fast
+    # scheduler config the reflect wrapper returns {:error, :llm_not_configured}
+    # deterministically — the row + its opts land on the persisted TaskInfo, no
+    # agent is registered, and no LLM endpoint is ever contacted.
+    test "starts a reflect task with the right opts and tracks it synchronously", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
       html = render_submit(view, "send_message", %{"message" => "hello genesis"})
 
-      # Optimistic UI: the user bubble appears immediately. (The real reflect
-      # task fails FAST in the test env — no LLM config — so chat_status may
-      # already be back at :idle by the time render_submit returns; never
-      # assert running-only state synchronously after a real send.)
+      # Optimistic UI: the user bubble appears immediately and the start flow
+      # did not render the error bubble. (Regression: passing the bare
+      # %EvoGit.TaskInfo{} struct — instead of {:ok, task} — to
+      # AgentStream.task_id_from_start/1 fell through to {:error, :no_task_id},
+      # leaving chat_task_id nil and rendering the error bubble even though the
+      # reflect task DID start.)
       assert html =~ "hello genesis"
+      refute html =~ "Failed to start the task"
 
       # The persisted row: repo-less reflect task with the FIRST message as the
       # bare objective, mode "reflect", and NO :path key (atom or string).
@@ -409,33 +450,20 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert opt(task, :path) == nil
       refute has_opt?(task, :path)
       refute has_opt?(task, "path")
+
+      # Synchronous tracking, proved race-free: a :failed event for the ROW's
+      # id only finalizes the transcript when the chat is tracking exactly
+      # that id (handle_task_event drops non-matching ids). The wrapper may
+      # already have broadcast the real :failed (the finalize is idempotent),
+      # but a chat that failed to track its task would stay :running with a
+      # still-streaming bubble.
+      finalize_failed(view, task.id)
+
+      assert assigns(view).chat_status == :idle
+      assert assigns(view).chat_task_id == nil
+      assert assigns(view).transcript |> List.last() |> Map.get(:text) == "The task failed."
+
       cleanup_task_on_exit(task.id)
-    end
-
-    test "real send sets chat_task_id and renders no task-start error (regression)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
-
-      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
-
-      # The real send flow sets chat_task_id synchronously in send_chat/2, so it
-      # is readable immediately after render_submit returns. Regression: passing
-      # the bare %EvoGit.TaskInfo{} struct (instead of {:ok, task}) to
-      # AgentStream.task_id_from_start/1 fell through to {:error, :no_task_id},
-      # leaving chat_task_id nil and rendering the error bubble even though the
-      # reflect task DID start.
-      task_id = chat_task_id(view)
-      assert is_binary(task_id)
-
-      # The reflect task started — the error bubble must NOT appear.
-      refute html =~ "Failed to start the task"
-
-      # The tracked id must be the persisted reflect task's id.
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      assert hd(reflect).id == task_id
-
-      cleanup_task_on_exit(task_id)
     end
 
     test "second message carries the transcript preamble", %{conn: conn} do
@@ -462,10 +490,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       render_submit(view, "send_message", %{"message" => "what is genesis?"})
 
-      tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-      reflect = Enum.filter(tasks, &(&1.type == :reflect))
-      assert length(reflect) == 1
-      task = hd(reflect)
+      # The persisted row's objective must carry the preamble.
+      [task] =
+        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+        |> Enum.filter(&(&1.type == :reflect))
 
       assert opt(task, :objective) ==
                "Previous conversation:\nUser: hello\nNew message: what is genesis?"
@@ -489,10 +517,26 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert length(EvoGit.Store.safe_select_all_tasks(EvoGit.Store)) == 1
     end
 
+    # The user-bubble markup is identical on the typed and chip send routes
+    # (both share do_send_chat/2's optimistic-transcript assign), so the
+    # classes are asserted against a SEEDED transcript materialized by a real
+    # assign path (the matching {:task_updated, ...} event runs
+    # handle_task_event's assign/persist path) — no task needs to start.
     test "typed send renders the right-aligned soft user bubble", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      html = render_submit(view, "send_message", %{"message" => "typed hi"})
+      seed_chat_state(view, %{
+        chat_task_id: "t1",
+        chat_status: :running,
+        transcript: [%{id: "1", role: :user, text: "typed hi", streaming: false}]
+      })
+
+      # Materialize the seeded transcript into the rendered html via the real
+      # assign path (replace_state alone never pushes a diff — see the badge
+      # tests in "assistant task-card").
+      send(view.pid, {:task_updated, "t1", :running, node()})
+      html = render(view)
+
       assert html =~ "typed hi"
 
       {wrapper_class, bubble_class} = first_user_bubble(html)
@@ -506,25 +550,22 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert bubble_class =~ "bg-base-300"
       assert bubble_class =~ "text-left"
       refute bubble_class =~ "bg-primary"
-
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      assert reflect != []
-      cleanup_task_on_exit(hd(reflect).id)
     end
 
     test "suggestion-chip send renders the same user bubble classes", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      # Chips render only while the transcript is empty — click the REAL chip
-      # element (phx-click="send_message" + phx-value-message); both routes
-      # share the send_chat path and must produce the same user bubble.
-      html =
-        view
-        |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
-        |> render_click()
+      seed_chat_state(view, %{
+        chat_task_id: "t1",
+        chat_status: :running,
+        transcript: [
+          %{id: "1", role: :user, text: "Explain the Genesis architecture", streaming: false}
+        ]
+      })
+
+      # Materialize via the real assign path, same as the typed-send test.
+      send(view.pid, {:task_updated, "t1", :running, node()})
+      html = render(view)
 
       assert html =~ "Explain the Genesis architecture"
 
@@ -534,13 +575,6 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert bubble_class =~ "bg-base-300"
       assert bubble_class =~ "text-left"
       refute bubble_class =~ "bg-primary"
-
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      assert reflect != []
-      cleanup_task_on_exit(hd(reflect).id)
     end
   end
 
@@ -548,35 +582,15 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "resets the chat to the idle empty state", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      render_submit(view, "send_message", %{"message" => "hello"})
+      # Synthetic running chat (seed + terminal event) — the real reflect
+      # runtime must never run in this suite (see the setup's fail-fast
+      # block). The seeded "hello" user entry gives new_chat a non-empty
+      # transcript to reset, exactly like a real send would.
+      seed_running_chat(view)
 
-      # ALWAYS register the ETS sweep — the reflect agent may remain
-      # alive/blocked in the scheduler ETS even after the task itself fails
-      # fast: the `:failed` task event clears the view's chat_task_id (and the
-      # status goes :idle) while the agent row persists as :running. Gating the
-      # cleanup on chat_task_id would skip it exactly when the agent is still
-      # registered, leaking the row into agents_live_test.exs (which expects an
-      # empty agent registry). The persisted reflect row's id is authoritative
-      # (the sched_meta task_id is the same string).
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      if reflect != [] do
-        cleanup_task_on_exit(hd(reflect).id)
-      end
-
-      # The real reflect task fails fast in the test env (no LLM config), so it
-      # may already have cleared the task refs by the time render_submit
-      # returns. Branch on that: nil → already :idle; otherwise inject a
-      # deterministic :failed terminal event to drive it back to :idle.
-      case chat_task_id(view) do
-        nil ->
-          :ok
-
-        id ->
-          finalize_failed(view, id)
-      end
+      # Deterministically drive the chat to a terminal state via the same
+      # {:task_updated, ...} event shape the core broadcasts.
+      finalize_failed(view, "t1")
 
       assert assigns(view).chat_status == :idle
 
@@ -592,14 +606,13 @@ defmodule EvoDashWeb.HomeLiveTest do
       old_id = assigns(view).chat_id
       assert old_id != nil
 
-      render_submit(view, "send_message", %{"message" => "hello"})
+      # Synthetic running chat (seed + terminal event) — same rationale as the
+      # "resets the chat" test above.
+      seed_running_chat(view)
 
-      # Deterministically drive the chat to a terminal state (same branch as
-      # the reset test above).
-      case chat_task_id(view) do
-        nil -> :ok
-        id -> finalize_failed(view, id)
-      end
+      # Deterministically drive the chat to a terminal state (same event
+      # shape as the reset test above).
+      finalize_failed(view, "t1")
 
       old_state = EvoDash.ChatHistory.get_state(old_id)
       assert old_state != nil
@@ -1521,22 +1534,38 @@ defmodule EvoDashWeb.HomeLiveTest do
       {:ok, view, _html} = live(conn, "/help")
       chat_id = assigns(view).chat_id
       assert chat_id != nil
-      render_submit(view, "send_message", %{"message" => "persist me please"})
-      # ALWAYS register the cleanup for the real reflect task (see the
-      # "new chat" describe for the rationale).
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
 
-      if reflect != [] do
-        cleanup_task_on_exit(hd(reflect).id)
-      end
+      # Fully SYNTHETIC running chat: seed the state a real send would produce
+      # (the user entry "persist me please" + an empty streaming assistant
+      # entry, refs set) via seed_chat_state — the real reflect runtime must
+      # never run in this suite (see the setup's fail-fast block).
+      # seed_chat_state bypasses __changed__ tracking, so
+      # the seeded transcript is materialized into rendered html by the same
+      # real assign path the badge/persistence tests use (a matching task
+      # event), then finalized with the exact {:task_updated, ...} shape the
+      # core broadcasts.
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: "t_persist",
+        chat_agent_id: 1001,
+        chat_node: node(),
+        transcript: [
+          %{id: "1", role: :user, text: "persist me please", streaming: false},
+          %{id: "2", role: :assistant, text: "", streaming: true}
+        ]
+      })
 
-      # Deterministically drive the chat to a terminal state.
-      case chat_task_id(view) do
-        nil -> :ok
-        id -> finalize_failed(view, id)
-      end
+      # Materialize the seeded state (a matching non-terminal task event runs
+      # handle_task_event's assign/persist path) and persist the running state
+      # into ChatHistory through the REAL persist point.
+      send(view.pid, {:task_updated, "t_persist", :running, node()})
+      render(view)
+      assert assigns(view).chat_status == :running
+      assert EvoDash.ChatHistory.get_state(chat_id).chat_status == :running
+
+      # Deterministic terminal event (the same event the finalize_failed
+      # helper drives): :failed finalizes the transcript and clears the refs.
+      finalize_failed(view, "t_persist")
 
       assert assigns(view).chat_status == :idle
       # The terminal event persisted the full state into ChatHistory.
@@ -1642,6 +1671,12 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "model selector" do
+    # All sends in this describe are deterministic-and-quiet under the setup's
+    # fail-fast scheduler config: the wrapper rejects at the AgentScheduler
+    # (:llm_not_configured) BEFORE any model resolution or LLM HTTP call, and
+    # every assertion below reads only the persisted row's opts — written by
+    # NodeContext.start_task before the runtime ever sees the task.
+    #
     # Writes a config.toml with a single model profile into the test's isolated
     # XDG_CONFIG_HOME (set per test by the file-level setup) so
     # ModelSelect.load/1 — called from mount's assign_model_select — sees a
@@ -2117,22 +2152,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).chat_task_status == nil
     end
 
-    test "real send through the real TaskRegistry survives the full lifecycle", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
-      html = render_submit(view, "send_message", %{"message" => "hello real lifecycle"})
-      assert html =~ "hello real lifecycle"
-      # Let the real wrapper run/fail-fast + broadcasts + the 300ms debounce.
-      Process.sleep(1500)
-      html = render(view)
-      assert html =~ "Chat with Genesis"
-
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      assert reflect != []
-      cleanup_task_on_exit(hd(reflect).id)
-    end
+    # (A former "real send through the real TaskRegistry survives the full
+    # lifecycle" test was removed: the full wrapper→terminal lifecycle is
+    # core-runtime territory covered by evo_git's own suites, and this page's
+    # unique behaviors — optimistic bubbles, synchronous tracking, persisted
+    # opts, finalize paths — are pinned by the canonical send test above and
+    # the injection-driven describes here.)
   end
 
   describe "stop / cancel flow" do
@@ -2475,30 +2500,21 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert EvoGit.TaskRegistry.get_task(fixture_id) != nil
     end
 
-    test "available source renders no gate and chat works as before", %{conn: conn} do
+    test "available source renders no gate and the send path stays open", %{conn: conn} do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
 
       {:ok, view, _html} = live(conn, "/help")
       html = await_source_available(view, true)
 
-      # No gate, chips intact, composer enabled.
+      # No gate, chips intact, composer enabled — the gate's open state is the
+      # subject; a full real task run is not (the send-path contract is pinned
+      # by the canonical send test in "send message").
       refute present?(html, "#genesis-source-gate")
       refute html =~ "Download the Genesis source to start chatting."
       assert html =~ "Explain the Genesis architecture"
       refute disabled?(html, ~s(textarea[name="message"]))
       refute disabled?(html, ~s(button[type="submit"]))
-
-      # A normal send still starts a repo-less :reflect task.
-      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
-      assert html =~ "hello genesis"
-
-      reflect =
-        EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
-        |> Enum.filter(&(&1.type == :reflect))
-
-      assert length(reflect) == 1
-      assert opt(hd(reflect), :objective) == "hello genesis"
-      cleanup_task_on_exit(hd(reflect).id)
+      assert assigns(view).source_available == true
     end
 
     test "a successful download clears the gate (busy → post-clone re-check)", %{conn: conn} do
