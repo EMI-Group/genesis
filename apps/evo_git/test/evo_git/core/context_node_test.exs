@@ -1,5 +1,9 @@
 defmodule EvoGit.Core.ContextNodeTest do
-  use ExUnit.Case
+  @moduledoc """
+  Pure/tmp-dir-isolated: exercises `ContextNode` path/normalization helpers plus
+  `@moduletag :tmp_dir` fixtures only — no BEAM-global mutation — so `async: true`.
+  """
+  use ExUnit.Case, async: true
   alias EvoGit.Core.ContextNode
 
   @moduletag :tmp_dir

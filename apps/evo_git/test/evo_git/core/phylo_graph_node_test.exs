@@ -1,5 +1,11 @@
 defmodule EvoGit.Core.PhyloGraphNodeTest do
-  use ExUnit.Case
+  @moduledoc """
+  Pure/tmp-dir-isolated: runs real `git` only inside a per-test `@moduletag :tmp_dir`
+  repo via `EvoGit.Adapters.Git` (whose only caching is deterministic
+  `:persistent_term` memoization keyed by the unique repo path) — no shared app
+  singleton / global ETS / env mutation — so `async: true`.
+  """
+  use ExUnit.Case, async: true
   alias EvoGit.Core.PhyloGraphNode
 
   @moduletag :tmp_dir
