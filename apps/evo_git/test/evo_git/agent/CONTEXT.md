@@ -24,6 +24,22 @@ Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local st
 - `tool_dispatch_retry_slot_test` — drives the global `AgentScheduler` GenServer (`update_config`, `pause`/`resume`) and the shared scheduler ETS tables.
 - `tool_dispatch_test` — its parallel-execution test registers agent state in the app-global `:evogit_agent_state` ETS table and acquires slots from the global `EvoGit.AgentScheduler` tool-slot pool.
 
+## Writable Foreign-Repo Coverage in This Node (file:line)
+
+- Authority text — `context_builder_test.exs` `describe "build_authority_section/1"` (lines 219-287), 4 pure `async: true` tests: repo_less yields `""` even with a writable non-primary foreign repo (220); `""` for an empty list AND for a primary-only list (230); ROOT block for `parent_id: nil` + a non-primary repo (246 — asserts `"ROOT agent"`, `"You MAY spawn write-capable"`, `"one at a time"`, refutes `"NESTED"`); NESTED block for an integer `parent_id` (267 — asserts `"NESTED agent"`, `"NOT the root agent"`, `"may NOT spawn write-capable"`, `"report the need back up to your parent agent"`).
+- Spawn-gate rejection shapes — `subagent_processing_test.exs` `describe "format_subagent_result/1"`: `{:foreign_repo_read_only, msg}` at 197 and 205, `{:foreign_repo_write_not_root, msg}` at 213, `{:foreign_repo_write_serialized, msg}` at 223 — all assert the `"Error: #{msg}"` pass-through, with HAND-WRITTEN messages (not the production wording).
+- Foreign-repo phylo starting commit — `subagent_processing_test.exs` `describe "build_subagent_specs/3 — foreign repo phylo nodes"` (496-692, needs real git repos + the global `:evogit_agent_state` ETS table): missing root → `{:error, {call, 0, msg =~ "does not exist or is not a git repository"}}` (579); `base_sha` honored as `base_commit`/`current_commit` (602); `base_sha` beats the tracked `foreign_repo_commits` map (632, passes `%{"orig" => sha2}`); invalid `base_sha` → error (669).
+- `Result.foreign_repo_commits` — `result_test.exs` only: default `%{}` (32) and option round-trip (37, 79-105). Pure struct construction; no runtime path.
+- Tool-layer write gating — `tools_test.exs` `describe "execute/5 - read-only foreign repo write gate"` (885-961): 7 write tools incl. `run_git`/`curl` blocked in a read-only foreign repo (886), JSON-encoded args form blocked (906), writes ALLOWED in a writable foreign repo (921) / the primary (934) / with no foreign repos (949).
+- Archive record — `tools/complete_task_test.exs:687,733-738` asserts `record.foreign_repos` carries the repo struct's `id`/`root`/`description` only (NOT `writable`/`base_sha`).
+
+### Coverage Gaps (this node)
+
+- No integration test for the authority section's call site: `build_authority_section/1` is unit-tested only; `runner.ex:107-123` (the `Process.get(:repo_less)` flag + the blank-filter ordering `[context_tree, authority_section, foreign_repos_section, repo_notes_section]`) is untested.
+- Precedence step 2 never proves a WIN: no test passes a foreign repo with `base_sha: nil` PLUS a `foreign_repo_commits` entry and asserts the tracked sha becomes the starting commit; step 3's SUCCESS path (no `base_sha`, empty tracked map, existing repo → foreign HEAD) is also untested — only step 3's error branch (missing root, 579) is covered.
+- The rejection-shape tests use hand-written messages on both sides: nothing asserts the production read-only wording (`agent_scheduler/subagents.ex:284-297`) — the test named "…with real message…" (205) uses a fabricated string — and no test feeds a REAL `Subagents.validate_spatial_contract_for_spec/4` rejection tuple into `format_subagent_result/1`.
+- `Result.foreign_repo_commits` as a runtime carrier is untested here: no test asserts a subagent-completion result carries a foreign repo's latest sha. The child-wins roll-up lives in the sibling node (`agent_scheduler/subagents_test.exs:587-667`, incl. "updates existing foreign repo commit to latest SHA" at 652-667; `Lifecycle.inject_foreign_repo_commits/2` at `agent_scheduler/lifecycle_test.exs:799-866`) — and even there the `Map.merge(parent.foreign_repo_commits, child_frc)` SUBTREE branch (`agent_scheduler/subagents.ex:401-402`) is uncovered (every `%Result{}` there is built without `foreign_repo_commits`, so `child_frc` is always `%{}`).
+
 ## Notes for Agents
 
 - Test-env seam for retry-backoff timing: `Application.put_env(:evo_git, :llm_retry_backoff_base_ms, ms)` is read at call time by `EvoGit.Agent.ToolDispatch.retry_backoff_base_ms/0`.
