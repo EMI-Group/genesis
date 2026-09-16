@@ -236,7 +236,7 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
             result = inject_foreign_repo_commits(result, meta.foreign_repo_commits)
 
             if meta.parent_id do
-              Subagents.store_sub_result(meta.parent_id, agent_id, result)
+              Subagents.store_sub_result(meta.parent_id, agent_id, result, meta.spec)
               state = Subagents.maybe_resume_parent(state, meta.parent_id)
               {:noreply, state}
             else
