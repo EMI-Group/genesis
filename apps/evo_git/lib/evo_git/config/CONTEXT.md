@@ -145,8 +145,18 @@ accent_color = "blue"             # Dashboard UI accent color (GNOME/libadwaita 
 
 [data]
 dir = "/abs/path/to/data"         # Optional: relocate the runtime data/state dir (tasks.sqlite, logs, caches). Absent/nil = platform default ($XDG_DATA_HOME/genesis or equivalent). Takes effect at next boot.
+
+[tmp]
+mode = "system"                   # Per-task temporary-directory mode: "system" (default) | "custom" | "per_repo"
+path = "/abs/path/to/tmp"         # Base path for :custom mode; absolute (or ~-relative). Absent/nil = system tmp
 ```
 
+**`[tmp]` — per-task managed temporary directory**: `EvoGit.Config.resolve([:tmp, :mode])` + `[:tmp, :path]` select the base directory used for an agent task's managed tmpdir (`task_<id>`):
+- `:system` (default) → `<system tmp>/genesis/task_<id>` (honors the user's OS tmp configuration, e.g. `$TMPDIR`).
+- `:custom` → `<[tmp] path>/genesis/task_<id>`; the base comes from `[:tmp, :path]` — when it is empty/nil (or not an absolute / `~`-relative path) the mode falls back to the system tmp.
+- `:per_repo` → `<task's primary repo>/.genesis/tmp/task_<id>`.
+
+`mode` is an `:atom` enum (`"system" | "custom" | "per_repo"`); the TOML string is atomized by the dedicated `[:tmp]` clause in `EvoGit.Config.atomize_enum_values/1` (config.ex) before `Schema.validate` — without that clause the raw string fails the `:atom` type check and lands in validation warnings.
 **`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml
 [[llm.models]]
@@ -217,7 +227,7 @@ The scalar/rule validator beneath the DSL is **Ecto-backed but Ecto is a VALIDAT
 
 **Delegation path**: `Schema.validate/1` keeps its map-walk + `safe_get_in/2` (schema.ex) → per present value calls `EctoValidation.errors_for/4` → scalar type decisions route through `EctoTypes.valid?/2` (→ `Ecto.Type.cast` → module `cast/1`); composite types (`:model_spec`, `:model_profiles`) and the optional peak profile fields (`peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`) recurse explicitly (multi-error, sub-path-aware) with scalar leaves still routed through `EctoTypes` where a matching type exists (e.g. `peak_concurrency` → `EctoTypes.valid?(:non_neg_integer, v)`, rule preserved as `:integer` for backward compat). No `Ecto.Changeset` is ever built; no `apply_changes`; the validated map passes through unchanged on `{:ok, config}` — unknown keys survive, model profiles stay plain maps.
 
-**What stays hand-written (and why)**: Ecto has no TOML story, and the config pipeline operates on variable-depth maps with byte-pinned shapes, so the **transform pipeline stays hand-written in `config.ex`** — `deep_merge`, `atomize_enum_values` (atomization stays PRE-Ecto: Ecto validates atoms, never produces them), `migrate_llm_models`, and save serialization (`strip_flat_llm_fields`, `stringify_keys`, `TomlElixir`). `Schema.defaults/0` stays a hand-written `deep_put` from each descriptor's `:default` (byte-identical output, 95 entries). `config.ex` calls `Schema.validate/1` exactly as before (oracle in `resolve/0` via `Process.put(:evo_git_config_validation_errors, ...)`; validate-first in `save_user_config/1`).
+**What stays hand-written (and why)**: Ecto has no TOML story, and the config pipeline operates on variable-depth maps with byte-pinned shapes, so the **transform pipeline stays hand-written in `config.ex`** — `deep_merge`, `atomize_enum_values` (atomization stays PRE-Ecto: Ecto validates atoms, never produces them), `migrate_llm_models`, and save serialization (`strip_flat_llm_fields`, `stringify_keys`, `TomlElixir`). `Schema.defaults/0` stays a hand-written `deep_put` from each descriptor's `:default` (byte-identical output, 97 entries). `config.ex` calls `Schema.validate/1` exactly as before (oracle in `resolve/0` via `Process.put(:evo_git_config_validation_errors, ...)`; validate-first in `save_user_config/1`).
 
 **Ecto quirk handling**: (a) numeric strings fail number types — the custom `cast/1` modules never coerce; (b) `""` is meaningful — never stripped (Ecto `String` type accepts any binary); (c) unknown keys survive — Ecto is oracle-only, never rebuilds; (d) no `Ecto.Enum` — atomized categories validate as atoms, so a bad enum string that survived `atomize_enum_values` surfaces as a *type* error (`rule == :atom`), never an `in:` error; (e) `Ecto.Type.cast(_, nil)` returns `{:ok, nil}`, matching the DSL's nil ≡ absent semantics (absent keys are skipped by `safe_get_in` before `errors_for` is ever called); (f) `EctoTypes.type_for/1` must return **fully-qualified** module atoms (`__MODULE__.PosInteger`) — a bare `PosInteger` reference before its nested `defmodule` would NOT be alias-expanded and Ecto's runtime module dispatch would fail.
 
