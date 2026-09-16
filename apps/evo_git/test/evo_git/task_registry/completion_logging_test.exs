@@ -20,13 +20,14 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
   and ExUnit.CaptureLog does NOT override the primary Logger level — so the
   `:info` messages under test are invisible unless the test first lowers
   `Logger.level()`. The `capture_info_logs/1` helper below does exactly that
-  (snapshot + restore), which is safe because all these tests are
-  `async: false`.
+  (snapshot + restore).
 
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  `async: false` is required: `capture_info_logs/1` lowers the process-wide
+  GLOBAL `Logger` level (`Logger.configure(level: :debug)`) for the capture
+  window, which every concurrently running module would observe. The
+  `EvoGit.TaskRegistryCase` fixture is already isolated (uniquely-named Store +
+  registry, resolved through the test process dictionary), so the Logger level
+  is the only forcing global.
   """
 
   # --- wrapper {ref, result} → terminal status logging ---
@@ -44,7 +45,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     log =
       capture_info_logs(fn ->
         send(
-          EvoGit.TaskRegistry,
+          TaskRegistry.server(),
           {ref, {:ok, %{result: "done", commit_sha: nil, branch_name: nil, tag: nil}}}
         )
 
@@ -66,7 +67,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     assert {:ok, %{result: "done"}} = fetched.result
 
     # The terminal write removed the task_refs entry.
-    state = :sys.get_state(EvoGit.TaskRegistry)
+    state = :sys.get_state(TaskRegistry.server())
     refute Map.has_key?(state.task_refs, task_id)
 
     cleanup_process(wrapper_pid)
@@ -99,7 +100,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     ref = make_ref()
     inject_task_ref(task_id, wrapper_pid, ref)
 
-    send(EvoGit.TaskRegistry, {ref, {:error, "boom"}})
+    send(TaskRegistry.server(), {ref, {:error, "boom"}})
 
     # Mailbox flush: the {ref, result} handler self-casts the terminal status
     # update, but that self-cast is queued AFTER the first call already in the
@@ -117,14 +118,14 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     assert is_list(fetched.error.stacktrace)
 
     # Column round-trip via the raw Store read — same persisted payload.
-    store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+    store_fetched = EvoGit.Store.get_task(store(), task_id)
     assert store_fetched.status == :failed
     assert store_fetched.error.kind == :error
     assert store_fetched.error.source == :result_handler
     assert store_fetched.error.message == fetched.error.message
     assert store_fetched.error.stacktrace == fetched.error.stacktrace
 
-    state = :sys.get_state(EvoGit.TaskRegistry)
+    state = :sys.get_state(TaskRegistry.server())
     refute Map.has_key?(state.task_refs, task_id)
 
     cleanup_process(wrapper_pid)
@@ -138,7 +139,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
     ref = make_ref()
     inject_task_ref(task_id, wrapper_pid, ref)
 
-    send(EvoGit.TaskRegistry, {ref, {:exit, {:shutdown, :crashed}}})
+    send(TaskRegistry.server(), {ref, {:exit, {:shutdown, :crashed}}})
 
     TaskRegistry.list_tasks()
     TaskRegistry.get_task(task_id)
@@ -160,7 +161,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
       capture_info_logs(fn ->
         # A ref that is not in task_refs (e.g. the registry restarted after the
         # wrapper finished) — the result cannot be persisted.
-        send(EvoGit.TaskRegistry, {make_ref(), {:ok, %{result: "orphaned"}}})
+        send(TaskRegistry.server(), {make_ref(), {:ok, %{result: "orphaned"}}})
         TaskRegistry.list_tasks()
       end)
 
@@ -178,7 +179,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
   test "an unknown-ref :DOWN message logs a warning and does not crash the registry" do
     log =
       capture_info_logs(fn ->
-        send(EvoGit.TaskRegistry, {:DOWN, make_ref(), :process, self(), :normal})
+        send(TaskRegistry.server(), {:DOWN, make_ref(), :process, self(), :normal})
         TaskRegistry.list_tasks()
       end)
 
@@ -195,7 +196,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
   # finalizing_watchdog_test.exs's seed_task/2).
   defp seed_task(task_id, status) do
     :ok =
-      EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+      EvoGit.Store.put_task(store(), %TaskInfo{
         id: task_id,
         type: :genesis,
         status: status,
@@ -211,7 +212,7 @@ defmodule EvoGit.TaskRegistry.CompletionLoggingTest do
   # Injects a fake %Task{} wrapper entry into the registry's task_refs so the
   # {ref, result} / {:DOWN, ...} handlers have a matching entry to look up.
   defp inject_task_ref(task_id, pid, ref) do
-    :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+    :sys.replace_state(TaskRegistry.server(), fn state ->
       %{
         state
         | task_refs:

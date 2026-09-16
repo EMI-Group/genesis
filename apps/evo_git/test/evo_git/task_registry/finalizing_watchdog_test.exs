@@ -20,10 +20,13 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
     (the task_refs entry is gone → row preserved, no `:completed` broadcast),
   - `false` disables the watchdog entirely (the row stays `:finalizing`).
 
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  `async: false` is required: `set_grace/1` MUTATES the process-wide app-env key
+  `:evo_git, :finalizing_watchdog_grace_minutes`, which the running
+  `EvoGit.TaskRegistry` reads at every local-node `:finalizing` PubSub broadcast
+  — so a concurrently running module whose task reaches `:finalizing` would
+  observe the perturbed grace window. The `EvoGit.TaskRegistryCase` fixture is
+  already isolated (uniquely-named Store + registry, resolved through the test
+  process dictionary), so the app-env grace key is the only forcing global.
   """
 
   @env_key :finalizing_watchdog_grace_minutes
@@ -61,7 +64,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       seed_task(task_id, :finalizing)
 
       # Drive the resolution arm by hand (no broadcast, no timer wait).
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
       TaskRegistry.list_tasks()
 
       fetched = TaskRegistry.get_task(task_id)
@@ -76,7 +79,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       task_id = "watchdog_error_#{System.unique_integer([:positive])}"
       seed_task(task_id, :finalizing)
 
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
       TaskRegistry.list_tasks()
 
       fetched = TaskRegistry.get_task(task_id)
@@ -93,7 +96,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
              }
 
       # Column round-trip via the raw Store read agrees.
-      store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      store_fetched = EvoGit.Store.get_task(store(), task_id)
       assert store_fetched.status == :failed
       assert store_fetched.result == fetched.result
       assert store_fetched.error == fetched.error
@@ -114,8 +117,8 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       completed_before = TaskRegistry.get_task(completed_id)
       failed_before = TaskRegistry.get_task(failed_id)
 
-      send(EvoGit.TaskRegistry, {:recheck_task, completed_id})
-      send(EvoGit.TaskRegistry, {:recheck_task, failed_id})
+      send(TaskRegistry.server(), {:recheck_task, completed_id})
+      send(TaskRegistry.server(), {:recheck_task, failed_id})
       TaskRegistry.list_tasks()
 
       # The registry survives — still serving calls.
@@ -144,7 +147,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       wrapper_pid = spawn(fn -> Process.sleep(:infinity) end)
       ref = make_ref()
 
-      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      :sys.replace_state(TaskRegistry.server(), fn state ->
         %{
           state
           | task_refs:
@@ -161,7 +164,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
         }
       end)
 
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
 
       wait_until(fn ->
         fetched = TaskRegistry.get_task(task_id)
@@ -174,7 +177,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
 
       # The terminal write removed the task from task_refs — nothing is left for
       # the late messages to match.
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(TaskRegistry.server())
       refute Map.has_key?(state.task_refs, task_id)
 
       # Drain anything already in the mailbox BEFORE subscribing, so only
@@ -185,11 +188,11 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       # The blocked wrapper eventually returns / exits — both late messages must
       # be complete no-ops (no DB write, no broadcast).
       send(
-        EvoGit.TaskRegistry,
+        TaskRegistry.server(),
         {ref, {:ok, %{result: "late result", commit_sha: nil, branch_name: nil, tag: nil}}}
       )
 
-      send(EvoGit.TaskRegistry, {:DOWN, ref, :process, wrapper_pid, :normal})
+      send(TaskRegistry.server(), {:DOWN, ref, :process, wrapper_pid, :normal})
       TaskRegistry.list_tasks()
 
       after_late = TaskRegistry.get_task(task_id)
@@ -250,7 +253,7 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
       end
 
     :ok =
-      EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+      EvoGit.Store.put_task(store(), %TaskInfo{
         id: task_id,
         type: :genesis,
         status: status,

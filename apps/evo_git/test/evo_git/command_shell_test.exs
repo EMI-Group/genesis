@@ -18,10 +18,10 @@ defmodule EvoGit.CommandShellTest do
   the 120 s default.
   """
 
-  # async: false is FORCED by `EvoGit.TaskRegistryCase`: its setup terminates /
-  # restarts the app-level `EvoGit.Store` and `EvoGit.TaskRegistry` supervision
-  # children (and re-registers their global names) on every test, and the shell
-  # handlers read the globally registered `EvoGit.Store`.
+  # async: false is FORCED by two pieces of BEAM-global state: (1) the setup
+  # below writes the app-env key `[:evo_git, :command_approval_timeout]`, read
+  # by `EvoGit.CommandApproval` per request; (2) `without_model_profiles/1`
+  # rewrites the global `EvoGit.AgentScheduler`'s `model_profiles`.
   use EvoGit.TaskRegistryCase, async: false
 
   @moduletag :tmp_dir
@@ -439,7 +439,7 @@ defmodule EvoGit.CommandShellTest do
       last_opened = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
       :ok =
-        EvoGit.Store.put_project(EvoGit.Store, %EvoGit.RecentProject{
+        EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
           path: "/proj/a",
           name: "Project A",
           last_opened_at: last_opened
@@ -525,7 +525,7 @@ defmodule EvoGit.CommandShellTest do
         )
       )
 
-    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+    :ok = EvoGit.Store.put_task(store(), task)
     task
   end
 
@@ -540,7 +540,7 @@ defmodule EvoGit.CommandShellTest do
     wrapper = spawn(fn -> Process.sleep(:infinity) end)
 
     :ok =
-      EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+      EvoGit.Store.put_task(store(), %TaskInfo{
         id: task_id,
         type: :genesis,
         status: :running,
@@ -553,7 +553,7 @@ defmodule EvoGit.CommandShellTest do
         lease_expires_at: System.system_time(:second) + 300
       })
 
-    :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+    :sys.replace_state(TaskRegistry.server(), fn state ->
       %{state | task_refs: Map.put(state.task_refs, task_id, fake_task_ref(wrapper))}
     end)
 
@@ -684,8 +684,8 @@ defmodule EvoGit.CommandShellParsingTest do
   validation error, a guardrail rejection, an unknown command, or a pure
   introspection call (`list_commands/0`, `help/1`, `security_level/1`). No
   Store, TaskRegistry or approval-gate state is touched, so the module skips the
-  per-test `EvoGit.TaskRegistryCase` setup (isolated Store + TaskRegistry
-  start/terminate cycle) that the dispatch tests in `EvoGit.CommandShellTest`
+  per-test `EvoGit.TaskRegistryCase` setup (the uniquely-named isolated Store +
+  TaskRegistry instances) that the dispatch tests in `EvoGit.CommandShellTest`
   need. The dispatch tests that DO reach a handler stay there.
 
   `async: true` is safe here: the module reads no BEAM-global state (the

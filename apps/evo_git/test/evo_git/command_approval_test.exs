@@ -18,10 +18,11 @@ defmodule EvoGit.CommandApprovalTest do
   that is never resolved times out in seconds instead of minutes.
   """
 
-  # async: false is FORCED by `EvoGit.TaskRegistryCase`: its setup terminates /
-  # restarts the app-level `EvoGit.Store` and `EvoGit.TaskRegistry` supervision
-  # children (and re-registers their global names) on every test, and the shell
-  # command handlers read the globally registered `EvoGit.Store`.
+  # async: false is FORCED by the BEAM-global app-env key
+  # `[:evo_git, :command_approval_timeout]`: the setup below (and one test)
+  # writes it, and `EvoGit.CommandApproval` reads it per request — any
+  # concurrently running module that opens an approval request would observe
+  # the perturbed window.
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.CommandShell
@@ -162,7 +163,7 @@ defmodule EvoGit.CommandApprovalTest do
         )
       )
 
-    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+    :ok = EvoGit.Store.put_task(store(), task)
     task
   end
 end

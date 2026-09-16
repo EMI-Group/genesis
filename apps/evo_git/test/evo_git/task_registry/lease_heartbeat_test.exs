@@ -1,12 +1,12 @@
 defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
   @moduledoc """
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  Runs `async: true`: each test gets its own isolated `EvoGit.Store` +
+  `EvoGit.TaskRegistry` from `EvoGit.TaskRegistryCase`, touches no BEAM-global
+  state (no app-env key, no shared `:evogit_*` ETS table, no global scheduler
+  config), and every task id is per-test unique.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   describe "lease & heartbeat" do
     test "lease cleared when task completes via update_task_status" do
@@ -25,7 +25,7 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) + 300
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Transition to completed
       TaskRegistry.update_task_status("lease_complete_#{unique}", :completed, nil)
@@ -60,17 +60,17 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: expired
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Send a heartbeat message directly to the registry process.
       # After the refactor, heartbeat ONLY renews owned leases — it does NOT
       # sweep. So even an expired-lease unowned task must remain :running.
-      send(EvoGit.TaskRegistry, :heartbeat)
+      send(TaskRegistry.server(), :heartbeat)
 
       # Sync
       TaskRegistry.list_tasks()
 
-      found = EvoGit.Store.get_task(EvoGit.Store, "lease_heartbeat_#{unique}")
+      found = EvoGit.Store.get_task(store(), "lease_heartbeat_#{unique}")
       assert found != nil
       # Lease unchanged and task still :running (no sweep on heartbeat).
       assert found.status == :running,
@@ -97,15 +97,15 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: System.system_time(:second) - 300
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Send a lease_sweep message directly to the registry process (one-shot).
-      send(EvoGit.TaskRegistry, :lease_sweep)
+      send(TaskRegistry.server(), :lease_sweep)
 
       # Sync
       TaskRegistry.list_tasks()
 
-      found = EvoGit.Store.get_task(EvoGit.Store, "lease_sweep_#{unique}")
+      found = EvoGit.Store.get_task(store(), "lease_sweep_#{unique}")
       assert found != nil
 
       assert found.status == :failed,
@@ -143,12 +143,12 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
         lease_expires_at: expired
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Make the task "owned" (in task_refs) so heartbeat renews its lease —
       # a long graceful cancel must keep its lease valid while the wrapper
       # is still alive. The %Task{} content is irrelevant to the heartbeat.
-      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      :sys.replace_state(TaskRegistry.server(), fn state ->
         %{
           state
           | task_refs:
@@ -165,12 +165,12 @@ defmodule EvoGit.TaskRegistry.LeaseHeartbeatTest do
         }
       end)
 
-      send(EvoGit.TaskRegistry, :heartbeat)
+      send(TaskRegistry.server(), :heartbeat)
 
       # Sync
       TaskRegistry.list_tasks()
 
-      found = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      found = EvoGit.Store.get_task(store(), task_id)
       assert found != nil
 
       assert found.status == :cancelling,
