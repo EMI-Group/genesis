@@ -6,6 +6,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
   alias EvoGit.TaskInfo
 
   setup do
+    # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
+    # isolation of its own), so fail loudly at the source if a prior suite
+    # leaked an isolated instance instead of silently reading a foreign DB.
+    EvoDash.Test.IsolatedTaskStore.assert_production!()
+
     # Test-seam stub (read by EvoDashWeb.ReviewLive.MergeCheck.start/4): the
     # auto-spawned async merge check resolves to :clean immediately and never
     # touches the file system, so mounted pages can't perform real git
@@ -1742,6 +1747,163 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # complete and the hub snapshot is unchanged.
       assert TaskRegistry.get_task(task_id).review_status == nil
       assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
+    end
+  end
+
+  describe "multi-repo review — in-page resolutions survive a self-triggered reload" do
+    # Regression coverage for carry_local_resolutions/2 + overlay_local_resolutions/2
+    # (review_live.ex): the page's OWN action tail records the outcome it just
+    # earned in the dedicated :local_repo_resolutions assign (set_repo_resolution/3),
+    # and that assign is overlaid onto a FRESHLY LOADED repos list — a load that
+    # derives each repo's resolution from REPOSITORY state alone and therefore
+    # reports nil for the repo the user just settled.
+    #
+    # The tests drive the real "merge" event (the merge-runner seam is stubbed, so
+    # nothing touches the file system) and then inject the load-completion message
+    # the LiveView itself handles, at the CURRENT :load_generation (the
+    # handle_info/2 stale-guard drops older generations). Two repos are injected
+    # and only ONE is settled, so completion_status/2 stays nil and the action
+    # records no review-status broadcast — no debounced self-reload can
+    # interleave with the explicitly injected message.
+    setup do
+      task_id = seed_orphaned_review_task!()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn node, repo_path, branch, target ->
+        send(test_pid, {:merged_call, node, repo_path, branch, target})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
+      {:ok, task_id: task_id}
+    end
+
+    test "(a) a repo settled in-page is NOT reverted by a load reporting resolution: nil",
+         %{conn: conn, task_id: task_id} do
+      primary = review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 3, 1)])
+
+      foreign =
+        review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 2, 1)])
+
+      view = mount_with_repos(conn, task_id, [primary, foreign])
+
+      # The non-nil loaded resolution is irrelevant here: the injected repos
+      # carry NO :resolution key, i.e. the load derived "unresolved".
+      assert assigns(view)[:local_repo_resolutions] == %{}
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      # The action tail EARNED the resolution and recorded it in the dedicated
+      # assign — never derived from @review_repos (whose entries the load and
+      # the fixtures also seed).
+      assert assigns(view)[:local_repo_resolutions]["primary"] == %{
+               state: :merged,
+               target: "main"
+             }
+
+      # A fresh load for the SAME repos, from REPOSITORY state alone: the settled
+      # repo comes back unresolved.
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, node(), gen,
+         {:ok,
+          %{
+            review_repos: [Map.put(primary, :resolution, nil), Map.put(foreign, :resolution, nil)],
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+
+      settled = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "primary"))
+      assert settled.resolution == %{state: :merged, target: "main"}
+
+      untouched = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "original"))
+      assert untouched.resolution == nil
+    end
+
+    test "(b) a LOADED non-nil resolution stays authoritative over the local overlay",
+         %{conn: conn, task_id: task_id} do
+      primary = review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 3, 1)])
+
+      foreign =
+        review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 2, 1)])
+
+      view = mount_with_repos(conn, task_id, [primary, foreign])
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      assert assigns(view)[:local_repo_resolutions]["primary"] == %{
+               state: :merged,
+               target: "main"
+             }
+
+      # The load independently determined a DIFFERENT resolution for the same
+      # repo (e.g. the branch is truly gone → :handled): it must win, never be
+      # overwritten by the page's local entry.
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, node(), gen,
+         {:ok,
+          %{
+            review_repos: [Map.put(primary, :resolution, %{state: :handled}), foreign],
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+
+      settled = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "primary"))
+      assert settled.resolution == %{state: :handled}
+    end
+
+    test "(c) local resolutions for repos absent from the fresh load are pruned",
+         %{conn: conn, task_id: task_id} do
+      primary = review_repo("primary", "/nonexistent/repo/path", [file_info("lib/one.ex", 3, 1)])
+
+      foreign =
+        review_repo("original", "/nonexistent/foreign/path", [file_info("src/two.rs", 2, 1)])
+
+      view = mount_with_repos(conn, task_id, [primary, foreign])
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      assert assigns(view)[:local_repo_resolutions] == %{
+               "primary" => %{state: :merged, target: "main"}
+             }
+
+      # The settled repo is gone from the freshly loaded list → its local entry
+      # must be dropped (the map never grows unboundedly across loads).
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, task_id, node(), gen,
+         {:ok,
+          %{
+            review_repos: [foreign],
+            active_repo_id: "original",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+
+      assert assigns(view)[:local_repo_resolutions] == %{}
+      assert Enum.map(assigns(view)[:review_repos], & &1.repo_id) == ["original"]
+
+      untouched = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "original"))
+      assert Map.get(untouched, :resolution) == nil
     end
   end
 
@@ -4388,6 +4550,26 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     wait_loop.(wait_loop)
+  end
+
+  # The DURABLE half of the hub invalidation contract (see the merge-completion
+  # test): EvoDash.ActiveTasks.invalidate/2 either leaves the key absent or lets
+  # an in-flight/queued sidebar refetch rewrite it — what must NEVER survive is
+  # an entry for the task that just left the reviewed state. Deterministic, no
+  # waiting: invalidation itself is synchronous, and the hub key this asserts on
+  # is only ever written by that invalidation and by the sidebar fetches that
+  # filter the merged task out.
+  defp assert_hub_excludes_task(task_id) do
+    case EvoDash.ActiveTasks.get(nil, node()) do
+      :empty ->
+        :ok
+
+      {:ok, {running, pending}} ->
+        ids = Enum.map(running ++ pending, & &1.id)
+
+        refute task_id in ids,
+               "the ActiveTasks hub snapshot still lists the resolved task #{task_id}: #{inspect(ids)}"
+    end
   end
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).

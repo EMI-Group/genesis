@@ -169,7 +169,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   # must be removed explicitly. Registering the cleanup via `on_exit/1` here —
   # at seed time, on the test process — makes removal UNCONDITIONAL: the row is
   # deleted even when a test fails, raises, or crashes before reaching its end,
-  # so no leftover `export_test_*` row can ever leak into a later test or run
+  # so no leftover `export_test_*` row can ever leak into a later test
   # (a leaked row previously broke `evo_git`'s `list_tasks_paginated/2`).
   defp seed_completed_task(archive_metadata) do
     task_id = "export_test_#{System.unique_integer([:positive])}"

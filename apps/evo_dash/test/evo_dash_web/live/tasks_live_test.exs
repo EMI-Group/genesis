@@ -2,35 +2,18 @@ defmodule EvoDashWeb.TasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
-  alias EvoGit.TaskRegistry
   alias EvoGit.TaskInfo
 
   setup do
-    # Terminate production children to prevent auto-restarts and use isolated stores.
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
-    unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
-    File.mkdir_p!(root)
-    sqlite_path = Path.join(root, "tasks.sqlite")
-
-    start_supervised({EvoGit.Store, data_dir: sqlite_path})
-
-    start_supervised(
-      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
-    )
+    # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
+    # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
+    # production children (no start_supervised/on_exit racing).
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("tasks_live")
 
     # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
     # terminated by the Store/TaskRegistry isolation above — reset it so one
     # test's sidebar snapshot never leaks into the next.
     EvoDash.ActiveTasks.reset()
-
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
 
     :ok
   end
@@ -59,15 +42,28 @@ defmodule EvoDashWeb.TasksLiveTest do
     id
   end
 
-  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  defp flush_tasks_load(view, timeout \\ 5000),
-    do:
-      EvoDashWeb.TestHelpers.flush_loading(
-        view,
-        "Loading tasks...",
-        "timed out waiting for the async task load to finish",
-        timeout
-      )
+  # Drains the async page load (via the shared EvoDashWeb.TestHelpers.flush_loading/4)
+  # AND synchronizes the test proxy before returning: flush_loading stops as soon
+  # as the "Loading tasks..." marker leaves the proxy's cached tree, but that tree
+  # is patched by channel diffs as they arrive, so a caller may otherwise assert
+  # against a tree read mid-diff. Await the cleared :tasks_loading assign on the
+  # socket (a synchronous :sys.get_state round-trip, the file's wait_until idiom)
+  # and re-render so every call site reads a fully-applied page-load result.
+  defp flush_tasks_load(view, timeout \\ 5000) do
+    EvoDashWeb.TestHelpers.flush_loading(
+      view,
+      "Loading tasks...",
+      "timed out waiting for the async task load to finish",
+      timeout
+    )
+
+    wait_until(
+      fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end,
+      timeout
+    )
+
+    render(view)
+  end
 
   # Renders only the task-list container (#tasks-list), scoping list-content
   # assertions away from the sidebar, which now also lists completed tasks.
