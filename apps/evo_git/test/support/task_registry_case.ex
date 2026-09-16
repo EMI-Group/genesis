@@ -1,13 +1,34 @@
 defmodule EvoGit.TaskRegistryCase do
   @moduledoc """
-  Shared test case for TaskRegistry tests. Provides an isolated TaskRegistry +
-  Store on a temporary SQLite database, plus common helper functions.
+  Shared test case for `EvoGit.TaskRegistry` tests.
 
-  Usage:
+  Each test gets its OWN, fully isolated `EvoGit.Store` + `EvoGit.TaskRegistry`
+  pair, both started under the test's supervisor with UNIQUE registered names, so
+  the app-global singletons are never touched and tests may run concurrently
+  (`async: true`).
+
+  Isolation works through the runtime seam on `EvoGit.TaskRegistry.server/0`:
+
+    * `EvoGit.TaskRegistry` resolves its target instance from the process
+      dictionary key `:evogit_task_registry_server` at CALL time (falling back
+      to the registered `EvoGit.TaskRegistry` singleton). `setup/1` runs in the
+      test process, so it stores the isolated registry name there — every
+      `EvoGit.TaskRegistry.*` call made from the test resolves to the isolated
+      instance. The registry's own process (and any task wrapper it spawns)
+      carries the same key, so in-wrapper callbacks resolve back to this
+      instance too.
+    * `EvoGit.Store` needs no seam: every client function takes the store name
+      as its first argument. The isolated store name is stored in the test
+      process under `:evogit_test_store` and exposed via `store/0`.
+
+  Nothing global is mutated: the temporary data directory is removed on exit and
+  the per-test processes are stopped by `start_supervised!/1`.
+
+  Usage (both async settings are supported — the case does not force one):
 
       defmodule EvoGit.TaskRegistry.XxxTest do
-        use EvoGit.TaskRegistryCase, async: false
-        # ...
+        use EvoGit.TaskRegistryCase, async: true
+        # ... context: %{data_dir: root, sqlite_path: path, store: name, registry: name}
       end
   """
 
@@ -24,34 +45,56 @@ defmodule EvoGit.TaskRegistryCase do
   end
 
   setup do
-    # Terminate production children to prevent auto-restarts and use isolated stores.
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    start_supervised({EvoGit.Store, data_dir: sqlite_path})
+    store_name = :"evogit_test_store_#{unique}"
+    registry_name = :"evogit_test_registry_#{unique}"
 
-    start_supervised(
-      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
+    # Explicit `id` overrides are required because both modules hardcode
+    # `id: __MODULE__` in their `child_spec/1`.
+    start_supervised!(
+      Supervisor.child_spec({EvoGit.Store, data_dir: sqlite_path, name: store_name},
+        id: store_name
+      )
     )
 
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
+    start_supervised!(
+      Supervisor.child_spec(
+        {TaskRegistry, task_store: store_name, data_dir: root, name: registry_name},
+        id: registry_name
+      )
+    )
 
-    {:ok, %{data_dir: root, sqlite_path: sqlite_path}}
+    # `setup/1` runs in the test process: point every in-test call at the
+    # isolated instances.
+    Process.put(:evogit_task_registry_server, registry_name)
+    Process.put(:evogit_test_store, store_name)
+
+    on_exit(fn -> File.rm_rf(root) end)
+
+    {:ok, %{data_dir: root, sqlite_path: sqlite_path, store: store_name, registry: registry_name}}
   end
 
-  # Helper: trigger cleanup_expired_tasks directly (cleanup is now periodic,
-  # not on every status transition).
+  @doc """
+  The isolated `EvoGit.Store` name for the current test, falling back to the
+  global singleton when called outside a test process (or after `setup/1`).
+  """
+  def store do
+    Process.get(:evogit_test_store) || EvoGit.Store
+  end
+
+  @doc """
+  Trigger `cleanup_expired_tasks/1` against the isolated store.
+
+  Cleanup is periodic (no longer run on every status transition), so tests call
+  this directly. Must be invoked from the test process so the isolated store
+  name is available via the process dictionary.
+  """
   def trigger_cleanup! do
-    EvoGit.TaskRegistry.Cleanup.cleanup_expired_tasks(EvoGit.Store)
+    EvoGit.TaskRegistry.Cleanup.cleanup_expired_tasks(store())
     :ok
   end
 
