@@ -498,6 +498,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     alias EvoGit.AgentSpec
     alias EvoGit.Adapters.Git
     alias EvoGit.AgentScheduler.AgentState
+    alias EvoGit.AgentScheduler.SchedMeta
+    alias EvoGit.AgentScheduler.Subagents
     alias EvoGit.Agents.Investigator
     alias EvoGit.Core.ContextNode
     alias EvoGit.Core.PhyloGraphNode
@@ -509,10 +511,23 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       def subagent_modules, do: [Investigator]
     end
 
+    # A dummy agent module declaring the built-in `:read_write` Executor as a
+    # subagent module, so `subagent_module_for/2` resolves the
+    # "subagent_executor" tool name to a child `agent_module` whose
+    # `agent_type()` is `:read_write` — the shape the roll-up authority
+    # predicate (`Subagents.writable_foreign_repo_agent?/1`) keys on.
+    defmodule ForeignWriteDummyAgentModule do
+      def subagent_modules, do: [EvoGit.Agents.Executor]
+    end
+
     setup do
-      # Ensure the ETS table exists (app may already create it)
+      # Ensure the ETS tables exist (app may already create them)
       if :ets.whereis(:evogit_agent_state) == :undefined do
         :ets.new(:evogit_agent_state, [:set, :public, :named_table])
+      end
+
+      if :ets.whereis(:evogit_sched_meta) == :undefined do
+        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
       end
 
       agent_id = 99_998
@@ -574,6 +589,36 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         "subagent_investigator",
         Jason.encode!(%{"path" => path, "objective" => "investigate foreign repo"})
       )
+    end
+
+    # A "subagent_executor" delegation — resolves to the built-in `:read_write`
+    # `EvoGit.Agents.Executor` child module via subagent_module_for/2.
+    defp executor_call(path) do
+      ReqLLM.ToolCall.new(
+        "call_1",
+        "subagent_executor",
+        Jason.encode!(%{"path" => path, "objective" => "edit foreign repo"})
+      )
+    end
+
+    # A minimal `%SchedMeta{}` row for a parent whose (fake) subagent id maps to
+    # result index 0 — the shape `Subagents.store_sub_result/4` reads from the
+    # `:evogit_sched_meta` ETS table.
+    defp sched_meta(parent_id, sub_indices) do
+      %SchedMeta{
+        id: parent_id,
+        depth: 0,
+        spec: %AgentSpec{
+          context_node: %ContextNode{path: "./", repo: "/test"},
+          phylo_node: %PhyloGraphNode{repo: "/test", base_commit: "abc", current_commit: "abc"},
+          agent_module: nil,
+          objective: "test",
+          repo_id: "primary"
+        },
+        sub_agent_indices: sub_indices,
+        sub_agent_results: %{},
+        foreign_repo_commits: %{}
+      }
     end
 
     test "missing foreign repo root returns an error tuple, no crash",
@@ -688,6 +733,139 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       assert call_result == call
       assert msg =~ "base commit 'deadbeef' for foreign repository 'orig' does not exist"
+    end
+
+    # --- Coupling the roll-up authority predicate to the REAL builder ---
+    #
+    # These tests derive the spec from the production builder
+    # `SubagentProcessing.build_subagent_specs/3` (never a hand-built struct)
+    # and assert `EvoGit.AgentScheduler.Subagents.writable_foreign_repo_agent?/1`
+    # on it, so a future silent regression in the builder's `repo_id` /
+    # `agent_module` / `foreign_repos` wiring fails here instead of passing.
+
+    test "absolute path into a writable foreign repo yields an authorized writable-foreign spec",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignWriteDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
+        repo_notes: nil
+      }
+
+      assert [spec] =
+               SubagentProcessing.build_subagent_specs(
+                 [{executor_call(foreign_root), 0}],
+                 state,
+                 %{}
+               )
+
+      # Absolute spawn -> resolved to the foreign repo by resolve_subagent_path/3;
+      # "subagent_executor" -> the `:read_write` Executor child module.
+      assert spec.repo_id == "orig"
+      assert spec.agent_module == EvoGit.Agents.Executor
+      assert Subagents.writable_foreign_repo_agent?(spec)
+    end
+
+    test "relative delegation from a parent inside a writable foreign repo is resolved to \"primary\" and not authorized",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      # The parent is itself running INSIDE the foreign repo (the NESTED case),
+      # so a RELATIVE path targets the parent's own repo root.
+      Process.put(:repo_path, foreign_root)
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignWriteDummyAgentModule,
+        depth: 1,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
+        repo_notes: nil
+      }
+
+      assert [spec] =
+               SubagentProcessing.build_subagent_specs([{executor_call("src"), 0}], state, %{})
+
+      # resolve_subagent_path/3 marks EVERY relative path as "primary", so the
+      # roll-up authority predicate never authorizes it — even though the
+      # parent's own root is the writable foreign repo.
+      assert spec.repo_id == "primary"
+      refute Subagents.writable_foreign_repo_agent?(spec)
+    end
+
+    test "store_sub_result/4 advances the tracked foreign commit only for the real builder's authorized spec",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      [sha] = init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      writable_parent = 99_001
+      primary_parent = 99_002
+
+      :ets.insert(
+        :evogit_sched_meta,
+        {writable_parent, sched_meta(writable_parent, %{101 => 0})}
+      )
+
+      :ets.insert(
+        :evogit_sched_meta,
+        {primary_parent, sched_meta(primary_parent, %{102 => 0})}
+      )
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, writable_parent)
+        :ets.delete(:evogit_sched_meta, primary_parent)
+      end)
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignWriteDummyAgentModule,
+        depth: 0,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
+        repo_notes: nil
+      }
+
+      # Authorized spec: an ABSOLUTE spawn into the writable foreign repo.
+      assert [writable_spec] =
+               SubagentProcessing.build_subagent_specs(
+                 [{executor_call(foreign_root), 0}],
+                 state,
+                 %{}
+               )
+
+      assert Subagents.writable_foreign_repo_agent?(writable_spec)
+
+      result = {:ok, %Result{result: "done", commit_sha: sha, repo_id: "orig"}}
+
+      Subagents.store_sub_result(writable_parent, 101, result, writable_spec)
+
+      assert EvoGit.AgentScheduler.get_foreign_repo_commits(writable_parent) == %{"orig" => sha}
+
+      # Unauthorized spec: a RELATIVE (nested) delegation resolves to "primary",
+      # so the SAME result payload must NOT advance any tracked commit.
+      Process.put(:repo_path, foreign_root)
+
+      assert [primary_spec] =
+               SubagentProcessing.build_subagent_specs([{executor_call("src"), 0}], state, %{})
+
+      assert primary_spec.repo_id == "primary"
+      refute Subagents.writable_foreign_repo_agent?(primary_spec)
+
+      Subagents.store_sub_result(primary_parent, 102, result, primary_spec)
+
+      assert EvoGit.AgentScheduler.get_foreign_repo_commits(primary_parent) == %{}
     end
   end
 

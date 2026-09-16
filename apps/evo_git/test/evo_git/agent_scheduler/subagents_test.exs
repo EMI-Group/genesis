@@ -547,7 +547,7 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
   # --- Foreign repo commit tracking ---
 
-  describe "store_sub_result/3 — foreign repo commit tracking" do
+  describe "store_sub_result/3,4 — foreign repo commit tracking" do
     setup do
       # Ensure ETS tables exist (app may already create them)
       ensure_ets_table(:evogit_sched_meta)
@@ -593,7 +593,12 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
 
       result = {:ok, %Result{result: "done", commit_sha: "def456", repo_id: "original"}}
 
-      Subagents.store_sub_result(parent_id, sub_id, result)
+      Subagents.store_sub_result(
+        parent_id,
+        sub_id,
+        result,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.foreign_repo_commits == %{"original" => "def456"}
@@ -609,8 +614,19 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       result1 = {:ok, %Result{result: "done1", commit_sha: "sha1", repo_id: "original"}}
       result2 = {:ok, %Result{result: "done2", commit_sha: "sha2", repo_id: "reference"}}
 
-      Subagents.store_sub_result(parent_id, 10, result1)
-      Subagents.store_sub_result(parent_id, 11, result2)
+      Subagents.store_sub_result(
+        parent_id,
+        10,
+        result1,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
+
+      Subagents.store_sub_result(
+        parent_id,
+        11,
+        result2,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "reference")
+      )
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       assert updated.foreign_repo_commits == %{"original" => "sha1", "reference" => "sha2"}
@@ -658,12 +674,147 @@ defmodule EvoGit.AgentScheduler.SubagentsTest do
       result1 = {:ok, %Result{result: "first", commit_sha: "sha_v1", repo_id: "original"}}
       result2 = {:ok, %Result{result: "second", commit_sha: "sha_v2", repo_id: "original"}}
 
-      Subagents.store_sub_result(parent_id, 10, result1)
-      Subagents.store_sub_result(parent_id, 11, result2)
+      Subagents.store_sub_result(
+        parent_id,
+        10,
+        result1,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
+
+      Subagents.store_sub_result(
+        parent_id,
+        11,
+        result2,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
 
       updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
       # Second result overwrites first for same repo
       assert updated.foreign_repo_commits == %{"original" => "sha_v2"}
+    end
+
+    test "local/primary child does not overwrite a pre-seeded foreign commit" do
+      parent_id = 1
+      sub_id = 2
+
+      parent_meta = %SchedMeta{
+        base_sched_meta(parent_id, %{sub_id => 0})
+        | foreign_repo_commits: %{"original" => "advanced_sha"}
+      }
+
+      :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
+
+      # A STALE sha arrives through a local/primary child (repo_id "primary"),
+      # which is never authorized to advance a foreign repo's tracked commit.
+      result =
+        {:ok,
+         %Result{
+           result: "done",
+           commit_sha: "stale_sha",
+           repo_id: "original",
+           foreign_repo_commits: %{"original" => "stale_sha"}
+         }}
+
+      Subagents.store_sub_result(
+        parent_id,
+        sub_id,
+        result,
+        spec(path: "./", repo: "/test", repo_id: "primary", agent_module: DummyReadWriteAgent)
+      )
+
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.foreign_repo_commits == %{"original" => "advanced_sha"}
+    end
+
+    test "read-only child targeting a writable foreign repo records nothing" do
+      parent_id = 1
+      sub_id = 2
+
+      parent_meta = base_sched_meta(parent_id, %{sub_id => 0})
+      :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
+
+      result =
+        {:ok,
+         %Result{
+           result: "done",
+           commit_sha: "ro_sha",
+           repo_id: "original",
+           foreign_repo_commits: %{"original" => "ro_sha"}
+         }}
+
+      # The target repo IS marked writable, but the child is read-only — it may
+      # not advance the tracked commit.
+      Subagents.store_sub_result(
+        parent_id,
+        sub_id,
+        result,
+        spec(
+          path: "./",
+          repo: "/test",
+          repo_id: "original",
+          agent_module: DummyReadOnlyAgent,
+          foreign_repos: [%ForeignRepo{id: "original", root: "/test", writable: true}]
+        )
+      )
+
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.foreign_repo_commits == %{}
+    end
+
+    test "writable foreign-repo child records its advanced SHA" do
+      parent_id = 1
+      sub_id = 2
+
+      parent_meta = base_sched_meta(parent_id, %{sub_id => 0})
+      :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
+
+      result = {:ok, %Result{result: "done", commit_sha: "adv_sha", repo_id: "original"}}
+
+      Subagents.store_sub_result(
+        parent_id,
+        sub_id,
+        result,
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
+
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.foreign_repo_commits == %{"original" => "adv_sha"}
+    end
+
+    test "writable foreign child's advance survives a later stale primary child" do
+      parent_id = 1
+
+      # Two children: the writable foreign agent (index 0) and a primary child
+      # (index 1) that completes afterwards carrying a stale sha.
+      parent_meta = base_sched_meta(parent_id, %{10 => 0, 11 => 1})
+      :ets.insert(:evogit_sched_meta, {parent_id, parent_meta})
+
+      Subagents.store_sub_result(
+        parent_id,
+        10,
+        {:ok, %Result{result: "wrote", commit_sha: "advanced_sha", repo_id: "original"}},
+        writable_foreign_spec(path: "./", repo: "/test", repo_id: "original")
+      )
+
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      assert updated.foreign_repo_commits == %{"original" => "advanced_sha"}
+
+      Subagents.store_sub_result(
+        parent_id,
+        11,
+        {:ok,
+         %Result{
+           result: "local",
+           commit_sha: "stale_sha",
+           repo_id: "original",
+           foreign_repo_commits: %{"original" => "stale_sha"}
+         }},
+        spec(path: "./", repo: "/test", repo_id: "primary", agent_module: DummyReadWriteAgent)
+      )
+
+      updated = :ets.lookup_element(:evogit_sched_meta, parent_id, 2)
+      # The primary child's stale sha must NOT clobber the writable agent's advance.
+      assert updated.foreign_repo_commits == %{"original" => "advanced_sha"}
     end
   end
 

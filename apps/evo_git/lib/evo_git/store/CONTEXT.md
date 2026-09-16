@@ -125,6 +125,15 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; run the `mix migrate.store` opts-object rewrite before reading old DBs.
 - `Queries.build_where/1` `:search` filter (`opts/result LIKE ?N ESCAPE '\'`) matches over the serialized JSON text — `"path"`/`"mode"` key names and string values alike; the `result` column's raw JSON carries the final agent report under its `"result"` data key, matching with the same semantics.
 
+## Opts / Result decode key whitelists (atomization contract)
+
+- `decode_opts/1` atomizes ONLY the keys in `@known_opt_keys` (codec.ex:299): `path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments` — every other key stays a STRING (never `String.to_atom` on user/LLM input).
+- `:foreign_repos` VALUE is not restructured on decode: it round-trips as a list of STRING-keyed maps with keys `"id"`, `"root"`, `"description"`, `"writable"`, `"base_sha"` (exactly the `%EvoGit.Core.ForeignRepo{}` `@derive Jason.Encoder, only: [...]` list, core/foreign_repo.ex:26). Consumers must normalize via `EvoGit.Core.ForeignRepo.normalize/1` before dot-accessing.
+- Silent-drop risk: if ANY opt value is non-Jason-encodable (tuple/pid/function), `encode_opts/1` falls back to the essential keys `[:path, :mode, :prompt, :objective]` ONLY (codec.ex:321-324) — `foreign_repos`, `attachments`, etc. are silently dropped from the persisted row.
+- `decode_result_data/1` atomizes ONLY `@result_data_fields` (codec.ex:61): `commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count archive_records`; the multi-repo roll-up key `"repos"` is deliberately ABSENT, so it stays a STRING key whose inner maps stay string-keyed (`%{repo_id => %{"commit_sha", "branch_name"}}` — Jason stringifies the runtime's atom keys). Read it via `Map.get(decoded, "repos")`.
+- `foreign_repo_commits` (the scheduler-side `%{repo_id => sha}` map) is NEVER persisted: it is neither a `report_map` key (runtime/helpers.ex:110-126) nor a `@result_data_fields` entry — only its projection into `repos` survives.
+- `repos` holds exactly ONE `commit_sha` per repo_id (no intermediate/alternate commits) — an advanced per-repo SHA can be replaced by a later-recorded one; ordering lives in the scheduler roll-up, not here (see agent_scheduler/CONTEXT.md "Subagent Management").
+
 ## Store.init does not auto-migrate
 
 `Store.init/1` runs only `create_tables/1`. Schema upgrades for existing DBs go through **`mix migrate.store`** (`apps/evo_git/lib/mix/tasks/migrate.store.ex`): standalone (never starts the `:evo_git` application), opens the DB directly, invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1`), and rewrites canonical results (step 4) + opts objects (step 5). Fresh DBs are created with the full current DDL by `create_tables/1`.

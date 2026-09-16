@@ -28,6 +28,7 @@ Genesis supports SSH remote development (VSCode Remote-SSH-style): a headless `:
 - Peak/off-peak hour scheduling → `./lib/evo_git/agent_scheduler/` (Slot Management) + `./lib/evo_git/config/`
 - Cross-node RPC payload profile → `lib/evo_git/CONTEXT.md` (Review/RemoteNode Return-Shape Contract)
 - Review API surface (per-repo-path capability vs task-level-only review state) → `./lib/evo_git/` (`review.ex` + `remote_node.ex`) + `./lib/evo_git/agent_scheduler/` (RemoteAPI mirrors) + `./lib/evo_git/task_registry/` (`set_review_status`/`set_review_metadata`) + `./lib/evo_git/store/` (single `tasks.review_status` column; no per-repo review state exists)
+- Foreign-repo starting-commit tracking (authority-gated roll-up of `SchedMeta.foreign_repo_commits`: only an agent running IN a foreign repo as a writable `:read_write` agent may advance that repo's tracked commit — local/primary children never update foreign commits, read-only agents never record; `base_sha` precedence at spawn) → `./lib/evo_git/agent_scheduler/` (roll-up + spawn gate) + `./lib/evo_git/agent/` (spawn-time resolution) + `./lib/evo_git/runtime/` (`merge_and_report`) + `./lib/evo_git/task_registry/` (`MergeContext`/`ResumeContext`/`PrevTaskRepos`) — detail in their foreign-repo sections
 - Desktop backend port / orphan prevention / task cancellation model / ReqLLMPool sizing / peak-hours / merge-conflict check / native directory picker → root `./CONTEXT.md` (do not duplicate)
 
 ## API Surface
