@@ -49,6 +49,15 @@ Two independent hinting mechanisms, both per-child-directory counter + fire-once
 
 ## Design Decisions
 
+### Foreign-repo subagent starting-commit chaining (per-agent scope — can go stale)
+
+`build_specs_and_errors/2` (`subagent_processing.ex:418-420`) reads `AgentScheduler.get_foreign_repo_commits(state.agent_id)` — the SPAWNING agent's OWN SchedMeta row — so foreign-repo commit tracking is **per-agent**, not per-task.
+`build_subagent_phylo_node/7` has two clauses: the `"primary"` clause (`:584-617`) starts a child at the parent's live `parent_state.phylo_node.current_commit` (`:608`), whereas EVERY non-primary target repo id goes through the foreign clause (`:619-708`), which ignores the parent's own commit entirely.
+`resolve_foreign_phylo_commit/4` (`:673-708`): a non-nil task-level `base_sha` wins unconditionally (`:681`); otherwise the spawning agent's `foreign_repo_commits[repo_id]` (`:692`); otherwise the foreign repo's HEAD (`:694`).
+Consequence: a child placed in the SAME foreign repo the parent is already working in does NOT inherit the parent's commit — it starts at `base_sha`/foreign HEAD, even at depth > 0, and even when the parent's own children already committed ahead.
+`collect_mergeable_results/2` (`:453-471`) merges a child's commit into the parent's worktree ONLY when `spec.repo_id == "primary"` (`:459`) — children in a foreign repo (including same-repo children of a Manager running INSIDE that foreign repo) are classified as cross-repo and never merged, so the parent's HEAD does not contain them.
+`delete_same_repo_branches/3` (`:502-512`) likewise deletes branches only for `"primary"` children — foreign children's per-agent branches are deleted by WorktreeManager on agent exit (`agent_scheduler/worktree_manager.ex:289`/`:574-582`).
+
 ### Module sizes (cohesive-by-design)
 
 `agent/tool_dispatch.ex` is ~1100 lines — the tool-dispatch orchestrator (`EvoGit.Agent.ToolDispatch`, extracted from the agent macro): per-turn LLM call with retry, tool-call routing (complete vs regular vs subagent; standard-tool batching through the write-gated `Tools.execute/5` dispatch), timeout management, the output sanitization/truncation-feedback call site (tool_dispatch.ex:995-1002), and subagent-spawn plumbing. Deliberately kept cohesive — do not split without a plan.
