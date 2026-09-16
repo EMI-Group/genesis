@@ -106,5 +106,5 @@ Note the `describe "recheck_task resolution"` `setup` creates/deletes `:evogit_s
 ## Constraints
 
 - No mocking — real SQLite via xqlite, real `EvoGit.Store`/`TaskRegistry` GenServers; corrupt rows injected via raw `XqliteNIF.execute`.
-- `EvoGit.TaskRegistryCase, async: false` for the 4 modules that reach a named BEAM-global; plain `ExUnit.Case, async: true` for the 4 pure modules and `EvoGit.TaskRegistryCase, async: true` for the 5 isolated fixture modules.
+- `EvoGit.TaskRegistryCase, async: false` for the 6 modules that reach a named BEAM-global (incl. the two XDG/`[tmp]`-mode tmpdir modules); plain `ExUnit.Case, async: true` for the 4 pure modules and `EvoGit.TaskRegistryCase, async: true` for the 5 isolated fixture modules.
 - Tests must not mutate BEAM-global state outside their module's own fixture lifecycle; per-test global-env seams are snapshot + restored in `on_exit` (see `finalizing_watchdog_test.exs`'s `set_grace/1`).
