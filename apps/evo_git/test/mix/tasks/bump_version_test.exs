@@ -2,20 +2,24 @@ defmodule Mix.Tasks.Bump.VersionTest do
   @moduledoc """
   Tests for `mix bump.version`.
 
-  MUST stay `async: false` — the exercised task and this suite rely on
-  process-/VM-global state that concurrent test modules would corrupt:
+  Runs `async: true`: the task resolves its working directory, Mix shell, and
+  the changelog summarizer seam from per-call `opts` (the merged production
+  testability seam), so this suite mutates no process-/VM-global state:
 
-    * `Mix.shell/0` is process-global: assertions drain `{:mix_shell, ...}`
-      messages from the test-process mailbox after switching to
-      `Mix.Shell.Process`.
-    * `File.cd!/2` changes the VM-wide working directory via the file server
-      (the task shells out `System.cmd("git", ...)` in the VM's cwd).
-    * one test mutates the `:changelog_summarizer` application-env seam.
+    * `root: tmp_dir` anchors every git invocation (`cd: root`) and every
+      relative path resolution, so no VM-wide `File.cd!/2` is needed.
+    * `shell: Mix.Shell.Process` is injected per call, so the VM-global
+      `Mix.shell/1` swap is not needed; the injected shell's `yes?`/`info`
+      post `{:mix_shell, ...}` messages to the calling (test) process, which
+      the assertions below drain.
+    * the `:changelog_summarizer` seam is passed as a per-call opt (the bump
+      task forwards it into the nested `Mix.Tasks.Changelog.run/1`), so the
+      `:evo_git` application env is never mutated.
 
   The `receive ... after 0` collectors below are non-blocking mailbox drains —
   they introduce no timing dependence.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Mix.Tasks.Bump.Version
 
@@ -72,7 +76,6 @@ defmodule Mix.Tasks.Bump.VersionTest do
     System.cmd("git", ["commit", "-q", "-m", "baseline"], cd: tmp_dir)
 
     on_exit(fn ->
-      Mix.shell(Mix.Shell.IO)
       File.rm_rf!(tmp_dir)
     end)
 
@@ -82,14 +85,11 @@ defmodule Mix.Tasks.Bump.VersionTest do
   test "bumps the files and commits exactly the touched files when confirmed", %{
     tmp_dir: tmp_dir
   } do
-    Mix.shell(Mix.Shell.Process)
     send(self(), {:mix_shell_input, :yes?, true})
     # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Version.run([@new_version])
-    end)
+    Version.run([@new_version, root: tmp_dir, shell: Mix.Shell.Process])
 
     # All version-bearing files were updated.
     assert File.read!(Path.join(tmp_dir, "VERSION")) == "0.2.0\n"
@@ -131,14 +131,11 @@ defmodule Mix.Tasks.Bump.VersionTest do
   test "does not commit when the prompt is declined but files are still updated", %{
     tmp_dir: tmp_dir
   } do
-    Mix.shell(Mix.Shell.Process)
     send(self(), {:mix_shell_input, :yes?, false})
     # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Version.run([@new_version])
-    end)
+    Version.run([@new_version, root: tmp_dir, shell: Mix.Shell.Process])
 
     # Files are still bumped…
     assert File.read!(Path.join(tmp_dir, "VERSION")) == "0.2.0\n"
@@ -162,7 +159,6 @@ defmodule Mix.Tasks.Bump.VersionTest do
   end
 
   test "warns and does not crash when git commit fails (missing identity)", %{tmp_dir: tmp_dir} do
-    Mix.shell(Mix.Shell.Process)
     send(self(), {:mix_shell_input, :yes?, true})
     # Decline the changelog prompt — no LLM call, no CHANGELOG.md.
     send(self(), {:mix_shell_input, :yes?, false})
@@ -172,9 +168,7 @@ defmodule Mix.Tasks.Bump.VersionTest do
     System.cmd("git", ["config", "user.email", ""], cd: tmp_dir)
     System.cmd("git", ["config", "user.name", ""], cd: tmp_dir)
 
-    File.cd!(tmp_dir, fn ->
-      Version.run([@new_version])
-    end)
+    Version.run([@new_version, root: tmp_dir, shell: Mix.Shell.Process])
 
     assert File.read!(Path.join(tmp_dir, "VERSION")) == "0.2.0\n"
 
@@ -194,12 +188,9 @@ defmodule Mix.Tasks.Bump.VersionTest do
   test "does not prompt or change anything when the version is already current", %{
     tmp_dir: tmp_dir
   } do
-    Mix.shell(Mix.Shell.Process)
     # No yes? input is queued — the task must not ask.
 
-    File.cd!(tmp_dir, fn ->
-      Version.run(["0.1.0"])
-    end)
+    Version.run(["0.1.0", root: tmp_dir, shell: Mix.Shell.Process])
 
     assert_received {:mix_shell, :info, ["Version is already 0.1.0 — nothing to do."]}
     refute_received {:mix_shell, :yes?, _}
@@ -211,34 +202,26 @@ defmodule Mix.Tasks.Bump.VersionTest do
   test "generates and commits a changelog when the changelog prompt is confirmed", %{
     tmp_dir: tmp_dir
   } do
-    Mix.shell(Mix.Shell.Process)
     # true: commit the bumped files; true: generate the changelog; true: commit
     # the changelog file.
     send(self(), {:mix_shell_input, :yes?, true})
     send(self(), {:mix_shell_input, :yes?, true})
     send(self(), {:mix_shell_input, :yes?, true})
 
-    previous = Application.get_env(:evo_git, :changelog_summarizer)
-
-    Application.put_env(:evo_git, :changelog_summarizer, fn _model, _version, _commits ->
+    summarizer = fn _model, _version, _commits ->
       {:ok,
        [
          %{category: "Added", text: "A shiny new feature"},
          %{category: "Fixed", text: "A nasty bug"}
        ]}
-    end)
+    end
 
-    on_exit(fn ->
-      if previous == nil do
-        Application.delete_env(:evo_git, :changelog_summarizer)
-      else
-        Application.put_env(:evo_git, :changelog_summarizer, previous)
-      end
-    end)
-
-    File.cd!(tmp_dir, fn ->
-      Version.run([@new_version])
-    end)
+    Version.run([
+      @new_version,
+      root: tmp_dir,
+      shell: Mix.Shell.Process,
+      changelog_summarizer: summarizer
+    ])
 
     # The changelog was generated with the version section and categorized bullets.
     changelog = Path.join(tmp_dir, "CHANGELOG.md")
