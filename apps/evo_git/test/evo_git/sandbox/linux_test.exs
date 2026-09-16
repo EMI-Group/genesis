@@ -6,6 +6,7 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
   alias EvoGit.Sandbox.Linux
   alias EvoGit.Platform
+  alias EvoGit.TaskTmpdir
 
   @tmp_prefix "--setenv=TMPDIR="
 
@@ -193,6 +194,62 @@ defmodule EvoGit.Sandbox.LinuxTest do
 
       assert "ReadWritePaths=-/tmp" in args
       assert "ReadWritePaths=-/var/tmp" in args
+    end
+  end
+
+  describe "args/4 — managed per-task tmpdir (installed)" do
+    test "adds the per-task dir as a ReadWritePaths pair and as the TMPDIR override" do
+      # `EvoGit.TaskTmpdir.put_current/1` writes the calling process's own
+      # process dictionary; `args/4` reads it in THIS process, so the install
+      # is self-contained and needs no cross-process cleanup (the test process
+      # dies at test end). The directory is never created — the sandbox grants
+      # it with the `-` prefix and the TMPDIR override, both fs-agnostic.
+      path =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_task_tmp_#{System.unique_integer([:positive])}"
+        )
+
+      TaskTmpdir.put_current(path)
+
+      args = build_args()
+
+      assert ["-p", "ReadWritePaths=-#{path}"] in Enum.chunk_every(args, 2, 1, :discard),
+             "expected a -p / ReadWritePaths=-#{path} pair in args, got: #{inspect(args)}"
+
+      assert tmpdir_value(args) == path
+
+      # The per-task dir is ADDITIONAL: the always-present system tmp writable
+      # rules are never replaced.
+      assert "ReadWritePaths=-/tmp" in args
+      assert "ReadWritePaths=-/var/tmp" in args
+    end
+  end
+
+  describe "args/4 — managed per-task tmpdir (not installed)" do
+    test "produces the legacy output when no per-task dir is installed" do
+      save_tmpdir()
+      System.delete_env("TMPDIR")
+
+      # Precondition: no per-task dir is installed on this process.
+      assert TaskTmpdir.current() == nil
+
+      args = build_args()
+
+      # Legacy TMPDIR resolution (no per-task override).
+      assert tmpdir_value(args) == hd(Platform.tmp_paths())
+
+      # No per-task directory leaks into the writable set — the legacy
+      # ReadWritePaths set is unchanged (a managed per-task entry always
+      # carries the `task_<id>` basename).
+      refute Enum.any?(args, fn
+               "ReadWritePaths=-" <> writable ->
+                 String.starts_with?(Path.basename(writable), "task_")
+
+               _ ->
+                 false
+             end),
+             "did not expect a per-task ReadWritePaths entry, got: #{inspect(args)}"
     end
   end
 
