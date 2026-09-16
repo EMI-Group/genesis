@@ -70,10 +70,14 @@ defmodule Mix.Tasks.Changelog do
 
   ## Test seam
 
-  The pipeline is routed through three `Application.get_env(:evo_git, ...)`
-  seams (repo-wide pattern, cf. `:peak_hours_now_fun`,
-  `:remote_rpc_timeout`); each defaults to the real `ReqLLM` implementation
-  and tests substitute deterministic stubs via `Application.put_env`:
+  The pipeline is routed through three seams; each defaults to the real
+  `ReqLLM` implementation and can be substituted deterministically. There are
+  two injection points, resolved **at call time**, in this precedence order:
+
+    1. a per-call `opts` override passed to `run/1` as a keyword entry
+       (e.g. `Changelog.run(["0.2.0", changelog_summarizer: fun])`) — async-safe;
+    2. the repo-wide `Application.get_env(:evo_git, ...)` value (the
+       long-standing pattern, cf. `:peak_hours_now_fun`, `:remote_rpc_timeout`).
 
     * `:changelog_summarizer` — the whole pipeline
       `(model, version, prs) -> {:ok, entries} | {:error, reason}` where
@@ -85,6 +89,16 @@ defmodule Mix.Tasks.Changelog do
     * `:changelog_aggregator` — stage 2 (reduce)
       `(model, version, summaries :: [String.t()]) -> {:ok, entries} | {:error, reason}`.
       Defaults to `__MODULE__.aggregate_with_llm/3`.
+
+  Two further keyword entries let a test run without VM-global state:
+
+    * `root: <dir>` — anchors every git invocation (`cd: root`) and resolves
+      every relative file path under `root`, instead of relying on the
+      process-wide CWD (`File.cd!`). Defaults to `File.cwd!()`.
+    * `shell: <shell>` — the `Mix.Shell` used for all info/error/yes? output,
+      instead of swapping the VM-global `Mix.shell/1` (which writes a global
+      ETS table). Precedence: `opts[:shell]` → app env `:mix_shell` →
+      `Mix.shell()`.
 
   `entries` is a list of `%{category, text}` maps (string- or atom-keyed);
   the aggregation schema/output stays exactly compatible with
@@ -114,10 +128,19 @@ defmodule Mix.Tasks.Changelog do
 
   @impl Mix.Task
   def run(args) do
+    # Keyword-tuple entries (`root: path`, `shell: shell`, seam overrides) are
+    # extracted BEFORE OptionParser, which would otherwise leave them in
+    # `remaining` and drop them from `opts`. CLI argv is always plain strings,
+    # so this pre-split is a no-op on the CLI path and keeps run/1's public
+    # contract unchanged.
+    {injected, cli_args} = Enum.split_with(args, &match?({k, _} when is_atom(k), &1))
+
     {opts, remaining, _invalid} =
-      OptionParser.parse(args,
+      OptionParser.parse(cli_args,
         switches: [from: :string, to: :string, model: :string, file: :string]
       )
+
+    opts = Keyword.merge(opts, injected)
 
     case remaining do
       [version | _] ->
@@ -125,7 +148,7 @@ defmodule Mix.Tasks.Changelog do
         execute(version, opts)
 
       [] ->
-        Mix.shell().error(
+        shell(opts).error(
           "Usage: mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]"
         )
     end
@@ -134,45 +157,47 @@ defmodule Mix.Tasks.Changelog do
   # --- Main flow -----------------------------------------------------------
 
   defp execute(version, opts) do
+    root = opts[:root] || File.cwd!()
     file = opts[:file] || @default_file
+    path = Path.join(root, file)
     model = opts[:model] || @model
 
-    case collect_prs(opts[:from], opts[:to]) do
+    case collect_prs(opts[:from], opts[:to], root) do
       {:ok, []} ->
-        Mix.shell().info("No commits found in the given range — nothing to summarize.")
+        shell(opts).info("No commits found in the given range — nothing to summarize.")
 
       {:ok, prs} ->
         total_commits = Enum.sum(Enum.map(prs, &length(&1.commits)))
 
-        Mix.shell().info(
+        shell(opts).info(
           "Found #{total_commits} commit(s) in #{length(prs)} change(s) — generating changelog for v#{version}..."
         )
 
-        case summarize(model, version, prs) do
+        case summarize(model, version, prs, opts) do
           {:ok, []} ->
             # Every change was non-user-facing (docs-only, ...) and was dropped
             # — nothing meaningful to write, mirroring the empty-range
             # "No commits found" path above.
-            Mix.shell().info(
+            shell(opts).info(
               "No user-facing code changes found in the given range — #{file} was NOT modified."
             )
 
           {:ok, entries} ->
             grouped = group_by_category(entries)
             section = build_section(version, grouped)
-            content = upsert_changelog(file, version, section)
-            File.write!(file, content)
-            Mix.shell().info("✓ Changelog updated in #{file}")
-            print_summary(version, grouped)
-            maybe_commit_changelog(file, version)
+            content = upsert_changelog(path, version, section)
+            File.write!(path, content)
+            shell(opts).info("✓ Changelog updated in #{file}")
+            print_summary(version, grouped, opts)
+            maybe_commit_changelog(root, file, version, opts)
 
           {:error, reason} ->
-            Mix.shell().error("Changelog generation failed — #{file} was NOT modified.")
-            Mix.shell().error("LLM error: #{inspect(reason)}")
+            shell(opts).error("Changelog generation failed — #{file} was NOT modified.")
+            shell(opts).error("LLM error: #{inspect(reason)}")
         end
 
       {:error, reason} ->
-        Mix.shell().error("Failed to read git history: #{inspect(reason)}")
+        shell(opts).error("Failed to read git history: #{inspect(reason)}")
     end
   end
 
@@ -183,12 +208,12 @@ defmodule Mix.Tasks.Changelog do
   # PR-shaped changes. Returns {:ok, prs} where prs is a list of
   # %{head_sha: String.t(), commits: [%{hash, subject, body}]} in
   # newest-first order, or {:error, {:git_log_failed, code, output}}.
-  defp collect_prs(from, to) do
+  defp collect_prs(from, to, root) do
     to_ref = to || "HEAD"
 
     from_ref =
       case from do
-        nil -> last_tag()
+        nil -> last_tag(root)
         ref -> ref
       end
 
@@ -198,14 +223,14 @@ defmodule Mix.Tasks.Changelog do
         ref -> "#{ref}..#{to_ref}"
       end
 
-    case git_log_first_parent(range) do
-      {:ok, entries} -> build_prs(entries)
+    case git_log_first_parent(range, root) do
+      {:ok, entries} -> build_prs(entries, root)
       {:error, code, output} -> {:error, {:git_log_failed, code, output}}
     end
   end
 
-  defp last_tag do
-    case git(["describe", "--tags", "--abbrev=0"]) do
+  defp last_tag(root) do
+    case git(["describe", "--tags", "--abbrev=0"], root) do
       {:ok, output} ->
         case String.trim(output) do
           "" -> nil
@@ -220,10 +245,10 @@ defmodule Mix.Tasks.Changelog do
   # git log --first-parent over the range, including merge commits so the
   # mainline walk is PR-shaped. Each record carries hash, parents (space-
   # separated full SHAs), subject, and body.
-  defp git_log_first_parent(range) do
+  defp git_log_first_parent(range, root) do
     format = "%H%x1f%P%x1f%s%x1f%b%x1e"
 
-    case git(["log", "--first-parent", "--pretty=format:#{format}", range]) do
+    case git(["log", "--first-parent", "--pretty=format:#{format}", range], root) do
       {:ok, output} ->
         {:ok, split_records(output, &parse_first_parent_record/1)}
 
@@ -235,10 +260,10 @@ defmodule Mix.Tasks.Changelog do
   # The branch commits a merge brought in: git log --no-merges <merge>^1..<merge>.
   # --no-merges skips nested agent merges; a GitHub-style single-commit merge
   # yields exactly one commit.
-  defp git_log_no_merges(range) do
+  defp git_log_no_merges(range, root) do
     format = "%H%x1f%s%x1f%b%x1e"
 
-    case git(["log", "--no-merges", "--pretty=format:#{format}", range]) do
+    case git(["log", "--no-merges", "--pretty=format:#{format}", range], root) do
       {:ok, output} ->
         {:ok, split_records(output, &parse_record/1)}
 
@@ -261,9 +286,9 @@ defmodule Mix.Tasks.Changelog do
     |> Enum.flat_map(parser)
   end
 
-  defp build_prs(entries) do
+  defp build_prs(entries, root) do
     Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
-      case pr_for_entry(entry) do
+      case pr_for_entry(entry, root) do
         {:ok, nil} -> {:cont, {:ok, acc}}
         {:ok, pr} -> {:cont, {:ok, [pr | acc]}}
         {:error, reason} -> {:halt, {:error, reason}}
@@ -278,15 +303,15 @@ defmodule Mix.Tasks.Changelog do
   # A merge commit (≥ 2 parents) is one PR whose commits are exactly the
   # branch commits it brought in — the merge's own subject/body are noise and
   # never feed the signal.
-  defp pr_for_entry(%{parents: parents, hash: hash}) when length(parents) >= 2 do
-    case git_log_no_merges("#{hash}^1..#{hash}") do
+  defp pr_for_entry(%{parents: parents, hash: hash}, root) when length(parents) >= 2 do
+    case git_log_no_merges("#{hash}^1..#{hash}", root) do
       {:ok, commits} -> pr_or_nil(hash, commits)
       {:error, code, output} -> {:error, {:git_log_failed, code, output}}
     end
   end
 
   # A non-merge (or root) commit on the first-parent line is a single-commit PR.
-  defp pr_for_entry(entry) do
+  defp pr_for_entry(entry, _root) do
     pr_or_nil(entry.hash, [%{hash: entry.hash, subject: entry.subject, body: entry.body}])
   end
 
@@ -337,31 +362,38 @@ defmodule Mix.Tasks.Changelog do
 
   # --- LLM summarization (two-stage map-reduce) ----------------------------
 
-  # Whole-pipeline seam. Routes through the :changelog_summarizer
-  # application-env seam so tests (and Mix.Tasks.Bump.Version's changelog
-  # integration) can substitute a deterministic stub (repo-wide pattern, cf.
-  # :peak_hours_now_fun, :remote_rpc_timeout). Contract:
+  # Whole-pipeline seam. The per-call `opts[:changelog_summarizer]` override
+  # (async-safe) wins over the repo-wide `:changelog_summarizer` application
+  # env; when neither is set the real pipeline runs with `opts` so opts can
+  # also reach the stage seams. Contract:
   # (model, version, prs) -> {:ok, entries} | {:error, reason}.
-  defp summarize(model, version, prs) do
-    summarizer =
-      Application.get_env(:evo_git, :changelog_summarizer, &__MODULE__.summarize_pipeline/3)
-
-    summarizer.(model, version, prs)
+  defp summarize(model, version, prs, opts) do
+    case seam(opts, :changelog_summarizer) do
+      nil -> run_pipeline(model, version, prs, opts)
+      summarizer -> summarizer.(model, version, prs)
+    end
   end
 
   @doc false
+  # Public arity-3 form kept for the documented app-env seam contract
+  # (`__MODULE__.summarize_pipeline/3`) and direct impl/prompt tests; delegates
+  # to run_pipeline/4 with no per-call opts (pure app-env/default fallback).
+  def summarize_pipeline(model, version, prs) do
+    run_pipeline(model, version, prs, [])
+  end
+
   # The real pipeline: stage 1 maps each PR to one summary line, stage 2
   # reduces the summaries into the final categorized entries. When every
   # change was non-user-facing (docs-only etc.), stage 1 yields no summaries
   # and the pipeline short-circuits with an empty entry list (mirroring the
   # empty-range "No commits found" path) instead of running the stage-2
-  # aggregator over nothing.
-  def summarize_pipeline(model, version, prs) do
-    with {:ok, summaries} <- summarize_prs(model, version, prs) do
+  # aggregator over nothing. `opts` carries per-call seam overrides.
+  defp run_pipeline(model, version, prs, opts) do
+    with {:ok, summaries} <- summarize_prs(model, version, prs, opts) do
       if summaries == [] do
         {:ok, []}
       else
-        aggregate(model, version, summaries)
+        aggregate(model, version, summaries, opts)
       end
     end
   end
@@ -371,13 +403,8 @@ defmodule Mix.Tasks.Changelog do
   # ignorable — empty, or the @no_user_facing_marker docs-only marker emitted
   # per build_pr_prompt/2 — are dropped here, before stage 2, so a docs-only
   # PR can never become a changelog entry.
-  defp summarize_prs(model, version, prs) do
-    summarizer =
-      Application.get_env(
-        :evo_git,
-        :changelog_pr_summarizer,
-        &__MODULE__.summarize_pr_with_llm/3
-      )
+  defp summarize_prs(model, version, prs, opts) do
+    summarizer = seam(opts, :changelog_pr_summarizer, &__MODULE__.summarize_pr_with_llm/3)
 
     Enum.reduce_while(prs, {:ok, []}, fn pr, {:ok, acc} ->
       case summarizer.(model, version, pr) do
@@ -444,9 +471,8 @@ defmodule Mix.Tasks.Changelog do
   # Stage 2 (reduce) seam: one LLM call over the per-PR summaries, producing
   # the final entries in the existing {category, text} shape — related
   # PRs/merges are merged into single entries.
-  defp aggregate(model, version, summaries) do
-    aggregator =
-      Application.get_env(:evo_git, :changelog_aggregator, &__MODULE__.aggregate_with_llm/3)
+  defp aggregate(model, version, summaries, opts) do
+    aggregator = seam(opts, :changelog_aggregator, &__MODULE__.aggregate_with_llm/3)
 
     aggregator.(model, version, summaries)
   end
@@ -765,64 +791,83 @@ defmodule Mix.Tasks.Changelog do
     end)
   end
 
-  defp print_summary(version, grouped) do
-    Mix.shell().info("Generated changelog section for v#{version}:")
+  defp print_summary(version, grouped, opts) do
+    shell(opts).info("Generated changelog section for v#{version}:")
 
     @categories
     |> Enum.each(fn cat ->
       case Map.get(grouped, cat) do
         nil -> :ok
-        texts -> Mix.shell().info("  #{cat}: #{length(texts)}")
+        texts -> shell(opts).info("  #{cat}: #{length(texts)}")
       end
     end)
   end
 
   # --- Interactive commit --------------------------------------------------
 
-  defp maybe_commit_changelog(file, version) do
-    if Mix.shell().yes?("Commit the changelog file now? [Yn]") do
-      do_commit(file, version)
+  defp maybe_commit_changelog(root, file, version, opts) do
+    if shell(opts).yes?("Commit the changelog file now? [Yn]") do
+      do_commit(root, file, version, opts)
     else
-      Mix.shell().info("""
+      shell(opts).info("""
       Changelog written to #{file} but not committed. Commit it manually:
         git add #{file} && git commit -m "Add changelog for v#{version}"
       """)
     end
   end
 
-  defp do_commit(file, version) do
-    case git(["add", "--", file]) do
+  defp do_commit(root, file, version, opts) do
+    case git(["add", "--", file], root) do
       {:ok, _output} ->
-        case git(["commit", "-m", "Add changelog for v#{version}"]) do
+        case git(["commit", "-m", "Add changelog for v#{version}"], root) do
           {:ok, output} ->
-            Mix.shell().info(String.trim(output))
+            shell(opts).info(String.trim(output))
 
           {:error, _code, output} ->
-            warn_git_failure("git commit", output, file, version)
+            warn_git_failure("git commit", output, file, version, opts)
         end
 
       {:error, _code, output} ->
-        warn_git_failure("git add", output, file, version)
+        warn_git_failure("git add", output, file, version, opts)
     end
   end
 
-  defp warn_git_failure(step, output, file, version) do
-    Mix.shell().error("⚠ #{step} failed (the changelog file itself was written):")
-    Mix.shell().error(String.trim(output))
+  defp warn_git_failure(step, output, file, version, opts) do
+    shell(opts).error("⚠ #{step} failed (the changelog file itself was written):")
+    shell(opts).error(String.trim(output))
 
-    Mix.shell().info("""
+    shell(opts).info("""
     Commit the changelog manually:
       git add #{file} && git commit -m "Add changelog for v#{version}"
     """)
   end
 
-  # Runs git in the current directory, capturing stderr into the output so
-  # failures can be reported verbatim. Returns {:ok, output} or
-  # {:error, code, output}.
-  defp git(args) do
-    case System.cmd("git", args, stderr_to_stdout: true) do
+  # Runs git anchored at `root`, capturing stderr into the output so failures
+  # can be reported verbatim. Returns {:ok, output} or {:error, code, output}.
+  # When `root` is the process CWD (the CLI default) this is identical to
+  # running git with no `cd:`.
+  defp git(args, root) do
+    case System.cmd("git", args, cd: root, stderr_to_stdout: true) do
       {output, 0} -> {:ok, output}
       {output, code} -> {:error, code, output}
     end
+  end
+
+  # --- Injectable seams ----------------------------------------------------
+
+  # Call-time-resolved Mix shell: a per-call `opts[:shell]` override wins over
+  # the `:mix_shell` application env, defaulting to the real `Mix.shell()`.
+  # `Mix.shell/1` writes a VM-global ETS table, so an injected shell is what
+  # lets concurrent (async) suites avoid swapping the global shell.
+  defp shell(opts) do
+    opts[:shell] || Application.get_env(:evo_git, :mix_shell, Mix.shell())
+  end
+
+  # Resolves an injectable seam at CALL time: a per-call `opts[key]` override
+  # wins over the repo-wide `Application.get_env(:evo_git, key, default)` value
+  # (the existing app-env test seam). Per-call opts are async-safe; the app-env
+  # fallback remains for backward compatibility.
+  defp seam(opts, key, default \\ nil) do
+    opts[key] || Application.get_env(:evo_git, key, default)
   end
 end
