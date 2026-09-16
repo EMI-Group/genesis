@@ -1493,7 +1493,12 @@ defmodule EvoDashWeb.SystemLive do
               {:noreply, socket}
             else
               socket = assign(socket, :chart_seed_retried, true)
-              Process.send_after(self(), :system_samples_seed_retry, 3000)
+
+              # Delay resolved AT CALL TIME from the
+              # `:system_samples_seed_retry_ms` app-env seam (test seam; default
+              # 3000 ms is the production behaviour).
+              retry_ms = Application.get_env(:evo_dash, :system_samples_seed_retry_ms, 3000)
+              Process.send_after(self(), :system_samples_seed_retry, retry_ms)
               {:noreply, socket}
             end
         end
