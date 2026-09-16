@@ -12,7 +12,20 @@ ExUnit tests for the `EvoGit.AgentScheduler` subsystem — scheduling (no worktr
 - `worktrees_test.exs` → WorktreeManager create/reclaim, crash-restart, per-repo init scoping
 - `worktree_admission_test.exs` → bounded worktree-creation ADMISSION QUEUE (head-of-line FIFO, cap never exceeded, queue drains / every caller replied once, queued-agent death dropped without starting a create, under-cap immediate admission) via the `:max_concurrent_worktree_creation` + `:worktree_create_fun` app-env seams
 - `slots_test.exs` → LLM/tool slot pools, hard-pause 0-capacity
-- `store_test.exs` / `state_test.exs` / `remote_api_test.exs` / `dispatch_test.exs` / `dispatch_custom_agents_test.exs` / `pubsub_test.exs` / `worktree_retry_test.exs` → ETS store, state/pool config, RPC surface, dispatch, PubSub throttle, retry helpers
+- `store_test.exs` / `state_test.exs` / `remote_api_test.exs` / `dispatch_test.exs` / `dispatch_custom_agents_test.exs` / `pubsub_test.exs` / `worktree_retry_test.exs` → ETS store, state/pool config, RPC surface, dispatch, PubSub throttle, retry helpers (`dispatch_test.exs` also covers `resolve_agent_repo_root/2` foreign-repo root resolution; `remote_api_test.exs` covers `get_agent_state` foreign_repos round-trip)
+
+## Writable Foreign Repo — Test Coverage Map & Gaps
+Covered IN THIS node:
+- **Spawn gate** (`subagents_test.exs`): read-only cross-repo unrestricted at any depth (L108, L166, L245-258, L349-364); `:read_write` cross-repo requires task-level `writable: true` — reject `{:foreign_repo_read_only, msg}` (L111-126 reject msg text, L189-207 read-only entry, L209-243 empty/unknown/other-id entry), accept when writable (L172-187); **root-only** `{:foreign_repo_write_not_root, msg}` for depth 1 and 3 (L332-347); **one-at-a-time** `{:foreign_repo_write_serialized, msg}` in `spawn_validated_subagents/5` — 2nd writable spec in a batch rejected + lands in `sub_agent_results`, only 1st registered (L451-497); same-repo-within-foreign unrestricted even at nested depth (L366-383, L499-545).
+- **Roll-up**: `Subagents.store_sub_result/3` per-repo commit tracking (subagents_test.exs L550-668 — records SHA under `repo_id`, accumulates across repos, ignores `"primary"`, ignores error results, latest-wins overwrite) + 3-level child-wins roll-up with `Lifecycle.inject_foreign_repo_commits/2` root reply (lifecycle_test.exs L789-868); `AgentScheduler.get_foreign_repo_commits/1` read-back + `%{}` fallback for a missing SchedMeta row (agent_scheduler_test.exs L238-256).
+- **WorktreeManager per-repo init scoping** (worktrees_test.exs L741-821): foreign repo first init PRESERVES a real `evogit-agent-*` branch (L755-789); primary repo first init DELETES every `evogit-agent-*` branch (L791-820).
+
+## Known Gaps (writable foreign repo)
+- No end-to-end test connecting the roll-up to the READ site: the tracked-commit lookup lives in `EvoGit.Agent.SubagentProcessing.build_subagent_phylo_node/7` → `resolve_foreign_phylo_commit/4` (`lib/evo_git/agent/subagent_processing.ex:619-708`) and is consumed at `subagent_processing.ex:419`; no test in this node drives `spawn → store_sub_result → get_foreign_repo_commits → next spawn`. Its precedence is exercised only OUTSIDE this node (`test/evo_git/agent/subagent_processing_test.exs:632`).
+- No A→B hierarchy / sibling-or-later-spawn test: nothing asserts that after a writable foreign-repo agent ADVANCES the foreign repo, a subsequent spawn into the same repo starts from the ADVANCED commit rather than a stale one.
+- No `base_sha`-staleness test: `resolve_foreign_phylo_commit/4` gives a NON-nil per-repo `base_sha` ABSOLUTE precedence over the tracked `foreign_repo_commits` map (the tracked commit is consulted only when `base_sha` is nil/empty + `Git.rev_parse` fails is not the case) — so a foreign repo with a `base_sha` never advances across sibling spawns. This interaction is untested here.
+- No test drives `Lifecycle.handle_task_result/3` → `Subagents.store_sub_result/3` through the live scheduler parent/root split; each piece is unit-tested in isolation.
+- Multi-repo read-write end-to-end (per-repo worktree roots, the `repos` report map, review merge) is covered outside this node (`test/evo_git/runtime/helpers_test.exs`, `test/evo_git/agent/subagent_processing_test.exs`, `test/evo_git/worktree_main_head_safety_test.exs`).
 
 ## Constraints
 
