@@ -502,4 +502,29 @@ defmodule EvoGit.Sandbox.LinuxTest do
                ["--user", "--unit=test-unit", "true"]
     end
   end
+
+  describe "run/4 — disabled path exports the managed per-task tmpdir" do
+    # In the test environment `enabled?/0` is false (the @mix_env gate), so
+    # `run/4` takes the disabled `bash -c` path — the one this change makes
+    # export TMPDIR/TMP/TEMP.
+    test "the spawned command sees TMPDIR/TMP/TEMP = the installed per-task dir" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+      TaskTmpdir.put_current(dir)
+      on_exit(fn -> TaskTmpdir.put_current(nil) end)
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {output, 0} = Linux.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$#{var}\""])
+
+        assert output == dir
+      end
+    end
+
+    test "no per-task dir installed → the managed dir is not injected" do
+      assert TaskTmpdir.current() == nil
+
+      {output, 0} = Linux.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == (System.get_env("TMPDIR") || "")
+    end
+  end
 end

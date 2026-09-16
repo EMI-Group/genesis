@@ -2,6 +2,18 @@ defmodule EvoGit.Sandbox.NoneTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Sandbox.None
+  alias EvoGit.TaskTmpdir
+
+  # A fresh, never-created managed per-task tmpdir path (the backend only
+  # exports it as an env var — no I/O stats it).
+  defp per_task_tmpdir! do
+    dir =
+      Path.join(System.tmp_dir!(), "evogit_none_task_tmp_#{System.unique_integer([:positive])}")
+
+    TaskTmpdir.put_current(dir)
+    on_exit(fn -> TaskTmpdir.put_current(nil) end)
+    dir
+  end
 
   describe "enabled?/0" do
     test "always returns false" do
@@ -143,6 +155,68 @@ defmodule EvoGit.Sandbox.NoneTest do
 
       assert exit_code == 0
       assert output == ""
+    end
+  end
+
+  describe "run/4 — managed per-task tmpdir export (disabled/None path)" do
+    test "exports the installed per-task dir as TMPDIR/TMP/TEMP" do
+      dir = per_task_tmpdir!()
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {output, 0} = None.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$#{var}\""])
+
+        assert output == dir,
+               "expected the managed per-task dir in $#{var}, got: #{inspect(output)}"
+      end
+    end
+
+    test "does not inject a managed dir when none is installed (inherited host temp)" do
+      # Precondition: no per-task dir installed on this process.
+      assert TaskTmpdir.current() == nil
+
+      {output, 0} = None.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      # No override → the child inherits the caller's $TMPDIR (possibly empty).
+      assert output == (System.get_env("TMPDIR") || "")
+    end
+
+    test "run_with_partial/6 (timed disabled path) also exports TMPDIR/TMP/TEMP" do
+      dir = per_task_tmpdir!()
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {:ok, output, 0} =
+          None.run_with_partial(
+            System.tmp_dir!(),
+            "bash",
+            ["-c", "printf %s \"$#{var}\""],
+            nil,
+            5000,
+            nil
+          )
+
+        assert output == dir
+      end
+    end
+  end
+
+  describe "EvoGit.Sandbox.run/4 — managed per-task tmpdir export" do
+    test "the spawned command sees TMPDIR = the installed per-task dir" do
+      dir = per_task_tmpdir!()
+
+      {output, 0} =
+        EvoGit.Sandbox.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == dir
+    end
+
+    test "no per-task dir installed → the managed dir is not injected" do
+      assert TaskTmpdir.current() == nil
+
+      {output, 0} =
+        EvoGit.Sandbox.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == (System.get_env("TMPDIR") || "")
     end
   end
 end

@@ -106,17 +106,23 @@ defmodule EvoGit.Sandbox.Linux do
       EvoGit.SandboxProcessRegistry.unregister(unit)
       result
     else
-      # Disabled path: wrap in bash with stdin redirect from /dev/null.
+      # Disabled path: wrap in bash with stdin redirect from /dev/null. The
+      # managed per-task tmpdir (when installed) is exported as
+      # TMPDIR/TMP/TEMP — see `Helpers.temp_env_vars/0`.
       wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
 
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd("bash", ["-c", wrapped_cmd],
           cd: cwd,
           stderr_to_stdout: true,
-          env: EvoGit.GitEnv.git_env_list(cwd)
+          env: EvoGit.GitEnv.git_env_list(cwd) ++ Helpers.temp_env_vars()
         )
       else
-        System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
+        System.cmd("bash", ["-c", wrapped_cmd],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: Helpers.temp_env_vars()
+        )
       end
     end
   end
@@ -434,8 +440,11 @@ defmodule EvoGit.Sandbox.Linux do
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
     else
-      # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+      # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path).
+      # The managed per-task tmpdir (when installed) rides along via
+      # `Helpers.temp_env_vars/0`.
+      git_env =
+        if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
       Helpers.run_task_with_partial(
         "bash",

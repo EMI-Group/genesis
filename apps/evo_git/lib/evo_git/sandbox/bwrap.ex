@@ -273,17 +273,23 @@ defmodule EvoGit.Sandbox.Bwrap do
       sandbox_args = if is_git, do: git_env_args(cwd) ++ sandbox_args, else: sandbox_args
       System.cmd("bwrap", sandbox_args, stderr_to_stdout: true)
     else
-      # Disabled path: identical to linux.ex — bash -c with stdin redirect.
+      # Disabled path: identical to linux.ex — bash -c with stdin redirect. The
+      # managed per-task tmpdir (when installed) is exported as
+      # TMPDIR/TMP/TEMP — see `Helpers.temp_env_vars/0`.
       wrapped_cmd = Helpers.build_shell_command(executable, args) <> " < /dev/null"
 
       if EvoGit.GitEnv.git_command?(executable) do
         System.cmd("bash", ["-c", wrapped_cmd],
           cd: cwd,
           stderr_to_stdout: true,
-          env: EvoGit.GitEnv.git_env_list(cwd)
+          env: EvoGit.GitEnv.git_env_list(cwd) ++ Helpers.temp_env_vars()
         )
       else
-        System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
+        System.cmd("bash", ["-c", wrapped_cmd],
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: Helpers.temp_env_vars()
+        )
       end
     end
   end
@@ -562,8 +568,10 @@ defmodule EvoGit.Sandbox.Bwrap do
       collect_output(port, timeout, max_bytes, os_pid, tmpfile)
     else
       # Disabled path: identical to linux.ex — Task + bash -c (no nix wrapping,
-      # consistent with run/4's disabled path).
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+      # consistent with run/4's disabled path). The managed per-task tmpdir
+      # (when installed) rides along via `Helpers.temp_env_vars/0`.
+      git_env =
+        if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
       Helpers.run_task_with_partial(
         "bash",

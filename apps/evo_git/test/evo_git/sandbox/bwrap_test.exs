@@ -840,4 +840,29 @@ defmodule EvoGit.Sandbox.BwrapTest do
       assert Bwrap.capability() == :unusable
     end
   end
+
+  describe "run/4 — disabled path exports the managed per-task tmpdir" do
+    # In the test environment `enabled?/0` is false (the @mix_env gate), so
+    # `run/4` takes the disabled `bash -c` path — the one this change makes
+    # export TMPDIR/TMP/TEMP.
+    test "the spawned command sees TMPDIR/TMP/TEMP = the installed per-task dir" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+      EvoGit.TaskTmpdir.put_current(dir)
+      on_exit(fn -> EvoGit.TaskTmpdir.put_current(nil) end)
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {output, 0} = Bwrap.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$#{var}\""])
+
+        assert output == dir
+      end
+    end
+
+    test "no per-task dir installed → the managed dir is not injected" do
+      assert EvoGit.TaskTmpdir.current() == nil
+
+      {output, 0} = Bwrap.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == (System.get_env("TMPDIR") || "")
+    end
+  end
 end

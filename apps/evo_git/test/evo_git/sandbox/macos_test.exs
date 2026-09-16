@@ -519,6 +519,40 @@ defmodule EvoGit.Sandbox.MacOSTest do
     end
   end
 
+  describe "run/4 — disabled path exports the managed per-task tmpdir" do
+    # Force the sandbox mode to `disabled` (via the isolated XDG config) so
+    # `run/4` reliably takes the non-sandboxed `bash -c` path on EVERY host —
+    # including real macOS, where the `:auto` mode would select sandbox-exec.
+    setup do
+      genesis_dir = Path.join(System.get_env("XDG_CONFIG_HOME"), "genesis")
+      File.mkdir_p!(genesis_dir)
+      File.write!(Path.join(genesis_dir, "config.toml"), "[sandbox]\nmode = \"disabled\"\n")
+      on_exit(fn -> File.rm_rf!(genesis_dir) end)
+      :ok
+    end
+
+    test "the spawned command sees TMPDIR/TMP/TEMP = the installed per-task dir" do
+      assert MacOS.enabled?() == false
+
+      dir = per_task_tmpdir!()
+      on_exit(fn -> TaskTmpdir.put_current(nil) end)
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {output, 0} = MacOS.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$#{var}\""])
+
+        assert output == dir
+      end
+    end
+
+    test "no per-task dir installed → the managed dir is not injected" do
+      assert TaskTmpdir.current() == nil
+
+      {output, 0} = MacOS.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == (System.get_env("TMPDIR") || "")
+    end
+  end
+
   # `System.put_env/2` mutates the VM-global OS env and
   # `EvoGit.Sandbox.resolve_tmpdir/0` reads $TMPDIR fresh at call time, so
   # under parallel load the put_env -> read pair can be observed
