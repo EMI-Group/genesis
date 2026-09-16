@@ -773,15 +773,19 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert Subagents.writable_foreign_repo_agent?(spec)
     end
 
-    test "relative delegation from a parent inside a writable foreign repo is resolved to \"primary\" and not authorized",
+    test "relative delegation from a parent inside a writable foreign repo inherits the foreign repo id and is authorized",
          %{agent_id: agent_id, tmp_dir: tmp_dir} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
       init_repo(foreign_root, [{"file.txt", "one", "c1"}])
 
       # The parent is itself running INSIDE the foreign repo (the NESTED case),
-      # so a RELATIVE path targets the parent's own repo root.
+      # so a RELATIVE path targets the parent's own repo root. Its OWN repo_id
+      # is the foreign repo's id — the authoritative source the spawn gate and
+      # resolve_subagent_path/4 both read.
       Process.put(:repo_path, foreign_root)
+      {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
 
       state = %LoopState{
         agent_id: agent_id,
@@ -796,11 +800,55 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert [spec] =
                SubagentProcessing.build_subagent_specs([{executor_call("src"), 0}], state, %{})
 
-      # resolve_subagent_path/3 marks EVERY relative path as "primary", so the
-      # roll-up authority predicate never authorizes it — even though the
-      # parent's own root is the writable foreign repo.
-      assert spec.repo_id == "primary"
-      refute Subagents.writable_foreign_repo_agent?(spec)
+      # The relative child inherits the parent's repo id ("orig"), so the
+      # roll-up authority predicate authorizes it — the parent's own root IS the
+      # writable foreign repo.
+      assert spec.repo_id == "orig"
+      assert Subagents.writable_foreign_repo_agent?(spec)
+    end
+
+    test "relative delegation from a foreign-repo parent resolves the child's repo id and worktree root to the FOREIGN repo",
+         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+      foreign_root = Path.join(tmp_dir, "foreign")
+      File.mkdir_p!(foreign_root)
+      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+
+      Process.put(:repo_path, foreign_root)
+      {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
+      :ets.insert(:evogit_agent_state, {agent_id, %{agent_state | repo_id: "orig"}})
+
+      state = %LoopState{
+        agent_id: agent_id,
+        agent_module: ForeignWriteDummyAgentModule,
+        depth: 1,
+        node_path: "./",
+        context: nil,
+        foreign_repos: [ForeignRepo.new("orig", foreign_root, writable: true)],
+        repo_notes: nil
+      }
+
+      assert [spec] =
+               SubagentProcessing.build_subagent_specs([{executor_call("src"), 0}], state, %{})
+
+      # repo id + worktree root resolve to the FOREIGN repo (not "primary") …
+      assert spec.repo_id == "orig"
+      assert EvoGit.AgentScheduler.Dispatch.resolve_agent_repo_root(spec, nil) == foreign_root
+
+      # … and the phylo node bases off the PARENT's live current commit (the
+      # same-repo clause), NOT the foreign repo's base_sha/HEAD.
+      assert spec.phylo_node.base_commit == "abc123"
+      assert spec.phylo_node.current_commit == "abc123"
+
+      # A same-repo spawn within the foreign repo is UNRESTRICTED by the spawn
+      # gate (it is not treated as a cross-repo delegation). The parent's own
+      # repo id matches the child's, so the gate's "same repo" branch applies.
+      nested_parent = %{
+        agent_state
+        | context_node: %ContextNode{path: "./", repo: foreign_root},
+          repo_id: "orig"
+      }
+
+      assert :ok == Subagents.validate_spatial_contract_for_spec(agent_id, nested_parent, spec, 1)
     end
 
     test "store_sub_result/4 advances the tracked foreign commit only for the real builder's authorized spec",
@@ -853,8 +901,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       assert EvoGit.AgentScheduler.get_foreign_repo_commits(writable_parent) == %{"orig" => sha}
 
-      # Unauthorized spec: a RELATIVE (nested) delegation resolves to "primary",
-      # so the SAME result payload must NOT advance any tracked commit.
+      # Unauthorized spec: a relative delegation from a PRIMARY-repo parent
+      # (the setup parent keeps its default repo_id: "primary") resolves to
+      # "primary", so the SAME result payload must NOT advance any tracked commit.
       Process.put(:repo_path, foreign_root)
 
       assert [primary_spec] =
