@@ -51,6 +51,7 @@ This matches `EvoGit.Review`, which normalizes adapter errors to exactly this `{
 - `commit/2` treats "nothing to commit, working tree clean" (exit 1) as success `{:ok, _}`.
 
 Notes on specific functions:
+- **`rev_parse(path, rev \\ "HEAD")` / `rev_parse_short(path, rev \\ "HEAD")` (git.ex:309-321)** — `git rev-parse <rev>` / `git rev-parse --short <rev>`; the default arg makes the `/1` and `/2` forms the same function (`/1` resolves HEAD of `path`). NO `--verify` flag, so an unresolvable rev exits 128 → `{:error, {128, "fatal: ambiguous argument '<rev>'..."}}`, and a non-existent/non-repo `path` short-circuits to `{:error, {:enoent, "Repository path does not exist: <path>"}}` before spawning git (git.ex:65-66). Success = `{:ok, <trimmed 40-hex sha>}` (or abbreviated sha for `_short`).
 - `ls_tree_names/2`, `diff_name_only/3`, `check_ignore/2`, `list_branches/1`, `list_branches/2` return `{:ok, [files]}` (empty on no results).
 - `ls_tree_names/2` runs `git ls-tree -r <treeish>` (NOT `--name-only`, which hides the entry type) and **excludes gitlink/submodule entries** — actual file paths only. Submodule dirs arrive in worktrees as **empty placeholders** (same as `git worktree add`); populate via `git submodule update --init`.
 - `check_ignore/2`: exit 1 ("no matches") → `{:ok, []}` — a valid result, not an error.
