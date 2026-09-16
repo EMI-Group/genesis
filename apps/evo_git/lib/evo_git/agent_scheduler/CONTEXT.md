@@ -304,7 +304,7 @@ Facts relevant to restarting the BEAM (e.g. a desktop auto-update) while agent t
 - **Per-agent artifacts OUTSIDE the worktree are NOT reclaimed**: worktree teardown (`destroy_worktree/3`, worktree_manager.ex:574-602) only rm_rf's the worktree dir + `Git.prune_worktrees` + deletes the `evogit-agent-*` branch.
   The repo's `.git` keeps accumulating per-agent `refs/genesis/archive/T<task_id>-A<agent_id>-start`/`-final` refs and the `refs/notes/evogit` metadata note (written by `CompleteTask.complete/4` on success only) — nothing prunes them (not the per-repo init wipe, not `destroy_worktree/3`).
   Transient agent temp files land under `EvoGit.Sandbox.resolve_tmpdir()` / `System.tmp_dir!()` (git commit-message file `genesis_ctx_msg_<n>.txt` in `agent/tools/context.ex`, skill scripts, adapter commit-message files) and are removed best-effort per call.
-  No per-agent or per-task tmpdir outside the worktree exists today — `.genesis/` contains only `workers/` (the repo-root-fixed worktree base, `Worktrees.workers_dir/1`).
+  A managed **per-task** scratch tmpdir exists OUTSIDE the worktree (`EvoGit.TaskTmpdir`, `../task_tmpdir.ex`) but is NOT owned by the scheduler: `:system`/`:custom` modes place `task_<id>` under a system/custom managed root, `:per_repo` mode under `<task's primary repo>/.genesis/tmp/task_<id>` (so `.genesis/` may hold `tmp/` alongside `workers/`, the repo-root-fixed worktree base, `Worktrees.workers_dir/1`). Its creation + reclamation are owned by `EvoGit.TaskRegistry` / the task wrapper (`TaskExecutor.ensure_task_tmpdir/2`), NOT by worktree teardown.
 
 ## Worktree Safety — Main-Copy HEAD Protection (foreign repos)
 
