@@ -2,11 +2,11 @@
 
 ## Intent
 
-ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, cleanup, skip-and-log of undecodable rows, archive metadata, restart durability, the merge/resume/runtime-opts context builders, the `:reflect` task-type routing, and failed-transition diagnostics.
+ExUnit tests for `EvoGit.TaskRegistry` and `EvoGit.Store` persistence/lifecycle behavior: status transitions & guards, lease/heartbeat, cleanup, skip-and-log of undecodable rows, archive metadata, restart durability, the merge/resume/runtime-opts context builders, the `:reflect` task-type routing, failed-transition diagnostics, and the managed per-task tmpdir reclaim lifecycle.
 
-13 files / 188 tests.
+14 files / 196 tests.
 
-Measured whole-directory baseline at `--seed 0`: ~2.8 s (1.0 s async, 1.8 s sync).
+Measured whole-directory baseline at `--seed 0`: ~3.4 s (1.3 s async, 2.0 s sync).
 
 ## API Surface
 
