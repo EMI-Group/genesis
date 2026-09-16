@@ -711,7 +711,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           type: :atom,
           default: :system,
           validation: [in: [:system, :custom, :per_repo]],
-          category: :tmp,
+          category: :data,
           sub_category: nil,
           description:
             "Per-task temporary directory mode for agents. :system (default) uses <system tmp>/genesis/task_<id> (honors the user's tmp configuration); :custom uses <[tmp] path>/genesis/task_<id>; :per_repo uses <task's primary repo>/.genesis/tmp/task_<id>."
