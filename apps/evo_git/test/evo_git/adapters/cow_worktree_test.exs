@@ -3,7 +3,10 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   Tests for CoW (copy-on-write) optimized worktree creation.
 
   Uses `async: false` because `:persistent_term` (`:evogit_cow_worktree_enabled`)
-  is global state shared across all tests — concurrent flag mutations would race.
+  is global state shared across all tests — concurrent flag mutations would race
+  — and because `setup` redirects the process-wide `XDG_CONFIG_HOME` env var via
+  `System.put_env/2` (so `Config.resolve([:git, :cow_worktree_creation])` sees
+  only the schema default).
   """
 
   use ExUnit.Case, async: false

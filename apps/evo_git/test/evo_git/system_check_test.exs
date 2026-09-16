@@ -1,4 +1,17 @@
 defmodule EvoGit.SystemCheckTest do
+  @moduledoc """
+  Tests for `EvoGit.SystemCheck` (dashboard Help-page diagnostics).
+
+  Uses `async: false` because `setup`/`on_exit` call `EvoGit.Nix.reset_state/0`,
+  which erases the BEAM-global `:evogit_nix_dev_env_state` `:persistent_term`
+  entry — a process-wide mutation any concurrently running module could observe.
+
+  Note: this module does NOT redirect `XDG_CONFIG_HOME` (unlike most config
+  tests), so `SystemCheck.config_check/0` reads the real
+  `~/.config/genesis/config.toml` of the running machine — a read-only
+  dependency on user state, not a global mutation.
+  """
+
   use ExUnit.Case, async: false
 
   alias EvoGit.{Nix, SystemCheck}

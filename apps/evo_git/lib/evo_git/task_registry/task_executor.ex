@@ -14,18 +14,31 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
   @process_registry EvoGit.TaskRegistry.ProcessRegistry
 
   @doc """
-  Execute a genesis, evolve, or skill extraction task.
+  Execute a genesis, evolve, skill extraction, or reflect task.
 
   Runs in a separate process under `Task.Supervisor`.
+
+  `server` is the registered name of the `EvoGit.TaskRegistry` instance that
+  owns this task. It is stored in the process dictionary under
+  `:evogit_task_registry_server` BEFORE any per-type work runs, so callbacks
+  made from inside this process (e.g. `MergeContext`/`ResumeContext` loading the
+  previous task) resolve back to the SAME registry instance via
+  `EvoGit.TaskRegistry.server/0`. Defaults to `__MODULE__` (the production
+  singleton), so `execute_task/3` is unchanged for every existing caller.
   """
-  def execute_task(:genesis, opts, task_id) do
+  def execute_task(task_type, opts, task_id, server \\ __MODULE__) do
+    Process.put(:evogit_task_registry_server, server)
+    do_execute_task(task_type, opts, task_id)
+  end
+
+  defp do_execute_task(:genesis, opts, task_id) do
     register_task_process(task_id)
     {_input_arg, runtime_opts} = RuntimeOpts.build_common_runtime_opts(opts, task_id, :genesis)
     prompt = Keyword.get(opts, :prompt, "")
     EvoGit.Runtime.Genesis.run(prompt, runtime_opts)
   end
 
-  def execute_task(:evolve, opts, task_id) do
+  defp do_execute_task(:evolve, opts, task_id) do
     register_task_process(task_id)
 
     opts =
@@ -62,7 +75,7 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
     EvoGit.Runtime.Evolution.run(objective, runtime_opts)
   end
 
-  def execute_task(:extract_skills, opts, task_id) do
+  defp do_execute_task(:extract_skills, opts, task_id) do
     register_task_process(task_id)
     repo_path = Keyword.fetch!(opts, :path)
     Application.ensure_all_started(:evo_git)
@@ -92,7 +105,7 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
     EvoGit.Runtime.SkillExtraction.run(runtime_opts)
   end
 
-  def execute_task(:reflect, opts, task_id) do
+  defp do_execute_task(:reflect, opts, task_id) do
     register_task_process(task_id)
 
     # CRITICAL: do NOT call RuntimeOpts.build_common_runtime_opts here — it does

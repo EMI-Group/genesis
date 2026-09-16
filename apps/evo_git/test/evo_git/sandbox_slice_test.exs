@@ -1,4 +1,16 @@
 defmodule EvoGit.SandboxSliceTest do
+  @moduledoc """
+  Tests for `EvoGit.SandboxSlice`.
+
+  Uses `async: false` because the tests drive the app-level
+  `EvoGit.SandboxSlice` singleton — the globally named GenServer registered in
+  `EvoGit.Supervisor`'s supervision tree by `EvoGit.Application.start/2` (on
+  Linux). Individual tests stop/restart it via `Supervisor.terminate_child/2` +
+  `Supervisor.restart_child/2` (or `GenServer.stop/2` + `SandboxSlice.start_link/1`
+  for the non-Linux standalone fallback), so its state and liveness are
+  process-wide globals no concurrently running module may observe mid-test.
+  """
+
   use ExUnit.Case, async: false
 
   alias EvoGit.SandboxSlice

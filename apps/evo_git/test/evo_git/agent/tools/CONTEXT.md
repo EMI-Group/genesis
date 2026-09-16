@@ -31,7 +31,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 Every module carries an `@moduledoc` naming why it is `async: true` / `async: false` — keep it accurate when the forcing state changes.
 
 - `async: false` — `web_search_test.exs` (mutates the `:web_search_http_runner` app-env seam and the shared `:req_llm` API-key store).
-- `async: false` — `reflect_tools_test.exs` (`use EvoGit.TaskRegistryCase` terminates/restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry`).
+- `async: false` — `reflect_tools_test.exs` (`without_model_profiles/1` rewrites the GLOBAL `EvoGit.AgentScheduler` `model_profiles` config via `AgentScheduler.update_config/1`, a BEAM-global read by every other agent/task module).
 - `async: false` — `complete_task_test.exs` (inserts/deletes rows in the shared `:evogit_sched_meta` / `:evogit_agent_state` tables and DELETES + recreates the global `:evogit_archive_records` table).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
 

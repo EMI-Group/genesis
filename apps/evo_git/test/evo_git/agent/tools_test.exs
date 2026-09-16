@@ -5,7 +5,7 @@ defmodule EvoGit.Agent.ToolsTest do
   application env, both of which are observable by concurrently running modules.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: false
   alias EvoGit.Agent.Tools
 
   @moduletag :tmp_dir

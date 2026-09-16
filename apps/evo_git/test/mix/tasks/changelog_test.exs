@@ -2,21 +2,23 @@ defmodule Mix.Tasks.ChangelogTest do
   @moduledoc """
   Tests for `mix changelog`.
 
-  MUST stay `async: false` — the exercised task and this suite rely on
-  process-/VM-global state that concurrent test modules would corrupt:
+  Runs `async: true`: the task resolves its working directory, Mix shell, and
+  its three summarizer seams from per-call `opts` (the production testability
+  seam), so this suite mutates no process-/VM-global state:
 
-    * `Mix.shell/0` is process-global: assertions drain `{:mix_shell, ...}`
-      messages from the test-process mailbox after switching to
-      `Mix.Shell.Process`.
-    * `File.cd!/2` changes the VM-wide working directory via the file server
-      (the task shells out `System.cmd("git", ...)` in the VM's cwd).
+    * `root: tmp_dir` anchors every git invocation (`cd: root`) and relative
+      path resolution, so no VM-wide `File.cd!/2` is needed.
+    * `shell: Mix.Shell.Process` is injected per call, so the VM-global
+      `Mix.shell/1` swap is not needed; assertions drain `{:mix_shell, ...}`
+      messages posted to the test-process mailbox by the injected shell.
     * the `:changelog_summarizer` / `:changelog_pr_summarizer` /
-      `:changelog_aggregator` application-env seams are mutated per test.
+      `:changelog_aggregator` seams are passed per call — the `:evo_git`
+      application env is never mutated.
 
   The `receive ... after 0` collectors below are non-blocking mailbox drains —
   they introduce no timing dependence.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias Mix.Tasks.Changelog
 
@@ -58,63 +60,28 @@ defmodule Mix.Tasks.ChangelogTest do
     git(tmp_dir, ["add", "--all"])
     git(tmp_dir, ["commit", "-q", "-m", "fix bug B"])
 
-    Mix.shell(Mix.Shell.Process)
-
     on_exit(fn ->
-      Mix.shell(Mix.Shell.IO)
       File.rm_rf!(tmp_dir)
     end)
 
     {:ok, %{tmp_dir: tmp_dir}}
   end
 
-  # Installs a deterministic whole-pipeline stub via the :changelog_summarizer
-  # application-env seam, restoring the previous value (or removing it) on exit.
-  # Contract: (model, version, prs) -> {:ok, entries} | {:error, reason}.
-  defp with_summarizer(fun) do
-    previous = Application.get_env(:evo_git, :changelog_summarizer)
-    Application.put_env(:evo_git, :changelog_summarizer, fun)
+  # Base opts for every run: the version positional, plus the root/shell seam
+  # that makes the suite async-safe (no File.cd!/2, no Mix.shell/1 swap).
+  defp base_opts(tmp_dir), do: [@new_version, root: tmp_dir, shell: Mix.Shell.Process]
 
-    on_exit(fn ->
-      if previous == nil do
-        Application.delete_env(:evo_git, :changelog_summarizer)
-      else
-        Application.put_env(:evo_git, :changelog_summarizer, previous)
-      end
-    end)
-  end
+  # Returns the whole-pipeline summarizer seam opt. Contract:
+  # (model, version, prs) -> {:ok, entries} | {:error, reason}.
+  defp with_summarizer(fun), do: [changelog_summarizer: fun]
 
-  # Installs a deterministic stage-1 (per-PR) stub via the
-  # :changelog_pr_summarizer application-env seam. Contract:
+  # Returns the stage-1 (per-PR) summarizer seam opt. Contract:
   # (model, version, pr) -> {:ok, summary :: String.t()} | {:error, reason}.
-  defp with_pr_summarizer(fun) do
-    previous = Application.get_env(:evo_git, :changelog_pr_summarizer)
-    Application.put_env(:evo_git, :changelog_pr_summarizer, fun)
+  defp with_pr_summarizer(fun), do: [changelog_pr_summarizer: fun]
 
-    on_exit(fn ->
-      if previous == nil do
-        Application.delete_env(:evo_git, :changelog_pr_summarizer)
-      else
-        Application.put_env(:evo_git, :changelog_pr_summarizer, previous)
-      end
-    end)
-  end
-
-  # Installs a deterministic stage-2 (aggregator) stub via the
-  # :changelog_aggregator application-env seam. Contract:
+  # Returns the stage-2 (aggregator) seam opt. Contract:
   # (model, version, summaries) -> {:ok, entries} | {:error, reason}.
-  defp with_aggregator(fun) do
-    previous = Application.get_env(:evo_git, :changelog_aggregator)
-    Application.put_env(:evo_git, :changelog_aggregator, fun)
-
-    on_exit(fn ->
-      if previous == nil do
-        Application.delete_env(:evo_git, :changelog_aggregator)
-      else
-        Application.put_env(:evo_git, :changelog_aggregator, previous)
-      end
-    end)
-  end
+  defp with_aggregator(fun), do: [changelog_aggregator: fun]
 
   # Builds a REAL merge on top of the current history: branches off HEAD, adds
   # one commit per message, then merges back with --no-ff so the merge commit
@@ -139,20 +106,18 @@ defmodule Mix.Tasks.ChangelogTest do
     Enum.reverse(commit_msgs)
   end
 
-  # Runs the pipeline with the two stage seams stubbed (PR-grouping tests):
-  # stage 1 records each PR and returns its newest commit's subject as the
-  # summary; stage 2 records the summaries and returns the deterministic stub
-  # entries.
+  # Returns the seam opts for the PR-grouping tests (stage 1 records each PR and
+  # returns its newest commit's subject as the summary; stage 2 records the
+  # summaries and returns the deterministic stub entries).
   defp install_stage_seams do
     with_pr_summarizer(fn _model, _version, pr ->
       send(self(), {:pr_summarized, pr})
       {:ok, hd(pr.commits).subject}
-    end)
-
-    with_aggregator(fn _model, _version, summaries ->
-      send(self(), {:aggregated_summaries, summaries})
-      {:ok, @stub_entries}
-    end)
+    end) ++
+      with_aggregator(fn _model, _version, summaries ->
+        send(self(), {:aggregated_summaries, summaries})
+        {:ok, @stub_entries}
+      end)
   end
 
   # Drains all {:pr_summarized, pr} messages left in the test process mailbox.
@@ -165,12 +130,10 @@ defmodule Mix.Tasks.ChangelogTest do
   end
 
   test "creates CHANGELOG.md when missing and commits it when confirmed", %{tmp_dir: tmp_dir} do
-    with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
+    seams = with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
     send(self(), {:mix_shell_input, :yes?, true})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     changelog = Path.join(tmp_dir, "CHANGELOG.md")
     assert File.exists?(changelog)
@@ -210,12 +173,10 @@ defmodule Mix.Tasks.ChangelogTest do
     """
 
     File.write!(Path.join(tmp_dir, "CHANGELOG.md"), existing)
-    with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
+    seams = with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     content = File.read!(Path.join(tmp_dir, "CHANGELOG.md"))
     assert content =~ ~r/## \[0\.2\.0\] - \d{4}-\d{2}-\d{2}/
@@ -232,14 +193,13 @@ defmodule Mix.Tasks.ChangelogTest do
   test "replaces an existing same-version section (no duplicates on re-run)", %{
     tmp_dir: tmp_dir
   } do
-    with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
+    seams = with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
     send(self(), {:mix_shell_input, :yes?, false})
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-      Changelog.run([@new_version])
-    end)
+    opts = base_opts(tmp_dir) ++ seams
+    Changelog.run(opts)
+    Changelog.run(opts)
 
     content = File.read!(Path.join(tmp_dir, "CHANGELOG.md"))
     assert length(Regex.scan(~r/^## \[0\.2\.0\]/m, content)) == 1
@@ -248,16 +208,15 @@ defmodule Mix.Tasks.ChangelogTest do
   test "defaults the range to the last tag (commits before it are excluded)", %{
     tmp_dir: tmp_dir
   } do
-    with_summarizer(fn _model, _version, prs ->
-      send(self(), {:summarized_prs, prs})
-      {:ok, []}
-    end)
+    seams =
+      with_summarizer(fn _model, _version, prs ->
+        send(self(), {:summarized_prs, prs})
+        {:ok, []}
+      end)
 
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     assert_received {:summarized_prs, prs}
 
@@ -268,9 +227,7 @@ defmodule Mix.Tasks.ChangelogTest do
   end
 
   test "prints a usage error when the version argument is missing", %{tmp_dir: tmp_dir} do
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([])
-    end)
+    Changelog.run(root: tmp_dir, shell: Mix.Shell.Process)
 
     assert_received {:mix_shell, :error,
                      [
@@ -283,12 +240,10 @@ defmodule Mix.Tasks.ChangelogTest do
   test "writes the file but does not commit when the commit prompt is declined", %{
     tmp_dir: tmp_dir
   } do
-    with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
+    seams = with_summarizer(fn _model, _version, _prs -> {:ok, @stub_entries} end)
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     changelog = Path.join(tmp_dir, "CHANGELOG.md")
     assert File.exists?(changelog)
@@ -309,12 +264,10 @@ defmodule Mix.Tasks.ChangelogTest do
     branch_subjects =
       build_merge(tmp_dir, "feature-x", ["add feature X part 1", "add feature X part 2"])
 
-    install_stage_seams()
+    seams = install_stage_seams()
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     prs = collect_pr_summaries()
 
@@ -358,12 +311,10 @@ defmodule Mix.Tasks.ChangelogTest do
     git(tmp_dir, ["add", "--all"])
     git(tmp_dir, ["commit", "-q", "-m", "post-merge fix"])
 
-    install_stage_seams()
+    seams = install_stage_seams()
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     prs = collect_pr_summaries()
 
@@ -402,12 +353,10 @@ defmodule Mix.Tasks.ChangelogTest do
       "Update mix hash"
     ])
 
-    install_stage_seams()
+    seams = install_stage_seams()
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     prs = collect_pr_summaries()
     all_subjects = prs |> Enum.flat_map(& &1.commits) |> Enum.map(& &1.subject)
@@ -422,12 +371,10 @@ defmodule Mix.Tasks.ChangelogTest do
   end
 
   test "works with a range containing only non-merge commits", %{tmp_dir: tmp_dir} do
-    install_stage_seams()
+    seams = install_stage_seams()
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     prs = collect_pr_summaries()
     assert length(prs) == 2
@@ -506,29 +453,27 @@ defmodule Mix.Tasks.ChangelogTest do
 
     docs_subject? = fn s -> s =~ ~r/readme|docs|documentation|CONTEXT|comment/i end
 
-    with_pr_summarizer(fn _model, _version, pr ->
-      send(self(), {:pr_summarized, pr})
-      subjects = Enum.map(pr.commits, & &1.subject)
+    seams =
+      with_pr_summarizer(fn _model, _version, pr ->
+        send(self(), {:pr_summarized, pr})
+        subjects = Enum.map(pr.commits, & &1.subject)
 
-      cond do
-        Enum.all?(subjects, docs_subject?) ->
-          {:ok, @no_user_facing_marker}
+        cond do
+          Enum.all?(subjects, docs_subject?) ->
+            {:ok, @no_user_facing_marker}
 
-        true ->
-          {:ok, Enum.find(subjects, &(not docs_subject?.(&1)))}
-      end
-    end)
-
-    with_aggregator(fn _model, _version, summaries ->
-      send(self(), {:aggregated_summaries, summaries})
-      {:ok, Enum.map(summaries, &%{category: "Added", text: &1})}
-    end)
+          true ->
+            {:ok, Enum.find(subjects, &(not docs_subject?.(&1)))}
+        end
+      end) ++
+        with_aggregator(fn _model, _version, summaries ->
+          send(self(), {:aggregated_summaries, summaries})
+          {:ok, Enum.map(summaries, &%{category: "Added", text: &1})}
+        end)
 
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     # The docs-only merge still reached stage 1 (it IS a collected change) ...
     doc_merge =
@@ -561,18 +506,16 @@ defmodule Mix.Tasks.ChangelogTest do
          tmp_dir: tmp_dir
        } do
     # Stage 1 marks EVERY change as non-user-facing.
-    with_pr_summarizer(fn _model, _version, _pr -> {:ok, @no_user_facing_marker} end)
-
-    with_aggregator(fn _model, _version, summaries ->
-      send(self(), {:aggregated_summaries, summaries})
-      {:ok, @stub_entries}
-    end)
+    seams =
+      with_pr_summarizer(fn _model, _version, _pr -> {:ok, @no_user_facing_marker} end) ++
+        with_aggregator(fn _model, _version, summaries ->
+          send(self(), {:aggregated_summaries, summaries})
+          {:ok, @stub_entries}
+        end)
 
     send(self(), {:mix_shell_input, :yes?, false})
 
-    File.cd!(tmp_dir, fn ->
-      Changelog.run([@new_version])
-    end)
+    Changelog.run(base_opts(tmp_dir) ++ seams)
 
     # Stage 2 was never invoked over an empty summary list.
     refute_received {:aggregated_summaries, _}

@@ -18,10 +18,15 @@ defmodule EvoGit.TaskRegistry.TaskExecutorReflectTest do
   `{:error, :llm_not_configured}` immediately instead of dispatching a real
   LLM-backed agent.
 
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  `async: false` is required: `without_model_profiles/1` MUTATES the
+  app-global `EvoGit.AgentScheduler`'s `:model_profiles` config (via
+  `EvoGit.AgentScheduler.update_config/1`) for the duration of each test, and
+  the `:reflect` runtime routes through that same global scheduler
+  (`AgentScheduler.run_agent/1`). A concurrently running module that reads the
+  scheduler's model profiles would observe the emptied list, so this module must
+  stay serialized. The `EvoGit.TaskRegistryCase` fixture itself is already
+  isolated (uniquely-named Store + registry), so the only forcing global is the
+  scheduler config.
   """
 
   use EvoGit.TaskRegistryCase, async: false

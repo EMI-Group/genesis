@@ -5,8 +5,10 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   Serialized (`async: false`) on purpose — the parallel-execution describe below
   works on BEAM-global state: it registers agent state in the app-global
   `:evogit_agent_state` ETS table and acquires slots from the global
-  `EvoGit.AgentScheduler`, and its concurrency proof is wall-clock-bounded by the
-  production per-call tool budget (`[:scheduler, :default_tool_timeout]`).
+  `EvoGit.AgentScheduler`. Its concurrency proof makes the two shell commands
+  rendezvous on each other's start markers (bounded by the commands' own poll
+  budget), and the whole call is still subject to the production per-call tool
+  budget (`[:scheduler, :default_tool_timeout]`).
   Running it alongside ~28 concurrent async modules (whose processes fork
   shells/git/ripgrep) inflated a single `run_bash` call from ~20-60ms to
   1.6-7.4s, which exceeds that budget and truncates the marker file. With
@@ -412,6 +414,50 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   # batch_execute_tools/4 parallel execution
   # ---------------------------------------------------------------------------
 
+  # Bounded rendezvous budget for the concurrency test's two shell commands:
+  # 400 poll iterations x 50ms = 20s. Generous enough that a genuinely
+  # concurrent run always observes the peer's start marker (both shell tools are
+  # started within tens of ms of each other), while still bounding the wait so a
+  # serialized/broken run fails instead of hanging.
+  @rendezvous_poll_iters 400
+  @rendezvous_poll_ms 50
+  # The same 50ms cadence expressed as fractional seconds for POSIX `sleep`.
+  @rendezvous_poll_seconds "0.05"
+
+  # Builds the two shell commands for the parallel-execution test. Each command
+  # appends its OWN start marker, then blocks (bounded) until the PEER's start
+  # marker exists, then appends its own end marker. On a correct concurrent run
+  # both finish in tens of ms (event-driven — no fixed sleep); on a serialized
+  # run the first command exhausts its bound, so the start2-before-end1
+  # interleaving assertion in the test still fails. POSIX (`run_bash`) and
+  # PowerShell (`run_powershell`) need different syntax for the bounded wait.
+  defp parallel_marker_commands(os) do
+    if os == :windows do
+      {ps_marker_command("start1", "end1", "start2"),
+       ps_marker_command("start2", "end2", "start1")}
+    else
+      {posix_marker_command("start1", "end1", "start2"),
+       posix_marker_command("start2", "end2", "start1")}
+    end
+  end
+
+  # `own_start`/`own_end` are this command's markers; `peer_start` is the OTHER
+  # command's start marker it rendezvouses on.
+  defp posix_marker_command(own_start, own_end, peer_start) do
+    "echo #{own_start} >> markers.txt; n=0; " <>
+      "while [ $n -lt #{@rendezvous_poll_iters} ] && ! grep -qx #{peer_start} markers.txt; " <>
+      "do sleep #{@rendezvous_poll_seconds}; n=$((n+1)); done; " <>
+      "echo #{own_end} >> markers.txt"
+  end
+
+  defp ps_marker_command(own_start, own_end, peer_start) do
+    "Add-Content -Path markers.txt -Value #{own_start}; " <>
+      "$n = 0; while ($n -lt #{@rendezvous_poll_iters} -and -not " <>
+      "(Select-String -Path markers.txt -Pattern '^#{peer_start}$' -Quiet " <>
+      "-ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds #{@rendezvous_poll_ms}; $n++ }; " <>
+      "Add-Content -Path markers.txt -Value #{own_end}"
+  end
+
   describe "batch_execute_tools/4 parallel execution" do
     setup do
       repo_root =
@@ -454,8 +500,12 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       shell_tool =
         if EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash"
 
-      cmd1 = "echo start1 >> markers.txt; sleep 1; echo end1 >> markers.txt"
-      cmd2 = "echo start2 >> markers.txt; sleep 1; echo end2 >> markers.txt"
+      # Event-driven rendezvous, NOT a fixed `sleep 1`: each command appends its
+      # start marker, then waits (bounded) for the OTHER command's start marker
+      # before appending its end marker. A correct concurrent run finishes in
+      # tens of ms; a serialized run exhausts the bound, so the interleaving
+      # assertion below still fails.
+      {cmd1, cmd2} = parallel_marker_commands(EvoGit.Platform.os())
 
       calls = [
         {ReqLLM.ToolCall.new("call_1", shell_tool, Jason.encode!(%{"command" => cmd1})), 0},

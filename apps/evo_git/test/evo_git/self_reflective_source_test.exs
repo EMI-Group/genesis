@@ -164,8 +164,8 @@ defmodule EvoGit.SelfReflectiveSourceTest do
 
   describe "reference_path/0 chain precedence" do
     test "app env wins over the env var and a valid managed dir" do
-      fixture = genesis_fixture!("chain-app")
-      set_app_env(:self_reflective_source_dir, fixture.work)
+      dir = managed_dir_fixture!("chain-app")
+      set_app_env(:self_reflective_source_dir, dir)
       set_os_env("/tmp/from-env-var")
       set_app_env(:self_reflective_source_root, "/tmp/from-app-env")
 
@@ -173,25 +173,24 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     end
 
     test "GENESIS_SOURCE_ROOT wins over the managed dir" do
-      fixture = genesis_fixture!("chain-env")
-      set_app_env(:self_reflective_source_dir, fixture.work)
+      dir = managed_dir_fixture!("chain-env")
+      set_app_env(:self_reflective_source_dir, dir)
       set_os_env("/tmp/from-env-var")
 
       assert SelfReflectiveSource.reference_path() == "/tmp/from-env-var"
     end
 
     test "managed dir is auto-selected when present and valid" do
-      fixture = genesis_fixture!("chain-managed")
-      set_app_env(:self_reflective_source_dir, fixture.work)
+      dir = managed_dir_fixture!("chain-managed")
+      set_app_env(:self_reflective_source_dir, dir)
 
-      assert SelfReflectiveSource.reference_path() == fixture.work
+      assert SelfReflectiveSource.reference_path() == dir
     end
 
     test "managed dir is NOT auto-selected when present but invalid (no CONTEXT.md)" do
       dir = tmp_path!("invalid")
-      File.mkdir_p!(dir)
+      File.mkdir_p!(Path.join(dir, ".git"))
       on_exit(fn -> File.rm_rf!(dir) end)
-      {:ok, _} = Git.init(dir)
       set_app_env(:self_reflective_source_dir, dir)
 
       assert SelfReflectiveSource.reference_path() == nil
@@ -238,8 +237,8 @@ defmodule EvoGit.SelfReflectiveSourceTest do
 
   describe "available?/0" do
     test "true when the app-env override points at a valid checkout" do
-      fixture = genesis_fixture!("avail-app")
-      set_app_env(:self_reflective_source_root, fixture.work)
+      dir = managed_dir_fixture!("avail-app")
+      set_app_env(:self_reflective_source_root, dir)
 
       assert SelfReflectiveSource.available?()
     end
@@ -260,10 +259,10 @@ defmodule EvoGit.SelfReflectiveSourceTest do
     end
 
     test "true when a valid managed clone is present" do
-      fixture = genesis_fixture!("avail-managed")
-      set_app_env(:self_reflective_source_dir, fixture.work)
+      dir = managed_dir_fixture!("avail-managed")
+      set_app_env(:self_reflective_source_dir, dir)
 
-      assert SelfReflectiveSource.reference_path() == fixture.work
+      assert SelfReflectiveSource.reference_path() == dir
       assert SelfReflectiveSource.available?()
     end
 
@@ -281,6 +280,23 @@ defmodule EvoGit.SelfReflectiveSourceTest do
   # --- Helpers -------------------------------------------------------------
   defp tmp_path!(label) do
     Path.join(System.tmp_dir!(), "selfref-src-#{label}-#{System.unique_integer([:positive])}")
+  end
+
+  # Builds the MINIMUM "valid managed dir" the production resolution chain
+  # recognizes: a plain temp dir carrying an empty `.git` DIRECTORY (all
+  # `EvoGit.SelfReflectiveSource`'s private `git_repo?/1` checks) plus a
+  # `CONTEXT.md` at the root (what `genesis_checkout?/1` checks). No git
+  # subprocesses — real git fixtures are reserved for the clone/update/status
+  # paths that actually shell out.
+  defp managed_dir_fixture!(label) do
+    dir = tmp_path!(label)
+    # Defense-in-depth against crashed-run leaks (System.unique_integer/1 is
+    # only unique per-VM): start from a known-empty dir.
+    File.rm_rf!(dir)
+    File.mkdir_p!(Path.join(dir, ".git"))
+    File.write!(Path.join(dir, "CONTEXT.md"), "# Fixture Genesis\n")
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
   end
 
   # Builds a "mini Genesis-like" fixture: a working repo with CONTEXT.md +

@@ -1,5 +1,16 @@
 defmodule EvoGitTest do
-  use ExUnit.Case
+  @moduledoc """
+  Top-level tests for `EvoGit` (sandbox args/run), `EvoGit.Sandbox` and
+  `EvoGit.Platform`.
+
+  `async: false` is stated explicitly (rather than relying on the untagged
+  serial default) because `setup` mutates two process-wide globals: it
+  redirects the `XDG_CONFIG_HOME` env var via `System.put_env/2` (isolating the
+  tests from the user's real `~/.config/genesis/config.toml`) and writes the
+  `:nix_enabled` app-env key via `Application.put_env(:evo_git, :nix_enabled, false)`.
+  """
+
+  use ExUnit.Case, async: false
 
   setup do
     # Isolate from the user's ~/.config/genesis/config.toml so tests

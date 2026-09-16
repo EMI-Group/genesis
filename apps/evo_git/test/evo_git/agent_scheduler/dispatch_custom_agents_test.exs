@@ -12,8 +12,12 @@ defmodule EvoGit.AgentScheduler.DispatchCustomAgentsTest do
     def run(_objective, _ctx), do: {:ok, :done}
   end
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents /
-  # ModelSelector never touch the real ~/.config/genesis/ directory.
+  # async: false — the tests mutate the process-wide XDG_CONFIG_HOME env var so
+  # that CustomAgents / ModelSelector never touch the real ~/.config/genesis/
+  # directory, and every register/2 call funnels through
+  # Dispatch.register_agent/7 → Store.put_agent_state/2, which broadcasts on the
+  # shared "agents" PubSub topic (`EvoGit.PubSub` / `PubSub.agent_topic`) — a
+  # topic other test modules subscribe to concurrently.
   setup do
     original_xdg = System.get_env("XDG_CONFIG_HOME")
 

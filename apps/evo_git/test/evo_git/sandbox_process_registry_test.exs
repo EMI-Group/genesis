@@ -1,4 +1,21 @@
 defmodule EvoGit.SandboxProcessRegistryTest do
+  @moduledoc """
+  Tests for `EvoGit.SandboxProcessRegistry`.
+
+  Uses `async: false` because the tests start/stop the globally named
+  `EvoGit.SandboxProcessRegistry` GenServer (the app-level singleton registered
+  in `EvoGit.Supervisor`'s supervision tree by `EvoGit.Application.start/2` on
+  Linux) and inspect its process-wide state with `:sys.get_state/1`.
+
+  This module is, in principle, flippable to `async: true`: nothing else in
+  `apps/evo_git/test` or `apps/evo_dash/test` consumes that registry (the only
+  production consumer is `EvoGit.Sandbox.Linux`, whose call sites sit behind
+  `Linux.enabled?/0`, short-circuited to the disabled path when
+  `@mix_env == :test`). It is nevertheless deliberately kept serialized here:
+  the ~6ms it would save does not justify diverging from the documented grouping
+  in `test/evo_git/CONTEXT.md` ("Shared app singletons").
+  """
+
   use ExUnit.Case, async: false
 
   alias EvoGit.SandboxProcessRegistry

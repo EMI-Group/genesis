@@ -5,9 +5,11 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   ListRecentProjects, SystemInfo, plus the repo-less write guard in
   `EvoGit.Agent.Tools.execute/5`.
 
-  `async: false` — the module `use`s `EvoGit.TaskRegistryCase`, which
-  terminates/restarts the app-level `EvoGit.Store` + `EvoGit.TaskRegistry`
-  singletons (and the shared `:evogit_*` ETS tables) for isolation.
+  `async: false` — `without_model_profiles/1` rewrites the GLOBAL
+  `EvoGit.AgentScheduler`'s `model_profiles` (via
+  `EvoGit.AgentScheduler.update_config/1`), a BEAM-global read by every other
+  agent/task test. The registry/store are per-test isolated instances provided
+  by `EvoGit.TaskRegistryCase`, so they no longer force serialization.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -288,7 +290,7 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       last_opened = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
       :ok =
-        EvoGit.Store.put_project(EvoGit.Store, %EvoGit.RecentProject{
+        EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
           path: "/proj/a",
           name: "Project A",
           last_opened_at: last_opened
@@ -310,22 +312,23 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       assert ListRecentProjects.execute(%{}, nil, nil) == "No recent projects found."
     end
 
-    test "reports task system unavailable when the registry is down" do
-      registry = Process.whereis(EvoGit.TaskRegistry)
+    test "reports task system unavailable when the registry is down",
+         %{registry: registry_name} do
+      registry = Process.whereis(registry_name)
       assert is_pid(registry)
 
       # Unregistering only removes the name — the isolated registry process
       # stays alive, so it can be re-registered in the after block.
-      Process.unregister(EvoGit.TaskRegistry)
+      Process.unregister(registry_name)
 
       try do
         output = ListRecentProjects.execute(%{}, nil, nil)
         assert output =~ "task system unavailable"
       after
-        assert Process.register(registry, EvoGit.TaskRegistry) == true
+        assert Process.register(registry, registry_name) == true
       end
 
-      assert Process.whereis(EvoGit.TaskRegistry) == registry
+      assert Process.whereis(registry_name) == registry
     end
 
     test "dispatch path works while repo_less", %{tmp_dir: tmp_dir} do
@@ -498,7 +501,7 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
         )
       )
 
-    :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+    :ok = EvoGit.Store.put_task(store(), task)
     task
   end
 
@@ -510,7 +513,7 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
     wrapper = spawn(fn -> Process.sleep(:infinity) end)
 
     :ok =
-      EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+      EvoGit.Store.put_task(store(), %TaskInfo{
         id: task_id,
         type: :genesis,
         status: :running,
@@ -523,7 +526,7 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
         lease_expires_at: System.system_time(:second) + 300
       })
 
-    :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+    :sys.replace_state(TaskRegistry.server(), fn state ->
       %{state | task_refs: Map.put(state.task_refs, task_id, fake_task_ref(wrapper))}
     end)
 
