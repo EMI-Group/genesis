@@ -1,9 +1,20 @@
 defmodule EvoGit.TaskRegistry.PersistenceTest do
   @moduledoc """
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  `async: false` is required: several tests here reach BEYOND the isolated
+  `EvoGit.TaskRegistryCase` fixture into APP-GLOBAL state, so a concurrently
+  running module would observe it.
+
+  - the `describe "recheck_task resolution"` `setup` does an app-global
+    `:ets.delete_all_objects(:evogit_sched_meta)` (and creates the table when
+    the scheduler ETS table is absent), and one test seeds the literal
+    `:evogit_sched_meta` id `1` — an id the already-`async: true` sibling
+    `agent_scheduler/subagents_test.exs` deletes in its own setup.
+  - the `describe "graceful cancel_task / force_kill_task"` tests seed the
+    app-global `:evogit_sched_meta` / `:evogit_agent_state` /
+    `:evogit_cancelling_tasks` tables and drive the GLOBAL
+    `EvoGit.AgentScheduler` (`begin_graceful_cancel/1`,
+    `force_kill_task_agents/1`, the `:evogit_cancelling_tasks` marker) through
+    the isolated registry's cancel/force-kill handlers.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -25,7 +36,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
@@ -53,7 +64,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
 
@@ -61,7 +72,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       TaskRegistry.list_tasks()
 
       # Read directly from the store to confirm persistence
-      stored_task = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      stored_task = EvoGit.Store.get_task(store(), task_id)
 
       assert stored_task.base_sha == "base_sha_1"
       assert stored_task.commit_sha == "commit_sha_1"
@@ -94,7 +105,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       TaskRegistry.set_review_metadata(task_id, "base1", "commit1")
       TaskRegistry.list_tasks()
@@ -110,7 +121,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "TaskInfo field backfill" do
     test "normalize_tasks backfills base_sha and commit_sha as nil for old entries",
-         %{data_dir: data_dir} do
+         %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       task_id = "backfill_#{unique}"
 
@@ -135,14 +146,17 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         model_id: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, old_task)
+      EvoGit.Store.put_task(store(), old_task)
 
       # Stop the supervised registry, then restart it so normalize_tasks runs.
       # KEEP the same store running so the backfilled data persists.
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The backfilled task should exist with nil for the new fields
@@ -154,7 +168,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     end
 
     test "normalize_tasks backfills model_id to nil for older structs", %{
-      data_dir: data_dir
+      data_dir: data_dir,
+      store: store,
+      registry: registry
     } do
       task_id = "model_backfill_#{System.unique_integer([:positive])}"
 
@@ -172,13 +188,16 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           model_id: nil
         }
 
-      EvoGit.Store.put_task(EvoGit.Store, stripped)
+      EvoGit.Store.put_task(store(), stripped)
 
       # Restart the registry to trigger normalize_tasks on init.
-      stop_supervised(TaskRegistry)
+      stop_supervised(registry)
 
       start_supervised!(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -205,7 +224,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+      :ok = EvoGit.Store.put_task(store(), task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -216,7 +235,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.result == nil
     end
 
-    test "task persists across a registry restart with the same store", %{data_dir: data_dir} do
+    test "task persists across a registry restart with the same store", %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       task_id = "persistence_durable_#{unique}"
 
@@ -232,17 +251,20 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      :ok = EvoGit.Store.put_task(EvoGit.Store, task)
+      :ok = EvoGit.Store.put_task(store(), task)
 
       # Confirm the task is visible before restart.
       assert %TaskInfo{} = TaskRegistry.get_task(task_id)
 
       # Stop the registry but KEEP the same store running (store is durable on disk).
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The task persisted in the store must survive the registry restart.
@@ -257,7 +279,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "recent projects persistence" do
     test "recent project persists across a registry restart with the same store",
-         %{data_dir: data_dir} do
+         %{data_dir: data_dir, store: store, registry: registry} do
       path = "/some/path"
       name = "My Project"
 
@@ -268,11 +290,14 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert Enum.any?(projects_before, &(&1.path == path and &1.name == name))
 
       # Stop the registry but KEEP the same store running (store is durable on disk).
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The project must survive the registry restart.
@@ -300,9 +325,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
-      pid = GenServer.whereis(EvoGit.TaskRegistry)
+      pid = GenServer.whereis(TaskRegistry.server())
       assert is_pid(pid)
       assert Process.alive?(pid)
 
@@ -319,7 +344,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
     test "registry survives mutation operations" do
       unique = System.unique_integer([:positive])
-      pid = GenServer.whereis(EvoGit.TaskRegistry)
+      pid = GenServer.whereis(TaskRegistry.server())
       assert Process.alive?(pid)
 
       # Each delete_task cast mutates the store.
@@ -338,7 +363,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           result: nil
         }
 
-        EvoGit.Store.put_task(EvoGit.Store, task)
+        EvoGit.Store.put_task(store(), task)
         TaskRegistry.delete_task(id)
       end
 
@@ -383,8 +408,8 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, good1)
-      EvoGit.Store.put_task(EvoGit.Store, good2)
+      EvoGit.Store.put_task(store(), good1)
+      EvoGit.Store.put_task(store(), good2)
 
       # Structurally corrupt entries (valid keys, wrong-shape values).
       # Inject corrupt rows via raw SQL (bypassing put_task validation).
@@ -406,7 +431,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       XqliteNIF.close(raw_conn)
 
       EvoGit.Store.put_project(
-        EvoGit.Store,
+        store(),
         %EvoGit.RecentProject{
           path: "/some/path",
           name: "test",
@@ -414,7 +439,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         }
       )
 
-      pid = GenServer.whereis(EvoGit.TaskRegistry)
+      pid = GenServer.whereis(TaskRegistry.server())
       assert Process.alive?(pid)
 
       # list_tasks must NOT crash — it should return only valid TaskInfo structs
@@ -457,7 +482,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, good)
+      EvoGit.Store.put_task(store(), good)
 
       # Corrupt entry
       # Inject a corrupt row via raw SQL (put_task rejects non-struct input)
@@ -471,7 +496,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       XqliteNIF.close(raw_conn2)
 
-      pid = GenServer.whereis(EvoGit.TaskRegistry)
+      pid = GenServer.whereis(TaskRegistry.server())
       assert Process.alive?(pid)
 
       # Trigger cleanup by doing mutations
@@ -521,7 +546,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Simulate completion via cast (this calls cleanup_expired_tasks internally)
       TaskRegistry.update_task_status(task_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
@@ -536,7 +561,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.status == :completed
 
       # Registry is alive
-      pid = GenServer.whereis(EvoGit.TaskRegistry)
+      pid = GenServer.whereis(TaskRegistry.server())
       assert Process.alive?(pid)
     end
   end
@@ -571,7 +596,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         archive_metadata: archive
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       fetched = TaskRegistry.get_task(task_id)
       assert %TaskInfo{} = fetched
@@ -579,7 +604,9 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
     end
 
     test "normalize_tasks backfills archive_metadata to nil for older structs", %{
-      data_dir: data_dir
+      data_dir: data_dir,
+      store: store,
+      registry: registry
     } do
       task_id = "archive_backfill_#{System.unique_integer([:positive])}"
 
@@ -603,15 +630,18 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           archive_metadata: nil
         }
 
-      EvoGit.Store.put_task(EvoGit.Store, stripped)
+      EvoGit.Store.put_task(store(), stripped)
 
       # Restart the registry to trigger normalize_tasks on init. normalize_tasks
       # runs Map.merge(%TaskInfo{}, task), backfilling the missing field to its
       # default (nil).
-      stop_supervised(TaskRegistry)
+      stop_supervised(registry)
 
       start_supervised!(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       fetched = TaskRegistry.get_task(task_id)
@@ -635,7 +665,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       archive_records = [
         %{
@@ -681,7 +711,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       usage = %EvoGit.Agent.Usage{input_tokens: 100, total_tokens: 100}
 
@@ -717,7 +747,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # The registry subscribes to the "tasks" PubSub topic on init. The
       # emitter broadcasts the task_updated shape with the emitting node; a
@@ -752,7 +782,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # A late :failed update must NOT overwrite a terminal :completed.
       TaskRegistry.update_task_status(task_id, :failed, "late error")
@@ -779,7 +809,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # A late :finalizing PubSub update must NOT overwrite a terminal :cancelled.
       Phoenix.PubSub.broadcast(
@@ -802,7 +832,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cross_node_finalizing_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -849,7 +879,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
   describe "startup reconciliation of orphaned :finalizing tasks" do
     test "restart marks an orphaned :finalizing row :failed but leaves a :running row untouched",
-         %{data_dir: data_dir} do
+         %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       finalizing_id = "startup_finalizing_#{unique}"
       running_id = "startup_running_#{unique}"
@@ -859,7 +889,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # before the fresh registry boots — literally "fresh registry against a
       # DB containing :finalizing rows". The Store stays running (durable on
       # disk); it is NOT stopped/restarted.
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       finalizing_task = %TaskInfo{
         id: finalizing_id,
@@ -887,17 +917,20 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         lease_expires_at: future_lease
       }
 
-      :ok = EvoGit.Store.put_task(EvoGit.Store, finalizing_task)
-      :ok = EvoGit.Store.put_task(EvoGit.Store, running_task)
+      :ok = EvoGit.Store.put_task(store(), finalizing_task)
+      :ok = EvoGit.Store.put_task(store(), running_task)
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The Store is the durable source of truth; the registry's init
       # reconciliation must have marked the orphaned :finalizing row :failed.
-      finalizing = EvoGit.Store.get_task(EvoGit.Store, finalizing_id)
+      finalizing = EvoGit.Store.get_task(store(), finalizing_id)
       assert finalizing != nil
       assert finalizing.status == :failed
       assert finalizing.finished_at != nil
@@ -908,14 +941,14 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Control row: a :running task with a valid (future) lease must NOT be
       # touched at init — sweeping orphaned :running tasks is the :lease_sweep
       # path (covered in lease_heartbeat_test.exs).
-      running = EvoGit.Store.get_task(EvoGit.Store, running_id)
+      running = EvoGit.Store.get_task(store(), running_id)
       assert running != nil
       assert running.status == :running
       assert running.lease_expires_at == future_lease
     end
 
     test "restart records the startup-reconcile error payload on the orphaned :finalizing row",
-         %{data_dir: data_dir} do
+         %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       finalizing_id = "startup_finalizing_error_#{unique}"
       future_lease = System.system_time(:second) + 300
@@ -923,10 +956,10 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Stop the initial registry FIRST so the seeded row exists in the Store
       # before the fresh registry boots. The Store stays running (durable on
       # disk); it is NOT stopped/restarted.
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: finalizing_id,
           type: :genesis,
           status: :finalizing,
@@ -941,11 +974,14 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       # Restart the registry pointing at the same store and data_dir.
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The exact lib result literal and the canonical restart error payload.
-      fetched = EvoGit.Store.get_task(EvoGit.Store, finalizing_id)
+      fetched = EvoGit.Store.get_task(store(), finalizing_id)
       assert fetched != nil
       assert fetched.status == :failed
       assert fetched.finished_at != nil
@@ -960,15 +996,15 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              }
     end
 
-    test "restart marks an orphaned :cancelling row :cancelled", %{data_dir: data_dir} do
+    test "restart marks an orphaned :cancelling row :cancelled", %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       cancelling_id = "startup_cancelling_#{unique}"
       future_lease = System.system_time(:second) + 300
 
-      stop_supervised(EvoGit.TaskRegistry)
+      stop_supervised(registry)
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: cancelling_id,
           type: :genesis,
           status: :cancelling,
@@ -982,12 +1018,15 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       start_supervised(
-        {TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry}
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
+          id: registry
+        )
       )
 
       # The runtime died mid-cancel — the orphaned :cancelling row must resolve
       # to :cancelled (never stay :cancelling forever).
-      fetched = EvoGit.Store.get_task(EvoGit.Store, cancelling_id)
+      fetched = EvoGit.Store.get_task(store(), cancelling_id)
       assert fetched != nil
       assert fetched.status == :cancelled
       assert fetched.finished_at != nil
@@ -1006,7 +1045,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :completed}] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1064,7 +1103,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
             {b1, "/proj-b", :completed}
           ] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1113,7 +1152,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :pending}] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1184,7 +1223,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
             {t4, :failed}
           ] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1237,7 +1276,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :completed}] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1278,7 +1317,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
             {t4, :pending}
           ] do
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: id,
             type: :genesis,
             status: status,
@@ -1326,7 +1365,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "recheck_resolve_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1340,10 +1379,10 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
       assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
-      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      fetched = EvoGit.Store.get_task(store(), task_id)
       assert fetched.status == :completed
       assert fetched.finished_at != nil
       assert fetched.lease_expires_at == nil
@@ -1355,7 +1394,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "recheck_preserve_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1369,10 +1408,10 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
       assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
-      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      fetched = EvoGit.Store.get_task(store(), task_id)
       assert fetched.status == :completed
       assert fetched.branch_name == "evogit/orig"
     end
@@ -1382,7 +1421,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "recheck_active_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1411,7 +1450,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       :ets.insert(:evogit_sched_meta, {1, meta})
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
 
       # The recheck handler RESCHEDULES when any sched_meta entry remains, so it
       # must not emit a broadcast. Sync against the SAME registry with a call
@@ -1419,11 +1458,13 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # handler has fully run); any broadcast that handler emitted was sent
       # registry→test-process BEFORE the call reply, and same-sender→same-receiver
       # signal order is guaranteed — so it is already in the mailbox and a
-      # zero-window refute is sufficient (no blind 200ms timeout needed).
+      # zero-window refute is sufficient (no blind 200ms timeout needed). The
+      # refute is pinned to THIS task id so a broadcast about another task (the
+      # "tasks" topic is process-global) can never fail it.
       TaskRegistry.list_tasks()
-      refute_receive {:task_updated, _, _, _}, 0
+      refute_receive {:task_updated, ^task_id, _, _}, 0
 
-      fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      fetched = EvoGit.Store.get_task(store(), task_id)
       assert fetched.status == :running
       assert fetched.branch_name == nil
 
@@ -1431,10 +1472,10 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # result was lost with the entry, so the task is marked :completed with a
       # nil result and no branch_name.
       :ets.delete(:evogit_sched_meta, 1)
-      send(EvoGit.TaskRegistry, {:recheck_task, task_id})
+      send(TaskRegistry.server(), {:recheck_task, task_id})
       assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
 
-      resolved = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      resolved = EvoGit.Store.get_task(store(), task_id)
       assert resolved.status == :completed
       assert resolved.result == nil
       assert resolved.branch_name == nil
@@ -1445,7 +1486,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "recheck_cast_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1500,7 +1541,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       for i <- 1..10 do
         :ok =
-          EvoGit.Store.put_project(EvoGit.Store, %EvoGit.RecentProject{
+          EvoGit.Store.put_project(store(), %EvoGit.RecentProject{
             path: "/dated-#{unique}-#{i}",
             name: "D#{i}",
             last_opened_at: DateTime.add(now, -i * 86_400, :second)
@@ -1526,7 +1567,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       agent_id = System.unique_integer([:positive])
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1571,7 +1612,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cancel_single_broadcast_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1628,7 +1669,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       agent_id = System.unique_integer([:positive])
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :cancelling,
@@ -1677,7 +1718,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cancel_pending_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :pending,
@@ -1698,7 +1739,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.lease_expires_at == nil
 
       # start_task guard: a :cancelled (or :cancelling) task must never start.
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(TaskRegistry.server())
 
       assert {:reply, {:error, :cancelled}, ^state} =
                TaskRegistry.handle_call(
@@ -1711,7 +1752,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       cancelling_id = "cancel_start_guard_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: cancelling_id,
           type: :genesis,
           status: :cancelling,
@@ -1738,7 +1779,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         task_id = "cancel_invalid_#{unique}_#{idx}"
 
         :ok =
-          EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+          EvoGit.Store.put_task(store(), %TaskInfo{
             id: task_id,
             type: :genesis,
             status: status,
@@ -1762,7 +1803,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cancel_final_map_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :cancelling,
@@ -1806,7 +1847,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cancel_guard_error_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :cancelling,
@@ -1855,7 +1896,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.error == nil
 
       # Column round-trip via the raw Store read agrees.
-      store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      store_fetched = EvoGit.Store.get_task(store(), task_id)
       assert store_fetched.status == :cancelled
       assert store_fetched.error == nil
 
@@ -1868,7 +1909,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       task_id = "cancel_finalizing_guard_#{unique}"
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :cancelling,
@@ -1900,7 +1941,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       wrapper = spawn(fn -> Process.sleep(:infinity) end)
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1914,7 +1955,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       # Make the task "owned": inject a live wrapper into task_refs.
-      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      :sys.replace_state(TaskRegistry.server(), fn state ->
         %{
           state
           | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
@@ -1932,7 +1973,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # Force-killed tasks have no result.
       assert fetched.result == nil
 
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(TaskRegistry.server())
       refute Map.has_key?(state.task_refs, task_id)
     end
 
@@ -1942,7 +1983,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       wrapper = spawn(fn -> Process.sleep(:infinity) end)
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :running,
@@ -1956,7 +1997,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         })
 
       # Make the task "owned": inject a live wrapper into task_refs.
-      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      :sys.replace_state(TaskRegistry.server(), fn state ->
         %{
           state
           | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
@@ -1981,12 +2022,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              }
 
       # Column round-trip via the raw Store read agrees.
-      store_fetched = EvoGit.Store.get_task(EvoGit.Store, task_id)
+      store_fetched = EvoGit.Store.get_task(store(), task_id)
       assert store_fetched.status == :failed
       assert store_fetched.result == nil
       assert store_fetched.error == fetched.error
 
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(TaskRegistry.server())
       refute Map.has_key?(state.task_refs, task_id)
     end
 
@@ -1996,7 +2037,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       wrapper = spawn(fn -> Process.sleep(:infinity) end)
 
       :ok =
-        EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: task_id,
           type: :genesis,
           status: :cancelling,
@@ -2012,7 +2053,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       :ets.insert(:evogit_cancelling_tasks, {task_id})
       on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
 
-      :sys.replace_state(EvoGit.TaskRegistry, fn state ->
+      :sys.replace_state(TaskRegistry.server(), fn state ->
         %{
           state
           | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
@@ -2032,7 +2073,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # The brutal path cleans up the graceful-cancel marker.
       refute :ets.member(:evogit_cancelling_tasks, task_id)
 
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(TaskRegistry.server())
       refute Map.has_key?(state.task_refs, task_id)
     end
 
