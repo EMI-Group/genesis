@@ -20,6 +20,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       :update_winddown_timeout,
       :update_winddown_poll_ms,
       :system_samples_runner,
+      :system_samples_seed_retry_ms,
       :source_status_runner,
       :source_clone_runner,
       :source_update_runner
@@ -970,14 +971,19 @@ defmodule EvoDashWeb.SystemLiveTest do
         {:error, :not_implemented}
       end)
 
+      # Shorten the one-shot retry delay (production default 3000 ms) so the
+      # test does not sleep 3s waiting for it; the setup on_exit restores the
+      # seam.
+      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 30)
+
       {:ok, view, _html} = live(conn, ~p"/system")
 
       # The initial seed failed — the one-shot retry is scheduled.
       assert await_view_assign(view, :chart_seed_retried, true) == :ok
 
-      # The retry fires once (3s later), fails again, and gives up: the second
-      # failure schedules no further call (the failure handler is gated on
-      # chart_seed_retried), so no third call can ever be made.
+      # The retry fires once (30ms later), fails again, and gives up: the
+      # second failure schedules no further call (the failure handler is gated
+      # on chart_seed_retried), so no third call can ever be made.
       assert await_ets_count(table, :calls, 2, 6_000) == :ok
       assert :ets.lookup_element(table, :calls, 2) == 2
       assert assigns(view)[:chart_samples] == []
@@ -996,6 +1002,11 @@ defmodule EvoDashWeb.SystemLiveTest do
         end
       end)
 
+      # Shorten the one-shot retry delay (production default 3000 ms) so the
+      # test does not sleep 3s waiting for it; the setup on_exit restores the
+      # seam.
+      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 30)
+
       {:ok, view, _html} = live(conn, ~p"/system")
 
       # The initial seed failed — the one-shot retry is scheduled. 6s budget:
@@ -1004,7 +1015,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # can arrive late.
       assert await_view_assign(view, :chart_seed_retried, true, 6_000) == :ok
 
-      # The retry succeeds and fills the buffer (3s later).
+      # The retry succeeds and fills the buffer (30ms later).
       assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
     end
 
