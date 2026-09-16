@@ -36,7 +36,7 @@ Forcing global state: `EvoGit.TaskRegistryCase#setup` calls `Supervisor.terminat
 - `setup`: terminate-child + `start_supervised` a FRESH `EvoGit.Store` (`data_dir: <temp>/tasks.sqlite`) and FRESH `TaskRegistry` (same Store, `name: EvoGit.TaskRegistry`) — a fresh empty SQLite DB per test. `on_exit`: `File.rm_rf(root)` + `Supervisor.restart_child` of Store and TaskRegistry.
 - **Measured cost: ~30-35 ms of fixture per test** (a test that does nothing but read config still takes ~36 ms). This is the dominant cost of the sync pool in this directory.
 - Helpers: `trigger_cleanup!/0` (direct `Cleanup.cleanup_expired_tasks(EvoGit.Store)`), `cleanup_process/1`, `old_age_days/0` / `within_age_days/0` (read runtime config, fallback 14).
-- No `XDG_DATA_HOME` redirection — isolation comes entirely from the terminate-child + fresh-temp-DB pattern. (Root CONTEXT.md flags `config/test.exs` sets `:evo_dash, :data_dir` while `EvoGit.Store` reads `:evo_git, :data_dir` — the app-level guard is broken; only the per-test isolation pattern protects the production DB.)
+- Isolation comes from the terminate-child + fresh-temp-DB pattern: `task_registry_case.ex` gives each test a FRESH empty SQLite DB. The app-level guard is `config/test.exs` pinning `config :evo_git, :data_dir` to a unique per-run temp path.
 - Sync idiom: `update_task_status` is a cast → always `TaskRegistry.list_tasks()` (a call) afterwards to flush the mailbox before asserting.
 - Restart pattern: `stop_supervised(EvoGit.TaskRegistry)` then `start_supervised({TaskRegistry, task_store: EvoGit.Store, data_dir: data_dir, name: EvoGit.TaskRegistry})` — keep the SAME Store running (it is durable on disk) so data survives the registry restart.
 
