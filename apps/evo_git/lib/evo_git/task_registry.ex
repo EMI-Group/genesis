@@ -58,9 +58,12 @@ defmodule EvoGit.TaskRegistry do
   routes to whichever registry instance the calling process was pointed at.
   A task wrapper propagates its own registry name into the process dictionary
   of the spawned task process (see `EvoGit.TaskRegistry.TaskExecutor`), so code
-  running inside the wrapper calls back to the SAME instance. When the key is
-  unset the default registered singleton is used, keeping production behavior
-  unchanged.
+  running inside the wrapper calls back to the SAME instance. The registry's
+  OWN process also carries the key (`init/1` stores its registered name under
+  it), so in-process self-calls — the `{ref, result}` / `:DOWN` handlers that
+  cast terminal status — resolve to the same instance rather than the global
+  singleton. When the key is unset the default registered singleton is used,
+  keeping production behavior unchanged.
   """
   def server do
     Process.get(:evogit_task_registry_server) || __MODULE__
@@ -271,6 +274,13 @@ defmodule EvoGit.TaskRegistry do
     # process dictionary key — in-wrapper callbacks (MergeContext/ResumeContext)
     # then resolve back to THIS instance via `server/0`. Defaults to `__MODULE__`.
     server_name = Keyword.get(opts, :name, __MODULE__)
+
+    # The registry's OWN process must also carry the seam key: its {ref, result}
+    # / :DOWN handlers cast terminal statuses from INSIDE this process, and
+    # server/0 is read at CALL time — without this they would resolve to the
+    # global singleton instead of THIS instance. Unset elsewhere ⇒ server_name
+    # == __MODULE__, so production resolves exactly as before.
+    Process.put(:evogit_task_registry_server, server_name)
 
     state = %{
       data_dir: data_dir,
