@@ -33,12 +33,13 @@ The shared harness `apps/evo_git/test/support/task_registry_case.ex` starts a UN
 
 **`async: true` (5 fixture modules)** — they mutate no BEAM-global state (no app-env key, no shared `:evogit_*` ETS write, no global scheduler config) and every task id is per-test unique: `lease_heartbeat`, `cleanup`, `store_skip_and_log`, `merge_context`, `resume_context`. `store_skip_and_log_test.exs` additionally starts its OWN uniquely-named Stores and never uses the fixture's store/registry.
 
-**`async: false` (4 modules), each with the exact forcing global named in its `@moduledoc`**:
+**`async: false` (6 modules), each with the exact forcing global named in its `@moduledoc`**:
 
 - `persistence` — the `describe "recheck_task resolution"` `setup` does an app-global `:ets.delete_all_objects(:evogit_sched_meta)` (setup AND `on_exit`, creating the named table when absent), and the `describe "graceful cancel_task / force_kill_task"` tests seed the global `:evogit_sched_meta` / `:evogit_agent_state` / `:evogit_cancelling_tasks` tables and drive the GLOBAL `EvoGit.AgentScheduler`. The already-`async: true` sibling `agent_scheduler/subagents_test.exs` inserts/reads those same global tables, so a concurrent `delete_all_objects` would corrupt it.
 - `completion_logging` — `capture_info_logs/1` lowers the process-wide GLOBAL `Logger` level for the capture window.
 - `finalizing_watchdog` — `set_grace/1` mutates the app-env key `:evo_git, :finalizing_watchdog_grace_minutes`, read by every registry instance at each local-node `:finalizing` broadcast.
 - `task_executor_reflect` — `without_model_profiles/1` mutates the app-global `EvoGit.AgentScheduler`'s `:model_profiles` for the duration of each test.
+- `task_tmpdir_reclaim` + `task_tmpdir_stale_sweep` (both in `task_tmpdir_reclaim_test.exs`) — each `setup_all/1` mutates the process-wide `XDG_CONFIG_HOME` env var (read live by `EvoGit.Config.resolve/1`) to a temp dir carrying a `config.toml`, because a non-`:system` `[tmp] mode` is required to keep `EvoGit.TaskTmpdir` off the REAL `/tmp/genesis` (`EvoGit.Platform.tmp_paths/0` is hardcoded `["/tmp","/var/tmp"]`); the env var is restored in `on_exit`. Each `setup_all` asserts the resolved mode, so a misread fails the module instead of silently deleting system scratch dirs.
 
 Also `async: true`, no fixture (pure/isolated): `runtime_opts`, `diagnostics`, `merge_context_block`, `resume_context_block`.
 
