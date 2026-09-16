@@ -426,6 +426,15 @@ defmodule EvoGit.Sandbox.Bwrap do
       ([cwd] ++ write_paths ++ nix_paths ++ List.wrap(git_meta))
       |> Enum.flat_map(fn path -> ["--bind-try", path, path] end)
 
+    # The managed per-task tmpdir (when installed) is an ADDITIONAL writable
+    # bind alongside the always-present system tmp dirs (tmp_bind_args). It
+    # MUST precede the command (bwrap's GOption parser stops at the first
+    # non-option argument).
+    task_tmp_bind_args =
+      Enum.flat_map(List.wrap(Helpers.task_tmpdir_path()), fn path ->
+        ["--bind-try", path, path]
+      end)
+
     # Deny list: bind an EMPTY tmpfs over each sensitive home dir. Must come
     # AFTER the --ro-bind / / (and after the writable binds) so it overrides
     # them. bwrap mkdir_with_parents the destination, so non-existent dirs are
@@ -484,6 +493,7 @@ defmodule EvoGit.Sandbox.Bwrap do
       ] ++
       tmp_bind_args ++
       writable_bind_args ++
+      task_tmp_bind_args ++
       deny_args ++
       ["--chdir", cwd] ++
       env_setenv_args ++

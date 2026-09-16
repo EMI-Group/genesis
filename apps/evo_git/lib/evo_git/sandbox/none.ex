@@ -14,6 +14,13 @@ defmodule EvoGit.Sandbox.None do
   provided is that `run_with_partial/6` kills the entire process tree on
   timeout via `taskkill /T /F` (a bare `Task.shutdown/1` would only reach the
   direct child). See `run_with_partial/6` for details.
+
+  The managed per-task tmpdir (`EvoGit.TaskTmpdir` / `EvoGit.Sandbox.resolve_tmpdir/0`)
+  is used by the runtime for its own temp files, but this backend performs NO
+  `TMPDIR` override and NO writable-path gating: because there is no
+  filesystem isolation, sandboxed commands simply inherit the caller
+  environment and the user's own filesystem permissions — the managed per-task
+  directory is writable anyway when a task installs it.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour

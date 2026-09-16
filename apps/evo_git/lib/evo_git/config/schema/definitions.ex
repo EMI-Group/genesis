@@ -704,6 +704,27 @@ defmodule EvoGit.Config.Schema.Definitions do
           sub_category: nil,
           description:
             "Optional absolute path override for the runtime data/state directory (tasks.sqlite, logs, caches). Empty/nil = platform default ($XDG_DATA_HOME/genesis or equivalent). Takes effect at next boot."
+        },
+        # ── Temporary Directory ────────────────────────────────────────────
+        %{
+          key_path: [:tmp, :mode],
+          type: :atom,
+          default: :system,
+          validation: [in: [:system, :custom, :per_repo]],
+          category: :tmp,
+          sub_category: nil,
+          description:
+            "Per-task temporary directory mode for agents. :system (default) uses <system tmp>/genesis/task_<id> (honors the user's tmp configuration); :custom uses <[tmp] path>/genesis/task_<id>; :per_repo uses <task's primary repo>/.genesis/tmp/task_<id>."
+        },
+        %{
+          key_path: [:tmp, :path],
+          type: :string,
+          default: nil,
+          validation: [],
+          category: :tmp,
+          sub_category: nil,
+          description:
+            "Base path for the :custom tmp mode. Must be an absolute (or ~-relative) path. Empty/nil falls back to the system tmp."
         }
       ]
   end

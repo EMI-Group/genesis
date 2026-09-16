@@ -195,6 +195,23 @@ defmodule EvoGit.Sandbox.Helpers do
     end)
   end
 
+  @doc """
+  Returns the managed per-task tmpdir that must ALSO be granted write access
+  inside the sandbox, or `nil` when no per-task dir is installed on the
+  calling process (`EvoGit.TaskTmpdir.current/0`).
+
+  This is an ADDITIONAL writable path: the system tmp dirs
+  (`EvoGit.Platform.tmp_paths/0`) stay writable regardless. Shared by every
+  backend so the derivation lives in exactly one place.
+  """
+  @spec task_tmpdir_path() :: String.t() | nil
+  def task_tmpdir_path do
+    case EvoGit.TaskTmpdir.current() do
+      path when is_binary(path) and path != "" -> path
+      _ -> nil
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Git metadata resolution (linked-worktree gitdir: pointer handling)
   # ---------------------------------------------------------------------------

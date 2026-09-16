@@ -28,7 +28,22 @@ defmodule EvoGit.TaskRegistry.TaskExecutor do
   """
   def execute_task(task_type, opts, task_id, server \\ __MODULE__) do
     Process.put(:evogit_task_registry_server, server)
+    ensure_task_tmpdir(task_id, opts)
     do_execute_task(task_type, opts, task_id)
+  end
+
+  # Creates the shared per-task scratch directory at the SINGLE catch-all choke
+  # point (this public entry funnels every task type), AFTER the process-
+  # dictionary seam is installed and BEFORE `do_execute_task/3`, so the dir
+  # exists before any agent can spawn a tool regardless of task type.
+  # `EvoGit.TaskTmpdir.ensure/2` is idempotent and NEVER raises (a filesystem
+  # failure is logged and the path is still returned), so no try/rescue is
+  # warranted. `opts[:path]` is the task's PRIMARY repo path — deliberately
+  # `Keyword.get/3` so a nil/missing `:path` (repo-less/`:reflect` tasks) does
+  # not crash the wrapper and correctly falls back to system mode.
+  defp ensure_task_tmpdir(task_id, opts) do
+    _ = EvoGit.TaskTmpdir.ensure(task_id, Keyword.get(opts, :path))
+    :ok
   end
 
   defp do_execute_task(:genesis, opts, task_id) do

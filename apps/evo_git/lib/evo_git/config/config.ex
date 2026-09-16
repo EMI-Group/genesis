@@ -205,6 +205,12 @@ defmodule EvoGit.Config do
         new_cow = atomize_if_string(cow, [:auto, :enabled, :disabled])
         put_in(acc, [:git, :cow_worktree_creation], new_cow)
 
+      # Tmp directory mode: "system" | "custom" | "per_repo" -> :system | :custom | :per_repo
+      {:tmp, tmp_config}, acc when is_map(tmp_config) ->
+        mode = Map.get(tmp_config, :mode)
+        new_mode = atomize_if_string(mode, [:system, :custom, :per_repo])
+        put_in(acc, [:tmp, :mode], new_mode)
+
       # LLM model normalization:
       # 1. Flat [llm].model map → normalize to string or atomized map
       # 2. [[llm.models]] → normalize model maps in each profile; strings pass through

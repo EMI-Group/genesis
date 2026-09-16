@@ -162,11 +162,14 @@ defmodule EvoGit.Sandbox.Linux do
         []
       end
 
-    # Add cwd, the system temp folders, and the language caches
+    # Add cwd, the system temp folders, and the language caches. The managed
+    # per-task tmpdir (when installed) is an ADDITIONAL writable path alongside
+    # the always-present system tmp dirs (`Platform.tmp_paths/0`).
     read_write_paths =
       [cwd | Platform.tmp_paths()] ++
         write_paths ++
         nix_paths ++
+        List.wrap(Helpers.task_tmpdir_path()) ++
         if repo_root do
           [Path.join(repo_root, ".git")]
         else

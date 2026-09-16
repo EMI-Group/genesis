@@ -53,7 +53,7 @@ defmodule EvoGit.CommandApproval do
   ## Approval-window / tool-timeout interplay
 
   Level-2/3 `run_command` tool calls block on `request/5`. The tool-dispatch
-  layer (`EvoGit.Agent.ToolDispatch.execute_tool_with_timeout/7`) detects
+  layer (`EvoGit.Agent.ToolDispatch.execute_tool_with_timeout/8`) detects
   approval-requiring commands up front and gives them a per-call timeout of
   `max(configured, approval window + 30s)`, capped by the scheduler's
   `max_tool_timeout` (30 min). The effective approval ceiling is therefore
