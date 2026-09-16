@@ -138,32 +138,12 @@ defmodule EvoDashWeb.NodeAwareTest do
     task
   end
 
-  # Sets up an isolated Store + TaskRegistry (production children are terminated
-  # so they don't auto-restart during the test). Used by describe blocks that
-  # need a real TaskRegistry backing the local node path.
+  # Sets up an isolated Store + TaskRegistry against a temp sqlite file. The
+  # helper owns teardown: it stops the isolated pair FIRST, then restores and
+  # VERIFIES the production children. Used by describe blocks that need a real
+  # TaskRegistry backing the local node path.
   def setup_isolated_registry(_context) do
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
-    unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_node_aware_#{unique}")
-    File.mkdir_p!(root)
-    sqlite_path = Path.join(root, "tasks.sqlite")
-
-    store = EvoGit.Store
-    start_supervised!({EvoGit.Store, data_dir: sqlite_path})
-
-    start_supervised!(
-      {EvoGit.TaskRegistry, task_store: store, data_dir: root, name: EvoGit.TaskRegistry}
-    )
-
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
-
-    :ok
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_aware")
   end
 
   # Isolates the config dir via XDG_CONFIG_HOME so EvoGit.RemoteConnections

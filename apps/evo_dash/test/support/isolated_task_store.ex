@@ -139,16 +139,25 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   end
 
   defp stop_isolated(sup) do
-    case Process.whereis(sup) do
-      nil -> :ok
-      _pid -> Supervisor.stop(sup, :normal, 30_000)
+    if isolated_alive?(sup) do
+      Supervisor.stop(sup, :normal, 30_000)
+    else
+      :ok
     end
   catch
-    # The isolated supervisor may already be gone (test process died first, or
-    # an earlier teardown step stopped it). Either way the names are released,
+    # The isolated supervisor may already be gone (it is linked to the test
+    # process, which ExUnit has already terminated when `on_exit` runs, or an
+    # earlier teardown step stopped it). Either way the names are released,
     # which is all this step exists to guarantee.
     :exit, _ -> :ok
   end
+
+  # `Supervisor.start_link/2` returns a PID (not a registered name), so the
+  # aliveness probe must not be `Process.whereis/1` — that raises
+  # "1st argument: not an atom" on a PID. Support both shapes so this helper is
+  # total.
+  defp isolated_alive?(sup) when is_pid(sup), do: Process.alive?(sup)
+  defp isolated_alive?(name) when is_atom(name), do: Process.whereis(name) != nil
 
   defp restore_production! do
     restart_child!(EvoGit.Store)

@@ -2,35 +2,18 @@ defmodule EvoDashWeb.TasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
-  alias EvoGit.TaskRegistry
   alias EvoGit.TaskInfo
 
   setup do
-    # Terminate production children to prevent auto-restarts and use isolated stores.
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
-    unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_tasks_live_#{unique}")
-    File.mkdir_p!(root)
-    sqlite_path = Path.join(root, "tasks.sqlite")
-
-    start_supervised({EvoGit.Store, data_dir: sqlite_path})
-
-    start_supervised(
-      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
-    )
+    # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
+    # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
+    # production children (no start_supervised/on_exit racing).
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("tasks_live")
 
     # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
     # terminated by the Store/TaskRegistry isolation above — reset it so one
     # test's sidebar snapshot never leaks into the next.
     EvoDash.ActiveTasks.reset()
-
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
 
     :ok
   end

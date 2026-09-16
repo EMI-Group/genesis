@@ -6,6 +6,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
   alias EvoGit.TaskInfo
 
   setup do
+    # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
+    # isolation of its own), so fail loudly at the source if a prior suite
+    # leaked an isolated instance instead of silently reading a foreign DB.
+    EvoDash.Test.IsolatedTaskStore.assert_production!()
+
     # Test-seam stub (read by EvoDashWeb.ReviewLive.MergeCheck.start/4): the
     # auto-spawned async merge check resolves to :clean immediately and never
     # touches the file system, so mounted pages can't perform real git

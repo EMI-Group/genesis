@@ -21,25 +21,14 @@ defmodule EvoDashWeb.HomeLiveTest do
   import Phoenix.LiveViewTest
 
   alias EvoGit.TaskInfo
-  alias EvoGit.TaskRegistry
 
   setup do
-    # Isolated Store + TaskRegistry (pattern from tasks_live_test): terminate
-    # the production children so this suite uses fresh temp sqlite stores and
-    # the reflect tasks started by send_message never leak into other suites.
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
-    unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_home_live_#{unique}")
-    File.mkdir_p!(root)
-    sqlite_path = Path.join(root, "tasks.sqlite")
-
-    start_supervised({EvoGit.Store, data_dir: sqlite_path})
-
-    start_supervised(
-      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
-    )
+    # Isolated Store + TaskRegistry (pattern from tasks_live_test). The helper
+    # owns teardown: it stops the isolated pair FIRST, then restores and
+    # VERIFIES the production children, so the reflect tasks started by
+    # send_message never leak into other suites and the globals are always
+    # deterministically restored afterwards.
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("home_live")
 
     # Fail-fast scheduler config: run_agent clause (a) (agent_scheduler.ex)
     # rejects every spawn synchronously with {:error, :llm_not_configured} when
@@ -105,16 +94,6 @@ defmodule EvoDashWeb.HomeLiveTest do
       end
 
       File.rm_rf!(tmp_config)
-
-      # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
-      try do
-        File.rm_rf(root)
-      rescue
-        _ -> :ok
-      end
-
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
     :ok

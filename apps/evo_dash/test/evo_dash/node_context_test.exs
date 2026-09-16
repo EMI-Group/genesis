@@ -2,29 +2,12 @@ defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: false
 
   alias EvoGit.TaskInfo
-  alias EvoGit.TaskRegistry
 
   setup do
-    # Terminate production children to prevent auto-restarts and use isolated stores.
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
-
-    unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_node_context_#{unique}")
-    File.mkdir_p!(root)
-    sqlite_path = Path.join(root, "tasks.sqlite")
-
-    start_supervised({EvoGit.Store, data_dir: sqlite_path})
-
-    start_supervised(
-      {TaskRegistry, task_store: EvoGit.Store, data_dir: root, name: EvoGit.TaskRegistry}
-    )
-
-    on_exit(fn ->
-      File.rm_rf(root)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
-      Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
-    end)
+    # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
+    # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
+    # production children.
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_context")
 
     :ok
   end
