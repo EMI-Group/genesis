@@ -19,6 +19,8 @@ Nix build support for Genesis. The primary entry points are the flake at the rep
 - The Nix expressions (`flake.nix`, `genesis.nix`, `genesis-desktop.nix`) live at the repository ROOT, not here.
 
 - **No `cargoHash` maintenance**: `genesis-desktop.nix` vendors Rust deps via `cargoLock.lockFile = ./desktop/src-tauri/Cargo.lock` — the vendor store path derives from the lock file, so updating Cargo.lock never requires a hash edit. Only git deps would need `cargoLock.outputHashes`. Both derivations read `version` from the repo-root `VERSION` file (`lib.fileContents ./VERSION`) — never hardcode it. The only flake hash that still needs manual updates is `mixFodDeps.hash` in `genesis.nix` (when `mix.lock` changes).
+- Refreshing `mixFodDeps.hash` after a `mix deps.update --all` does NOT require a full `nix build`: set `hash = lib.fakeHash;`, then locate and realize only the dependency FOD — `nix eval --raw .#default.drvPath` → `nix-store -q --references <drv> | grep -i mix-deps` → `nix-store --realise <fod.drv>` — whose hash-mismatch error prints the correct `sha256-...` value, and whose exit 0 after pasting it in verifies the new hash.
+- Also check the `precompiled_nifs` entries when updating deps: a version bump of `xqlite` / `mdex_native` in `mix.lock` requires updating their pinned `fetchurl` URLs + hashes too (the NIF version suffix, e.g. `nif-2.17`, tracks the OTP ABI).
 - Scripts in this directory are designed to run inside the `nix develop` shell where `curl`, `git`, and `rg` are available.
 - `bundle-vendor.sh` is only needed for the manual `nix develop` → `mix release` workflow. The `nix build` path handles vendor binaries via the derivation's `postInstall` hook.
 
