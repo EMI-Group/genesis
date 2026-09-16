@@ -1,11 +1,18 @@
 defmodule EvoGit.Agent.ToolsTest do
   @moduledoc """
-  `async: false` — the web-search tests mutate the BEAM-global `XDG_CONFIG_HOME`
-  env var (via the private `with_isolated_config/1` helper) and the `:req_llm`
-  application env, both of which are observable by concurrently running modules.
+  `async: true` — mutates no BEAM-global state.
+
+  Every test here is repo-local or process-local: it drives `EvoGit.Agent.Tools`
+  against per-test `:tmp_dir` temp directories (any `Process.put/2` only touches
+  the calling test process) and exercises pure schema/introspection functions.
+  The few config-reading tests consume the resolved config read-only and assert
+  only config-value-independent facts (tool-name presence/absence). The tests
+  that DO mutate BEAM-global state — the `XDG_CONFIG_HOME` redirect via
+  `with_isolated_config/1` and the `:req_llm` application-env mutations — live
+  in the sibling `EvoGit.Agent.ToolsConfigTest` module.
   """
 
-  use ExUnit.Case
+  use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools
 
   @moduletag :tmp_dir
@@ -860,22 +867,6 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "search_web in schemas" do
-    test "search_web is NOT included in schemas/0 by default (config disabled)" do
-      with_isolated_config(fn ->
-        schemas = Tools.schemas()
-        names = Enum.map(schemas, & &1.name)
-        refute "search_web" in names
-      end)
-    end
-
-    test "search_web is NOT included in read_only_schemas/0 by default (config disabled)" do
-      with_isolated_config(fn ->
-        schemas = Tools.read_only_schemas()
-        names = Enum.map(schemas, & &1.name)
-        refute "search_web" in names
-      end)
-    end
-
     test "curl is NOT included in read_only_schemas/0 (removed — write-capable tool)" do
       names = Enum.map(Tools.read_only_schemas(), & &1.name)
       refute "curl" in names
@@ -960,41 +951,7 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "EvoGit.Config.tools_search_enabled?/0" do
-    test "returns false by default" do
-      with_isolated_config(fn ->
-        refute EvoGit.Config.tools_search_enabled?()
-      end)
-    end
-
-    test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
-      with_isolated_config(fn ->
-        ReqLLM.put_key(:tavily_api_key, "test-key")
-
-        try do
-          refute EvoGit.Config.tools_search_enabled?()
-        after
-          Application.delete_env(:req_llm, :tavily_api_key)
-        end
-      end)
-    end
-  end
-
   describe "WebSearch.execute/3" do
-    test "returns error when API key is missing" do
-      # Ensure no API key is set
-      original_reqllm_key = Application.get_env(:req_llm, :tavily_api_key)
-      Application.delete_env(:req_llm, :tavily_api_key)
-
-      try do
-        result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test query"}, nil, nil)
-        assert result =~ "Error: API key for search provider is not set"
-      after
-        if original_reqllm_key,
-          do: Application.put_env(:req_llm, :tavily_api_key, original_reqllm_key)
-      end
-    end
-
     test "returns error for missing query argument" do
       result = EvoGit.Agent.Tools.WebSearch.execute(%{}, nil, nil)
       assert {:error, msg} = result
@@ -1103,6 +1060,77 @@ defmodule EvoGit.Agent.ToolsTest do
 
   defp with_no_foreign_repos(tmp_dir, fun) do
     with_repo_role([], EvoGit.Core.ForeignRepo.primary_id(), tmp_dir, fun)
+  end
+end
+
+defmodule EvoGit.Agent.ToolsConfigTest do
+  @moduledoc """
+  `async: false` — FORCED by BEAM-global mutation: these web-search
+  config/isolation tests redirect the process-wide `XDG_CONFIG_HOME` env var
+  (via the private `with_isolated_config/1` helper) and mutate the `:req_llm`
+  application env (`ReqLLM.put_key(:tavily_api_key, ...)` /
+  `Application.put_env/3` / `Application.delete_env/2` on `:tavily_api_key`),
+  both observable by any concurrently running module. Every other test lives in
+  the sibling `EvoGit.Agent.ToolsTest` module, which mutates no BEAM-global
+  state and runs `async: true`.
+  """
+
+  use ExUnit.Case, async: false
+
+  alias EvoGit.Agent.Tools
+
+  describe "search_web in schemas" do
+    test "search_web is NOT included in schemas/0 by default (config disabled)" do
+      with_isolated_config(fn ->
+        schemas = Tools.schemas()
+        names = Enum.map(schemas, & &1.name)
+        refute "search_web" in names
+      end)
+    end
+
+    test "search_web is NOT included in read_only_schemas/0 by default (config disabled)" do
+      with_isolated_config(fn ->
+        schemas = Tools.read_only_schemas()
+        names = Enum.map(schemas, & &1.name)
+        refute "search_web" in names
+      end)
+    end
+  end
+
+  describe "EvoGit.Config.tools_search_enabled?/0" do
+    test "returns false by default" do
+      with_isolated_config(fn ->
+        refute EvoGit.Config.tools_search_enabled?()
+      end)
+    end
+
+    test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
+      with_isolated_config(fn ->
+        ReqLLM.put_key(:tavily_api_key, "test-key")
+
+        try do
+          refute EvoGit.Config.tools_search_enabled?()
+        after
+          Application.delete_env(:req_llm, :tavily_api_key)
+        end
+      end)
+    end
+  end
+
+  describe "WebSearch.execute/3" do
+    test "returns error when API key is missing" do
+      # Ensure no API key is set
+      original_reqllm_key = Application.get_env(:req_llm, :tavily_api_key)
+      Application.delete_env(:req_llm, :tavily_api_key)
+
+      try do
+        result = EvoGit.Agent.Tools.WebSearch.execute(%{"query" => "test query"}, nil, nil)
+        assert result =~ "Error: API key for search provider is not set"
+      after
+        if original_reqllm_key,
+          do: Application.put_env(:req_llm, :tavily_api_key, original_reqllm_key)
+      end
+    end
   end
 
   # Runs `fun` with XDG_CONFIG_HOME pointed at a fresh temp directory that
