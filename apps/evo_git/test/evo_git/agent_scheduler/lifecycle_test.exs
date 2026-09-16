@@ -786,7 +786,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
   end
 
-  describe "store_sub_result/3 — 3-level foreign-repo-commits roll-up" do
+  describe "store_sub_result/3,4 — 3-level foreign-repo-commits roll-up" do
     # Seeds a SchedMeta row for an agent that has spawned subagents, carrying
     # the given pre-accumulated foreign repo commits.
     defp frc_sched_meta(agent_id, sub_indices, frc) do
@@ -824,7 +824,15 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
            result: "exec done",
            commit_sha: nil,
            foreign_repo_commits: %{"foreign1" => "exec_sha"}
-         }}
+         }},
+        %AgentSpec{
+          context_node: context_node(),
+          phylo_node: phylo_node(),
+          agent_module: EvoGit.Agents.Executor,
+          objective: "foreign work",
+          repo_id: "foreign1",
+          foreign_repos: [%{id: "foreign1", root: "/tmp/foreign1", writable: true}]
+        }
       )
 
       {:ok, agent2_meta} = get_sched_meta(agent2)
@@ -842,7 +850,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
            foreign_repo_commits: %{"foreign1" => "exec_sha"}
          }}
 
-      Subagents.store_sub_result(agent1, agent2, result2)
+      Subagents.store_sub_result(agent1, agent2, result2, %AgentSpec{
+        context_node: context_node(),
+        phylo_node: phylo_node(),
+        agent_module: EvoGit.Agents.Executor,
+        objective: "foreign work",
+        repo_id: "foreign2",
+        foreign_repos: [%{id: "foreign2", root: "/tmp/foreign2", writable: true}]
+      })
 
       {:ok, agent1_meta} = get_sched_meta(agent1)
       # Map.merge is child-wins: agent2's subtree view (carrying agent3's deeper
