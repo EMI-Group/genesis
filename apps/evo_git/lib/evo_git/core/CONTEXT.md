@@ -50,6 +50,8 @@ Struct: `repo`, `base_commit`, `current_commit`.
 | `list_files/1` | Lists all files at the node's commit — used by `EvoGit.Task` (`diagnose/3` file tree) |
 | `list_immediate_children/2` | Lists direct children of a path at the node's commit — used by `phylo_graph_node_test.exs` |
 
+`base_commit`/`current_commit`/`repo` NEVER reach prompt text: the SHAs live only in scheduler ETS (`AgentState.phylo_node`, updated by `AgentScheduler.update_phylo_node/2`) and are consumed by git operations + the worktree checkout (`Worktrees.create_worktree` uses `spec.phylo_node.current_commit`); `PhyloGraphNode.new/2` (`phylo_graph_node.ex:23-24`) is the only constructor and `repo` is a repo/worktree path used solely for git calls (`Git.merge_base`/`status`/`rev_parse`/`run`). The only place a SHA is interpolated into text is the `mutate/3` commit MESSAGE in `task.ex:35` (`"(base: #{binary_part(phylo_node.base_commit, 0, 7)})"`) — git commit text, not a prompt.
+
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 
 Struct: `id` (string), `root` (absolute path), `description` (string | nil),
