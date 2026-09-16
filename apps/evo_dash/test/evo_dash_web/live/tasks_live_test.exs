@@ -42,15 +42,28 @@ defmodule EvoDashWeb.TasksLiveTest do
     id
   end
 
-  # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
-  defp flush_tasks_load(view, timeout \\ 5000),
-    do:
-      EvoDashWeb.TestHelpers.flush_loading(
-        view,
-        "Loading tasks...",
-        "timed out waiting for the async task load to finish",
-        timeout
-      )
+  # Drains the async page load (via the shared EvoDashWeb.TestHelpers.flush_loading/4)
+  # AND synchronizes the test proxy before returning: flush_loading stops as soon
+  # as the "Loading tasks..." marker leaves the proxy's cached tree, but that tree
+  # is patched by channel diffs as they arrive, so a caller may otherwise assert
+  # against a tree read mid-diff. Await the cleared :tasks_loading assign on the
+  # socket (a synchronous :sys.get_state round-trip, the file's wait_until idiom)
+  # and re-render so every call site reads a fully-applied page-load result.
+  defp flush_tasks_load(view, timeout \\ 5000) do
+    EvoDashWeb.TestHelpers.flush_loading(
+      view,
+      "Loading tasks...",
+      "timed out waiting for the async task load to finish",
+      timeout
+    )
+
+    wait_until(
+      fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end,
+      timeout
+    )
+
+    render(view)
+  end
 
   # Renders only the task-list container (#tasks-list), scoping list-content
   # assertions away from the sidebar, which now also lists completed tasks.
@@ -616,20 +629,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Loading tasks..."
       refute html =~ "async visible task"
 
-      flush_tasks_load(view)
-
-      # flush_tasks_load returns as soon as "Loading tasks..." leaves the
-      # proxy's cached tree, but that tree is patched by channel diffs as they
-      # arrive. Await the cleared :tasks_loading assign on the socket (a
-      # synchronous :sys.get_state round-trip, as elsewhere in this file) and
-      # re-render so the list + count + pager assertions below all read the
-      # same fully-applied page-load result.
-      wait_until(fn ->
-        state = :sys.get_state(view.pid)
-        state.socket.assigns[:tasks_loading] == false
-      end)
-
-      html = render(view)
+      html = flush_tasks_load(view)
 
       assert html =~ "async visible task"
       assert html =~ "1 task found"
