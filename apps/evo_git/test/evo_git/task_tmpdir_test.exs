@@ -200,9 +200,9 @@ defmodule EvoGit.TaskTmpdirTest do
       write_tmp_config!("custom", base)
       root = Path.join(base, "genesis")
 
-      # "task_" <> "../evil" == "task_../evil": the literal "task_.." component
-      # makes the resolved dir sit one level BELOW a sibling of the root, so the
-      # containment guard must refuse the deletion.
+      # "task_" <> "../evil" == "task_../evil": the literal component is not ".."
+      # (it is "task_.."), so the resolved dir is <root>/task_../evil whose parent
+      # is <root>/task_.. — not the managed root — so the containment guard refuses.
       evil = Path.join(root, "task_../evil")
       File.mkdir_p!(evil)
       File.write!(Path.join(evil, "keep.txt"), "keep")
@@ -225,6 +225,54 @@ defmodule EvoGit.TaskTmpdirTest do
 
       assert :ok = TaskTmpdir.reclaim(1, nil)
       assert File.exists?(Path.join(outside_dir, "keep.txt"))
+    end
+
+    test "refuses a task_id that resolves to the managed root itself" do
+      base = scratch_dir!()
+      write_tmp_config!("custom", base)
+      root = Path.join(base, "genesis")
+
+      # task_id "/.." → dir_name "task_/.." → <root>/task_/.. , which Path.expand
+      # collapses to <root> itself. The `expanded_dir == expanded_root` branch
+      # (together with the sibling container/basename checks) is what keeps
+      # reclaim/2 from File.rm_rf-ing the managed root and everything in it.
+      # <root>/task_ is created because the UN-expanded <root>/task_/.. is what
+      # File.rm_rf would resolve — a real intermediate component is required for
+      # the deletion to reach the root, so the test proves the GUARD, not ENOENT.
+      File.mkdir_p!(root)
+      File.write!(Path.join(root, "marker.txt"), "keep")
+      File.mkdir_p!(Path.join(root, "task_"))
+
+      # A legitimate live task dir under the same root must survive untouched.
+      File.mkdir_p!(Path.join(root, "task_5"))
+      File.write!(Path.join(root, "task_5/keep.txt"), "keep")
+
+      assert :ok = TaskTmpdir.reclaim("/..", nil)
+      assert File.dir?(root)
+      assert File.exists?(Path.join(root, "marker.txt"))
+      assert File.exists?(Path.join(root, "task_5/keep.txt"))
+    end
+
+    test "refuses a task_id whose resolved basename is not task_-prefixed" do
+      base = scratch_dir!()
+      write_tmp_config!("custom", base)
+      root = Path.join(base, "genesis")
+
+      # task_id "/../victim" → dir_name "task_/../victim" → <root>/task_/../victim ,
+      # which Path.expand collapses to <root>/victim. Its parent IS the managed
+      # root, so only the `basename starts_with "task_"` guard stops reclaim/2
+      # from deleting the unrelated <root>/victim directory.
+      # <root>/task_ is created so the UN-expanded <root>/task_/../victim path is
+      # OS-resolvable — proving the GUARD refuses, not merely that a
+      # nonexistent path makes File.rm_rf fail with ENOENT.
+      File.mkdir_p!(root)
+      File.mkdir_p!(Path.join(root, "task_"))
+      File.mkdir_p!(Path.join(root, "victim"))
+      File.write!(Path.join(root, "victim/keep.txt"), "keep")
+
+      assert :ok = TaskTmpdir.reclaim("/../victim", nil)
+      assert File.exists?(Path.join(root, "victim/keep.txt"))
+      assert File.dir?(root)
     end
   end
 
