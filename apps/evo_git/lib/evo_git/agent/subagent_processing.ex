@@ -73,11 +73,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
     else
       {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
       parent_commit = agent_state.phylo_node.current_commit
+      parent_repo_id = agent_state.repo_id
 
-      # Separate same-repo and cross-repo results
-      # Cross-repo subagents commit to their own repo, no merge needed into parent
+      # Separate same-repo and cross-repo results.
+      # "Same repo" means the child's repo id equals the parent's repo id — a
+      # foreign-repo parent's own children are same-repo too. Cross-repo
+      # subagents commit to their own repo, no merge needed into parent.
       {successful_shas, cross_repo_details} =
-        collect_mergeable_results(subagent_specs, results)
+        collect_mergeable_results(subagent_specs, results, parent_repo_id)
 
       repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
@@ -93,7 +96,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         )
 
       # Only delete branches for same-repo subagents
-      delete_same_repo_branches(subagent_specs, results, repo_path)
+      delete_same_repo_branches(subagent_specs, results, repo_path, parent_repo_id)
 
       # Sync current_commit after subagents complete (parent worktree state may have changed)
       sync_commit_fn.(state)
@@ -127,6 +130,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
       when is_list(indexed_calls) and is_map(foreign_repo_commits) do
     {:ok, parent_state} = AgentScheduler.get_agent_state(state.agent_id)
     repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
+    parent_repo_id = parent_state.repo_id
 
     # Get foreign repos from the agent's inherited state (per-task, not global)
     foreign_repos = state.foreign_repos
@@ -150,8 +154,13 @@ defmodule EvoGit.Agent.SubagentProcessing do
         end
 
       # Determine if this is a cross-repo delegation (absolute path) or same-repo (relative)
-      case resolve_subagent_path(raw_path, repo_path, foreign_repos) do
+      case resolve_subagent_path(raw_path, repo_path, foreign_repos, parent_repo_id) do
         {:ok, target_repo_id, target_repo_root, resolved_rel_path} ->
+          # A child is "same repo" when it targets the PARENT's own repo — a
+          # relative path always does, and an absolute path may when the parent
+          # itself runs inside a foreign repo.
+          same_repo? = target_repo_id == parent_repo_id
+
           # If the LLM passed a file path, use its parent directory instead
           path =
             if File.regular?(Path.join(target_repo_root, resolved_rel_path)) do
@@ -162,19 +171,21 @@ defmodule EvoGit.Agent.SubagentProcessing do
               resolved_rel_path
             end
 
-          # Load context node with the target repo_id
+          # Load context node: same-repo children load against the parent's
+          # worktree with the parent's repo id; cross-repo children load against
+          # the target repo root with the target repo id.
           sub_context_node =
-            if target_repo_id == "primary" do
-              ContextNode.load(path, repo_path)
+            if same_repo? do
+              ContextNode.load(path, repo_path, parent_repo_id)
             else
               # For foreign repos, use the foreign repo root as the base
               ContextNode.load(path, target_repo_root, target_repo_id)
             end
 
-          # For foreign repo subagents, we need the foreign repo's starting commit (the
+          # For cross-repo subagents, we need the target repo's starting commit (the
           # primary repo's commit SHA doesn't exist in the foreign repo's git database).
           # The foreign repos list is threaded through so the per-repo `base_sha`
-          # starting commit can be honored (see build_subagent_phylo_node/7).
+          # starting commit can be honored (see build_subagent_phylo_node/8).
           case build_subagent_phylo_node(
                  target_repo_id,
                  commit_id,
@@ -182,7 +193,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
                  target_repo_root,
                  foreign_repo_commits,
                  parent_state,
-                 foreign_repos
+                 foreign_repos,
+                 same_repo?
                ) do
             {:ok, sub_phylo_node} ->
               AgentSpec.new(sub_context_node, sub_phylo_node, mod, objective,
@@ -208,7 +220,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
   `{:error, error_message}`.
 
   Absolute paths are resolved against foreign repos first, then the primary repo.
-  Relative paths stay within the parent agent's repo.
+  Relative paths stay within the parent agent's repo — they resolve to the PARENT's
+  repo id (`parent_repo_id`), so a parent running inside a foreign repo delegates
+  same-repo children with that foreign repo's id rather than `"primary"`.
 
   For foreign repos, agents are encouraged to use the repository root path
   so subagents can discover the codebase layout via CONTEXT.md routing tables.
@@ -219,9 +233,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
   @spec resolve_subagent_path(
           raw_path :: String.t() | nil,
           repo_path :: String.t(),
-          foreign_repos :: [ForeignRepo.t()]
+          foreign_repos :: [ForeignRepo.t()],
+          parent_repo_id :: String.t()
         ) :: {:ok, String.t(), String.t(), String.t()} | {:error, String.t()}
-  def resolve_subagent_path(raw_path, repo_path, foreign_repos) do
+  def resolve_subagent_path(raw_path, repo_path, foreign_repos, parent_repo_id \\ "primary") do
     if ForeignRepo.absolute_path?(raw_path) do
       # Absolute path — resolve to the correct foreign repo, falling back to primary
       case ForeignRepo.resolve_path(foreign_repos, raw_path) do
@@ -258,9 +273,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
           end
       end
     else
-      # Relative path — same repo as parent
+      # Relative path — same repo as parent, so it carries the PARENT's repo id
       normalized = ContextNode.normalize_relpath(raw_path)
-      {:ok, "primary", repo_path, normalized}
+      {:ok, parent_repo_id, repo_path, normalized}
     end
   end
 
@@ -449,14 +464,16 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   # Separates subagent results into same-repo commit SHAs (mergeable into the
   # parent) and cross-repo details (committed to their own repo, no merge needed).
+  # A child is same-repo when its repo id equals the PARENT's repo id — so a
+  # foreign-repo parent's own children are mergeable into its worktree.
   # Returns `{successful_shas, cross_repo_details}`.
-  defp collect_mergeable_results(subagent_specs, results) do
+  defp collect_mergeable_results(subagent_specs, results, parent_repo_id) do
     {same_repo_shas, cross_repo_details} =
       Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result},
                                                                   {shas, details} ->
         case result do
           {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
-            if spec.repo_id == "primary" do
+            if spec.repo_id == parent_repo_id do
               {[sha | shas], details}
             else
               {shas, [{spec.repo_id, sha} | details]}
@@ -498,11 +515,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
     end
   end
 
-  # Deletes branches of successful same-repo subagents.
-  defp delete_same_repo_branches(subagent_specs, results, repo_path) do
+  # Deletes branches of successful same-repo subagents (repo id == parent's).
+  defp delete_same_repo_branches(subagent_specs, results, repo_path, parent_repo_id) do
     same_repo_branches =
       for {spec, {:ok, %Result{branch: branch}}} <- Enum.zip(subagent_specs, results),
-          spec.repo_id == "primary" do
+          spec.repo_id == parent_repo_id do
         branch
       end
 
@@ -582,14 +599,18 @@ defmodule EvoGit.Agent.SubagentProcessing do
   # a user-provided commit_id does not exist in the repository (early validation so the
   # LLM gets a clear, actionable error instead of a generic retry-exhausted crash).
   defp build_subagent_phylo_node(
-         "primary",
+         _target_repo_id,
          commit_id,
          repo_path,
          _target_repo_root,
          _foreign_repo_commits,
          parent_state,
-         _foreign_repos
+         _foreign_repos,
+         true
        ) do
+    # Same repo as the parent (a relative-path child, or an absolute-path child
+    # pointing back into the parent's own repo): base off the parent's worktree and
+    # its live current commit.
     if commit_id do
       case Git.rev_parse(repo_path, commit_id) do
         {:ok, _sha} ->
@@ -623,9 +644,10 @@ defmodule EvoGit.Agent.SubagentProcessing do
          target_repo_root,
          foreign_repo_commits,
          _parent_state,
-         foreign_repos
+         foreign_repos,
+         false
        ) do
-    # Foreign repo subagent: resolve the phylo node's starting commit with this
+    # Cross-repo subagent: resolve the phylo node's starting commit with this
     # precedence:
     #   1. The foreign repo entry's per-repo `base_sha` (the task-level starting
     #      commit for this repo, when non-nil) — resolved in the foreign repo.
