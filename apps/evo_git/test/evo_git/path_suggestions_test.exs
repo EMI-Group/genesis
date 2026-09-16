@@ -112,13 +112,35 @@ defmodule EvoGit.PathSuggestionsTest do
         assert Enum.all?(results, &String.starts_with?(&1, "//wsl.localhost"))
       end
 
-      # On POSIX hosts `//tmp` resolves to `/tmp`, so this genuinely lists
-      # with the `//` prefix intact; on Windows the share is missing → [].
-      # Either way the marker must survive expansion — a plain `Path.expand`
-      # would collapse it to `/tmp/...` and fail the prefix assertion.
-      results = PathSuggestions.suggest("//tmp/")
+      # On POSIX hosts a `//`-prefixed path resolves to the same target as a
+      # single-slash one, so this genuinely drives the listing — but it is run
+      # against a CONTROLLED fixture directory, never the host's real `/tmp`.
+      # The shared `/tmp` made the assertion environment-dependent: on a box
+      # whose `/tmp` held ~28k entries the listing plus its per-entry
+      # `File.dir?/1` stats exceeded ExUnit's 60s default and the test timed
+      # out. The fixture keeps the exact `//<base>/` shape the test exists to
+      # pin while bounding the listing to two known entries.
+      unc_base = tmp_dir()
+      on_exit(fn -> File.rm_rf!(unc_base) end)
+
+      File.mkdir_p!(Path.join(unc_base, "UncDir"))
+      File.write!(Path.join(unc_base, "unc_file.txt"), "")
+
+      # `//` + the tmp dir WITHOUT its own leading separator ⇒ a two-slash
+      # input (the same shape as `//tmp/`), so the double-separator marker is
+      # the only thing under test.
+      unc_input = "//" <> String.replace_leading(unc_base, "/", "") <> "/"
+      results = PathSuggestions.suggest(unc_input)
       assert is_list(results)
-      assert Enum.all?(results, &String.starts_with?(&1, "//tmp/"))
+
+      if not match?({:win32, _}, :os.type()) do
+        # The double-separator root resolved to the fixture, so the listing
+        # really ran — and every suggestion kept the `//` marker. A plain
+        # `Path.expand` would collapse it to `/tmp/...` and fail BOTH
+        # assertions.
+        assert Enum.map(results, &Path.basename/1) == ["UncDir", "unc_file.txt"]
+        assert Enum.all?(results, &String.starts_with?(&1, "//"))
+      end
 
       # Backslash-form UNC input is used as-is on non-Windows hosts (never
       # cwd-anchored); if it resolves, the `\\` prefix must survive too.
