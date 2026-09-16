@@ -464,7 +464,10 @@
                       >
                         <div class="divide-y divide-base-300">
                           <%= for {entry, index} <- Enum.with_index(history_entries) do %>
-                            <div class="p-3 hover:bg-base-300/40">
+                            <div
+                              id={"agent-history-entry-#{@selected_agent_id}-#{index}"}
+                              class="p-3 hover:bg-base-300/40"
+                            >
                               <div class="flex flex-wrap items-center gap-2 mb-1">
                                 <.icon
                                   name={history_entry_icon(entry.type)}

@@ -686,25 +686,31 @@ defmodule EvoDashWeb.AgentsLive do
 
     id_to_display = Map.new(agents, fn a -> {a.id, a.task_local_id || a.id} end)
 
-    # Carry over already-fetched histories and record the gate: a fresh agent
-    # built from summaries has history: [] — keep the old (fetched) history
-    # while the message count is unchanged (the gate's last-seen entry), so the
-    # full history is never re-transferred for an unchanged agent. When the
-    # count changed (or there is no last-seen entry), the history is dropped
-    # and the gate entry is left untouched — selecting the agent then fetches
-    # fresh history.
+    # Carry over already-fetched histories and (conditionally) record the gate.
+    # A fresh agent built from summaries carries history: [], so the old
+    # (fetched) history is ALWAYS carried over while an old row exists — this
+    # keeps the already-rendered entries MOUNTED while the refresh-induced
+    # refetch is in flight. Blanking it on a moved message count would swap the
+    # whole list for the "Loading history…" spinner and re-animate every entry
+    # once the refetch landed. The gate is recorded ONLY when the count is
+    # unchanged (its last-seen entry), so a moved count still reports
+    # "needs fetch" and the refetch is triggered — no redundant re-transfers.
     old_agents = socket.assigns.agents
 
     {agents, history_gate} =
       Enum.reduce(agents, {[], socket.assigns.history_gate}, fn agent, {acc, gate} ->
         old_agent = Enum.find(old_agents, &(&1.id == agent.id))
 
-        carry =
-          old_agent && old_agent.history != [] &&
-            !HistoryGate.need_fetch?(gate, agent.id, agent.message_count)
+        keep_history = old_agent != nil and old_agent.history != []
 
-        agent = if carry, do: %{agent | history: old_agent.history}, else: agent
-        gate = if carry, do: HistoryGate.record(gate, agent.id, agent.message_count), else: gate
+        agent = if keep_history, do: %{agent | history: old_agent.history}, else: agent
+
+        gate =
+          if keep_history and not HistoryGate.need_fetch?(gate, agent.id, agent.message_count) do
+            HistoryGate.record(gate, agent.id, agent.message_count)
+          else
+            gate
+          end
 
         {[agent | acc], gate}
       end)
