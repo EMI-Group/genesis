@@ -32,7 +32,8 @@ The async setting is **per MODULE, not per file** — two files carry two test m
 Inventory at `2ec39de4a`: 131 test modules — 65 `async: true`, 66 serialized (64 `async: false` + 2 untagged-by-default `agent/tools_test.exs` / `evo_git_test.exs`); 14 of the serialized modules use `EvoGit.TaskRegistryCase`.
 ## Shared Infrastructure
 `test_helper.exs` runs after app boot and before any test: it redirects `XDG_DATA_HOME` to a temp dir as a fallback guard against the production DB, sets the one global `:nix_enabled = false` default (nix is only consulted lazily, so setting it here is race-free for every async module; a few `async: false` sandbox modules still set it locally), then calls `ExUnit.start(capture_log: true)`.
-The canonical DB guard is `config/test.exs` pinning `:evo_git, :data_dir` (see Known Issues).
+The canonical DB guard is `config/test.exs` pinning `:evo_git, :data_dir` to a UNIQUE per-run path (`…/evogit_test_data/genesis-<os-pid>-<unique-integer>`): concurrent `mix test` runs and sibling worker worktrees never share a `tasks.sqlite`, and no rows accumulate across runs.
+Each run's `after_suite` hook removes only its own dir (never the shared parent), so any whole-table or global-state failure is a REAL flake rather than test pollution.
 `support/fake_gh.ex` — `EvoGit.FakeGh`: puts a fake `gh` on `PATH` (canned JSON, `GH_FAKE_MODE`, argv log); only usable from `async: false` modules, POSIX-gated.
 `support/submodule_helper.ex` — the module is `EvoGit.TestSupport.Submodule` (name differs from the filename — grepping `SubmoduleHelper` finds nothing); builds gitlink/submodule entries without cloning.
 `support/task_registry_case.ex` — `EvoGit.TaskRegistryCase`: isolated `TaskRegistry` + `Store` on a fresh per-test SQLite DB, used by 14 test modules (all `async: false`).
