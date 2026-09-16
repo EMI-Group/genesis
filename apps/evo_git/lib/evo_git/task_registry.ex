@@ -330,6 +330,14 @@ defmodule EvoGit.TaskRegistry do
         end
       end)
 
+    # Boot reaper for the managed per-task tmpdirs. Any `task_<id>` directory
+    # under the managed root whose task is no longer live (non-terminal) was
+    # left behind by a previous runtime that died before reclaiming it — sweep
+    # them once at boot. The managed root is node-local (per-BEAM), so this
+    # only ever touches THIS node's scratch dirs; the sweep is best-effort and
+    # never crashes boot on filesystem errors.
+    EvoGit.TaskTmpdir.reclaim_stale(live_task_ids(state))
+
     # Subscribe to task status events from EvoGit.PubSub
     Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
 
@@ -501,6 +509,12 @@ defmodule EvoGit.TaskRegistry do
                   end
 
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
+
+                # Direct terminal write (:failed) — bypasses
+                # handle_update_status/6, so reclaim the tmpdir here too. The
+                # task is gone in-memory regardless of disk-full retryability.
+                reclaim_task_tmpdir(state, task_id)
+
                 {reply, state}
               else
                 {{:error, :not_running}, state}
@@ -540,6 +554,11 @@ defmodule EvoGit.TaskRegistry do
                  lease_expires_at: nil
                ) do
             :ok ->
+              # Direct terminal write (:cancelled) — bypasses
+              # handle_update_status/6, so reclaim the tmpdir here too (a
+              # :pending task never started, so this is normally a no-op).
+              reclaim_task_tmpdir(state, task_id)
+
               Phoenix.PubSub.broadcast(
                 EvoGit.PubSub,
                 "tasks",
@@ -983,6 +1002,12 @@ defmodule EvoGit.TaskRegistry do
               # the scheduler may be down during startup reconciliation).
               clear_cancelling_marker(task_id)
 
+              # Reclaim the task's managed per-task tmpdir (this is the dominant
+              # terminal choke point — wrapper result, watchdog resolution and
+              # startup reconciliation all flow through here). Best-effort +
+              # idempotent; the primary repo path is already in hand.
+              EvoGit.TaskTmpdir.reclaim(task_id, project_path)
+
               %{state | task_refs: Map.delete(state.task_refs, task_id)}
             else
               state
@@ -1042,6 +1067,50 @@ defmodule EvoGit.TaskRegistry do
   end
 
   # --- Shared Private Helpers ---
+
+  # --- Managed per-task tmpdir lifecycle ---
+  #
+  # `EvoGit.TaskTmpdir` owns a per-task scratch directory (`task_<id>` under a
+  # node-local managed root). Creation happens in the task wrapper; RECLAIM
+  # happens here on the three terminal-ish triggers:
+  #   * every terminal transition through handle_update_status/6 (the dominant
+  #     choke point) + the three direct terminal writes that bypass it
+  #     (force_kill_task, :pending cancel, :lease_sweep);
+  #   * a boot reaper in init/1 (dirs left by a crashed previous runtime);
+  #   * the 5-minute :periodic_cleanup sweep (belt-and-braces).
+  # All reclaims are safe + idempotent and never raise.
+
+  # Reclaims `task_id`'s managed per-task tmpdir when the caller does not
+  # already hold the task struct. Resolves the task's PRIMARY repo path
+  # (`opts[:path]`) via the narrow select_task_update_info/2 read — a repo-less
+  # (reflect) task yields nil and TaskTmpdir falls back to the :system/:custom
+  # root. Best-effort: TaskTmpdir.reclaim/2 never raises.
+  defp reclaim_task_tmpdir(state, task_id) do
+    project_path =
+      case EvoGit.Store.select_task_update_info(state.task_store, task_id) do
+        %{opts: opts} when is_list(opts) -> Keyword.get(opts, :path)
+        _ -> nil
+      end
+
+    EvoGit.TaskTmpdir.reclaim(task_id, project_path)
+  end
+
+  # The PRIMARY repo path from a decoded task struct (nil when absent/repo-less).
+  defp task_repo_path(%TaskInfo{opts: opts}) when is_list(opts), do: Keyword.get(opts, :path)
+  defp task_repo_path(_task), do: nil
+
+  # The ids of this node's live (non-terminal) tasks — used by the boot reaper
+  # and the periodic sweep to protect their managed per-task tmpdirs. Lightweight
+  # projection (id/status/updated_at), status filter pushed into SQL.
+  defp live_task_ids(state) do
+    EvoGit.Store.select_task_ids(state.task_store, [
+      :running,
+      :pending,
+      :finalizing,
+      :cancelling
+    ])
+    |> Enum.map(& &1.id)
+  end
 
   # Delegates a heavy Store decode to a short-lived Task process so the large
   # decoded terms are allocated and discarded on that process's heap rather
@@ -1604,6 +1673,11 @@ defmodule EvoGit.TaskRegistry do
 
               case EvoGit.Store.put_task(state.task_store, updated) do
                 :ok ->
+                  # Direct terminal write (:failed) — bypasses
+                  # handle_update_status/6, so reclaim the tmpdir here too. The
+                  # task struct is already in hand, so read the path locally.
+                  EvoGit.TaskTmpdir.reclaim(id, task_repo_path(task))
+
                   {true, [id | failed_ids]}
 
                 {:error, :disk_full} ->
@@ -1638,10 +1712,14 @@ defmodule EvoGit.TaskRegistry do
   end
 
   # Periodic cleanup handler: sweeps expired finished tasks to enforce
-  # max_age_days and max_tasks limits. Reschedules itself every 5 minutes.
+  # max_age_days and max_tasks limits, then sweeps the managed per-task tmpdirs
+  # for any directory whose task is no longer live (belt-and-braces on top of
+  # the per-terminal reclaim — catches dirs left behind by crashes). Reschedules
+  # itself every 5 minutes.
   @impl true
   def handle_info(:periodic_cleanup, state) do
     Cleanup.cleanup_expired_tasks(state.task_store)
+    EvoGit.TaskTmpdir.reclaim_stale(live_task_ids(state))
     Process.send_after(self(), :periodic_cleanup, 300_000)
     {:noreply, state}
   end
