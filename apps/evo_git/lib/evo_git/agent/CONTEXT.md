@@ -50,14 +50,9 @@ Two independent hinting mechanisms, both per-child-directory counter + fire-once
 
 ## Design Decisions
 
-### Foreign-repo subagent starting-commit chaining (per-agent scope — can go stale)
+### Foreign-repo subagent starting-commit chaining
 
-`build_specs_and_errors/2` (`subagent_processing.ex`) reads `AgentScheduler.get_foreign_repo_commits(state.agent_id)` — the SPAWNING agent's OWN SchedMeta row — so foreign-repo commit tracking is **per-agent**, not per-task.
-`build_subagent_phylo_node/8` chooses its clause on `same_repo?` (= the child's resolved repo id equals the PARENT agent's repo id, `parent_state.repo_id`): a SAME-REPO child (a relative-path child, or an absolute path pointing back into the parent's own repo) starts at the parent's live `parent_state.phylo_node.current_commit`; a CROSS-repo child goes through the foreign clause, which ignores the parent's own commit.
-`resolve_foreign_phylo_commit/4`: a non-nil task-level `base_sha` wins unconditionally; otherwise the spawning agent's `foreign_repo_commits[repo_id]`; otherwise the foreign repo's HEAD.
-A child placed in a DIFFERENT foreign repo than its parent starts at `base_sha`/that repo's tracked commit/HEAD — never the parent's commit. A same-repo child of a foreign-repo Manager DOES inherit the parent's commit.
-`collect_mergeable_results/3` merges a child's commit into the parent's worktree when `spec.repo_id == parent_repo_id` (same repo as the parent) — including same-repo children of a Manager running INSIDE that foreign repo; genuinely cross-repo children are reported as details and never merged.
-`delete_same_repo_branches/4` deletes branches on the same same-repo condition; cross-repo children's per-agent branches are deleted by WorktreeManager on agent exit (`agent_scheduler/worktree_manager.ex`).
+Per-agent (not per-task) tracking, the `same_repo?` clause selection, `resolve_foreign_phylo_commit/4` precedence, and same-repo merge/`delete_same_repo_branches` behavior are detailed in "Foreign-Repo Commit Propagation" below — do not duplicate here.
 
 ### Module sizes (cohesive-by-design)
 
