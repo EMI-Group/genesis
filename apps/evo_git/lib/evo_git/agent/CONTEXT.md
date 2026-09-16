@@ -52,12 +52,12 @@ Two independent hinting mechanisms, both per-child-directory counter + fire-once
 
 ### Foreign-repo subagent starting-commit chaining (per-agent scope — can go stale)
 
-`build_specs_and_errors/2` (`subagent_processing.ex:418-420`) reads `AgentScheduler.get_foreign_repo_commits(state.agent_id)` — the SPAWNING agent's OWN SchedMeta row — so foreign-repo commit tracking is **per-agent**, not per-task.
-`build_subagent_phylo_node/7` has two clauses: the `"primary"` clause (`:584-617`) starts a child at the parent's live `parent_state.phylo_node.current_commit` (`:608`), whereas EVERY non-primary target repo id goes through the foreign clause (`:619-708`), which ignores the parent's own commit entirely.
-`resolve_foreign_phylo_commit/4` (`:673-708`): a non-nil task-level `base_sha` wins unconditionally (`:681`); otherwise the spawning agent's `foreign_repo_commits[repo_id]` (`:692`); otherwise the foreign repo's HEAD (`:694`).
-Consequence: a child placed in the SAME foreign repo the parent is already working in does NOT inherit the parent's commit — it starts at `base_sha`/foreign HEAD, even at depth > 0, and even when the parent's own children already committed ahead.
-`collect_mergeable_results/2` (`:453-471`) merges a child's commit into the parent's worktree ONLY when `spec.repo_id == "primary"` (`:459`) — children in a foreign repo (including same-repo children of a Manager running INSIDE that foreign repo) are classified as cross-repo and never merged, so the parent's HEAD does not contain them.
-`delete_same_repo_branches/3` (`:502-512`) likewise deletes branches only for `"primary"` children — foreign children's per-agent branches are deleted by WorktreeManager on agent exit (`agent_scheduler/worktree_manager.ex:289`/`:574-582`).
+`build_specs_and_errors/2` (`subagent_processing.ex`) reads `AgentScheduler.get_foreign_repo_commits(state.agent_id)` — the SPAWNING agent's OWN SchedMeta row — so foreign-repo commit tracking is **per-agent**, not per-task.
+`build_subagent_phylo_node/8` chooses its clause on `same_repo?` (= the child's resolved repo id equals the PARENT agent's repo id, `parent_state.repo_id`): a SAME-REPO child (a relative-path child, or an absolute path pointing back into the parent's own repo) starts at the parent's live `parent_state.phylo_node.current_commit`; a CROSS-repo child goes through the foreign clause, which ignores the parent's own commit.
+`resolve_foreign_phylo_commit/4`: a non-nil task-level `base_sha` wins unconditionally; otherwise the spawning agent's `foreign_repo_commits[repo_id]`; otherwise the foreign repo's HEAD.
+A child placed in a DIFFERENT foreign repo than its parent starts at `base_sha`/that repo's tracked commit/HEAD — never the parent's commit. A same-repo child of a foreign-repo Manager DOES inherit the parent's commit.
+`collect_mergeable_results/3` merges a child's commit into the parent's worktree when `spec.repo_id == parent_repo_id` (same repo as the parent) — including same-repo children of a Manager running INSIDE that foreign repo; genuinely cross-repo children are reported as details and never merged.
+`delete_same_repo_branches/4` deletes branches on the same same-repo condition; cross-repo children's per-agent branches are deleted by WorktreeManager on agent exit (`agent_scheduler/worktree_manager.ex`).
 
 ### Module sizes (cohesive-by-design)
 
