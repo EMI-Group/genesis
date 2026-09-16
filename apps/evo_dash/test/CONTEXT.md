@@ -4,7 +4,7 @@
 
 Holds all test files for the EvoDash application: the ExUnit test runner configuration, shared test support modules (ConnCase, TestHelpers, picker fakes), and suites for the domain layer, web layer, LiveView pages, components, controllers, and live hooks.
 
-NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProject`) live in the `:evo_git` app as `EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.RecentProject` and are tested there — this app has no domain-layer test suite for them. Web-layer tests reference `EvoGit.TaskRegistry` / `EvoGit.Store` / `EvoGit.TaskInfo` directly (isolated setup via `EvoGit.Store` / `EvoGit.TaskRegistry` under `EvoDash.Supervisor`).
+NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProject`) live in the `:evo_git` app as `EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.RecentProject` and are tested there — this app has no domain-layer test suite for them. Web-layer tests reference `EvoGit.TaskRegistry` / `EvoGit.Store` / `EvoGit.TaskInfo` directly (per-test isolation of those two singletons is owned by `EvoDash.Test.IsolatedTaskStore` — they are children of `EvoGit.Supervisor`, NOT of `EvoDash.Supervisor`).
 
 ## Routing Table
 
