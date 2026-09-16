@@ -286,6 +286,38 @@ defmodule EvoGit.Agent.Runner do
         )
       end
     end
+
+    # Resolve the managed per-task scratch directory (EvoGit.TaskTmpdir) once
+    # and install it on THIS agent process, so `EvoGit.Sandbox.resolve_tmpdir/0`
+    # — and therefore every backend's `TMPDIR` injection plus the framework's own
+    # temp files (commit-message files, skill scripts, partial outputs) — targets
+    # the per-task dir instead of a host-wide `/tmp`.
+    #
+    # Sharing across the task's agents:
+    #   * `:system`/`:custom` modes depend ONLY on `task_id`, so every agent of
+    #     the task computes the identical dir regardless of which repo it runs in.
+    #   * `:per_repo` depends on the TASK's PRIMARY repo. The root agent computes
+    #     it rooted at the primary repo and threads it down via
+    #     `spec.opts[:task_tmpdir]` (see `SubagentProcessing.build_subagent_specs/3`),
+    #     so foreign-repo subagents inherit the SAME dir instead of rooting it at
+    #     their own repo.
+    #
+    # `:genesis_repo_root` is the agent's ORIGINAL repo root (for the root agent
+    # it is the task's primary repo) — NOT `:repo_path`, which is the transient
+    # worktree. It is passed as `nil` for repo-less agents so `:per_repo` falls
+    # back to `:system`: the Genesis source root must NEVER receive a
+    # `.genesis/tmp` dir.
+    task_tmpdir =
+      case Keyword.get(spec.opts, :task_tmpdir) do
+        path when is_binary(path) ->
+          path
+
+        _ ->
+          primary_repo_path = if repo_less, do: nil, else: Process.get(:genesis_repo_root)
+          EvoGit.TaskTmpdir.ensure(meta.task_id, primary_repo_path)
+      end
+
+    EvoGit.TaskTmpdir.put_current(task_tmpdir)
   end
 
   # --- Internal Execution Logic ---

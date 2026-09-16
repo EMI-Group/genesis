@@ -140,6 +140,15 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # so subagents render it in their own context without re-detection.
     repo_notes = state.repo_notes
 
+    # Thread the parent's resolved per-task tmpdir (set by the parent's Runner
+    # via `EvoGit.TaskTmpdir.put_current/1`) into every child spec so the child
+    # Runner re-installs the SAME dir instead of computing it from its own repo.
+    # This matters for `:per_repo` mode (the dir must stay rooted at the TASK's
+    # primary repo, not the child's foreign repo); for `:system`/`:custom` the
+    # threaded value is identical at every level. `nil` (e.g. direct/test
+    # callers) leaves the child to compute it.
+    task_tmpdir = EvoGit.TaskTmpdir.current()
+
     Enum.map(indexed_calls, fn {call, index} ->
       name = ReqLLM.ToolCall.name(call)
       args = ReqLLM.ToolCall.args_map(call)
@@ -202,7 +211,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
                 foreign_repos: foreign_repos,
                 repo_notes: repo_notes,
                 archive: parent_state.archive,
-                model_id: parent_state.model_id
+                model_id: parent_state.model_id,
+                task_tmpdir: task_tmpdir
               )
 
             {:error, error_msg} ->

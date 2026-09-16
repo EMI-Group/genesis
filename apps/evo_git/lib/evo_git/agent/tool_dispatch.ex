@@ -913,19 +913,24 @@ defmodule EvoGit.Agent.ToolDispatch do
       delegation_level: delegation_level,
       threshold: threshold,
       read_threshold: read_threshold,
-      conflict_files: conflict_files
+      conflict_files: conflict_files,
+      # Resolved once here (in the agent process, which owns the process dict)
+      # and re-installed inside each spawned tool task so the per-task tmpdir
+      # survives the `Task.async` boundary (spawned tasks do not inherit the
+      # caller's process dictionary). `nil` is a harmless no-op.
+      taskdir: EvoGit.TaskTmpdir.current()
     }
 
     # Execute ALL standard tool calls in the batch CONCURRENTLY, bounded only
     # by the scheduler's tool-slot pool: each parallel task still acquires a
     # tool slot via `AgentScheduler.with_tool_slot/2` inside
-    # `execute_tool_with_timeout/7` (respecting `max_tool_concurrency`).
+    # `execute_tool_with_timeout/8` (respecting `max_tool_concurrency`).
     # `max_concurrency` is set to the batch size so every call starts
     # immediately — Elixir's `max_concurrency` only accepts positive integers
     # (`:infinity` is valid for `timeout` only) — making the scheduler, not a
     # local cap, the binding constraint. `ordered: true` keeps results in index
     # order. `timeout: :infinity` defers timeout enforcement to the per-tool
-    # timeout logic inside `execute_tool_with_timeout/7` (an outer stream
+    # timeout logic inside `execute_tool_with_timeout/8` (an outer stream
     # timeout would wrongly kill legitimate long-running tools).
     concurrency = max(1, length(indexed_calls))
 
@@ -977,7 +982,8 @@ defmodule EvoGit.Agent.ToolDispatch do
         ctx.repo_path,
         ctx.repo_root,
         ctx.node_path,
-        ctx.max_timeout
+        ctx.max_timeout,
+        ctx.taskdir
       )
 
     {index, call, output}
@@ -1012,7 +1018,8 @@ defmodule EvoGit.Agent.ToolDispatch do
          repo_path,
          repo_root,
          node_path,
-         max_timeout
+         max_timeout,
+         taskdir
        ) do
     tool_timeout =
       Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
@@ -1047,6 +1054,14 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       task =
         Task.async(fn ->
+          # Spawned tasks do NOT inherit the caller's process dictionary, so
+          # re-install the resolved per-task tmpdir unconditionally — every tool
+          # that consults `EvoGit.Sandbox.resolve_tmpdir/0` (sandbox TMPDIR
+          # injection, commit-message files, skill scripts, partial outputs)
+          # must see the correct dir. A nil value is harmless (`current/0`
+          # returns nil for a non-binary).
+          EvoGit.TaskTmpdir.put_current(taskdir)
+
           case run_command_context do
             {run_agent_id, run_task_id} ->
               Process.put(:evogit_agent_id, run_agent_id)

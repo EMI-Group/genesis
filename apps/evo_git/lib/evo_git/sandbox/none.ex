@@ -14,6 +14,15 @@ defmodule EvoGit.Sandbox.None do
   provided is that `run_with_partial/6` kills the entire process tree on
   timeout via `taskkill /T /F` (a bare `Task.shutdown/1` would only reach the
   direct child). See `run_with_partial/6` for details.
+
+  The managed per-task tmpdir (`EvoGit.TaskTmpdir` / `EvoGit.Sandbox.resolve_tmpdir/0`)
+  is EXPORTED to spawned commands as `TMPDIR`/`TMP`/`TEMP` when a task
+  installs one (via the shared `EvoGit.Sandbox.Helpers.temp_env_vars/0`, on
+  every execution path). This backend still performs NO isolation and NO
+  writable-path gating: because there is no filesystem isolation, sandboxed
+  commands keep the user's own filesystem permissions, and the always-writable
+  system tmp dirs stay fully accessible — the exported managed dir is an
+  ADDITIONAL env override, never a replacement.
   """
 
   @behaviour EvoGit.Sandbox.Behaviour
@@ -54,15 +63,21 @@ defmodule EvoGit.Sandbox.None do
     # Inject LC_ALL=C and GIT_EDITOR=<true path> for git commands so that
     # automated operations that may open an interactive editor (e.g.
     # `git merge --continue`, rebase, am, commit) never block. Detection uses
-    # the ORIGINAL executable param (before nix/bash wrapping).
+    # the ORIGINAL executable param (before nix/bash wrapping). The managed
+    # per-task tmpdir (when installed) is exported as TMPDIR/TMP/TEMP on every
+    # path — see `Helpers.temp_env_vars/0`.
     if EvoGit.GitEnv.git_command?(executable) do
       System.cmd("bash", ["-c", wrapped_cmd],
         cd: cwd,
         stderr_to_stdout: true,
-        env: EvoGit.GitEnv.git_env_list(cwd)
+        env: EvoGit.GitEnv.git_env_list(cwd) ++ Helpers.temp_env_vars()
       )
     else
-      System.cmd("bash", ["-c", wrapped_cmd], cd: cwd, stderr_to_stdout: true)
+      System.cmd("bash", ["-c", wrapped_cmd],
+        cd: cwd,
+        stderr_to_stdout: true,
+        env: Helpers.temp_env_vars()
+      )
     end
   end
 
@@ -87,10 +102,14 @@ defmodule EvoGit.Sandbox.None do
         System.cmd(executable, args,
           cd: cwd,
           stderr_to_stdout: true,
-          env: EvoGit.GitEnv.git_env_list(cwd)
+          env: EvoGit.GitEnv.git_env_list(cwd) ++ Helpers.temp_env_vars()
         )
       else
-        System.cmd(executable, args, cd: cwd, stderr_to_stdout: true)
+        System.cmd(executable, args,
+          cd: cwd,
+          stderr_to_stdout: true,
+          env: Helpers.temp_env_vars()
+        )
       end
 
     # Defensive BOM-aware decode — idempotent, passthrough-safe for
@@ -213,7 +232,8 @@ defmodule EvoGit.Sandbox.None do
         {"bash", ["-c", wrapped_cmd]}
       end
 
-    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+    git_env =
+      if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
     Helpers.run_task_with_partial(exec, exec_args, cwd, git_env, timeout, tmpfile, max_bytes)
   end
@@ -244,7 +264,9 @@ defmodule EvoGit.Sandbox.None do
       end
 
     is_git = EvoGit.GitEnv.git_command?(executable)
-    git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+
+    git_env =
+      if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
     # Resolve the executable with a binary-safe lookup. Raw `:os.find_executable/1`
     # is deliberately avoided: on OTP 27+ (kernel 11.0.3) it raises ArgumentError

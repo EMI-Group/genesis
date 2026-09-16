@@ -136,10 +136,17 @@ defmodule EvoGit.Sandbox do
   end
 
   @doc """
-  Resolves a writable `TMPDIR` value for use inside the sandbox.
+  Resolves the writable `TMPDIR` value for use inside the sandbox.
 
-  The forwarded `TMPDIR` must point to a path the sandbox profile actually grants
-  write access to. Returns a path based on `Platform.tmp_paths/0`:
+  When a managed **per-task** tmpdir is installed on the current process
+  (`EvoGit.TaskTmpdir.current/0` — set by the agent runner and re-installed by
+  the tool-dispatch layer in every spawned tool task), that path is returned
+  DIRECTLY, bypassing the "must be under `Platform.tmp_paths/0`" check below —
+  the per-task dir may live under a custom base or a repository (both are made
+  writable by the backends, see `EvoGit.Sandbox.Helpers`).
+
+  Otherwise the legacy constant-resolution applies. Returns a path based on
+  `Platform.tmp_paths/0`:
 
     * If `$TMPDIR` is unset, falls back to the first entry of `Platform.tmp_paths/0`
       (e.g. `/tmp` on Linux/macOS).
@@ -149,9 +156,21 @@ defmodule EvoGit.Sandbox do
 
   This prevents forwarding a `TMPDIR` that the sandbox profile does not cover
   (e.g. macOS `/var/folders/...`) or that points to a non-existent directory.
+  The original system tmp dirs (`/tmp`, `/var/tmp`, Windows temp) remain fully
+  writable inside the sandbox regardless — the per-task dir is an ADDITIONAL
+  writable path + a `TMPDIR` override, never a replacement.
   """
   @spec resolve_tmpdir() :: String.t()
   def resolve_tmpdir do
+    case EvoGit.TaskTmpdir.current() do
+      path when is_binary(path) -> path
+      _ -> system_tmpdir()
+    end
+  end
+
+  # The legacy per-BEAM constant resolution (used when no per-task tmpdir is
+  # installed on the calling process).
+  defp system_tmpdir do
     tmp_paths = Platform.tmp_paths()
     default = List.first(tmp_paths)
 

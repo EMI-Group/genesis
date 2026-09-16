@@ -195,6 +195,54 @@ defmodule EvoGit.Sandbox.Helpers do
     end)
   end
 
+  @doc """
+  Returns the managed per-task tmpdir that must ALSO be granted write access
+  inside the sandbox, or `nil` when no per-task dir is installed on the
+  calling process (`EvoGit.TaskTmpdir.current/0`).
+
+  This is an ADDITIONAL writable path: the system tmp dirs
+  (`EvoGit.Platform.tmp_paths/0`) stay writable regardless. Shared by every
+  backend so the derivation lives in exactly one place.
+  """
+  @spec task_tmpdir_path() :: String.t() | nil
+  def task_tmpdir_path do
+    case EvoGit.TaskTmpdir.current() do
+      path when is_binary(path) and path != "" -> path
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Returns the environment overrides that point the child process at the
+  managed per-task tmpdir, or `[]` when no per-task dir is installed on the
+  calling process.
+
+  Shape when installed:
+
+      [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
+
+  `TMPDIR` is the POSIX convention, `TMP`/`TEMP` the Windows ones — all three
+  resolve to the SAME managed dir so a spawned command picks it up on every
+  platform.
+
+  This is an **ADDITIONAL** env override, never a replacement for the system
+  tmp dirs (`/tmp`, `/var/tmp`, Windows temp): commands remain free to use the
+  host temp locations, and the sandbox backends keep those paths writable
+  regardless.
+
+  It is the single shared source for the non-sandboxed / disabled execution
+  paths — the sandbox-enabled paths inject the same value via their own
+  `--setenv`/`env:` mechanism. Derivation delegates to `task_tmpdir_path/0`
+  (no duplication). Pure and unit-testable.
+  """
+  @spec temp_env_vars() :: [{String.t(), String.t()}]
+  def temp_env_vars do
+    case task_tmpdir_path() do
+      dir when is_binary(dir) -> [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
+      nil -> []
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Git metadata resolution (linked-worktree gitdir: pointer handling)
   # ---------------------------------------------------------------------------

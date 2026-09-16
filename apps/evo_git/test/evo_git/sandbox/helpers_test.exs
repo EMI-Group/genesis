@@ -157,6 +157,41 @@ defmodule EvoGit.Sandbox.HelpersTest do
     end
   end
 
+  describe "task_tmpdir_path/0" do
+    test "returns nil when no per-task tmpdir is installed on the process" do
+      # Fresh ExUnit test process: the pdict key is unset, so `current/0`
+      # returns nil and the helper yields nil.
+      assert Helpers.task_tmpdir_path() == nil
+    end
+
+    test "returns the installed per-task tmpdir path" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+
+      # The install is process-local (test-process pdict) and read back in the
+      # SAME process by `task_tmpdir_path/0`, so no cross-process cleanup is
+      # needed here.
+      assert EvoGit.TaskTmpdir.put_current(dir) == :ok
+      assert Helpers.task_tmpdir_path() == dir
+    end
+  end
+
+  describe "temp_env_vars/0" do
+    test "returns [] when no per-task tmpdir is installed on the process" do
+      # Fresh ExUnit test process: the pdict key is unset.
+      assert EvoGit.TaskTmpdir.current() == nil
+      assert Helpers.temp_env_vars() == []
+    end
+
+    test "returns TMPDIR/TMP/TEMP tuples for the installed per-task tmpdir" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+
+      assert EvoGit.TaskTmpdir.put_current(dir) == :ok
+      on_exit(fn -> EvoGit.TaskTmpdir.put_current(nil) end)
+
+      assert Helpers.temp_env_vars() == [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
+    end
+  end
+
   describe "system_cmd/2" do
     test "runs a command successfully and returns {:ok, output}" do
       assert {:ok, output} = Helpers.system_cmd("echo", ["hello"])

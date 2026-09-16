@@ -64,6 +64,15 @@ defmodule EvoGit.Sandbox.BwrapTest do
     |> Enum.any?(&(&1 == pattern))
   end
 
+  # Returns the index of the first occurrence of `pattern` as a consecutive
+  # subsequence of `args`, or nil when absent — the position-aware companion to
+  # has_subsequence?/2, used to assert real argument ordering.
+  defp subsequence_index(args, pattern) do
+    args
+    |> Enum.chunk_every(length(pattern), 1, :discard)
+    |> Enum.find_index(&(&1 == pattern))
+  end
+
   # Returns the value of a `["--setenv", key, value]` triple, or nil when the
   # key is not set.
   defp setenv_value(args, key) do
@@ -568,6 +577,73 @@ defmodule EvoGit.Sandbox.BwrapTest do
     end
   end
 
+  describe "args/4 — managed per-task tmpdir" do
+    test "installs the per-task dir as an extra writable bind + TMPDIR when set" do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_task_tmp_#{System.unique_integer([:positive])}"
+        )
+
+      # Install the per-task dir on THIS (test) process — args/4 reads the
+      # process dictionary in the same process, so no cleanup/uninstall is
+      # needed.
+      EvoGit.TaskTmpdir.put_current(dir)
+
+      args = build_args()
+
+      # The per-task dir gets its own writable --bind-try triple.
+      assert has_subsequence?(args, ["--bind-try", dir, dir])
+
+      # It must be positioned AFTER the always-present system tmp binds and
+      # BEFORE the `--` command separator (bwrap's GOption parser stops at the
+      # first non-option argument).
+      system_tmp = hd(Platform.tmp_paths())
+      tmp_idx = subsequence_index(args, ["--bind-try", system_tmp, system_tmp])
+      task_idx = subsequence_index(args, ["--bind-try", dir, dir])
+      sep_idx = Enum.find_index(args, &(&1 == "--"))
+
+      assert is_integer(tmp_idx) and is_integer(task_idx) and is_integer(sep_idx),
+             "expected tmp/task/-- indices, got: #{inspect(args)}"
+
+      assert tmp_idx < task_idx,
+             "expected the per-task bind (#{task_idx}) after the system tmp bind (#{tmp_idx})"
+
+      assert task_idx < sep_idx,
+             "expected the per-task bind (#{task_idx}) before the -- separator (#{sep_idx})"
+
+      # TMPDIR now points at the per-task dir (resolve_tmpdir/0 prefers current/0).
+      assert setenv_value(args, "TMPDIR") == dir
+
+      # The always-present system tmp binds are STILL emitted alongside it.
+      for path <- Platform.tmp_paths() do
+        assert has_subsequence?(args, ["--bind-try", path, path]),
+               "expected the system tmp bind for #{path} to survive, got: #{inspect(args)}"
+      end
+    end
+
+    test "emits the legacy output when no per-task dir is installed" do
+      save_tmpdir()
+      System.delete_env("TMPDIR")
+
+      # A candidate path that is NOT installed must never appear as a bind.
+      not_installed =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_task_tmp_#{System.unique_integer([:positive])}"
+        )
+
+      assert EvoGit.TaskTmpdir.current() == nil
+
+      args = build_args()
+
+      assert setenv_value(args, "TMPDIR") == hd(Platform.tmp_paths())
+
+      refute has_subsequence?(args, ["--bind-try", not_installed, not_installed]),
+             "did not expect a per-task bind, got: #{inspect(args)}"
+    end
+  end
+
   describe "args/4 — git identity env" do
     test "injects the resolved git identity for /usr/bin/git" do
       args = Bwrap.args(System.tmp_dir!(), "/usr/bin/git", ["status"], nil)
@@ -762,6 +838,31 @@ defmodule EvoGit.Sandbox.BwrapTest do
       # reachable in the test env — this pins the observable contract instead.
       assert Bwrap.enabled?() == false
       assert Bwrap.capability() == :unusable
+    end
+  end
+
+  describe "run/4 — disabled path exports the managed per-task tmpdir" do
+    # In the test environment `enabled?/0` is false (the @mix_env gate), so
+    # `run/4` takes the disabled `bash -c` path — the one this change makes
+    # export TMPDIR/TMP/TEMP.
+    test "the spawned command sees TMPDIR/TMP/TEMP = the installed per-task dir" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+      EvoGit.TaskTmpdir.put_current(dir)
+      on_exit(fn -> EvoGit.TaskTmpdir.put_current(nil) end)
+
+      for var <- ["TMPDIR", "TMP", "TEMP"] do
+        {output, 0} = Bwrap.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$#{var}\""])
+
+        assert output == dir
+      end
+    end
+
+    test "no per-task dir installed → the managed dir is not injected" do
+      assert EvoGit.TaskTmpdir.current() == nil
+
+      {output, 0} = Bwrap.run(System.tmp_dir!(), "bash", ["-c", "printf %s \"$TMPDIR\""])
+
+      assert output == (System.get_env("TMPDIR") || "")
     end
   end
 end

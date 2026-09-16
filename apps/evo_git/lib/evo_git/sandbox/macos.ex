@@ -138,7 +138,9 @@ defmodule EvoGit.Sandbox.MacOS do
         git_env
       )
     else
-      # Disabled path: wrap in bash with stdin redirect from /dev/null.
+      # Disabled path: wrap in bash with stdin redirect from /dev/null. The
+      # managed per-task tmpdir (when installed) is exported as
+      # TMPDIR/TMP/TEMP — see `Helpers.temp_env_vars/0`.
       git_env =
         if EvoGit.GitEnv.git_command?(executable),
           do: EvoGit.GitEnv.git_env_list(cwd),
@@ -149,7 +151,7 @@ defmodule EvoGit.Sandbox.MacOS do
       System.cmd("bash", ["-c", wrapped_cmd],
         cd: cwd,
         stderr_to_stdout: true,
-        env: git_env
+        env: git_env ++ Helpers.temp_env_vars()
       )
     end
   end
@@ -259,6 +261,16 @@ defmodule EvoGit.Sandbox.MacOS do
 
     tmp_rules =
       Enum.map_join(tmp_paths, "\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
+      end)
+
+    # Managed per-task tmpdir (when installed on the calling process): the
+    # runtime injects this as the sandbox TMPDIR, so it must be granted BOTH
+    # read and write access. It is an ADDITIONAL path — the system tmp dirs
+    # (tmp_rules above) stay writable regardless. Evaluates to "" when unset,
+    # mirroring the empty-group pattern used by git_rules/nix_rules.
+    task_tmpdir_rules =
+      Enum.map_join(List.wrap(Helpers.task_tmpdir_path()), "\n    ", fn path ->
         ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
       end)
 
@@ -414,6 +426,7 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-write* (subpath "#{cwd}"))
     #{git_rules}
     #{tmp_rules}
+    #{task_tmpdir_rules}
     #{genesis_rw_rules}
     #{home_read_rule}
     #{sensitive_read_rules}
@@ -583,8 +596,11 @@ defmodule EvoGit.Sandbox.MacOS do
           {:timeout, partial <> "\n[TRUNCATED due to timeout]"}
       end
     else
-      # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path)
-      git_env = if is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []
+      # Non-sandbox path: no nix wrapping (consistent with run/4 disabled path).
+      # The managed per-task tmpdir (when installed) rides along via
+      # `Helpers.temp_env_vars/0`.
+      git_env =
+        if(is_git, do: EvoGit.GitEnv.git_env_list(cwd), else: []) ++ Helpers.temp_env_vars()
 
       Helpers.run_task_with_partial(
         "bash",
