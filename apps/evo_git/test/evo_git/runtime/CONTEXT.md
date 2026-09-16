@@ -36,11 +36,8 @@ Genuinely `async: true` (verified to mutate no BEAM-global state):
   polluted by them.
 - **`worktree_init_script_test.exs`** — pure data/script-string assertions.
 
-## Known Issues
-
-- **Git `-F` temp message files live in the SHARED host tmp dir**: every `EvoGit.Adapters.Git.commit/2` / `add_note/4` writes `System.tmp_dir!()/genesis_git_msg_<n><ext>` (`adapters/git.ex` `with_temp_msg_file/3` + `temp_file_path/1`) and deletes it in an `after` block. The name is unique only WITHIN one BEAM VM (`System.unique_integer([:positive, :monotonic])`) while `System.tmp_dir!()` reads the VM-global `$TMPDIR`, so a git-commit-based helper (`make_git_repo!/1` here, `setup_primary_with_changes!/1`, plus the adapter/scheduler suites) can fail with `{:error, {128, "fatal: could not read log file '/tmp/genesis_git_msg_N.txt': No such file or directory"}}` → `MatchError` when another concurrently-running `mix test` BEAM (parallel worktree runs sharing `/tmp`) generated the same filename and removed it. Observed once in a full-suite run under CPU load (helpers_test.exs:419). No code in the repo bulk-deletes temp files; treat this as an environment-level path collision, not an assertion bug.
-
 ## Notes for Agents
+
 - **No test-side seam for the agent LLM path** (see `../../CONTEXT.md` → "No fake-LLM harness"):
   the custom-evolve and self-reflective `run/2` tests accept ONLY the error paths — an empty
   `model_profiles` (→ `{:error, :llm_not_configured}`) or a scheduler-down `:noproc` exit. The
