@@ -227,6 +227,126 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "incremental history refresh (panel stays mounted)" do
+    test "a batched message-count update keeps the mounted entries and appends the new tail (never blanked)",
+         %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "seed"}], metadata: %{turn: 0}}
+      ])
+
+      test_pid = self()
+      Application.put_env(:evo_dash, :agents_history_runner, blocking_history_runner(test_pid))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      assert_receive {:history_fetch_called, first_task}, 2000
+
+      send(
+        first_task,
+        {:history_release,
+         [
+           %ReqLLM.Message{
+             role: :user,
+             content: [%{text: "first entry"}],
+             metadata: %{turn: 1}
+           }
+         ]}
+      )
+
+      wait_until(fn -> render(view) =~ "first entry" end)
+
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "first entry"}], metadata: %{turn: 1}},
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%{text: "second entry"}],
+          metadata: %{turn: 2}
+        }
+      ])
+
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+
+      assert_receive {:history_fetch_called, second_task}, 2000
+
+      mid_flight = render(view)
+      assert mid_flight =~ "first entry"
+      refute mid_flight =~ "Loading history"
+
+      send(
+        second_task,
+        {:history_release,
+         [
+           %ReqLLM.Message{
+             role: :user,
+             content: [%{text: "first entry"}],
+             metadata: %{turn: 1}
+           },
+           %ReqLLM.Message{
+             role: :assistant,
+             content: [%{text: "second entry"}],
+             metadata: %{turn: 2}
+           }
+         ]}
+      )
+
+      wait_until(fn -> render(view) =~ "second entry" end)
+
+      final = render(view)
+      assert final =~ "first entry"
+      assert final =~ "second entry"
+      assert final =~ ~s{id="agent-history-entry-#{agent_id()}-0"}
+      assert final =~ ~s{id="agent-history-entry-#{agent_id()}-1"}
+    end
+
+    test "a diverging refetch (compression/rewrite) still updates the panel", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "seed"}], metadata: %{turn: 0}}
+      ])
+
+      queue =
+        start_history_queue([
+          [%ReqLLM.Message{role: :user, content: [%{text: "old entry"}], metadata: %{turn: 1}}],
+          [
+            %ReqLLM.Message{role: :user, content: [%{text: "new entry A"}], metadata: %{turn: 5}},
+            %ReqLLM.Message{
+              role: :assistant,
+              content: [%{text: "new entry B"}],
+              metadata: %{turn: 6}
+            }
+          ]
+        ])
+
+      Application.put_env(:evo_dash, :agents_history_runner, queued_history_runner(queue))
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "old entry" end)
+
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: "old entry"}], metadata: %{turn: 1}},
+        %ReqLLM.Message{role: :assistant, content: [%{text: "x"}], metadata: %{turn: 2}}
+      ])
+
+      send(view.pid, {:agents_updated, node()})
+      flush_agent_events(view)
+
+      wait_until(fn -> render(view) =~ "new entry B" end)
+
+      html = render(view)
+      assert html =~ "new entry A"
+      assert html =~ "new entry B"
+      refute html =~ "old entry"
+    end
+  end
+
   describe "agent event broadcasts (node-identity contract)" do
     # The :evo_git emitters broadcast four node-identity event shapes on
     # EvoGit.PubSub topic "agents": {:agent_registered, id, summary, node},
@@ -1526,6 +1646,24 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   defp start_history_counter do
     start_supervised!({Agent, fn -> 0 end})
+  end
+
+  defp blocking_history_runner(test_pid) do
+    fn _node, _agent_id ->
+      send(test_pid, {:history_fetch_called, self()})
+
+      receive do
+        {:history_release, messages} -> messages
+      after
+        5_000 -> []
+      end
+    end
+  end
+
+  defp start_history_queue(responses), do: start_supervised!({Agent, fn -> responses end})
+
+  defp queued_history_runner(queue) do
+    fn _node, _agent_id -> Agent.get_and_update(queue, fn [head | tail] -> {head, tail} end) end
   end
 
   # The expected local "HH:MM:SS" for a given UTC instant, computed
