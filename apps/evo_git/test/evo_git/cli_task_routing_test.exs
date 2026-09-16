@@ -18,11 +18,10 @@ defmodule EvoGit.CLI.TaskRoutingTest do
   `{:error, :llm_not_configured}` immediately (see `without_model_profiles/1`).
   """
 
-  # async: false is FORCED by two pieces of BEAM-global state: (1)
-  # `EvoGit.TaskRegistryCase` terminates/restarts the app-level `EvoGit.Store` +
-  # `EvoGit.TaskRegistry` children and re-registers their global names per test
-  # (the CLI's enqueued-task reads go through them); (2) the setup below
-  # redirects the process-wide `XDG_CONFIG_HOME` env var for `-m` resolution.
+  # async: false is FORCED by two pieces of BEAM-global state: (1) the setup
+  # below redirects the process-wide `XDG_CONFIG_HOME` env var for `-m`
+  # resolution (read live by `EvoGit.Config`); (2) `without_model_profiles/1`
+  # rewrites the global `EvoGit.AgentScheduler`'s `model_profiles`.
   use EvoGit.TaskRegistryCase, async: false
 
   @moduletag :tmp_dir
