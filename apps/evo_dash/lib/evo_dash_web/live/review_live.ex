@@ -300,7 +300,14 @@ defmodule EvoDashWeb.ReviewLive do
         review_repos: [],
         active_repo_id: "primary",
         load_generation: 0,
-        last_broadcast_task_id: nil
+        last_broadcast_task_id: nil,
+        # Resolutions EARNED by this page's own per-repo action tail
+        # (set_repo_resolution/3), keyed %{repo_id => resolution}. Deliberately
+        # NOT derived from @review_repos — that list is also seeded by the load
+        # (and by test fixtures) and carrying those values would re-apply
+        # stale/seeded resolutions over a fresh load. See
+        # carry_local_resolutions/2 for how this survives a self-triggered reload.
+        local_repo_resolutions: %{}
       )
 
     {:ok, socket}
@@ -327,6 +334,10 @@ defmodule EvoDashWeb.ReviewLive do
         socket
       else
         socket
+        # A genuine context change (node/task/route) discards the action-earned
+        # resolutions — they belonged to the previous load context and must
+        # never be overlaid onto a different node's freshly loaded repos.
+        |> assign(:local_repo_resolutions, %{})
         |> start_async_load(params["commit_sha"])
         |> assign(
           :tasks_loaded_for,
@@ -1004,7 +1015,7 @@ defmodule EvoDashWeb.ReviewLive do
         {:ok, assigns_map} ->
           socket =
             socket
-            |> assign(assigns_map)
+            |> assign(carry_local_resolutions(assigns_map, socket.assigns))
 
           # The merge check MUST be sequenced here, after the loaded assigns
           # (merge_targets/branch_name/branch_exists/...) are in place. load_data
@@ -1389,8 +1400,19 @@ defmodule EvoDashWeb.ReviewLive do
   # Writes one repo's RESOLUTION into @review_repos (clearing branch_exists on a
   # TERMINAL outcome — the branch was deleted) and re-projects the flat assigns.
   # Reuses MergeCheck.update_repo/3 (the single per-entry update path).
+  #
+  # This is the SINGLE funnel written ONLY by the in-page action tail (merge /
+  # reject / merge_all) — never by the load seeding or test fixtures — so it
+  # ALSO records the resolution in the dedicated :local_repo_resolutions assign.
+  # That assign lets a self-triggered reload (the page's own review-status
+  # broadcast → 300ms debounce → load_data, which re-derives resolutions from
+  # REPOSITORY state alone) keep the outcome the user just earned instead of
+  # reverting the settled card (see carry_local_resolutions/2).
   defp set_repo_resolution(socket, repo_id, resolution) do
+    recorded = Map.put(socket.assigns.local_repo_resolutions, repo_id, resolution)
+
     socket
+    |> assign(:local_repo_resolutions, recorded)
     |> EvoDashWeb.ReviewLive.MergeCheck.update_repo(repo_id, fn repo ->
       repo
       |> Map.put(:resolution, resolution)
@@ -1403,6 +1425,56 @@ defmodule EvoDashWeb.ReviewLive do
     do: %{repo | branch_exists: false}
 
   defp maybe_clear_branch(repo, _resolution), do: repo
+
+  # Applies a freshly loaded assigns map (from LoadData) with the in-page
+  # action-earned TERMINAL resolutions overlaid onto @review_repos.
+  #
+  # load_data derives each repo's resolution from REPOSITORY state ONLY
+  # (build_repo_entry/2: :handled when a non-blank branch no longer exists, else
+  # nil). A reload triggered by the page's OWN review-status broadcast therefore
+  # knows nothing about the action just taken and would revert the settled card
+  # (dropping the completion banner for a fully-resolved review). Overlay the
+  # dedicated :local_repo_resolutions entries — and ONLY those, never the
+  # fixture/seeded values in @review_repos — for repos whose loaded resolution
+  # is nil; when the load independently determined a resolution (e.g. a truly
+  # gone branch → :handled) that value stays authoritative. Entries for repos no
+  # longer in the loaded list are dropped so the map cannot grow unboundedly.
+  defp carry_local_resolutions(assigns_map, assigns) do
+    local = Map.get(assigns, :local_repo_resolutions, %{})
+
+    case {Map.get(assigns_map, :review_repos), is_map(local)} do
+      {review_repos, true} when is_list(review_repos) and local != %{} ->
+        {review_repos, local} = overlay_local_resolutions(review_repos, local)
+
+        assigns_map
+        |> Map.put(:review_repos, review_repos)
+        |> Map.put(:local_repo_resolutions, local)
+
+      _ ->
+        assigns_map
+    end
+  end
+
+  # Overlays the TERMINAL entries of `local` onto the loaded `review_repos`
+  # (repo_id match, loaded resolution nil only) and returns the pruned `local`
+  # (kept only for repos still present in the loaded list).
+  defp overlay_local_resolutions(review_repos, local) do
+    present_ids = review_repos |> Enum.map(&Map.get(&1, :repo_id)) |> MapSet.new()
+    local = Map.take(local, MapSet.to_list(present_ids))
+
+    overlaid =
+      Enum.map(review_repos, fn repo ->
+        resolution = Map.get(local, Map.get(repo, :repo_id))
+
+        if terminal_resolution?(resolution) and Map.get(repo, :resolution) == nil do
+          Map.put(repo, :resolution, resolution)
+        else
+          repo
+        end
+      end)
+
+    {overlaid, local}
+  end
 
   # Resolves the merge runner at CALL time (test seam, mirrors MergeCheck's
   # :merge_check_runner): the app-env override when set, else the default that
