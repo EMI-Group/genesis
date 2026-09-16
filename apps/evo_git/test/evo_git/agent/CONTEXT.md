@@ -15,16 +15,14 @@ A module is `async: true` ONLY if it mutates no BEAM-global state observable by 
 Every `async: false` module names its exact forcing global in its `@moduledoc`; when in doubt, keep `async: false`.
 
 Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local state):
-`coder_test`, `coder_2_test`, `context_builder_test`, `context_compression_test`, `delegation_hints_test`, `output_sanitizer_test`, `result_test`, `tools_test` (`EvoGit.Agent.ToolsTest` module), `turn_limit_test`, `turn_warning_test`, `truncation_feedback_test`, `usage_test`.
+`coder_test`, `coder_2_test`, `context_builder_test`, `context_compression_test`, `delegation_hints_test`, `output_sanitizer_test`, `result_test`, `turn_limit_test`, `turn_warning_test`, `truncation_feedback_test`, `usage_test`.
 
 `async: false` and its forcing state:
-- `tools_test` (`EvoGit.Agent.ToolsConfigTest` module) — mutates BEAM-global `XDG_CONFIG_HOME` (via the private `with_isolated_config/1` helper) and the `:req_llm` app env (`ReqLLM.put_key(:tavily_api_key, ...)` / `Application.put_env/3` / `Application.delete_env/2` on `:tavily_api_key`).
+- `tools_test` — mutates BEAM-global `XDG_CONFIG_HOME` (via the private `with_isolated_config/1` helper) and the `:req_llm` app env.
 - `cancel_grace_test` — `:ets.delete_all_objects/1` on the global `:evogit_agent_state` / `:evogit_sched_meta` / `:evogit_archive_records` tables, plus a fixed `agent_id = 1`.
 - `subagent_processing_test` — inserts/deletes rows in the app-owned global `:evogit_agent_state` ETS table (fixed agent ids 99_998/99_999).
 - `tool_dispatch_retry_slot_test` — drives the global `AgentScheduler` GenServer (`update_config`, `pause`/`resume`) and the shared scheduler ETS tables.
 - `tool_dispatch_test` — its parallel-execution test registers agent state in the app-global `:evogit_agent_state` ETS table and acquires slots from the global `EvoGit.AgentScheduler` tool-slot pool.
-
-`tools_test.exs` carries TWO modules and the async setting is per MODULE, not per file (same pattern as `../command_shell_test.exs` and `../command_approval_test.exs`): the bulk (69 git/shell/pure tests) is the `async: true` `EvoGit.Agent.ToolsTest`, and the 5 tests that mutate BEAM-global state are the serialized `EvoGit.Agent.ToolsConfigTest`.
 
 ## Notes for Agents
 

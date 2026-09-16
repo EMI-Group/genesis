@@ -3,13 +3,10 @@ defmodule EvoGit.RemoteNodeGitHubTest do
   Tests for the GitHub gh-CLI RPC wrappers on `EvoGit.RemoteNode`.
 
   Mirrors `EvoGit.RemoteNodeTest` style (unreachable-remote error fallbacks +
-  local-node RemoteAPI delegation). This module holds only tests that never
-  touch `PATH`, so it is `async: true`. The two `gh`-dependent tests that put a
-  fake `gh` on `PATH` (via `EvoGit.FakeGh`) live in the sibling
-  `EvoGit.RemoteNodeGitHubFakeGhTest` module at the bottom of this file, which
-  is `async: false` — that BEAM-global `PATH` mutation must stay serialized.
-  Keeping the PATH-mutating tests in their own serialized module is why this
-  file is not merged into the `async: true` `remote_node_test.exs`.
+  local-node RemoteAPI delegation), but kept in a SEPARATE file because the
+  gh-dependent local-path tests manipulate the BEAM-global `PATH` env var —
+  appending them to `remote_node_test.exs` would force that whole
+  `async: true` module to `async: false`.
 
   Note: `github_upstream/2`, `list_github_issues/3` and
   `github_issue_markdown/3` on `EvoGit.RemoteNode` (and their
@@ -18,9 +15,10 @@ defmodule EvoGit.RemoteNodeGitHubTest do
   change lands.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.FakeGh
   alias EvoGit.RemoteNode
 
   # A node name that definitely does not exist on this machine.
@@ -80,49 +78,10 @@ defmodule EvoGit.RemoteNodeGitHubTest do
       assert {:error, _} = RemoteNode.github_issue_markdown(@fake_remote, tmp_dir, 42)
     end
   end
-end
 
-# The fake gh is a POSIX shell script on PATH — the gh-dependent local-path
-# tests run on POSIX platforms only, and live in their own `async: false` module
-# because `EvoGit.FakeGh` mutates the BEAM-global `PATH` (plus `GH_FAKE_LOG` /
-# `GH_FAKE_MODE`) env vars (the same rule documented on `EvoGit.FakeGh`).
-if not match?({:win32, _}, :os.type()) do
-  defmodule EvoGit.RemoteNodeGitHubFakeGhTest do
-    @moduledoc """
-    The `gh`-dependent `EvoGit.RemoteNode` GitHub tests, isolated in their own
-    module because `EvoGit.FakeGh` mutates the BEAM-global `PATH` env var (plus
-    `GH_FAKE_LOG`/`GH_FAKE_MODE`) — process-wide state no concurrently running
-    module may observe, hence `async: false`.
-    """
-
-    use ExUnit.Case, async: false
-
-    alias EvoGit.Adapters.Git
-    alias EvoGit.FakeGh
-    alias EvoGit.RemoteNode
-
-    setup do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-test-remote-node-gh-" <> to_string(System.unique_integer([:positive]))
-        )
-
-      File.mkdir_p!(tmp_dir)
-      {:ok, _} = Git.init(tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf!(tmp_dir)
-      end)
-
-      {:ok, %{tmp_dir: tmp_dir}}
-    end
-
-    defp add_origin(tmp_dir, url) do
-      {:ok, _} = Git.run(["remote", "add", "origin", url], tmp_dir)
-      :ok
-    end
-
+  # The fake gh is a POSIX shell script on PATH — the gh-dependent local-path
+  # tests run on POSIX platforms only.
+  if not match?({:win32, _}, :os.type()) do
     describe "local path with fake gh (POSIX)" do
       test "list_github_issues/3 returns normalized issues", %{tmp_dir: tmp_dir} do
         add_origin(tmp_dir, "https://github.com/octocat/hello-world.git")
