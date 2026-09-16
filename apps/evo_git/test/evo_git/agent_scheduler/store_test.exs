@@ -6,7 +6,9 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   code (`EvoGit.Agent.ContextBuilder`), never in the store.
 
   Uses `async: false` because the tests manipulate global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`).
+  (`:evogit_agent_state` and `:evogit_sched_meta`) and subscribe to / assert on
+  the shared `"agents"` PubSub topic (`PubSub.agent_topic`) of the global
+  `EvoGit.PubSub`.
   """
 
   use ExUnit.Case, async: false

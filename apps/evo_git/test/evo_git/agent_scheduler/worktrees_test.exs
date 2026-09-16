@@ -1,8 +1,14 @@
 defmodule EvoGit.AgentScheduler.WorktreesTest do
   # async: false — WorktreeManager is a named GenServer with shared state
   # across tests (agents/monitors/pending maps), and the tests manipulate the
-  # global named ETS tables (:evogit_agent_state, :evogit_sched_meta).
-  # The Application starts the WorktreeManager, so it is available.
+  # global named ETS tables (:evogit_agent_state, :evogit_sched_meta,
+  # :evogit_worktree_repos — the last is created/deleted by setup per test when
+  # the app does not already own it).
+  # The Application starts the WorktreeManager, so it is available; the
+  # crash-restart tests also terminate + restart it via
+  # Supervisor.terminate_child(EvoGit.Supervisor, WorktreeManager) +
+  # Supervisor.restart_child/2, mutating the app-level EvoGit.Supervisor's
+  # child set.
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git

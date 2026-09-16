@@ -3,8 +3,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   Tests for `EvoGit.AgentScheduler.RemoteAPI` — the RPC-accessible read-only
   API over scheduler ETS state.
 
-  Uses `async: false` because the tests manipulate global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`).
+  Uses `async: false` because the tests (a) manipulate the global named ETS
+  tables (`:evogit_agent_state` and `:evogit_sched_meta`) and (b) write task
+  rows directly into the app-level `EvoGit.Store` singleton (`insert_task/2` →
+  `EvoGit.Store.put_task/2`, cleaned up in `on_exit`).
   """
 
   use ExUnit.Case, async: false
