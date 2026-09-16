@@ -472,6 +472,20 @@ defmodule EvoGit.RemoteConnectionTest do
             "evogit-test-tunnel-port-#{System.unique_integer([:positive])}"
           )
 
+        # `System.unique_integer/1` restarts low in every fresh BEAM run, so
+        # this name RECURS across runs — and a LEFTOVER port file from an
+        # earlier run (nothing ever removed them; the shared temp dir is not
+        # per-run) would satisfy `await_tunnel_port_file/2` BEFORE this run's
+        # fake ssh writes its port. The listener below would then bind the
+        # PREVIOUS run's tunnel port, the worker would poll its own (unserved)
+        # port until the whole `@tunnel_wait_timeout_ms` budget expired, and the
+        # terminal `:error` would arrive as `tunnel_not_ready` long after this
+        # test's 10s wait. Removing the file up front makes the write → read
+        # handshake deterministic: the wait now provably blocks until THIS
+        # run's fake ssh reports its port.
+        File.rm_rf!(port_file)
+        on_exit(fn -> File.rm_rf!(port_file) end)
+
         with_fake_ssh_connect([mode: :sleep, write_port_to: port_file], fn _log ->
           target_id = save_test_target()
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
@@ -969,6 +983,13 @@ defmodule EvoGit.RemoteConnectionTest do
             "evogit-test-ssh-#{System.unique_integer([:positive])}"
           )
 
+        # Same-name dirs RECUR across BEAM runs and the shared temp dir is not
+        # cleaned between runs, so leftovers from an earlier run would leak real
+        # state into this one: `ssh.log` is APPENDED to (stale command lines),
+        # `daemon.marker` can make the fake daemon look already-active, and
+        # `is-active.count` shifts the :daemon_active_after counter — all
+        # environment-dependent. Wipe the dir before writing our own state.
+        File.rm_rf!(tmp)
         File.mkdir_p!(tmp)
 
         log = Path.join(tmp, "ssh.log")
@@ -1655,6 +1676,13 @@ defmodule EvoGit.RemoteConnectionTest do
         "evogit-test-ssh-#{System.unique_integer([:positive])}"
       )
 
+    # Same-name dirs RECUR across BEAM runs (`System.unique_integer/1` restarts
+    # low in a fresh VM) and the shared temp dir is never cleaned between runs,
+    # so a LEFTOVER `ssh.log` from an earlier run would be APPENDED to here —
+    # and the argv / invocation-count assertions reading it could see stale
+    # lines. Wipe the dir before writing our own script + log so the harness
+    # can only ever read state this run produced.
+    File.rm_rf!(tmp)
     File.mkdir_p!(tmp)
     log = Path.join(tmp, "ssh.log")
 
