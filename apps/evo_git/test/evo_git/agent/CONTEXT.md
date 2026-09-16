@@ -56,4 +56,5 @@ Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local st
 - No fake-LLM harness exists — agent runs to completion are exercised only through error paths (`without_model_profiles/1`, connection-refused model specs).
   Details in `../CONTEXT.md` ("Known Issues & Test Env Notes").
 - Same-named `test` cases across different `describe` blocks cover DIFFERENT functions (e.g. in `context_builder_test`, `delegation_hints_test`, `turn_warning_test`) — not duplicates.
+- `subagent_processing_test.exs` runs slightly over the ~1000-line soft cap (~1046 lines) because it is ONE comprehensive suite over the subagent-processing surface (path resolution, phylo-node building, spawn-gate result formatting, real-builder authority coupling, model-id inheritance) sharing the same global-ETS + real-git-repo setup — splitting it would duplicate that setup for no cohesion gain, so it is intentionally NOT split. Prefer adding new subagent-processing tests to an existing `describe` block here.
 - Full-suite parallel-run flakiness is pre-existing and documented in `../CONTEXT.md`.
