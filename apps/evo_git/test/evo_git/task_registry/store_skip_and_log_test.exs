@@ -1,12 +1,14 @@
 defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
   @moduledoc """
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  Runs `async: true`: every test starts its OWN uniquely-named `EvoGit.Store`
+  against a private temporary SQLite file (`start_store/2` / `EvoGit.Store.start_link`)
+  and mutates it only through raw `Xqlite` connections to that same file — no
+  BEAM-global state (no app-env key, no `:evogit_*` ETS table, no global
+  scheduler config), and the `EvoGit.TaskRegistryCase` fixture it still `use`s
+  provides an isolated Store + registry that this file never touches.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   import ExUnit.CaptureLog
 

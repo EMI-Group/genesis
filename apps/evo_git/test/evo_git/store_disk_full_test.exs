@@ -35,11 +35,11 @@ defmodule EvoGit.StoreDiskFullTest do
   the test's synchronous calls.
   """
 
-  # `async: false`: EvoGit.TaskRegistryCase terminates and restarts the SHARED
-  # production `EvoGit.Store`/`EvoGit.TaskRegistry` (re-registering them under
-  # their canonical names), so this module must never run concurrently with any
-  # other test.
-  use EvoGit.TaskRegistryCase, async: false
+  # `async: true` is safe: EvoGit.TaskRegistryCase starts UNIQUELY-NAMED isolated
+  # `EvoGit.Store`/`EvoGit.TaskRegistry` instances per test, so the `PRAGMA
+  # query_only` arm below only ever touches this test's own Store connection —
+  # no BEAM-global is mutated.
+  use EvoGit.TaskRegistryCase, async: true
 
   import ExUnit.CaptureLog
 
@@ -81,16 +81,16 @@ defmodule EvoGit.StoreDiskFullTest do
 
   describe "Store survives a disk-full-class write" do
     test "put_task returns {:error, :disk_full}, logs the DB path, and the Store keeps serving reads",
-         %{sqlite_path: sqlite_path} do
+         %{store: store, sqlite_path: sqlite_path} do
       unique = System.unique_integer([:positive])
       task_id = "disk_full_#{unique}"
       task = disk_full_task(task_id)
 
-      set_query_only(Store, "ON")
+      set_query_only(store, "ON")
 
       log =
         capture_log(fn ->
-          assert {:error, :disk_full} = Store.put_task(Store, task)
+          assert {:error, :disk_full} = Store.put_task(store, task)
         end)
 
       # The actionable warning names the DB file so the user knows which
@@ -99,45 +99,46 @@ defmodule EvoGit.StoreDiskFullTest do
       assert log =~ sqlite_path
 
       # The GenServer survived the failed write...
-      assert Process.alive?(Process.whereis(Store))
+      assert Process.alive?(Process.whereis(store))
 
       # ...and reads keep working (the failed row is simply absent).
-      assert Store.get_task(Store, task_id) == nil
-      assert Store.select_task_ids(Store) == []
+      assert Store.get_task(store, task_id) == nil
+      assert Store.select_task_ids(store) == []
     end
 
-    test "a retried put_task succeeds after the disk-full condition clears" do
+    test "a retried put_task succeeds after the disk-full condition clears", %{store: store} do
       unique = System.unique_integer([:positive])
       task_id = "disk_full_retry_#{unique}"
       task = disk_full_task(task_id)
 
-      set_query_only(Store, "ON")
+      set_query_only(store, "ON")
 
       capture_log(fn ->
-        assert {:error, :disk_full} = Store.put_task(Store, task)
+        assert {:error, :disk_full} = Store.put_task(store, task)
       end)
 
-      set_query_only(Store, "OFF")
+      set_query_only(store, "OFF")
 
       # A full disk is transient — the same write succeeds once the
       # condition clears, without restarting the Store.
-      assert :ok = Store.put_task(Store, task)
-      assert %TaskInfo{id: ^task_id} = Store.get_task(Store, task_id)
+      assert :ok = Store.put_task(store, task)
+      assert %TaskInfo{id: ^task_id} = Store.get_task(store, task_id)
     end
   end
 
   describe "TaskRegistry degradation on disk-full" do
-    test "start_task continues in-memory when persistence fails" do
+    test "start_task continues in-memory when persistence fails",
+         %{store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       task_id = "disk_full_registry_#{unique}"
 
-      set_query_only(Store, "ON")
+      set_query_only(store, "ON")
 
       log =
         capture_log(fn ->
           assert {:ok, %TaskInfo{id: ^task_id}} =
                    GenServer.call(
-                     EvoGit.TaskRegistry,
+                     registry,
                      {:start_task, task_id, :genesis, [path: "/tmp/test"]}
                    )
         end)
@@ -148,13 +149,13 @@ defmodule EvoGit.StoreDiskFullTest do
       assert log =~ "Store: DISK FULL"
 
       # The registry GenServer did not crash.
-      assert Process.alive?(Process.whereis(EvoGit.TaskRegistry))
+      assert Process.alive?(Process.whereis(registry))
 
       # Reads still work; the unpersisted task is tracked in-memory only
       # (list_tasks is DB-backed, so the task is absent from it).
       assert TaskRegistry.list_tasks() == []
 
-      state = :sys.get_state(EvoGit.TaskRegistry)
+      state = :sys.get_state(registry)
       assert Map.has_key?(state.task_refs, task_id)
     end
   end

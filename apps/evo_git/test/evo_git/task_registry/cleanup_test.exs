@@ -1,12 +1,12 @@
 defmodule EvoGit.TaskRegistry.CleanupTest do
   @moduledoc """
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  Runs `async: true`: each test gets its own isolated `EvoGit.Store` +
+  `EvoGit.TaskRegistry` from `EvoGit.TaskRegistryCase`, touches no BEAM-global
+  state (no app-env key, no shared `:evogit_*` ETS table, no global scheduler
+  config), and every task id is per-test unique.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   describe "task_history_config/0 defaults" do
     test "returns default max_tasks and max_age_days when no config set" do
@@ -44,7 +44,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, old_task)
+      EvoGit.Store.put_task(store(), old_task)
 
       # Insert a recent finished task (today)
       recent_task = %TaskInfo{
@@ -59,7 +59,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, recent_task)
+      EvoGit.Store.put_task(store(), recent_task)
 
       # Verify both exist
       tasks = TaskRegistry.list_tasks()
@@ -94,7 +94,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, task)
+      EvoGit.Store.put_task(store(), task)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -123,7 +123,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, running_task)
+      EvoGit.Store.put_task(store(), running_task)
 
       # Pending task
       pending_task = %TaskInfo{
@@ -138,7 +138,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, pending_task)
+      EvoGit.Store.put_task(store(), pending_task)
 
       # Old finished task (should be cleaned)
       old_finished = %TaskInfo{
@@ -153,7 +153,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, old_finished)
+      EvoGit.Store.put_task(store(), old_finished)
 
       # Trigger cleanup
       trigger_cleanup!()
@@ -188,7 +188,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, old_task)
+      EvoGit.Store.put_task(store(), old_task)
 
       # Recent tasks (within max_age_days) - should be kept
       for i <- 1..3 do
@@ -204,7 +204,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
           result: nil
         }
 
-        EvoGit.Store.put_task(EvoGit.Store, recent)
+        EvoGit.Store.put_task(store(), recent)
       end
 
       # Running task - should always be kept regardless of age
@@ -220,7 +220,7 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
         result: nil
       }
 
-      EvoGit.Store.put_task(EvoGit.Store, running)
+      EvoGit.Store.put_task(store(), running)
 
       # Trigger cleanup
       trigger_cleanup!()

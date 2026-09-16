@@ -17,13 +17,15 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
   local `%TaskInfo{}` and never touch the Store or the registry, so they do not
   need this module's heavy fixture.
 
-  `async: false` is required: `EvoGit.TaskRegistryCase` terminates and restarts
-  the GLOBAL `EvoGit.TaskRegistry` / `EvoGit.Store` app children and
-  re-registers them under their global names, so a concurrently running module
-  would observe the swapped singletons.
+  Runs `async: true`: the `EvoGit.TaskRegistryCase` fixture is an isolated
+  `EvoGit.Store` + `EvoGit.TaskRegistry` under UNIQUE registered names, and the
+  test process is pointed at them via the process dictionary — so
+  `EvoGit.TaskRegistry.get_task/1` and `store()` resolve to this test's own
+  instances and no BEAM-global state (app env, `:evogit_*` ETS, global
+  scheduler config) is mutated. Task ids are per-test unique.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskRegistry.MergeContext
@@ -354,7 +356,7 @@ defmodule EvoGit.TaskRegistry.MergeContextTest do
   end
 
   defp persist_task!(%TaskInfo{} = task) do
-    EvoGit.Store.put_task(EvoGit.Store, task)
+    EvoGit.Store.put_task(store(), task)
     task
   end
 
