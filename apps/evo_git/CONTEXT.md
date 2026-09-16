@@ -21,7 +21,7 @@ Genesis supports SSH remote development (VSCode Remote-SSH-style): a headless `:
 - `./lib/evo_git/store/` → `EvoGit.Store` (SQLite) + `Store.Codec` — task/project persistence, summary projections, disk-full handling — detail in `store/CONTEXT.md`
 - `./lib/evo_git/task_registry/` → `TaskRegistry` support modules — `Cleanup`, `Diagnostics`, `Lease`, `MergeContext`, `ResumeContext`, `RuntimeOpts`, `TaskExecutor`, Graceful Cancellation & Force Kill, Restart Recovery — detail in `task_registry/CONTEXT.md`
 - `./lib/evo_git/agent/tools/` → Tool implementations incl. the repo-less `run_command` shell tool (task control, user guides, system info) — detail in `agent/tools/CONTEXT.md`
-- `./lib/mix/tasks/` → `Mix.Tasks.Changelog`, `Mix.Tasks.Bump.Version`, `Mix.Tasks.Migrate.Store` — detail in root `./CONTEXT.md` ("AI changelog generation"/"Versioning") + `lib/mix/tasks/`
+- `./lib/mix/tasks/` → `Mix.Tasks.Changelog`, `Mix.Tasks.Bump.Version`, `Mix.Tasks.Migrate.Store` (+ their per-call `root:`/`shell:`/summarizer-seam injection surface) — detail in `lib/mix/tasks/CONTEXT.md` and root `./CONTEXT.md` ("AI changelog generation"/"Versioning")
 - SSH remote (RemoteConnection, RemoteBootstrap, EpmdDist, Distribution, tunnel readiness, bootstrap safeguards) → `lib/evo_git/CONTEXT.md` (RemoteConnection/RemoteBootstrap sections) + `apps/evo_dash/CONTEXT.md` (dashboard UX)
 - Task persistence + startup reconciliation → `./lib/evo_git/store/` + `./lib/evo_git/task_registry/`
 - Config caching behavior (remote/SSH scenarios) → `./lib/evo_git/config/` (Config Caching)
