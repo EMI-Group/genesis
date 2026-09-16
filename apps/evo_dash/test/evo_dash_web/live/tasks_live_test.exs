@@ -616,7 +616,20 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Loading tasks..."
       refute html =~ "async visible task"
 
-      html = flush_tasks_load(view)
+      flush_tasks_load(view)
+
+      # flush_tasks_load returns as soon as "Loading tasks..." leaves the
+      # proxy's cached tree, but that tree is patched by channel diffs as they
+      # arrive. Await the cleared :tasks_loading assign on the socket (a
+      # synchronous :sys.get_state round-trip, as elsewhere in this file) and
+      # re-render so the list + count + pager assertions below all read the
+      # same fully-applied page-load result.
+      wait_until(fn ->
+        state = :sys.get_state(view.pid)
+        state.socket.assigns[:tasks_loading] == false
+      end)
+
+      html = render(view)
 
       assert html =~ "async visible task"
       assert html =~ "1 task found"

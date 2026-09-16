@@ -897,6 +897,11 @@ defmodule EvoDashWeb.HomeLiveTest do
         {:chat_history_loaded, node(), assigns(view)[:chat_fetch_seq], 1, real_history()}
       )
 
+      # Await the assign the {:chat_history_loaded, ...} handler writes (the
+      # same barrier the sibling "real AgentState ETS row" test uses) so the
+      # render below reads the fully-applied injected history.
+      wait_until(fn -> assigns(view)[:agent_message_count] == length(real_history()) end)
+
       html = render(view)
       assert html =~ "Genesis is an Elixir framework."
       assert html =~ "Thought process"
