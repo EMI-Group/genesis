@@ -5,7 +5,7 @@ defmodule EvoGit.Sandbox.MacOSTest do
   # seeds the `{EvoGit.Sandbox.MacOS, :process_limit_rejected}` persistent_term.
   use ExUnit.Case, async: false
 
-  alias EvoGit.{Platform, Sandbox}
+  alias EvoGit.{Platform, Sandbox, TaskTmpdir}
   alias EvoGit.Sandbox.MacOS
 
   # The backend's built-in build-cache dirs (mirrored from
@@ -57,6 +57,18 @@ defmodule EvoGit.Sandbox.MacOSTest do
     end)
 
     original
+  end
+
+  # Installs a fresh, test-owned managed per-task tmpdir on the CURRENT test
+  # process (the process-dictionary seam read in the SAME process by
+  # `EvoGit.Sandbox.Helpers.task_tmpdir_path/0` and
+  # `EvoGit.Sandbox.resolve_tmpdir/0`) and returns its path. ExUnit gives every
+  # test a fresh process, so the pdict value never leaks and needs no cleanup.
+  defp per_task_tmpdir! do
+    path = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+
+    TaskTmpdir.put_current(path)
+    path
   end
 
   setup do
@@ -219,6 +231,42 @@ defmodule EvoGit.Sandbox.MacOSTest do
 
       assert profile =~ "(limit number 200)"
       assert length(Regex.scan(~r/\(limit number 200\)/, profile)) == 1
+    end
+  end
+
+  describe "generate_profile/2 — managed per-task tmpdir" do
+    test "grants read+write to the managed per-task tmpdir when installed" do
+      task_tmp = per_task_tmpdir!()
+
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      assert profile =~ ~s{(allow file-read* (subpath "#{task_tmp}"))}
+      assert profile =~ ~s{(allow file-write* (subpath "#{task_tmp}"))}
+    end
+
+    test "keeps the system tmp read/write rules when a per-task tmpdir is installed" do
+      # The per-task dir is an ADDITIONAL writable path — the system tmp rules
+      # (same paths asserted by the plain generate_profile/2 tests) must stay.
+      per_task_tmpdir!()
+
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      for path <- ["/tmp", "/var/tmp"] do
+        assert profile =~ ~s{(allow file-read* (subpath "#{path}"))}
+        assert profile =~ ~s{(allow file-write* (subpath "#{path}"))}
+      end
+    end
+
+    test "emits no per-task tmpdir rules when none is installed" do
+      TaskTmpdir.put_current(nil)
+
+      profile = MacOS.generate_profile("/some/cwd", nil)
+
+      # No rule may reference a managed per-task dir (`<root>/genesis/task_<id>`).
+      # This matches the real per-task rule shape and cannot collide with the
+      # genesis config/data dir rules (those end in `/genesis`).
+      refute profile =~ ~r{subpath "[^"]*/genesis/task_\d+"},
+             "expected no managed per-task tmpdir rules when none is installed"
     end
   end
 
@@ -449,6 +497,25 @@ defmodule EvoGit.Sandbox.MacOSTest do
       # The repo worktree (File.cwd!()) is not under /tmp or /var/tmp on CI
       # or dev machines.
       assert_tmpdir_falls_back(File.cwd!())
+    end
+
+    test "returns the installed per-task tmpdir directly, bypassing the legacy fallback" do
+      save_tmpdir()
+      # Point $TMPDIR at the repo worktree (outside every tmp path) so the
+      # LEGACY resolution would return the first platform tmp path — proving
+      # the installed per-task dir wins outright.
+      System.put_env("TMPDIR", File.cwd!())
+      task_tmp = per_task_tmpdir!()
+
+      assert Sandbox.resolve_tmpdir() == task_tmp
+    end
+
+    test "falls back to the legacy resolution when no per-task tmpdir is installed" do
+      save_tmpdir()
+      System.delete_env("TMPDIR")
+      TaskTmpdir.put_current(nil)
+
+      assert Sandbox.resolve_tmpdir() == List.first(Platform.tmp_paths())
     end
   end
 
