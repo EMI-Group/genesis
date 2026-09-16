@@ -157,6 +157,7 @@ path = "/abs/path/to/tmp"         # Base path for :custom mode; absolute (or ~-r
 - `:per_repo` → `<task's primary repo>/.genesis/tmp/task_<id>`.
 
 `mode` is an `:atom` enum (`"system" | "custom" | "per_repo"`); the TOML string is atomized by the dedicated `[:tmp]` clause in `EvoGit.Config.atomize_enum_values/1` (config.ex) before `Schema.validate` — without that clause the raw string fails the `:atom` type check and lands in validation warnings.
+The `[:tmp, :*]` keys carry `category: :data` (NOT a new `:tmp` category): the dashboard Settings page hardcodes its category set (`EvoDashWeb.SettingsComponents.CategoryMetadata`), so a new category would crash its sidebar render. `:data` renders them generically with no platform filtering; the `[tmp]` TOML table itself is unaffected by the display grouping.
 
 **`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml
