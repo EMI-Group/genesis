@@ -262,6 +262,16 @@ defmodule EvoGit.Sandbox.MacOS do
         ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
       end)
 
+    # Managed per-task tmpdir (when installed on the calling process): the
+    # runtime injects this as the sandbox TMPDIR, so it must be granted BOTH
+    # read and write access. It is an ADDITIONAL path — the system tmp dirs
+    # (tmp_rules above) stay writable regardless. Evaluates to "" when unset,
+    # mirroring the empty-group pattern used by git_rules/nix_rules.
+    task_tmpdir_rules =
+      Enum.map_join(List.wrap(Helpers.task_tmpdir_path()), "\n    ", fn path ->
+        ~s{(allow file-read* (subpath "#{path}"))\n    (allow file-write* (subpath "#{path}"))}
+      end)
+
     # Genesis config/data dirs (e.g. `~/Library/Application Support/genesis`
     # on macOS — NOT under /tmp or the repo): the runtime reads and writes
     # config, credentials, state, and logs there.
@@ -414,6 +424,7 @@ defmodule EvoGit.Sandbox.MacOS do
     (allow file-write* (subpath "#{cwd}"))
     #{git_rules}
     #{tmp_rules}
+    #{task_tmpdir_rules}
     #{genesis_rw_rules}
     #{home_read_rule}
     #{sensitive_read_rules}
