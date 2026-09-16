@@ -688,20 +688,27 @@ defmodule EvoDashWeb.AgentsLive do
 
     # Carry over already-fetched histories and (conditionally) record the gate.
     # A fresh agent built from summaries carries history: [], so the old
-    # (fetched) history is ALWAYS carried over while an old row exists — this
-    # keeps the already-rendered entries MOUNTED while the refresh-induced
-    # refetch is in flight. Blanking it on a moved message count would swap the
-    # whole list for the "Loading history…" spinner and re-animate every entry
-    # once the refetch landed. The gate is recorded ONLY when the count is
-    # unchanged (its last-seen entry), so a moved count still reports
-    # "needs fetch" and the refetch is triggered — no redundant re-transfers.
+    # (fetched) history is carried over while an old row exists — this keeps the
+    # already-rendered entries MOUNTED while the refresh-induced refetch is in
+    # flight. Blanking it on a moved message count would swap the whole list for
+    # the "Loading history…" spinner and re-animate every entry once the
+    # refetch landed. Carry-over is scoped to SAME-NODE agents via
+    # HistoryGate.known?/2: the gate is reset on a node switch while @agents is
+    # kept mounted, and agent ids are per-node, so without this check a same-id
+    # row from the PREVIOUS node could leak its history into the new node's
+    # list. A brand-new agent has no gate entry either — but it has history: []
+    # anyway, so skipping the carry-over is a no-op for it. The gate is
+    # recorded ONLY when the count is unchanged (its last-seen entry), so a
+    # moved count still reports "needs fetch" and the refetch is triggered — no
+    # redundant re-transfers.
     old_agents = socket.assigns.agents
 
     {agents, history_gate} =
       Enum.reduce(agents, {[], socket.assigns.history_gate}, fn agent, {acc, gate} ->
         old_agent = Enum.find(old_agents, &(&1.id == agent.id))
 
-        keep_history = old_agent != nil and old_agent.history != []
+        keep_history =
+          old_agent != nil and old_agent.history != [] and HistoryGate.known?(gate, agent.id)
 
         agent = if keep_history, do: %{agent | history: old_agent.history}, else: agent
 

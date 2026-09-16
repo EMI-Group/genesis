@@ -11,7 +11,10 @@ defmodule EvoDashWeb.AgentsLive.HistoryGate do
 
   The gate state is a plain `%{agent_id => message_count}` map stored in the
   `:history_gate` socket assign (seeded `%{}` in mount, reset on node switch —
-  agent ids are per-node).
+  agent ids are per-node). A gate entry therefore ALSO means "the gate already
+  observed this agent on the CURRENT node": the gate's absence distinguishes a
+  brand-new agent — or a leftover row from a PREVIOUS node — from an agent the
+  gate already knows (see `known?/2`).
   """
 
   @doc """
@@ -27,6 +30,22 @@ defmodule EvoDashWeb.AgentsLive.HistoryGate do
   def need_fetch?(last_seen, agent_id, message_count) do
     Map.get(last_seen, agent_id) != message_count
   end
+
+  @doc """
+  Whether the gate already knows this agent on the CURRENT node.
+
+  A `true` result means the gate holds an entry for `agent_id` (the agent was
+  observed on the current node — an entry is written by `record/3` once a
+  history fetch lands); `false` means either a brand-new agent, or a leftover
+  row from a PREVIOUS node. The gate is reset on a node switch while the
+  mounted `@agents` list is deliberately kept, and agent ids are per-node, so
+  a same-id row from the previous node must not be mistaken for a same-node
+  one. Used by `AgentsLive.apply_agents_result/2` to carry already-fetched
+  history over ONLY for same-node agents, so cross-node agent ids never leak
+  another node's history.
+  """
+  @spec known?(map(), integer()) :: boolean()
+  def known?(last_seen, agent_id), do: Map.has_key?(last_seen, agent_id)
 
   @doc """
   Records the message count a fetched history corresponds to.

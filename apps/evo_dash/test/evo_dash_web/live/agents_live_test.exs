@@ -345,6 +345,76 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "new entry B"
       refute html =~ "old entry"
     end
+
+    test "does not carry a previous node's history into a newly applied agent (no gate entry)",
+         %{conn: conn} do
+      # Regression: on a node switch the history gate is RESET while @agents is
+      # deliberately kept mounted. Agent ids are per-node, so a same-id row from
+      # the previous node can still be found in @agents — but the gate has NO
+      # entry for it (it was reset), so its history must NOT be carried into the
+      # newly-applied (new node's) rows.
+      Application.put_env(:evo_dash, :agents_history_runner, fn _node, _agent_id ->
+        [
+          %ReqLLM.Message{
+            role: :user,
+            content: [%{text: "NEW NODE HISTORY"}],
+            metadata: %{turn: 1}
+          }
+        ]
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      leaked = %ReqLLM.Message{
+        role: :user,
+        content: [%{text: "PREVIOUS NODE HISTORY"}],
+        metadata: %{turn: 1}
+      }
+
+      # State left over by a node switch: @agents holds a row WITH its
+      # already-fetched history, while the gate is empty (reset on the switch).
+      send(
+        view.pid,
+        {:agents_data_loaded, node(), 1,
+         {:ok,
+          %{
+            agents: [full_agent(id: agent_id(), history: [leaked], message_count: 5)],
+            config_status: nil,
+            threshold_cache: nil
+          }}}
+      )
+
+      # The new node's async load lands: a fresh summary row for the SAME id
+      # (agent ids are per-node) with no history of its own and no gate entry.
+      send(
+        view.pid,
+        {:agents_data_loaded, node(), 1,
+         {:ok,
+          %{
+            agents: [full_agent(id: agent_id(), history: [], message_count: 5)],
+            config_status: nil,
+            threshold_cache: nil
+          }}}
+      )
+
+      render(view)
+
+      # The apply path must NOT carry the previous node's history into the
+      # new node's row (the gate never knew this id on the current node).
+      [agent] = Enum.filter(assigns(view)[:agents], &(&1.id == agent_id()))
+      assert agent.history == []
+      assert assigns(view)[:history_gate] == %{}
+
+      # Selecting the agent fetches ITS node's history — the previous node's
+      # content must never appear in the panel.
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      wait_until(fn -> render(view) =~ "NEW NODE HISTORY" end)
+
+      refute render(view) =~ "PREVIOUS NODE HISTORY"
+    end
   end
 
   describe "agent event broadcasts (node-identity contract)" do
@@ -1294,6 +1364,18 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert HistoryGate.record(%{}, 1, 5) == %{1 => 5}
       assert HistoryGate.record(%{1 => 3}, 1, 5) == %{1 => 5}
     end
+
+    test "known?/2 reports whether the gate has an entry for the agent" do
+      # No entry = a brand-new agent OR a leftover row from a previous node
+      # (the gate is reset on a node switch — agent ids are per-node).
+      refute HistoryGate.known?(%{}, 1)
+      refute HistoryGate.known?(%{2 => 5}, 1)
+
+      # An entry (whatever its count) = the gate already observed this agent
+      # on the current node.
+      assert HistoryGate.known?(%{1 => 5}, 1)
+      assert HistoryGate.known?(%{1 => nil}, 1)
+    end
   end
 
   describe "LoadData" do
@@ -1589,41 +1671,49 @@ defmodule EvoDashWeb.AgentsLiveTest do
     )
   end
 
-  # A fully-shaped agent map for stale-result injection. Distinctive id 99
-  # (renders as "#99" in the tree) so a leaked stale result fails loudly.
-  defp marker_agent do
-    %{
-      id: 99,
-      task_local_id: nil,
-      repo_id: "primary",
-      repo_root: nil,
-      task_id: nil,
-      task_number: 99,
-      status: :running,
-      depth: 0,
-      parent_id: nil,
-      worktree: nil,
-      retries: 0,
-      agent_module: EvoGit.Agents.Manager,
-      model_id: nil,
-      objective: "STALE MARKER OBJECTIVE",
-      context_path: "./stale-marker",
-      current_commit: "abc123",
-      base_commit: "def456",
-      children: [],
-      has_children: false,
-      pending_sub_agents: [],
-      sub_agent_results: %{},
-      task_ref: nil,
-      result_sent: false,
-      history: [],
-      usage: EvoGit.Agent.Usage.zero(),
-      total_tokens: 0,
-      compression_count: 0,
-      compression_threshold: 100_000,
-      compression_pct: 0,
-      message_count: 0
-    }
+  # A fully-shaped agent map for stale-result injection / direct apply-path
+  # exercises. Distinctive id 99 (renders as "#99" in the tree) so a leaked
+  # stale result fails loudly.
+  defp marker_agent, do: full_agent([])
+
+  # A fully-shaped agent map (all fields the tree/detail render + carry-over
+  # path read), with `overrides` merged in so tests can set id/history/etc.
+  defp full_agent(overrides) do
+    Map.merge(
+      %{
+        id: 99,
+        task_local_id: nil,
+        repo_id: "primary",
+        repo_root: nil,
+        task_id: nil,
+        task_number: 99,
+        status: :running,
+        depth: 0,
+        parent_id: nil,
+        worktree: nil,
+        retries: 0,
+        agent_module: EvoGit.Agents.Manager,
+        model_id: nil,
+        objective: "STALE MARKER OBJECTIVE",
+        context_path: "./stale-marker",
+        current_commit: "abc123",
+        base_commit: "def456",
+        children: [],
+        has_children: false,
+        pending_sub_agents: [],
+        sub_agent_results: %{},
+        task_ref: nil,
+        result_sent: false,
+        history: [],
+        usage: EvoGit.Agent.Usage.zero(),
+        total_tokens: 0,
+        compression_count: 0,
+        compression_threshold: 100_000,
+        compression_pct: 0,
+        message_count: 0
+      },
+      Map.new(overrides)
+    )
   end
 
   # A counter-backed :agents_history_runner fake. Each call returns one more
