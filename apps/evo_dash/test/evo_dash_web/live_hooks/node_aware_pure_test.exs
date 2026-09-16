@@ -313,7 +313,13 @@ defmodule EvoDashWeb.NodeAwarePureTest do
     # is dropped BEFORE the debounce — socket returned unchanged, no message.
     # Every scheduling test drains the message with `assert_receive` so a late
     # delivery can never leak into a later test's `refute_receive`.
-
+    #
+    # The receive budget (2000ms) is generously ABOVE the real 300ms
+    # production debounce (`Process.send_after(self(), :node_aware_reload_tasks,
+    # 300)`): the requirement is unchanged (the debounce message MUST arrive),
+    # but the margin absorbs timer/scheduler latency on a loaded machine — a
+    # 500ms budget is only 200ms above the timer and reproducibly flaked under
+    # CPU load ("message delivered too close to the timeout value").
     test "{:task_updated, _, _, node()} with matching node schedules the debounce" do
       sock = socket(%{current_node: node(), tasks_reload_pending: false})
 
@@ -321,7 +327,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", :running, node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 500
+      assert_receive :node_aware_reload_tasks, 2_000
     end
 
     test "{:task_updated, _, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
@@ -342,7 +348,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_deleted, "t1", node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 500
+      assert_receive :node_aware_reload_tasks, 2_000
     end
 
     test "{:task_deleted, _, foreign_node} is dropped (socket unchanged, no reload scheduled)" do
@@ -365,7 +371,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", :completed, remote_node})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 500
+      assert_receive :node_aware_reload_tasks, 2_000
 
       # A local-node event while viewing the remote node → dropped.
       sock2 = socket(%{current_node: remote_node, tasks_reload_pending: false})
@@ -385,7 +391,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
                NodeAware.handle_task_info(sock, {:task_updated, "t1", nil, node()})
 
       assert result.assigns[:tasks_reload_pending] == true
-      assert_receive :node_aware_reload_tasks, 500
+      assert_receive :node_aware_reload_tasks, 2_000
     end
 
     test "a second matching broadcast while a reload is pending is dropped (coalescing)" do
@@ -403,7 +409,7 @@ defmodule EvoDashWeb.NodeAwarePureTest do
       assert result2 == result
 
       # Exactly ONE :node_aware_reload_tasks message was scheduled.
-      assert_receive :node_aware_reload_tasks, 500
+      assert_receive :node_aware_reload_tasks, 2_000
       refute_receive :node_aware_reload_tasks, 150
     end
   end
