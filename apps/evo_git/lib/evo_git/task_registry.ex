@@ -47,6 +47,25 @@ defmodule EvoGit.TaskRegistry do
 
   ## Client API
 
+  @doc """
+  Resolves the TaskRegistry server name for the CURRENT process.
+
+  Returns the value stored under the `:evogit_task_registry_server` process
+  dictionary key when present (an isolated instance started with a custom
+  `:name`), otherwise the default registered name `__MODULE__`.
+
+  The value is read at CALL time — never cached — so every client function
+  routes to whichever registry instance the calling process was pointed at.
+  A task wrapper propagates its own registry name into the process dictionary
+  of the spawned task process (see `EvoGit.TaskRegistry.TaskExecutor`), so code
+  running inside the wrapper calls back to the SAME instance. When the key is
+  unset the default registered singleton is used, keeping production behavior
+  unchanged.
+  """
+  def server do
+    Process.get(:evogit_task_registry_server) || __MODULE__
+  end
+
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
@@ -54,15 +73,15 @@ defmodule EvoGit.TaskRegistry do
 
   def start_task(task_type, opts) do
     task_id = TaskExecutor.generate_id()
-    GenServer.call(__MODULE__, {:start_task, task_id, task_type, opts}, @call_timeout)
+    GenServer.call(server(), {:start_task, task_id, task_type, opts}, @call_timeout)
   end
 
   def get_task(task_id) do
-    GenServer.call(__MODULE__, {:get_task, task_id}, @call_timeout)
+    GenServer.call(server(), {:get_task, task_id}, @call_timeout)
   end
 
   def list_tasks do
-    GenServer.call(__MODULE__, :list_tasks, @call_timeout)
+    GenServer.call(server(), :list_tasks, @call_timeout)
   end
 
   @doc """
@@ -72,7 +91,7 @@ defmodule EvoGit.TaskRegistry do
   to `EvoGit.Store.safe_select_paginated_tasks/2`). Returns `{tasks, total_count}`.
   """
   def list_tasks_paginated(opts \\ []) do
-    GenServer.call(__MODULE__, {:list_tasks_paginated, opts}, @call_timeout)
+    GenServer.call(server(), {:list_tasks_paginated, opts}, @call_timeout)
   end
 
   @doc """
@@ -94,7 +113,7 @@ defmodule EvoGit.TaskRegistry do
   For the brutal (no grace period) cancellation, use `force_kill_task/1`.
   """
   def cancel_task(task_id) do
-    GenServer.call(__MODULE__, {:cancel_task, task_id}, @call_timeout)
+    GenServer.call(server(), {:cancel_task, task_id}, @call_timeout)
   end
 
   @doc """
@@ -113,34 +132,34 @@ defmodule EvoGit.TaskRegistry do
   For the graceful cancellation, use `cancel_task/1`.
   """
   def force_kill_task(task_id) do
-    GenServer.call(__MODULE__, {:force_kill_task, task_id}, @call_timeout)
+    GenServer.call(server(), {:force_kill_task, task_id}, @call_timeout)
   end
 
   def update_task_status(task_id, status, result \\ nil, opts \\ []) do
-    GenServer.cast(__MODULE__, {:update_status, task_id, status, result, opts})
+    GenServer.cast(server(), {:update_status, task_id, status, result, opts})
   end
 
   defp update_task_status_with_caller(task_id, status, result, opts) do
     GenServer.cast(
-      __MODULE__,
+      server(),
       {:update_status, task_id, status, result, opts, {self(), Diagnostics.capture_stacktrace(5)}}
     )
   end
 
   def update_task_log(task_id, log_entry) do
-    GenServer.cast(__MODULE__, {:append_log, task_id, log_entry})
+    GenServer.cast(server(), {:append_log, task_id, log_entry})
   end
 
   def set_review_status(task_id, status) do
-    GenServer.cast(__MODULE__, {:set_review_status, task_id, status})
+    GenServer.cast(server(), {:set_review_status, task_id, status})
   end
 
   def set_review_metadata(task_id, base_sha, commit_sha) do
-    GenServer.cast(__MODULE__, {:set_review_metadata, task_id, base_sha, commit_sha})
+    GenServer.cast(server(), {:set_review_metadata, task_id, base_sha, commit_sha})
   end
 
   def list_tasks_by_path(path) do
-    GenServer.call(__MODULE__, {:list_tasks_by_path, path}, @call_timeout)
+    GenServer.call(server(), {:list_tasks_by_path, path}, @call_timeout)
   end
 
   @doc """
@@ -155,7 +174,7 @@ defmodule EvoGit.TaskRegistry do
   filter). The filter is pushed into SQL.
   """
   def list_tasks_summary(statuses \\ [], since \\ nil) do
-    GenServer.call(__MODULE__, {:list_tasks_summary, statuses, since}, @call_timeout)
+    GenServer.call(server(), {:list_tasks_summary, statuses, since}, @call_timeout)
   end
 
   @doc """
@@ -168,7 +187,7 @@ defmodule EvoGit.TaskRegistry do
   When `statuses` is non-empty, the status filter is pushed into SQL.
   """
   def list_task_ids(statuses \\ []) do
-    GenServer.call(__MODULE__, {:list_task_ids, statuses}, @call_timeout)
+    GenServer.call(server(), {:list_task_ids, statuses}, @call_timeout)
   end
 
   @doc """
@@ -176,7 +195,7 @@ defmodule EvoGit.TaskRegistry do
   """
   def list_tasks_summary_by_path(path, statuses \\ [], since \\ nil) do
     GenServer.call(
-      __MODULE__,
+      server(),
       {:list_tasks_summary_by_path, path, statuses, since},
       @call_timeout
     )
@@ -189,19 +208,19 @@ defmodule EvoGit.TaskRegistry do
   (id, status, updated_at, ...).
   """
   def list_tasks_changed_since(since_iso) do
-    GenServer.call(__MODULE__, {:list_tasks_changed_since, since_iso}, @call_timeout)
+    GenServer.call(server(), {:list_tasks_changed_since, since_iso}, @call_timeout)
   end
 
   def get_unique_paths do
-    GenServer.call(__MODULE__, :get_unique_paths, @call_timeout)
+    GenServer.call(server(), :get_unique_paths, @call_timeout)
   end
 
   def delete_task(task_id) do
-    GenServer.cast(__MODULE__, {:delete_task, task_id})
+    GenServer.cast(server(), {:delete_task, task_id})
   end
 
   def clear_finished_tasks do
-    GenServer.call(__MODULE__, :clear_finished_tasks, @call_timeout)
+    GenServer.call(server(), :clear_finished_tasks, @call_timeout)
   end
 
   ## Recent Projects Client API
@@ -211,21 +230,21 @@ defmodule EvoGit.TaskRegistry do
   Moves it to the top with the current timestamp.
   """
   def add_recent_project(path, name) do
-    GenServer.call(__MODULE__, {:add_recent_project, path, name}, @call_timeout)
+    GenServer.call(server(), {:add_recent_project, path, name}, @call_timeout)
   end
 
   @doc """
   Returns the list of recently opened projects, sorted by last_opened_at descending.
   """
   def list_recent_projects do
-    GenServer.call(__MODULE__, :list_recent_projects, @call_timeout)
+    GenServer.call(server(), :list_recent_projects, @call_timeout)
   end
 
   @doc """
   Removes a project from the recent list by path.
   """
   def remove_recent_project(path) do
-    GenServer.call(__MODULE__, {:remove_recent_project, path}, @call_timeout)
+    GenServer.call(server(), {:remove_recent_project, path}, @call_timeout)
   end
 
   ## Server Callbacks
@@ -247,10 +266,17 @@ defmodule EvoGit.TaskRegistry do
     # Tests may pass their own task_store: name pointing to a test store.
     task_store = Keyword.get(opts, :task_store, EvoGit.Store)
 
+    # This instance's OWN registered name. Captured here so the task wrapper it
+    # spawns can propagate it into the wrapper process's `:evogit_task_registry_server`
+    # process dictionary key — in-wrapper callbacks (MergeContext/ResumeContext)
+    # then resolve back to THIS instance via `server/0`. Defaults to `__MODULE__`.
+    server_name = Keyword.get(opts, :name, __MODULE__)
+
     state = %{
       data_dir: data_dir,
       task_store: task_store,
-      task_refs: %{}
+      task_refs: %{},
+      server_name: server_name
     }
 
     # Startup reconciliation for orphaned :finalizing and :cancelling tasks. A
@@ -330,7 +356,7 @@ defmodule EvoGit.TaskRegistry do
             EvoGit.TaskSupervisor,
             TaskExecutor,
             :execute_task,
-            [task_type, opts, task_id]
+            [task_type, opts, task_id, state.server_name]
           )
 
         task = %TaskInfo{
