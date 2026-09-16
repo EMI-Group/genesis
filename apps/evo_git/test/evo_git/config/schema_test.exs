@@ -163,8 +163,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 95 schemas" do
-      assert length(Schema.all_schemas()) == 95
+    test "has exactly 97 schemas" do
+      assert length(Schema.all_schemas()) == 97
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -389,7 +389,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:tools]) == 34
       assert length(grouped[:node]) == 6
       assert length(grouped[:appearance]) == 1
-      assert length(grouped[:data]) == 1
+      assert length(grouped[:data]) == 3
     end
 
     test "sandbox schemas include sub_category metadata" do
