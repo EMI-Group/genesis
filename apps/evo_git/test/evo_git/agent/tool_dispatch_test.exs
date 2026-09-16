@@ -2,14 +2,21 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   @moduledoc """
   Unit tests for `EvoGit.Agent.ToolDispatch`.
 
-  `async: true` is safe here: the module mutates only process-local state
-  (`Process.put/2` for `:evogit_agent_id` / `:repo_path` / `:genesis_repo_root`),
-  registers agent state under unique agent ids, and uses unique temp dirs — so it
-  touches no BEAM-global state (no `Application.put_env`, no `:persistent_term`,
-  no shared fixed-path files) that could race with a concurrently running test.
+  Serialized (`async: false`) on purpose — the parallel-execution describe below
+  works on BEAM-global state: it registers agent state in the app-global
+  `:evogit_agent_state` ETS table and acquires slots from the global
+  `EvoGit.AgentScheduler`, and its concurrency proof is wall-clock-bounded by the
+  production per-call tool budget (`[:scheduler, :default_tool_timeout]`).
+  Running it alongside ~28 concurrent async modules (whose processes fork
+  shells/git/ripgrep) inflated a single `run_bash` call from ~20-60ms to
+  1.6-7.4s, which exceeds that budget and truncates the marker file. With
+  exclusive access the tool calls stay three orders of magnitude under budget.
+  Everything else in this module is process-local (`Process.put/2` for
+  `:evogit_agent_id` / `:repo_path` / `:genesis_repo_root`) or uses unique agent
+  ids and temp dirs.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolDispatch
