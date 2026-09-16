@@ -20,7 +20,7 @@ None — leaf directory (modules: `state.ex`, `agent_state.ex`, `sched_meta.ex`,
 `Store.get_sched_meta/1` / `Store.get_agent_state/1` return `{:ok, x} | :error`. Four sites in `subagents.ex` use `case`-guarded lookups with graceful fallbacks (log warning + safe return) instead of bare `{:ok, x} = Store.get_*(id)` matches — a missing ETS entry (e.g. a parent's entries reaped by `cancel_agent/2` while a subagent spawn/result is in flight) never crashes the scheduler GenServer with a `MatchError`:
 
 1. `spawn_validated_subagents/5` — missing parent agent_state → replies `[{:error, :parent_recycled}]` per spec to the blocked `from`, spawns nothing, returns `{:noreply, state}` (bails BEFORE the `:waiting` status mutation).
-2. `store_sub_result/3` — missing parent sched_meta → `:ok` (result dropped; parent gone).
+2. `store_sub_result/3,4` — missing parent sched_meta → `:ok` (result dropped; parent gone).
 3. `maybe_resume_parent/2` — missing parent sched_meta → state unchanged.
 4. `dispatch_ready_parent/3` — missing agent_state (only needed for the resume log's commit SHA) → still replies/resets meta, logs `"unknown"` SHA.
 
