@@ -320,6 +320,31 @@ defmodule EvoGit.AgentScheduler.Subagents do
     end)
   end
 
+  @doc """
+  Returns `true` when `spec` is an agent authorized to advance a foreign repo's
+  tracked working commit — i.e. it is ITSELF running in a foreign repo as a
+  WRITABLE agent.
+
+  All of the following must hold:
+
+  - its `repo_id` is a binary other than `"primary"`;
+  - its `agent_module` is non-nil and `agent_module.agent_type()` is `:read_write`;
+  - the task-level `foreign_repos` entry matching `repo_id` is `writable: true`.
+
+  Local/primary agents and read-only agents (in any repo) are never authorized.
+  Uses the same `spec.foreign_repos` id-matching source as the spawn gate.
+
+  Never raises — any non-`%EvoGit.AgentSpec{}` input returns `false`.
+  """
+  @spec writable_foreign_repo_agent?(term()) :: boolean()
+  def writable_foreign_repo_agent?(%EvoGit.AgentSpec{} = spec) do
+    is_binary(spec.repo_id) and spec.repo_id != "primary" and
+      not is_nil(spec.agent_module) and spec.agent_module.agent_type() == :read_write and
+      match?(%{writable: true}, foreign_repo_entry(spec))
+  end
+
+  def writable_foreign_repo_agent?(_spec), do: false
+
   # A spec is a "writable foreign repo spawn" when it is a CROSS-repo
   # (different repo id than the parent) `:read_write` spec whose target is
   # marked writable at the task level. Same-repo spawns within a foreign repo
@@ -381,41 +406,24 @@ defmodule EvoGit.AgentScheduler.Subagents do
 
   @doc """
   Stores a subagent result at the correct index in the parent's results map.
+
+  The completing child's `%EvoGit.AgentSpec{}` (when known — passed as the 4th
+  arg) gates foreign-repo commit tracking: only a child that is ITSELF a writable
+  agent running in a foreign repo (`writable_foreign_repo_agent?/1`) may advance
+  that repo's tracked working commit. A local/primary or read-only child
+  contributes nothing — its result's foreign commits are ignored, so a stale SHA
+  can never overwrite a newer one recorded by a writable foreign agent.
   """
-  @spec store_sub_result(pos_integer(), pos_integer(), term()) :: :ok
-  def store_sub_result(parent_id, sub_id, result) do
+  @spec store_sub_result(pos_integer(), pos_integer(), term(), EvoGit.AgentSpec.t() | nil) :: :ok
+  def store_sub_result(parent_id, sub_id, result, child_spec \\ nil) do
     # Parent entry may be reaped by cancel_agent while a subagent completes in flight
     case Store.get_sched_meta(parent_id) do
       {:ok, parent} ->
         idx = Map.get(parent.sub_agent_indices, sub_id)
         results = Map.put(parent.sub_agent_results, idx, result)
 
-        # Roll up the completing subagent's subtree commits: its result carries
-        # the per-repo commits of its own subtree (injected by Lifecycle at
-        # completion), so multi-level trees accumulate at the root. Child
-        # entries override the parent's for the same repo_id — the child's
-        # subtree view is fresher.
-        base_commits =
-          case result do
-            {:ok, %EvoGit.Agent.Result{} = res} ->
-              child_frc = Map.get(res, :foreign_repo_commits, %{})
-              Map.merge(parent.foreign_repo_commits, child_frc)
-
-            _ ->
-              parent.foreign_repo_commits
-          end
-
-        # Track foreign repo commit SHAs — when a foreign-repo subagent completes,
-        # record its commit so subsequent subagents can start from it instead of HEAD.
-        foreign_repo_commits =
-          case result do
-            {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
-            when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
-              Map.put(base_commits, repo_id, sha)
-
-            _ ->
-              base_commits
-          end
+        writable? = not is_nil(child_spec) and writable_foreign_repo_agent?(child_spec)
+        foreign_repo_commits = roll_up_foreign_repo_commits(parent, result, writable?)
 
         Store.put_sched_meta(parent_id, %{
           parent
@@ -429,6 +437,35 @@ defmodule EvoGit.AgentScheduler.Subagents do
         )
 
         :ok
+    end
+  end
+
+  # Authority-gated foreign-repo working-commit roll-up. A child authorized by
+  # `writable_foreign_repo_agent?/1` may advance a repo's tracked commit two
+  # ways: (1) its result carries the subtree's per-repo commits (injected by
+  # Lifecycle at completion), which merge child-wins over the parent's map; and
+  # (2) its own `commit_sha` on a foreign `repo_id` is recorded directly so
+  # subsequent subagents start from it instead of HEAD. Any other child leaves
+  # the parent's map EXACTLY as-is (no merge, no put).
+  defp roll_up_foreign_repo_commits(parent, _result, false), do: parent.foreign_repo_commits
+
+  defp roll_up_foreign_repo_commits(parent, result, true) do
+    subtree_commits =
+      case result do
+        {:ok, %EvoGit.Agent.Result{} = res} ->
+          Map.merge(parent.foreign_repo_commits, Map.get(res, :foreign_repo_commits, %{}))
+
+        _ ->
+          parent.foreign_repo_commits
+      end
+
+    case result do
+      {:ok, %EvoGit.Agent.Result{commit_sha: sha, repo_id: repo_id}}
+      when is_binary(sha) and not is_nil(repo_id) and repo_id != "primary" ->
+        Map.put(subtree_commits, repo_id, sha)
+
+      _ ->
+        subtree_commits
     end
   end
 
