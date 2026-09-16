@@ -11,6 +11,8 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   `:llm_retry_backoff_base_ms` to `@retry_backoff_base_ms` and every wait below is
   a real scheduler condition (`AgentScheduler.get_llm_slot_status/0` / `paused?/0`)
   rather than a fixed sleep — see the synchronization notes above the constants.
+  The remaining one-off cost is ReqLLM's `LLMDB.load/1` catalog decode, paid ONCE
+  in `setup_all/1` (see `warm_pool/0`).
 
   `async: false` — touches the global `EvoGit.AgentScheduler` GenServer (config
   update, pause/resume) and the shared scheduler ETS tables.
@@ -28,14 +30,17 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   # Base (ms) of the production exponential-backoff between retry attempts,
   # overridden per test through the call-time app-env seam
-  # `:llm_retry_backoff_base_ms` read by `ToolDispatch` at call time. 250ms is
+  # `:llm_retry_backoff_base_ms` read by `ToolDispatch` at call time. 75ms is
   # chosen so that (a) the retry sequences that used to cost ~3s / ~1s / ~7s
-  # collapse to ~0.75s / ~0.25s / ~1.75s, and (b) every backoff window stays far
-  # longer than the ~10-30ms a connection-refused attempt needs against a warmed
-  # Finch pool — and far longer than a scheduler round trip — so the
-  # deterministic waits below (anchored on slot/queue STATE, never on the clock)
-  # cannot race the window.
-  @retry_backoff_base_ms 250
+  # collapse to ~0.22s / ~0.22s / ~0.53s, and (b) every backoff window stays far
+  # longer than a connection-refused attempt against a warmed Finch pool —
+  # MEASURED at 1.0-2.5ms (p99 1.81ms, max 2.46ms over 300 samples) — and far
+  # longer than a scheduler round trip (<=0.03ms) — so the deterministic waits
+  # below (anchored on slot/queue STATE, never on the clock) cannot race the
+  # window. `randomize/1` shifts each delay by at most 10%, so the SMALLEST
+  # randomized window is 75 * 0.9 = 67.5ms — ~27x the measured worst-case
+  # attempt and still >2x the old, deliberately conservative 30ms estimate.
+  @retry_backoff_base_ms 75
 
   # The model pool every retry test drives: a SINGLE-slot pool, pinned by the
   # setup (`model_profiles: [%{id: "default", ..., concurrency: 1}]`).
@@ -70,10 +75,21 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     %{provider: :openai, id: "test-refused", base_url: "http://127.0.0.1:1", api_key: "test-key"}
   end
 
-  # The FIRST stream_text to a fresh Finch destination creates the connection
-  # pool (~1.7s); subsequent calls to the same destination fail in ~1-2ms. Warm
-  # the pool so each retry attempt fails in milliseconds, making the retry-sleep
-  # windows deterministic for the assertions below.
+  # The FIRST ReqLLM call in a fresh BEAM pays a one-off `LLMDB.load/1`: reading
+  # + JSON-decoding + indexing the packaged `priv/llm_db/snapshot.json` catalog
+  # (8.6 MB), MEASURED at ~2.5-3.5s (`:timer.tc` around `LLMDB.load/1` alone;
+  # every other step of `ReqLLM.stream_text/3` — model resolution, provider
+  # build — is <=11ms). This is NOT Finch per-origin pool creation: a brand-new
+  # destination costs ~2ms once the catalog is loaded. It is unavoidable for any
+  # test that exercises ReqLLM, so `setup_all/1` pays it ONCE per module (it does
+  # not reduce total wall clock — it only stops one arbitrary test from being
+  # charged ~2.5s by `setup/1`).
+  #
+  # After the catalog load, warm the Finch pool + Mint modules for the refused
+  # destination too: the FIRST transport attempt costs ~39ms vs ~1-2ms once warm
+  # (a brand-new destination is only ~2-3ms once the catalog is loaded). Warming
+  # keeps every retry attempt in the low milliseconds, so the retry-sleep windows
+  # below are deterministic.
   #
   # stream_text/3 returns {:ok, stream_resp} once the provider build phase
   # succeeds (the API key is resolved); the actual transport failure surfaces
@@ -227,6 +243,30 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     |> Map.get(@model_id, %{used: 0, waiting: 0, capacity: 0})
   end
 
+  # One-off module warm-up (see warm_pool/0): pays the unavoidable
+  # `LLMDB.load/1` catalog cost ONCE for the whole module, in a clearly
+  # attributed place, instead of charging ~2.5s to whichever test happens to run
+  # first. It does NOT reduce the module's total wall clock.
+  #
+  # The API key is pinned only for the duration of the warm-up call (the
+  # per-test `setup/1` below keeps pinning it the way it always has).
+  setup_all do
+    previous_api_key = Application.get_env(:req_llm, :openai_api_key)
+    Application.put_env(:req_llm, :openai_api_key, "test-key")
+
+    try do
+      warm_pool()
+    after
+      if previous_api_key do
+        Application.put_env(:req_llm, :openai_api_key, previous_api_key)
+      else
+        Application.delete_env(:req_llm, :openai_api_key)
+      end
+    end
+
+    :ok
+  end
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
 
@@ -248,8 +288,8 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # Shrink the retry loop's exponential-backoff base through the call-time
     # app-env seam `:llm_retry_backoff_base_ms` (read by
     # `ToolDispatch.call_llm_with_retry/5` on every call) so each backoff sleep
-    # is ~250ms instead of ~1s — the retry sequences below shrink from
-    # ~3s / ~1s / ~7s to ~0.75s / ~0.25s / ~1.75s without touching lib. The value
+    # is ~75ms instead of ~1s — the retry sequences below shrink from
+    # ~3s / ~1s / ~7s to ~0.22s / ~0.22s / ~0.53s without touching lib. The value
     # is restored (or removed when it had none) in `on_exit`, keeping the seam out
     # of sibling tests.
     original_backoff_base = Application.get_env(:evo_git, :llm_retry_backoff_base_ms)
@@ -260,8 +300,6 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     AgentScheduler.update_config(
       model_profiles: [%{id: "default", model: "test:model", concurrency: 1}]
     )
-
-    warm_pool()
 
     on_exit(fn ->
       AgentScheduler.resume()
