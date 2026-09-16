@@ -1523,7 +1523,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # Completion invalidates the hub snapshot (review_live.ex
       # invalidate_active_tasks/1) so a later /projects mount comes up COLD.
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # Durable property: the settled task must be absent from the snapshot —
+      # the same completion's set_review_status broadcast makes this still-mounted
+      # page run its own debounced sidebar reload, which legitimately re-warms
+      # the key with a filtered snapshot.
+      assert_hub_excludes_task(task_id)
     end
 
     test "merging from the foreign card targets the foreign repo's chosen branch", %{
@@ -1695,7 +1699,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "All repositories rejected."
       assert html =~ ~s(id="review-completion-banner")
       assert assigns(view)[:flash]["success"] =~ "Changes rejected"
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # The settled task must be absent (the debounced sidebar reload this
+      # completion's broadcast triggers may legitimately re-warm the key).
+      assert_hub_excludes_task(task_id)
     end
 
     test "reports the failure on the failing repo's card and stays", %{
@@ -2827,8 +2833,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ ~s(id="review-completion-back")
       assert assigns(view)[:flash]["success"] =~ "Changes rejected"
 
-      # Completion invalidates the sidebar hub snapshot.
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # Completion invalidates the sidebar hub snapshot — the settled task must
+      # be absent (a broadcast-driven sidebar reload may re-warm the key).
+      assert_hub_excludes_task(task_id)
     end
 
     test "a mixed merge + reject completes as :merged (≥1 merged wins)", %{conn: conn} do
@@ -2862,7 +2869,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert TaskRegistry.get_task(task_id).review_status == :merged
       assert html =~ "All repositories merged."
       assert html =~ ~s(id="review-completion-banner")
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # Completion invalidates the sidebar hub snapshot — the settled task must
+      # be absent (a broadcast-driven sidebar reload may re-warm the key).
+      assert_hub_excludes_task(task_id)
     end
 
     test "a persisted review status wins over a later computed value", %{conn: conn} do
@@ -3003,9 +3012,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
 
       # The LAST repo reaching a terminal state completes the review → the
-      # snapshot is invalidated so a later /projects mount comes up cold.
+      # snapshot is invalidated so a later /projects mount comes up cold. The
+      # settled task must be absent (a broadcast-driven sidebar reload may
+      # re-warm the key with a filtered snapshot).
       render_click(view, "reject", %{"repo_id" => "original"})
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      assert_hub_excludes_task(task_id)
     end
   end
 
@@ -3545,7 +3556,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ ~s(id="review-completion-banner")
       assert html =~ "All repositories merged."
       assert assigns(view)[:flash]["success"] =~ "Successfully merged 2 repositories."
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # The settled task must be absent (a broadcast-driven sidebar reload may
+      # legitimately re-warm the key with a filtered snapshot).
+      assert_hub_excludes_task(task_id)
     end
 
     test "a conflict on one repo settles that card and the others still merge", %{conn: conn} do
@@ -3658,7 +3671,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ ~s(id="review-completion-back")
       assert html =~ "All repositories merged."
       assert assigns(view)[:flash]["success"] =~ "Successfully merged 2 repositories."
-      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+      # The settled task must be absent (a broadcast-driven sidebar reload may
+      # legitimately re-warm the key with a filtered snapshot).
+      assert_hub_excludes_task(task_id)
     end
   end
 
