@@ -721,7 +721,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           type: :string,
           default: nil,
           validation: [],
-          category: :tmp,
+          category: :data,
           sub_category: nil,
           description:
             "Base path for the :custom tmp mode. Must be an absolute (or ~-relative) path. Empty/nil falls back to the system tmp."
