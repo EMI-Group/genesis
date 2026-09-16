@@ -156,7 +156,8 @@ defmodule EvoGit.Config.Schema do
         :tools,
         :node,
         :appearance,
-        :data
+        :data,
+        :tmp
       ])
   """
   @spec schemas_by_category() :: %{category() => [schema_map()]}
