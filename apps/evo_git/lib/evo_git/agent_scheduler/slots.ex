@@ -12,7 +12,7 @@ defmodule EvoGit.AgentScheduler.Slots do
   The agent's `model_id` (read from ETS via `AgentState`) determines which
   pool it belongs to.
 
-  The key benefit: a rate-limit on one provider no longer blocks agents
+  The key benefit: an exhaustion on one provider no longer blocks agents
   using a different model. Backoff is scoped per-model.
 
   ## Slot Tracking
@@ -25,8 +25,10 @@ defmodule EvoGit.AgentScheduler.Slots do
   ## Slot Types
 
   - **LLM slots** — Controls how many agents can make concurrent LLM calls,
-    per-model. Includes a per-model backoff mechanism for rate limit errors
-    (60-second cooldown).
+    per-model. Includes a per-model backoff mechanism for LLM
+    model-exhaustion errors (`:rate_limit` / `:insufficient_balance` /
+    `:model_exhaustion`) with a caller-supplied duration (default 60 s) and a
+    self-rescheduling wakeup sweep that works for multi-hour durations.
 
   - **Tool slots** — Controls how many agents can execute tools concurrently.
     Simple semaphore without backoff (shared across all agents regardless of model).
@@ -46,6 +48,10 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
+
+  @default_backoff_ms 60_000
+  @max_timer_ms 4_000_000_000
+  @sweep_epsilon_ms 1_000
 
   @type slot_result ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
@@ -165,24 +171,45 @@ defmodule EvoGit.AgentScheduler.Slots do
   end
 
   @doc """
-  Handles an LLM error report.
+  Handles an LLM error report (backward-compatible 3-arity).
 
-  Rate-limit errors trigger a **per-model** 60-second backoff, re-queuing all
-  waiting agents for that model with the backoff timestamp. Other error types
-  are no-ops. Returns `{:reply, :ok, state, status_updates}`.
-
-  This is the key win of per-model pools: a rate-limit on one provider
-  no longer blocks agents using a different model.
+  Delegates to `handle_report_llm_error/4` with a nil backoff duration, which
+  falls back to `@default_backoff_ms` (60 s).
   """
   @spec handle_report_llm_error(pos_integer(), atom(), State.t()) ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
-  def handle_report_llm_error(agent_id, :rate_limit, %State{} = state) do
+  def handle_report_llm_error(agent_id, error_type, %State{} = state) do
+    handle_report_llm_error(agent_id, error_type, nil, state)
+  end
+
+  @doc """
+  Handles an LLM error report with a caller-supplied backoff duration.
+
+  LLM **model-exhaustion** errors — `:rate_limit`, `:insufficient_balance`
+  (HTTP 402) and the `:model_exhaustion` synonym — trigger a **per-model**
+  backoff, re-queuing all waiting agents for that model with the backoff
+  timestamp. The backoff duration is caller-supplied (`backoff_ms`); a nil
+  value falls back to `@default_backoff_ms` (60 s) and every value is clamped
+  to `@max_timer_ms` to guard against `Process.send_after/3` overflow (the
+  Erlang timer limit is ~2^32-1 ms). Other error types are no-ops.
+
+  Returns `{:reply, :ok, state, status_updates}`.
+
+  This is the key win of per-model pools: an exhaustion on one provider
+  no longer blocks agents using a different model.
+  """
+  @spec handle_report_llm_error(pos_integer(), atom(), non_neg_integer() | nil, State.t()) ::
+          {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
+  def handle_report_llm_error(agent_id, error_type, backoff_ms, %State{} = state)
+      when error_type in [:rate_limit, :insufficient_balance, :model_exhaustion] do
     model_id = resolve_model_id(agent_id, state)
-    backoff_until = System.monotonic_time(:millisecond) + 60_000
+    ms = backoff_ms || @default_backoff_ms
+    ms = min(ms, @max_timer_ms)
+    backoff_until = System.monotonic_time(:millisecond) + ms
 
     Logger.warning(
-      "AgentScheduler: LLM rate limit detected for model '#{model_id}', " <>
-        "per-model backoff until #{backoff_until}"
+      "AgentScheduler: LLM #{error_type} for model '#{model_id}' — " <>
+        "per-model backoff of #{ms}ms"
     )
 
     waiting = State.waiting_for(state, model_id)
@@ -193,25 +220,50 @@ defmodule EvoGit.AgentScheduler.Slots do
       |> State.update_waiting(model_id, waiting)
       |> State.update_backoff(model_id, backoff_until)
 
-    Process.send_after(self(), :retry_llm_waiting, 65_000)
+    Process.send_after(self(), :retry_llm_waiting, ms + @sweep_epsilon_ms)
 
     {:reply, :ok, state, []}
   end
 
-  def handle_report_llm_error(_agent_id, _error_type, %State{} = state) do
+  def handle_report_llm_error(_agent_id, _error_type, _backoff_ms, %State{} = state) do
     {:reply, :ok, state, []}
   end
 
   @doc """
   Handles the retry_llm_waiting timer.
 
-  Grants pending LLM slots for all models whose backoff has expired.
-  Returns `{:noreply, state, status_updates}`.
+  Grants pending LLM slots for all models whose backoff has expired, then
+  self-reschedules another sweep while any model's backoff is still in the
+  future. Returns `{:noreply, state, status_updates}`.
   """
   @spec handle_retry_llm_waiting(State.t()) :: {:noreply, State.t(), [{pos_integer(), atom()}]}
   def handle_retry_llm_waiting(%State{} = state) do
     {state, unblocked, _sweep} = grant_pending_llm_slots(state)
+    schedule_next_backoff_sweep(state)
     {:noreply, state, unblocked}
+  end
+
+  # Self-reschedules the wakeup sweep while any model is still in a future
+  # backoff, so a multi-hour backoff always wakes up and a walk-away for hours
+  # is safe. Idempotent: overlapping pending sweeps are harmless.
+  defp schedule_next_backoff_sweep(%State{} = state) do
+    now = System.monotonic_time(:millisecond)
+
+    max_remaining =
+      state
+      |> State.all_model_ids()
+      |> Enum.reduce(0, fn model_id, acc ->
+        case State.backoff_for(state, model_id) do
+          ts when is_integer(ts) and ts > now -> max(acc, ts - now)
+          _ -> acc
+        end
+      end)
+
+    if max_remaining > 0 do
+      Process.send_after(self(), :retry_llm_waiting, max_remaining + @sweep_epsilon_ms)
+    end
+
+    :ok
   end
 
   # --- Tool Slot Management ---
