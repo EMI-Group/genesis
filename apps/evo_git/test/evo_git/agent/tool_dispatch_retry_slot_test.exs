@@ -46,19 +46,22 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # setup (`model_profiles: [%{id: "default", ..., concurrency: 1}]`).
   @model_id "default"
 
-  # Agent id the TEST process uses to hold that only slot. Holding it makes the
+  # Agent id the test process uses to hold that only slot. Holding it makes the
   # retrying agent's FIRST attempt provably QUEUED at slot acquisition — a
   # persistent state, so there is no short "hold window" to catch by polling —
   # and the release then grants that attempt inside the SAME scheduler state
   # transition (`Slots.handle_release_llm_slot/2` removes the holder and grants
-  # the waiters together), so the first "slot free again" observation can only be
-  # that attempt's OWN release. Together the two replace the old
+  # the waiters together). Together the two replace the old
   # `Process.sleep(150)`/"give the first attempt time to fail" guess with
   # certainty.
   @slot_owner_agent_id 99
 
-  # Agent id of the second agent that probes whether the retrying agent's slot is
-  # FREE between attempts (unchanged from the pre-optimization test).
+  # Agent id of a second agent that probes whether the retrying agent's slot is
+  # FREE between attempts. Its request is enqueued from a SEPARATE process while
+  # the owner above still holds the slot (so an immediate grant is impossible)
+  # and the SCHEDULER's own release sweep then hands it the slot — the grant
+  # lands in the between-attempts interval without this test process having to
+  # win any wall-clock race against the retrying agent's remaining attempts.
   @probe_agent_id 2
 
   # A model spec whose base_url points at a closed loopback port (1). ReqLLM
@@ -325,6 +328,24 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     agent_id = 101
     register_agent(agent_id)
 
+    # Failure-proof, order-proof cleanup: a flunked assertion can leave any of the
+    # three agent ids holding or still waiting for the single slot, and a release
+    # sweep can promote a still-queued waiter into a fresh holder. Releasing every
+    # id twice — from ONE process, so the casts stay ordered — drains both the
+    # holder set and any waiter the preceding sweep promoted, so no leaked holder
+    # can wedge the single-slot pool for sibling tests.
+    on_exit(fn ->
+      for _ <- 1..2, id <- [@slot_owner_agent_id, agent_id, @probe_agent_id] do
+        AgentScheduler.release_llm_slot(id)
+      end
+    end)
+
+    # Keep the probe at the absent-default recursion depth (`Slots.depth_of/1`
+    # reads `:evogit_sched_meta`; no row -> 999) so the grant sweep prefers the
+    # EARLIER queue entry — the first attempt — on a full tie. The probe is then
+    # granted only by that attempt's OWN release.
+    Store.delete_sched_meta(@probe_agent_id)
+
     # The test process takes the model's only slot first, which forces the
     # retrying agent's first attempt to QUEUE at slot acquisition (see the
     # `@slot_owner_agent_id` notes above).
@@ -334,23 +355,27 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
     assert await_llm_waiting(1, "the first retry attempt to queue for the model's slot")
 
-    # Releasing our hold grants that attempt within the SAME scheduler state
-    # transition, so the next "slot free" state observable is the attempt's OWN
-    # release: the retrying agent is now provably in its backoff sleep with the
-    # slot FREE.
+    # The probe issues its request from a SEPARATE process while the owner still
+    # holds the only slot, so an immediate grant is impossible: the request
+    # provably QUEUES behind the first attempt. Pre-queueing it removes the old
+    # race in which this process had to acquire the free slot before the retrying
+    # agent's remaining attempts completed (a load-starved test process could lose
+    # that race and then never observe a waiter at all).
+    probe = Task.async(fn -> AgentScheduler.request_llm_slot(@probe_agent_id, 5_000) end)
+    assert await_llm_waiting(2, "the probe to queue behind the first attempt")
+
+    # Releasing the owner hands the slot to the first attempt (the earlier queue
+    # entry). When that attempt releases, the SCHEDULER's own sweep grants the
+    # probe — i.e. the probe is granted inside the between-attempts interval. That
+    # is the structural proof that the slot is FREE between attempts: a slot held
+    # across the whole retry sequence (old behavior) would never release the first
+    # attempt, so the probe could not be granted here.
     AgentScheduler.release_llm_slot(@slot_owner_agent_id)
-    assert await_llm_slot_free("the retrying agent to release its slot into the backoff sleep")
+    assert :ok == Task.await(probe, 5_000)
 
-    # While the retrying agent sleeps between attempts, a second agent must be
-    # able to acquire the model's only LLM slot. The 5s bound inside
-    # `acquire_llm_slot/1` is only a safety net: the STRUCTURAL proof that the
-    # slot was free BETWEEN attempts is the re-queue assertion below — a slot held
-    # for the whole retry sequence (old behavior) never produces a second slot
-    # request.
-    acquire_llm_slot(@probe_agent_id)
-
-    # The retrying agent's NEXT attempt queues behind the probe: it re-requests
-    # the slot it released instead of holding it across the retry sequence.
+    # The retrying agent's NEXT attempt now queues behind the probe's
+    # persistently-held slot: it re-requested the slot it released instead of
+    # holding it across the retry sequence.
     assert await_llm_waiting(1, "the next retry attempt to re-request the model's slot")
 
     # Release the probe's slot so the retrying agent can proceed with its next
@@ -367,31 +392,37 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     register_agent(agent_id)
 
     # Same deterministic hand-off as in the previous test: the test process holds
-    # the only slot so the first attempt is provably queued, and the release
-    # (which grants it atomically) is followed by the attempt's own release.
+    # the only slot so the first attempt is provably QUEUED.
     acquire_llm_slot(@slot_owner_agent_id)
 
-    # max_retries = 2 → three attempts total. The extra attempt buys the headroom
-    # this test needs: the pause below must land before the retrying agent has
-    # spent its whole retry stream (its remaining backoff windows are the grace
-    # period for the pause). Without the fix (slot held across the whole
-    # sequence) the agent never re-requests the slot, so the wait below can never
-    # be satisfied regardless of how many attempts are left.
+    # max_retries = 2 → three attempts total: the first is granted by the release
+    # below, the second is the one the pause must block at re-acquisition, and the
+    # third runs after resume.
     retrying = start_retrying_agent(agent_id, 2)
 
     assert await_llm_waiting(1, "the first retry attempt to queue for the model's slot")
 
-    AgentScheduler.release_llm_slot(@slot_owner_agent_id)
-    assert await_llm_slot_free("the retrying agent to release its slot into the backoff sleep")
-
-    # The retrying agent has RUN an attempt and is now sleeping between attempts —
-    # the pause lands BETWEEN attempts, as the old fixed `Process.sleep(150)` +
-    # pause aimed to arrange.
+    # Pause BEFORE the hand-off: the pause is therefore in place while the first
+    # attempt is still queued — before ANY attempt acquires the slot — so no
+    # wall-clock race between this process and the agent's backoff windows can let
+    # the pause land too late (the failure mode of the old
+    # `await_llm_slot_free` + `pause()` ordering, where the remaining attempts
+    # could all complete first under load).
+    #
+    # The release still grants the queued first attempt: the release sweep is not
+    # paused-gated (`Slots.handle_release_llm_slot/2` → `grant_pending_llm_slots/1`
+    # has no `paused` check). That attempt runs, releases into its backoff sleep,
+    # and its NEXT attempt is then blocked at re-acquisition by the pause.
     AgentScheduler.pause()
     assert AgentScheduler.paused?()
 
-    # Its next attempt blocks on slot RE-acquisition (queued as :blocked) instead
-    # of retrying.
+    AgentScheduler.release_llm_slot(@slot_owner_agent_id)
+    assert await_llm_slot_free("the retrying agent to release its slot into the backoff sleep")
+
+    # Its next attempt blocks on slot RE-acquisition (queued as :blocked) even
+    # though the slot is FREE — the pause, not contention, is what blocks it. A
+    # slot held across the whole retry sequence (old behavior) never re-requests,
+    # so this wait can never be satisfied.
     assert await_llm_waiting(1, "the next retry attempt to be blocked at slot re-acquisition")
 
     # The task is still alive: it is blocked in the scheduler's waiting queue, not
