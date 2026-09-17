@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-09-17
+
+### Added
+
+- Managed per-task temporary directories: configurable via `[tmp]` config (system/custom/per_repo modes), a per-task scratch directory threaded through the runner, tool dispatch, and subagents, exported as `TMPDIR`/`TMP`/`TEMP` for non-sandboxed execution and granted additive write access in the Linux, bwrap, and macOS sandboxes.
+- Per-repository review cards on the review page with individual merge/reject controls, merge-check status, and resolution states, replacing the single merge box with primary-scoped task actions.
+- "Merge all repositories" shortcut on the multi-repo review page to batch-accept merges across all unresolved repositories.
+- Genesis source availability gate on the /help Home chat that detects a missing source, explains it, offers one-click download, and blocks sends until the source is available.
+- Call-time `:system_samples_seed_retry_ms` option to control the SystemLive chart-seed retry delay.
+
+### Changed
+
+- Managed temporary directories are now reclaimed purely event-driven on terminal task status; periodic and boot-time stale sweeping was removed.
+- Shell tool aliases like "Bash" or "Shell" normalize to the platform's shell tool, and unknown-tool errors suggest the closest valid tool name plus a list of available tools.
+- Per-repository merge/reject actions on the multi-repo review page act only on the selected repo, with per-repo outcomes and an aggregate completion status.
+- Agent chat history stays mounted and stable during incremental refreshes, avoiding the loading spinner flash and re-animation of existing entries when new messages arrive.
+- Bursty agent events in the live agents view are coalesced into a single 300ms flush, preventing flicker and UI stalls.
+- Worktree-creation concurrency is bounded by a FIFO admission queue, and CoW worktree fallback is scope-aware so transient failures no longer disable the feature.
+- Drive-side agent errors now raise a descriptive message instead of a MatchError when agent state is missing, and ReqLLM's repeated "unverified model" warning is silenced for user-configured models.
+- Worktree copies and worktree-init script catalogs preserve source file timestamps, keeping mtime-keyed build caches (Mix, Cargo, npm) warm.
+- Elixir/Mix dependencies updated to their latest versions, including the mixFodDeps hash refresh.
+- Gettext backend modules split by locale and domain to reduce evo_dash compile times.
+
+### Fixed
+
+- Relative-path subagents delegated from inside a foreign repo now inherit the parent's repo id, keeping the spawn gate, phylo base commit, and same-repo branch cleanup working correctly.
+- Foreign-repo commit roll-up now advances a repo's tracked commit only when the completing child is a writable read-write agent in that repo, preventing stale commits from overwriting newer ones.
+- Chat history no longer leaks across node switches in the agent panel.
+- Review page self-reload no longer reverts in-page per-repo resolutions, preserving merge/reject state.
+- Multi-repo review flow now handles no-change repos correctly: merge/reject/completion/dismissal and sidebar review candidacy work when only foreign repos changed, and the Review button is shown for all completed or cancelled tasks including multi-repo tasks that only changed writable foreign repositories.
+- EvoGit.Review branch operations now return an error instead of raising when given a nil or blank branch/ref.
+- Sidebar Active Tasks no longer crash on malformed task entries, and the model-profile edit form has a stable id.
+- Missing form id warning on the agent send-message form in the dashboard is fixed.
+
 ## [0.12.6] - 2026-09-11
 
 ### Added
