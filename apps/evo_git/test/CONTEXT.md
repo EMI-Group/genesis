@@ -20,7 +20,7 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 - `./evo_git/task_registry/` → TaskRegistry lifecycle, runtime-opts, merge/resume context, `:reflect` executor, managed-tmpdir reclaim lifecycle → `./evo_git/task_registry/CONTEXT.md`
 - `./evo_git/config/` → `EvoGit.Config` schema/validation/LLM-catalog + `[:tmp]` schema tests → `./evo_git/config/CONTEXT.md`
 - `./support/` → shared test helpers (no own CONTEXT.md — documented under Shared Infrastructure below)
-- Managed per-task tmpdir (`EvoGit.TaskTmpdir`) coverage → `./evo_git/task_tmpdir_test.exs` (unit: modes/path math/ensure/reclaim safety/stale sweep) + `./evo_git/sandbox/` (backend args/env: per-task writable path + `TMPDIR`) + `./evo_git/task_registry/` (create→terminal reclaim, boot reaper, `:periodic_cleanup`) + `./evo_git/config/` (`[:tmp]` schema)
+- Managed per-task tmpdir (`EvoGit.TaskTmpdir`) coverage → `./evo_git/task_tmpdir_test.exs` (unit: modes/path math/ensure/reclaim safety) + `./evo_git/sandbox/` (backend args/env: per-task writable path + `TMPDIR`) + `./evo_git/task_registry/` (event-driven terminal reclaim) + `./evo_git/config/` (`[:tmp]` schema)
 - `./mix/tasks/` → standalone `mix`-task suites (`bump.version`, `changelog`), both `async: true`; detail in `./mix/tasks/CONTEXT.md`
 - `./evo_git_test.exs` → top-level sandbox/platform suite (`EvoGit.sandbox_args/4`, `sandbox_run/4`, backend capability checks)
 
