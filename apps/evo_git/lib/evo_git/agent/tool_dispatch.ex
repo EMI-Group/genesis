@@ -8,7 +8,6 @@ defmodule EvoGit.Agent.ToolDispatch do
   """
 
   require Logger
-  use Retry
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Tools.CompleteTask
@@ -245,79 +244,148 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc false
-  # Calls the LLM with retry-on-transient-error semantics. The retry loop (with
-  # exponential backoff) handles ONLY genuine transport/stream errors (network
-  # failures, rate limits, stream-processing errors) — returned as `{:error, _}`
-  # tuples. It does NOT retry the "no tool calls" case — that semantic problem
-  # is handled by the caller via context nudging. Returns {:ok, response,
-  # duration_ms} or {:error, reason}.
+  # Calls the LLM with retry-on-transient-error semantics using a MANUAL retry
+  # loop (not the `retry` macro) so error CLASSES can be discriminated:
   #
-  # `rescue_only: []` disables exception retrying. It stays because the remaining
-  # raise paths must propagate IMMEDIATELY rather than being retried through
-  # exponential backoff: the retry library's DEFAULT is
-  # `rescue_only: [RuntimeError]`, which WOULD retry a raised RuntimeError
-  # (bounded by max_retries, but through exponential-backoff sleeps of up to
-  # 60s each — effectively a long hang). The remaining raise paths are:
+  #   * MODEL-EXHAUSTION errors (e.g. "insufficient balance" / HTTP 402) are
+  #     classified by `EvoGit.Agent.TruncationFeedback.classify_model_exhaustion/1`;
+  #     the agent reports them to the scheduler via `report_llm_error/3` and then
+  #     recurses IMMEDIATELY with NO agent-side sleep. The long wait is realized
+  #     by the scheduler's per-model backoff: the next attempt's
+  #     `AgentScheduler.with_llm_slot/2` BLOCKS in the backoff queue (a purgeable
+  #     `:infinity` call, unblocked by force-kill/graceful-cancel or granted when
+  #     the backoff expires). That keeps the wait cancel-safe and preserves the
+  #     SAME turn/context across attempts (no context loss).
+  #   * ORDINARY transient errors keep the previous schedule EXACTLY: a short
+  #     exponential backoff of base `retry_backoff_base_ms()`, doubling each step,
+  #     capped at 60s, with the same +/-10% jitter (see `short_delay_ms/1`).
+  #
+  # The loop handles ONLY genuine transport/stream errors returned as `{:error, _}`
+  # tuples; it does NOT retry the "no tool calls" case — that semantic problem is
+  # handled by the caller via context nudging. The first attempt runs with NO
+  # initial sleep; total attempts = `max_retries + 1`. Returns `{:ok, response,
+  # duration_ms}` or `{:error, reason}`.
+  #
+  # There is NO try/rescue around the loop: exceptions MUST propagate IMMEDIATELY
+  # rather than being retried through backoff sleeps. The raise paths are:
   # (a) `{:error, :cancelled}` from a force-kill queue purge raises in
   # `AgentScheduler.with_llm_slot/2` → agent crash → scheduler crash-retry/cancel
   # machinery; (b) unexpected exceptions. A model with 0 LLM slots (peak
   # hard-pause) does NOT raise — its slot request BLOCKS (queued in the
-  # scheduler, exactly like the paused-scheduler path) until capacity returns
+  # scheduler, exactly like the paused-scheduler path), until capacity returns
   # (peak exit → `update_config` → `grant_pending_on_resume` grants queued
   # waiters) or a purge replies `{:error, :cancelled}` (force-kill).
   #
-  # The LLM slot is acquired and released PER ATTEMPT (with_llm_slot sits INSIDE
-  # the retry block), so the exponential-backoff sleep happens BETWEEN attempts
-  # while the agent's slot is FREE. This makes `AgentScheduler.pause/0` effective
-  # for a retrying agent: its next attempt blocks on slot re-acquisition when the
-  # scheduler is paused (and is granted on resume). `{:error, _}` tuple returns
-  # from the block are retried per the `atoms: [:error]` default.
+  # The LLM slot is acquired and released PER ATTEMPT (`with_llm_slot` wraps a
+  # SINGLE attempt), so the backoff wait happens BETWEEN attempts while the
+  # agent's slot is FREE. This keeps `AgentScheduler.pause/0` effective for a
+  # retrying agent: its next attempt blocks on slot re-acquisition when the
+  # scheduler is paused (and is granted on resume).
   def call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
-    retry with:
-            exponential_backoff(retry_backoff_base_ms())
-            |> randomize()
-            |> cap(60_000)
-            |> Stream.take(max_retries),
-          rescue_only: [] do
-      AgentScheduler.with_llm_slot(agent_id, fn ->
-        with llm_start <- System.monotonic_time(:millisecond),
-             {:ok, stream_resp} <-
-               ReqLLM.stream_text(
-                 current_model(),
-                 context,
-                 Keyword.merge([tools: tools], llm_gen_opts)
-               ),
-             {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
-             llm_end <- System.monotonic_time(:millisecond) do
-          {:ok, response, llm_end - llm_start}
-        else
-          {:error, reason} ->
-            Logger.warning(
-              "Agent #{agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
-            )
+    do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, 0)
+  end
 
-            if EvoGit.ReqLLMPool.excess_queuing_error?(reason) do
-              EvoGit.ReqLLMPool.bump_for_excess_queuing(
-                AgentScheduler.get_config(:model_concurrency),
-                AgentScheduler.get_config(:default_llm_max_concurrency)
-              )
-            end
-
-            {:error, reason}
-        end
-      end)
-    end
-    |> case do
+  # Manual retry loop. `attempt` is 0-based; total attempts = max_retries + 1.
+  defp do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt) do
+    case run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
       {:ok, _response, _llm_duration} = result ->
         result
 
       {:error, reason} ->
-        if EvoGit.Agent.TruncationFeedback.is_rate_limit_error?(reason) do
-          AgentScheduler.report_llm_error(agent_id, :rate_limit)
+        handle_llm_failure(context, tools, llm_gen_opts, agent_id, max_retries, attempt, reason)
+    end
+  end
+
+  # Classifies a failed attempt and decides what to do next: recurse
+  # (model-exhaustion → immediate recursion, the scheduler realizes the wait;
+  # ordinary transient → short backoff sleep) or return the terminal error once
+  # attempts are exhausted.
+  defp handle_llm_failure(context, tools, llm_gen_opts, agent_id, max_retries, attempt, reason) do
+    class = EvoGit.Agent.TruncationFeedback.classify_model_exhaustion(reason)
+
+    cond do
+      attempt >= max_retries ->
+        # Attempts exhausted. Keep the model-wide backoff fresh for the
+        # crash-retry: `prompt_until_tools_or_limit/6` still raises as before,
+        # but the crash-retry then lands after a long scheduler wait instead of
+        # immediately re-hitting an exhausted model.
+        if class do
+          AgentScheduler.report_llm_error(
+            agent_id,
+            class,
+            EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(15)
+          )
         end
 
         {:error, reason}
+
+      class ->
+        # Model exhaustion with attempts remaining: report to the scheduler and
+        # recurse IMMEDIATELY — the next attempt's `with_llm_slot/2` BLOCKS in the
+        # per-model backoff queue. No agent-side sleep here (the long wait is the
+        # scheduler's, and stays cancel-safe).
+        AgentScheduler.report_llm_error(
+          agent_id,
+          class,
+          EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(attempt + 1)
+        )
+
+        do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
+
+      true ->
+        # Ordinary transient error: short exponential-backoff sleep, then recurse.
+        :timer.sleep(short_delay_ms(attempt + 1))
+
+        do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
     end
+  end
+
+  # Runs ONE LLM attempt, acquiring and releasing the LLM slot for THAT single
+  # attempt (the slot-per-attempt invariant). Any exception raised inside — e.g.
+  # `{:error, :cancelled}` from a force-kill purge in
+  # `AgentScheduler.with_llm_slot/2` — propagates IMMEDIATELY (no rescue).
+  defp run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
+    AgentScheduler.with_llm_slot(agent_id, fn ->
+      with llm_start <- System.monotonic_time(:millisecond),
+           {:ok, stream_resp} <-
+             ReqLLM.stream_text(
+               current_model(),
+               context,
+               Keyword.merge([tools: tools], llm_gen_opts)
+             ),
+           {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
+           llm_end <- System.monotonic_time(:millisecond) do
+        {:ok, response, llm_end - llm_start}
+      else
+        {:error, reason} ->
+          Logger.warning(
+            "Agent #{agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+          )
+
+          if EvoGit.ReqLLMPool.excess_queuing_error?(reason) do
+            EvoGit.ReqLLMPool.bump_for_excess_queuing(
+              AgentScheduler.get_config(:model_concurrency),
+              AgentScheduler.get_config(:default_llm_max_concurrency)
+            )
+          end
+
+          {:error, reason}
+      end
+    end)
+  end
+
+  # Short exponential-backoff delay (ms) before attempt `k` (k >= 1) for ORDINARY
+  # transient errors — preserves the prior schedule exactly: base
+  # `retry_backoff_base_ms()`, doubling each step, capped at 60_000 ms, with the
+  # same +/-10% jitter as `Retry.DelayStreams.randomize/2`. The raw stream's first
+  # element is the base delay, so the delay before attempt k is the (k-1)-th
+  # element (`Enum.at(stream, k - 1)`).
+  defp short_delay_ms(k) do
+    retry_backoff_base_ms()
+    |> Retry.DelayStreams.exponential_backoff()
+    |> Retry.DelayStreams.randomize()
+    |> Retry.DelayStreams.cap(60_000)
+    |> Enum.at(k - 1, 60_000)
   end
 
   # Retry backoff base (ms) — call-time app-env seam so tests can shrink the
