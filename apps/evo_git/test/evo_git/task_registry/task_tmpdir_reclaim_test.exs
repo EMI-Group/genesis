@@ -1,8 +1,8 @@
 defmodule EvoGit.TaskRegistry.TaskTmpdirTestHelpers do
   @moduledoc false
 
-  # Shared fixtures for the managed per-task tmpdir suites in this file. Both
-  # suites run `async: false` on `EvoGit.TaskRegistryCase`, so the "current"
+  # Shared fixtures for the managed per-task tmpdir suite in this file. The
+  # suite runs `async: false` on `EvoGit.TaskRegistryCase`, so the "current"
   # isolated Store is resolved from the test process dictionary via
   # `EvoGit.TaskRegistryCase.store/0`.
 
@@ -71,8 +71,8 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirReclaimTest do
   (`update_task_status/3`, `force_kill_task/1`, `cancel_task/1`) against the
   isolated Store + registry pair started by `EvoGit.TaskRegistryCase` — one
   fresh pair per test, resolved through the `:evogit_task_registry_server`
-  process-dictionary seam. The private helpers `reclaim_task_tmpdir/2`,
-  `task_repo_path/1` and `live_task_ids/1` are deliberately never called.
+  process-dictionary seam. The private helpers `reclaim_task_tmpdir/2` and
+  `task_repo_path/1` are deliberately never called.
 
   ## Mode: `:per_repo` — a test-owned managed root
 
@@ -81,10 +81,9 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirReclaimTest do
   `["/tmp", "/var/tmp"]`), so `setup_all/1` isolates `XDG_CONFIG_HOME` to a temp
   dir and writes a `config.toml` selecting `[tmp] mode = "per_repo"`. The
   managed root then becomes `<task opts[:path]>/.genesis/tmp` — a per-test temp
-  dir. The registry's boot reaper (`reclaim_stale/1`) is a documented no-op for
-  `:per_repo`, so the isolated registry's `init/1` can never touch real system
-  scratch dirs. Driving `opts[:path]` is also exactly what exercises the
-  registry's per-task path resolution (`opts[:path]` → `TaskTmpdir.reclaim/2`).
+  dir, so no reclaim can reach the real `/tmp/genesis`. Driving `opts[:path]` is
+  also exactly what exercises the registry's per-task path resolution
+  (`opts[:path]` → `TaskTmpdir.reclaim/2`).
 
   ## `async: false` — forcing globals
 
@@ -225,150 +224,29 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirReclaimTest do
       refute File.exists?(dir), "cancel_task/1 on a :pending task must reclaim the tmpdir"
     end
   end
-end
 
-defmodule EvoGit.TaskRegistry.TaskTmpdirStaleSweepTest do
-  use EvoGit.TaskRegistryCase, async: false
+  describe "the periodic cleanup no longer sweeps tmpdirs" do
+    test ":periodic_cleanup leaves a non-live task dir untouched" do
+      repo = tmp_repo!()
+      on_exit(fn -> File.rm_rf(repo) end)
+      non_live_id = "tmpdir_nonlive_#{System.unique_integer([:positive])}"
 
-  @moduledoc """
-  Registry-driven coverage of the managed per-task tmpdir STALE SWEEP —
-  `EvoGit.TaskTmpdir.reclaim_stale/1`, reached by the registry's boot reaper
-  (`init/1`) and by the 5-minute `:periodic_cleanup` sweep.
+      # A `task_*` dir for a task that is NOT registered in the isolated store —
+      # nothing makes it "live", so the removed stale sweep would have deleted it.
+      dir = EvoGit.TaskTmpdir.ensure(non_live_id, repo)
+      root = EvoGit.TaskTmpdir.managed_root(repo)
 
-  `reclaim_stale/1` only enumerates the managed root outside `:per_repo` mode,
-  so `setup_all/1` isolates `XDG_CONFIG_HOME` to a temp dir and selects
-  `[tmp] mode = "custom"` with `[tmp] path` pointing at a fresh test-owned temp
-  dir. The managed root (`<tmp path>/genesis`) is then fully test-owned, and
-  every entry the sweep can reach lives under it.
-
-  ## `async: false` — forcing globals
-
-  `setup_all/1` mutates the process-wide `XDG_CONFIG_HOME` env var, read live by
-  `EvoGit.Config.resolve/1` on every concurrently running module. See
-  `EvoGit.TaskRegistry.TaskTmpdirReclaimTest` for the shared rationale.
-  """
-
-  import EvoGit.TaskRegistry.TaskTmpdirTestHelpers, only: [seed_task: 3]
-
-  setup_all do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    xdg =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_tmpdir_sweep_xdg_#{System.unique_integer([:positive])}"
-      )
-
-    custom_base =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_tmpdir_sweep_base_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(xdg)
-    File.mkdir_p!(custom_base)
-    System.put_env("XDG_CONFIG_HOME", xdg)
-
-    # config.toml lives at <xdg>/genesis/config.toml.
-    File.mkdir_p!(EvoGit.Config.config_dir())
-
-    File.write!(EvoGit.Config.config_path(), """
-    [tmp]
-    mode = "custom"
-    path = "#{custom_base}"
-    """)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(xdg)
-      File.rm_rf!(custom_base)
-    end)
-
-    assert EvoGit.TaskTmpdir.mode() == :custom
-    assert EvoGit.TaskTmpdir.managed_root(nil) == Path.join(custom_base, "genesis")
-
-    :ok
-  end
-
-  describe "EvoGit.TaskTmpdir.reclaim_stale/1 (managed-root sweep)" do
-    test "removes stale task dirs, keeps live-task dirs, non-task entries and the root" do
-      root = EvoGit.TaskTmpdir.managed_root(nil)
-      unique = System.unique_integer([:positive])
-
-      # Live ids may be integers — dir_name/1 stringifies them.
-      live_id = unique
-      live_dir = EvoGit.TaskTmpdir.ensure(live_id, nil)
-      stale_dir = EvoGit.TaskTmpdir.ensure("stale_#{unique}", nil)
-
-      # A non-`task_*` entry under the managed root must never be touched.
-      unrelated = Path.join(root, "keepme_#{unique}")
-      File.mkdir_p!(unrelated)
-
-      assert File.dir?(live_dir)
-      assert File.dir?(stale_dir)
-
-      assert :ok = EvoGit.TaskTmpdir.reclaim_stale([live_id])
-
-      assert File.dir?(live_dir), "a live task's dir must be kept"
-      refute File.exists?(stale_dir), "a dir whose task is not live must be swept"
-      assert File.dir?(unrelated), "non-`task_` entries must never be touched"
-      assert File.dir?(root), "the managed root itself must never be removed"
-    end
-  end
-
-  describe "registry-driven stale sweeps" do
-    test ":periodic_cleanup sweeps dirs of non-live tasks and keeps live-task dirs" do
-      unique = System.unique_integer([:positive])
-      live_id = "sweep_live_#{unique}"
-      seed_task(live_id, :running, [])
-      live_dir = EvoGit.TaskTmpdir.ensure(live_id, nil)
-
-      stale_dir = EvoGit.TaskTmpdir.ensure("sweep_dead_#{unique}", nil)
+      assert File.dir?(dir)
+      assert File.dir?(root)
 
       send(TaskRegistry.server(), :periodic_cleanup)
       # The handler is fire-and-forget — flush with a synchronous call.
       TaskRegistry.list_tasks()
 
-      assert File.dir?(live_dir), "a live task's dir must be kept"
-      refute File.exists?(stale_dir), "the sweep must remove dirs of non-live tasks"
+      assert File.dir?(dir),
+             "the periodic cleanup must not sweep a non-live task's tmpdir"
+
+      assert File.dir?(root), "the managed root itself must survive"
     end
-
-    test "the boot reaper (init/1) sweeps stale dirs left by a crashed runtime", %{
-      data_dir: data_dir
-    } do
-      unique = System.unique_integer([:positive])
-      live_id = "boot_live_#{unique}"
-      seed_task(live_id, :running, [])
-      live_dir = EvoGit.TaskTmpdir.ensure(live_id, nil)
-
-      stale_dir = EvoGit.TaskTmpdir.ensure("boot_dead_#{unique}", nil)
-      assert File.dir?(stale_dir)
-
-      restart_registry(data_dir)
-
-      refute File.exists?(stale_dir), "the boot reaper must sweep dirs of non-live tasks"
-      assert File.dir?(live_dir), "a live task's dir must survive the boot reaper"
-    end
-  end
-
-  # Restarts the isolated registry (same Store — it is durable on disk) so
-  # `init/1` re-runs its boot reaper against the current managed root.
-  defp restart_registry(data_dir) do
-    registry = TaskRegistry.server()
-    store = Process.get(:evogit_test_store)
-
-    stop_supervised(registry)
-
-    start_supervised!(
-      Supervisor.child_spec(
-        {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
-        id: registry
-      )
-    )
   end
 end
