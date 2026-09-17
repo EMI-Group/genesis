@@ -41,8 +41,8 @@ defmodule EvoGit.TaskTmpdirTest do
   end
 
   describe "path_for/2 and managed_root/1" do
-    # Pure path math only: none of these call ensure/2, reclaim/2 or
-    # reclaim_stale/1, so nothing is created/removed. The :system assertions
+    # Pure path math only: none of these call ensure/2 or reclaim/2, so
+    # nothing is created/removed. The :system assertions
     # target the hardcoded "/tmp/genesis" root; every scratch path is
     # test-owned.
 
@@ -276,59 +276,6 @@ defmodule EvoGit.TaskTmpdirTest do
     end
   end
 
-  describe "reclaim_stale/1" do
-    # :custom mode with a test-owned base so the sweep enumerates a
-    # test-owned root, never the real /tmp/genesis.
-    setup do
-      isolate_xdg!()
-      :ok
-    end
-
-    test "removes stale task_* dirs and keeps live, non-task and outside entries (integer id)" do
-      %{base: base, root: root} = seed_root!()
-
-      assert :ok = TaskTmpdir.reclaim_stale([2])
-
-      assert File.dir?(Path.join(root, "task_2"))
-      refute File.exists?(Path.join(root, "task_1"))
-      assert File.dir?(Path.join(root, "other_dir"))
-      assert File.exists?(Path.join(root, "notes.txt"))
-      assert File.exists?(Path.join([base, "outside_dir", "keep.txt"]))
-    end
-
-    test "protects the matching dir for a string live id" do
-      %{base: base, root: root} = seed_root!()
-
-      assert :ok = TaskTmpdir.reclaim_stale(["1"])
-
-      assert File.dir?(Path.join(root, "task_1"))
-      refute File.exists?(Path.join(root, "task_2"))
-      assert File.dir?(Path.join(root, "other_dir"))
-      assert File.exists?(Path.join(root, "notes.txt"))
-      assert File.exists?(Path.join([base, "outside_dir", "keep.txt"]))
-    end
-
-    test "is a no-op in :per_repo mode" do
-      repo = scratch_dir!()
-      write_tmp_config!("per_repo")
-
-      dir = Path.join([repo, ".genesis", "tmp", "task_999"])
-      File.mkdir_p!(dir)
-
-      assert :ok = TaskTmpdir.reclaim_stale([])
-      assert File.dir?(dir)
-    end
-
-    test "returns :ok when the managed root does not exist" do
-      base = scratch_dir!()
-      write_tmp_config!("custom", base)
-      # <base>/genesis is deliberately never created.
-      refute File.exists?(Path.join(base, "genesis"))
-
-      assert :ok = TaskTmpdir.reclaim_stale([])
-    end
-  end
-
   # ── Helpers ─────────────────────────────────────────────────────────────
 
   # Isolates XDG_CONFIG_HOME (read LIVE by EvoGit.Config via
@@ -377,24 +324,5 @@ defmodule EvoGit.TaskTmpdirTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     dir
-  end
-
-  # Builds the reclaim_stale/1 fixture in :custom mode: a test-owned managed
-  # root carrying task_1/task_2/other_dir/notes.txt plus a sibling outside_dir.
-  defp seed_root! do
-    base = scratch_dir!()
-    write_tmp_config!("custom", base)
-    root = Path.join(base, "genesis")
-
-    File.mkdir_p!(Path.join(root, "task_1"))
-    File.mkdir_p!(Path.join(root, "task_2"))
-    File.mkdir_p!(Path.join(root, "other_dir"))
-    File.write!(Path.join(root, "notes.txt"), "notes")
-
-    outside = Path.join(base, "outside_dir")
-    File.mkdir_p!(outside)
-    File.write!(Path.join(outside, "keep.txt"), "keep")
-
-    %{base: base, root: root}
   end
 end
