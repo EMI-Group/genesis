@@ -234,10 +234,30 @@ defmodule EvoGit.Sandbox.LinuxTest do
       # Precondition: no per-task dir is installed on this process.
       assert TaskTmpdir.current() == nil
 
-      args = build_args()
+      # Pass an EXPLICIT cwd instead of relying on `build_args/0`'s
+      # `System.tmp_dir!()` default: `System.tmp_dir!` resolves through
+      # `$TMPDIR` → `$TEMP` → `$TMP` → `$TEMPDIR`, and this BEAM may itself run
+      # under a managed per-task tmpdir (all four vars pointing at
+      # `<tmp>/genesis/task_<id>`, injected by the Genesis agent harness).
+      # Deleting only `$TMPDIR` therefore does NOT clear the ambient value, and
+      # the leaked `task_<id>` cwd would masquerade as a managed writable entry.
+      cwd =
+        Path.join(
+          hd(Platform.tmp_paths()),
+          "evogit_linux_test_cwd_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(cwd)
+      on_exit(fn -> File.rm_rf!(cwd) end)
+
+      args = build_args(cwd)
 
       # Legacy TMPDIR resolution (no per-task override).
       assert tmpdir_value(args) == hd(Platform.tmp_paths())
+
+      # The always-present system tmp writable rules are unchanged.
+      assert "ReadWritePaths=-/tmp" in args
+      assert "ReadWritePaths=-/var/tmp" in args
 
       # No per-task directory leaks into the writable set — the legacy
       # ReadWritePaths set is unchanged (a managed per-task entry always
