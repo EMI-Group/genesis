@@ -23,8 +23,8 @@ defmodule EvoGit.TaskTmpdir do
       behaviour.
 
   The managed root (`managed_root/1`) is the ONE directory at the top of each
-  mode that this module owns; `reclaim/2` and `reclaim_stale/1` NEVER delete
-  anything outside it and NEVER delete the root itself.
+  mode that this module owns; `reclaim/2` NEVER deletes anything outside it and
+  NEVER deletes the root itself.
 
   ## Process-dictionary seam
 
@@ -160,47 +160,7 @@ defmodule EvoGit.TaskTmpdir do
     end
   end
 
-  @doc """
-  Sweeps stale per-task directories no longer belonging to a live task.
-
-  For `:system`/`:custom` modes the managed root is enumerated and every
-  `task_*` entry whose name is not in `live_task_ids` is removed. For
-  `:per_repo` this is a no-op (the root is repo-specific and requires a repo
-  path — per-repo stragglers are reclaimed per task via `reclaim/2`). The root
-  itself is never removed; filesystem errors are swallowed (the sweep is
-  best-effort). `live_task_ids` entries may be integers or strings.
-  """
-  @spec reclaim_stale([task_id()]) :: :ok
-  def reclaim_stale(live_task_ids) do
-    case mode() do
-      :per_repo ->
-        :ok
-
-      _ ->
-        root = managed_root(nil)
-        live_names = MapSet.new(Enum.map(live_task_ids, &dir_name/1))
-        sweep_root(root, live_names)
-    end
-  end
-
   # ── Private ─────────────────────────────────────────────────────────────
-
-  defp sweep_root(root, live_names) do
-    case File.ls(root) do
-      {:ok, entries} ->
-        Enum.each(entries, fn entry ->
-          if String.starts_with?(entry, @dir_prefix) and
-               not MapSet.member?(live_names, entry) do
-            _ = File.rm_rf(Path.join(root, entry))
-          end
-        end)
-
-        :ok
-
-      {:error, _reason} ->
-        :ok
-    end
-  end
 
   defp root_for(:system, _primary_repo_path) do
     Path.join(system_base(), @managed_subdir)
