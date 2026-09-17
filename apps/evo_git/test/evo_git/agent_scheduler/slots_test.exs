@@ -397,6 +397,152 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert State.backoff_for(new_state, @default_model) != nil
       assert State.backoff_for(new_state, @fast_model) == nil
     end
+
+    # --- Model-exhaustion backoff (HTTP 402 / insufficient balance) ---------
+    #
+    # A 402 "insufficient balance" is the same machinery as a rate limit: it is
+    # a per-model backoff. What changes is the DURATION — the agent reports a
+    # model-exhaustion schedule entry (up to 8h) instead of the 60s default, so
+    # the sweep must keep self-rescheduling for multi-hour waits (without that,
+    # a queued agent would hang forever after the first sweep).
+
+    test "insufficient_balance activates the same per-model backoff as rate_limit" do
+      put_agent_state(1, @default_model)
+      state = base_state([])
+      before = System.monotonic_time(:millisecond)
+
+      assert {:reply, :ok, balance_state, []} =
+               Slots.handle_report_llm_error(1, :insufficient_balance, state)
+
+      assert {:reply, :ok, rate_state, []} =
+               Slots.handle_report_llm_error(1, :rate_limit, state)
+
+      # Both classes set the default backoff on the agent's OWN pool only.
+      for new_state <- [balance_state, rate_state] do
+        assert State.backoff_for(new_state, @default_model) != nil
+        assert State.backoff_for(new_state, @fast_model) == nil
+
+        delta = State.backoff_for(new_state, @default_model) - before
+        assert delta >= 60_000
+        assert delta <= 61_000
+      end
+
+      # The `:model_exhaustion` synonym is accepted too (same 60s default).
+      assert {:reply, :ok, synonym_state, []} =
+               Slots.handle_report_llm_error(1, :model_exhaustion, state)
+
+      assert State.backoff_for(synonym_state, @default_model) - before >= 60_000
+    end
+
+    test "honors a caller-supplied backoff duration and schedules the sweep from it" do
+      put_agent_state(1, @default_model)
+      before = System.monotonic_time(:millisecond)
+
+      assert {:reply, :ok, new_state, []} =
+               Slots.handle_report_llm_error(1, :rate_limit, 300, base_state([]))
+
+      # The stored deadline reflects the SUPPLIED 300ms, not the 60s default.
+      delta = State.backoff_for(new_state, @default_model) - before
+      assert delta >= 300
+      assert delta < 1_500
+
+      # The wakeup timer is due at supplied + epsilon (~1.3s), NOT 61s: it can
+      # only arrive inside this bound if the supplied duration was used.
+      assert_receive :retry_llm_waiting, 2_000
+    end
+
+    test "a caller-supplied duration is clamped to the Process.send_after ceiling" do
+      put_agent_state(1, @default_model)
+      before = System.monotonic_time(:millisecond)
+
+      assert {:reply, :ok, new_state, []} =
+               Slots.handle_report_llm_error(1, :rate_limit, 10_000_000_000, base_state([]))
+
+      # @max_timer_ms caps the backoff so Process.send_after/3 cannot overflow.
+      delta = State.backoff_for(new_state, @default_model) - before
+      assert delta <= 4_000_000_000
+      assert delta >= 4_000_000_000 - 1_000
+    end
+
+    test "the sweep reschedules itself while the backoff has not expired" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_agent_state(2, @default_model)
+
+      # A backoff that is still in the future when the sweep runs (250ms of
+      # headroom) → the queued waiter stays parked and the sweep must schedule
+      # ANOTHER pass (due at ~1.25s).
+      until = System.monotonic_time(:millisecond) + 250
+
+      state =
+        base_state(
+          llm_holders: %{@default_model => MapSet.new([1])},
+          llm_backoff_until: %{@default_model => until},
+          llm_waiting: %{@default_model => :queue.from_list([{2, from, until}])}
+        )
+
+      assert {:noreply, new_state, _updates} = Slots.handle_retry_llm_waiting(state)
+
+      # Not granted — the entry's own backoff is still in the future.
+      refute_received {^ref, :ok}
+      assert :queue.len(State.waiting_for(new_state, @default_model)) == 1
+
+      # ... and the sweep rescheduled another pass (the multi-hour-backoff guard).
+      assert_receive :retry_llm_waiting, 3_000
+    end
+
+    test "the sweep does not reschedule once the backoff has expired (and grants the waiter)" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_agent_state(2, @default_model)
+
+      # An ALREADY-expired backoff: the sweep clears it and grants the waiter.
+      past = System.monotonic_time(:millisecond) - 1
+
+      state =
+        base_state(
+          llm_backoff_until: %{@default_model => past},
+          llm_waiting: %{@default_model => :queue.from_list([{2, from, past}])}
+        )
+
+      assert {:noreply, new_state, _updates} = Slots.handle_retry_llm_waiting(state)
+
+      assert_received {^ref, :ok}
+      assert State.backoff_for(new_state, @default_model) == nil
+      assert :queue.is_empty(State.waiting_for(new_state, @default_model))
+
+      # No future backoff remains → nothing to reschedule.
+      refute_receive :retry_llm_waiting, 200
+    end
+
+    test "a purge still unblocks a waiter parked behind a multi-hour backoff" do
+      ref = make_ref()
+      from = {self(), ref}
+      put_agent_state(2, @default_model)
+
+      # The 8h cap: the agent's queued slot request carries this backoff, so no
+      # ordinary grant path will ever unblock it before then.
+      far = System.monotonic_time(:millisecond) + 28_800_000
+
+      state =
+        base_state(
+          llm_holders: %{@default_model => MapSet.new([1])},
+          llm_backoff_until: %{@default_model => far},
+          llm_waiting: %{@default_model => :queue.from_list([{2, from, far}])}
+        )
+
+      # A release sweep does NOT grant it (its own backoff is in the future) —
+      # the parked request would otherwise hang for hours.
+      {_granted_state, _updates} = Slots.handle_release_llm_slot(1, state)
+      refute_received {^ref, :ok}
+
+      # Graceful cancel / force-kill purge replies {:error, :cancelled}, so the
+      # blocked `:infinity` slot call unblocks immediately instead of hanging.
+      assert {purged_state, _updates} = Slots.purge_agents_from_queues(state, MapSet.new([2]))
+
+      assert_received {^ref, {:error, :cancelled}}
+      assert :queue.is_empty(State.waiting_for(purged_state, @default_model))
+    end
   end
 
   # --- LLM priority-based selection ---

@@ -21,7 +21,8 @@ Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local st
 - `tools_test` — mutates BEAM-global `XDG_CONFIG_HOME` (via the private `with_isolated_config/1` helper) and the `:req_llm` app env.
 - `cancel_grace_test` — `:ets.delete_all_objects/1` on the global `:evogit_agent_state` / `:evogit_sched_meta` / `:evogit_archive_records` tables, plus a fixed `agent_id = 1`.
 - `subagent_processing_test` — inserts/deletes rows in the app-owned global `:evogit_agent_state` ETS table (fixed agent ids 99_998/99_999) and in `:evogit_sched_meta` (parent ids 99_001/99_002 for the `store_sub_result/4` round-trip).
-- `tool_dispatch_retry_slot_test` — drives the global `AgentScheduler` GenServer (`update_config`, `pause`/`resume`) and the shared scheduler ETS tables.
+- `tool_dispatch_retry_slot_test` — drives the global `AgentScheduler` GenServer (`update_config`, `pause`/`resume`) and the shared scheduler ETS tables; its model-exhaustion (402) tests also read/clear the live per-model LLM backoff through `:sys.get_state/1` + `:sys.replace_state/2` (`purge_llm_pool/1`, `clear_model_backoff/0`).
+- `llm_retry_policy_test` — mutates the app-env model-exhaustion seams `:llm_model_exhaustion_backoff_base_ms` / `:llm_model_exhaustion_backoff_cap_ms` (restored via `on_exit`); the sibling `async: false` `tool_dispatch_retry_slot_test` reads those same keys, so the two must not run concurrently.
 - `tool_dispatch_test` — its parallel-execution test registers agent state in the app-global `:evogit_agent_state` ETS table and acquires slots from the global `EvoGit.AgentScheduler` tool-slot pool.
 
 ## Writable Foreign-Repo Coverage in This Node (file:line)
@@ -47,6 +48,10 @@ Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local st
   `tool_dispatch_retry_slot_test` pins it to 75ms (`@retry_backoff_base_ms`) instead of sleeping through the real 1s/2s/4s backoff.
   75ms is the lowest value verified robustly deterministic across 10+ seeds and under concurrent `mix test` load.
   The smallest randomized window (75 × 0.9 = 67.5ms) stays ~27× the measured worst-case connection-refused attempt (1.0-2.5ms over 300 samples) and far above a scheduler round trip (≤0.03ms).
+- Model-exhaustion (HTTP 402 "insufficient balance") retry timing has TWO app-env seams, read at call time by `EvoGit.Agent.LlmRetryPolicy`: `:llm_model_exhaustion_backoff_base_ms` (default 60_000) and `:llm_model_exhaustion_backoff_cap_ms` (default 28_800_000).
+  `llm_retry_policy_test` (NEW) shrinks them (10/80 → a 15-entry, 1.03s-total schedule) to pin the schedule math; production keeps the 60s-doubling-to-8h default.
+  Tests must NEVER sleep hours: `tool_dispatch_retry_slot_test`'s 402 tests assert the DEFAULT 60s / 8h backoff by reading the scheduler's `llm_backoff_until` and by asserting the retry queues behind it (`AgentScheduler.get_llm_slot_status/0`) — the wait itself is never performed (the blocked task is killed and its pool purged in `on_exit`).
+- `EvoGit.TestLlmServer` (`test/support/llm_server.ex`) is the raw-TCP HTTP/1.1 harness for real LLM HTTP error responses: `start!/2` (status + body) returns a `%{port:, url:}` whose `url` is handed to a fake model spec's `base_url`, so ReqLLM surfaces a genuine `%ReqLLM.Error.API.Request{}` (e.g. 402) to the retry loop.
 - `tool_dispatch_retry_slot_test` stays state-anchored: it synchronizes on `AgentScheduler.get_llm_slot_status/0` (per-model `used`/`waiting`/`capacity`) and `AgentScheduler.paused?/0` rather than fixed sleeps.
   Its two slot-re-acquisition tests are built so NO assertion depends on the test process winning a wall-clock race against the retrying agent's backoff windows.
   In "releases the LLM slot between retry attempts", the probe agent's slot request is PRE-QUEUED from a separate `Task` while the owner still holds the only slot (asserted via `await_llm_waiting(2)`), so the SCHEDULER's own release sweep — not a reactive re-acquisition by the test process — grants the probe inside the between-attempts interval; the retrying agent's next attempt then provably re-queues behind the probe's persistently-held slot.
@@ -58,7 +63,7 @@ Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local st
 - `tool_dispatch_test`'s parallel-shell test proves concurrency by an EVENT-DRIVEN rendezvous: each command appends its start marker, then waits (bounded at 400 × 50ms = 20s) for the PEER's start marker before appending its end marker.
   The concurrency proof is the marker interleaving (`start2` before `end1`) — a serialized run exhausts the bound and fails; no wall-clock bound is asserted.
   The POSIX `run_bash` and Windows `run_powershell` command strings differ and are built by the test's `parallel_marker_commands/1`.
-- No fake-LLM harness exists — agent runs to completion are exercised only through error paths (`without_model_profiles/1`, connection-refused model specs).
+- The only fake-LLM harness is `EvoGit.TestLlmServer` (raw-TCP, answers a fixed status + JSON body); agent runs to COMPLETION are still exercised only through error paths (`without_model_profiles/1`, connection-refused model specs, and the test server's HTTP 402).
   Details in `../CONTEXT.md` ("Known Issues & Test Env Notes").
 - Same-named `test` cases across different `describe` blocks cover DIFFERENT functions (e.g. in `context_builder_test`, `delegation_hints_test`, `turn_warning_test`) — not duplicates.
 - `subagent_processing_test.exs` runs slightly over the ~1000-line soft cap (~1046 lines) because it is ONE comprehensive suite over the subagent-processing surface (path resolution, phylo-node building, spawn-gate result formatting, real-builder authority coupling, model-id inheritance) sharing the same global-ETS + real-git-repo setup — splitting it would duplicate that setup for no cohesion gain, so it is intentionally NOT split. Prefer adding new subagent-processing tests to an existing `describe` block here.

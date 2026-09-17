@@ -16,15 +16,32 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   `async: false` — touches the global `EvoGit.AgentScheduler` GenServer (config
   update, pause/resume) and the shared scheduler ETS tables.
-  """
 
+  It also pins the model-exhaustion (HTTP 402 "insufficient balance") retry
+  handling: a 402 drives the LONG model-exhaustion schedule reported
+  SCHEDULER-side (the agent recurses immediately and queues behind the per-model
+  backoff — never an agent-side sleep), while an ordinary transient error keeps
+  the short schedule and sets no backoff. The 402 is produced end-to-end by
+  `EvoGit.TestLlmServer` (a raw-TCP HTTP server), so no mocks or fixtures are
+  needed; the default 60s/8h backoffs are asserted (never waited out) and the
+  scheduler pool is restored via `purge_llm_pool/1` in `on_exit`.
+  """
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.ToolDispatch
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
+  alias EvoGit.AgentScheduler.State
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
+
+  # --- Model-exhaustion (HTTP 402) fixture --------------------------------
+
+  # The DeepSeek "Insufficient Balance" response, answered by a local raw-TCP
+  # HTTP server (see EvoGit.TestLlmServer) so the 402 reaches the retry loop as
+  # a real `%ReqLLM.Error.API.Request{}` — no mocks, no fixtures.
+  @insufficient_balance_status 402
+  @insufficient_balance_body ~s({"error":{"message":"Insufficient Balance"}})
 
   # --- Retry/slot synchronization constants -------------------------------
 
@@ -112,16 +129,28 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     end
   end
 
+  # A model whose base_url points at the raw-TCP test HTTP server
+  # (`EvoGit.TestLlmServer`): ReqLLM's OpenAI provider streams a real request at
+  # it and surfaces whatever status/body it answers with (e.g. a DeepSeek-style
+  # 402 "Insufficient Balance"). The dummy key clears ReqLLM's provider-build
+  # phase; it is never validated by the local server.
+  defp model_at(url) do
+    %{provider: :openai, id: "test-llm-server", base_url: url, api_key: "test-key"}
+  end
+
   # Registers a fake agent in the scheduler ETS with the connection-refused model.
   # Only the agent-state table is needed (ToolDispatch.current_model/0 reads
   # llm_model; slot resolution reads model_id) — no sched-meta entry is required.
-  defp register_agent(agent_id) do
+  defp register_agent(agent_id), do: register_agent(agent_id, refused_model())
+
+  # Same, with an explicit model spec (used by the model-exhaustion 402 tests).
+  defp register_agent(agent_id, model) do
     state = %AgentState{
       context_node: %ContextNode{path: "./", repo: "/tmp/genesis-retry-slot-test"},
-      llm_model: refused_model(),
+      llm_model: model,
       max_retries: 2,
       max_depth: 1,
-      model_id: "default"
+      model_id: @model_id
     }
 
     Store.put_agent_state(agent_id, state)
@@ -246,6 +275,56 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     |> Map.get(@model_id, %{used: 0, waiting: 0, capacity: 0})
   end
 
+  # --- Model-exhaustion backoff helpers -----------------------------------
+
+  # Remaining ms of the "default" model's LLM backoff, or `nil` when the model
+  # is NOT in backoff. The backoff is internal scheduler state with no public
+  # read accessor, so it is read from the live state (the sibling
+  # `agent_scheduler_test.exs` uses the same `:sys.get_state` seam).
+  defp model_backoff_remaining do
+    state = :sys.get_state(EvoGit.AgentScheduler)
+
+    case State.backoff_for(state, @model_id) do
+      nil -> nil
+      until -> until - System.monotonic_time(:millisecond)
+    end
+  end
+
+  # Clears the "default" model's backoff without touching any other pool.
+  defp clear_model_backoff do
+    :sys.replace_state(EvoGit.AgentScheduler, fn state ->
+      %{state | llm_backoff_until: Map.delete(state.llm_backoff_until, @model_id)}
+    end)
+  end
+
+  # Restores the global scheduler's LLM pools to a neutral state for one test
+  # agent: removes it from every holder set AND every waiting queue (a killed
+  # agent left queued would be granted later and permanently hog the
+  # single-slot "default" pool), and clears the "default" model's backoff.
+  defp purge_llm_pool(agent_id) do
+    :sys.replace_state(EvoGit.AgentScheduler, fn state ->
+      holders =
+        Map.new(state.llm_holders, fn {model_id, set} ->
+          {model_id, MapSet.delete(set, agent_id)}
+        end)
+
+      waiting =
+        Map.new(state.llm_waiting, fn {model_id, queue} ->
+          {model_id, :queue.filter(fn entry -> entry_agent_id(entry) != agent_id end, queue)}
+        end)
+
+      %{
+        state
+        | llm_holders: holders,
+          llm_waiting: waiting,
+          llm_backoff_until: Map.delete(state.llm_backoff_until, @model_id)
+      }
+    end)
+  end
+
+  defp entry_agent_id({agent_id, _from, _backoff}), do: agent_id
+  defp entry_agent_id({agent_id, _from}), do: agent_id
+  defp entry_agent_id(_entry), do: nil
   # One-off module warm-up (see warm_pool/0): pays the unavoidable
   # `LLMDB.load/1` catalog cost ONCE for the whole module, in a clearly
   # attributed place, instead of charging ~2.5s to whichever test happens to run
@@ -277,6 +356,12 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # a no-op when not paused).
     AgentScheduler.resume()
 
+    # Defensive: a sibling test may have left the "default" model in a long
+    # model-exhaustion backoff (see the HTTP 402 tests below) — clear it so
+    # every test starts from a neutral per-model pool, and clear it again on
+    # exit so no long backoff leaks into later modules.
+    clear_model_backoff()
+    on_exit(fn -> clear_model_backoff() end)
     # Pin a test API key in the ReqLLM application env so the refused_model's
     # OpenAI provider requests clear the build phase (ReqLLM.Keys resolution)
     # and reach the transport layer where they fail fast with connection-refused.
@@ -492,8 +577,107 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Descriptive errors from current_model/0 + current_generation_params/0
+  # Model-exhaustion (HTTP 402 "insufficient balance") retry handling
+  #
+  # A 402 is not a transient transport hiccup: the agent must not burn the short
+  # retry schedule, and it must not sit in a multi-hour agent-side sleep either.
+  # The loop reports the LONG model-exhaustion backoff to the scheduler and
+  # recurses IMMEDIATELY — the wait is realized scheduler-side (the next
+  # attempt's slot request queues in the per-model backoff, purgeable by
+  # force-kill / graceful cancel). These tests drive a real 402 through
+  # EvoGit.TestLlmServer (a raw-TCP HTTP server) so the error classification
+  # runs end-to-end, and a real connection-refused spec for the ordinary path.
+  # ---------------------------------------------------------------------------
 
+  describe "model-exhaustion (HTTP 402) retry handling" do
+    test "reports a long backoff and recurses with NO agent-side sleep" do
+      agent_id = 111
+
+      server =
+        EvoGit.TestLlmServer.start!(@insufficient_balance_status, @insufficient_balance_body)
+
+      register_agent(agent_id, model_at(server.url))
+      on_exit(fn -> purge_llm_pool(agent_id) end)
+
+      started = System.monotonic_time(:millisecond)
+      task = start_retrying_agent(agent_id, 1)
+
+      try do
+        # Attempt 1 fails with 402 → the loop reports the model-exhaustion
+        # backoff (default 60s) and recurses IMMEDIATELY: attempt 2's slot
+        # request lands in the model's backoff queue within milliseconds. An
+        # agent-side 60s sleep (the old behavior for an unclassified 402) could
+        # never satisfy this wait inside its 5s deadline.
+        assert await_llm_waiting(1, "the 402 retry to queue behind the model-exhaustion backoff")
+
+        # Confirms the recursion was near-instant (no sleep of the reported
+        # backoff anywhere agent-side).
+        assert System.monotonic_time(:millisecond) - started < 5_000
+
+        # The reported backoff IS the model-exhaustion schedule's first entry
+        # (~60s) — not the short transient schedule (~75ms via the seam).
+        remaining = model_backoff_remaining()
+        assert is_integer(remaining)
+        assert remaining > 30_000
+        assert remaining <= 60_000
+      after
+        # Failure-proof cleanup: a flunked assertion can leave the task blocked
+        # on the :infinity slot call. The `on_exit` above purges the pool.
+        Task.shutdown(task, :brutal_kill)
+      end
+    end
+
+    test "an ordinary transient error keeps the short schedule and sets NO backoff" do
+      agent_id = 112
+      register_agent(agent_id)
+
+      started = System.monotonic_time(:millisecond)
+      task = start_retrying_agent(agent_id, 2)
+
+      # 3 connection-refused attempts with the 75ms seam → ~0.2s, never a
+      # model-exhaustion wait.
+      assert {:error, _reason} = Task.await(task, 15_000)
+      assert System.monotonic_time(:millisecond) - started < 3_000
+
+      # No model-exhaustion class was reported: the model is NOT in backoff.
+      assert model_backoff_remaining() == nil
+    end
+
+    test "an exhausted model-exhaustion retry reports the last (capped) schedule entry" do
+      agent_id = 113
+
+      server =
+        EvoGit.TestLlmServer.start!(@insufficient_balance_status, @insufficient_balance_body)
+
+      register_agent(agent_id, model_at(server.url))
+      on_exit(fn -> purge_llm_pool(agent_id) end)
+
+      started = System.monotonic_time(:millisecond)
+      # max_retries 0 → a SINGLE attempt, whose 402 is terminal.
+      task = start_retrying_agent(agent_id, 0)
+
+      assert {:error, reason} = Task.await(task, 10_000)
+      # Terminal, promptly — no agent-side sleep of the (8h) reported backoff.
+      assert System.monotonic_time(:millisecond) - started < 5_000
+
+      # ReqLLM wraps the HTTP error in an `API.Stream` whose `cause` is the real
+      # `%ReqLLM.Error.API.Request{status: 402}` — the classification matched it
+      # through the insufficient-balance phrase fallback (see the "Insufficient
+      # Balance" reason above).
+      assert %ReqLLM.Error.API.Stream{cause: %ReqLLM.Error.API.Request{status: 402}} = reason
+      # The final report refreshes the model-wide backoff with the LAST
+      # schedule entry (model_exhaustion_delay(15) = the 8h cap), so the
+      # crash-retry lands after a long scheduler wait instead of immediately
+      # re-hitting the exhausted model.
+      remaining = model_backoff_remaining()
+      assert is_integer(remaining)
+      assert remaining > 28_000_000
+      assert remaining <= 28_800_000
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Descriptive errors from current_model/0 + current_generation_params/0
   # Both helpers raise a descriptive ArgumentError (naming the agent id, or
   # stating the process is not a scheduled agent) instead of the old
   # context-free MatchError ("no match of right hand side value: :error") when
