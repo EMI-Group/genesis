@@ -4,7 +4,7 @@
 Core source of the `:evo_git` OTP application: the Agent system (LLM-powered tool-calling loops), AgentScheduler (GenServer for scheduling, ETS state, slot management — worktree lifecycle owned by `AgentScheduler.WorktreeManager`), Core domain types (ContextNode, PhyloGraphNode, ForeignRepo), Git adapter, and Runtime phases (Genesis, Evolution). Supports multi-repo operation — foreign repos configured via `genesis.toml` or CLI flags enable cross-repo subagent spawning into isolated worktrees.
 
 ## Routing Table
-- `./agent/` → Agent behaviour, tool library, context compression, subagent processing
+- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy
 - `./agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees, WorktreeManager — ETS schemas, helpers, worktree lifecycle
 - `./core/` → ContextNode, PhyloGraphNode, ForeignRepo data structures
@@ -201,7 +201,7 @@ Static system prompts are role-agnostic by design and point to this dynamic stat
 
 **Two triggers (both wired):**
 1. **Config change** — `AgentScheduler.handle_call({:update_config, opts}, ...)` (agent_scheduler.ex:849-858): the `{:reply, :ok, new_state}` path (via private `reconcile_pool_after_update/1`, agent_scheduler.ex:979-988) computes `effective_concurrency(new_state.model_concurrency, new_state.default_llm_max_concurrency)` and calls `reconcile/2`. Covers ALL config-change routes (RemoteAPI.reload_config, save_user_config, evo_dash ConfigIO). The `{:error, "llm_model cannot be nil"}` path never reconciles. `State.do_update_config/2` (state.ex:313-425, pure) always returns `{:reply, :ok, state}` → single-clause helper total.
-2. **Excess-queuing error** — `ToolDispatch.call_llm_with_retry/5` (tool_dispatch.ex:204-218): in the `retry with` loop's inner-`with` `{:error, reason}` branch (between retries, before the next attempt), `if EvoGit.ReqLLMPool.excess_queuing_error?(reason), do: EvoGit.ReqLLMPool.bump_for_excess_queuing(AgentScheduler.get_config(:model_concurrency), AgentScheduler.get_config(:default_llm_max_concurrency))`. No `report_llm_error` for this — the bump IS the fix; existing retry/rate-limit semantics unchanged. `AgentScheduler.get_config/1` from the agent process is safe (pure state reads, no slot contention).
+2. **Excess-queuing error** — `ToolDispatch.run_llm_attempt/4` (tool_dispatch.ex): inside the per-attempt `AgentScheduler.with_llm_slot/2` body, the inner `with`'s `{:error, reason}` branch runs `if EvoGit.ReqLLMPool.excess_queuing_error?(reason), do: EvoGit.ReqLLMPool.bump_for_excess_queuing(AgentScheduler.get_config(:model_concurrency), AgentScheduler.get_config(:default_llm_max_concurrency))`. No `report_llm_error` for this — the bump IS the fix. `AgentScheduler.get_config/1` from the agent process is safe (pure state reads, no slot contention).
 
 **Tests:** `test/evo_git/req_llm_pool_test.exs` (16 tests, `async: false`) — pure-function tests + real-tiny-Finch grow/grow-only/`:not_found`-grace tests (test Finch started with `start_pool_metrics?: true`, `pools: %{default: [size: 1, count: 2]}`; origin materialized via a request to a closed port, `http://127.0.0.1:1/`). Scheduler smoke test in `test/evo_git/agent_scheduler/agent_scheduler_test.exs` (update_config → :ok, no crash; model_concurrency keys are STRINGS, `%{"default" => 3}`).
 
