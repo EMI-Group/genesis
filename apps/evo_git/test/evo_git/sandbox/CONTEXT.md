@@ -59,6 +59,9 @@ ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linu
 ### Global-state test hygiene
 
 - Tests that mutate `$TMPDIR`/`$XDG_CONFIG_HOME` save and restore the original value in `on_exit` (see `save_tmpdir/0` in `macos_test.exs`).
+- `System.tmp_dir!/0` resolves `$TMPDIR` → `$TEMP` → `$TMP` → `$TEMPDIR`, whereas `EvoGit.Sandbox.resolve_tmpdir/0` reads `$TMPDIR` only — so deleting just `$TMPDIR` does NOT clear `System.tmp_dir!/0`.
+- An agent-hosted test BEAM frequently runs under a managed per-task tmpdir, with the harness exporting all four vars as `<tmp>/genesis/task_<id>`; a default `cwd` taken from `System.tmp_dir!/0` then leaks a `task_<id>` path into `ReadWritePaths` and is indistinguishable from a managed entry.
+- Args-generation tests therefore pass an EXPLICIT `cwd` into `Linux.args/4` instead of relying on the `build_args/0` `System.tmp_dir!/0` default (`linux_test.exs`, "managed per-task tmpdir (not installed)").
 - `resolve_tmpdir/0` reads `$TMPDIR` fresh at call time; `System.put_env/2` mutates the VM-global OS env, so under parallel load the pair can be observed inconsistently. `macos_test.exs` uses a bounded retry helper (`assert_tmpdir_falls_back/1`) that re-establishes `$TMPDIR` and re-reads, while keeping the exact `== List.first(Platform.tmp_paths())` assertion.
 - `XDG_CONFIG_HOME` isolation is what makes the sandbox mode resolve to the built-in default instead of the developer's `~/.config/genesis/config.toml`.
 - The `MacOS`/`Bwrap` capability and nix dev-env decisions are cached in `:persistent_term`; tests that seed them erase the keys on exit so no state leaks between tests.
