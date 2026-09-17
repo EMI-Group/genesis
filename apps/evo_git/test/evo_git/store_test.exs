@@ -679,8 +679,13 @@ defmodule EvoGit.StoreTest do
                Codec.encode_result({:ok, %{commit_sha: "abc", branch_name: "b"}})
              ) == {:ok, %{commit_sha: "abc", branch_name: "b"}}
 
-      # {:error, string} — reason is not an existing atom, stays a string.
-      assert Codec.decode_result(Codec.encode_result({:error, "boom"})) == {:error, "boom"}
+      # {:error, string} — an unknown reason stays a string.
+      # The reason MUST be a unique string, never a fixed literal like "boom":
+      # Codec.decode_reason/1 restores a PRE-EXISTING atom via String.to_existing_atom/1,
+      # so the round-trip stays a string only while no module anywhere in the suite
+      # happens to contain that atom literal (e.g. a test using `:boom` would flip it).
+      reason = "boom_#{System.unique_integer([:positive])}"
+      assert Codec.decode_result(Codec.encode_result({:error, reason})) == {:error, reason}
 
       # {:exit, reason} — existing atoms round-trip as atoms.
       assert Codec.decode_result(Codec.encode_result({:exit, :killed})) == {:exit, :killed}
