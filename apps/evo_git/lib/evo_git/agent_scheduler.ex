@@ -342,11 +342,22 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Reports an LLM error that should trigger a global backoff period.
   All agents waiting for LLM slots will be delayed until the backoff expires.
+
+  For the model-exhaustion classes (`:rate_limit`, `:insufficient_balance`) this
+  applies a model-wide per-model backoff for the given duration (`backoff_ms`;
+  `nil` falls back to the Slots default).
+  """
+  @spec report_llm_error(pos_integer(), atom(), pos_integer() | nil) :: :ok
+  def report_llm_error(agent_id, error_type, backoff_ms) do
+    GenServer.call(__MODULE__, {:report_llm_error, agent_id, error_type, backoff_ms})
+  end
+
+  @doc """
+  Back-compat delegate for `report_llm_error/3` with no explicit backoff duration
+  (`nil` -> the Slots default).
   """
   @spec report_llm_error(pos_integer(), atom()) :: :ok
-  def report_llm_error(agent_id, error_type) do
-    GenServer.call(__MODULE__, {:report_llm_error, agent_id, error_type})
-  end
+  def report_llm_error(agent_id, error_type), do: report_llm_error(agent_id, error_type, nil)
 
   @doc """
   Requests a tool execution slot from the scheduler. Blocks the caller until a slot
@@ -950,9 +961,9 @@ defmodule EvoGit.AgentScheduler do
   end
 
   @impl true
-  def handle_call({:report_llm_error, agent_id, error_type}, _from, %State{} = state) do
+  def handle_call({:report_llm_error, agent_id, error_type, backoff_ms}, _from, %State{} = state) do
     {:reply, :ok, new_state, status_updates} =
-      Slots.handle_report_llm_error(agent_id, error_type, state)
+      Slots.handle_report_llm_error(agent_id, error_type, backoff_ms, state)
 
     Lifecycle.apply_status_updates(status_updates)
     {:reply, :ok, new_state}
