@@ -96,6 +96,21 @@ defmodule EvoGit.Agents.PromptFragments do
     "Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead."
   end
 
+  @doc """
+  "Trust subagent reports by default — the same way you trust the Context Tree by default …"
+
+  Used by: Manager (the Core Principles "**Validation**" bullet), Architect (the
+  "(d) Supervise to completion" clause of the "**You only handle YOUR level**"
+  paragraph).
+
+  Fixes the observed failure mode where a high-level agent re-investigates a
+  finished subagent's work (re-reading the changed files, re-deriving its
+  findings) after every report — doubling token cost for no new information.
+  """
+  def subagent_report_trust_clause do
+    "Trust subagent reports by default — the same way you trust the Context Tree by default: when a subagent reports completion with a summary, accept it as accurate and do NOT re-investigate the work or re-derive its findings. Escalate to a deep re-review only on concrete signals of trouble (failing or erroring tests, contradictions between reports, a diff touching files unrelated to the objective, or the subagent itself reporting failure or uncertainty)."
+  end
+
   # ── Genesis architecture (Manager + Architect) ───────────────────────────
 
   @doc """
