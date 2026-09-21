@@ -998,5 +998,47 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert String.contains?(diff, "-line2")
       assert String.contains?(diff, "+CHANGED")
     end
+
+    test "list_commit_graph/3 delegates to CommitGraph.for_ranges/3", %{review_templates: tpl} do
+      {tmp_dir, base_sha} = review_repo(tpl.base)
+
+      {:ok, second} = commit_file(tmp_dir, "second.txt", "second\n", "Second commit")
+      {:ok, third} = commit_file(tmp_dir, "third.txt", "third\n", "Third commit")
+
+      ranges = [{base_sha, "HEAD"}]
+
+      assert {:ok, %{commits: commits, refs: refs}} =
+               RemoteAPI.list_commit_graph(tmp_dir, ranges, [])
+
+      # Newest-first, exactly the two commits above the base.
+      assert Enum.map(commits, & &1.sha) == [third, second]
+      assert Enum.map(commits, & &1.message) == ["Third commit", "Second commit"]
+
+      [third_commit, second_commit] = commits
+
+      # Each commit is an atom-keyed map with EXACTLY the documented keys.
+      Enum.each(commits, fn commit ->
+        assert Enum.sort(Map.keys(commit)) ==
+                 [:author_email, :author_name, :date, :message, :parents, :sha, :short_sha]
+      end)
+
+      assert third_commit.parents == [second]
+      assert second_commit.parents == [base_sha]
+      assert String.starts_with?(third_commit.sha, third_commit.short_sha)
+      assert is_binary(third_commit.author_name)
+      assert is_binary(third_commit.author_email)
+      assert %DateTime{} = third_commit.date
+
+      # Only refs pointing at a returned commit are labelled (`main` → HEAD).
+      assert refs == %{third => ["main"]}
+
+      # Faithful delegation — same fixture + args, identical result.
+      assert RemoteAPI.list_commit_graph(tmp_dir, ranges, []) ==
+               EvoGit.CommitGraph.for_ranges(tmp_dir, ranges, [])
+
+      # `opts` is forwarded: `limit: 1` keeps only the newest commit.
+      assert {:ok, %{commits: [only]}} = RemoteAPI.list_commit_graph(tmp_dir, ranges, limit: 1)
+      assert only.sha == third
+    end
   end
 end
