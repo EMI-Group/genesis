@@ -603,6 +603,32 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @spec reload_custom_agents() :: :ok
   def reload_custom_agents, do: EvoGit.CustomAgents.reload()
 
+  # ── Custom tools (delegated to EvoGit.CustomTools) ────────────────
+  #
+  # Custom tools live in `<config_dir>/tools/` — a per-node directory sitting
+  # next to `config.toml`. This function therefore runs ON the node being
+  # inspected: a direct local call for the local node, an `:erpc.call/5` for a
+  # remote node (via `EvoGit.RemoteNode`).
+
+  @doc """
+  Returns the node's custom-tools loader status.
+
+  Delegates to `EvoGit.CustomTools.status/0`, reporting the tools loaded from
+  the per-node `<config_dir>/tools/` directory. This runs on the REMOTE node
+  when called via `:erpc.call/5`, so the remote node's own tools directory is
+  inspected — exactly right, because the directory lives per-node next to
+  config.toml.
+
+  Returns `%{ok: [%{name, file, module, read_only?: boolean}], errors:
+  [%{file, reason}]}` — never raises; `%{ok: [], errors: []}` when nothing is
+  configured.
+  """
+  @spec custom_tools_status() :: %{
+          ok: [%{name: String.t(), file: String.t(), module: module(), read_only?: boolean()}],
+          errors: [%{file: String.t(), reason: String.t()}]
+        }
+  def custom_tools_status, do: EvoGit.CustomTools.status()
+
   @doc """
   Starts a task on the remote node.
 
