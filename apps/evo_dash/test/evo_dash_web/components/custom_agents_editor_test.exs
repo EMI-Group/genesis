@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditorTest do
+defmodule EvoDashWeb.CustomAgentsEditorTest do
   @moduledoc """
   Render-only component tests for
   `EvoDashWeb.SettingsComponents.CustomAgentsEditor.custom_agents_editor/1`,

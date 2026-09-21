@@ -1,4 +1,4 @@
-defmodule EvoDashWeb.Components.CustomToolsPanelTest do
+defmodule EvoDashWeb.CustomToolsPanelTest do
   @moduledoc """
   Component-level tests for `EvoDashWeb.SettingsComponents.CustomToolsPanel`.
 
