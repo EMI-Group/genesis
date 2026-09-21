@@ -1697,13 +1697,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "commit history view — async state and interactions" do
-    # The commit lane markup wraps each lane's commits in a keyed
-    # `phx-update="append"` container, which the LiveViewTest proxy REFUSES to
-    # apply ("phx-update=append … is no longer supported in tests"). Any
-    # page-level render AFTER @commit_graph holds ≥1 lane would therefore raise,
-    # so every LOADED-graph assertion below reads the socket assigns directly
-    # (`assigns/1`) and never calls render/1. Rendering of a loaded graph is
-    # covered by the commit-graph component tests (render_component/2).
+    # A loaded commit graph is renderable AT PAGE LEVEL: the per-lane commits
+    # container carries no `phx-update` mode — incremental patching relies on the
+    # stable, unique child ids — so LiveViewTest renders the loaded markup
+    # directly and the tests below assert it from the DOM. The sibling component
+    # suite (test/evo_dash_web/components/commit_graph_view_test.exs) still pins
+    # the DOM markers in isolation via render_component/2.
 
     test "an applied commit graph is stored and built into lanes", %{conn: conn} do
       install_agents([
@@ -1725,7 +1724,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert_receive {:commit_graph_call, _node, "/repo/a", [{"b1", "c1"}], [limit: 100]}, 1000
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
-      # Loaded graph → asserts are SERVER-SIDE ONLY (see the describe comment).
+      # The stored socket state first (the rendered DOM is asserted below).
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_error] == nil
 
@@ -1767,6 +1766,42 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # "b1" is the exclusive base and is absent from the fetched graph, so the
       # first parent "b1" is not owned by this lane.
       assert commit.has_parent_in_lane? == false
+
+      # ── Page-level MARKUP assertions ─────────────────────────────────────
+      # The loaded graph renders at page level (the commits container carries no
+      # `phx-update` mode). Derive every id FROM THE LIVE SOCKET — the repo's
+      # `repo_dom_id` and the lane's `agent_id` — never a hardcoded dom id.
+      dom = repo.repo_dom_id
+      aid = lane.agent_id
+
+      html = render(view)
+
+      assert has_element?(view, "#commit-graph")
+      assert html =~ ~s(phx-hook="CommitGraph")
+
+      assert has_element?(view, "#commit-graph-repo-#{dom}")
+      assert has_element?(view, "#commit-lane-#{dom}-#{aid}")
+      assert has_element?(view, "#commit-lane-commits-#{dom}-#{aid}")
+      assert has_element?(view, "#commit-node-#{dom}-c1")
+      assert has_element?(view, "#commit-agent-chip-#{aid}")
+
+      tree = Floki.parse_document!(html)
+
+      # The commits container carries NO phx-update mode.
+      assert [container] = Floki.find(tree, "#commit-lane-commits-#{dom}-#{aid}")
+      assert Floki.attribute(container, "phx-update") == []
+
+      # The commit node shows the short sha and the FIRST-LINE subject only —
+      # the payload's body line is dropped.
+      assert [node] = Floki.find(tree, "#commit-node-#{dom}-c1")
+      assert node |> Floki.find("code") |> Floki.text() |> String.trim() == "c1"
+
+      node_text = Floki.text(node)
+      assert node_text =~ "subject line"
+      refute node_text =~ "body"
+
+      # The tip's "main" ref renders as a badge on that commit node.
+      assert node |> Floki.find("span.badge") |> Floki.text() =~ "main"
     end
 
     test "a stale commit-graph result is dropped", %{conn: conn} do
@@ -1838,8 +1873,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       wait_until(fn -> assigns(view)[:commit_graph_error] != nil end)
 
-      # A failed INITIAL load leaves @commit_graph empty → no lane (and no
-      # phx-update="append" container), so rendering here is safe.
+      # A failed INITIAL load leaves @commit_graph empty, so the commit pane
+      # renders its error state.
       html = render(view)
       assert html =~ "commit-graph-error"
       assert html =~ "Could not load commit history."
@@ -1847,7 +1882,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
     test "the right-hand agent detail panel is preserved across the view switch", %{conn: conn} do
       # repo_root nil → the agent is not eligible for a commit-graph fetch, so
-      # @commit_graph stays empty (empty state) and rendering stays safe.
+      # @commit_graph stays empty and the commit pane renders its empty state.
       install_agents([summary_agent(id: agent_id(), repo_root: nil)])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
@@ -1989,20 +2024,17 @@ defmodule EvoDashWeb.AgentsLiveTest do
     on_exit(&clear_agents_env/0)
   end
 
-  # The commit-graph lane markup carries a keyed `phx-update="append"` container,
-  # which the LiveViewTest proxy REFUSES to apply ("phx-update=append … is no
-  # longer supported in tests"). A page-level test must therefore never let a
-  # graph LOAD while it renders the commit pane. An {:error, _} reply keeps
-  # @commit_graph empty (the pane's error state) AND halts the fetch loop after
-  # that repo — so every EARLIER repo's call is still recorded (see
-  # graph_partial_responder/1). Loaded-graph RENDERING is covered by the
-  # commit-graph component tests.
+  # An {:error, _} reply keeps @commit_graph empty (the commit pane's error
+  # state) AND halts the fetch loop after that repo — so every EARLIER repo's
+  # call is still recorded (see graph_partial_responder/1). Loaded-graph DOM
+  # coverage lives in the page test above; the sibling component suite still
+  # pins the DOM markers in isolation.
   defp graph_error_responder, do: fn _repo_root -> {:error, :stub} end
 
   # Returns {:ok, _} for `first_repo_root` — letting the (sorted) fetch loop
   # continue to the NEXT repo_root — and {:error, _} for every other repo, which
-  # halts it before anything can be rendered as a loaded graph. That makes "one
-  # call per distinct repo_root" observable without tripping the proxy.
+  # halts it. That keeps "one call per distinct repo_root" observable: the loop
+  # reaches every repo before the first error stops it.
   defp graph_partial_responder(first_repo_root) do
     fn
       ^first_repo_root -> {:ok, %{commits: [], refs: %{}}}
@@ -2012,9 +2044,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   # Reaches a LOADED commit graph through the REAL async path: one eligible agent
   # in /repo/a with a stub runner returning `single_commit_graph_payload/0`, then
-  # a switch to the commits view. Returns the view. Callers MUST NOT render/3
-  # afterwards — the loaded lane markup carries a keyed `phx-update="append"`
-  # container the LiveViewTest proxy refuses to apply; assert via assigns/1.
+  # a switch to the commits view. Returns the view. Callers MAY render the loaded
+  # graph (the commits container carries no phx-update mode); the assigns-based
+  # stale / foreign-node / failed-refresh tests use this helper to inspect state.
   defp mount_loaded_commit_graph(conn) do
     install_agents([
       summary_agent(id: agent_id(), repo_root: "/repo/a", base_commit: "b1", current_commit: "c1")
