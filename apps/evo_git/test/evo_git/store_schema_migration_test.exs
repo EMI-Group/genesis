@@ -10,15 +10,24 @@ defmodule EvoGit.StoreSchemaMigrationTest do
   alias EvoGit.Store.{Codec, Schema}
   alias EvoGit.TaskInfo
 
+  # Legacy 18-column tasks table (current Codec.@task_columns minus `error`,
+  # minus the store-internal `updated_at` column).
+  @legacy_tasks_ddl """
+  CREATE TABLE tasks (
+    id TEXT PRIMARY KEY, type TEXT, status TEXT NOT NULL, opts TEXT,
+    started_at TEXT, finished_at TEXT, logs TEXT, result TEXT,
+    review_status TEXT, usage TEXT, agent_count INTEGER, base_sha TEXT,
+    commit_sha TEXT, archive_metadata TEXT, lease_expires_at INTEGER,
+    model_id TEXT, project_path TEXT, branch_name TEXT
+  )
+  """
+
   # Tests the fixed-precision timestamp migration (`normalize_timestamps/1`)
   # introduced by the SQLite-optimization refactor. All tests use RAW Xqlite
-  # connections against a private temp DB — the migration must be exercised
-  # directly (Store.init/1 NO LONGER runs it: it is now the `mix migrate.store`
-  # task's job, so a GenServer-backed store sees whatever precision the rows
-  # were written with). The final wiring test seeds old-format data, starts a
-  # uniquely-named Store to prove init leaves pre-existing rows untouched, then
-  # runs the manual migration and restarts the Store to prove the values ARE
-  # normalized afterwards.
+  # connections against a private temp DB — the migration primitives are
+  # exercised directly — and the final wiring tests start a uniquely-named
+  # Store to prove `init/1` now runs the repair pipeline at boot (normalizing
+  # legacy timestamps and adding columns missing from old databases).
   setup do
     unique = System.unique_integer([:positive])
     root = Path.join(System.tmp_dir!(), "evogit_test_store_schema_#{unique}")
@@ -168,55 +177,48 @@ defmodule EvoGit.StoreSchemaMigrationTest do
   end
 
   describe "Store.init/1 migration wiring" do
-    test "does NOT normalize pre-existing rows on startup (manual migration required)", %{
-      sqlite_path: path
-    } do
-      # Seed a DB with old-format timestamps via a raw connection, then start a
-      # Store on it: init must leave the rows untouched — normalization is now
-      # the `mix migrate.store` task's job, not Store.init's.
+    test "normalizes pre-existing rows at boot (no manual step)", %{sqlite_path: path} do
       {:ok, conn} = Xqlite.open(path)
       :ok = Schema.create_tables(conn)
       :ok = Schema.migrate_schema(conn)
-
-      {:ok, _} =
-        XqliteNIF.execute(
-          conn,
-          "INSERT INTO tasks (id, status, started_at, finished_at) VALUES (?1, ?2, ?3, ?4)",
-          ["init-1", "completed", "2024-01-01T12:00:00.123456Z", "2024-01-01T13:00:00Z"]
-        )
-
+      insert_task!(conn, "init-1", "2024-01-01T12:00:00.123456Z", "2024-01-01T13:00:00Z")
       :ok = XqliteNIF.close(conn)
 
-      # Unique name so the running production EvoGit.Store is untouched.
       name = :"store_schema_init_#{System.unique_integer([:positive])}"
       start_supervised({Store, data_dir: path, name: name})
 
       assert %TaskInfo{} = task = Store.get_task(name, "init-1")
-      # Untouched: 6-digit input keeps its original microsecond precision.
-      assert task.started_at.microsecond == {123_456, 6}
-      # Untouched: whole-second input stays second-precision (no fraction).
-      assert task.finished_at.microsecond == {0, 0}
+      assert task.started_at.microsecond == {123_000, 3}
+      assert task.finished_at.microsecond == {0, 3}
+    end
 
-      # Now run the manual migration (what `mix migrate.store` does) on a raw
-      # connection to the same file while the store is stopped. stop_supervised
-      # takes the child spec id (the Store module), which removes the child
-      # from the test supervisor so it can be restarted below.
-      stop_supervised(Store)
-
+    # Regression for the reported crash-on-upgrade: a DB written before the
+    # `error` column existed makes put_task's full-row INSERT raise
+    # {:sqlite_failure, 1, 1, "table tasks has no column named error"} and crash
+    # the Store GenServer (taking TaskRegistry + the caller with it).
+    test "boots a legacy DB missing the error column and persists tasks", %{sqlite_path: path} do
       {:ok, conn} = Xqlite.open(path)
-      assert :ok = Schema.normalize_timestamps(conn)
+      {:ok, _} = XqliteNIF.execute(conn, @legacy_tasks_ddl, [])
+      refute "error" in Schema.existing_columns(conn, "tasks")
       :ok = XqliteNIF.close(conn)
 
-      # Restart a fresh uniquely-named store: the values ARE now normalized,
-      # proving "untouched until the migration runs".
-      name = :"store_schema_migrated_#{System.unique_integer([:positive])}"
+      name = :"store_legacy_boot_#{System.unique_integer([:positive])}"
       start_supervised({Store, data_dir: path, name: name})
 
-      assert %TaskInfo{} = task = Store.get_task(name, "init-1")
-      # 6-digit input was truncated to millisecond precision (value, precision).
-      assert task.started_at.microsecond == {123_000, 3}
-      # Whole-second input gained explicit millisecond precision.
-      assert task.finished_at.microsecond == {0, 3}
+      # (b) the reported crash: persisting a task must succeed ...
+      task = %TaskInfo{id: "legacy-1", type: :evolve, status: :completed, opts: [archive: true]}
+      assert :ok = Store.put_task(name, task)
+      assert %TaskInfo{} = read = Store.get_task(name, "legacy-1")
+      assert read.id == "legacy-1"
+
+      # (a) ... because boot added the missing columns before any write.
+      stop_supervised(Store)
+      {:ok, conn} = Xqlite.open(path)
+      cols = Schema.existing_columns(conn, "tasks")
+      assert "error" in cols
+      assert "updated_at" in cols
+      assert length(cols) == 20
+      :ok = XqliteNIF.close(conn)
     end
   end
 
@@ -258,33 +260,7 @@ defmodule EvoGit.StoreSchemaMigrationTest do
 
       # Legacy 18-column tasks table (current task_columns minus error, minus
       # the store-internal updated_at column).
-      {:ok, _} =
-        XqliteNIF.execute(
-          conn,
-          """
-          CREATE TABLE tasks (
-            id TEXT PRIMARY KEY,
-            type TEXT,
-            status TEXT NOT NULL,
-            opts TEXT,
-            started_at TEXT,
-            finished_at TEXT,
-            logs TEXT,
-            result TEXT,
-            review_status TEXT,
-            usage TEXT,
-            agent_count INTEGER,
-            base_sha TEXT,
-            commit_sha TEXT,
-            archive_metadata TEXT,
-            lease_expires_at INTEGER,
-            model_id TEXT,
-            project_path TEXT,
-            branch_name TEXT
-          )
-          """,
-          []
-        )
+      {:ok, _} = XqliteNIF.execute(conn, @legacy_tasks_ddl, [])
 
       refute "error" in Schema.existing_columns(conn, "tasks")
 
