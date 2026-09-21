@@ -77,7 +77,7 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 ## Design Principles
 
 1. **TOTAL encode**: Encode functions never raise (all JSON via non-crashing `Jason.encode/1` with `case`/`with`).
-2. **Decode raises on bad data**: structurally bad rows raise (incl. non-canonical JSON via `ArgumentError`). Safe-select helpers + summary reads (`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`) catch, skip the row, log `Logger.warning`. Inline narrow reads that decode `opts` (e.g. `select_task_update_info`) deliberately do NOT catch — crash loudly so corrupt rows surface; run `mix migrate.store` first.
+2. **Decode raises on bad data**: structurally bad rows raise (incl. non-canonical JSON via `ArgumentError`). Safe-select helpers + summary reads (`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`) catch, skip the row, log `Logger.warning`. Inline narrow reads that decode `opts` (e.g. `select_task_update_info`) deliberately do NOT catch — crash loudly so corrupt rows surface; `Store.init/1` canonicalizes legacy `opts`/`result` rows at boot, so a raising row means genuine damage (re-run `mix migrate.store` to inspect).
 3. **Atom safety**: closed whitelists with `Map.get/3` for atom conversion from DB-sourced strings.
 4. **Result tuple round-tripping**: `{:ok, _}`/`{:error, _}`/`{:exit, _}` survive JSON via `__result_tag__`; plain strings via the `"string"` tag.
 5. **One justified `try/rescue`**: `decode_reason/1` (`String.to_existing_atom/1` has no non-crashing variant; unknown reason strings legitimately stay strings).
