@@ -52,7 +52,7 @@ Callers that run in processes NOT descending from the task wrapper do not inheri
 - The OTP-27+ `:os.find_executable/1`-with-a-BINARY trap (verified on OTP 29: raises `ArgumentError`) is NOT hit in this subtree; the app's only executable resolver is the `System.find_executable`-based `EvoGit.Sandbox.None.resolve_executable/1` (detail: `sandbox/CONTEXT.md`).
 - **Windows-relevant INTERACTION (indirect)**: the per-task tmpdir this layer installs (task_executor.ex:45 — a BINARY path) is later injected as `TMPDIR`/`TMP`/`TEMP` and reaches the Windows sandbox's `Port.open`; `Port.open` env pairs MUST be charlists (OTP-29 verified: binary tuples raise `ArgumentError: invalid option in list`, while `System.cmd/3` normalizes internally and is safe). Any conversion belongs at the `Port.open` call site — `Helpers.temp_env_vars/0`'s binary shape is test-pinned. Detail: `sandbox/CONTEXT.md` → "Port/OS-pid pitfalls".
 - **Windows reclaim degradation**: `EvoGit.TaskTmpdir.reclaim/2`'s `File.rm_rf` (task_tmpdir.ex:150) can fail or only partly delete when a child process still holds files open (Windows mandatory locking); `reclaim/2` is best-effort and only logs, so leaked `task_<id>` dirs are expected on Windows (there is no boot/periodic reaper).
-- `EvoGit.Portability` `Platform.tmp_paths/0` on Windows is a ONE-element list (`[System.tmp_dir!()]`) — the tmpdir's `:system`/`:custom` root resolves there via `EvoGit.TaskTmpdir` (parent-node file).
+- `EvoGit.Platform.tmp_paths/0` on Windows is a ONE-element list (`[System.tmp_dir!()]`) — the tmpdir's `:system`/`:custom` root resolves there (parent-node file `lib/evo_git/task_tmpdir.ex`).
 
 ## Per-Task Tmpdir Lifecycle
 
