@@ -8,7 +8,7 @@ Contains all reusable UI component modules and layout templates for the EvoDash 
 
 - `layouts/` → HTML layout templates (currently only the root layout shell with meta tags, CSRF, theme persistence)
 - `review_components/` → Sub-components of `ReviewComponents`: `DiffViewer` (split diff + file tree + layouts), `Header` (page header, agent report, objective, task details), `Actions` (task-level actions + skills modal), `RepoCards` (per-repo merge/reject cards), `Stats` (diff stat row, commits list) — full detail: `review_components/CONTEXT.md`
-- `settings_components/` → Sub-components extracted from `SettingsComponents`: `CategoryMetadata`, `SettingCard`, `ModelProfilesEditor`, `CustomAgentsEditor`, `ModelSelectionEditor`, `Sidebar`, `SearchResults`, plus the shared building blocks `SaveBar`, `SectionHeader`, `CardShell`, `FormFooter` (all four consumed by `SettingsComponents`/`SearchResults`/the editors — see the Modules table)
+- `settings_components/` → Sub-components extracted from `SettingsComponents`: `CategoryMetadata`, `SettingCard`, `ModelProfilesEditor`, `CustomAgentsEditor`, `CustomToolsPanel`, `ModelSelectionEditor`, `Sidebar`, `SearchResults`, plus the shared building blocks `SaveBar`, `SectionHeader`, `CardShell`, `FormFooter` (all four consumed by `SettingsComponents`/`SearchResults`/the editors — see the Modules table)
 
 ## API Surface
 
