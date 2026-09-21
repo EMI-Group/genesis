@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-09-21
+
+### Added
+
+- Add user-defined custom tools loaded from the tools directory in the config folder, exposed in the Settings > Agents Custom Tools panel and usable in custom-agent tools whitelists and the central tool dispatcher
+- Add report_llm_error/3 to AgentScheduler to allow specifying an explicit backoff duration when reporting LLM errors
+
+### Changed
+
+- Compress built-in agent system prompts (Manager, Executor, ContextExtractor, Investigator, Architect, TaskScheduler, GenesisPlanner, SkillExtractor) by 14-37% with no behavior change
+- Reduce rendered built-in prompt text by roughly 5% by compressing shared prompt fragments, preserving all instructions and the public API
+- Agents now trust subagent reports by default instead of re-investigating completed work, and test runs are scoped to each node's subtree rather than the full suite at every depth, reducing token and test-execution cost
+- Handle model-exhaustion errors (e.g. insufficient balance / HTTP 402) with a cancel-safe per-model scheduler backoff instead of short agent-side retries; transient failures keep the existing exponential backoff
+- Update dependencies: jsv 0.23.0, llm_db 2026.9.4, mint 1.10.1, and xqlite 0.12.2 with a matching NIF pin
+
+### Fixed
+
+- Fix sandbox port lifecycle: wait_for_os_pid/2 now returns the real integer PID, and close_port/1 is nil-safe and idempotent on timeout
+- Fix executable resolution to only return bundled tool paths when the bundled file actually exists, restoring PATH and Windows fallback lookup for non-bundled tools
+- Fix Windows crash (badarg) in the None sandbox shell tools by converting Port.open environment variables to charlists
+
 ## [0.13.0] - 2026-09-17
 
 ### Added
