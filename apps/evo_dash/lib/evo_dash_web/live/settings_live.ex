@@ -680,6 +680,16 @@ defmodule EvoDashWeb.SettingsLive do
                         agents={@custom_agents}
                         editing_agent_id={@editing_agent_id}
                         model_profiles={@file_config[:llm][:models] || []}
+                        custom_tool_names={
+                          EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tool_names(
+                            @custom_tools_status
+                          )
+                        }
+                      />
+
+                      <EvoDashWeb.SettingsComponents.CustomToolsPanel.custom_tools_panel
+                        status={@custom_tools_status}
+                        loading={@custom_tools_loading}
                       />
 
                       <EvoDashWeb.SettingsComponents.ModelSelectionEditor.model_selection_editor
@@ -804,6 +814,12 @@ defmodule EvoDashWeb.SettingsLive do
         # apply_node_data_results, save paths, reset_key).
         appearance_accent_draft: nil,
         test_profile_id: test_profile_id,
+        # Custom-tools panel state (tool modules discovered in the node's
+        # `<config_dir>/tools/`). Seeded from a LOCAL fetch below (mount runs
+        # with the local default node) and refreshed asynchronously on demand
+        # (refresh_custom_tools/1). `loading` drives the panel's spinner.
+        custom_tools_status: %{ok: [], errors: []},
+        custom_tools_loading: false,
         remote_config: false,
         remote_config_error: nil,
         bootstrap_progress: %{},
@@ -820,6 +836,7 @@ defmodule EvoDashWeb.SettingsLive do
         remote_show_advanced: false
       )
       |> load_custom_agents_data()
+      |> load_custom_tools_data()
 
     {:ok, socket}
   end
@@ -908,6 +925,19 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply, socket}
     else
       {:noreply, apply_node_data_results(socket, category_param, results)}
+    end
+  end
+
+  @impl true
+  def handle_info({:custom_tools_loaded, requested_node, result}, socket) do
+    # Stale-guard (same convention as the node-data load): the async refresh
+    # was spawned for `requested_node`; if the user has since switched nodes a
+    # newer load services the new node — drop this value. Always clear the
+    # loading flag so the panel's spinner never sticks.
+    if requested_node == socket.assigns.current_node do
+      {:noreply, assign(socket, custom_tools_status: result, custom_tools_loading: false)}
+    else
+      {:noreply, assign(socket, :custom_tools_loading, false)}
     end
   end
 
@@ -1577,6 +1607,14 @@ defmodule EvoDashWeb.SettingsLive do
     CustomAgentEvents.test_model_selection_script(socket, params)
   end
 
+  # Refresh button on the Custom Tools panel — re-fetch the custom-tools status
+  # for the currently-viewed node ASYNCHRONOUSLY (a cross-node RPC on remote
+  # nodes). Result arrives as `{:custom_tools_loaded, node, result}`.
+  @impl true
+  def handle_event("reload_custom_tools", _params, socket) do
+    {:noreply, refresh_custom_tools(socket)}
+  end
+
   @impl true
   def handle_event(
         "save_api_key",
@@ -1990,7 +2028,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   # ───────────────────────────────────────────────────────────────────────────
-  # Helpers: Node-aware custom agents loading
+  # Helpers: Node-aware custom agents + custom tools loading
   # ───────────────────────────────────────────────────────────────────────────
 
   # Loads the custom-agents data (agent definitions, model-selection script,
@@ -2015,6 +2053,42 @@ defmodule EvoDashWeb.SettingsLive do
       script_save_error: nil,
       script_test_results: []
     )
+  end
+
+  # Loads the custom-tools status (tool modules discovered in the node's
+  # `<config_dir>/tools/`) synchronously into the socket, mirroring
+  # `load_custom_agents_data/1`'s mount-time local seed.
+  #
+  # `EvoDashWeb.SettingsLive.NodeData.fetch_custom_tools_status/1` is TOTAL: a
+  # remote RPC failure reads as `{:error, reason}` (the panel renders its
+  # degraded state) instead of crashing. Public because the custom-agent
+  # mutation flows refresh through it.
+  @doc false
+  def load_custom_tools_data(socket) do
+    assign(socket,
+      custom_tools_status:
+        EvoDashWeb.SettingsLive.NodeData.fetch_custom_tools_status(socket.assigns.current_node),
+      custom_tools_loading: false
+    )
+  end
+
+  # Re-fetches the custom-tools status for the currently-viewed node in a
+  # SUPERVISED task — never inline in the LiveView process (a cross-node RPC on
+  # remote nodes) — then reports back `{:custom_tools_loaded, node, result}`.
+  # Non-blocking: the panel renders with `@custom_tools_loading` true until the
+  # result lands. The result handler stale-guards on the node. Called by the
+  # panel's Refresh button and by the custom-agent mutation flows.
+  @doc false
+  def refresh_custom_tools(socket) do
+    parent = self()
+    node = socket.assigns.current_node
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = EvoDashWeb.SettingsLive.NodeData.fetch_custom_tools_status(node)
+      send(parent, {:custom_tools_loaded, node, result})
+    end)
+
+    assign(socket, :custom_tools_loading, true)
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -2091,6 +2165,10 @@ defmodule EvoDashWeb.SettingsLive do
       custom_agents: results.custom_agents.agents,
       model_selection_script: results.custom_agents.model_selection_script,
       script_status: results.custom_agents.script_status,
+      # Tolerant: results maps built before the custom-tools panel lack this key
+      # (several tests build them without it) — default to the empty status.
+      custom_tools_status: Map.get(results, :custom_tools_status, %{ok: [], errors: []}),
+      custom_tools_loading: false,
       editing_agent_id: nil,
       script_save_error: nil,
       script_test_results: []

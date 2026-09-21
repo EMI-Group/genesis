@@ -6,9 +6,10 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   RPCs — `EvoDash.NodeContext.get_resolved_config/1` (a FULL merged config
   map) can take up to 30s on a slow or unreachable remote node. This module
   runs the whole node-data load sequence — platform gating (OS detection +
-  schema filtering + nix gating), resolved config, config status, and the
-  custom-agents list — in a supervised task OUTSIDE the LiveView process and
-  reports the result back as `{tag, requested_node, category_param, results}`.
+  schema filtering + nix gating), resolved config, config status, the
+  custom-agents list, and the custom-tools status — in a supervised task
+  OUTSIDE the LiveView process and reports the result back as
+  `{tag, requested_node, category_param, results}`.
 
   Local and remote nodes share ONE code path: `EvoDash.NodeContext` already
   unifies local-direct calls with `:erpc`-routed remote calls, so the same
@@ -35,7 +36,8 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
           agents: [map()],
           model_selection_script: String.t(),
           script_status: :ok | {:error, {:compile_error, String.t()}}
-        }
+        },
+        custom_tools_status: %{ok: [map()], errors: [map()]} | {:error, term()}
       }
   """
 
@@ -95,6 +97,7 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
     |> Map.put(:platform_os, platform_os)
     |> Map.put(:filtered_schemas_by_category, filtered_schemas_by_category)
     |> Map.put(:custom_agents, fetch_custom_agents(node))
+    |> Map.put(:custom_tools_status, fetch_custom_tools_status(node))
   end
 
   # Error funnel: conservative degrade values so the results map is complete in
@@ -113,7 +116,8 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
       file_config: %{},
       config_status: config_status(node),
       remote_config_error: reason,
-      custom_agents: %{agents: [], model_selection_script: "", script_status: :ok}
+      custom_agents: %{agents: [], model_selection_script: "", script_status: :ok},
+      custom_tools_status: %{ok: [], errors: []}
     }
   end
 
@@ -173,6 +177,49 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
 
       _ ->
         %{agents: [], model_selection_script: "", script_status: :ok}
+    end
+  end
+
+  @doc """
+  Fetches the custom-tools status for the given node, NORMALIZED so the
+  LiveView can render it without shape checks.
+
+  `EvoDash.NodeContext.custom_tools_status/1` returns the status map VERBATIM
+  on local or remote success, but `{:error, reason}` on a remote RPC failure.
+  This is the ONE justified normalization point (the RPC boundary):
+
+    * a `%{ok: list, errors: list}` map → kept with ATOM keys (a non-list
+      `ok`/`errors` value degrades to `[]`),
+    * a `{:error, reason}` tuple → preserved so the panel renders its degraded
+      state,
+    * any other shape → the empty `%{ok: [], errors: []}`.
+  """
+  @spec fetch_custom_tools_status(node()) :: %{ok: [map()], errors: [map()]} | {:error, term()}
+  def fetch_custom_tools_status(node) do
+    case EvoDash.NodeContext.custom_tools_status(node) do
+      {:error, reason} ->
+        {:error, reason}
+
+      %{} = status ->
+        %{ok: status_list(status, :ok), errors: status_list(status, :errors)}
+
+      _other ->
+        %{ok: [], errors: []}
+    end
+  end
+
+  # Total list reader: reads an atom OR string key; a non-list / missing value
+  # reads as an empty list.
+  defp status_list(map, key) do
+    case Map.get(map, key) do
+      list when is_list(list) ->
+        list
+
+      _other ->
+        case Map.get(map, to_string(key)) do
+          list when is_list(list) -> list
+          _other -> []
+        end
     end
   end
 end
