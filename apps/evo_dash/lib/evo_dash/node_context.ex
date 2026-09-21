@@ -632,6 +632,27 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Returns the custom-tools status on the given node.
+
+  Delegates to `EvoGit.RemoteNode.custom_tools_status/1`, which reads the
+  node's own `<config_dir>/tools/` directory (per-node, next to
+  `config.toml`). Returns the status map verbatim (`%{ok: [%{name, file,
+  module, read_only?: boolean}], errors: [%{file, reason}]}`) on local or
+  remote success. RPC/transport failures (node down, timeout, remote raise)
+  are passed through UNCHANGED as `{:error, term()}` — never swallowed into an
+  empty map.
+  """
+  @spec custom_tools_status(node()) ::
+          %{
+            ok: [%{name: String.t(), file: String.t(), module: module(), read_only?: boolean()}],
+            errors: [%{file: String.t(), reason: String.t()}]
+          }
+          | {:error, term()}
+  def custom_tools_status(node) do
+    EvoGit.RemoteNode.custom_tools_status(node)
+  end
+
+  @doc """
   Returns filesystem path suggestions for the given node.
 
   Delegates to `EvoGit.RemoteNode.list_path_suggestions/2` — the remote daemon
