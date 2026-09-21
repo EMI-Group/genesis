@@ -8,7 +8,7 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 
 - `../store.ex` → Main GenServer module (`EvoGit.Store`) — public API, GenServer callbacks, private helpers
 - `./codec.ex` → `EvoGit.Store.Codec` — pure serialization/deserialization functions (no I/O)
-- `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, timestamp normalization
+- `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, shared idempotent data migrations (timestamp normalization, canonical result/opts rewrites)
 - `./queries.ex` → `EvoGit.Store.Queries` — SQL builder helpers (WHERE, SET, clamping, column encoding)
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full error classifier (pure; public `disk_full_error?/1` for testability)
 - `../task_registry/` → TaskRegistry lifecycle semantics that consume Store data — startup reconciliation (`:finalizing` → `:failed` / `:cancelling` → `:cancelled`), lease/heartbeat, stuck-task recovery ("Restart Recovery & Status Transitions" section)
@@ -43,9 +43,13 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 
 | Function | Description |
 |----------|-------------|
-| `create_tables/1` | Creates tables (tasks, projects) and indexes |
-| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs (incl. `updated_at`, `error`); invoked by the `mix migrate.store` task (`Store.init/1` does not auto-migrate) |
+| `create_tables/1` | Creates tables (tasks, projects) and indexes; on a legacy DB it must run AFTER `migrate_schema/1` (`idx_tasks_updated_at` references a column only the migration adds) |
+| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs (lease_expires_at, model_id, project_path, branch_name, `error`, `updated_at`); a no-op returning `:ok` when the `tasks` table does not exist yet |
 | `normalize_timestamps/1` | Idempotent, SQL-only data migration — rewrites existing timestamp rows to the fixed-precision format |
+| `canonicalize_results/1` | Idempotent `result` rewrite — JSON literal `null` text → SQL NULL, every other untagged value wrapped verbatim as the `"string"`-tag form; returns `%{nulls: non_neg_integer(), wraps: non_neg_integer()}` |
+| `canonicalize_opts/1` | Idempotent legacy `opts` rewrite — JSON `[key, value]` pair arrays → JSON objects (always the Elixir read-decode-rewrite loop); returns the rewritten row count |
+| `json1_available?/1` | `true` when SQLite's JSON1 functions are available (probes `SELECT json_valid('{}')`) |
+| `table_exists?/2` | `true` when the named table exists (queries `sqlite_master`) |
 | `existing_columns/2` | Reads column names via `PRAGMA table_info` |
 
 ### `EvoGit.Store.Queries` (`queries.ex`)
@@ -73,7 +77,7 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 ## Design Principles
 
 1. **TOTAL encode**: Encode functions never raise (all JSON via non-crashing `Jason.encode/1` with `case`/`with`).
-2. **Decode raises on bad data**: structurally bad rows raise (incl. non-canonical JSON via `ArgumentError`). Safe-select helpers + summary reads (`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`) catch, skip the row, log `Logger.warning`. Inline narrow reads that decode `opts` (e.g. `select_task_update_info`) deliberately do NOT catch — crash loudly so corrupt rows surface; run `mix migrate.store` first.
+2. **Decode raises on bad data**: structurally bad rows raise (incl. non-canonical JSON via `ArgumentError`). Safe-select helpers + summary reads (`select_tasks_summary`, `select_tasks_summary_by_path`, `select_tasks_changed_since`) catch, skip the row, log `Logger.warning`. Inline narrow reads that decode `opts` (e.g. `select_task_update_info`) deliberately do NOT catch — crash loudly so corrupt rows surface; `Store.init/1` canonicalizes legacy `opts`/`result` rows at boot, so a raising row means genuine damage (re-run `mix migrate.store` to inspect).
 3. **Atom safety**: closed whitelists with `Map.get/3` for atom conversion from DB-sourced strings.
 4. **Result tuple round-tripping**: `{:ok, _}`/`{:error, _}`/`{:exit, _}` survive JSON via `__result_tag__`; plain strings via the `"string"` tag.
 5. **One justified `try/rescue`**: `decode_reason/1` (`String.to_existing_atom/1` has no non-crashing variant; unknown reason strings legitimately stay strings).
@@ -82,16 +86,16 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 
 No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine` tables, no `integrity_check`/`scan_and_repair`/`recover_quarantine` functions. SQLite in WAL mode is crash-safe and essentially never corrupts, so a quarantine net is unnecessary.
 
-- No quarantine tables are created (`Schema.create_tables/1`); leftover quarantine tables in live DBs are ignored, never dropped.
+- No quarantine tables are created (`Schema.create_tables/1`); DETS-era leftovers in a live DB are ignored by the store and only `mix migrate.store` drops them.
 - Undecodable rows are SKIPPED + `Logger.warning` (no INSERT-into-quarantine + DELETE-from-live pair).
-- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub at init.
+- The only startup integrity check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub: the boot migration is schema/data-only (`migrate_schema` + the canonical rewrites), never scan-and-repair.
 
 ## Schema: `error` + `updated_at` columns
 
 - `tasks` has 20 columns: 19 in `Codec.@task_columns` (the 19th is `error TEXT`, after `branch_name`) plus a 20th store-internal `updated_at TEXT` (after `error`). `encode_task`/`decode_task` are positional over `@task_columns` (19 values incl. the `error` cell via `encode_error`/`decode_error`); the `put_task` INSERT adds `updated_at` as a literal 20th value (store.ex:484-499, VALUES ?1..?20).
 - `updated_at` is deliberately NOT in `Codec.@task_columns` nor `%TaskInfo{}` (changed-since poll tracking); it is written by `put_task` and via targeted `update_task_columns` with `Queries.encode_column_value(:updated_at, dt)` → `Codec.encode_datetime/1` (fixed-precision ISO, same as `started_at`/`finished_at`).
 - Indexes (idempotent `IF NOT EXISTS`): `idx_tasks_updated_at ON tasks(updated_at)` (backs the changed-since poll query) and `idx_tasks_started_at ON tasks(started_at)` (backs `safe_select_paginated_tasks`'s `ORDER BY started_at DESC`).
-- Migration: `Schema.migrate_schema/1` adds `error` and `updated_at` via idempotent `ALTER TABLE tasks ADD COLUMN ...` clauses when missing (same pattern as lease_expires_at/model_id/project_path/branch_name); fresh DBs get both from `create_tables/1` DDL directly. Existing pre-`error` deployments need `mix migrate.store` — `Store.init/1` does not auto-migrate.
+- Migration: `Schema.migrate_schema/1` adds `error` and `updated_at` via idempotent `ALTER TABLE tasks ADD COLUMN ...` clauses when missing (same pattern as lease_expires_at/model_id/project_path/branch_name); fresh DBs get both from `create_tables/1` DDL directly. `Store.init/1` runs `migrate_schema/1` at boot (BEFORE `create_tables/1`), so a pre-`error`/pre-`updated_at` deployment is upgraded on first start; `mix migrate.store` re-runs the same migration on demand.
 
 ## `review_status` column (single, task-level)
 
@@ -111,7 +115,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 - Encode: `Jason.encode!/1` of a binary can never fail (TOTAL-encode philosophy).
 - Decode: strictly canonical — nil + the 4 tagged forms only (`ok` map data, `error`, `exit`, `string` binary); raw strings, untagged JSON, invalid JSON, JSON null raise `ArgumentError`.
-- Enables future `json_valid`-guarded `json_extract` SQL filters. DBs that have NOT run `mix migrate.store` may contain legacy rows — they RAISE on decode; run the migration first (its canonical-result rewrite, step 4: JSON literal `null` text → SQL NULL; raw strings AND untagged JSON objects/arrays/scalars → `"string"`-tag wrap verbatim). Tagged rows are untouched.
+- Enables future `json_valid`-guarded `json_extract` SQL filters. Rows written before the canonical codec would RAISE on decode, so `Store.init/1` runs `Schema.canonicalize_results/1` at boot: JSON literal `null` text → SQL NULL; raw strings AND untagged JSON objects/arrays/scalars → `"string"`-tag wrap verbatim. Tagged rows are untouched.
 
 ## Opts object encoding (JSON-path addressable)
 
@@ -122,7 +126,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 ```
 
 - Encode: `Map.new/2` over the keyword list (atom keys → strings), essential-keys fallback + nil-on-failure.
-- Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; run the `mix migrate.store` opts-object rewrite before reading old DBs.
+- Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; `Store.init/1` rewrites legacy pair-array rows via `Schema.canonicalize_opts/1` at boot, before any read.
 - `Queries.build_where/1` `:search` filter (`opts/result LIKE ?N ESCAPE '\'`) matches over the serialized JSON text — `"path"`/`"mode"` key names and string values alike; the `result` column's raw JSON carries the final agent report under its `"result"` data key, matching with the same semantics.
 
 ## Opts / Result decode key whitelists (atomization contract)
@@ -134,21 +138,27 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - `foreign_repo_commits` (the scheduler-side `%{repo_id => sha}` map) is NEVER persisted: it is neither a `report_map` key (runtime/helpers.ex:110-126) nor a `@result_data_fields` entry — only its projection into `repos` survives.
 - `repos` holds exactly ONE `commit_sha` per repo_id (no intermediate/alternate commits) — an advanced per-repo SHA can be replaced by a later-recorded one; ordering lives in the scheduler roll-up, not here (see agent_scheduler/CONTEXT.md "Subagent Management").
 
-## Store.init does not auto-migrate
+## `Store.init/1` runs the boot migration
 
-`Store.init/1` runs only `create_tables/1`. Schema upgrades for existing DBs go through **`mix migrate.store`** (`apps/evo_git/lib/mix/tasks/migrate.store.ex`): standalone (never starts the `:evo_git` application), opens the DB directly, invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1`), and rewrites canonical results (step 4) + opts objects (step 5). Fresh DBs are created with the full current DDL by `create_tables/1`.
+`EvoGit.Store.init/1` runs the idempotent boot migration (safe to repeat; a no-op on a fresh or already-migrated DB).
+Order: `Schema.migrate_schema/1` (adds missing columns; a no-op when `tasks` does not exist) → `Schema.create_tables/1` (tables + indexes) → `Schema.normalize_timestamps/1` → `Schema.canonicalize_results/1` → `Schema.canonicalize_opts/1`.
+`migrate_schema/1` must precede `create_tables/1` because `idx_tasks_updated_at` references a column a legacy table may lack.
+The same path runs on the headless `genesis_remote` daemon.
+
+The **`mix migrate.store`** task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`) reuses the same `Schema` primitives and additionally runs the denormalization backfills (`branch_name`, `updated_at`) and drops the DETS-era quarantine tables.
+It runs standalone (never starts the `:evo_git` application) so it also works when the app cannot boot at all.
 
 ## Fixed-precision timestamps
 
 - `Codec.encode_datetime/1` → constant 24-char `:millisecond` ISO-8601 (`%Y-%m-%dT%H:%M:%S.SSSZ`, `.000Z` even for whole seconds) via `DateTime.truncate(dt, :millisecond)` + `DateTime.to_iso8601/1`. Lexicographically sortable in SQLite — a mixed-precision `:auto` format would mis-sort (`'Z'` (0x5A) > `'.'` (0x2E)) — making SQL-side datetime filtering/ordering pushdowns safe.
-- `Schema.normalize_timestamps/1` migrates existing rows (tasks.started_at / tasks.finished_at / projects.last_opened_at). Idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips normalized rows; `%f` round-trips them unchanged); skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). Invoked only via `mix migrate.store` (step 3) or direct `Schema` calls in tests.
+- `Schema.normalize_timestamps/1` migrates existing rows (tasks.started_at / tasks.finished_at / projects.last_opened_at). Idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips normalized rows; `%f` round-trips them unchanged); skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). Invoked at boot by `EvoGit.Store.init/1` and by `mix migrate.store` (step 3).
 
 ## SQL Access Patterns
 
 - **Only two xqlite entry points**: `XqliteNIF.query/3` (SELECT/PRAGMA) and `XqliteNIF.execute/3` (INSERT/UPDATE/DELETE/DDL). No `Xqlite` module-wrapper helpers (no `q/2`, no `exec/3`). Dep: `{:xqlite, "~> 0.10"}` (`apps/evo_git/mix.exs:35`).
 - **All user values parameterized** with `?N` numbered placeholders + params list. The ONLY interpolated identifiers are table names, column lists, PK names — all from closed module-level sets (Codec column lists, hardcoded literals), never user input.
 - **No prepared statements** (one-shot prepare+execute via the NIF per call) and **no transactions** (zero `with_transaction|BEGIN|COMMIT|ROLLBACK` matches in `apps/evo_git/lib`; every execute is its own autocommit). WAL mode set at open (`store.ex:340`: `journal_mode: :wal, synchronous: :normal, cache_size: -2000`); `PRAGMA wal_checkpoint(TRUNCATE)` on terminate (`store.ex:346,364-365`).
-- **SQLite JSON1 functions — migration task only**: `mix migrate.store` step 4 uses `json_valid`/`json_type`/`json_object`/`json_extract` when the bundled SQLite has JSON1 (bundled 3.53.2), with an Elixir/Jason fallback. Everywhere else JSON handling is Elixir/Jason; `build_where/1` `:search` LIKEs over raw JSON text of the `opts` and `result` columns (the result column's `"result"` data key carries the final agent report text, so response fragments are searchable); `id`/`project_path` LIKE matches are the only other search surfaces — no JSON-path querying.
+- **SQLite JSON1 functions — migrations only**: `Schema.canonicalize_results/1` (and the same rewrite inside `mix migrate.store`) uses `json_valid`/`json_type`/`json_object`/`json_extract` when the bundled SQLite has JSON1 (bundled 3.53.2), with an Elixir/Jason fallback; `Schema.canonicalize_opts/1` always uses the Elixir loop (never `json_group_object`, which would collapse JSON booleans to SQLite integers). `Schema.json1_available?/1` is the availability probe. Everywhere else JSON handling is Elixir/Jason; `build_where/1` `:search` LIKEs over raw JSON text of the `opts` and `result` columns (the result column's `"result"` data key carries the final agent report text, so response fragments are searchable); `id`/`project_path` LIKE matches are the only other search surfaces — no JSON-path querying.
 - **Heavy vs cheap decode**: `decode_task/1` + `decode_result/1` are HEAVY (full struct reconstruction, JSON decode of result/opts/logs/usage/archive); `decode_atom/1`, `decode_datetime/1`, `decode_logs/1`, `decode_archive/1`, `decode_usage/1` are cheap-to-medium scalar decodes that never raise (nil/[] fallbacks). Raise vectors: positional pattern mismatches in `decode_task/1`/`decode_project/1`, `ArgumentError` from `decode_result/1`/`decode_opts/1` on non-canonical JSON — safe-select + summary callers catch, skip, warn. `decode_reason/1` is the only decode-side try/rescue.
 
 ## Heavy SELECT handlers offloaded to short-lived Tasks
