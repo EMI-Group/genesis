@@ -115,7 +115,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 - Encode: `Jason.encode!/1` of a binary can never fail (TOTAL-encode philosophy).
 - Decode: strictly canonical — nil + the 4 tagged forms only (`ok` map data, `error`, `exit`, `string` binary); raw strings, untagged JSON, invalid JSON, JSON null raise `ArgumentError`.
-- Enables future `json_valid`-guarded `json_extract` SQL filters. DBs that have NOT run `mix migrate.store` may contain legacy rows — they RAISE on decode; run the migration first (its canonical-result rewrite, step 4: JSON literal `null` text → SQL NULL; raw strings AND untagged JSON objects/arrays/scalars → `"string"`-tag wrap verbatim). Tagged rows are untouched.
+- Enables future `json_valid`-guarded `json_extract` SQL filters. Rows written before the canonical codec would RAISE on decode, so `Store.init/1` runs `Schema.canonicalize_results/1` at boot: JSON literal `null` text → SQL NULL; raw strings AND untagged JSON objects/arrays/scalars → `"string"`-tag wrap verbatim. Tagged rows are untouched.
 
 ## Opts object encoding (JSON-path addressable)
 
