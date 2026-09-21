@@ -21,6 +21,8 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 - `./evo_git/config/` → `EvoGit.Config` schema/validation/LLM-catalog + `[:tmp]` schema tests → `./evo_git/config/CONTEXT.md`
 - `./support/` → shared test helpers (no own CONTEXT.md — documented under Shared Infrastructure below)
 - Managed per-task tmpdir (`EvoGit.TaskTmpdir`) coverage → `./evo_git/task_tmpdir_test.exs` (unit: modes/path math/ensure/reclaim safety) + `./evo_git/sandbox/` (backend args/env: per-task writable path + `TMPDIR`) + `./evo_git/task_registry/` (event-driven terminal reclaim) + `./evo_git/config/` (`[:tmp]` schema)
+- SQLite persistence-layer suites (`EvoGit.Store` + `Store.Codec/Schema/Queries/Errors`, TaskRegistry↔Store resilience) → `./evo_git/` (`store_test`, `store_summary_test`, `store_schema_migration_test`, `store_disk_full_test`, `migrate_store_test`) + `./evo_git/store/` (`queries_test` pure-SQL-builder, `errors_test` pure disk-full classifier — neither opens a DB) + `./evo_git/task_registry/` (`persistence_test` incl. structural corruption, `store_skip_and_log_test`); disk-full is armed by `PRAGMA query_only=ON` on the Store's OWN conn (`:sys.get_state` → `%{conn: conn}`), no fake conn/app env — detail in those CONTEXT.md files
+- `./evo_git/agent_scheduler/store_test.exs` tests `EvoGit.AgentScheduler.Store` (scheduler-side state store) — NOT the SQLite `EvoGit.Store`; naming collision, do not mis-route persistence work there
 - `./mix/tasks/` → standalone `mix`-task suites (`bump.version`, `changelog`), both `async: true`; detail in `./mix/tasks/CONTEXT.md`
 - `./evo_git_test.exs` → top-level sandbox/platform suite (`EvoGit.sandbox_args/4`, `sandbox_run/4`, backend capability checks)
 
