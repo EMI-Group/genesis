@@ -1522,6 +1522,180 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "commit history view — switcher and lazy fetch" do
+    # The left pane is a segmented switcher (@left_view): :tree (default) vs
+    # :commits. Switching to :commits lazily fetches the git commit graph via the
+    # :agents_commit_graph_runner seam — ONE runner call per distinct repo_root,
+    # resolved AT SPAWN TIME inside the EvoDash.TaskSupervisor child. Every call
+    # is recorded to the TEST process as
+    # {:commit_graph_call, node, repo_root, ranges, opts}.
+    #
+    # These tests stub the seam BEFORE live/3 (composition-time resolution) and
+    # synchronize on the recorded messages; the real
+    # EvoDash.NodeContext.list_commit_graph/4 is NEVER invoked.
+
+    test "defaults to the agent tree view and renders the segmented switcher", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      assert assigns(view)[:left_view] == :tree
+      assert render(view) =~ "Agent Tree"
+      assert has_element?(view, "#left-view-tree")
+      assert has_element?(view, "#left-view-commits")
+    end
+
+    test "switching to commits renders the commit-graph root", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert assigns(view)[:left_view] == :commits
+      assert assigns(view)[:commit_graph_seq] == 1
+
+      html = render(view)
+      assert html =~ "commit-graph"
+      assert html =~ ~s(phx-hook="CommitGraph")
+      # The tree pane (empty state) is replaced by the commit-graph view.
+      refute html =~ "No agents currently registered"
+    end
+
+    test "the segment buttons toggle the left view", %{conn: conn} do
+      # Pin the agent list empty so switching to commits needs no fetch (it would
+      # otherwise depend on whatever the shared ETS tables hold).
+      install_agents([])
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      assert assigns(view)[:left_view] == :tree
+
+      view |> element("#left-view-commits") |> render_click()
+      assert assigns(view)[:left_view] == :commits
+
+      view |> element("#left-view-tree") |> render_click()
+      assert assigns(view)[:left_view] == :tree
+    end
+
+    test "an unknown switched view value is a no-op", %{conn: conn} do
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "bogus"})
+
+      assert assigns(view)[:left_view] == :tree
+      refute_receive {:commit_graph_call, _, _, _, _}, 200
+    end
+
+    test "viewing the tree never invokes the commit runner", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # The default tree view must never trigger a git RPC.
+      refute_receive {:commit_graph_call, _, _, _, _}, 200
+    end
+
+    test "switching to commits fetches once per distinct repo_root with its ranges and the limit",
+         %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        ),
+        summary_agent(
+          id: agent_id() + 1,
+          repo_root: "/repo/b",
+          base_commit: "b2",
+          current_commit: "c2"
+        ),
+        # A SECOND agent in /repo/a with a different range → both ranges travel
+        # in ONE call for that repo_root (de-duplicated).
+        summary_agent(
+          id: agent_id() + 2,
+          repo_root: "/repo/a",
+          base_commit: "b1b",
+          current_commit: "c1b"
+        )
+      ])
+
+      install_commit_graph_runner(graph_partial_responder("/repo/a"))
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      # Exactly ONE call per distinct repo_root, carrying that repo's
+      # de-duplicated {base, current} ranges and the limit.
+      assert_receive {:commit_graph_call, _node, "/repo/a", ranges_a, opts_a}, 1000
+      assert_receive {:commit_graph_call, _node, "/repo/b", ranges_b, opts_b}, 1000
+
+      assert opts_a == [limit: 100]
+      assert opts_b == [limit: 100]
+      assert Enum.sort(ranges_a) == Enum.sort([{"b1", "c1"}, {"b1b", "c1b"}])
+      assert ranges_b == [{"b2", "c2"}]
+
+      refute_receive {:commit_graph_call, _, _, _, _}, 200
+    end
+
+    test "agents lacking commit metadata are skipped by the fetch", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        ),
+        # repo_root nil → skipped
+        summary_agent(id: agent_id() + 1, repo_root: nil),
+        # missing base_commit → skipped
+        summary_agent(id: agent_id() + 2, repo_root: "/repo/c", base_commit: nil),
+        # missing current_commit → skipped
+        summary_agent(id: agent_id() + 3, repo_root: "/repo/d", current_commit: nil)
+      ])
+
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      # Only the eligible agent's repo is fetched — exactly one call, and never
+      # for a nil/blank repo_root.
+      assert_receive {:commit_graph_call, _node, repo_root, _ranges, _opts}, 1000
+      assert repo_root == "/repo/a"
+      refute_receive {:commit_graph_call, _, _, _, _}, 200
+    end
+  end
+
   # ── Private helpers ─────────────────────────────────────────────
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
@@ -1577,10 +1751,59 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   # Deletes ALL the AgentsLive env seams (each is resolved at call time inside
-  # the async tasks, so a leaked value would leak into later tests).
+  # the async tasks, so a leaked value would leak into later tests). The
+  # commit-graph seam is resolved at SPAWN time too, so it is cleared as well.
   defp clear_agents_env do
-    for key <- [:agents_list_runner, :agents_history_runner, :agents_config_runner] do
+    for key <- [
+          :agents_list_runner,
+          :agents_history_runner,
+          :agents_config_runner,
+          :agents_commit_graph_runner
+        ] do
       Application.delete_env(:evo_dash, key)
+    end
+  end
+
+  # Installs the :agents_commit_graph_runner stub. Every call is recorded to the
+  # TEST process as {:commit_graph_call, node, repo_root, ranges, opts}; the
+  # result comes from responder.(repo_root), which may return {:ok, payload}.
+  defp install_commit_graph_runner(responder) do
+    test_pid = self()
+
+    stub = fn node, repo_root, ranges, opts ->
+      send(test_pid, {:commit_graph_call, node, repo_root, ranges, opts})
+      responder.(repo_root)
+    end
+
+    Application.put_env(:evo_dash, :agents_commit_graph_runner, stub)
+    on_exit(&clear_agents_env/0)
+  end
+
+  # Installs an :agents_list_runner stub returning the given crafted summaries
+  # (build them with the existing summary_agent/1 helper).
+  defp install_agents(summaries) when is_list(summaries) do
+    Application.put_env(:evo_dash, :agents_list_runner, fn _node -> summaries end)
+    on_exit(&clear_agents_env/0)
+  end
+
+  # The commit-graph lane markup carries a keyed `phx-update="append"` container,
+  # which the LiveViewTest proxy REFUSES to apply ("phx-update=append … is no
+  # longer supported in tests"). A page-level test must therefore never let a
+  # graph LOAD while it renders the commit pane. An {:error, _} reply keeps
+  # @commit_graph empty (the pane's error state) AND halts the fetch loop after
+  # that repo — so every EARLIER repo's call is still recorded (see
+  # graph_partial_responder/1). Loaded-graph RENDERING is covered by the
+  # commit-graph component tests.
+  defp graph_error_responder, do: fn _repo_root -> {:error, :stub} end
+
+  # Returns {:ok, _} for `first_repo_root` — letting the (sorted) fetch loop
+  # continue to the NEXT repo_root — and {:error, _} for every other repo, which
+  # halts it before anything can be rendered as a loaded graph. That makes "one
+  # call per distinct repo_root" observable without tripping the proxy.
+  defp graph_partial_responder(first_repo_root) do
+    fn
+      ^first_repo_root -> {:ok, %{commits: [], refs: %{}}}
+      _other -> {:error, :stub}
     end
   end
 
