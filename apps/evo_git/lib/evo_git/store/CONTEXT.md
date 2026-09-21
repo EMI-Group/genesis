@@ -43,9 +43,13 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 
 | Function | Description |
 |----------|-------------|
-| `create_tables/1` | Creates tables (tasks, projects) and indexes |
-| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs (incl. `updated_at`, `error`); invoked by the `mix migrate.store` task (`Store.init/1` does not auto-migrate) |
+| `create_tables/1` | Creates tables (tasks, projects) and indexes; on a legacy DB it must run AFTER `migrate_schema/1` (`idx_tasks_updated_at` references a column only the migration adds) |
+| `migrate_schema/1` | Idempotent column migration — adds missing columns to existing DBs (lease_expires_at, model_id, project_path, branch_name, `error`, `updated_at`); a no-op returning `:ok` when the `tasks` table does not exist yet |
 | `normalize_timestamps/1` | Idempotent, SQL-only data migration — rewrites existing timestamp rows to the fixed-precision format |
+| `canonicalize_results/1` | Idempotent `result` rewrite — JSON literal `null` text → SQL NULL, every other untagged value wrapped verbatim as the `"string"`-tag form; returns `%{nulls: non_neg_integer(), wraps: non_neg_integer()}` |
+| `canonicalize_opts/1` | Idempotent legacy `opts` rewrite — JSON `[key, value]` pair arrays → JSON objects (always the Elixir read-decode-rewrite loop); returns the rewritten row count |
+| `json1_available?/1` | `true` when SQLite's JSON1 functions are available (probes `SELECT json_valid('{}')`) |
+| `table_exists?/2` | `true` when the named table exists (queries `sqlite_master`) |
 | `existing_columns/2` | Reads column names via `PRAGMA table_info` |
 
 ### `EvoGit.Store.Queries` (`queries.ex`)
