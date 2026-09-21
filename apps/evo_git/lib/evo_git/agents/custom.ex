@@ -38,17 +38,25 @@ defmodule EvoGit.Agents.Custom do
         tools: ["read_file", "write_file"] | nil # nil/absent → all standard tools
       }
 
+  A `tools` entry may name a built-in tool OR a user-defined custom tool (loaded
+  from `<config_dir>/tools/` by `EvoGit.CustomTools`).
+
   ## Tools whitelist
 
   When `tools` is nil or absent, the agent gets the standard tool set — the same
   base as the `EvoGit.Agent.__using__` default: `EvoGit.Agent.Tools.schemas/0` plus
   the subagent tool schemas generated from this agent's `subagent_modules/0` plus
-  `complete_task`. When `tools` is a list, only the schemas whose tool name appears
-  in the whitelist survive — including the subagent tool schemas (their tool names
-  are the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"`) and
-  `complete_task`. Filtering `complete_task` out is allowed — that is the user's
-  explicit choice (the agent can no longer finish through it). An unknown name in
-  the whitelist simply matches nothing.
+  `complete_task`. User-defined custom tools (`EvoGit.CustomTools`, loaded from
+  `<config_dir>/tools/`) are NOT added in this case — they are opt-in only.
+
+  When `tools` is a list, only the schemas whose tool name appears in the whitelist
+  survive. The whitelist accepts both built-in tool names (including the subagent
+  tool schemas — their tool names are the spawned module's `subagent_tool_name/0`,
+  e.g. `"subagent_executor"` — and `complete_task`) AND the names of user-defined
+  custom tools loaded from `<config_dir>/tools/` by `EvoGit.CustomTools`. Filtering
+  `complete_task` out is allowed — that is the user's explicit choice (the agent
+  can no longer finish through it). An unknown name in the whitelist simply matches
+  nothing.
 
   ## Subagent name→module mapping
 
@@ -111,7 +119,14 @@ defmodule EvoGit.Agents.Custom do
         base
 
       tools when is_list(tools) ->
-        Enum.filter(base, fn schema -> EvoGit.Agent.tool_name(schema) in tools end)
+        # An explicit whitelist may also name user-defined custom tools
+        # (`EvoGit.CustomTools`); they are opt-in and reachable ONLY through this
+        # list. Candidates are deduped by name (first occurrence wins) so a name
+        # shared between a built-in/subagent/custom schema never yields two
+        # schemas with the same name.
+        (base ++ EvoGit.CustomTools.schemas())
+        |> Enum.filter(fn schema -> EvoGit.Agent.tool_name(schema) in tools end)
+        |> dedupe_by_tool_name()
 
       other ->
         Logger.warning(
@@ -125,6 +140,22 @@ defmodule EvoGit.Agents.Custom do
   end
 
   def system_prompt, do: field(definition!(), :prompt) || ""
+
+  # Keeps only the FIRST schema for each tool name, preserving input order.
+  defp dedupe_by_tool_name(schemas) do
+    {deduped, _seen} =
+      Enum.reduce(schemas, {[], MapSet.new()}, fn schema, {acc, seen} ->
+        name = EvoGit.Agent.tool_name(schema)
+
+        if MapSet.member?(seen, name) do
+          {acc, seen}
+        else
+          {[schema | acc], MapSet.put(seen, name)}
+        end
+      end)
+
+    Enum.reverse(deduped)
+  end
 
   # --- Definition resolution ---
 
