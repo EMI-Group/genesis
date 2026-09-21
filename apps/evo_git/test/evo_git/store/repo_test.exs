@@ -39,7 +39,6 @@ defmodule EvoGit.Store.RepoTest do
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
   alias EvoGit.Store.Schemas.TaskRow
-  alias EvoGit.TestSupport.StoreBootLock
 
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
@@ -90,11 +89,8 @@ defmodule EvoGit.Store.RepoTest do
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process, per call — `async: true` safe) and stops it on test exit.
-  #
-  # The boot is serialized through the BEAM-global `StoreBootLock` —
-  # `Ecto.Migrator` recompiles each `.exs` migration on every pending run, and
-  # concurrent compiles of the same module race (see
-  # `EvoGit.TestSupport.StoreBootLock`'s moduledoc).
+  # Migration compilation inside `Boot.start_dynamic/1` is serialized by the
+  # production `:global` lock (see `EvoGit.Store.Boot`).
   #
   # The repo is UNLINKED: `Boot.start_dynamic/1` links it to this test process
   # and `on_exit/1` callbacks run after that process is gone, so the link's
@@ -102,7 +98,7 @@ defmodule EvoGit.Store.RepoTest do
   # is used for cleanup because tests that stop their instance manually inside
   # the test body would otherwise hit "no process" on `Supervisor.stop/3`.
   defp start_repo!(tag) do
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(db_path(tag)) end)
+    {:ok, pid} = Boot.start_dynamic(db_path(tag))
     Process.unlink(pid)
     on_exit(fn -> stop_quietly(pid) end)
     pid
@@ -283,15 +279,15 @@ defmodule EvoGit.Store.RepoTest do
     test "a re-run against a current database migrates nothing" do
       pid = start_repo!(:idempotent)
 
-      assert StoreBootLock.with_boot_lock(fn -> Boot.run_migrations(pid) end) == []
+      assert Boot.run_migrations(pid) == []
       assert migration_versions(pid) == @migration_versions
     end
 
     test "repeated re-runs stay no-ops and never raise" do
       pid = start_repo!(:idempotent_repeat)
 
-      assert StoreBootLock.with_boot_lock(fn -> Boot.run_migrations(pid) end) == []
-      assert StoreBootLock.with_boot_lock(fn -> Boot.run_migrations(pid) end) == []
+      assert Boot.run_migrations(pid) == []
+      assert Boot.run_migrations(pid) == []
       assert migration_versions(pid) == @migration_versions
     end
 
@@ -301,7 +297,7 @@ defmodule EvoGit.Store.RepoTest do
       before =
         query_rows(pid, "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
 
-      assert StoreBootLock.with_boot_lock(fn -> Boot.run_migrations(pid) end) == []
+      assert Boot.run_migrations(pid) == []
 
       after_ =
         query_rows(pid, "SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
@@ -316,7 +312,7 @@ defmodule EvoGit.Store.RepoTest do
     test "a committed row survives Boot.stop/1 then start_dynamic/1 on the same path" do
       path = db_path("durability")
 
-      {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+      {:ok, pid} = Boot.start_dynamic(path)
       Process.unlink(pid)
       on_exit(fn -> stop_quietly(pid) end)
 
@@ -325,7 +321,7 @@ defmodule EvoGit.Store.RepoTest do
 
       :ok = Boot.stop(pid)
 
-      {:ok, pid2} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+      {:ok, pid2} = Boot.start_dynamic(path)
       Process.unlink(pid2)
       on_exit(fn -> stop_quietly(pid2) end)
 
