@@ -262,8 +262,8 @@ defmodule EvoGit.Store.Codec do
   `"…00Z"` sorts before `"…00.5Z"` while being chronologically after). The
   constant 24-char `:millisecond` format sorts correctly, which is required
   for SQL-side `ORDER BY started_at DESC` and datetime comparisons. All
-  writers use `DateTime.utc_now()` (UTC); existing rows are migrated by
-  `EvoGit.Store.Schema.normalize_timestamps/1`.
+  writers use `DateTime.utc_now()` (UTC); existing rows are migrated by the
+  `20260815000002_data_normalization` boot migration (timestamp rewrite).
   """
   def encode_datetime(nil), do: nil
 

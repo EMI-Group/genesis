@@ -641,6 +641,23 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert Enum.map(pct_tasks, & &1.id) == ["pct100%done"]
     end
 
+    test "search escapes a literal backslash — it matches literally, never as the ESCAPE char" do
+      repo = start_repo!()
+
+      # A literal backslash in project_path: with the ported escape_like/1 the
+      # search needle "a\\b" becomes "a\\\\b" and matches ONLY the literal
+      # "a\b" path — the ESCAPE '\' clause consumes the doubled backslash. (An
+      # unescaped backslash would pair with the following char and fail to
+      # match anything.)
+      put!(repo, %TaskInfo{id: "bs-lit", type: :evolve, status: :pending, opts: [path: "a\\b"]})
+      put!(repo, %TaskInfo{id: "bs-plain", type: :evolve, status: :pending, opts: [path: "ab"]})
+
+      {tasks, total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "a\\b"])
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["bs-lit"]
+      assert hd(tasks).project_path == "a\\b"
+    end
+
     test "ORDER BY started_at DESC (newest first)" do
       repo = start_repo!()
 
@@ -852,6 +869,39 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert {:ok, first_dt, _} = DateTime.from_iso8601(first)
       assert {:ok, second_dt, _} = DateTime.from_iso8601(second)
       assert DateTime.compare(second_dt, first_dt) == :gt
+    end
+
+    test "nil values write SQL NULL — the nil guard fires BEFORE the per-column encoder" do
+      repo = start_repo!()
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "cols-nil",
+          type: :evolve,
+          status: :running,
+          opts: [path: "/nil"],
+          logs: ["first"],
+          review_status: :merged
+        }
+      )
+
+      # `logs: nil` must become SQL NULL — NOT Codec.encode_logs(nil)'s "[]"
+      # (the default the put path applies); `review_status: nil` → NULL too,
+      # never Codec.encode_atom/1 output. The encode_column_value/2 nil clause
+      # is checked FIRST, for EVERY column family.
+      assert Tasks.update_task_columns(repo, "cols-nil",
+               logs: nil,
+               review_status: nil,
+               result: nil,
+               opts: nil
+             ) == :ok
+
+      row = raw_row(repo, "cols-nil")
+      assert is_nil(row.logs)
+      assert is_nil(row.review_status)
+      assert is_nil(row.result)
+      assert is_nil(row.opts)
     end
 
     test "an unknown column raises a descriptive ArgumentError (no silent write)" do

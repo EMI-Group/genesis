@@ -70,7 +70,6 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
-  alias EvoGit.Store.Queries
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
@@ -242,8 +241,8 @@ defmodule EvoGit.Store.Operations.Tasks do
   def safe_select_paginated_tasks(repo, opts) when is_list(opts) do
     RepoScope.with_repo(repo, fn ->
       filters = Keyword.get(opts, :filters, [])
-      limit = Queries.clamp_limit(Keyword.get(opts, :limit))
-      offset = Queries.clamp_offset(Keyword.get(opts, :offset))
+      limit = clamp_limit(Keyword.get(opts, :limit))
+      offset = clamp_offset(Keyword.get(opts, :offset))
 
       base = from(t in TaskRowRaw)
 
@@ -290,11 +289,13 @@ defmodule EvoGit.Store.Operations.Tasks do
   `{:update_task_columns, task_id, columns}` handler (store.ex:713).
 
   `columns` is a keyword list of `{column_atom, value}`; each value is encoded
-  through `Queries.encode_column_value/2` — the EXACT per-column encoder the
-  old body used (status atom → TEXT, DateTime → fixed-ms ISO, logs/result/
-  opts/usage/error → JSON) — and the statement is issued through the RAW
-  wire twin, whose plain field types pass the pre-encoded wire values to
-  SQLite verbatim. Byte-identical SET clauses to the old raw SQL.
+  through the private `encode_column_value/2` (the retired
+  `EvoGit.Store.Queries.encode_column_value/2`, ported verbatim) — the EXACT
+  per-column encoder the old body used (status atom → TEXT, DateTime →
+  fixed-ms ISO, logs/result/opts/usage/error → JSON) — and the statement is
+  issued through the RAW wire twin, whose plain field types pass the
+  pre-encoded wire values to SQLite verbatim. Byte-identical SET clauses to
+  the old raw SQL.
 
   WHY the raw twin and not the typed schema: Ecto's `update_all` can pin only
   SCALAR values into `set:` — pinning a keyword list (`opts:` is a keyword
@@ -400,7 +401,30 @@ defmodule EvoGit.Store.Operations.Tasks do
     end)
   end
 
-  ## Private — pagination filters (port of Queries.build_where/1 semantics)
+  ## Private — pagination filters (port of the retired Queries.build_where/1 semantics)
+
+  # Pagination clamps — a verbatim port of the retired
+  # `EvoGit.Store.Queries.clamp_limit/1` / `clamp_offset/1`: non-integer or
+  # out-of-range values fall back to the defaults 50 / 0.
+  defp clamp_limit(nil), do: 50
+  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
+  defp clamp_limit(_), do: 50
+
+  defp clamp_offset(nil), do: 0
+  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
+  defp clamp_offset(_), do: 0
+
+  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
+  # with a backslash — a verbatim port of the retired
+  # `EvoGit.Store.Queries.escape_like/1`. Used together with `ESCAPE '\'` on
+  # the LIKE fragment so user-supplied values (e.g. project paths containing
+  # underscores) match literally instead of acting as wildcards.
+  defp escape_like(value) do
+    value
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
+  end
 
   # Applies the raw store's build_where/1 filter set, clause for clause:
   #
@@ -450,7 +474,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   defp where_search_filter(query, search) when search in [nil, ""], do: query
 
   defp where_search_filter(query, search) do
-    pat = "%#{Queries.escape_like(search)}%"
+    pat = "%#{escape_like(search)}%"
 
     # A single literal fragment — the 4-column OR-LIKE with the old `\` escape
     # char. The escape char must be pinned as a PARAMETER, not written as the
@@ -536,14 +560,15 @@ defmodule EvoGit.Store.Operations.Tasks do
   ## Private — targeted-update SET building
 
   # Keyword list → the `set:` keyword Ecto expects, values pre-encoded through
-  # Queries.encode_column_value/2 — the exact per-column encoder the old
-  # handler body used (store.ex:713-729). The statement then goes through the
-  # RAW twin, whose plain field types pass the pre-encoded wire values to
-  # SQLite verbatim — byte-identical SET clauses to the old raw SQL.
+  # encode_column_value/2 below — the exact per-column encoder the old raw-SQL
+  # handler used (store.ex:713-729, formerly Queries.encode_column_value/2).
+  # The statement then goes through the RAW twin, whose plain field types pass
+  # the pre-encoded wire values to SQLite verbatim — byte-identical SET clauses
+  # to the old raw SQL.
   defp encode_update_set(columns) do
     Enum.map(columns, fn {column, value} ->
       validate_update_column!(column)
-      {column, Queries.encode_column_value(column, value)}
+      {column, encode_column_value(column, value)}
     end)
   end
 
@@ -559,6 +584,27 @@ defmodule EvoGit.Store.Operations.Tasks do
               "(expected one of #{inspect(TaskRow.__schema__(:fields))})"
     end
   end
+
+  # The per-column wire encoder for targeted updates — a verbatim port of the
+  # retired `EvoGit.Store.Queries.encode_column_value/2`, which delegated each
+  # column family to the matching `Codec.encode_*/1`. The nil clause fires
+  # FIRST (deliberate: e.g. a nil `:logs` stays SQL NULL, never
+  # `Codec.encode_logs(nil)`'s "[]"); scalars pass through untouched.
+  defp encode_column_value(_col, nil), do: nil
+
+  defp encode_column_value(:status, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:type, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:review_status, value), do: Codec.encode_atom(value)
+  defp encode_column_value(:started_at, value), do: Codec.encode_datetime(value)
+  defp encode_column_value(:finished_at, value), do: Codec.encode_datetime(value)
+  defp encode_column_value(:updated_at, value), do: Codec.encode_datetime(value)
+  defp encode_column_value(:logs, value), do: Codec.encode_logs(value)
+  defp encode_column_value(:result, value), do: Codec.encode_result(value)
+  defp encode_column_value(:error, value), do: Codec.encode_error(value)
+  defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
+  defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
+  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
+  defp encode_column_value(_col, value), do: value
 
   ## Private — row building (TaskInfo → insert map)
 

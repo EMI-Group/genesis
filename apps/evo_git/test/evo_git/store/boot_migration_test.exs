@@ -1,8 +1,8 @@
 defmodule EvoGit.Store.BootMigrationTest do
   @moduledoc """
   Schema-ADOPTION coverage for `EvoGit.Store.Boot.start_dynamic/1` — the Ecto
-  migrations that replace the raw-SQL `EvoGit.Store.Schema` repair pipeline
-  (whose tests live in `store_schema_migration_test.exs`).
+  migrations that replace the retired raw-SQL `EvoGit.Store.Schema` repair
+  pipeline.
 
   Every legacy fixture is crafted with RAW xqlite (never the repo), exactly the
   way a pre-Ecto release left the file on disk: a `tasks` table in a historical
