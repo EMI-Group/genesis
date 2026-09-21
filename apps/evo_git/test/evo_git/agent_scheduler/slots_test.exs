@@ -459,8 +459,12 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
                Slots.handle_report_llm_error(1, :rate_limit, 10_000_000_000, base_state([]))
 
       # @max_timer_ms caps the backoff so Process.send_after/3 cannot overflow.
+      # The 1000ms upper tolerance is deliberate: the monotonic millisecond can
+      # tick between `before` and the clamp inside `Slots.handle_report_llm_error/4`,
+      # so the computed delta can legitimately exceed the exact ceiling by a
+      # millisecond or two — do NOT tighten this back to 4_000_000_000.
       delta = State.backoff_for(new_state, @default_model) - before
-      assert delta <= 4_000_000_000
+      assert delta <= 4_000_000_000 + 1_000
       assert delta >= 4_000_000_000 - 1_000
     end
 
