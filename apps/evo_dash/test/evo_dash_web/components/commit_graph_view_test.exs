@@ -8,9 +8,9 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   with `render_component/2` (no `live/3` — matching the rest of this directory)
   and pin the frozen DOM markers consumed by the client-side `CommitGraph` hook
   / CSS animation: `#commit-graph`, `#commit-graph-body-<node_key>`,
-  `#commit-graph-repo-*`, `#commit-lane-*`, `#commit-lane-commits-*` with
-  `phx-update="append"`, `#commit-node-*`, `#commit-agent-chip-*` and
-  `data-commit-graph-anim="lane|node|edge"`.
+  `#commit-graph-repo-*`, `#commit-lane-*`, `#commit-lane-commits-*` (keyed by
+  stable unique child ids, no `phx-update` mode), `#commit-node-*`,
+  `#commit-agent-chip-*` and `data-commit-graph-anim="lane|node|edge"`.
 
   The main happy-path fixture is produced by calling the REAL
   `CommitGraph.build/2` with realistic agent maps and a raw commit graph, so the
@@ -63,7 +63,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   # ---------------------------------------------------------------------------
 
   describe "commit_graph_view/1 — lanes and commit nodes" do
-    test "renders one lane per agent with an append container and per-commit nodes" do
+    test "renders one lane per agent with a stable-id commits container and per-commit nodes" do
       repos = happy_repos()
       dom = dom_id(repos)
       tree = parse(render_repos(repos))
@@ -72,7 +72,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Floki.find(tree, "#commit-lane-#{dom}-a2") != []
 
       assert [container] = Floki.find(tree, "#commit-lane-commits-#{dom}-a1")
-      assert attr(container, "phx-update") == ["append"]
+      assert attr(container, "phx-update") == []
 
       assert Floki.find(tree, "#commit-lane-commits-#{dom}-a2") != []
 
