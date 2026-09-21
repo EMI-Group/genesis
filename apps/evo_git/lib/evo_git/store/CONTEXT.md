@@ -86,9 +86,9 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 
 No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine` tables, no `integrity_check`/`scan_and_repair`/`recover_quarantine` functions. SQLite in WAL mode is crash-safe and essentially never corrupts, so a quarantine net is unnecessary.
 
-- No quarantine tables are created (`Schema.create_tables/1`); leftover quarantine tables in live DBs are ignored, never dropped.
+- No quarantine tables are created (`Schema.create_tables/1`); DETS-era leftovers in a live DB are ignored by the store and only `mix migrate.store` drops them.
 - Undecodable rows are SKIPPED + `Logger.warning` (no INSERT-into-quarantine + DELETE-from-live pair).
-- The only startup DB check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub at init.
+- The only startup integrity check is lease reconciliation — pure SQL (`EvoGit.Store.select_running_lease_info/1` in `TaskRegistry.init/1`). No whole-table integrity scrub: the boot migration is schema/data-only (`migrate_schema` + the canonical rewrites), never scan-and-repair.
 
 ## Schema: `error` + `updated_at` columns
 
