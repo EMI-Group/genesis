@@ -192,6 +192,142 @@ defmodule EvoGit.Sandbox.HelpersTest do
     end
   end
 
+  describe "port_env/1" do
+    test "converts a binary name + binary value into a charlist tuple" do
+      assert Helpers.port_env([{"TMPDIR", "/tmp/x"}]) == [{~c"TMPDIR", ~c"/tmp/x"}]
+    end
+
+    test "converts a Windows-style absolute path value verbatim" do
+      assert Helpers.port_env([{"TMPDIR", "C:\\Users\\x\\Temp"}]) ==
+               [{~c"TMPDIR", ~c"C:\\Users\\x\\Temp"}]
+    end
+
+    test "converts the exact temp_env_vars/0 output (the real call-site input)" do
+      dir = Path.join(System.tmp_dir!(), "evogit_task_tmp_#{System.unique_integer([:positive])}")
+
+      assert EvoGit.TaskTmpdir.put_current(dir) == :ok
+      on_exit(fn -> EvoGit.TaskTmpdir.put_current(nil) end)
+
+      # The binary shape the `None` backend feeds to the raw `Port.open/2`...
+      assert Helpers.temp_env_vars() == [{"TMPDIR", dir}, {"TMP", dir}, {"TEMP", dir}]
+
+      # ...and the charlist shape `port_env/1` must convert it to at the boundary.
+      assert Helpers.port_env(Helpers.temp_env_vars()) == [
+               {~c"TMPDIR", String.to_charlist(dir)},
+               {~c"TMP", String.to_charlist(dir)},
+               {~c"TEMP", String.to_charlist(dir)}
+             ]
+    end
+
+    test "passes already-charlist entries through unchanged" do
+      assert Helpers.port_env([{~c"BAR", ~c"baz"}]) == [{~c"BAR", ~c"baz"}]
+    end
+
+    test "converts atom names, atom values and integer values" do
+      assert Helpers.port_env([{:FOO, 42}, {~c"BAR", ~c"baz"}, {:A, :b}]) ==
+               [{~c"FOO", ~c"42"}, {~c"BAR", ~c"baz"}, {~c"A", ~c"b"}]
+    end
+
+    test "returns [] for an empty list" do
+      assert Helpers.port_env([]) == []
+    end
+
+    test "preserves order and entry count" do
+      assert Helpers.port_env([{"A", "1"}, {"B", "2"}, {"C", "3"}]) ==
+               [{~c"A", ~c"1"}, {~c"B", ~c"2"}, {~c"C", ~c"3"}]
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Port.open/2 charlist-env contract (Windows `badarg` regression)
+  # ---------------------------------------------------------------------------
+  #
+  # `Helpers.port_env/1` exists to fix a Windows-only hard crash: the sole raw
+  # `Port.open/2` in `EvoGit.Sandbox.None.run_with_partial_windows/5` passed
+  # BINARY env tuples, and `:erlang.open_port/2` rejects the whole option list
+  # when any `{:env, [{name, value}]}` pair holds a binary. The rejection comes
+  # from the VM's option VALIDATION, which runs on EVERY platform — so the tests
+  # below reproduce it on Linux CI and are deliberately NOT gated on
+  # `Platform.windows?/0` (there is no Windows CI runner).
+  #
+  # `bash` exists on every CI runner; the guard is COMPILE-TIME so an exotic host
+  # without bash yields a genuine ExUnit *skip* rather than a silent pass.
+  if System.find_executable("bash") do
+    describe "port_env/1 → Port.open/2 (charlist env contract)" do
+      test "a raw port accepts the converted env list and delivers the env to the child" do
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        port =
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [
+                {:args, ["-c", "echo TMPDIR=$TMPDIR"]},
+                {:cd, tmp_dir},
+                {:env, Helpers.port_env([{"TMPDIR", tmp_dir}])}
+              ]
+          )
+
+        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+
+        {output, exit_code} = collect_port_output(port)
+        if Port.info(port), do: Port.close(port)
+
+        assert exit_code == 0
+        assert output =~ "TMPDIR=#{tmp_dir}"
+      end
+
+      test "the raw binary env shape is what Port.open/2 rejects (OTP open_port/2 contract)" do
+        # Documents the VM contract the bug hinged on: an unconverted binary env
+        # tuple invalidates the whole option list → ArgumentError. If a future
+        # OTP release relaxes this, delete this single test.
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        assert_raise ArgumentError, fn ->
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [
+                {:args, ["-c", "echo hi"]},
+                {:cd, tmp_dir},
+                {:env, [{"TMPDIR", tmp_dir}]}
+              ]
+          )
+        end
+      end
+    end
+  else
+    @tag :skip
+    test "port_env/1 → Port.open/2 charlist env contract (skipped: no bash)" do
+      # Only reachable on a host without bash on PATH (CI always has bash).
+    end
+  end
+
+  # A real, self-cleaning dir for the raw-port tests — used both as the child's
+  # cwd and as the injected `TMPDIR` value.
+  defp port_tmp_dir! do
+    dir = Path.join(System.tmp_dir!(), "helpers_port_env_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  # Mirrors `EvoGit.Sandbox.None.collect_windows_output/5`: data messages first,
+  # then the terminal exit status.
+  defp collect_port_output(port, acc \\ []) do
+    receive do
+      {^port, {:data, data}} ->
+        collect_port_output(port, [data | acc])
+
+      {^port, {:exit_status, exit_code}} ->
+        {acc |> Enum.reverse() |> IO.iodata_to_binary(), exit_code}
+    after
+      30_000 -> flunk("raw port produced no exit status within 30s")
+    end
+  end
+
   describe "system_cmd/2" do
     test "runs a command successfully and returns {:ok, output}" do
       assert {:ok, output} = Helpers.system_cmd("echo", ["hello"])
