@@ -25,10 +25,16 @@ defmodule EvoGit.Store.Operations.TasksTest do
   # ── Self-contained helpers (no shared files) ─────────────────────────────
 
   defp start_repo! do
-    unique = System.unique_integer([:positive, :monotonic])
+    # The filename must be unique ACROSS BEAM RESTARTS too, not just within
+    # this node: `System.unique_integer([:positive, :monotonic])` restarts
+    # from low values on a fresh node and so do PIDs, so counter+pid alone
+    # can collide with a previous run's leftover file and silently reopen
+    # its stale rows. The wall-clock stamp makes cross-run collisions
+    # effectively impossible.
+    unique =
+      "#{System.system_time(:millisecond)}_#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
 
-    path =
-      Path.join(System.tmp_dir!(), "evogit_r2a_#{unique}_#{inspect(self())}.sqlite")
+    path = Path.join(System.tmp_dir!(), "evogit_r2a_#{unique}.sqlite")
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
@@ -417,6 +423,532 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert Tasks.clear_tasks(repo) == :ok
       assert Tasks.count_tasks(repo) == 0
       assert Tasks.select_all_tasks(repo) == []
+    end
+  end
+
+  # ── safe_select_paginated_tasks/2 ────────────────────────────────────────
+
+  describe "safe_select_paginated_tasks/2 filters" do
+    test "status filter alone matches the stored TEXT spelling" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "pg-run", type: :evolve, status: :running})
+      put!(repo, %TaskInfo{id: "pg-done", type: :evolve, status: :completed})
+
+      {tasks, total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [status: "completed"])
+
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["pg-done"]
+    end
+
+    test "project_path filter alone" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "pg-a", type: :evolve, status: :pending, opts: [path: "/p/a"]})
+      put!(repo, %TaskInfo{id: "pg-b", type: :evolve, status: :pending, opts: [path: "/p/b"]})
+
+      {tasks, total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [project_path: "/p/a"])
+
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["pg-a"]
+      assert hd(tasks).project_path == "/p/a"
+    end
+
+    test "review_status filter: literal value matches the column" do
+      repo = start_repo!()
+      put!(repo, full_task("pg-rv") |> struct(review_status: :merged))
+      put!(repo, %TaskInfo{id: "pg-rv-none", type: :evolve, status: :completed})
+
+      {tasks, total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [review_status: "merged"])
+
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["pg-rv"]
+    end
+
+    test "review_status 'pending' is the COMPOSITE (completed + NULL review + branch_name NOT NULL)" do
+      repo = start_repo!()
+
+      # In the composite: completed, no review_status, branch present.
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-pend-hit",
+          type: :evolve,
+          status: :completed,
+          branch_name: "genesis/agent_1"
+        }
+      )
+
+      # Excluded: running (status not completed) — even though branch present.
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-pend-running",
+          type: :evolve,
+          status: :running,
+          branch_name: "genesis/agent_2"
+        }
+      )
+
+      # Excluded: completed + review_status set.
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-pend-reviewed",
+          type: :evolve,
+          status: :completed,
+          review_status: :merged,
+          branch_name: "genesis/agent_3"
+        }
+      )
+
+      # Excluded: completed + no review, but NO branch_name.
+      put!(repo, %TaskInfo{id: "pg-pend-nobranch", type: :evolve, status: :completed})
+
+      {tasks, total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [review_status: "pending"])
+
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["pg-pend-hit"]
+    end
+
+    test "combined filters AND together" do
+      repo = start_repo!()
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-combo-hit",
+          type: :evolve,
+          status: :completed,
+          opts: [path: "/combo"],
+          branch_name: "genesis/agent_x"
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-combo-miss",
+          type: :evolve,
+          status: :running,
+          opts: [path: "/combo"]
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "pg-combo-other-path",
+          type: :evolve,
+          status: :completed,
+          opts: [path: "/other"],
+          branch_name: "genesis/agent_y"
+        }
+      )
+
+      {tasks, total} =
+        Tasks.safe_select_paginated_tasks(repo,
+          filters: [status: "completed", project_path: "/combo", review_status: "pending"]
+        )
+
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["pg-combo-hit"]
+    end
+
+    test "search matches id, opts JSON, project_path, and result text" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "find-this-id", type: :evolve, status: :pending})
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "by-opts",
+          type: :evolve,
+          status: :pending,
+          opts: [objective: "needle in objective"]
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "by-path",
+          type: :evolve,
+          status: :pending,
+          opts: [path: "/proj/needle-dir"]
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "by-result",
+          type: :evolve,
+          status: :completed,
+          result: {:ok, %{result: "the needle summary", branch_name: "genesis/agent_n"}}
+        }
+      )
+
+      put!(repo, %TaskInfo{id: "no-hit", type: :evolve, status: :pending})
+
+      {by_id, total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "find-this-id"])
+      assert total == 1
+      assert Enum.map(by_id, & &1.id) == ["find-this-id"]
+
+      {by_opts, _} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle in objective"])
+
+      assert Enum.map(by_opts, & &1.id) == ["by-opts"]
+
+      {by_path, _} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle-dir"])
+      assert Enum.map(by_path, & &1.id) == ["by-path"]
+
+      {by_result, _} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle summary"])
+
+      assert Enum.map(by_result, & &1.id) == ["by-result"]
+
+      # Empty search string = no clause at all (everything matches).
+      {all, all_total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: ""])
+      assert all_total == 5
+      assert length(all) == 5
+    end
+
+    test "search escapes % and _ — they match LITERALLY, not as wildcards" do
+      repo = start_repo!()
+
+      # Literal underscore in id: must NOT match a needle where _ sits in a
+      # different position (an unescaped _ would match any char).
+      put!(repo, %TaskInfo{id: "task_alpha", type: :evolve, status: :pending})
+      put!(repo, %TaskInfo{id: "taskXalpha", type: :evolve, status: :pending})
+
+      {tasks, total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "task_alpha"])
+      assert total == 1
+      assert Enum.map(tasks, & &1.id) == ["task_alpha"]
+
+      # Literal percent: an unescaped % would match "pct100Xdone" and
+      # "pct100done" as well (a % wildcard eats any suffix).
+      put!(repo, %TaskInfo{id: "pct100%done", type: :evolve, status: :pending})
+      put!(repo, %TaskInfo{id: "pct100Xdone", type: :evolve, status: :pending})
+
+      {pct_tasks, pct_total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "100%d"])
+      assert pct_total == 1
+      assert Enum.map(pct_tasks, & &1.id) == ["pct100%done"]
+    end
+
+    test "ORDER BY started_at DESC (newest first)" do
+      repo = start_repo!()
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "old",
+          type: :evolve,
+          status: :completed,
+          started_at: ~U[2026-01-01 00:00:00.000Z]
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "newest",
+          type: :evolve,
+          status: :completed,
+          started_at: ~U[2026-03-01 00:00:00.000Z]
+        }
+      )
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "middle",
+          type: :evolve,
+          status: :completed,
+          started_at: ~U[2026-02-01 00:00:00.000Z]
+        }
+      )
+
+      {tasks, _total} = Tasks.safe_select_paginated_tasks(repo, [])
+      assert Enum.map(tasks, & &1.id) == ["newest", "middle", "old"]
+    end
+
+    test "limit/offset paginate the result; total_count stays the FILTERED total" do
+      repo = start_repo!()
+
+      for i <- 1..5,
+          do:
+            put!(
+              repo,
+              %TaskInfo{
+                id: "page-#{i}",
+                type: :evolve,
+                status: :running,
+                started_at: ~U[2026-01-01 00:00:00.000Z] |> DateTime.add(i, :second)
+              }
+            )
+
+      put!(repo, %TaskInfo{id: "other-status", type: :evolve, status: :completed})
+
+      {page1, total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [status: "running"], limit: 2, offset: 0)
+
+      assert total == 5
+      assert Enum.map(page1, & &1.id) == ["page-5", "page-4"]
+
+      {page2, ^total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [status: "running"], limit: 2, offset: 2)
+
+      assert Enum.map(page2, & &1.id) == ["page-3", "page-2"]
+
+      {page3, ^total} =
+        Tasks.safe_select_paginated_tasks(repo, filters: [status: "running"], limit: 2, offset: 4)
+
+      assert Enum.map(page3, & &1.id) == ["page-1"]
+    end
+
+    test "limit/offset clamps + defaults (nil → 50/0, invalid → 50/0)" do
+      repo = start_repo!()
+
+      for i <- 1..3,
+          do: put!(repo, %TaskInfo{id: "clamp-#{i}", type: :evolve, status: :pending})
+
+      # nil limit/offset → defaults 50/0 — all rows come back.
+      {tasks, total} = Tasks.safe_select_paginated_tasks(repo, [])
+      assert {length(tasks), total} == {3, 3}
+
+      # Non-integer / non-positive limit → 50; negative offset → 0.
+      {tasks2, _} = Tasks.safe_select_paginated_tasks(repo, limit: "x", offset: -7)
+      assert length(tasks2) == 3
+
+      # limit 0 → default 50 (not "nothing").
+      {tasks3, _} = Tasks.safe_select_paginated_tasks(repo, limit: 0)
+      assert length(tasks3) == 3
+    end
+
+    test "empty DB returns {[], 0}" do
+      repo = start_repo!()
+      assert Tasks.safe_select_paginated_tasks(repo, filters: [status: "running"]) == {[], 0}
+    end
+
+    test "an undecodable row is SKIPPED from the page but still COUNTED" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "good-1", type: :evolve, status: :completed})
+      put!(repo, %TaskInfo{id: "good-2", type: :evolve, status: :completed})
+
+      # Corrupt the opts JSON of one row directly (raw write — no type casting).
+      RepoScope.with_repo(repo, fn ->
+        Repo.update_all(
+          from(t in TaskRowRaw, where: t.id == "good-2"),
+          set: [opts: "not-json-object"]
+        )
+      end)
+
+      {tasks, total} = Tasks.safe_select_paginated_tasks(repo, [])
+
+      # COUNT(*) counts rows, never decodes them — the bad row is included in
+      # the total but excluded from the decoded page (skip-and-log boundary).
+      assert total == 2
+      assert Enum.map(tasks, & &1.id) == ["good-1"]
+    end
+  end
+
+  # ── update_lease_expires_at/3 ─────────────────────────────────────────────
+
+  describe "update_lease_expires_at/3" do
+    test "writes the value and does NOT bump updated_at (raw-select both)" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "lease-1", type: :evolve, status: :running, lease_expires_at: 111})
+      before_row = raw_row(repo, "lease-1")
+      assert before_row.lease_expires_at == 111
+
+      # Sleep past 1ms so an updated_at bump would be detectable.
+      Process.sleep(5)
+
+      assert Tasks.update_lease_expires_at(repo, "lease-1", 999_999) == :ok
+
+      after_row = raw_row(repo, "lease-1")
+      assert after_row.lease_expires_at == 999_999
+      # THE invariant: the 60s heartbeat must not mark tasks dirty.
+      assert after_row.updated_at == before_row.updated_at
+    end
+
+    test "nil clears the lease; a missing id is a no-op :ok" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "lease-2", type: :evolve, status: :running, lease_expires_at: 5})
+
+      assert Tasks.update_lease_expires_at(repo, "lease-2", nil) == :ok
+      assert raw_row(repo, "lease-2").lease_expires_at == nil
+
+      assert Tasks.update_lease_expires_at(repo, "missing", 42) == :ok
+      assert Tasks.get_task(repo, "missing") == nil
+    end
+  end
+
+  # ── update_task_columns/3 ────────────────────────────────────────────────
+
+  describe "update_task_columns/3" do
+    test "status ATOM is dumped to the stored TEXT spelling (type-dumping evidence)" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "cols-1", type: :evolve, status: :running})
+
+      assert Tasks.update_task_columns(repo, "cols-1", status: :completed) == :ok
+
+      # RAW select — the exact bytes SQLite stored, no type casting.
+      row = raw_row(repo, "cols-1")
+      assert row.status == "completed"
+      assert is_binary(row.status)
+    end
+
+    test "DateTime is dumped to the fixed-millisecond ISO string" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "cols-2", type: :evolve, status: :running})
+
+      dt = ~U[2026-06-26 10:11:12.987654Z]
+
+      assert Tasks.update_task_columns(repo, "cols-2", finished_at: dt) == :ok
+
+      # µs truncated to ms — the Codec wire format (24-char ISO).
+      assert raw_row(repo, "cols-2").finished_at == "2026-06-26T10:11:12.987Z"
+    end
+
+    test "result and opts JSON columns re-encode round-trip" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "cols-3", type: :evolve, status: :running})
+
+      result = {:ok, %{commit_sha: "abc", branch_name: "genesis/agent_z", result: "sum"}}
+      opts = [path: "/rt", mode: "simple", objective: "obj"]
+
+      assert Tasks.update_task_columns(repo, "cols-3", result: result, opts: opts) == :ok
+
+      fetched = Tasks.get_task(repo, "cols-3")
+      assert {:ok, data} = fetched.result
+      assert data.commit_sha == "abc"
+      assert data.branch_name == "genesis/agent_z"
+      # opts keys come back in the Codec's canonical JSON round-trip order.
+      assert Enum.sort(fetched.opts) == Enum.sort(opts)
+      assert fetched.opts[:path] == "/rt"
+      assert fetched.opts[:mode] == "simple"
+      assert fetched.opts[:objective] == "obj"
+    end
+
+    test "updated_at is ALWAYS bumped (even when nothing else changes)" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "cols-4", type: :evolve, status: :running})
+      first = raw_row(repo, "cols-4").updated_at
+
+      Process.sleep(5)
+      assert Tasks.update_task_columns(repo, "cols-4", []) == :ok
+
+      second = raw_row(repo, "cols-4").updated_at
+      assert is_binary(second)
+      assert {:ok, first_dt, _} = DateTime.from_iso8601(first)
+      assert {:ok, second_dt, _} = DateTime.from_iso8601(second)
+      assert DateTime.compare(second_dt, first_dt) == :gt
+    end
+
+    test "an unknown column raises a descriptive ArgumentError (no silent write)" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "cols-5", type: :evolve, status: :running})
+
+      assert_raise ArgumentError, ~r/unknown task column :typo/, fn ->
+        Tasks.update_task_columns(repo, "cols-5", typo: "x")
+      end
+
+      # Nothing was written (updated_at NOT bumped either — the raise happens
+      # before the statement).
+      assert raw_row(repo, "cols-5").status == "running"
+    end
+
+    test "a missing-id update is a no-op :ok (0 rows)" do
+      repo = start_repo!()
+      assert Tasks.update_task_columns(repo, "missing", status: :completed) == :ok
+      assert Tasks.count_tasks(repo) == 0
+    end
+  end
+
+  # ── get_task_status / select_task_logs / select_task_update_info ──────────
+
+  describe "get_task_status/2" do
+    test "returns the decoded atom for an existing row" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "st-1", type: :evolve, status: :cancelling})
+      assert Tasks.get_task_status(repo, "st-1") == :cancelling
+    end
+
+    test "returns nil for a missing row" do
+      repo = start_repo!()
+      assert Tasks.get_task_status(repo, "nope") == nil
+    end
+  end
+
+  describe "select_task_logs/2" do
+    test "returns the decoded list for an existing row" do
+      repo = start_repo!()
+
+      put!(repo, %TaskInfo{id: "lg-1", type: :evolve, status: :running, logs: ["a", "b"]})
+      assert Tasks.select_task_logs(repo, "lg-1") == ["a", "b"]
+    end
+
+    test "a NULL logs column decodes to [] (lenient Codec semantics)" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "lg-2", type: :evolve, status: :running})
+      assert Tasks.select_task_logs(repo, "lg-2") == []
+    end
+
+    test "returns nil for a missing row" do
+      repo = start_repo!()
+      assert Tasks.select_task_logs(repo, "nope") == nil
+    end
+  end
+
+  describe "select_task_update_info/2" do
+    test "returns the 4-key narrow map for an existing row" do
+      repo = start_repo!()
+
+      put!(
+        repo,
+        %TaskInfo{
+          id: "ui-1",
+          type: :evolve,
+          status: :running,
+          opts: [path: "/ui", mode: "simple"],
+          finished_at: ~U[2026-06-26 09:00:00.500Z],
+          lease_expires_at: 1_767_225_600
+        }
+      )
+
+      assert info = Tasks.select_task_update_info(repo, "ui-1")
+      assert map_size(info) == 4
+      assert info.status == :running
+      # opts keys come back in the Codec's canonical JSON round-trip order.
+      assert Enum.sort(info.opts) == Enum.sort(path: "/ui", mode: "simple")
+      assert info.finished_at == ~U[2026-06-26 09:00:00.500Z]
+      assert info.lease_expires_at == 1_767_225_600
+    end
+
+    test "nil opts/finished_at/lease come back nil (not defaults)" do
+      repo = start_repo!()
+      put!(repo, %TaskInfo{id: "ui-2", type: :evolve, status: :pending})
+
+      assert Tasks.select_task_update_info(repo, "ui-2") == %{
+               status: :pending,
+               opts: nil,
+               finished_at: nil,
+               lease_expires_at: nil
+             }
+    end
+
+    test "returns nil for a missing row" do
+      repo = start_repo!()
+      assert Tasks.select_task_update_info(repo, "nope") == nil
     end
   end
 end

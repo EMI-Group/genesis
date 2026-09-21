@@ -1,35 +1,44 @@
 defmodule EvoGit.Store.Operations.Tasks do
   @moduledoc """
-  Ecto TASK WRITE/CORE operations for the EvoGit task store (migration wave R2a).
+  Ecto TASK operations for the EvoGit task store (migration waves R2a
+  write/core + R2b pagination/targeted updates/narrow reads).
 
-  Ports the task write/core handler bodies of the raw-SQL `EvoGit.Store`
-  GenServer (store.ex:479-605) onto `EvoGit.Repo` + the typed
-  `EvoGit.Store.Schemas.TaskRow` schema. Every public function takes the repo
-  pid FIRST and binds it with `EvoGit.Store.RepoScope.with_repo/2`; every
-  statement goes through `EvoGit.Repo.*` and `Ecto.Query` — no `?N` SQL
-  strings. The wire format is owned by `EvoGit.Store.Types.*` (thin delegation
-  to `EvoGit.Store.Codec`, the oracle), so the stored bytes are identical to
-  the raw-SQL store's.
+  Ports the task handler bodies of the raw-SQL `EvoGit.Store` GenServer onto
+  `EvoGit.Repo` + the typed `EvoGit.Store.Schemas.TaskRow` schema. Every public
+  function takes the repo pid FIRST and binds it with
+  `EvoGit.Store.RepoScope.with_repo/2`; every statement goes through
+  `EvoGit.Repo.*` and `Ecto.Query` — no `?N` SQL strings. The wire format is
+  owned by `EvoGit.Store.Types.*` (thin delegation to `EvoGit.Store.Codec`,
+  the oracle), so the stored bytes are identical to the raw-SQL store's.
 
   ## Return shapes (exactly the old handlers' — zero consumer changes)
 
-  | function             | old handler  | returns                                                               |
-  |----------------------|--------------|----------------------------------------------------------------------|
-  | `put_task/2`         | store.ex:479 | `:ok \| {:error, :missing_task_id} \| {:error, :missing_task_status}` |
-  | `get_task/2`         | store.ex:518 | `%EvoGit.TaskInfo{} \| nil`                                           |
-  | `delete_task/2`      | store.ex:531 | `:ok`                                                                 |
-  | `delete_tasks/2`     | store.ex:539 | `:ok`                                                                 |
-  | `select_all_tasks/1` | store.ex:570 | `[EvoGit.TaskInfo.t()]`                                               |
-  | `count_tasks/1`      | store.ex:581 | `non_neg_integer()`                                                   |
-  | `clear_tasks/1`      | store.ex:598 | `:ok`                                                                 |
+  | function                        | old handler  | returns                                                               |
+  |---------------------------------|--------------|----------------------------------------------------------------------|
+  | `put_task/2`                    | store.ex:479 | `:ok \| {:error, :missing_task_id} \| {:error, :missing_task_status}` |
+  | `get_task/2`                    | store.ex:518 | `%EvoGit.TaskInfo{} \| nil`                                           |
+  | `delete_task/2`                 | store.ex:531 | `:ok`                                                                 |
+  | `delete_tasks/2`                | store.ex:539 | `:ok`                                                                 |
+  | `select_all_tasks/1`            | store.ex:570 | `[EvoGit.TaskInfo.t()]`                                               |
+  | `count_tasks/1`                 | store.ex:581 | `non_neg_integer()`                                                   |
+  | `clear_tasks/1`                 | store.ex:598 | `:ok`                                                                 |
+  | `safe_select_paginated_tasks/2` | store.ex:587 | `{[TaskInfo.t()], total_count}` — bad rows skipped+logged, still counted |
+  | `update_lease_expires_at/3`     | store.ex:697 | `:ok` — does NOT bump `updated_at`                                    |
+  | `update_task_columns/3`         | store.ex:713 | `:ok` — ALWAYS bumps `updated_at`                                     |
+  | `get_task_status/2`             | store.ex:730 | `atom() \| nil`                                                       |
+  | `select_task_logs/2`            | store.ex:738 | `[String.t()] \| nil`                                                 |
+  | `select_task_update_info/2`     | store.ex:754 | `%{status, opts, finished_at, lease_expires_at} \| nil`               |
 
   ## Crash philosophy (inherited from the old `EvoGit.Store` moduledoc)
 
-  NO try/rescue in this module. A failed statement RAISES out of the
-  `EvoGit.Repo.*` call and surfaces to the caller, exactly like the old
-  handler's deliberate bad-match crash. The disk-full conversion boundary
-  (`{:error, :disk_full}`) lives in the facade unit that will wrap these
-  operations — NOT here.
+  NO try/rescue in this module except the ONE justified per-row skip-and-log
+  decode boundary of `safe_select_paginated_tasks/2` (a verbatim port of the
+  old `decode_skipping_bad/3` safe-select boundary — DB rows may contain
+  corrupt/legacy data that fails to decode; skipping is the deliberate
+  recovery boundary). A failed statement RAISES out of the `EvoGit.Repo.*`
+  call and surfaces to the caller, exactly like the old handler's deliberate
+  bad-match crash. The disk-full conversion boundary (`{:error, :disk_full}`)
+  lives in the facade unit that will wrap these operations — NOT here.
 
   ## put_task replace semantics
 
@@ -50,9 +59,9 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   ## Growth
 
-  R2b APPENDS the pagination/update/status/log operations to this module; the
-  private helpers here (`row_for_task/1`, `to_task_info/1`) are the shared
-  row ↔ struct translation surface for them.
+  R2b APPENDS the pagination/targeted-update/narrow-read operations to this
+  module; the private helpers here (`row_for_task/1`, `to_task_info/1`) are
+  the shared row ↔ struct translation surface for them.
   """
 
   import Ecto.Query
@@ -61,8 +70,10 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Queries
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
+  alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskInfo
 
   # Batched `DELETE ... WHERE id IN (...)` chunk size — 500 ids, safely under
@@ -208,6 +219,345 @@ defmodule EvoGit.Store.Operations.Tasks do
     RepoScope.with_repo(repo, fn ->
       Repo.aggregate(TaskRow, :count)
     end)
+  end
+
+  @doc """
+  Paginated + filtered task select — port of the old
+  `{:safe_select_paginated_tasks, opts}` handler (store.ex:587 +
+  do_safe_select_paginated_tasks, store.ex:1000).
+
+  `opts` keys: `:filters` (keyword — `status`, `project_path`,
+  `review_status`, `search`), `:limit`, `:offset`. Returns
+  `{tasks, total_count}` where `tasks` is ONE page of `%TaskInfo{}` (ORDER BY
+  `started_at DESC`, LIMIT/OFFSET applied with the old `clamp_limit`/
+  `clamp_offset` clamps + defaults 50/0) and `total_count` counts ALL rows
+  matching the SAME filters — regardless of pagination or decodability
+  (`COUNT(*)` counts rows, never decodes them, so a skipped bad row is still
+  counted, exactly like the old raw SQL).
+
+  Rows whose decode raises are SKIPPED with a `Logger.warning` (the old
+  skip-and-log safe-select boundary, `decode_skipping_bad/3`).
+  """
+  @spec safe_select_paginated_tasks(pid(), keyword()) :: {[TaskInfo.t()], non_neg_integer()}
+  def safe_select_paginated_tasks(repo, opts) when is_list(opts) do
+    RepoScope.with_repo(repo, fn ->
+      filters = Keyword.get(opts, :filters, [])
+      limit = Queries.clamp_limit(Keyword.get(opts, :limit))
+      offset = Queries.clamp_offset(Keyword.get(opts, :offset))
+
+      base = from(t in TaskRowRaw)
+
+      rows =
+        base
+        |> where_filters(filters)
+        |> order_by([t], desc: t.started_at)
+        |> limit(^limit)
+        |> offset(^offset)
+        |> Repo.all()
+        |> decode_tasks_skipping_bad()
+
+      total_count =
+        base
+        |> where_filters(filters)
+        |> Repo.aggregate(:count)
+
+      {rows, total_count}
+    end)
+  end
+
+  @doc """
+  Updates only the `lease_expires_at` column — port of the old
+  `{:update_lease_expires_at, task_id, expires_at}` handler (store.ex:697).
+
+  Deliberately does NOT bump `updated_at` — the 60s lease heartbeat must not
+  mark tasks dirty. Returns `:ok` whether or not the row existed (an UPDATE of
+  a missing id is a successful no-op statement, same as the old raw SQL).
+  """
+  @spec update_lease_expires_at(pid(), String.t(), integer() | nil) :: :ok
+  def update_lease_expires_at(repo, task_id, expires_at) do
+    RepoScope.with_repo(repo, fn ->
+      Repo.update_all(
+        from(t in TaskRow, where: t.id == ^task_id),
+        set: [lease_expires_at: expires_at]
+      )
+
+      :ok
+    end)
+  end
+
+  @doc """
+  Updates only the specified columns of a task — port of the old
+  `{:update_task_columns, task_id, columns}` handler (store.ex:713).
+
+  `columns` is a keyword list of `{column_atom, value}`; each value is encoded
+  through `Queries.encode_column_value/2` — the EXACT per-column encoder the
+  old body used (status atom → TEXT, DateTime → fixed-ms ISO, logs/result/
+  opts/usage/error → JSON) — and the statement is issued through the RAW
+  wire twin, whose plain field types pass the pre-encoded wire values to
+  SQLite verbatim. Byte-identical SET clauses to the old raw SQL.
+
+  WHY the raw twin and not the typed schema: Ecto's `update_all` can pin only
+  SCALAR values into `set:` — pinning a keyword list (`opts:` is a keyword
+  list by contract) is rejected ("keyword lists are only allowed at the top
+  level of ..."). Pre-encoding through the Codec is the one path that covers
+  every column of the old surface uniformly.
+
+  EVERY call auto-prepends `{:updated_at, DateTime.utc_now()}` (store-internal
+  bookkeeping) — use `update_lease_expires_at/3` for the one write that must
+  not bump it. The old body had NO column whitelist: an arbitrary column name
+  built `SET <col> = ?` verbatim. Under the typed schema only real fields can
+  be addressed — an unknown column raises a descriptive `ArgumentError` at
+  SET-build time, surfacing the caller bug exactly like the old raw SQL
+  produced a SQLite error.
+  """
+  @spec update_task_columns(pid(), String.t(), keyword()) :: :ok
+  def update_task_columns(repo, task_id, columns) when is_list(columns) do
+    RepoScope.with_repo(repo, fn ->
+      set =
+        [{:updated_at, DateTime.utc_now()} | columns]
+        |> encode_update_set()
+
+      Repo.update_all(from(t in TaskRowRaw, where: t.id == ^task_id), set: set)
+
+      :ok
+    end)
+  end
+
+  @doc """
+  Returns only the decoded status atom (or `nil` for a missing row) — port of
+  the old `{:get_task_status, task_id}` handler (store.ex:730).
+
+  The status column is read through the typed schema, whose
+  `EvoGit.Store.Types.Status` load applies the same `Codec.decode_atom/1` the
+  old `read_task_status/2` used (known atom, or `nil` on unknown values).
+  """
+  @spec get_task_status(pid(), String.t()) :: atom() | nil
+  def get_task_status(repo, task_id) do
+    RepoScope.with_repo(repo, fn ->
+      Repo.one(from(t in TaskRow, select: t.status, where: t.id == ^task_id))
+    end)
+  end
+
+  @doc """
+  Returns only the decoded logs list (or `nil` when the row is absent) — port
+  of the old `{:select_task_logs, task_id}` handler (store.ex:738).
+
+  Reads a single column, no full-row decode. The lenient
+  `Codec.decode_logs/1` semantics (nil/undecodable → `[]`) come from the
+  typed schema's `EvoGit.Store.Types.LogsJson` load — same decoder the old
+  handler called directly.
+  """
+  @spec select_task_logs(pid(), String.t()) :: [String.t()] | nil
+  def select_task_logs(repo, task_id) do
+    RepoScope.with_repo(repo, fn ->
+      case Repo.one(from(t in TaskRow, select: t.logs, where: t.id == ^task_id)) do
+        nil -> nil
+        logs -> logs
+      end
+    end)
+  end
+
+  @doc """
+  Returns the narrow `%{status, opts, finished_at, lease_expires_at}` read (or
+  `nil` when the row is absent) — port of the old `{:select_task_update_info,
+  task_id}` handler (store.ex:754).
+
+  Reads exactly the 4 columns the TaskRegistry `handle_update_status/6` path
+  needs (stale-guard, preservation, project_path) — no heavy JSON field
+  (`logs`, `result`, `usage`, `archive_metadata`) is decoded. `status` is the
+  decoded atom (nil on unknown), `opts` the decoded keyword list (nil when the
+  column is NULL), `finished_at` the decoded DateTime (nil on corrupt text),
+  `lease_expires_at` the raw unix-ms INTEGER.
+  """
+  @spec select_task_update_info(pid(), String.t()) :: %{
+          status: atom() | nil,
+          opts: keyword() | nil,
+          finished_at: DateTime.t() | nil,
+          lease_expires_at: integer() | nil
+        }
+  def select_task_update_info(repo, task_id) do
+    RepoScope.with_repo(repo, fn ->
+      case Repo.one(
+             from(t in TaskRow,
+               select: %{status: t.status, opts: t.opts, finished_at: t.finished_at},
+               where: t.id == ^task_id
+             )
+           ) do
+        nil ->
+          nil
+
+        %{status: status, opts: opts, finished_at: finished_at} ->
+          # lease_expires_at is read through the RAW twin so it comes back as
+          # the bare INTEGER the old single-statement SELECT returned (it is
+          # an integer under the typed schema too, but the raw read keeps the
+          # two-column projection in ONE code path — same schema the old SQL
+          # read from, no type casting at all).
+          lease =
+            Repo.one(from(t in TaskRowRaw, select: t.lease_expires_at, where: t.id == ^task_id))
+
+          %{status: status, opts: opts, finished_at: finished_at, lease_expires_at: lease}
+      end
+    end)
+  end
+
+  ## Private — pagination filters (port of Queries.build_where/1 semantics)
+
+  # Applies the raw store's build_where/1 filter set, clause for clause:
+  #
+  #   * `:status` (default "all") — exact TEXT equality on the stored status
+  #     string (dashboard filters pass the string spelling; "all" = no clause).
+  #   * `:project_path` (default "all") — exact TEXT equality.
+  #   * `:review_status` (default "all") — "pending" is the old COMPOSITE:
+  #     `status = 'completed' AND review_status IS NULL AND branch_name IS NOT
+  #     NULL` (completed tasks with no review whose result carried a
+  #     branch_name → awaiting review); any other value is exact TEXT equality.
+  #   * `:search` (nil/"" = no clause) — a 4-column OR-LIKE over id, opts,
+  #     project_path, result using the old escaped pattern
+  #     `%#{escape_like(search)}%` with `ESCAPE '\'`. This is the ONE
+  #     `fragment` in the module — LIKE-escape cannot be expressed in
+  #     Ecto.Query syntax.
+  defp where_filters(query, filters) do
+    query
+    |> where_status_filter(Keyword.get(filters, :status, "all"))
+    |> where_path_filter(Keyword.get(filters, :project_path, "all"))
+    |> where_review_status_filter(Keyword.get(filters, :review_status, "all"))
+    |> where_search_filter(Keyword.get(filters, :search))
+  end
+
+  defp where_status_filter(query, "all"), do: query
+  defp where_status_filter(query, status), do: where(query, [t], t.status == ^status)
+
+  defp where_path_filter(query, "all"), do: query
+  defp where_path_filter(query, path), do: where(query, [t], t.project_path == ^path)
+
+  defp where_review_status_filter(query, "all"), do: query
+
+  defp where_review_status_filter(query, "pending") do
+    # The composite "pending review" predicate — ported verbatim from the old
+    # build_where/1 arm (literal 'completed' pushdown, exactly as written).
+    where(
+      query,
+      [t],
+      t.status == "completed" and is_nil(t.review_status) and
+        not is_nil(t.branch_name)
+    )
+  end
+
+  defp where_review_status_filter(query, review_status) do
+    where(query, [t], t.review_status == ^review_status)
+  end
+
+  defp where_search_filter(query, search) when search in [nil, ""], do: query
+
+  defp where_search_filter(query, search) do
+    pat = "%#{Queries.escape_like(search)}%"
+
+    # A single literal fragment — the 4-column OR-LIKE with the old `\` escape
+    # char. The escape char must be pinned as a PARAMETER, not written as the
+    # SQL literal `'\'`: the adapter doubles backslashes inside SQL string
+    # literals, which SQLite then rejects ("ESCAPE expression must be a single
+    # character"). The pattern itself is the other interpolated (^) value.
+    where(
+      query,
+      [t],
+      fragment(
+        "(? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ?)",
+        t.id,
+        ^pat,
+        ^"\\",
+        t.opts,
+        ^pat,
+        ^"\\",
+        t.project_path,
+        ^pat,
+        ^"\\",
+        t.result,
+        ^pat,
+        ^"\\"
+      )
+    )
+  end
+
+  ## Private — pagination decode (skip-and-log safe-select boundary)
+
+  # Decodes raw rows one at a time through the Codec (the decode oracle),
+  # SKIPPING (with a warning) any row that raises — a verbatim port of the old
+  # decode_skipping_bad/3 boundary. Loading happens through the RAW wire twin
+  # so Ecto's loader never raises before this per-row rescue can run.
+  defp decode_tasks_skipping_bad(rows) do
+    Enum.flat_map(rows, fn %TaskRowRaw{} = row ->
+      # Justified try/rescue — safe-select boundary (mirrors the raw store's
+      # store.ex:1123): DB rows may contain corrupt or legacy data that fails
+      # to decode; the Codec decoders raise by design and skipping is the
+      # deliberate recovery boundary.
+      try do
+        [decode_raw_task(row)]
+      rescue
+        e ->
+          Logger.warning(
+            "Store: skipping undecodable row in tasks (id: #{inspect(row.id)}): " <>
+              Exception.message(e)
+          )
+
+          []
+      end
+    end)
+  end
+
+  # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
+  # same 19-element `Codec.task_columns/0` order (deliberately WITHOUT
+  # `updated_at`, which the old SELECT over those columns never fetched
+  # either). Identical to the existing get_task/to_task_info result: decode_task
+  # itself applies the `status || :pending` and `ref: nil` fallbacks.
+  defp decode_raw_task(%TaskRowRaw{} = row) do
+    Codec.decode_task([
+      row.id,
+      row.type,
+      row.status,
+      row.opts,
+      row.started_at,
+      row.finished_at,
+      row.logs,
+      row.result,
+      row.review_status,
+      row.usage,
+      row.agent_count,
+      row.base_sha,
+      row.commit_sha,
+      row.archive_metadata,
+      row.lease_expires_at,
+      row.model_id,
+      row.project_path,
+      row.branch_name,
+      row.error
+    ])
+  end
+
+  ## Private — targeted-update SET building
+
+  # Keyword list → the `set:` keyword Ecto expects, values pre-encoded through
+  # Queries.encode_column_value/2 — the exact per-column encoder the old
+  # handler body used (store.ex:713-729). The statement then goes through the
+  # RAW twin, whose plain field types pass the pre-encoded wire values to
+  # SQLite verbatim — byte-identical SET clauses to the old raw SQL.
+  defp encode_update_set(columns) do
+    Enum.map(columns, fn {column, value} ->
+      validate_update_column!(column)
+      {column, Queries.encode_column_value(column, value)}
+    end)
+  end
+
+  # The old raw SQL interpolated the column name verbatim (no whitelist), so
+  # any column of the physical table could be targeted — and a typo produced a
+  # SQLite "no such column" error. Under the schemas the equivalent guard
+  # raises here with the unknown name, BEFORE any statement is issued. Every
+  # one of the 20 fields is addressable — the full old surface.
+  defp validate_update_column!(column) do
+    unless column in TaskRow.__schema__(:fields) do
+      raise ArgumentError,
+            "update_task_columns/3: unknown task column #{inspect(column)} " <>
+              "(expected one of #{inspect(TaskRow.__schema__(:fields))})"
+    end
   end
 
   ## Private — row building (TaskInfo → insert map)
