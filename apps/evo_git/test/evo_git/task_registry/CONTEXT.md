@@ -102,6 +102,7 @@ Note the `describe "recheck_task resolution"` `setup` creates/deletes `:evogit_s
 - **`Process.sleep(N)` as a wait is banned here** — use the timing patterns above. The only acceptable fixed window is a bounded, id-pinned `refute_receive` for an unobservable async trigger.
 - Only READ global `:evogit_*` ETS by a per-test-unique id from an async module; never `:ets.delete_all_objects` a shared table and never `:ets.new` a shared named table from an async module (both are cross-module races).
 - `runtime_opts_test.exs` and `diagnostics_test.exs` were already `async: true` — keep them that way.
+- **Disk-full TaskRegistry-degradation tests live OUTSIDE this directory** — in the parent `../store_disk_full_test.exs` (armed via `PRAGMA query_only = ON` on the isolated Store's own connection, reached by `:sys.get_state(store)` → `%{conn: conn}`; the Store write boundary converts SQLITE_FULL/IOERR/READONLY to `{:error, :disk_full}`, the registry's `start_task` handler then logs "continuing in-memory only" and keeps the task in `task_refs` without persisting). Nothing in THIS directory simulates a dead Store — a persistence-layer inventory must include that file.
 
 ## Constraints
 
