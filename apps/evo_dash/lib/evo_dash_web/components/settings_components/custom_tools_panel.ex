@@ -76,7 +76,10 @@ defmodule EvoDashWeb.SettingsComponents.CustomToolsPanel do
         </div>
       <% end %>
 
-      <%= if @tools == [] and @errors == [] do %>
+      <%!-- zh_CN: the empty state must NOT render for an unreadable status
+           (`{:error, _}`), which also yields no tools/errors — showing it
+           below the error banner would imply nothing is configured --%>
+      <%= if @tools == [] and @errors == [] and not match?({:error, _}, @status) do %>
         <div class="flex flex-col items-center justify-center py-10 text-center border-2 border-dashed border-base-300 rounded-lg">
           <div class="text-base-content/30 mb-3">
             <.icon name="hero-wrench-screwdriver" class="size-8" />
