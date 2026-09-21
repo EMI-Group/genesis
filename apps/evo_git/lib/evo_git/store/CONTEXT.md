@@ -11,6 +11,10 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 - `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, shared idempotent data migrations (timestamp normalization, canonical result/opts rewrites)
 - `./queries.ex` → `EvoGit.Store.Queries` — SQL builder helpers (WHERE, SET, clamping, column encoding)
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full error classifier (pure; public `disk_full_error?/1` for testability)
+- `./boot.ex` → `EvoGit.Store.Boot` — Ecto boot/migration runner for dynamic repo instances (see "Ecto persistence foundations")
+- `./repo_scope.ex` → `EvoGit.Store.RepoScope` — `with_repo/2` scoped dynamic-repo binding helper (see "Ecto persistence foundations")
+- `./schemas/` → `EvoGit.Store.Schemas.TaskRow`/`ProjectRow` (typed write path) + `TaskRowRaw`/`ProjectRowRaw` (raw read projections) — see "Ecto persistence foundations"
+- `./types/` → `EvoGit.Store.Types.*` — Ecto.Type modules delegating to the Codec (see "Ecto persistence foundations")
 - `../task_registry/` → TaskRegistry lifecycle semantics that consume Store data — startup reconciliation (`:finalizing` → `:failed` / `:cancelling` → `:cancelled`), lease/heartbeat, stuck-task recovery ("Restart Recovery & Status Transitions" section)
 
 ## API Surface
@@ -64,6 +68,25 @@ GenServer wrapping a single xqlite (SQLite) connection. Public API for task and 
 | `clamp_offset/1` | Ensures offset is a non-negative integer (default 0) |
 | `build_where/1` | Builds SQL WHERE clause and param list from filter options |
 | `escape_like/1` | Escapes SQL LIKE-special characters |
+
+### Ecto persistence foundations
+
+Beside the raw-SQL store, an Ecto layer exists (wave-by-wave adoption; the raw
+`EvoGit.Store` GenServer remains the live persistence path until the final
+cutover wave):
+
+| Module | Purpose |
+|---|---|
+| `EvoGit.Repo` (`../repo.ex`) | `use Ecto.Repo, otp_app: :evo_git, adapter: XqliteEcto3` — NOT in the supervision tree; per-store UNNAMED dynamic instances are addressed BY PID via the process-dictionary binding `put_dynamic_repo/1`/`get_dynamic_repo/0` (unset binding → the canonical NAMED instance) |
+| `EvoGit.Store.Boot` (`./boot.ex`) | `start_dynamic(path)` → `{:ok, pid}` (unnamed dynamic repo, pool_size 1, migrations run) + `stop(pid)`; `run_migrations/1` scopes the dynamic binding set/try/after-restore |
+| `EvoGit.Store.RepoScope` (`./repo_scope.ex`) | `with_repo(pid, fun)` — binds the caller's dynamic repo to `pid` for `fun`'s duration and ALWAYS restores the previous binding (raise/throw/exit safe; nesting composes — the inner call restores the outer's binding). The scoped-addressing primitive for every read/write against an unnamed dynamic instance |
+| `EvoGit.Store.Schemas.TaskRow` / `ProjectRow` (`./schemas/task_row.ex`) | TYPED persistence-row schemas — `Types.*` Ecto.Type casting (atoms ↔ TEXT, JSON TEXT, DateTime ↔ fixed-ms ISO, unix-ms INTEGER, raw `updated_at`); the write path (typed dump == `Codec.encode_*` byte-identical) |
+| `EvoGit.Store.Schemas.TaskRowRaw` / `ProjectRowRaw` (`./schemas/task_row_raw.ex`) | RAW wire-value read-projection twins of the typed schemas — plain `:string`/`:integer` fields only (no type casting), same field list/order/PK. Two reasons: (a) per-row safe decode — load rows raw, decode each via `Codec` individually, skip+log the raising ones so one corrupt row never poisons a read (loading through `TaskRow` raises inside Ecto's loader before any rescue can run); (b) byte-identical `updated_at` — the summary projection returns it as the raw fixed-precision ISO string, never a round-tripped DateTime. READ-PROJECTION ONLY: writes must go through the typed schemas or `Codec.encode_*/1` directly |
+
+Migration sources: `../../priv/repo/migrations/` (baseline adoption +
+data normalization), run by `Boot.start_dynamic/1` / `Boot.run_migrations/1`.
+Tests: `../../test/evo_git/store/` (`types_test.exs` pins the type↔Codec oracle
+equivalence; `repo_scope_test.exs` covers the dynamic-binding scoping).
 
 ### Field-level encoders/decoders (Codec)
 - **Atoms**: `encode_atom/1` (nil/atoms/strings), `decode_atom/1` (`String.to_atom/1` guarded by closed whitelist `@known_atoms`); `String.to_existing_atom/1` only in `decode_reason/1` (the one justified try/rescue).
