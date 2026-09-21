@@ -138,9 +138,13 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 - `foreign_repo_commits` (the scheduler-side `%{repo_id => sha}` map) is NEVER persisted: it is neither a `report_map` key (runtime/helpers.ex:110-126) nor a `@result_data_fields` entry — only its projection into `repos` survives.
 - `repos` holds exactly ONE `commit_sha` per repo_id (no intermediate/alternate commits) — an advanced per-repo SHA can be replaced by a later-recorded one; ordering lives in the scheduler roll-up, not here (see agent_scheduler/CONTEXT.md "Subagent Management").
 
-## Store.init does not auto-migrate
+## `Store.init/1` runs the boot migration
 
-`Store.init/1` runs only `create_tables/1`. Schema upgrades for existing DBs go through **`mix migrate.store`** (`apps/evo_git/lib/mix/tasks/migrate.store.ex`): standalone (never starts the `:evo_git` application), opens the DB directly, invokes `Schema.migrate_schema/1` (+ `normalize_timestamps/1`), and rewrites canonical results (step 4) + opts objects (step 5). Fresh DBs are created with the full current DDL by `create_tables/1`.
+`EvoGit.Store.init/1` runs the idempotent migration on every boot, in this order: `Schema.migrate_schema/1` (adds missing columns, no-op when `tasks` does not exist), then `Schema.create_tables/1` (tables + indexes — it must come after `migrate_schema/1` because `idx_tasks_updated_at` references a column a legacy table may lack), then `Schema.normalize_timestamps/1`, `Schema.canonicalize_results/1`, and `Schema.canonicalize_opts/1`.
+
+Every step is a no-op on a fresh or already-migrated database, so the boot cost is negligible and the headless `genesis_remote` daemon runs the same path.
+
+The **`mix migrate.store`** task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`) reuses the same `Schema` primitives and additionally runs the denormalization backfills (`branch_name`, `updated_at`) and drops the DETS-era quarantine tables; it runs standalone (never starts the `:evo_git` application) for the case where the app cannot boot at all.
 
 ## Fixed-precision timestamps
 
