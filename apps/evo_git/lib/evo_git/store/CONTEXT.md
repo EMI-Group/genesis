@@ -140,12 +140,10 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 
 ## `Store.init/1` runs the boot migration
 
-`EvoGit.Store.init/1` runs the idempotent migration on every boot, in this order:
-`Schema.migrate_schema/1` (adds missing columns; a no-op when `tasks` does not exist),
-then `Schema.create_tables/1` (tables + indexes — it must come after `migrate_schema/1` because `idx_tasks_updated_at` references a column a legacy table may lack),
-then `Schema.normalize_timestamps/1`, `Schema.canonicalize_results/1`, and `Schema.canonicalize_opts/1`.
-
-Every step is a no-op on a fresh or already-migrated database, so the boot cost is negligible and the headless `genesis_remote` daemon runs the same path.
+`EvoGit.Store.init/1` runs the idempotent boot migration (safe to repeat; a no-op on a fresh or already-migrated DB).
+Order: `Schema.migrate_schema/1` (adds missing columns; a no-op when `tasks` does not exist) → `Schema.create_tables/1` (tables + indexes) → `Schema.normalize_timestamps/1` → `Schema.canonicalize_results/1` → `Schema.canonicalize_opts/1`.
+`migrate_schema/1` must precede `create_tables/1` because `idx_tasks_updated_at` references a column a legacy table may lack.
+The same path runs on the headless `genesis_remote` daemon.
 
 The **`mix migrate.store`** task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`) reuses the same `Schema` primitives and additionally runs the denormalization backfills (`branch_name`, `updated_at`) and drops the DETS-era quarantine tables.
 It runs standalone (never starts the `:evo_git` application) so it also works when the app cannot boot at all.
