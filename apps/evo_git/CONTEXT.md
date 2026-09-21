@@ -14,6 +14,7 @@ Genesis supports SSH remote development (VSCode Remote-SSH-style): a headless `:
 - `./lib/evo_git/agent/` → Agent behaviour, Runner loop, tool library, context compression, subagent processing, usage tracking — detail in `agent/CONTEXT.md` (incl. Grace Period/Cancellation, Update-Timing Safety, Repo-Less Agents)
 - `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner, Custom, SelfReflective) — detail in `agents/CONTEXT.md`
 - `./lib/evo_git/custom_agents/` → `EvoGit.CustomAgents` (agents.toml store) + `EvoGit.CustomAgents.ModelSelector` (per-agent model selection script) — detail in `custom_agents/CONTEXT.md`
+- `./lib/evo_git/custom_tools/` → `EvoGit.CustomTools` (user-defined custom tool loader/facade) + `EvoGit.CustomTools.Tool` behaviour — user tools loaded from `<config_dir>/tools/` (`.ex`/`.exs`/`.beam`) — detail in `custom_tools/CONTEXT.md`
 - `./lib/evo_git/runtime/` → Genesis (incl. Mode B two-root), Evolution (simple + custom modes), SelfReflective (repo-less runtime), Prompts — detail in `runtime/CONTEXT.md`
 - `./lib/evo_git/agent_scheduler/` → `AgentState`, `SchedMeta`, `Slots` (LLM/tool slot pools), `Worktrees`, `WorktreeManager`, `RemoteAPI`, Repo-Less Plumbing, Graceful Cancellation, Shutdown & Restart Safety — detail in `agent_scheduler/CONTEXT.md`
 - `./lib/evo_git/config/` → `EvoGit.Config` — 3-level config (defaults → user TOML → runtime overrides), schema, LLM catalog, Config Caching — detail in `config/CONTEXT.md`
