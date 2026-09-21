@@ -82,6 +82,12 @@ defmodule EvoGit.Store.Types.Status do
   defdelegate dump(value), to: AtomColumn
   defdelegate load(value), to: AtomColumn
   defdelegate embed_as(format), to: AtomColumn
+
+  # equal?/2 must also be delegated: Ecto.Changeset's put_change/cast paths
+  # call it on the field type, so a defdelegate wrapper missing it crashes.
+  # AtomColumn uses `use Ecto.Type`'s default (`==`) — delegating keeps the
+  # wrappers byte-for-byte behaviorally identical to it.
+  defdelegate equal?(a, b), to: AtomColumn
 end
 
 defmodule EvoGit.Store.Types.TaskType do
@@ -104,6 +110,10 @@ defmodule EvoGit.Store.Types.TaskType do
   defdelegate dump(value), to: AtomColumn
   defdelegate load(value), to: AtomColumn
   defdelegate embed_as(format), to: AtomColumn
+
+  # equal?/2 must also be delegated (see Status's comment — the Ecto.Changeset
+  # cast/put_change paths call it on the field type).
+  defdelegate equal?(a, b), to: AtomColumn
 end
 
 defmodule EvoGit.Store.Types.ReviewStatus do
@@ -126,4 +136,8 @@ defmodule EvoGit.Store.Types.ReviewStatus do
   defdelegate dump(value), to: AtomColumn
   defdelegate load(value), to: AtomColumn
   defdelegate embed_as(format), to: AtomColumn
+
+  # equal?/2 must also be delegated (see Status's comment — the Ecto.Changeset
+  # cast/put_change paths call it on the field type).
+  defdelegate equal?(a, b), to: AtomColumn
 end
