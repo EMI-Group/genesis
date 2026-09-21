@@ -31,7 +31,6 @@ defmodule EvoGit.Store.Operations.SummariesTest do
   alias EvoGit.Store.Operations.Summaries
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
-  alias EvoGit.TestSupport.StoreBootLock
 
   @summary_keys [
     :id,
@@ -60,11 +59,8 @@ defmodule EvoGit.Store.Operations.SummariesTest do
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process, per call — `async: true` safe) and stops it on test exit.
-  #
-  # The boot is serialized through the BEAM-global `StoreBootLock` —
-  # `Ecto.Migrator` recompiles each `.exs` migration on every pending run, and
-  # concurrent compiles of the same module race (see
-  # `EvoGit.TestSupport.StoreBootLock`'s moduledoc).
+  # The production `EvoGit.Store.Boot` serializes concurrent migration runs
+  # globally (`:global.trans`), so parallel boots are safe.
   #
   # The repo is UNLINKED: `Boot.start_dynamic/1` links it to this test process
   # and `on_exit/1` callbacks run after that process is gone, so the link's
@@ -83,7 +79,7 @@ defmodule EvoGit.Store.Operations.SummariesTest do
           "#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}.sqlite"
       )
 
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok end)
     pid

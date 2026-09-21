@@ -4,11 +4,11 @@ defmodule EvoGit.Store.Operations.TasksTest do
   operations.
 
   Each test boots its own UNNAMED dynamic repo (`EvoGit.Store.Boot.start_dynamic/1`)
-  on a unique tmp SQLite file, so `async: true` is safe. The boot is
-  serialized through the BEAM-global `EvoGit.TestSupport.StoreBootLock`
-  (`Ecto.Migrator` recompiles migrations on every pending run — concurrent
-  compiles race). Raw-column assertions go through the read-only
-  `TaskRowRaw` projection (exact stored bytes, no type casting).
+  on a unique tmp SQLite file, so `async: true` is safe. The production
+  `EvoGit.Store.Boot` serializes concurrent migration runs globally
+  (`:global.trans`), so parallel boots are safe. Raw-column assertions go
+  through the read-only `TaskRowRaw` projection (exact stored bytes, no type
+  casting).
   """
 
   use ExUnit.Case, async: true
@@ -21,7 +21,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskInfo
-  alias EvoGit.TestSupport.StoreBootLock
 
   # ── Self-contained helpers (no shared files) ─────────────────────────────
 
@@ -31,7 +30,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
     path =
       Path.join(System.tmp_dir!(), "evogit_r2a_#{unique}_#{inspect(self())}.sqlite")
 
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid
