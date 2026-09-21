@@ -320,7 +320,9 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert html =~ "my_tool"
       assert html =~ "MyTool"
       assert html =~ "/cfg/tools/my_tool.ex"
-      assert html =~ "Read-only"
+      # Pin the badge content itself (`>Read-only<`) — a bare "Read-only"
+      # substring could be satisfied by surrounding chrome instead of the badge.
+      assert html =~ ">Read-only<"
       refute html =~ "No custom tools loaded"
     end
 
@@ -336,7 +338,10 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       html = render(view)
 
       assert html =~ "writer_tool"
-      assert html =~ "Write"
+      # Pin the badge content itself. The fixture's module name ("WriterTool")
+      # contains "Write", so a bare "Write" substring would pass even if the
+      # badge rendered nothing — `>Write<` can only come from the badge span.
+      assert html =~ ">Write<"
       refute html =~ "Read-only"
     end
 
@@ -460,6 +465,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       html = render_hook(view, "add_custom_agent", %{})
 
       assert html =~ ~s(value="my_custom_tool")
+      assert html =~ ~s(name="tools[]")
       assert html =~ "Custom tools"
     end
 
