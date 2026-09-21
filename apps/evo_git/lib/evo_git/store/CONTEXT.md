@@ -8,7 +8,7 @@ Contains the `EvoGit.Store` GenServer and its support modules for the SQLite per
 
 - `../store.ex` → Main GenServer module (`EvoGit.Store`) — public API, GenServer callbacks, private helpers
 - `./codec.ex` → `EvoGit.Store.Codec` — pure serialization/deserialization functions (no I/O)
-- `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, timestamp normalization
+- `./schema.ex` → `EvoGit.Store.Schema` — table creation, idempotent column migration, shared idempotent data migrations (timestamp normalization, canonical result/opts rewrites)
 - `./queries.ex` → `EvoGit.Store.Queries` — SQL builder helpers (WHERE, SET, clamping, column encoding)
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full error classifier (pure; public `disk_full_error?/1` for testability)
 - `../task_registry/` → TaskRegistry lifecycle semantics that consume Store data — startup reconciliation (`:finalizing` → `:failed` / `:cancelling` → `:cancelled`), lease/heartbeat, stuck-task recovery ("Restart Recovery & Status Transitions" section)
