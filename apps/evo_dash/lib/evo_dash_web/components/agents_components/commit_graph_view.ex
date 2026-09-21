@@ -11,11 +11,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   The component does NO data assembly, NO I/O and never touches the socket: it
   is purely presentational and fires the EXISTING `select_agent` event. The
   frozen DOM markers (`#commit-graph`, `#commit-graph-body-<node_key>`,
-  `#commit-graph-repo-*`, `#commit-lane-*`, `#commit-lane-commits-*` with
-  `phx-update="append"`, `#commit-node-*`, `#commit-agent-chip-*` and
+  `#commit-graph-repo-*`, `#commit-lane-*`, `#commit-lane-commits-*`,
+  `#commit-node-*`, `#commit-agent-chip-*` and
   `data-commit-graph-anim="lane|node|edge"`) are the contract consumed by the
   client-side `CommitGraph` hook / CSS animation, which live in the assets
-  subtree.
+  subtree. Every element carries a stable, unique DOM id, so LiveView's
+  patcher (morphdom) reuses existing nodes by id and inserts only genuinely
+  new ones — incremental patching without any `phx-update` mode.
   """
 
   # zh_CN glossary used in this module:
@@ -177,13 +179,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         </div>
       <% end %>
 
-      <%!-- KEYED append container: commits are ordered oldest -> newest, so new
-           commits land at the end and LiveView patches incrementally instead of
-           recreating the graph. Every child carries a unique id. --%>
-      <div
-        id={"commit-lane-commits-" <> @repo.repo_dom_id <> "-" <> to_string(@lane.agent_id)}
-        phx-update="append"
-      >
+      <%!-- Keyed commits container: every child carries a stable, unique id
+           (`commit-node-*` / `commit-edge-*`), so morphdom matches and REUSES
+           existing elements by id and only inserts genuinely new ones.
+           Incremental patching therefore relies on the unique ids, not on any
+           `phx-update` mode — existing nodes are never recreated, so the
+           `CommitGraph` hook only animates the newly inserted ones. --%>
+      <div id={"commit-lane-commits-" <> @repo.repo_dom_id <> "-" <> to_string(@lane.agent_id)}>
         <%= for {commit, index} <- Enum.with_index(@lane.commits) do %>
           <%= if index > 0 do %>
             <div

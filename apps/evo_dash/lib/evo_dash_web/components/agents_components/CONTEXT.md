@@ -30,11 +30,11 @@ A lane is `%{agent_id, lane_index, depth, parent_agent_id, parent_lane_index, co
 - Immediately inside the root, the node-scoped wrapper `id={"commit-graph-body-" <> @node_key}` (a node switch changes the id → LiveView replaces the whole subtree).
 - Per repo: `id={"commit-graph-repo-" <> repo.repo_dom_id}`.
 - Per lane wrapper: `id={"commit-lane-" <> repo.repo_dom_id <> "-" <> to_string(lane.agent_id)}` + `data-commit-graph-anim="lane"`.
-- Per lane commits list: `id={"commit-lane-commits-" <> repo.repo_dom_id <> "-" <> to_string(lane.agent_id)}` with `phx-update="append"` (keyed append container; new commits land at the end).
+- Per lane commits list: `id={"commit-lane-commits-" <> repo.repo_dom_id <> "-" <> to_string(lane.agent_id)}` (plain container, NO `phx-update` mode).
 - Each commit node: `id={"commit-node-" <> repo.repo_dom_id <> "-" <> c.sha}`, `data-commit-graph-anim="node"`, `phx-click="select_agent"`, `phx-value-id={lane.agent_id}`.
 - Agent chip at the lane tip: `id={"commit-agent-chip-" <> to_string(lane.agent_id)}`, `data-commit-graph-anim="node"`, `phx-click="select_agent"`, `phx-value-id={lane.agent_id}`.
 - Connector / edge elements: `data-commit-graph-anim="edge"` — the parent→child elbow (only when `lane.connects?`), the continuous lane rail, and one segment per gap between consecutive commits.
-- Every child of the append container carries a unique id (`commit-edge-<repo_dom_id>-<sha>` for gap edges, `commit-node-...` for nodes) — REQUIRED by `phx-update="append"`.
+- Every child of the commits container carries a stable, unique id (`commit-edge-<repo_dom_id>-<sha>` for gap edges, `commit-node-...` for nodes) — morphdom matches and REUSES existing elements by id, inserting only genuinely new ones, so the graph patches incrementally (existing nodes are never recreated and the `CommitGraph` hook only animates newly inserted `[data-commit-graph-anim]` elements) without any `phx-update` mode.
 
 ## Constraints
 
@@ -47,7 +47,7 @@ A lane is `%{agent_id, lane_index, depth, parent_agent_id, parent_lane_index, co
 
 ## Notes for Agents
 
-- `phx-update="append"` emits a LiveView deprecation warning ("please use streams instead") — it is deliberate and required by the frozen contract; do not "fix" it to streams without also updating the animation agent's assumptions.
+- The view deliberately uses NO `phx-update` mode (`"append"` is deprecated — it emits a LiveView warning that fails `--warnings-as-errors` and breaks `LiveViewTest` rendering) and does NOT use streams: incremental patching is provided by the stable, unique DOM ids on every element (morphdom keyed reuse), which keeps the frozen marker contract intact.
 - The component deliberately does NOT own repo-header/lane/commit geometry keys beyond `margin-left` from `lane.depth`; the rail/elbow/node visuals are Tailwind classes and the animation lives in the assets subtree.
 - States handled: `:loading` (spinning `hero-arrow-path` + "Loading commit history…"), `:empty` (dimmed `hero-server` + "No commit history yet."), `:error` (small `text-error`/`bg-error/10` strip — only when there is no data), and `:repos` (last-good graph kept when `@error != nil`, with a subtle `text-warning` refresh-failed strip above it).
 - Wiring into the left panel (view switcher, `selected_id`/`node_key` assigns) is owned by `agents_live.ex` / `agents_live.html.heex` (outside this subtree) and is a separate step.

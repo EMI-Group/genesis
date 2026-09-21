@@ -47,7 +47,7 @@ The tree view (and its `"Agent Tree"` label) stays the default, so the agent tre
 ### Commit view markup (frozen DOM contract)
 
 The view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (called FULLY QUALIFIED in `agents_live.html.heex`; attrs `repos` / `selected_id` / `loading` / `error` / `node_key`), fed `repos={@commit_graph}`, `selected_id={@selected_agent_id}`, `loading={@commit_graph_loading}`, `error={@commit_graph_error}` and `node_key={@current_node_id || "local"}`.
-It emits the frozen DOM markers (`#commit-graph` + `phx-hook="CommitGraph"`, `#commit-graph-body-<node_key>`, `#commit-lane-*`, `#commit-lane-commits-*` with `phx-update="append"`, `#commit-node-*`, `#commit-agent-chip-*`, `data-commit-graph-anim="lane|node|edge"`, and `phx-click="select_agent"` + `phx-value-id` on commit nodes and agent chips) consumed by the client-side `CommitGraph` hook / CSS — see `../../components/agents_components/CONTEXT.md`.
+It emits the frozen DOM markers (`#commit-graph` + `phx-hook="CommitGraph"`, `#commit-graph-body-<node_key>`, `#commit-lane-*`, `#commit-lane-commits-*`, `#commit-node-*`, `#commit-agent-chip-*`, `data-commit-graph-anim="lane|node|edge"`, and `phx-click="select_agent"` + `phx-value-id` on commit nodes and agent chips) consumed by the client-side `CommitGraph` hook / CSS — see `../../components/agents_components/CONTEXT.md`.
 In the commit view the `.agents-legend` cluster swaps the three status chips for a two-chip commit-graph legend (`agents-legend-commit` / `agents-legend-agent`, title "Commit Graph Legend"), same `data-tip` + `phx-hook="LegendTooltip"` style.
 
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
