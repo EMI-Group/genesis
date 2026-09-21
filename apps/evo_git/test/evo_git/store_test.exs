@@ -1,8 +1,10 @@
 defmodule EvoGit.StoreTest do
   use ExUnit.Case, async: false
 
+  alias EvoGit.Repo
   alias EvoGit.Store
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.RepoScope
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -1900,6 +1902,165 @@ defmodule EvoGit.StoreTest do
       {:ok, conn} = Xqlite.open(sqlite_path)
       :ok = XqliteNIF.close(conn)
       File.rm(sqlite_path)
+    end
+  end
+
+  # A full Store.start_link boot must migrate a LEGACY-shaped database before
+  # the first read/write — the Ecto port of the old raw-SQL Schema repair
+  # pipeline (schema adoption coverage per-shape lives in
+  # `store/boot_migration_test.exs` against `Boot.start_dynamic/1` directly;
+  # THIS test pins the same contract through the public GenServer entry).
+  describe "boot migration on Store.start_link (legacy DB)" do
+    # The real v0.9.0–v0.12.5 19-column shape: `updated_at` is the 19th
+    # column and `error` does not exist yet — the "reported
+    # crash-on-upgrade" database (DDL copied from boot_migration_test.exs).
+    @ddl_19_col """
+    CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      type TEXT,
+      status TEXT NOT NULL,
+      opts TEXT,
+      started_at TEXT,
+      finished_at TEXT,
+      logs TEXT,
+      result TEXT,
+      review_status TEXT,
+      usage TEXT,
+      agent_count INTEGER,
+      base_sha TEXT,
+      commit_sha TEXT,
+      archive_metadata TEXT,
+      lease_expires_at INTEGER,
+      model_id TEXT,
+      project_path TEXT,
+      branch_name TEXT,
+      updated_at TEXT
+    )
+    """
+
+    @projects_ddl """
+    CREATE TABLE projects (
+      path TEXT PRIMARY KEY,
+      name TEXT,
+      last_opened_at TEXT
+    )
+    """
+
+    @migration_versions [20_260_815_000_001, 20_260_815_000_002]
+
+    test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
+         %{root: root} do
+      unique = System.unique_integer([:positive])
+      sqlite_path = Path.join(root, "evogit_legacy_boot_#{unique}.sqlite")
+      store = :"legacy_boot_store_#{unique}"
+      task_id = "legacy-boot-#{unique}"
+
+      # Seed the legacy DB with RAW xqlite — exactly the file a pre-Ecto
+      # release left on disk (legacy DDL, NO schema_migrations table, one
+      # canonical-shaped row the data normalization must leave untouched).
+      File.mkdir_p!(root)
+
+      {:ok, conn} = Xqlite.open(sqlite_path, journal_mode: :wal, synchronous: :normal)
+      {:ok, _} = XqliteNIF.query(conn, @ddl_19_col, [])
+      {:ok, _} = XqliteNIF.query(conn, @projects_ddl, [])
+
+      {:ok, _} =
+        XqliteNIF.query(
+          conn,
+          "INSERT INTO tasks (id, type, status, opts, started_at, finished_at, logs, result, " <>
+            "usage, agent_count, base_sha, commit_sha, archive_metadata, lease_expires_at, " <>
+            "model_id, project_path, branch_name, updated_at) VALUES " <>
+            "(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+          [
+            task_id,
+            "genesis",
+            "completed",
+            ~S({"mode":"new","path":"/tmp/legacy-boot"}),
+            "2024-02-02T08:00:00.111Z",
+            "2024-02-02T09:00:00.222Z",
+            ~S(["seed log line"]),
+            ~S({"__result_tag__":"ok","data":{"summary":"legacy seed"}}),
+            ~S({"llm":{"total_cost":0.5}}),
+            3,
+            "base19",
+            "commit19",
+            ~S({"records":[]}),
+            1_738_500_000_000,
+            "kimi",
+            "/tmp/legacy-boot",
+            "genesis/agent_19ab",
+            "2024-02-02T09:00:01.333Z"
+          ]
+        )
+
+      :ok = XqliteNIF.close(conn)
+
+      # The legacy file had no migrations table before boot.
+      {:ok, pre} = Xqlite.open(sqlite_path)
+      {:ok, pre_result} = XqliteNIF.query(pre, "PRAGMA table_info(tasks)", [])
+      pre_columns = Enum.map(pre_result.rows, fn [_cid, name | _] -> name end)
+      refute "error" in pre_columns
+      :ok = XqliteNIF.close(pre)
+
+      # Public GenServer entry: Store.start_link itself boots the dynamic
+      # repo, runs BOTH migrations, and comes up serving reads/writes.
+      {:ok, pid} = Store.start_link(data_dir: sqlite_path, name: store)
+
+      # The store is LINKED to this test process; a normal test exit would
+      # kill it before on_exit can stop it cleanly. Unlink (same pattern as
+      # boot_migration_test.exs's start_booted_repo!/1) and stop through an
+      # alive-guarded on_exit.
+      Process.unlink(pid)
+
+      on_exit(fn ->
+        case Process.whereis(store) do
+          nil -> :ok
+          pid -> :ok = GenServer.stop(pid)
+        end
+      end)
+
+      # Both migration versions are stamped in schema_migrations, observed
+      # through the same test seam the disk-full tests use (__repo_pid__ +
+      # RepoScope/Repo against the store's OWN dynamic instance).
+      repo_pid = Store.__repo_pid__(store)
+
+      versions =
+        RepoScope.with_repo(repo_pid, fn ->
+          Repo.query!("SELECT version FROM schema_migrations ORDER BY version").rows
+          |> Enum.map(&hd/1)
+        end)
+
+      assert versions == @migration_versions
+
+      # The legacy row is readable through the PUBLIC API — every seeded
+      # value round-trips, and the adopted `error` column reads as nil.
+      assert %TaskInfo{} = task = Store.get_task(store, task_id)
+      assert {task.id, task.type, task.status} == {task_id, :genesis, :completed}
+      assert task.opts == [mode: "new", path: "/tmp/legacy-boot"]
+      assert task.started_at == ~U[2024-02-02 08:00:00.111Z]
+      assert task.finished_at == ~U[2024-02-02 09:00:00.222Z]
+      assert task.logs == ["seed log line"]
+      assert task.result == {:ok, %{"summary" => "legacy seed"}}
+      assert {task.agent_count, task.lease_expires_at} == {3, 1_738_500_000_000}
+      assert {task.base_sha, task.commit_sha} == {"base19", "commit19"}
+      assert task.model_id == "kimi"
+      assert task.project_path == "/tmp/legacy-boot"
+      assert task.branch_name == "genesis/agent_19ab"
+      assert task.error == nil
+
+      # `error` was ADOPTED at the tail — writes through the public API now
+      # persist it (the column exists and is writable post-migration).
+      :ok =
+        Store.update_task_columns(store, task_id,
+          status: :failed,
+          error: %{kind: :error, source: :recheck, message: "boot test"}
+        )
+
+      assert %TaskInfo{status: :failed, error: %{kind: :error, message: "boot test"}} =
+               Store.get_task(store, task_id)
+
+      # Clean stop through the on_exit above; the DB file is removed with the
+      # per-test root.
     end
   end
 end
