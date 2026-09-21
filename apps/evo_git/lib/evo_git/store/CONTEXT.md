@@ -149,7 +149,7 @@ The **`mix migrate.store`** task (`apps/evo_git/lib/mix/tasks/migrate.store.ex`)
 ## Fixed-precision timestamps
 
 - `Codec.encode_datetime/1` → constant 24-char `:millisecond` ISO-8601 (`%Y-%m-%dT%H:%M:%S.SSSZ`, `.000Z` even for whole seconds) via `DateTime.truncate(dt, :millisecond)` + `DateTime.to_iso8601/1`. Lexicographically sortable in SQLite — a mixed-precision `:auto` format would mis-sort (`'Z'` (0x5A) > `'.'` (0x2E)) — making SQL-side datetime filtering/ordering pushdowns safe.
-- `Schema.normalize_timestamps/1` migrates existing rows (tasks.started_at / tasks.finished_at / projects.last_opened_at). Idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips normalized rows; `%f` round-trips them unchanged); skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). Invoked only via `mix migrate.store` (step 3) or direct `Schema` calls in tests.
+- `Schema.normalize_timestamps/1` migrates existing rows (tasks.started_at / tasks.finished_at / projects.last_opened_at). Idempotent (GLOB guard `'*.[0-9][0-9][0-9]Z'` skips normalized rows; `%f` round-trips them unchanged); skips unparseable rows (`julianday(...) IS NOT NULL` guard — never overwritten with NULL). Invoked at boot by `EvoGit.Store.init/1` and by `mix migrate.store` (step 3).
 
 ## SQL Access Patterns
 
