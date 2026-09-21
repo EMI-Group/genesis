@@ -24,6 +24,20 @@ defmodule EvoGit.Store.Operations.Safety do
   not these handlers. The old offload-to-a-Task heap isolation was a GenServer
   concern and stays at the wave-2 store layer.
 
+  ## Wrong-typed cells (load-failure fallback)
+
+  Ecto's struct loader RAISES inside `Repo.all/1` when a cell's physical type
+  does not match the raw twin's declared field type (e.g. a legacy INTEGER
+  `last_opened_at`) — BEFORE the per-row boundary below can see the row. The
+  old raw-SQL store read plain bytes and skipped such rows inside its
+  `decode_skipping_bad/3` (the Codec decode raised `FunctionClauseError` on
+  the non-binary value), so a corrupt/legacy row NEVER crashed the read. Both
+  safe selects reproduce that exactly: on a loader raise they fall back to
+  reading rows ONE AT A TIME by primary key, so a row that fails to LOAD or
+  DECODE is skipped + logged while every other row still comes back. The
+  fallback only ever triggers on a wrong-typed cell — over well-typed rows
+  the single-set `Repo.all/1` path runs, unchanged.
+
   ## Why rows load through the RAW twins
 
   `EvoGit.Store.Codec` decode raises on corrupt/legacy wire values BY DESIGN.
@@ -65,6 +79,8 @@ defmodule EvoGit.Store.Operations.Safety do
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskInfo
 
+  import Ecto.Query, only: [from: 2]
+
   require Logger
 
   @doc """
@@ -75,9 +91,7 @@ defmodule EvoGit.Store.Operations.Safety do
   @spec safe_select_all_tasks(pid()) :: [TaskInfo.t()]
   def safe_select_all_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
-      TaskRowRaw
-      |> Repo.all()
-      |> decode_skipping_bad("tasks", :id, &decode_raw_task/1)
+      all_skipping_bad(TaskRowRaw, "tasks", :id, &decode_raw_task/1)
     end)
   end
 
@@ -89,9 +103,7 @@ defmodule EvoGit.Store.Operations.Safety do
   @spec safe_select_all_projects(pid()) :: [RecentProject.t()]
   def safe_select_all_projects(repo) do
     RepoScope.with_repo(repo, fn ->
-      ProjectRowRaw
-      |> Repo.all()
-      |> decode_skipping_bad("projects", :path, &decode_raw_project/1)
+      all_skipping_bad(ProjectRowRaw, "projects", :path, &decode_raw_project/1)
     end)
   end
 
@@ -143,6 +155,66 @@ defmodule EvoGit.Store.Operations.Safety do
   # expects (`Codec.project_columns/0` order).
   defp decode_raw_project(%ProjectRowRaw{} = row) do
     Codec.decode_project([row.path, row.name, row.last_opened_at])
+  end
+
+  ## Private — safe-select set loading
+
+  # Loads ALL rows of `schema` and decodes them through `decoder`, skipping
+  # + logging rows that fail. Two failure depths, mirroring the old raw-SQL
+  # skip-and-log boundary exactly:
+  #
+  #   * DECODE failures (per row, below) — the usual case: the Codec raises
+  #     on corrupt/legacy JSON text.
+  #   * LOAD failures (the fallback) — Ecto's struct loader raises inside
+  #     `Repo.all/1` when a cell's physical type mismatches the raw twin's
+  #     declared field type (e.g. a legacy INTEGER `last_opened_at` in a
+  #     table some old DB version created). The old store never saw this
+  #     class separately (it read plain bytes and the Codec's
+  #     FunctionClauseError landed in the same per-row skip), so the fallback
+  #     re-reads rows ONE AT A TIME by primary key and lets the SAME per-row
+  #     boundary skip+log the offending row while every other row survives.
+  #     This rescue catches ONLY loader raises — `Repo.get/2` re-raises any
+  #     genuine database error, which then surfaces to the caller unchanged
+  #     (crash philosophy preserved).
+  defp all_skipping_bad(schema, table, id_key, decoder) do
+    schema
+    |> Repo.all()
+    |> decode_skipping_bad(table, id_key, decoder)
+  rescue
+    e ->
+      # Justified try/rescue — safe-select boundary (mirrors the raw store):
+      # a wrong-typed cell poisons the WHOLE set load, so fall back to
+      # per-key loads and skip only the offending rows (see moduledoc).
+      # (`from s in schema` needs a compile-time queryable, hence the case.)
+      Logger.warning(
+        "Store: batch row load failed for #{table} (#{Exception.message(e)}); " <>
+          "falling back to per-row loads, skipping undecodable rows"
+      )
+
+      id_query =
+        case id_key do
+          :id -> from(s in TaskRowRaw, select: s.id)
+          :path -> from(p in ProjectRowRaw, select: p.path)
+        end
+
+      id_query
+      |> Repo.all()
+      |> Enum.flat_map(fn id ->
+        try do
+          case Repo.get(schema, id) do
+            nil -> []
+            row -> [decoder.(row)]
+          end
+        rescue
+          e ->
+            Logger.warning(
+              "Store: skipping undecodable row in #{table} (id: #{inspect(id)}): " <>
+                Exception.message(e)
+            )
+
+            []
+        end
+      end)
   end
 
   # Safe-select decode boundary — ported verbatim from the raw store's
