@@ -12,6 +12,7 @@ Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
 |---|---|---|
 | `changelog.ex` | `Mix.Tasks.Changelog` | `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`. PR/merge-aware first-parent collection, two-stage (map-reduce) LLM summarization via `ReqLLM.stream_object`, keeps `CHANGELOG.md`. `@requirements ["app.config"]` kept. |
 | `bump.version.ex` | `Mix.Tasks.Bump.Version` | `mix bump.version <version>`. Rewrites `VERSION`, `desktop/src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock}`, `README.md`; interactively commits the touched files and optionally delegates to `Mix.Tasks.Changelog.run/1`. |
+| `migrate.store.ex` | `Mix.Tasks.Migrate.Store` | `mix migrate.store [db_path]`. Standalone upgrade of an EXISTING `tasks.sqlite`. Reuses the SAME `EvoGit.Store.Schema` primitives `EvoGit.Store.init/1` runs at boot (schema/tables, timestamps, canonical `result`/`opts`) and ADDITIONALLY backfills `branch_name` (from `result.data.branch_name`) + `updated_at` (from `finished_at`/`started_at`) and drops the DETS-era quarantine tables — neither of which runs at boot. Never starts `:evo_git` (raw `Xqlite` connection → works even when the app cannot boot). Idempotent; 8 numbered steps. |
 
 ### Injectable seams (call-time resolved, defaults byte-for-byte unchanged)
 
