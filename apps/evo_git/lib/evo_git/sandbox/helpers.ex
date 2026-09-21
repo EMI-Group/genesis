@@ -468,14 +468,16 @@ defmodule EvoGit.Sandbox.Helpers do
 
   @doc """
   Waits for the OS PID of a spawned port to materialize (it is populated
-  asynchronously after spawn). Polls briefly; falls back to `:undefined` when
-  it never appears — the caller's timeout path then degrades to closing the
-  port (group/process-tree kill skipped).
+  asynchronously after spawn). `Port.info(port, :os_pid)` returns the tuple
+  `{:os_pid, pid}` while the port is open (and `nil` once it is closed), so
+  this helper unwraps that tuple and returns the integer pid. Polls briefly;
+  falls back to `:undefined` when it never appears — the caller's timeout path
+  then degrades to closing the port (group/process-tree kill skipped).
   """
   @spec wait_for_os_pid(port(), non_neg_integer()) :: pos_integer() | :undefined
   def wait_for_os_pid(port, attempts \\ 10) do
     case Port.info(port, :os_pid) do
-      pid when is_integer(pid) ->
+      {:os_pid, pid} when is_integer(pid) ->
         pid
 
       _ when attempts > 0 ->
@@ -498,6 +500,20 @@ defmodule EvoGit.Sandbox.Helpers do
     after
       0 -> :ok
     end
+  end
+
+  @doc """
+  Idempotently closes a port. `Port.close/1` RAISES `ArgumentError` on an
+  already-closed port (e.g. after `{:exit_status, _}` has been delivered), so
+  every timeout path closes through this guard instead of a bare
+  `Port.close/1`. A `nil` port is a no-op.
+  """
+  @spec close_port(port() | nil) :: :ok
+  def close_port(nil), do: :ok
+
+  def close_port(port) when is_port(port) do
+    if Port.info(port) != nil, do: Port.close(port)
+    :ok
   end
 
   # ---------------------------------------------------------------------------

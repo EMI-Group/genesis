@@ -319,7 +319,7 @@ defmodule EvoGit.Sandbox.None do
     after
       timeout ->
         kill_windows_tree(os_pid)
-        Port.close(port)
+        Helpers.close_port(port)
         Helpers.drain_port_messages(port)
 
         partial =
