@@ -1029,6 +1029,21 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.check_merge(node, repo_path, branch, target)
   end
 
+  @doc """
+  Lists the commit graph for the given ref ranges on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_commit_graph/4`. `ranges` is a list of
+  `{base_ref, tip_ref}` 2-tuples; `opts` is a keyword list (e.g. `[limit: n]`).
+  Returns `{:ok, %{commits: [commit], refs: %{sha => [name]}}}` or `{:error,
+  reason}` — the VERBATIM underlying value in BOTH the local and remote paths;
+  only transport failures surface as `{:error, {kind, reason}}`.
+  """
+  @spec list_commit_graph(node(), String.t(), [{String.t(), String.t()}], keyword()) ::
+          {:ok, %{commits: [map()], refs: %{String.t() => [String.t()]}}} | {:error, term()}
+  def list_commit_graph(node, repo_path, ranges, opts) do
+    EvoGit.RemoteNode.list_commit_graph(node, repo_path, ranges, opts)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning
