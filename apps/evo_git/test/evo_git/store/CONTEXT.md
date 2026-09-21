@@ -41,5 +41,20 @@ strings). The stateful Store/TaskRegistry suites live one level up (`../store_te
 
 - Pure-function tests: no `@moduletag :tmp_dir`, no DB, no fixtures — the whole directory runs
   in well under a second (parallel, `async: true`). There is nothing time/seed-sensitive here.
+- **No DB anywhere**: neither file opens a database — zero `:xqlite` calls, no `EvoGit.Store.start_link`,
+  no injected conn, no `setup` blocks. The GenServer name question is moot; inputs are literals,
+  `%EvoGit.Agent.Usage{}`, `~U[...]` sigils, and `Jason.decode!` round-trip checks. No app-env /
+  pdict / named-process seams exist in either module.
+- **Coverage is complete at the function level**: all 8 public `Queries` functions
+  (`task_select_sql/0`, `project_select_sql/0`, `build_update_set/2`, `encode_column_value/2`,
+  `clamp_limit/1`, `clamp_offset/1`, `build_where/1`, `escape_like/1` — 77 tests) and the single
+  public `Errors.disk_full_error?/1` (21 tests) are pinned. Minor residual gaps:
+  `build_update_set/2` never exercises the `:error`/`:usage` columns directly (only via
+  `encode_column_value/2`), `encode_column_value(:error, ...)` pins only `stacktrace: nil`, and
+  the message-text fallback has no near-miss negative (e.g. `"disk is full"` without the full
+  canonical "database or disk is full" text).
+- **Pinned quirk worth knowing**: `build_where/1` does NOT stringify atom filters — `build_where(status: :pending)`
+  asserts `params == [:pending]` (the raw atom rides into the bind params); only `encode_column_value/2`
+  routes through `Codec.encode_atom/1`.
 - The parent `../CONTEXT.md` (and the one above it at `../..`) documents the stateful Store/
   TaskRegistry suites and their async-safety / shared-test-DB cautions — those do NOT apply here.

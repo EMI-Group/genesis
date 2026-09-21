@@ -155,7 +155,7 @@ It runs standalone (never starts the `:evo_git` application) so it also works wh
 
 ## SQL Access Patterns
 
-- **Only two xqlite entry points**: `XqliteNIF.query/3` (SELECT/PRAGMA) and `XqliteNIF.execute/3` (INSERT/UPDATE/DELETE/DDL). No `Xqlite` module-wrapper helpers (no `q/2`, no `exec/3`). Dep: `{:xqlite, "~> 0.10"}` (`apps/evo_git/mix.exs:35`).
+- **Only two xqlite entry points**: `XqliteNIF.query/3` (SELECT/PRAGMA) and `XqliteNIF.execute/3` (INSERT/UPDATE/DELETE/DDL). No `Xqlite` module-wrapper helpers (no `q/2`, no `exec/3`) — except `Xqlite.open/2` (connection open, store.ex:430) and `XqliteNIF.close/1` (store.ex:466). Dep: `{:xqlite, "~> 0.12"}` (`apps/evo_git/mix.exs:39`, locked 0.12.2; bundled SQLite 3.53.2). Placeholders are NUMBERED `?N` throughout.
 - **All user values parameterized** with `?N` numbered placeholders + params list. The ONLY interpolated identifiers are table names, column lists, PK names — all from closed module-level sets (Codec column lists, hardcoded literals), never user input.
 - **No prepared statements** (one-shot prepare+execute via the NIF per call) and **no transactions** (zero `with_transaction|BEGIN|COMMIT|ROLLBACK` matches in `apps/evo_git/lib`; every execute is its own autocommit). WAL mode set at open (`store.ex:340`: `journal_mode: :wal, synchronous: :normal, cache_size: -2000`); `PRAGMA wal_checkpoint(TRUNCATE)` on terminate (`store.ex:346,364-365`).
 - **SQLite JSON1 functions — migrations only**: `Schema.canonicalize_results/1` (and the same rewrite inside `mix migrate.store`) uses `json_valid`/`json_type`/`json_object`/`json_extract` when the bundled SQLite has JSON1 (bundled 3.53.2), with an Elixir/Jason fallback; `Schema.canonicalize_opts/1` always uses the Elixir loop (never `json_group_object`, which would collapse JSON booleans to SQLite integers). `Schema.json1_available?/1` is the availability probe. Everywhere else JSON handling is Elixir/Jason; `build_where/1` `:search` LIKEs over raw JSON text of the `opts` and `result` columns (the result column's `"result"` data key carries the final agent report text, so response fragments are searchable); `id`/`project_path` LIKE matches are the only other search surfaces — no JSON-path querying.
@@ -169,7 +169,7 @@ It runs standalone (never starts the `:evo_git` application) so it also works wh
 
 **Contract:** disk-full-class write errors — `SQLITE_FULL` (13), `SQLITE_IOERR` (10), `SQLITE_READONLY` (8) — are detected at the write boundary and converted to `{:error, :disk_full}` instead of crashing the Store GenServer. Reads keep working; writes can be retried (a full disk is transient, unlike a corrupt DB). Every other write error keeps the same failure shape: an identical `MatchError` (via `raise MatchError, term: error` to avoid a statically-impossible pattern warning) crashes the GenServer and the supervisor restarts it.
 
-### xqlite error surfacing (deps/xqlite v0.10)
+### xqlite error surfacing (deps/xqlite v0.12.2)
 
 - `XqliteNIF.query/3` and `XqliteNIF.execute/3` RETURN tuples, never raise: Rust `Result<_, XqliteError>` encodes as `{:ok, _} | {:error, reason}` (`deps/xqlite/native/xqlitenif/src/nif.rs:99-115`). `query` → `{:ok, %{columns, rows, num_rows}}`; `execute` → `{:ok, affected_count}`.
 - Disk-full-class shapes (`error.rs` `classify_sqlite_error` + `Encoder` impl):
