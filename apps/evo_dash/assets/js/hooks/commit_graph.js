@@ -1,12 +1,13 @@
 // CommitGraph hook: enter-animations for the commit-history visualization.
 //
 // The markup grows incrementally — LiveView patches new commit nodes / lane
-// segments into a keyed `phx-update="append"` container as agents commit — so
-// only NEWLY INSERTED elements must animate. A MutationObserver on the root
-// (#commit-graph, `childList` + `subtree`) sees exactly those insertions; the
-// elements already present at mount never animate, and a `updated()` re-scan
-// covers wholesale re-renders (e.g. a full view switch that replaces the
-// subtree) without re-animating anything already seen.
+// segments into the container as agents commit, matching and reusing existing
+// elements by their stable unique DOM ids and inserting only genuinely new
+// ones — so only NEWLY INSERTED elements must animate. A MutationObserver on
+// the root (#commit-graph, `childList` + `subtree`) sees exactly those
+// insertions; the elements already present at mount never animate, and an
+// `updated()` re-scan covers wholesale re-renders (e.g. a full view switch that
+// replaces the subtree) without re-animating anything already seen.
 //
 // Markup scope: any element carrying `data-commit-graph-anim` ("node" | "lane"
 // | "edge") — either as a directly added child or anywhere inside an added
