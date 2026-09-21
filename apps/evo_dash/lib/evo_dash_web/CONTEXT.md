@@ -42,7 +42,7 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | `live/` | Phoenix LiveView pages: Home, Projects, Agents, Settings, System, Tasks, Review, Welcome. Also contains the `live/components/` subdirectory (LiveComponents like `NodeSelectorComponent`). |
 | `live/components/` | LiveComponents (`use EvoDashWeb, :live_component`): `NodeSelectorComponent` (navbar node selector + connection manager modal for SSH Remote Development). |
 | `live_hooks/` | On-mount hooks: `SetLocale`, `NodeAware`, `DesktopQuit`, `UpdateStatus`, `Guide` (global overlays). |
-| `components/` | Reusable HEEx components: CoreComponents, ProjectComponents, TaskFormComponents, TaskCardComponents, AgentsComponents, RemoteGateComponents, Layouts. |
+| `components/` | Reusable HEEx components: CoreComponents, ProjectComponents, TaskFormComponents, TaskCardComponents, AgentsComponents, RemoteGateComponents, Layouts, plus the `components/agents_components/` sub-components (`CommitGraphView` — the Agents-page commit-history view). |
 | `controllers/` | Classic HTTP controllers and error handlers. Includes `TaskExportController` (JSON export of archived task metadata). |
 
 ### LiveView Routes
