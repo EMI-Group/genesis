@@ -221,6 +221,16 @@ defmodule EvoGit.Agent.Tools do
 
   defp normalize_tool_name(tool_name), do: tool_name
 
+  # Classifies a tool name as a WRITE tool for the two dispatch write gates.
+  # Extends the built-in write set with user-defined custom tools: a loaded
+  # custom tool whose `read_only?/0` is false/absent must be gated exactly like
+  # a built-in writer (blocked for repo-less agents and inside read-only foreign
+  # repos). Unknown names are never write tools, so this never blocks built-ins
+  # or hallucinated tool calls.
+  defp write_tool?(tool_name) do
+    tool_name in @write_tools or EvoGit.CustomTools.write_tool?(tool_name)
+  end
+
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
   # must never touch git or write files. Block write tools for them before
@@ -228,7 +238,7 @@ defmodule EvoGit.Agent.Tools do
   # there is no bypass. The repo-less guard runs FIRST (ordered before the
   # foreign-repo gate), then the foreign-repo gate, then `execute_tool`.
   defp maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path) do
-    if Process.get(:repo_less) && tool_name in @write_tools do
+    if Process.get(:repo_less) && write_tool?(tool_name) do
       "Error: this agent has read-only access to the system — the #{tool_name} tool is disabled."
     else
       maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path)
@@ -266,7 +276,7 @@ defmodule EvoGit.Agent.Tools do
             nil
         end
 
-    if resolved_repo && resolved_repo.writable != true && tool_name in @write_tools do
+    if resolved_repo && resolved_repo.writable != true && write_tool?(tool_name) do
       "Error: this agent operates in a read-only foreign repository (#{resolved_repo.root}) — " <>
         "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
         "that accept modifications; read-only foreign repos are for investigation only."
@@ -388,20 +398,40 @@ defmodule EvoGit.Agent.Tools do
     RunCommand.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool(unknown_tool, args, repo_path, repo_root, _node_path)
+  defp execute_tool(unknown_tool, args, repo_path, repo_root, node_path)
        when is_binary(unknown_tool) and is_map(args) do
-    # Try dynamic skill execution — skills are loaded from .agents/skills/
-    # and injected as tool schemas at agent startup
-    if repo_root && is_binary(repo_root) do
-      skills = EvoGit.Skills.load_skills(repo_root)
+    # An explicitly configured custom tool (EvoGit.CustomTools, loaded from
+    # `<config_dir>/tools/`) MUST win over a same-named dynamic skill, so the
+    # custom lookup runs FIRST. Built-in tool name clauses match earlier, so a
+    # built-in always wins (intended). `:unknown` (name is not a loaded custom
+    # tool) falls through to the existing dynamic-skill lookup and then the
+    # unknown-tool error. `EvoGit.CustomTools.execute/3` error strings are
+    # never "Error: "-prefixed, so a plain prepend is correct.
+    case EvoGit.CustomTools.execute(unknown_tool, args, %{
+           repo_path: repo_path,
+           repo_root: repo_root,
+           node_path: node_path
+         }) do
+      {:ok, output} ->
+        output
 
-      if EvoGit.Skills.find_skill(skills, unknown_tool) do
-        EvoGit.Skills.execute(skills, unknown_tool, args, repo_path)
-      else
-        unknown_tool_error(unknown_tool)
-      end
-    else
-      unknown_tool_error(unknown_tool)
+      {:error, reason} ->
+        "Error: " <> reason
+
+      :unknown ->
+        # Try dynamic skill execution — skills are loaded from .agents/skills/
+        # and injected as tool schemas at agent startup
+        if repo_root && is_binary(repo_root) do
+          skills = EvoGit.Skills.load_skills(repo_root)
+
+          if EvoGit.Skills.find_skill(skills, unknown_tool) do
+            EvoGit.Skills.execute(skills, unknown_tool, args, repo_path)
+          else
+            unknown_tool_error(unknown_tool)
+          end
+        else
+          unknown_tool_error(unknown_tool)
+        end
     end
   end
 

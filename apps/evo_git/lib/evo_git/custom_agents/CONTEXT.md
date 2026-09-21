@@ -19,12 +19,12 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - `delete/1` (id) → `:ok | {:error, :not_found}`. Preserves `[model_selection]`.
 - `model_selection_script/0` → script `String.t()` | `nil`.
 - `save_model_selection_script/1` → `:ok | {:error, term}` (empty string removes the key; preserves `[[agents]]`).
-- `reload/0` → `:ok` — invalidates the `ModelSelector` compile cache (guarded with `Code.ensure_loaded?/1` + `function_exported?/3`).
+- `reload/0` → `:ok` — invalidates BOTH the `ModelSelector` compile cache AND the `EvoGit.CustomTools` custom-tools load cache (each guarded with `Code.ensure_loaded?/1` + `function_exported?/3` + `apply/3`, warning-free when a module is absent).
 - `stringify_keys/1` (public, `@doc false`) → shared map-stringify helper: `EvoGit.RemoteConnections` (`lib/evo_git/remote_connections.ex`) calls it when serializing connection maps to TOML, rather than keeping a local copy. New code needing string-keyed map serialization for config/TOML stores should reuse `CustomAgents.stringify_keys/1` instead of duplicating it.
 
 **Validation error atoms** (`save/1` only — reads never raise): `:missing_name, :missing_prompt, :invalid_agent_type, :invalid_delegation_level, :invalid_max_turns, :invalid_tools, :invalid_subagents, :duplicate_id`.
 
-**Definition map** (atom keys, defaults applied on save): `%{id (auto-slugified from name when absent), name (required), description (optional), prompt (required), agent_type (:read_write default | :read), delegation_level (:low default | :high), model_id (default model PROFILE id; nil = auto), max_turns (per-agent turn cap override), tools (whitelist of tool-name STRINGS; nil = all), subagents (default []; built-in type-name STRINGS)}`.
+**Definition map** (atom keys, defaults applied on save): `%{id (auto-slugified from name when absent), name (required), description (optional), prompt (required), agent_type (:read_write default | :read), delegation_level (:low default | :high), model_id (default model PROFILE id; nil = auto), max_turns (per-agent turn cap override), tools (whitelist of tool-name STRINGS — built-in tool names or user-defined custom tool names from `<config_dir>/tools/`, resolved by `EvoGit.CustomTools`; nil = built-in tools only, custom tools are opt-in), subagents (default []; built-in type-name STRINGS)}`.
 
 ### `EvoGit.CustomAgents.ModelSelector` (script evaluator)
 
@@ -40,7 +40,12 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 ## Constraints
 
 - **Both modules live in this directory** — the store is `../custom_agents.ex` (one level up, sibling of this dir); do not relocate it.
-- **`tools`/`subagents` entries are STRINGS in the TOML.** `save/1` rejects atom entries (`:invalid_tools` / `:invalid_subagents`). `EvoGit.Agents.Custom` tolerates atom entries defensively at runtime, but the store is the contract owner — do not weaken validation to accept atoms.
+- **`tools`/`subagents` entries are STRINGS in the TOML.** `save/1` rejects atom entries (`:invalid_tools` / `:invalid_subagents`) via `valid_string_list?/1`; custom tool names are ordinary non-empty strings, so they already pass this validation unchanged (the store does not resolve them — resolution is a runtime concern owned by `EvoGit.CustomTools`). `EvoGit.Agents.Custom` tolerates atom entries defensively at runtime, but the store is the contract owner — do not weaken validation to accept atoms.
 - **ModelSelector caching**: compiled script cached in `:persistent_term` keyed `{__MODULE__, :cache, path}` storing `{mtime, size, entry}` — one `File.stat` + one `:persistent_term.get` per spawn after first compile; external edits picked up when mtime/size change. Lazy compile (never at boot) so a broken script cannot block scheduler startup.
 - **try/rescue boundaries are justified**: the script body is USER-provided code — compile errors (`compile_script/1`) and runtime raises (`evaluate_script/2`) must surface as error tuples, never crash the scheduler GenServer that calls `select_model/1`.
 - Consumers: `EvoGit.AgentScheduler.Dispatch.register_agent/7` (calls `select_model/1` per spawn, BEFORE `resolve_model_for_agent/2`; skipped when `spec.opts[:model_id_locked]`) and the `:evo_dash` settings UI (CRUD + script editor + `status/0` surfacing). Tests: `test/evo_git/custom_agents_test.exs`, `test/evo_git/agents/custom_test.exs`.
+
+## See Also
+
+- User-defined custom tools (the `tools`-whitelist names loaded from `<config_dir>/tools/` — directory layout, `EvoGit.CustomTools.Tool` behaviour, built-in/duplicate collision rules, write classification and security model) → `../custom_tools/CONTEXT.md`.
+- Runtime resolution of `tools` entries into agent tool schemas → `../agents/` (`EvoGit.Agents.Custom.available_tools/0`).

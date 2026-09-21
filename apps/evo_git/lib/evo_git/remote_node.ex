@@ -1057,6 +1057,35 @@ defmodule EvoGit.RemoteNode do
   defnode(EvoGit.AgentScheduler.RemoteAPI.reload_custom_agents())
 
   @doc """
+  Returns the custom-tools loader status on the given node.
+
+  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.custom_tools_status/0`
+  directly. On a remote node, routes the call through `:erpc` via `call_remote/4`.
+  The `<config_dir>/tools/` directory lives per-node (next to `config.toml`), so
+  this inspects the node being viewed — not the local dashboard's directory.
+
+  Declared via `defnode` because `EvoGit.CustomTools.status/0` never raises and
+  never returns an `{:error, _}` tuple, so the remote branch is exactly the
+  identity-unwrap pattern. This matches the closest sibling RPC family (the
+  custom-agents group), whose tests assert RPC failures surface as
+  `{:error, reason}`. This wrapper therefore intentionally does NOT swallow RPC
+  failures into an empty `%{ok: [], errors: []}` map — a silent swallow would
+  hide a real RPC/backend problem.
+
+  Returns the status map verbatim on the local node or on remote success, or
+  `{:error, {kind, reason}}` on remote RPC failure (node down, timeout, remote
+  raise). The status map is `%{ok: [%{name, file, module, read_only?: boolean}],
+  errors: [%{file, reason}]}`.
+  """
+  @spec custom_tools_status(node()) ::
+          %{
+            ok: [%{name: String.t(), file: String.t(), module: module(), read_only?: boolean()}],
+            errors: [%{file: String.t(), reason: String.t()}]
+          }
+          | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.custom_tools_status())
+
+  @doc """
   Returns filesystem path suggestions for the given node.
 
   On the local node, calls `EvoGit.PathSuggestions.suggest/1` directly. On a

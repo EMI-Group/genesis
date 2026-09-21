@@ -36,6 +36,43 @@ defmodule EvoDash.NodeContextTest do
     id
   end
 
+  # Writes a MINIMAL valid custom-tool source module (a `.ex` file exporting
+  # `schema/0`, `read_only?/0` and `execute/2`) into the ISOLATED temp
+  # `<config_dir>/tools/` dir — mirrors the fixture shape used by evo_git's
+  # custom_tools_rpc_test.exs. Returns `{module, path}`.
+  defp custom_tool_fixture!(tool_name) do
+    module =
+      Module.concat([:"NodeContextCustomToolFixture#{System.unique_integer([:positive])}"])
+
+    dir = EvoGit.CustomTools.tools_dir()
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "#{tool_name}.ex")
+
+    File.write!(path, """
+    defmodule #{inspect(module)} do
+      @behaviour EvoGit.CustomTools.Tool
+
+      @impl true
+      def schema do
+        ReqLLM.tool(
+          name: #{inspect(tool_name)},
+          description: "node_context_test custom-tool fixture",
+          parameter_schema: %{"type" => "object", "properties" => %{}},
+          callback: fn _ -> {:ok, nil} end
+        )
+      end
+
+      @impl true
+      def read_only?, do: true
+
+      @impl true
+      def execute(_args, _ctx), do: "custom-tool-ran"
+    end
+    """)
+
+    {module, path}
+  end
+
   describe "task-cancellation RPC delegates (local node, real paths)" do
     test "cancel_task/2 returns {:error, :not_found} for a missing task" do
       assert EvoDash.NodeContext.cancel_task(node(), "missing-id") == {:error, :not_found}
@@ -231,6 +268,83 @@ defmodule EvoDash.NodeContextTest do
 
       assert {:ok, %{agents: [%{name: "Keeper"}]}} =
                EvoDash.NodeContext.list_custom_agents(node())
+    end
+  end
+
+  describe "custom_tools_status/1 (node-first custom-tools RPC)" do
+    # The local path reads the VIEWED node's own `<config_dir>/tools/`
+    # directory. Never touch the user's real config: isolate with the same XDG
+    # pattern as the custom-agents describe above (and evo_git's
+    # custom_tools_rpc_test.exs). A fresh temp config dir has no `tools/`
+    # subdirectory, so the hermetic status is the empty shape.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      # The loader caches in :persistent_term keyed by the tools dir (which
+      # follows XDG_CONFIG_HOME) — invalidate before and after for determinism.
+      EvoGit.CustomTools.reload()
+
+      on_exit(fn ->
+        EvoGit.CustomTools.reload()
+
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "returns the empty status map shape for a hermetic tools dir" do
+      status = EvoDash.NodeContext.custom_tools_status(node())
+
+      # Both documented atom keys, both lists; nothing configured → empty.
+      assert %{ok: ok, errors: errors} = status
+      assert is_list(ok) and is_list(errors)
+      assert status == %{ok: [], errors: []}
+    end
+
+    test "is a verbatim pass-through of EvoGit.RemoteNode.custom_tools_status/1" do
+      # There is NO local/remote branch inside NodeContext — the wrapper
+      # delegates verbatim (identity: no re-keying, no degradation).
+      assert EvoDash.NodeContext.custom_tools_status(node()) ==
+               EvoGit.RemoteNode.custom_tools_status(node())
+    end
+
+    test "surfaces a populated tools status verbatim (documented entry keys)" do
+      tool_name = "node_context_ct_#{System.unique_integer([:positive])}"
+      {module, path} = custom_tool_fixture!(tool_name)
+      EvoGit.CustomTools.reload()
+
+      status = EvoDash.NodeContext.custom_tools_status(node())
+
+      assert %{ok: [entry], errors: []} = status
+      assert entry == %{name: tool_name, file: path, module: module, read_only?: true}
+
+      # Verbatim: byte-identical to the core wrapper's map (no transformation).
+      assert status == EvoGit.RemoteNode.custom_tools_status(node())
+    end
+
+    test "on an unreachable remote node surfaces the RPC failure, never an empty map" do
+      # No distribution to that node in the test env, so :erpc.call fails fast
+      # (:noconnection against a non-distributed local node) and the `defnode`
+      # wrapper must pass the error tuple through — deliberately NOT swallowed
+      # into `%{ok: [], errors: []}`, which would hide a real backend/RPC
+      # problem.
+      result = EvoDash.NodeContext.custom_tools_status(:"nonexistent-node@nowhere")
+
+      assert match?({:error, _}, result)
+      refute result == %{ok: [], errors: []}
     end
   end
 

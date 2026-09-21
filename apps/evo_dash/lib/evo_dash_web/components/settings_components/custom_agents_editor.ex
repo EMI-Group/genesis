@@ -25,6 +25,10 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
   attr(:agents, :list, default: [])
   attr(:editing_agent_id, :any, default: nil)
   attr(:model_profiles, :list, default: [])
+  # Names of the custom tool modules currently loaded from
+  # `<config_dir>/tools/` (see `CustomToolsPanel.custom_tool_names/1`) — offered
+  # as an additional tools-whitelist chip group.
+  attr(:custom_tool_names, :list, default: [])
 
   def custom_agents_editor(assigns) do
     ~H"""
@@ -65,14 +69,22 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
         <%= for agent <- @agents do %>
           <% id = agent_id_string(agent) %>
           <%= if @editing_agent_id == id do %>
-            <.agent_edit_form agent={agent} model_profiles={@model_profiles} />
+            <.agent_edit_form
+              agent={agent}
+              model_profiles={@model_profiles}
+              custom_tool_names={@custom_tool_names}
+            />
           <% else %>
             <.agent_row agent={agent} />
           <% end %>
         <% end %>
 
         <%= if @editing_agent_id == "new" do %>
-          <.agent_edit_form agent={%{}} model_profiles={@model_profiles} />
+          <.agent_edit_form
+            agent={%{}}
+            model_profiles={@model_profiles}
+            custom_tool_names={@custom_tool_names}
+          />
         <% end %>
       </div>
     </.card_shell>
@@ -145,6 +157,7 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
   attr(:agent, :map, required: true)
   attr(:model_profiles, :list, default: [])
+  attr(:custom_tool_names, :list, default: [])
 
   defp agent_edit_form(assigns) do
     ~H"""
@@ -309,8 +322,10 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
           )}</span>
         </label>
         <% tools = agent_tools(@agent) %>
+        <% builtin_tools = tool_names() %>
+        <% custom_tools = custom_tool_chips(@custom_tool_names, builtin_tools) %>
         <div class="flex flex-wrap gap-2">
-          <%= for tool <- tool_names() do %>
+          <%= for tool <- builtin_tools do %>
             <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-base-300 bg-base-200/50 cursor-pointer text-xs font-mono hover:bg-base-200">
               <input
                 type="checkbox"
@@ -323,11 +338,52 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
             </label>
           <% end %>
         </div>
+
+        <%!-- Custom tool modules loaded from `<config_dir>/tools/` — an
+             ADDITIONAL chip group with the SAME `tools[]` checkbox markup, so
+             the save path and `save_custom_agent` parsing are unchanged.
+             Order follows the incoming `@custom_tool_names`; names that
+             collide with a built-in tool are dropped (the built-in chip
+             already covers them). --%>
+        <%= if custom_tools != [] do %>
+          <div class="mt-3">
+            <span class="text-xs font-semibold text-base-content/70"><%!-- zh_CN: 自定义工具 --%>{gettext(
+              "Custom tools"
+            )}</span>
+            <div class="flex flex-wrap gap-2 mt-1.5">
+              <%= for tool <- custom_tools do %>
+                <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-primary-standalone/40 bg-primary/5 cursor-pointer text-xs font-mono hover:bg-primary/10">
+                  <input
+                    type="checkbox"
+                    name="tools[]"
+                    value={tool}
+                    checked={tool in tools}
+                    class="checkbox checkbox-xs"
+                  />
+                  {tool}
+                </label>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
+
+        <%= if unknown_tools(tools, builtin_tools, custom_tools) != [] do %>
+          <% unknown = unknown_tools(tools, builtin_tools, custom_tools) %>
+          <p class="text-xs text-warning mt-2 flex items-start gap-1.5">
+            <.icon name="hero-exclamation-triangle" class="size-3.5 shrink-0 mt-0.5" />
+            <span>
+              <%!-- zh_CN: 未知工具名称（既不是内置工具，也没有加载同名自定义工具） --%>{gettext(
+                "Unknown tool names: %{names}. They are neither built-in tools nor loaded custom tools.",
+                names: Enum.join(unknown, ", ")
+              )}
+            </span>
+          </p>
+        <% end %>
+
         <p class="text-xs text-base-content/70 mt-1">
           {gettext("None selected = all tools")}
         </p>
       </div>
-
       <%!-- Subagents ── --%>
       <div class="form-control">
         <label class="label pb-1">
@@ -448,6 +504,40 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
     |> Enum.map(&EvoGit.Agent.tool_name/1)
     |> Enum.reject(&is_nil/1)
   end
+
+  # Loaded custom tool names minus the built-in ones (a built-in chip already
+  # covers a colliding name). Blank/non-binary entries are dropped and the
+  # incoming order is preserved.
+  defp custom_tool_chips(custom_names, builtin) do
+    builtin_set = MapSet.new(builtin)
+
+    custom_names
+    |> Enum.filter(&is_binary/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(builtin_set, &1))
+  end
+
+  # UI-only diagnostic: names selected on the agent that match NEITHER a
+  # built-in tool NOR a loaded custom tool. Never validated/blocked here — the
+  # `agents.toml` store stays lenient.
+  defp unknown_tools(tools, builtin, custom_tools) do
+    known = MapSet.new(builtin ++ custom_tools)
+
+    tools
+    |> Enum.map(&tool_name_string/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(known, &1))
+  end
+
+  defp tool_name_string(tool) when is_binary(tool), do: if(tool == "", do: nil, else: tool)
+
+  defp tool_name_string(tool) when is_atom(tool) and not is_nil(tool),
+    do: Atom.to_string(tool)
+
+  defp tool_name_string(tool) when is_integer(tool), do: Integer.to_string(tool)
+  defp tool_name_string(_tool), do: nil
 
   defp model_profile_id(profile) when is_map(profile) do
     case Map.get(profile, :id) || Map.get(profile, "id") do

@@ -51,6 +51,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
               |> assign(:editing_agent_id, nil)
               |> put_flash(:info, gettext("Custom agent saved."))
               |> SettingsLive.load_custom_agents_data()
+              |> SettingsLive.refresh_custom_tools()
 
             {:noreply, socket}
 
@@ -73,6 +74,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
           |> assign(:editing_agent_id, nil)
           |> put_flash(:info, gettext("Custom agent deleted."))
           |> SettingsLive.load_custom_agents_data()
+          |> SettingsLive.refresh_custom_tools()
 
         {:noreply, socket}
 
@@ -108,6 +110,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
           socket
           |> put_flash(:info, gettext("Model selection script saved."))
           |> SettingsLive.load_custom_agents_data()
+          |> SettingsLive.refresh_custom_tools()
 
         {:noreply, socket}
 
@@ -142,7 +145,9 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
         %{label: label, result: result}
       end
 
-    {:noreply, assign(socket, :script_test_results, results)}
+    socket = assign(socket, :script_test_results, results)
+
+    {:noreply, SettingsLive.refresh_custom_tools(socket)}
   end
 
   # ───────────────────────────────────────────────────────────────────────────

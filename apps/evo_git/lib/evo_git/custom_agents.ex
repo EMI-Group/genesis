@@ -258,11 +258,12 @@ defmodule EvoGit.CustomAgents do
   end
 
   @doc """
-  Invalidates the compile cache of `EvoGit.CustomAgents.ModelSelector`.
+  Invalidates the compile cache of `EvoGit.CustomAgents.ModelSelector` and the
+  loaded-custom-tools cache of `EvoGit.CustomTools`.
 
-  Always returns `:ok`. The invalidation call is guarded with
+  Always returns `:ok`. Each invalidation call is guarded with
   `Code.ensure_loaded?/1` + `function_exported?/3` so this module compiles
-  and runs even before `EvoGit.CustomAgents.ModelSelector` exists.
+  and runs even before the referenced module exists.
   """
   @spec reload() :: :ok
   def reload do
@@ -271,6 +272,11 @@ defmodule EvoGit.CustomAgents do
       # apply/3 keeps this warning-free while ModelSelector has not landed yet
       # (guarded by ensure_loaded? + function_exported? above).
       apply(EvoGit.CustomAgents.ModelSelector, :invalidate, [])
+    end
+
+    if Code.ensure_loaded?(EvoGit.CustomTools) and
+         function_exported?(EvoGit.CustomTools, :reload, 0) do
+      apply(EvoGit.CustomTools, :reload, [])
     end
 
     :ok
