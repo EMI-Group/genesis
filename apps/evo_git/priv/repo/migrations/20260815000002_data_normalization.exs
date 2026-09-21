@@ -23,16 +23,20 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
   Idempotent — every guard leaves already-normalized rows alone, so
   re-running (or a fresh DB) finds nothing to change.
 
-  `execute/1` takes exactly ONE statement; the Elixir-side rewrites read
-  rows via `repo().query/2` and update per-row.
+  Every statement runs via `repo().query!/3` in body order (see the
+  baseline migration's moduledoc for why `execute/1` string queuing is
+  unusable here); the Elixir-side rewrites read rows via `repo().query!/3`
+  and update per-row. Each statement is a single SQL statement.
+
+  Defined as `up/0` (no `down/0`): rolling back a data rewrite would be
+  lossy/meaningless, so it is deliberately irreversible.
   """
 
   use Ecto.Migration
 
   alias EvoGit.Store.Codec
 
-  @impl Ecto.Migration
-  def change do
+  def up do
     normalize_timestamps()
     canonicalize_results()
     canonicalize_opts()
@@ -53,12 +57,12 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
     # The GLOB pattern matches values already ending in exactly 3 fractional
     # digits + Z (the fixed format) → no-op after the first run;
     # julianday(...) IS NOT NULL skips unparseable rows.
-    execute("""
-      UPDATE #{table}
-      SET #{column} = strftime('%Y-%m-%dT%H:%M:%fZ', #{column})
-      WHERE #{column} IS NOT NULL
-        AND #{column} NOT GLOB '*.[0-9][0-9][0-9]Z'
-        AND julianday(#{column}) IS NOT NULL
+    sql("""
+    UPDATE #{table}
+    SET #{column} = strftime('%Y-%m-%dT%H:%M:%fZ', #{column})
+    WHERE #{column} IS NOT NULL
+      AND #{column} NOT GLOB '*.[0-9][0-9][0-9]Z'
+      AND julianday(#{column}) IS NOT NULL
     """)
   end
 
@@ -70,23 +74,23 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
   # no reachable benefit.
   defp canonicalize_results do
     # JSON literal null text → SQL NULL.
-    execute("""
-      UPDATE tasks
-      SET result = NULL
-      WHERE result IS NOT NULL
-        AND json_valid(result) = 1
-        AND json_type(result) = 'null'
+    sql("""
+    UPDATE tasks
+    SET result = NULL
+    WHERE result IS NOT NULL
+      AND json_valid(result) = 1
+      AND json_type(result) = 'null'
     """)
 
     # Every other untagged value — raw non-JSON strings AND untagged JSON
     # objects/arrays/scalars — wrapped verbatim (json_object/3 turns its
     # TEXT argument into a JSON string, so the raw content round-trips).
-    execute("""
-      UPDATE tasks
-      SET result = json_object('__result_tag__','string','value',result)
-      WHERE result IS NOT NULL
-        AND (json_valid(result) = 0
-             OR json_extract(result, '$.__result_tag__') IS NULL)
+    sql("""
+    UPDATE tasks
+    SET result = json_object('__result_tag__','string','value',result)
+    WHERE result IS NOT NULL
+      AND (json_valid(result) = 0
+           OR json_extract(result, '$.__result_tag__') IS NULL)
     """)
   end
 
@@ -94,20 +98,14 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
 
   defp canonicalize_opts do
     # SQL guard narrows the scan; rows that are already objects never match.
-    {:ok, %{rows: rows}} =
-      repo().query(
-        """
-        SELECT id, opts FROM tasks
-        WHERE opts IS NOT NULL
-          AND NOT (json_valid(opts) = 1 AND json_type(opts) = 'object')
-        """,
-        [],
-        log: false
-      )
+    rows =
+      query("""
+      SELECT id, opts FROM tasks
+      WHERE opts IS NOT NULL
+        AND NOT (json_valid(opts) = 1 AND json_type(opts) = 'object')
+      """)
 
-    for [id, opts] <- rows,
-        rewritten = rewrite_opts(opts),
-        do: update_column(id, "opts", rewritten)
+    for [id, opts] <- rows, rewritten = rewrite_opts(opts), do: update_task(id, "opts", rewritten)
 
     :ok
   end
@@ -134,24 +132,23 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
   defp backfill_branch_name do
     # From the canonical ok-result shape
     # {"__result_tag__":"ok","data":{"branch_name": "..."}}.
-    execute("""
-      UPDATE tasks
-      SET branch_name = json_extract(result, '$.data.branch_name')
-      WHERE branch_name IS NULL
-        AND json_valid(result) = 1
-        AND json_extract(result, '$.__result_tag__') = 'ok'
+    sql("""
+    UPDATE tasks
+    SET branch_name = json_extract(result, '$.data.branch_name')
+    WHERE branch_name IS NULL
+      AND json_valid(result) = 1
+      AND json_extract(result, '$.__result_tag__') = 'ok'
     """)
   end
 
   defp backfill_updated_at do
     now = Codec.encode_datetime(DateTime.utc_now())
 
-    {:ok, _} =
-      repo().query(
-        "UPDATE tasks SET updated_at = COALESCE(finished_at, started_at, ?1) WHERE updated_at IS NULL",
-        [now],
-        log: false
-      )
+    repo().query!(
+      "UPDATE tasks SET updated_at = COALESCE(finished_at, started_at, ?1) WHERE updated_at IS NULL",
+      [now],
+      log: false
+    )
 
     :ok
   end
@@ -161,16 +158,17 @@ defmodule EvoGit.Repo.Migrations.DataNormalization do
   defp drop_quarantine_tables do
     # DETS-era leftovers — no current code path creates these tables; they
     # only exist in very old databases.
-    execute("DROP TABLE IF EXISTS tasks_quarantine")
-    execute("DROP TABLE IF EXISTS projects_quarantine")
+    sql("DROP TABLE IF EXISTS tasks_quarantine")
+    sql("DROP TABLE IF EXISTS projects_quarantine")
   end
 
   ## Shared
 
-  defp update_column(id, column, value) do
-    {:ok, _} =
-      repo().query("UPDATE tasks SET #{column} = ?1 WHERE id = ?2", [value, id], log: false)
+  defp sql(statement), do: repo().query!(statement, [], log: false)
 
-    :ok
+  defp query(statement), do: repo().query!(statement, [], log: false).rows
+
+  defp update_task(id, column, value) do
+    repo().query!("UPDATE tasks SET #{column} = ?1 WHERE id = ?2", [value, id], log: false)
   end
 end
