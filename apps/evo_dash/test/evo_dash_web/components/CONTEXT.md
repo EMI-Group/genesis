@@ -15,6 +15,7 @@ ExUnit suites for the function components in `./lib/evo_dash_web/components/` (o
 - `setting_card_test.exs` → `EvoDashWeb.SettingCardTest`
 - `model_profiles_editor_test.exs` → `EvoDashWeb.ModelProfilesEditorTest` — render-only peak/off-peak form coverage: peak_concurrency (incl. 0), peak_hours rows, timezone, draft-wins pre-fill, remove-row buttons, PLUS the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading, and a regression guard that start/end/remove-row markup coexists)
 - `category_metadata_test.exs` → `EvoDashWeb.CategoryMetadataTest` — pure units for `SettingsComponents.CategoryMetadata` (`category_display_name/1`/`category_icon/1`/`category_description/1`/`sort_categories/1`, pinned on the `:data` category)
+- `custom_tools_panel_test.exs` → `EvoDashWeb.Components.CustomToolsPanelTest` — `CustomToolsPanel.custom_tools_panel/1` render contract (ok/error entries, badges, Refresh disabled state, mutual-exclusion empty state vs error banner, totality on odd statuses) + pure `custom_tool_names/1` units
 - `layouts_test.exs` → `EvoDashWeb.LayoutsTest` — render-level coverage of `Layouts.app/1`'s sidebar "Active Tasks" grouping (the private `group_tasks_by_project/2` exercised through the public function component)
 
 ## Coverage Boundary — review-page components
