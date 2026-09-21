@@ -169,7 +169,7 @@ It runs standalone (never starts the `:evo_git` application) so it also works wh
 
 **Contract:** disk-full-class write errors — `SQLITE_FULL` (13), `SQLITE_IOERR` (10), `SQLITE_READONLY` (8) — are detected at the write boundary and converted to `{:error, :disk_full}` instead of crashing the Store GenServer. Reads keep working; writes can be retried (a full disk is transient, unlike a corrupt DB). Every other write error keeps the same failure shape: an identical `MatchError` (via `raise MatchError, term: error` to avoid a statically-impossible pattern warning) crashes the GenServer and the supervisor restarts it.
 
-### xqlite error surfacing (deps/xqlite v0.10)
+### xqlite error surfacing (deps/xqlite v0.12.2)
 
 - `XqliteNIF.query/3` and `XqliteNIF.execute/3` RETURN tuples, never raise: Rust `Result<_, XqliteError>` encodes as `{:ok, _} | {:error, reason}` (`deps/xqlite/native/xqlitenif/src/nif.rs:99-115`). `query` → `{:ok, %{columns, rows, num_rows}}`; `execute` → `{:ok, affected_count}`.
 - Disk-full-class shapes (`error.rs` `classify_sqlite_error` + `Encoder` impl):
