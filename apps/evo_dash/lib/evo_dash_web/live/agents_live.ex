@@ -25,6 +25,7 @@ defmodule EvoDashWeb.AgentsLive do
   use EvoDashWeb, :live_view
 
   alias EvoDashWeb.AgentsLive.{
+    CommitGraph,
     HistoryGate,
     LoadData,
     OptimisticMessages,
@@ -33,8 +34,13 @@ defmodule EvoDashWeb.AgentsLive do
     ToolCallDisplay
   }
 
-  alias EvoGit.Platform
+  # Commit-graph RPC: max commits fetched per repo range (see spawn_commit_graph_fetch/2).
+  @commit_graph_limit 100
 
+  # Minimum interval between commit-graph fetches. Refreshes are already coalesced
+  # by the 300ms agent-event flush; this further throttles the (heavier) per-repo
+  # git RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
+  @commit_graph_min_interval_ms 1000
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -99,7 +105,21 @@ defmodule EvoDashWeb.AgentsLive do
         # a once-per-window scheduling flag, and a coalesced refresh trigger.
         pending_agent_events: PendingEvents.new(),
         agent_flush_scheduled: false,
-        pending_agents_refresh: false
+        pending_agents_refresh: false,
+        # Left-panel view switcher + TEMPORAL (git commit history) view state.
+        # left_view survives node switches (a user preference); the commit-graph
+        # data does not — agent ids/commits are per-node (reset in handle_params).
+        left_view: :tree,
+        commit_graph: [],
+        commit_graph_raw: %{},
+        commit_graph_loaded: false,
+        commit_graph_loading: false,
+        commit_graph_error: nil,
+        # Monotonic seq stale-guarding async commit-graph fetches — NEVER reset,
+        # mirroring :refresh_seq.
+        commit_graph_seq: 0,
+        commit_graph_fetched_at: nil,
+        commit_graph_tick_scheduled: false
       )
 
     {:ok, socket}
@@ -146,7 +166,16 @@ defmodule EvoDashWeb.AgentsLive do
           # a no-op.
           pending_agent_events: PendingEvents.new(),
           agent_flush_scheduled: false,
-          pending_agents_refresh: false
+          pending_agents_refresh: false,
+          # Commit-graph data is per-node: reset it on a node switch. @left_view
+          # (the user's view preference) survives; @commit_graph_seq is monotonic.
+          commit_graph: [],
+          commit_graph_raw: %{},
+          commit_graph_loaded: false,
+          commit_graph_loading: false,
+          commit_graph_error: nil,
+          commit_graph_fetched_at: nil,
+          commit_graph_tick_scheduled: false
         )
       else
         assign(socket, :previous_node, current_node)
@@ -334,6 +363,10 @@ defmodule EvoDashWeb.AgentsLive do
         true -> socket
       end
 
+    # A burst of agent commits advances the lanes (throttled/coalesced); no-op
+    # unless the commit-history view is active.
+    socket = maybe_load_commit_graph(socket, [])
+
     {:noreply, socket}
   end
 
@@ -395,6 +428,48 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
+  # Async commit-graph result (spawned by spawn_commit_graph_fetch/2). Applies the
+  # fresh graph when it is the newest fetch for the node being viewed. An error
+  # keeps the last good graph (the view never wedges on a spinner).
+  def handle_info({:commit_graph_loaded, node, seq, result}, socket) do
+    if node != socket.assigns.current_node or
+         seq < Map.get(socket.assigns, :commit_graph_seq, 0) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, raw_by_repo} ->
+          graph = CommitGraph.build(raw_by_repo, socket.assigns.agents)
+
+          {:noreply,
+           assign(socket,
+             commit_graph: graph,
+             commit_graph_raw: raw_by_repo,
+             commit_graph_loaded: true,
+             commit_graph_loading: false,
+             commit_graph_error: nil
+           )}
+
+        {:error, reason} ->
+          {:noreply,
+           assign(socket,
+             commit_graph_loading: false,
+             commit_graph_error: reason
+           )}
+      end
+    end
+  end
+
+  @impl true
+  # One-shot retry armed by schedule_commit_graph_tick/1 when a refresh request was
+  # throttled: re-attempt with the throttle bypassed so a lane tip that advanced
+  # inside the throttle window is still reflected. Not periodic — it is armed ONLY
+  # by a throttled request.
+  def handle_info(:commit_graph_tick, socket) do
+    socket = assign(socket, :commit_graph_tick_scheduled, false)
+    {:noreply, maybe_load_commit_graph(socket, force: true)}
+  end
+
+  @impl true
   def handle_event("select_agent", %{"id" => id}, socket) do
     agent_id = String.to_integer(id)
 
@@ -425,6 +500,19 @@ defmodule EvoDashWeb.AgentsLive do
 
     {:noreply, socket}
   end
+
+  @impl true
+  # Left-panel view switcher (agent tree / commit history). Only the two literal
+  # values are accepted; anything else is ignored (whitelist, no atom conversion).
+  def handle_event("switch_left_view", %{"view" => "tree"}, socket) do
+    {:noreply, assign(socket, :left_view, :tree)}
+  end
+
+  def handle_event("switch_left_view", %{"view" => "commits"}, socket) do
+    {:noreply, socket |> assign(:left_view, :commits) |> maybe_load_commit_graph(force: true)}
+  end
+
+  def handle_event("switch_left_view", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("close_details", _params, socket) do
@@ -656,6 +744,137 @@ defmodule EvoDashWeb.AgentsLive do
     socket
   end
 
+  # Fetches (or refreshes) the commit graph, but ONLY while the commit-history
+  # view is active — the tree view must never trigger a git RPC. Mirrors the
+  # other async loads: the task runs in an EvoDash.TaskSupervisor child (never in
+  # the LiveView process), the runner seam is resolved AT SPAWN TIME (inside the
+  # task), and the result is stale-guarded on a monotonic seq + the viewed node.
+  #
+  # First keeps the rendered lane set in sync with the CURRENT agent list (a
+  # newly-spawned child lane must appear immediately), then refetches — throttled
+  # to @commit_graph_min_interval_ms; a throttled request arms a one-shot tick.
+  # `force: true` bypasses the throttle (first activation, tick fire).
+  defp maybe_load_commit_graph(socket, opts) do
+    if socket.assigns.left_view != :commits do
+      socket
+    else
+      socket = rebuild_commit_graph(socket)
+      groups = commit_graph_groups(socket.assigns.agents)
+      force? = Keyword.get(opts, :force, false) or not socket.assigns.commit_graph_loaded
+
+      cond do
+        groups == [] ->
+          assign(socket, commit_graph: [], commit_graph_loaded: true, commit_graph_loading: false)
+
+        force? or not commit_graph_throttled?(socket) ->
+          spawn_commit_graph_fetch(socket, groups)
+
+        true ->
+          schedule_commit_graph_tick(socket)
+      end
+    end
+  end
+
+  # Rebuilds @commit_graph from the last fetched raw data + the current agents, so
+  # the lane set (and each lane's chip) tracks agents without a git RPC. A no-op
+  # before the first successful fetch.
+  defp rebuild_commit_graph(socket) do
+    if socket.assigns.commit_graph_loaded do
+      assign(
+        socket,
+        :commit_graph,
+        CommitGraph.build(socket.assigns.commit_graph_raw, socket.assigns.agents)
+      )
+    else
+      socket
+    end
+  end
+
+  # Eligible agents' commit ranges grouped by repo_root for the commit-graph RPC:
+  # {base_commit, current_commit} per agent, de-duplicated. Agents lacking a
+  # repo_root or either commit are skipped. Sorted for deterministic task input.
+  defp commit_graph_groups(agents) do
+    agents
+    |> Enum.filter(fn a ->
+      is_binary(a.repo_root) and is_binary(a.base_commit) and is_binary(a.current_commit)
+    end)
+    |> Enum.group_by(& &1.repo_root, fn a -> {a.base_commit, a.current_commit} end)
+    |> Enum.map(fn {repo_root, ranges} -> {repo_root, Enum.uniq(ranges)} end)
+    |> Enum.sort_by(fn {repo_root, _ranges} -> repo_root end)
+  end
+
+  # True when the last fetch is inside the minimum interval.
+  defp commit_graph_throttled?(socket) do
+    case socket.assigns.commit_graph_fetched_at do
+      nil -> false
+      at -> System.monotonic_time(:millisecond) - at < @commit_graph_min_interval_ms
+    end
+  end
+
+  # Arms ONE one-shot tick (never a repeating timer) so a throttled refresh is
+  # eventually served. The boolean assign guarantees a single timer per window.
+  defp schedule_commit_graph_tick(socket) do
+    if socket.assigns.commit_graph_tick_scheduled do
+      socket
+    else
+      Process.send_after(self(), :commit_graph_tick, @commit_graph_min_interval_ms)
+      assign(socket, :commit_graph_tick_scheduled, true)
+    end
+  end
+
+  # Spawns the async commit-graph fetch: ONE runner call per distinct repo_root,
+  # passing all that repo's ranges + the limit. The seam
+  # :agents_commit_graph_runner (default &EvoDash.NodeContext.list_commit_graph/4)
+  # is resolved AT SPAWN TIME so tests can stub it.
+  defp spawn_commit_graph_fetch(socket, groups) do
+    parent = self()
+    node = socket.assigns.current_node
+    seq = Map.get(socket.assigns, :commit_graph_seq, 0) + 1
+
+    socket =
+      assign(socket,
+        commit_graph_seq: seq,
+        commit_graph_loading: true,
+        commit_graph_fetched_at: System.monotonic_time(:millisecond),
+        commit_graph_tick_scheduled: false
+      )
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      # Node-boundary rescue: the commit-graph RPC targets a possibly-dead remote
+      # daemon (or a node that disconnected mid-flight). (1) Do we expect this
+      # error? Yes — the remote daemon can die or the SSH tunnel drop between
+      # fetches. (2) Is try/rescue the cleanest approach? Yes — the alternative is
+      # the commit view wedging on a spinner forever; the seq+node stale-guard
+      # drops late results and an error merely keeps the last good graph.
+      result =
+        try do
+          runner =
+            Application.get_env(
+              :evo_dash,
+              :agents_commit_graph_runner,
+              &EvoDash.NodeContext.list_commit_graph/4
+            )
+
+          Enum.reduce_while(groups, {:ok, %{}}, fn {repo_root, ranges}, {:ok, acc} ->
+            case runner.(node, repo_root, ranges, limit: @commit_graph_limit) do
+              {:ok, %{commits: commits} = payload} when is_list(commits) ->
+                refs = Map.get(payload, :refs, %{})
+                {:cont, {:ok, Map.put(acc, repo_root, %{commits: commits, refs: refs})}}
+
+              other ->
+                {:halt, {:error, {:commit_graph_repo_failed, repo_root, other}}}
+            end
+          end)
+        rescue
+          _ -> {:error, :commit_graph_fetch_failed}
+        end
+
+      send(parent, {:commit_graph_loaded, node, seq, result})
+    end)
+
+    socket
+  end
+
   # Shared application of a fresh agent list (from the async load or a refresh
   # task): recomputes all the tracking assigns, carries over already-fetched
   # histories when the history gate says they are still current, records the
@@ -737,6 +956,7 @@ defmodule EvoDashWeb.AgentsLive do
       history_gate: history_gate
     )
     |> maybe_fetch_selected_history()
+    |> maybe_load_commit_graph([])
   end
 
   # Triggers an async history fetch for the selected agent when the history
@@ -1239,9 +1459,10 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.sort_by(fn {name, _} -> name end)
   end
 
-  defp grouping_key(agent) do
-    agent.repo_root || agent.repo_id
-  end
+  # Repo grouping / display naming lives in the pure CommitGraph module (shared
+  # with the temporal commit-graph view); keep these delegates so the tree path is
+  # unchanged.
+  defp grouping_key(agent), do: CommitGraph.grouping_key(agent)
 
   defp rename_root(nodes, new_name) do
     Enum.map(nodes, fn
@@ -1250,20 +1471,7 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
-  defp repo_display_name("primary"), do: gettext("Primary Repo")
-  defp repo_display_name(:primary), do: gettext("Primary Repo")
-  defp repo_display_name(nil), do: gettext("Primary Repo")
-
-  # An absolute path on any platform (Unix /foo or Windows C:\foo) — use the basename.
-  defp repo_display_name(key) when is_binary(key) do
-    if Platform.absolute_path?(key) do
-      Path.basename(key)
-    else
-      gettext("Repo: %{repo_id}", repo_id: key)
-    end
-  end
-
-  defp repo_display_name(_), do: gettext("Unknown Repo")
+  defp repo_display_name(key), do: CommitGraph.repo_display_name(key)
 
   defp commit_bg_class(agent) do
     if agent.current_commit != agent.base_commit do
