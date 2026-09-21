@@ -23,7 +23,6 @@ strings). The stateful Store/TaskRegistry suites live one level up (`../store_te
 - `./errors_test.exs` → `EvoGit.Store.Errors.disk_full_error?/1` (all xqlite error shapes + non-error inputs).
 - `./repo_test.exs` → Ecto foundations: migrations applied (exactly versions 20260815000001 + 20260815000002), exact 20-column `tasks` shape, 3-column `projects` shape, 6 named indexes + PK autoindexes, `Boot.run_migrations/1` idempotency, durability across `stop`/`start_dynamic`, two-instance coexistence, connection PRAGMAs (`wal`/`1`/`30000`).
 - `./repo_scope_test.exs` → `EvoGit.Store.RepoScope.with_repo/2` (happy path, restore-on-raise/throw/exit, nesting, disjoint data across instances).
-- `../../support/store_boot_lock.ex` → `EvoGit.TestSupport.StoreBootLock` — REQUIRED for every module that calls `Boot.start_dynamic/1`/`run_migrations/1` (see Constraints).
 
 ## API Surface
 
@@ -37,19 +36,23 @@ strings). The stateful Store/TaskRegistry suites live one level up (`../store_te
 ## Constraints
 
 - **All four test modules are `async: true` and MUST stay that way.** They touch no
-  shared BEAM-global state other than the store-boot lock below (which exists precisely
-  to make that sharing safe). Verified by audit — no `Application.put_env`/`delete_env`,
+  shared BEAM-global state other than the production migration lock inside
+  `EvoGit.Store.Boot` (which exists precisely to make concurrent boots safe).
+  Verified by audit — no `Application.put_env`/`delete_env`,
   no `System.put_env`/`delete_env`, no `:persistent_term`, no `:ets`, no GenServer/app-singleton
   access, no real Finch, no sleeps. Do NOT flip them to `async: false` (nothing forces serialization).
-- **Any module that calls `EvoGit.Store.Boot.start_dynamic/1` or `Boot.run_migrations/1`
-  MUST wrap those calls in `EvoGit.TestSupport.StoreBootLock.with_boot_lock/1`.**
+- **Concurrent-boot migration compile race is fixed in PRODUCTION**: both clauses of
+  `EvoGit.Store.Boot.run_migrations/1` wrap `Ecto.Migrator.run/4` in a cluster-safe
+  `:global.trans({{:evo_git_store_migrations, self()}, fun})` lock.
   `Ecto.Migrator.load_migration!/1` recompiles each `.exs` migration via
   `Code.compile_file/1` on EVERY run with pending versions (even when the module is
   already loaded), and concurrent compiles of the same module race with a CompileError
-  ("cannot compile module ... because it is currently being defined"). Within one async
-  module ExUnit is sequential, but two async modules booting dynamic repos interleave.
-  The lock is `:global.set_lock({StoreBootLock, self()})` — the `self()` LockRequesterId
-  is what makes it exclude; a CONSTANT requester id is silently re-entrant (no exclusion).
+  ("cannot compile module ... because it is currently being defined"). The lock id is a
+  single GLOBAL constant (NOT per repo path/instance) because the protected resource is
+  the shared set of migration SOURCE modules; the `self()` LockRequesterId is what makes
+  it exclude — a CONSTANT requester id is silently re-entrant (no exclusion). Tests call
+  `Boot.start_dynamic/1`/`Boot.run_migrations/1` directly (the REAL production path) —
+  no test-side lock wrapper is needed or allowed.
 - Assertions are intentionally **exact** (full SQL strings / param lists where the output is
   deterministic) — keep them; do not weaken to `contains?`/smoke checks.
 - No mocking libraries: inputs are plain literals and `%EvoGit.Agent.Usage{}`/datetime structs.
@@ -73,9 +76,9 @@ strings). The stateful Store/TaskRegistry suites live one level up (`../store_te
 - **Pinned quirk worth knowing**: `build_where/1` does NOT stringify atom filters — `build_where(status: :pending)`
   asserts `params == [:pending]` (the raw atom rides into the bind params); only `encode_column_value/2`
   routes through `Codec.encode_atom/1`.
-- **Surfaced infra gotcha for future units**: two concurrent `Boot.start_dynamic/1` calls on one
-  BEAM race at the migration-compile step (unlocked `Code.compile_file` in `Ecto.Migrator`) —
-  a PRODUCTION-grade concern if per-store instances ever boot concurrently, not just a test
-  concern; the `StoreBootLock` pattern documents it.
+- **Concurrent `Boot.start_dynamic/1` is production-safe**: the migration run inside
+  `EvoGit.Store.Boot` is serialized by the global `:global` lock (unlocked
+  `Code.compile_file` in `Ecto.Migrator` would otherwise race) — any consumer may boot
+  per-store dynamic instances concurrently (tests included) without a wrapper.
 - The parent `../CONTEXT.md` (and the one above it at `../..`) documents the stateful Store/
   TaskRegistry suites and their async-safety / shared-test-DB cautions — those do NOT apply here.

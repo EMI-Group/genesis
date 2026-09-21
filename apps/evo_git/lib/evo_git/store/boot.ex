@@ -23,9 +23,12 @@ defmodule EvoGit.Store.Boot do
       # ... repo usage ...
       EvoGit.Store.Boot.stop(pid)
 
-  No GenServer, no global state: `run_migrations/1` sets the caller's
-  dynamic repo (restoring the previous binding afterwards), so migrations
-  run against the intended instance even when several coexist.
+  No GenServer, no persistent global state: `run_migrations/1` sets the
+  caller's dynamic repo (restoring the previous binding afterwards), so
+  migrations run against the intended instance even when several coexist.
+  The migration run itself is serialized by a transient `:global` lock (see
+  `run_migrations/1`) — concurrent boots of ANY instances never race on
+  migration module compilation.
   """
 
   @repo EvoGit.Repo
@@ -49,10 +52,15 @@ defmodule EvoGit.Store.Boot do
   def run_migrations(pid) when is_pid(pid) do
     ensure_database_dir!(pid)
 
+    # The pdict save/restore stays OUTSIDE the global lock: the dynamic-repo
+    # binding is PER-PROCESS state, so only this caller's own dictionary is
+    # mutated and there is nothing to serialize against other booting
+    # processes. The lock below is exclusively about migration MODULE
+    # compilation (see `migrate_synchronized!/0`).
     previous = @repo.put_dynamic_repo(pid)
 
     try do
-      Ecto.Migrator.run(@repo, :up, all: true)
+      migrate_synchronized!()
     after
       @repo.put_dynamic_repo(previous)
     end
@@ -60,7 +68,7 @@ defmodule EvoGit.Store.Boot do
 
   def run_migrations(opts) when is_list(opts) do
     ensure_database_dir!(@repo.get_dynamic_repo())
-    Ecto.Migrator.run(@repo, :up, all: true)
+    migrate_synchronized!()
   end
 
   @doc """
@@ -96,6 +104,36 @@ defmodule EvoGit.Store.Boot do
   end
 
   ## Shared
+
+  # `Ecto.Migrator.run/4` loads each `.exs` migration with
+  # `Code.compile_file/1` (`Ecto.Migrator.load_migration!/1`) on EVERY run
+  # with pending versions — even when the module is already loaded in the
+  # BEAM — and `Code.compile_file/1` is not concurrency-safe for the same
+  # module. Two concurrent boots racing on the in-progress module definition
+  # blow up with a CompileError ("cannot compile module
+  # EvoGit.Repo.Migrations.BaselineAdoption"). Boot is not exclusive in
+  # production: per-store dynamic instances can start in parallel (e.g. a
+  # dashboard restarting stores alongside another booting consumer), so the
+  # migration RUN — not just the compile — must be serialized.
+  #
+  # The lock is `:global` (cluster-safe across the whole BEAM — including a
+  # distributed dashboard/daemon pair once connected) and its id is a single
+  # GLOBAL constant, NOT derived from the repo path or instance: the shared
+  # resource being protected is the set of migration SOURCE modules, which
+  # every database path compiles from the same `priv/repo/migrations` files.
+  # A per-path lock would still let two different databases race on
+  # redefining the same migration module. `:global.trans/2` (lock id, fun)
+  # blocks until the lock is free, runs the fun, and releases even on raise;
+  # the `self()` LockRequesterId keeps each caller a DISTINCT owner so the
+  # lock actually excludes (a constant requester id would be treated as
+  # re-entry by the same owner and re-grant). Only the boot window is
+  # serialized — already migrated (current) databases never reach
+  # `load_migration!/1`, so steady state pays no lock contention.
+  defp migrate_synchronized! do
+    :global.trans({:evo_git_store_migrations, self()}, fn ->
+      Ecto.Migrator.run(@repo, :up, all: true)
+    end)
+  end
 
   # The adapter's SQLite driver creates the parent dir itself, but only for
   # the primary database file of ITS connection — keep the guarantee
