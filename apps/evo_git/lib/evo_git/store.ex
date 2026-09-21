@@ -429,10 +429,19 @@ defmodule EvoGit.Store do
 
     case Xqlite.open(data_dir, journal_mode: :wal, synchronous: :normal, cache_size: -2000) do
       {:ok, conn} ->
-        # Fresh DBs get the full schema from create_tables/1. Schema upgrades for
-        # existing DBs now happen via the manual `mix migrate.store` task — no
-        # auto-migration (migrate_schema/normalize_timestamps) at startup.
+        # Bring an EXISTING database up to the current schema/data shape before
+        # any read or write. Every step is idempotent and a no-op on a fresh DB
+        # or an already-migrated DB.
+        #
+        # Order matters: `migrate_schema/1` MUST run before `create_tables/1`,
+        # whose `CREATE INDEX ... ON tasks(updated_at)` fails on a legacy table
+        # that predates the `updated_at` column. `migrate_schema/1` is a no-op on
+        # a fresh DB where the `tasks` table does not exist yet.
+        Schema.migrate_schema(conn)
         Schema.create_tables(conn)
+        Schema.normalize_timestamps(conn)
+        Schema.canonicalize_results(conn)
+        Schema.canonicalize_opts(conn)
 
         # Best-effort: checkpoint any leftover WAL from a previous ungraceful shutdown
         XqliteNIF.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
