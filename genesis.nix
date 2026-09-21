@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-hUD8swPglaRLqdu3AeNebnuDv7GqlpE/4MFSigyYXwg=";
+    hash = "sha256-q3bDwkmlsmkTgwR8LuSeIXS8ccHLl04YUlBUXH83jt0=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -91,17 +91,17 @@ let
     # Application.compile_env(:mdex_native, :syntax_highlighter, nil), so the
     # base mdex variant above is the only one ever used. Do not reintroduce it.
 
-    # ── xqlite 0.12.1 ───────────────────────────────────────────═
+    # ── xqlite 0.12.2 ───────────────────────────────────────────═
     # Note: this package lives under dimitarvp/xqlite, not leandrocp/xqlite.
     # The library prefix is "libxqlitenif" (no underscore between xqlite and nif).
     {
-      name = "libxqlitenif-v0.12.1-nif-2.17-${rustTarget}.so.tar.gz";
-      version = "0.12.1";
+      name = "libxqlitenif-v0.12.2-nif-2.17-${rustTarget}.so.tar.gz";
+      version = "0.12.2";
       file = fetchurl {
         url =
-          "https://github.com/dimitarvp/xqlite/releases/download/v0.12.1/"
-          + "libxqlitenif-v0.12.1-nif-2.17-${rustTarget}.so.tar.gz";
-        hash = "sha256-TZV7otELHAYPjk5rfRnihgzeWv1L+RryJ5wcG97DMrE=";
+          "https://github.com/dimitarvp/xqlite/releases/download/v0.12.2/"
+          + "libxqlitenif-v0.12.2-nif-2.17-${rustTarget}.so.tar.gz";
+        hash = "sha256-Aa/gE2ekBGq3ysMLxK47rT9yAmjLgqqPDZio5d0YSlw=";
       };
     }
   ];
