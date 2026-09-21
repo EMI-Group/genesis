@@ -2,7 +2,9 @@
 
 ## Intent
 
-Release-time Mix tasks for the `:evo_git` app: `mix changelog` (AI-generated Keep-a-Changelog section from git history) and `mix bump.version` (bump the single-source-of-truth `VERSION` and sync it to the desktop manifests + README badge). Both are interactive (shell `yes?` prompts) and run git/file operations. Both expose a call-time-resolved testability seam so their suites can run under `async: true`.
+Mix tasks for the `:evo_git` app.
+Release-time: `mix changelog` (AI-generated Keep-a-Changelog section from git history) and `mix bump.version` (bump the single-source-of-truth `VERSION` and sync it to the desktop manifests + README badge) — both interactive (shell `yes?` prompts), run git/file operations, and expose a call-time-resolved testability seam so their suites can run under `async: true`.
+Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
 
 ## API Surface
 
