@@ -40,7 +40,10 @@ defmodule EvoGit.MixProject do
       {:jason, "~> 1.2"},
       # Ecto — schema-less config validation/casting/defaults (no ecto_sql,
       # no database adapter; plain :ecto only)
-      {:ecto, "~> 3.14"}
+      {:ecto, "~> 3.14"},
+      # Ecto 3.x adapter for xqlite (GitHub-only, pre-0.1; pins xqlite
+      # ~> 0.12; brings ecto_sql + db_connection transitively)
+      {:xqlite_ecto3, github: "dimitarvp/xqlite_ecto3"}
     ]
   end
 
