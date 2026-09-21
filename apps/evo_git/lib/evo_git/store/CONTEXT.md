@@ -126,7 +126,7 @@ No quarantine/integrity subsystem — no `tasks_quarantine`/`projects_quarantine
 ```
 
 - Encode: `Map.new/2` over the keyword list (atom keys → strings), essential-keys fallback + nil-on-failure.
-- Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; run the `mix migrate.store` opts-object rewrite before reading old DBs.
+- Decode: `decode_opts/1` rebuilds a keyword list, atomizing known keys via `decode_opt_key/1` (`@known_opt_keys`). Non-object JSON (legacy pair-array rows, scalars, JSON null) and invalid JSON raise `ArgumentError` — no legacy decode path; `Store.init/1` rewrites legacy pair-array rows via `Schema.canonicalize_opts/1` at boot, before any read.
 - `Queries.build_where/1` `:search` filter (`opts/result LIKE ?N ESCAPE '\'`) matches over the serialized JSON text — `"path"`/`"mode"` key names and string values alike; the `result` column's raw JSON carries the final agent report under its `"result"` data key, matching with the same semantics.
 
 ## Opts / Result decode key whitelists (atomization contract)
