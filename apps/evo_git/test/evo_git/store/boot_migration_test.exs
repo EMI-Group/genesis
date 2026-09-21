@@ -22,21 +22,17 @@ defmodule EvoGit.Store.BootMigrationTest do
       final `PRAGMA table_info(tasks)` matches the fresh-DB shape exactly
       (names in canonical ORDER, types, notnull/pk flags), and the seeded data
       survives
-    * **DEVIATION from the old raw-SQL pipeline (pinned actual behavior)**: the
-      real 19-column v0.9.0–v0.12.5 shape — which already has `updated_at`
-      (19th) and lacks only `error` — is NOT adopted. The baseline migration
-      appends `error` AFTER the existing `updated_at`, so the physical order
-      becomes `… branch_name, updated_at, error`, its strict order invariant
-      fails, and the migration RAISES `Ecto.MigrationError`. The migration
-      transaction then rolls back completely: the ALTER and the `projects`
-      CREATE are undone (the table keeps its original 19 columns), the seeded
-      row is untouched, and `schema_migrations` is left present but EMPTY. The
-      same raise hits the shape an OLD-pipeline repair of that DB produced
-      (`… branch_name, updated_at, error`), i.e. the exact v0.12.5 → v0.13.0
-      upgrade path the old `Schema.migrate_schema/1` repaired in place —
-      carrying the old pipeline's regression coverage forward here means
-      pinning that the Ecto boot path (currently) REJECTS that shape loudly
-      instead of adopting it.
+    * the real 19-column v0.9.0–v0.12.5 shape — which already has `updated_at`
+      (19th) and lacks only `error` — IS adopted: the baseline migration
+      appends `error` AFTER the existing `updated_at` (SQLite ALTERs can only
+      append), and its post-invariant accepts that ADOPTED tail order
+      (`…, branch_name, updated_at, error`) while still asserting all 20
+      columns with their types/nullability/pk. Same for the shape an
+      OLD-pipeline repair of that DB produced (`…, branch_name, updated_at,
+      error`) — the exact v0.12.5 → v0.13.0 upgrade path the old
+      `Schema.migrate_schema/1` repaired in place, carried forward as a
+      REQUIRED adoption here: data preserved, `error` added NULLABLE at the
+      tail, schema_migrations stamped, indexes created.
 
   ## Scope
 
@@ -49,15 +45,11 @@ defmodule EvoGit.Store.BootMigrationTest do
   appended `updated_at` starts NULL and the data migration backfills it from
   `finished_at` in the same boot — that value is pinned (`== finished_at`).
 
-  Same infra contract as `repo_test.exs`: every `Boot.start_dynamic/1` runs
-  inside `EvoGit.TestSupport.StoreBootLock.with_boot_lock/1` (concurrent
-  migration compiles race), the repo is UNLINKED from the test process and
-  stopped through an alive-guard `on_exit` (`Boot.stop/1` on a dead pid
-  raises). For the RAISE scenarios the dynamic repo is started from a short
-  launcher process (`start_dynamic/1` returns `{:ok, pid}` BEFORE migrations
-  run, so on a migration failure the repo leaks, linked to its caller);
-  killing the launcher tears the leaked instance down with it — a normal exit
-  would NOT, links only trap abnormal exits.
+  Same infra contract as `repo_test.exs`: the repo is UNLINKED from the test
+  process and stopped through an alive-guard `on_exit` (`Boot.stop/1` on a
+  dead pid raises). Concurrent `Boot.start_dynamic/1` boots are safe in
+  production — the migration run inside `EvoGit.Store.Boot` is serialized by
+  a cluster-safe `:global.trans` lock (see `EvoGit.Store.Boot`).
   """
 
   use ExUnit.Case, async: true
@@ -66,7 +58,6 @@ defmodule EvoGit.Store.BootMigrationTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
-  alias EvoGit.TestSupport.StoreBootLock
 
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
@@ -100,6 +91,32 @@ defmodule EvoGit.Store.BootMigrationTest do
     [17, "branch_name", "TEXT", 0, nil, 0],
     [18, "error", "TEXT", 0, nil, 0],
     [19, "updated_at", "TEXT", 0, nil, 0]
+  ]
+
+  # The ADOPTED 19-column tail: the real v0.9.0–v0.12.5 DDL already ended in
+  # `updated_at`, so the appended `error` lands AFTER it (SQLite ALTERs can
+  # only append). Same 20 rows (types/notnull/pk), the last two swapped.
+  @adopted_19_col_table_info_rows [
+    [0, "id", "TEXT", 0, nil, 1],
+    [1, "type", "TEXT", 0, nil, 0],
+    [2, "status", "TEXT", 1, nil, 0],
+    [3, "opts", "TEXT", 0, nil, 0],
+    [4, "started_at", "TEXT", 0, nil, 0],
+    [5, "finished_at", "TEXT", 0, nil, 0],
+    [6, "logs", "TEXT", 0, nil, 0],
+    [7, "result", "TEXT", 0, nil, 0],
+    [8, "review_status", "TEXT", 0, nil, 0],
+    [9, "usage", "TEXT", 0, nil, 0],
+    [10, "agent_count", "INTEGER", 0, nil, 0],
+    [11, "base_sha", "TEXT", 0, nil, 0],
+    [12, "commit_sha", "TEXT", 0, nil, 0],
+    [13, "archive_metadata", "TEXT", 0, nil, 0],
+    [14, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [15, "model_id", "TEXT", 0, nil, 0],
+    [16, "project_path", "TEXT", 0, nil, 0],
+    [17, "branch_name", "TEXT", 0, nil, 0],
+    [18, "updated_at", "TEXT", 0, nil, 0],
+    [19, "error", "TEXT", 0, nil, 0]
   ]
 
   @task_index_names [
@@ -327,11 +344,11 @@ defmodule EvoGit.Store.BootMigrationTest do
     :ok
   end
 
-  # Boots a dynamic repo (through the BEAM-global boot lock — see
-  # StoreBootLock's moduledoc), unlinks it from the test process, and stops it
-  # on exit through an alive guard.
+  # Boots a dynamic repo and unlinks it from the test process, stopping it on
+  # exit through an alive guard. Concurrent boots are production-safe (the
+  # migration run is serialized by the `:global` lock in `EvoGit.Store.Boot`).
   defp start_booted_repo!(path) do
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> stop_quietly(pid) end)
     pid
@@ -339,53 +356,6 @@ defmodule EvoGit.Store.BootMigrationTest do
 
   defp stop_quietly(pid) do
     if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok
-  end
-
-  # Boots from a short-lived LAUNCHER process and reports the outcome instead
-  # of raising: on a migration failure `Boot.start_dynamic/1` has already
-  # started (and linked) the repo to its caller, so the repo LEAKS — killing
-  # the launcher (abnormal exit propagates over the link) tears it down.
-  #
-  # The launcher parks until killed: a normal launcher exit would leave the
-  # repo alive (links only trap abnormal exits).
-  defp boot_via_launcher!(path) do
-    parent = self()
-
-    {:ok, launcher} =
-      Task.start(fn ->
-        outcome =
-          try do
-            {:ok, Boot.start_dynamic(path)}
-          rescue
-            exception -> {:raised, exception}
-          end
-
-        send(parent, {__MODULE__, self(), outcome})
-
-        receive do
-          :r6b1_stop -> :ok
-        end
-      end)
-
-    ref = Process.monitor(launcher)
-
-    {launcher, outcome} =
-      receive do
-        {__MODULE__, ^launcher, outcome} ->
-          Process.demonitor(ref, [:flush])
-          {launcher, outcome}
-
-        {:DOWN, ^ref, :process, ^launcher, reason} ->
-          flunk("boot launcher died before reporting: #{inspect(reason)}")
-      after
-        15_000 -> flunk("boot launcher timed out")
-      end
-
-    on_exit(fn ->
-      if Process.alive?(launcher), do: Process.exit(launcher, :kill)
-    end)
-
-    {launcher, outcome}
   end
 
   defp task_table_info(pid) do
@@ -423,7 +393,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   end
 
   # Raw xqlite SELECT of the given columns (in order) for one task row — the
-  # pre-boot / post-raise ground truth, independent of the repo.
+  # pre-boot ground truth, independent of the repo.
   defp raw_task_columns!(path, columns, id) do
     {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
 
@@ -431,20 +401,6 @@ defmodule EvoGit.Store.BootMigrationTest do
     {:ok, %{rows: rows}} = XqliteNIF.query(conn, sql, [id])
     :ok = XqliteNIF.close(conn)
     rows
-  end
-
-  defp raw_table_names!(path) do
-    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
-
-    {:ok, %{rows: rows}} =
-      XqliteNIF.query(
-        conn,
-        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-        []
-      )
-
-    :ok = XqliteNIF.close(conn)
-    Enum.map(rows, &hd/1)
   end
 
   # ── Scenario 1: fresh database ────────────────────────────────────────────
@@ -493,12 +449,12 @@ defmodule EvoGit.Store.BootMigrationTest do
     end
   end
 
-  # ── Scenario 3: the 19-column v0.12.5 shapes — PINNED ACTUAL (raise) ──────
+  # ── Scenario 3: the 19-column v0.12.5 shapes — ADOPTED ─────────────────────
 
   describe "19-column legacy (v0.9.0-v0.12.5 shape, updated_at before error)" do
-    test "boot RAISES Ecto.MigrationError (order invariant), rolls the migration back, data intact",
+    test "adopts the table (error appended NULLABLE at the tail), data preserved",
          %{root: root} do
-      path = db_path(%{root: root}, "19col_raise")
+      path = db_path(%{root: root}, "19col_adopt")
 
       seed_columns =
         ~w(id type status opts started_at finished_at result agent_count base_sha commit_sha lease_expires_at branch_name updated_at)
@@ -521,68 +477,51 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       build_legacy_db!(path, @ddl_19_col, seed_columns, seed_values)
 
-      {launcher, outcome} = boot_via_launcher!(path)
-
-      # ACTUAL behavior (deviates from the old raw-SQL pipeline, which
-      # appended `error` and moved on): the appended `error` lands AFTER the
-      # pre-existing `updated_at`, the strict order invariant fails, and the
-      # migration raises.
-      {:raised, %Ecto.MigrationError{} = error} = outcome
-      assert error.message =~ "baseline adoption failed"
-      assert error.message =~ "updated_at"
-
-      # The launcher owns the leaked dynamic repo; killing it tears it down.
-      Process.exit(launcher, :kill)
-      refute Process.alive?(launcher)
-
-      # The migration transaction rolled back COMPLETELY: the DDL the
-      # migration performed (the tasks ALTER + the projects CREATE) is undone —
-      # only the pre-existing tables remain (plus schema_migrations, which the
-      # Ecto migrator itself creates OUTSIDE the migration transaction)...
-      assert raw_table_names!(path) == ["projects", "schema_migrations", "tasks"]
-      assert raw_task_columns!(path, ~w(id), "r6b1-v125") == [["r6b1-v125"]]
-
-      # ...the table kept its ORIGINAL 19-column shape (no error column)...
-      {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
-      {:ok, %{rows: pragma_rows}} = XqliteNIF.query(conn, "PRAGMA table_info(tasks)", [])
-
-      pre_names = Enum.map(pragma_rows, fn [_cid, name | _] -> name end)
-
-      assert pre_names == [
-               "id",
-               "type",
-               "status",
-               "opts",
-               "started_at",
-               "finished_at",
-               "logs",
-               "result",
-               "review_status",
-               "usage",
-               "agent_count",
-               "base_sha",
-               "commit_sha",
-               "archive_metadata",
-               "lease_expires_at",
-               "model_id",
-               "project_path",
-               "branch_name",
-               "updated_at"
-             ]
-
-      # ...schema_migrations exists but records NOTHING (its version INSERT
-      # was inside the rolled-back transaction)...
-      {:ok, %{rows: versions}} =
-        XqliteNIF.query(conn, "SELECT version FROM schema_migrations", [])
-
-      assert versions == []
-
-      # ...and the seeded row is untouched, byte-for-byte.
+      # Ground truth BEFORE boot.
       assert raw_task_columns!(path, seed_columns, "r6b1-v125") == [seed_values]
-      :ok = XqliteNIF.close(conn)
+
+      pid = start_booted_repo!(path)
+
+      # The boot stamped both migrations (the Ecto migrator saw version 0)...
+      assert migration_versions(pid) == @migration_versions
+      assert schema_migrations_count(pid) == [[2]]
+
+      # ...the appended `error` landed AFTER the pre-existing `updated_at`
+      # (SQLite ALTERs can only append) as a NULLABLE add with its declared
+      # type — the ADOPTED tail order the post-invariant accepts.
+      assert task_table_info(pid) == @adopted_19_col_table_info_rows
+
+      # ...and all 6 baseline indexes were created alongside.
+      index_names =
+        query_rows(
+          pid,
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks' ORDER BY name"
+        )
+        |> Enum.map(&hd/1)
+
+      assert index_names == Enum.sort(@task_index_names ++ [@tasks_pk_autoindex])
+
+      # Every seeded value survived; the appended `error` reads NULL.
+      row = get_task_row(pid, "r6b1-v125")
+
+      assert row.id == "r6b1-v125"
+      assert row.type == "genesis"
+      assert row.status == "completed"
+      assert row.opts == ~S({"mode":"new"})
+      assert row.started_at == "2024-03-03T10:00:00.111Z"
+      assert row.finished_at == "2024-03-03T11:00:00.222Z"
+      assert row.result == ~S({"__result_tag__":"ok","data":{"summary":"seed"}})
+      assert row.agent_count == 4
+      assert {row.base_sha, row.commit_sha} == {"base19", "commit19"}
+      assert row.lease_expires_at == 1_738_500_000_000
+
+      assert {row.branch_name, row.updated_at} ==
+               {"genesis/agent_19ab", "2024-03-03T11:00:01.333Z"}
+
+      assert row.error == nil
     end
 
-    test "the old-pipeline-repaired 20-column variant (error appended after updated_at) raises identically",
+    test "the old-pipeline-repaired 20-column variant (error appended after updated_at) is adopted identically",
          %{root: root} do
       path = db_path(%{root: root}, "20col_old_pipeline")
 
@@ -591,19 +530,16 @@ defmodule EvoGit.Store.BootMigrationTest do
         "completed"
       ])
 
-      {launcher, outcome} = boot_via_launcher!(path)
-      Process.exit(launcher, :kill)
+      pid = start_booted_repo!(path)
 
-      {:raised, %Ecto.MigrationError{} = error} = outcome
-      assert error.message =~ "baseline adoption failed"
+      # No ALTER runs on this shape (all 20 columns already present) — the
+      # physical tail order it arrived with is preserved and accepted.
+      assert task_table_info(pid) == @adopted_19_col_table_info_rows
+      assert migration_versions(pid) == @migration_versions
+      assert schema_migrations_count(pid) == [[2]]
 
-      # Same full rollback as the 19-column shape (projects CREATE undone,
-      # schema_migrations itself survives, empty).
-      assert raw_table_names!(path) == ["projects", "schema_migrations", "tasks"]
-
-      assert raw_task_columns!(path, ~w(id status), "r6b1-oldpipe") == [
-               ["r6b1-oldpipe", "completed"]
-             ]
+      row = get_task_row(pid, "r6b1-oldpipe")
+      assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
     end
   end
 

@@ -26,9 +26,10 @@ defmodule EvoGit.Store.BootNormalizationTest do
   for raw wire values, plain `Repo.query!/1` SQL for byte-identity snapshots
   and the migration's own guard predicates.
 
-  Every boot is serialized through `EvoGit.TestSupport.StoreBootLock`:
-  `Ecto.Migrator` recompiles the `.exs` migrations on every pending run and
-  concurrent compiles of the same module race (see its moduledoc).
+  Concurrent `Boot.start_dynamic/1` boots are safe — the migration run inside
+  `EvoGit.Store.Boot` is serialized by a cluster-safe `:global.trans` lock
+  (`Ecto.Migrator` recompiles the `.exs` migrations on every pending run and
+  concurrent compiles of the same module race; see `EvoGit.Store.Boot`).
 
   ## Pinned rules (from the migration source)
 
@@ -61,7 +62,6 @@ defmodule EvoGit.Store.BootNormalizationTest do
   alias EvoGit.Store.Codec
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
-  alias EvoGit.TestSupport.StoreBootLock
 
   # ── Fixtures ──────────────────────────────────────────────────────────────
 
@@ -190,11 +190,12 @@ defmodule EvoGit.Store.BootNormalizationTest do
   end
 
   # Boots the seeded database through the REAL production entry point. The
-  # boot is lock-serialized (migration recompiles race — see StoreBootLock)
-  # and the repo is UNLINKED: on_exit/1 runs after the test process is gone,
-  # so the link's exit signal must not own the shutdown (alive-guarded stop).
+  # migration run is serialized by the production `:global` lock in
+  # `EvoGit.Store.Boot` (concurrent migration compiles race), and the repo is
+  # UNLINKED: on_exit/1 runs after the test process is gone, so the link's
+  # exit signal must not own the shutdown (alive-guarded stop).
   defp boot!(path) do
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid
@@ -535,7 +536,7 @@ defmodule EvoGit.Store.BootNormalizationTest do
 
       # Re-boot the SAME database: schema_migrations is current, the migrator
       # runs nothing, and every guard in the data migration is a no-op.
-      {:ok, pid2} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+      {:ok, pid2} = Boot.start_dynamic(path)
       Process.unlink(pid2)
       on_exit(fn -> if Process.alive?(pid2), do: :ok = Boot.stop(pid2) end)
 
