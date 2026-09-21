@@ -10,17 +10,19 @@ defmodule EvoGit.Agents.PromptFragments do
 
   ## Rules for editing
 
-  - **Prompts are behavior.** The composed `system_prompt/0` strings must stay
-    byte-identical to what agents saw before. Never normalize, reword, or merge
-    fragments — near-duplicates are preserved as their own functions (or left
-    inline in the owning module) on purpose.
+  - **Prompts are behavior.** Wording changes must be deliberate: check that
+    every distinct instruction in a fragment survives an edit (compaction may
+    merge overlapping sentences, but must not drop a rule, number, or named
+    convention). Near-duplicates are preserved as their own functions (or left
+    inline in the owning module) on purpose — never merge two fragments.
   - When an agent prompt needs a wording change, update the fragment here (if
     the text is shared) rather than editing the copy in one agent module.
   - When you notice new boilerplate shared by two or more prompts, extract it
     here as a new function instead of copy-pasting.
   - **Verification practice:** dump every agent's `system_prompt/0` before and
-    after a prompt change (e.g. via `mix run -e`) and diff — the outputs must
-    match character-for-character unless a deliberate wording change was made.
+    after a prompt change (e.g. via `mix run -e`) and diff — eyeball the
+    fragment join points for grammatical breakage and confirm the change is the
+    intended one.
 
   ## Conventions
 
@@ -28,8 +30,8 @@ defmodule EvoGit.Agents.PromptFragments do
     `"\\n"` explicitly where a fragment ends a line, so mid-line composition
     stays exact.
   - Fragment names mirror the first line of the text (e.g.
-    `worktree_isolation_note/0` starts with "You are currently working in an
-    isolated worktree."). This file is legitimately long — the string literals
+    `worktree_isolation_note/0` starts with "You are in an isolated
+    worktree"). This file is legitimately long — the string literals
     are data, not logic.
   """
 
@@ -42,7 +44,7 @@ defmodule EvoGit.Agents.PromptFragments do
   (each as a standalone paragraph).
   """
   def worktree_isolation_note do
-    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Each subagent you spawn runs in its OWN separate worktree — never include worktree paths or `cd` commands in subagent objectives. Your worktree lives under `.genesis/` at the project root — that `.genesis` folder is the framework's runtime/agent-worktree area, not project code."
+    "You are in an isolated worktree (cwd is already set correctly). Each subagent runs in its OWN separate worktree — never put worktree paths or `cd` commands in subagent objectives. Worktrees live under `.genesis/` at the project root — the framework's runtime area, not project code."
   end
 
   @doc """
@@ -52,7 +54,7 @@ defmodule EvoGit.Agents.PromptFragments do
   Used by: SkillExtractor (its prompt omits the subagent-spawning sentence).
   """
   def worktree_isolation_note_short do
-    "You are currently working in an isolated worktree. The current working directory is automatically set to the correct worktree path. Your worktree lives under `.genesis/` at the project root — that `.genesis` folder is the framework's runtime/agent-worktree area, not project code."
+    "You are in an isolated worktree (cwd is already set correctly). Worktrees live under `.genesis/` at the project root — the framework's runtime area, not project code."
   end
 
   @doc """
@@ -66,7 +68,7 @@ defmodule EvoGit.Agents.PromptFragments do
   "OWN worktree" (no "isolated") and is used only by Architect.
   """
   def subagent_worktree_tail_isolated do
-    "Each subagent runs in its OWN isolated worktree — never include worktree paths or `cd` commands in subagent objectives."
+    "Each subagent runs in its OWN isolated worktree — never put worktree paths or `cd` commands in subagent objectives."
   end
 
   # ── Delegation principles ───────────────────────────────────────────────────
@@ -83,7 +85,7 @@ defmodule EvoGit.Agents.PromptFragments do
   child subtrees in detail yourself …") — those variants stay inline.
   """
   def delegation_investigation_sentence do
-    "Investigating child subtrees yourself is rarely the best use of your turns — a subagent can do it faster and at a more correct level."
+    "Investigating child subtrees yourself is rarely the best use of your turns — a subagent does it faster and more correctly."
   end
 
   @doc """
@@ -93,11 +95,11 @@ defmodule EvoGit.Agents.PromptFragments do
   the delegation-guidance paragraphs).
   """
   def delegation_occasional_reads_sentence do
-    "Occasional targeted reads for quick context are fine, but if you find yourself reading multiple files in a child subtree, that's a strong signal to delegate instead."
+    "Occasional targeted reads for quick context are fine, but reading multiple files in a child subtree means: delegate instead."
   end
 
   @doc """
-  "Trust subagent reports by default — the same way you trust the Context Tree by default …"
+  "Trust subagent reports by default, as you trust the Context Tree …"
 
   Used by: Manager (the Core Principles "**Validation**" bullet), Architect (the
   "(d) Supervise to completion" clause of the "**You only handle YOUR level**"
@@ -108,7 +110,7 @@ defmodule EvoGit.Agents.PromptFragments do
   findings) after every report — doubling token cost for no new information.
   """
   def subagent_report_trust_clause do
-    "Trust subagent reports by default — the same way you trust the Context Tree by default: when a subagent reports completion with a summary, accept it as accurate and do NOT re-investigate the work or re-derive its findings. Escalate to a deep re-review only on concrete signals of trouble (failing or erroring tests, contradictions between reports, a diff touching files unrelated to the objective, or the subagent itself reporting failure or uncertainty)."
+    "Trust subagent reports by default, as you trust the Context Tree: accept a completion summary as accurate — do NOT re-investigate or re-derive its findings. Deep re-review only on concrete trouble signals (failing tests, contradictions between reports, diff touching files unrelated to the objective, subagent reporting failure/uncertainty)."
   end
 
   # ── Genesis architecture (Manager + Architect) ───────────────────────────
@@ -133,7 +135,7 @@ Genesis is a recursive software development framework"
   When you design …").
   """
   def context_tree_routing_table_clause do
-    "as both documentation (Intent, API Surface, Constraints) and a **Routing Table** (a map of areas/modules/features to child subdirectories; may also include sibling paths for cross-references like related test directories)."
+    "as both documentation (Intent, API Surface, Constraints) and a **Routing Table** (map of areas/modules/features → child subdirectories; may include sibling cross-references like test directories)."
   end
 
   @doc """
@@ -185,7 +187,7 @@ Genesis is a recursive software development framework"
   (continues "When including sibling entries, …").
   """
   def routing_sibling_prefix do
-    "Routing tables primarily map to child subdirectories, but may also include sibling paths for cross-references (e.g., `../tests/auth_tests/` → Authentication test suite). "
+    "Routing tables primarily map to child subdirectories but may include sibling cross-references (e.g. `../tests/auth_tests/` → Authentication test suite). "
   end
 
   @doc """
@@ -201,79 +203,79 @@ Genesis is a recursive software development framework"
   # ── Code quality & file structure (Manager + Architect) ──────────────────
 
   @doc """
-  "Single Responsibility (each file has one reason to change), … (related code lives together). "
+  "Single Responsibility (one reason to change per file), … (related code lives together). "
 
   Used by: Manager ("…essential software engineering practices: " <> clause <>
   "In the Genesis recursive delegation system, …"), Architect ("…practices — "
   <> clause <> "In the Genesis system …").
   """
   def solid_principles_sentence do
-    "Single Responsibility (each file has one reason to change), Low Coupling (files depend on abstractions, not concrete internals), and High Cohesion (related code lives together). "
+    "Single Responsibility (one reason to change per file), Low Coupling (depend on abstractions, not internals), High Cohesion (related code lives together). "
   end
 
   @doc """
-  "Some files are long for a good reason — … When you "
+  "Some files are legitimately long — … When you "
 
   Used by: Manager (continues "encounter a file that exceeds …"),
   Architect (continues "determine a file is long …"). Paired with
   `large_files_remediation/0`.
   """
   def large_files_intro do
-    "Some files are long for a good reason — generated code, comprehensive test suites, data mappings, or protocol definitions that can't be split without losing coherence. When you "
+    "Some files are legitimately long — generated code, comprehensive test suites, data mappings, protocol definitions that lose coherence if split. When you "
   end
 
   @doc """
-  "leave a short comment at the top of the file … re-investigating whether "
+  "leave a top-of-file comment stating its role … re-investigating whether "
 
   Used by: Manager (ends "the file should be split."), Architect (ends
   "it should be split."). Paired with `large_files_intro/0`.
   """
   def large_files_remediation do
-    "leave a short comment at the top of the file explaining its role and why it needs to be long (if the file format supports comments). Alternatively, add a note to the directory's CONTEXT.md so future agents understand the rationale and don't waste turns re-investigating whether "
+    "leave a top-of-file comment stating its role and why it must be long (if the format supports comments), or note it in the directory's CONTEXT.md so future agents don't re-investigate whether "
   end
 
   @doc """
-  "the user or project config specifies a particular structure, convention, or file organization,"
+  "the user or project config specifies a structure, convention, or file organization,"
 
   Used by: Manager ("…first** — if " <> clause <> " that is always the highest
   priority."), Architect ("…ALWAYS the highest priority. If " <> clause <>
   " follow it unconditionally.").
   """
   def user_config_specifies_clause do
-    "the user or project config specifies a particular structure, convention, or file organization,"
+    "the user or project config specifies a structure, convention, or file organization,"
   end
 
   @doc """
-  "file-structure expectations in the objective (e.g., \"keep files under ~1000 lines, extract shared "
+  "file-structure expectations in the objective (e.g. \"keep files under ~1000 lines, extract shared "
 
   Used by: Manager (ends "helpers to a common module\")."), Architect (ends
   "utilities to a common module\").").
   """
   def file_structure_expectations_prefix do
-    "file-structure expectations in the objective (e.g., \"keep files under ~1000 lines, extract shared "
+    "file-structure expectations in the objective (e.g. \"keep files under ~1000 lines, extract shared "
   end
 
   # ── Context Tree definition (Architect + ContextExtractor) ───────────────
 
   @doc """
-  "spatial, recursive representation of the codebase structure."
+  "spatial, recursive representation of the codebase."
 
   Used by: Architect ("The Context Tree is the " <> clause), ContextExtractor
   ("The Context Tree is a " <> clause).
   """
   def context_tree_definition_clause do
-    "spatial, recursive representation of the codebase structure."
+    "spatial, recursive representation of the codebase."
   end
 
   @doc """
-  "simple markdown list mapping each area/module/feature to its owning child subdirectory"
+  "markdown list mapping each area/module/feature to its owning child subdirectory"
 
   Used by: Architect ("(2) Routing Table — a " <> clause <> ", so parent
   agents know …"), ContextExtractor ("**Routing Table** — A " <> clause <>
   ". May also include …").
   """
   def routing_table_markdown_list_clause do
-    "simple markdown list mapping each area/module/feature to its owning child subdirectory"
+    "markdown list mapping each area/module/feature to its owning child subdirectory"
   end
 
   @doc """
@@ -322,7 +324,7 @@ Genesis is a recursive software development framework"
   def genesis_context_header do
     "# Genesis Context
 
-Genesis models the codebase as a **Context Tree**: a hierarchical tree where every directory node has a `CONTEXT.md`"
+Genesis models the codebase as a **Context Tree**: every directory node has a `CONTEXT.md`"
   end
 
   # ── CONTEXT.md describes current state, not history ─────────────────────────
@@ -347,20 +349,20 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   Documentation section list, before the Routing Table item).
   """
   def context_current_state_clause do
-    "CONTEXT.md documents the **current state** of the code — what is TRUE NOW (intent, API surface, constraints, current known issues, current design decisions) — not a change log. Do NOT record history in CONTEXT.md: no records of past behaviors, no \"was X, now Y\" notes, no \"bug fixed\" or \"FIXED\" annotations, no dated changelog entries. A bug or gotcha that exists NOW may be recorded (e.g. under `## Known Issues`) — but once it is fixed, DELETE the related text outright (use `edit_context` to remove the stale entry); do not annotate it as fixed. To inspect past versions or change history of CONTEXT.md or any file, use git — `git log -p -- <path>` or the `search_history` tool — git history IS the change log, not CONTEXT.md. Actively maintain CONTEXT.md: when you add new content, prune or condense stale or redundant text in the same pass so the file stays concise — git history preserves what you remove, nothing is lost. Write CONTEXT.md with one sentence per line (break sentences at line boundaries) so git diffs stay granular and easy to manage. Write each finding at the level where it belongs: if it concerns a child or descendant node, put it in that node's CONTEXT.md (via `write_context`/`edit_context` at that path) and add a routing-table entry at the current level pointing to it, rather than hoarding it in the parent. If a section keeps growing despite pruning, extract the detailed content into a skill (`.agents/skills/`, the skills system — `skill_add`/`skill_enable`) and leave a brief pointer in CONTEXT.md. If a CONTEXT.md you read shows a `... [Content Truncated] ...` marker, that file has grown past the per-file size limit (each CONTEXT.md is truncated individually at ~64 KB, not the chain as a whole) — treat it as a signal to prune the file to the essentials and push detail down to child nodes or into a skill."
+    "CONTEXT.md documents the **current state** — what is TRUE NOW (intent, API surface, constraints, known issues, design decisions) — not a change log. No history: no past behaviors, \"was X, now Y\", \"bug fixed\"/\"FIXED\" annotations, dated changelog entries. A bug that exists NOW may be recorded (e.g. `## Known Issues`), but once fixed DELETE the text outright (`edit_context`) — never mark it fixed. For history use git (`git log -p -- <path>`, `search_history`) — git IS the change log. Actively maintain the file: prune/condense stale or redundant text in the same pass as adding new content (git preserves what you remove). One sentence per line so git diffs stay granular. Put each finding at the level it belongs: child/descendant findings go in that node's CONTEXT.md plus a routing-table entry here — don't hoard in the parent. A section that keeps growing despite pruning → extract detail into a skill (`.agents/skills/`, `skill_add`/`skill_enable`) and leave a pointer. A read CONTEXT.md showing `... [Content Truncated] ...` exceeded the per-file limit (~64 KB each, not the chain) — prune to essentials and push detail down to child nodes or a skill."
   end
 
   # ── Foreign repositories (Architect + ContextExtractor) ──────────────────
 
   @doc """
-  "a foreign repository (an absolute path like `/Source/original-proj`),"
+  "a foreign repository (absolute path like `/Source/original-proj`),"
 
   Used by: Architect ("When your objective involves " <> clause <> " such as
   porting an existing codebase:"), ContextExtractor ("…objective references " <>
   clause <> " you can spawn subagents in that repo …").
   """
   def foreign_repo_absolute_path_clause do
-    "a foreign repository (an absolute path like `/Source/original-proj`),"
+    "a foreign repository (absolute path like `/Source/original-proj`),"
   end
 
   @doc """
@@ -403,7 +405,7 @@ Genesis models the codebase as a **Context Tree**: a hierarchical tree where eve
   bullets by design — this is the shared canonical sentence.
   """
   def writable_foreign_repo_clause do
-    "- **Writable vs read-only foreign repos**: Foreign repositories may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). Read-only foreign-repo access is **unrestricted** — any agent may spawn a read-only agent (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) into any foreign repo at any time. Write-capable (`:read_write`) spawns into a writable foreign repo are restricted: **root-agent-only** (only the root agent at depth 0 may spawn write-capable subagents into a foreign repo — nested/child agents may NOT) and **one at a time** (serialized: spawn one writable foreign-repo subagent, wait for it to complete, then spawn the next — no parallel writable foreign-repo subagents). This matches the spatial contract: every agent edits only files under its own path, and parallel writes to a foreign repo create merge conflicts the spawning agent cannot control (the sandbox restricts write access to the agent's LOCAL path, not the foreign repo path) — parallelism inside a writable foreign repo is the job of the Manager running inside that repo. A writable subagent's changes are committed to `evogit-agent-*` branches and **tracked by the task** (per-repo commit + branch appear in the final report); the task NEVER merges foreign-repo branches back into the foreign repo's default branch (merging/rejecting across repos happens later via the dashboard review page). Nested agents needing foreign-repo changes report the need back up to their parent agent (the higher level in the delegation chain), which will handle it. Your first-user context states whether you are the ROOT or a NESTED agent of this task and your exact foreign-repo authority."
+    "- **Writable vs read-only foreign repos**: Foreign repos may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). Read-only access is **unrestricted** — any agent may spawn a read-only agent (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) into any foreign repo. Write-capable (`:read_write`) spawns are **root-agent-only** (depth 0; nested agents may NOT) and **one at a time** (spawn, wait for completion, then the next — never parallel). Why: the sandbox grants write access only to the agent's LOCAL path, so parallel foreign-repo writes create merge conflicts the spawner cannot control; parallelism inside a writable foreign repo belongs to its internal Manager. Writable changes go to `evogit-agent-*` branches, **tracked by the task** (per-repo commit + branch in the final report), and are NEVER merged into the foreign repo's default branch by the task (that happens later via the dashboard review page). Nested agents needing foreign-repo changes report up to their parent agent (next level up the delegation chain) to handle it. Your first-user context states whether you are the ROOT or a NESTED agent and your exact foreign-repo authority."
   end
 
   # ── Objective scope (Executor + ContextExtractor) ───────────────────────────
