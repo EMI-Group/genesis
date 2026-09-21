@@ -40,7 +40,6 @@ defmodule EvoGit.Store.Operations.LightweightTest do
   alias EvoGit.Store.Operations.Lightweight
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
-  alias EvoGit.TestSupport.StoreBootLock
 
   @cutoff ~U[2024-06-01 00:00:00.000Z]
   @cutoff_iso "2024-06-01T00:00:00.000Z"
@@ -50,16 +49,15 @@ defmodule EvoGit.Store.Operations.LightweightTest do
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process — `async: true` safe), unlinked, stopped on exit.
   #
-  # The boot is serialized through the BEAM-global `StoreBootLock` —
-  # `Ecto.Migrator` recompiles each `.exs` migration on every pending run and
-  # concurrent compiles race (see `EvoGit.TestSupport.StoreBootLock`).
+  # The production `EvoGit.Store.Boot` serializes concurrent migration runs
+  # globally (`:global.trans`), so parallel boots are safe.
   defp start_repo! do
     unique = System.unique_integer([:positive, :monotonic])
 
     path =
       Path.join(System.tmp_dir!(), "evogit_r3a_#{unique}_#{inspect(self())}.sqlite")
 
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok end)
     pid

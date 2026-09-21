@@ -10,9 +10,9 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
   (`:ok` / struct-or-nil / list / integer) and the REPLACE semantics of the
   old `INSERT OR REPLACE`.
 
-  Self-contained by design (R4a unit contract): no shared test helper files
-  beyond `EvoGit.TestSupport.StoreBootLock`, which the boot helper below uses
-  to serialize the migration compile across concurrent async modules.
+  Self-contained by design (R4a unit contract): no shared test helper files —
+  the production `EvoGit.Store.Boot` serializes concurrent migration runs
+  globally (`:global.trans`), so parallel async boots are safe.
   """
 
   use ExUnit.Case, async: true
@@ -20,7 +20,6 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
   alias EvoGit.RecentProject
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Operations.Projects, as: Ops
-  alias EvoGit.TestSupport.StoreBootLock
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -28,10 +27,17 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
   # and stops it on test exit. Unlinked: `on_exit/1` runs after the test
   # process exits, and the start_link link would tear the repo down mid-stop.
   defp start_repo!(tag) do
-    unique = System.unique_integer([:positive, :monotonic])
-    path = Path.join(System.tmp_dir!(), "evogit_r4a_#{tag}_#{unique}.sqlite")
+    # The name embeds the OS pid + wall-clock ms on top of the per-BEAM unique
+    # integer: `System.unique_integer/1` restarts in every BEAM, so without
+    # those a PREVIOUS test run's stale tmp file gets silently adopted.
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_r4a_#{tag}_#{:os.getpid()}_#{System.system_time(:millisecond)}_" <>
+          "#{System.unique_integer([:positive, :monotonic])}.sqlite"
+      )
 
-    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid

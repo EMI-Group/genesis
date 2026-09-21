@@ -105,11 +105,16 @@ defmodule EvoGit.Store.RepoTest do
   end
 
   defp db_path(tag) do
+    # The name embeds the OS pid + wall-clock ms on top of the per-BEAM unique
+    # integer + test pid: `System.unique_integer/1` restarts in every BEAM and
+    # test pids are deterministic across runs, so without those a PREVIOUS
+    # test run's stale tmp file gets silently adopted.
     unique = System.unique_integer([:positive, :monotonic])
 
     Path.join(
       System.tmp_dir!(),
-      "evogit_r6a_#{tag}_#{unique}_#{inspect(self())}.sqlite"
+      "evogit_r6a_#{tag}_#{:os.getpid()}_#{System.system_time(:millisecond)}_" <>
+        "#{unique}_#{inspect(self())}.sqlite"
     )
   end
 
