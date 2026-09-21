@@ -28,7 +28,7 @@ Low-level Git CLI wrapper centred on **worktree isolation**. Every function take
 | **Notes** | `add_note/4`, `remove_note/3`, `show_note/3`, `get_note/4`, `list_notes/2` |
 | **Tags** | `tag/3`, `delete_tag/2` |
 | **Refs** | `update_ref/3`, `delete_ref/2` — archive refs protecting commits from GC |
-| **Branches** | `create_branch/3`, `current_branch/1`, `list_branches/1`, `list_branches/2`, `branch_exists?/2`, `delete_branch/2` |
+| **Branches** | `create_branch/3`, `current_branch/1`, `list_branches/1`, `list_branches/2`, `list_refs/1` (local branches + tags → `{:ok, [{ref_short_name, full_sha}]}` via `git for-each-ref`), `branch_exists?/2`, `delete_branch/2` |
 | **Init** | `init/1` |
 | **GitHub** | `gh_available?/0`, `create_pull_request/5`, `create_origin_remote/1`, `origin_default_branch/1`, `has_origin_remote?/1`, `push_branch/2` |
 
@@ -52,7 +52,7 @@ This matches `EvoGit.Review`, which normalizes adapter errors to exactly this `{
 
 Notes on specific functions:
 - **`rev_parse(path, rev \\ "HEAD")` / `rev_parse_short(path, rev \\ "HEAD")` (git.ex:309-321)** — `git rev-parse <rev>` / `git rev-parse --short <rev>`; the default arg makes the `/1` and `/2` forms the same function (`/1` resolves HEAD of `path`). NO `--verify` flag, so an unresolvable rev exits 128 → `{:error, {128, "fatal: ambiguous argument '<rev>'..."}}`, and a non-existent/non-repo `path` short-circuits to `{:error, {:enoent, "Repository path does not exist: <path>"}}` before spawning git (git.ex:65-66). Success = `{:ok, <trimmed 40-hex sha>}` (or abbreviated sha for `_short`).
-- `ls_tree_names/2`, `diff_name_only/3`, `check_ignore/2`, `list_branches/1`, `list_branches/2` return `{:ok, [files]}` (empty on no results).
+- `ls_tree_names/2`, `diff_name_only/3`, `check_ignore/2`, `list_branches/1`, `list_branches/2`, `list_refs/1` return `{:ok, [files]}` (empty on no results).
 - `ls_tree_names/2` runs `git ls-tree -r <treeish>` (NOT `--name-only`, which hides the entry type) and **excludes gitlink/submodule entries** — actual file paths only. Submodule dirs arrive in worktrees as **empty placeholders** (same as `git worktree add`); populate via `git submodule update --init`.
 - `check_ignore/2`: exit 1 ("no matches") → `{:ok, []}` — a valid result, not an error.
 - `get_note/4` → `{:error, {:no_note, output}}` (missing note) / `{:error, {:invalid_json, note_content}}` (unparseable or non-map JSON) / passes through other `{:error, {tag, output}}` (e.g. `:enoent`).
