@@ -21,6 +21,7 @@ defmodule EvoGit.Store.RepoScopeTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.TestSupport.StoreBootLock
 
   @canonical_default Repo
 
@@ -28,6 +29,12 @@ defmodule EvoGit.Store.RepoScopeTest do
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process, per call — `async: true` safe) and stops it on test exit.
+  #
+  # The boot is serialized through the BEAM-global `StoreBootLock` —
+  # `Ecto.Migrator` recompiles each `.exs` migration on every pending run, and
+  # concurrent compiles of the same module race (see
+  # `EvoGit.TestSupport.StoreBootLock`'s moduledoc), so modules that boot
+  # dynamic repos concurrently MUST share the lock.
   #
   # The repo is UNLINKED: `Boot.start_dynamic/1` uses `start_link`, which
   # links the repo to the CALLER (this test process). `on_exit/1` callbacks
@@ -43,7 +50,7 @@ defmodule EvoGit.Store.RepoScopeTest do
         "evogit_repo_scope_#{tag}_#{unique}_#{inspect(self())}.sqlite"
       )
 
-    {:ok, pid} = Boot.start_dynamic(path)
+    {:ok, pid} = StoreBootLock.with_boot_lock(fn -> Boot.start_dynamic(path) end)
     Process.unlink(pid)
     on_exit(fn -> :ok = Boot.stop(pid) end)
     pid
