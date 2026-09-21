@@ -1696,6 +1696,209 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "commit history view — async state and interactions" do
+    # The commit lane markup wraps each lane's commits in a keyed
+    # `phx-update="append"` container, which the LiveViewTest proxy REFUSES to
+    # apply ("phx-update=append … is no longer supported in tests"). Any
+    # page-level render AFTER @commit_graph holds ≥1 lane would therefore raise,
+    # so every LOADED-graph assertion below reads the socket assigns directly
+    # (`assigns/1`) and never calls render/1. Rendering of a loaded graph is
+    # covered by the commit-graph component tests (render_component/2).
+
+    test "an applied commit graph is stored and built into lanes", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      install_commit_graph_runner(fn "/repo/a" -> {:ok, single_commit_graph_payload()} end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert_receive {:commit_graph_call, _node, "/repo/a", [{"b1", "c1"}], [limit: 100]}, 1000
+      wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+
+      # Loaded graph → asserts are SERVER-SIDE ONLY (see the describe comment).
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_error] == nil
+
+      # The raw per-repo payload is stored verbatim under the repo_root key.
+      assert assigns(view)[:commit_graph_raw] == %{
+               "/repo/a" => %{
+                 commits: [
+                   %{
+                     sha: "c1",
+                     short_sha: "c1",
+                     message: "subject line\nbody",
+                     parents: ["b1"],
+                     author_name: "Ada",
+                     date: nil
+                   }
+                 ],
+                 refs: %{"c1" => ["main"]}
+               }
+             }
+
+      assert [repo] = assigns(view)[:commit_graph]
+      assert repo.repo_name == "a"
+
+      assert [lane] = repo.lanes
+      assert lane.agent_id == agent_id()
+
+      assert [commit] = lane.commits
+
+      # The message is truncated to its first line; refs come from the payload.
+      assert Map.take(commit, [:sha, :short_sha, :message, :parents, :author_name, :refs]) == %{
+               sha: "c1",
+               short_sha: "c1",
+               message: "subject line",
+               parents: ["b1"],
+               author_name: "Ada",
+               refs: ["main"]
+             }
+
+      # "b1" is the exclusive base and is absent from the fetched graph, so the
+      # first parent "b1" is not owned by this lane.
+      assert commit.has_parent_in_lane? == false
+    end
+
+    test "a stale commit-graph result is dropped", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      graph_before = assigns(view)[:commit_graph]
+      raw_before = assigns(view)[:commit_graph_raw]
+
+      # seq 0 < the loaded fetch's seq (1) → the result is stale and must be
+      # ignored. The synchronous assigns/1 round-trip guarantees the message was
+      # processed (mailbox FIFO) before we read the state.
+      send(
+        view.pid,
+        {:commit_graph_loaded, node(), 0, {:ok, %{"/repo/a" => %{commits: [], refs: %{}}}}}
+      )
+
+      assert assigns(view)[:commit_graph] == graph_before
+      assert assigns(view)[:commit_graph_raw] == raw_before
+    end
+
+    test "a result from a foreign node is dropped", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      graph_before = assigns(view)[:commit_graph]
+
+      send(
+        view.pid,
+        {:commit_graph_loaded, :remote@elsewhere, 99,
+         {:ok, %{"/repo/a" => %{commits: [], refs: %{}}}}}
+      )
+
+      assert assigns(view)[:commit_graph] == graph_before
+    end
+
+    test "a failed refresh keeps the last good graph and records the error", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      graph_before = assigns(view)[:commit_graph]
+      raw_before = assigns(view)[:commit_graph_raw]
+
+      send(view.pid, {:commit_graph_loaded, node(), 2, {:error, :boom}})
+
+      assert assigns(view)[:commit_graph_error] == :boom
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_loaded] == true
+
+      # The previous good graph survives a failed refresh (the view never wedges
+      # on a spinner and never loses the data it already had).
+      assert assigns(view)[:commit_graph] == graph_before
+      assert assigns(view)[:commit_graph_raw] == raw_before
+    end
+
+    test "a failed initial load renders the error state", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      install_commit_graph_runner(graph_error_responder())
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      wait_until(fn -> assigns(view)[:commit_graph_error] != nil end)
+
+      # A failed INITIAL load leaves @commit_graph empty → no lane (and no
+      # phx-update="append" container), so rendering here is safe.
+      html = render(view)
+      assert html =~ "commit-graph-error"
+      assert html =~ "Could not load commit history."
+    end
+
+    test "the right-hand agent detail panel is preserved across the view switch", %{conn: conn} do
+      # repo_root nil → the agent is not eligible for a commit-graph fetch, so
+      # @commit_graph stays empty (empty state) and rendering stays safe.
+      install_agents([summary_agent(id: agent_id(), repo_root: nil)])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+
+      assert has_element?(view, "#agent-detail-#{agent_id()}")
+      assert render(view) =~ "##{agent_id()}"
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert assigns(view)[:left_view] == :commits
+      assert assigns(view)[:selected_agent_id] == agent_id()
+
+      # The detail column is independent of the left view — the selection and
+      # its rendered panel survive the switch.
+      assert has_element?(view, "#agent-detail-#{agent_id()}")
+      assert render(view) =~ "##{agent_id()}"
+
+      render_click(view, "switch_left_view", %{"view" => "tree"})
+
+      assert assigns(view)[:left_view] == :tree
+      assert assigns(view)[:selected_agent_id] == agent_id()
+      assert render(view) =~ "##{agent_id()}"
+    end
+
+    test "a node switch resets the commit-graph state but keeps the left view", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+      assert assigns(view)[:left_view] == :commits
+
+      # Drive handle_params/3 directly (the LiveView is a plain socket here) and
+      # force the node-changed reset branch by pointing previous_node at another
+      # node than the one the (node-less) params resolve to — the local node.
+      state = :sys.get_state(view.pid)
+      socket = state.socket
+
+      socket = %{socket | assigns: Map.put(socket.assigns, :previous_node, :some_other_node)}
+
+      {:noreply, new_socket} = EvoDashWeb.AgentsLive.handle_params(%{}, "/agents", socket)
+
+      # The user's view preference survives; the per-node commit data does not.
+      assert new_socket.assigns.left_view == :commits
+      assert new_socket.assigns.commit_graph == []
+      assert new_socket.assigns.commit_graph_raw == %{}
+      assert new_socket.assigns.commit_graph_loaded == false
+      assert new_socket.assigns.commit_graph_loading == false
+      assert new_socket.assigns.commit_graph_error == nil
+    end
+  end
+
   # ── Private helpers ─────────────────────────────────────────────
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
@@ -1805,6 +2008,48 @@ defmodule EvoDashWeb.AgentsLiveTest do
       ^first_repo_root -> {:ok, %{commits: [], refs: %{}}}
       _other -> {:error, :stub}
     end
+  end
+
+  # Reaches a LOADED commit graph through the REAL async path: one eligible agent
+  # in /repo/a with a stub runner returning `single_commit_graph_payload/0`, then
+  # a switch to the commits view. Returns the view. Callers MUST NOT render/3
+  # afterwards — the loaded lane markup carries a keyed `phx-update="append"`
+  # container the LiveViewTest proxy refuses to apply; assert via assigns/1.
+  defp mount_loaded_commit_graph(conn) do
+    install_agents([
+      summary_agent(id: agent_id(), repo_root: "/repo/a", base_commit: "b1", current_commit: "c1")
+    ])
+
+    install_commit_graph_runner(fn "/repo/a" -> {:ok, single_commit_graph_payload()} end)
+
+    {:ok, view, _html} = live(conn, ~p"/agents")
+    flush_agents_load(view)
+
+    render_click(view, "switch_left_view", %{"view" => "commits"})
+
+    assert_receive {:commit_graph_call, _node, "/repo/a", [{"b1", "c1"}], [limit: 100]}, 1000
+    wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+
+    view
+  end
+
+  # The per-repo commit-graph payload for the single eligible /repo/a agent (base
+  # "b1" → current "c1"). The message carries a body line to pin the first-line
+  # truncation; "c1" is tagged with the "main" ref.
+  defp single_commit_graph_payload do
+    %{
+      commits: [
+        %{
+          sha: "c1",
+          short_sha: "c1",
+          message: "subject line\nbody",
+          parents: ["b1"],
+          author_name: "Ada",
+          date: nil
+        }
+      ],
+      refs: %{"c1" => ["main"]}
+    }
   end
 
   # Seeds a single agent (sched_meta + agent_state) directly into the ETS
