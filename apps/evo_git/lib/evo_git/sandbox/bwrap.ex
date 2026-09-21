@@ -606,7 +606,7 @@ defmodule EvoGit.Sandbox.Bwrap do
     after
       timeout ->
         kill_process_group(os_pid)
-        Port.close(port)
+        Helpers.close_port(port)
         Helpers.drain_port_messages(port)
 
         partial = Helpers.read_tempfile(tmpfile, max_bytes)

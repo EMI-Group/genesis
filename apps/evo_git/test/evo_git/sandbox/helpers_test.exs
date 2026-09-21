@@ -298,6 +298,116 @@ defmodule EvoGit.Sandbox.HelpersTest do
         end
       end
     end
+
+    # -------------------------------------------------------------------------
+    # Port lifecycle (os-pid lookup + idempotent close)
+    # -------------------------------------------------------------------------
+    #
+    # `wait_for_os_pid/2` must read `Port.info(port, :os_pid)` as the tuple
+    # `{:os_pid, pid}` (the shape while the port is open; `nil` once closed).
+    # Comparing it against a bare integer never matched, so it always fell
+    # through to `:undefined` and every timeout kill path (Windows `taskkill`,
+    # bwrap `kill -TERM -<pgid>`) silently skipped the group/process-tree kill.
+    # `close_port/1` is the shared idempotent close that replaces bare
+    # `Port.close/1`, which RAISES on an already-closed port. Both reproduce on
+    # Linux CI, so nothing here is gated on `Platform.windows?/0`.
+    describe "wait_for_os_pid/2 + close_port/1 (port lifecycle)" do
+      test "wait_for_os_pid/2 returns the real integer os pid of a live port, matching the child" do
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        port =
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [{:args, ["-c", "echo $$"]}, {:cd, tmp_dir}]
+          )
+
+        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+
+        os_pid = Helpers.wait_for_os_pid(port)
+        {output, exit_code} = collect_port_output(port)
+
+        assert exit_code == 0
+        assert is_integer(os_pid)
+        # The os_pid of a `spawn_executable` port IS the spawned process (bash),
+        # so it must equal the `$$` bash prints for itself.
+        assert os_pid == output |> String.trim() |> String.to_integer()
+      end
+
+      test "close_port/1 is nil-safe and idempotent, unlike a bare Port.close/1" do
+        assert Helpers.close_port(nil) == :ok
+
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        port =
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [{:args, ["-c", "echo done"]}, {:cd, tmp_dir}]
+          )
+
+        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+
+        # Let the child exit so the port auto-closes (`{:exit_status, _}` seen).
+        {output, exit_code} = collect_port_output(port)
+
+        assert exit_code == 0
+        assert output =~ "done"
+        refute Port.info(port)
+
+        # Already-closed port: both guarded closes are no-ops returning :ok.
+        assert Helpers.close_port(port) == :ok
+        assert Helpers.close_port(port) == :ok
+
+        # The exact reason the guard exists: a bare close RAISES on a closed port.
+        # Delete this sub-assertion only if a future OTP relaxes that contract.
+        assert_raise ArgumentError, fn -> Port.close(port) end
+      end
+
+      test "wait_for_os_pid/2 returns :undefined once the port is closed explicitly" do
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        port =
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [{:args, ["-c", "echo $$; exec sleep 5"]}, {:cd, tmp_dir}]
+          )
+
+        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+
+        # The child is still running, so the port is live and closes cleanly.
+        assert Helpers.close_port(port) == :ok
+        refute Port.info(port)
+
+        assert Helpers.wait_for_os_pid(port) == :undefined
+      end
+
+      test "wait_for_os_pid/2 returns :undefined after the child exited (port auto-closed)" do
+        bash = System.find_executable("bash")
+        tmp_dir = port_tmp_dir!()
+
+        port =
+          Port.open(
+            {:spawn_executable, bash},
+            [:binary, :exit_status, :hide, :stderr_to_stdout] ++
+              [{:args, ["-c", "echo bye"]}, {:cd, tmp_dir}]
+          )
+
+        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+
+        {output, exit_code} = collect_port_output(port)
+
+        assert exit_code == 0
+        assert output =~ "bye"
+        refute Port.info(port)
+
+        assert Helpers.wait_for_os_pid(port) == :undefined
+      end
+    end
   else
     @tag :skip
     test "port_env/1 → Port.open/2 charlist env contract (skipped: no bash)" do
