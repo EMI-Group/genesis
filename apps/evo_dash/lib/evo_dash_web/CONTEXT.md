@@ -54,7 +54,7 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | `GET /welcome` | `WelcomeLive` | Onboarding page — stepwise first-LLM quick setup (provider → variant → model → credentials); `skip`/`get_started` redirect to `/welcome/complete`. |
 | `GET /welcome/complete` | `WelcomeCompleteLive` | Onboarding completion page — example task (copyable demo objective via the `ClipboardCopy` hook) + "Go to Dashboard" button that completes onboarding and navigates to `/projects`. |
 | `GET /tasks` | `TasksLive` | Task history page — full task list with status filters, pagination, archive details, cancel/force-kill actions. |
-| `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
+| `GET /agents` | `AgentsLive` | Agent inspector — left-panel view switcher between the recursive agent tree (spatial) and the git commit history (temporal), plus the agent detail panel on the right |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
 | `GET /system` | `SystemLive` | System page — Software Update card, System Self-Check (health banner + check grid incl. the Genesis Source card), scheduler-status charts, and the grouped System Controls section (System Dashboard + scheduler pause/resume + VM restart/stop) |
 | `GET /review/:task_id` | `ReviewLive` (`:show`) | Code review page — diff viewer with expandable context, commit list, merge/reject/resume actions. Supports post-merge re-review via persisted SHAs. |
