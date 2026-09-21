@@ -100,6 +100,33 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     render_hook(view, "save_custom_agent", params)
   end
 
+  # Builds a `%{ok: [...], errors: []}` custom-tools status carrying a single ok
+  # entry (the shape `EvoGit.CustomTools.status/0` yields and the panel
+  # consumes).
+  defp ok_tool_status(name, opts \\ []) do
+    %{
+      ok: [
+        %{
+          name: name,
+          module: Keyword.get(opts, :module, "M"),
+          file: Keyword.get(opts, :file, "/cfg/tools/#{name}.ex"),
+          read_only?: Keyword.get(opts, :read_only?, true)
+        }
+      ],
+      errors: []
+    }
+  end
+
+  # Extracts the Custom Tools panel's Refresh <button> opening tag so an
+  # assertion can pin THAT button's disabled state (a bare `"disabled"`
+  # substring would also match unrelated disabled controls on the page).
+  defp refresh_button_tag(html) do
+    case Regex.run(~r/<button[^>]*phx-click="reload_custom_tools"[^>]*>/, html) do
+      [tag] -> tag
+      _ -> flunk("Custom Tools Refresh button not found in:\n#{html}")
+    end
+  end
+
   describe "agents category rendering" do
     test "renders the custom agents and script editors", %{conn: conn} do
       {:ok, _view, html} = mount_settings(conn)
@@ -271,6 +298,191 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert length(results) == 3
       assert Enum.all?(results, fn r -> match?({:error, {:compile_error, _}}, r.result) end)
       assert html =~ "Test Results"
+    end
+  end
+
+  describe "custom tools panel" do
+    # The async custom-tools refresh result. `requested_node` is captured at
+    # spawn time and stale-guarded against `socket.assigns.current_node` (a
+    # local mount resolves `current_node` to `node()`), so injecting with
+    # `node()` lands on the currently-viewed node.
+    test "renders a read-only ok entry", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(
+        view.pid,
+        {:custom_tools_loaded, node(),
+         ok_tool_status("my_tool", module: "MyTool", file: "/cfg/tools/my_tool.ex")}
+      )
+
+      html = render(view)
+
+      assert html =~ "my_tool"
+      assert html =~ "MyTool"
+      assert html =~ "/cfg/tools/my_tool.ex"
+      assert html =~ "Read-only"
+      refute html =~ "No custom tools loaded"
+    end
+
+    test "renders a write ok entry", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(
+        view.pid,
+        {:custom_tools_loaded, node(),
+         ok_tool_status("writer_tool", module: "WriterTool", read_only?: false)}
+      )
+
+      html = render(view)
+
+      assert html =~ "writer_tool"
+      assert html =~ "Write"
+      refute html =~ "Read-only"
+    end
+
+    test "renders populated errors", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(
+        view.pid,
+        {:custom_tools_loaded, node(),
+         %{
+           ok: [],
+           errors: [%{file: "/cfg/tools/broken.ex", reason: "compile error: unexpected token"}]
+         }}
+      )
+
+      html = render(view)
+
+      assert html =~ "/cfg/tools/broken.ex"
+      assert html =~ "compile error: unexpected token"
+      refute html =~ "No custom tools loaded"
+    end
+
+    test "renders the unavailable banner for an error status", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(view.pid, {:custom_tools_loaded, node(), {:error, :boom}})
+
+      html = render(view)
+
+      assert html =~ "Custom Tools Unavailable"
+      assert html =~ ":boom"
+      # Banner and empty state are mutually exclusive.
+      refute html =~ "No custom tools loaded"
+    end
+
+    test "renders the empty state for an empty ok status", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(view.pid, {:custom_tools_loaded, node(), %{ok: [], errors: []}})
+
+      html = render(view)
+
+      assert html =~ "No custom tools loaded"
+      refute html =~ "Custom Tools Unavailable"
+    end
+
+    test "refresh click spins the button then applies a later result", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      # The click sets `custom_tools_loading` synchronously and spawns a
+      # supervised fetch. The HTML returned reflects the post-event state, so
+      # the Refresh button is disabled here.
+      html = render_click(view, "reload_custom_tools", %{})
+      assert refresh_button_tag(html) =~ "disabled"
+
+      # The click's own task delivers an (empty) status that could arrive
+      # before or after our injected one. Wait for it to leave the supervisor
+      # (its `send` has run by then) and drain it, so the sentinel below is the
+      # last status applied.
+      spawned = Task.Supervisor.children(EvoDash.TaskSupervisor)
+      wait_until(fn -> Enum.all?(spawned, &(not Process.alive?(&1))) end, 2_000)
+      render(view)
+
+      send(view.pid, {:custom_tools_loaded, node(), ok_tool_status("sentinel_tool")})
+
+      html = render(view)
+      assert html =~ "sentinel_tool"
+      assert assigns(view).custom_tools_loading == false
+      refute refresh_button_tag(html) =~ "disabled"
+    end
+
+    test "drops a result for a foreign node", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(view.pid, {:custom_tools_loaded, node(), ok_tool_status("kept_tool")})
+      assert render(view) =~ "kept_tool"
+
+      send(
+        view.pid,
+        {:custom_tools_loaded, :some_other_node@host, ok_tool_status("sentinel_tool")}
+      )
+
+      html = render(view)
+
+      refute html =~ "sentinel_tool"
+      assert html =~ "kept_tool"
+      # The stale result still clears the loading flag (never sticks).
+      assert assigns(view).custom_tools_loading == false
+    end
+
+    test "applies a node-data result that omits the custom-tools key", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+      current = assigns(view)
+
+      # Older-shaped node-data loads carry no `:custom_tools_status` — the
+      # handler must fall back to the empty status instead of crashing.
+      results = %{
+        platform_os: current[:platform_os],
+        filtered_schemas_by_category: current[:schemas_by_category],
+        file_config: current[:file_config],
+        config_status: current[:config_status],
+        remote_config_error: nil,
+        custom_agents: %{agents: [], model_selection_script: "", script_status: :ok}
+      }
+
+      send(view.pid, {:settings_node_data_loaded, node(), "agents", results})
+
+      html = render(view)
+
+      assert assigns(view).active_category == :agents
+      assert html =~ "No custom tools loaded"
+      assert html =~ "No custom agents defined"
+    end
+
+    test "offers loaded custom tools as chips in the agent editor", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      send(view.pid, {:custom_tools_loaded, node(), ok_tool_status("my_custom_tool")})
+      render(view)
+
+      html = render_hook(view, "add_custom_agent", %{})
+
+      assert html =~ ~s(value="my_custom_tool")
+      assert html =~ "Custom tools"
+    end
+
+    test "warns about unknown tool names in the agent editor", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      save_agent(view, %{"name" => "Tooly", "tools" => ["bogus_tool"]})
+
+      html = render_hook(view, "edit_custom_agent", %{"id" => "tooly"})
+
+      assert html =~
+               "Unknown tool names: bogus_tool. They are neither built-in tools nor loaded custom tools."
+    end
+
+    test "does not warn for a valid built-in tool", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      save_agent(view, %{"name" => "Reader", "tools" => ["read_file"]})
+
+      html = render_hook(view, "edit_custom_agent", %{"id" => "reader"})
+
+      refute html =~ "Unknown tool names"
+      assert html =~ ~s(value="read_file")
     end
   end
 
