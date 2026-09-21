@@ -17,8 +17,8 @@ ExUnit test files for the EvoDash LiveView pages and their support modules. Mirr
 - `./welcome_live_test.exs`, `./welcome_complete_live_test.exs` → Onboarding pages
 - `./system_live_test.exs` → System page (scheduler controls, system check, Status sandbox helpers). The file setup snapshot-restores the update/source/`:system_samples_runner` / `:system_samples_seed_retry_ms` app-env seams; the two "failed seed retries" tests set `:system_samples_seed_retry_ms` to 30ms before mounting (production default 3000ms) so they no longer sleep 3s each.
 - `./system_live/` → `charts_test.exs` — SystemLive chart/ring-buffer tests
-- `./agents_live_test.exs` → Agent tree (node-aware async loads, push-driven refresh)
-- `./agents_live/` → `optimistic_messages_test.exs` — agents page optimistic-message handling
+- `./agents_live_test.exs` → Agent tree (node-aware async loads, push-driven refresh) + the left-panel VIEW SWITCHER & TEMPORAL commit-history view (lazy fetch, async apply/stale-guard/error, node-switch reset) — see "Notes for Agents — Agents-page commit-history view tests"
+- `./agents_live/` → `optimistic_messages_test.exs` (agents-page optimistic user messages) + `commit_graph_test.exs` (pure `EvoDashWeb.AgentsLive.CommitGraph.build/2` graph assembly)
 - `./platform_info_test.exs` → Pure unit tests for `EvoDashWeb.PlatformInfo` (platform gating)
 - `../components/` → Function-component tests (sibling — read-only, escalate writes to parent)
 - `../live_hooks/` → Live-hook tests (NodeAware, Guide, DesktopQuit, UpdateStatus) (sibling — read-only, escalate writes to parent)
