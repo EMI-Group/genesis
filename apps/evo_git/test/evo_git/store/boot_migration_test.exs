@@ -314,9 +314,9 @@ defmodule EvoGit.Store.BootMigrationTest do
   defp db_path(%{root: root}, tag), do: Path.join(root, "evogit_r6b1_#{tag}.sqlite")
 
   # Crafts a legacy DB with RAW xqlite — never the repo: `ddl` is executed
-  # verbatim, `columns`/`values` seed one task row, `projects?` controls
-  # whether the historical projects table exists.
-  defp build_legacy_db!(path, ddl, columns \\ [], values \\ [], projects? \\ true) do
+  # verbatim, `columns`/`values` seed one task row, and `projects?` (default
+  # true) controls whether the historical projects table exists.
+  defp build_legacy_db!(path, ddl, columns, values, projects? \\ true) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
     {:ok, _} = XqliteNIF.query(conn, ddl, [])

@@ -33,8 +33,6 @@ defmodule EvoGit.Store.Operations.LightweightTest do
 
   use ExUnit.Case, async: true
 
-  require Ecto.Query
-
   alias EvoGit.Repo
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Operations.Lightweight

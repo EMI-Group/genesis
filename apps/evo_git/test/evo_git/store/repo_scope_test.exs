@@ -188,11 +188,16 @@ defmodule EvoGit.Store.RepoScopeTest do
   end
 
   describe "with_repo/2 argument guards" do
+    # Both tests below feed `with_repo/2` DELIBERATELY wrong-typed arguments,
+    # so the calls are dispatched through `apply/3`: the compiler's type
+    # checker cannot infer the (intentionally invalid) argument types of an
+    # indirect dispatch, and the call itself — same function, same arguments,
+    # same FunctionClauseError — is unchanged.
     test "rejects a non-pid first argument" do
       bad = :not_a_pid
 
       assert_raise FunctionClauseError, fn ->
-        RepoScope.with_repo(bad, fn -> :ok end)
+        apply(RepoScope, :with_repo, [bad, fn -> :ok end])
       end
     end
 
@@ -201,7 +206,7 @@ defmodule EvoGit.Store.RepoScopeTest do
       fun = fn _arg -> :ok end
 
       assert_raise FunctionClauseError, fn ->
-        RepoScope.with_repo(pid, fun)
+        apply(RepoScope, :with_repo, [pid, fun])
       end
 
       assert Repo.get_dynamic_repo() == @canonical_default
