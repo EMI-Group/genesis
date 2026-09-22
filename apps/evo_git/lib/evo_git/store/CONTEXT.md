@@ -29,7 +29,7 @@ EvoGit.Store (GenServer facade, store.ex)
 
 ## Boot & Migrations
 
-`init/1` → `Boot.start_dynamic(data_dir)` runs the Ecto migrations in `../../priv/repo/migrations/` BEFORE any read/write (`Ecto.Migrator.run(repo, :up, all: true)` — a no-op on a current DB), so an existing user DB upgrades automatically on first start; a manual `mix migrate.store` is never required to boot. Boot failure → `{:stop, {:failed_to_open_sqlite, reason}}` (historical stop tuple). `terminate/2` → `Boot.stop(repo)` inside the module's one justified try/rescue (GenServer terminate must never raise).
+`init/1` → `Boot.start_dynamic(data_dir)` runs the Ecto migrations in `../../priv/repo/migrations/` BEFORE any read/write (`Ecto.Migrator.run(repo, :up, all: true)` — a no-op on a current DB), so an existing user DB upgrades automatically on first start; a manual `mix migrate.store` is never required to boot. Boot failure → `{:stop, {:failed_to_open_sqlite, reason}}` (historical stop tuple) — that tuple covers ONLY the repo-OPEN path (`start_dynamic/1`'s `{:error, reason}` from `EvoGit.Repo.start_link/1`); a MIGRATION raise (e.g. the baseline post-condition rejecting a non-canonical `tasks` shape) propagates out of `init/1` and crashes the Store child (supervisor restart, then app-boot failure) instead of stopping with that tuple. `terminate/2` → `Boot.stop(repo)` inside the module's one justified try/rescue (GenServer terminate must never raise).
 
 ### Migration 1 — `20260815000001_baseline_adoption`
 
