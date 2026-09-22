@@ -38,11 +38,12 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 
 ### Agents page — left-panel view switcher (spatial tree / temporal commit history)
 
-The Agents page visualizes BOTH dimensions: the recursive agent tree (spatial) and a git commit-history graph (temporal) that makes the parent→child fork visually obvious.
+The Agents page visualizes BOTH dimensions: the recursive agent tree (spatial) and a classic git commit-history graph (temporal) that makes fork/merge structure visually obvious.
 The left column (`live/agents_live.html.heex`) carries a compact segmented control (`#left-view-tree` / `#left-view-commits`) that swaps the panel body via the `switch_left_view` event (`phx-value-view` whitelisted by pattern match — never an atom conversion); the selection is the `@left_view` assign (`:tree | :commits`, default `:tree`) and it survives a node switch while the commit-graph data is reset.
-The commit view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (`components/agents_components/`) from `@commit_graph` — the per-repo lane view model built by the pure `EvoDashWeb.AgentsLive.CommitGraph.build/2`, which now also owns the shared repo `grouping_key/1` / `repo_display_name/1` naming (the tree delegates to it).
-Commit nodes AND agent chips reuse the existing `select_agent` event, so the right-hand detail panel behaves exactly as it does from the tree.
-The `.agents-legend` chips swap per view (status legend ↔ commit-graph legend); the right-hand detail panel is unchanged.
+The commit view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (`components/agents_components/`) from `@commit_graph` — the per-repo SVG view model (dots, edges, rings + geometry) built by the pure `EvoDashWeb.AgentsLive.CommitGraph.build/2`, which also owns the shared repo `grouping_key/1` / `repo_display_name/1` naming (the tree delegates to it).
+Design (classic git graph, oldest at top / newest at bottom): commits are DOTS connected by straight-within-lane / Bézier cross-lane edges over first-available-lane assignment; an agent's progress path (base→current) is colored by its recursion DEPTH via the golden-angle hue mapping (`hue = Integer.mod(round(depth * 137.508) + 265, 360)`, s 70 / l 54 — exact contract in `live/agents_live/CONTEXT.md`); a hollow RING around a dot marks the commit an agent is currently on, colored by agent status via the shared `Helpers.agent_status_svg_color/1` (same palette as the agent tree); per-dot native `<title>` tooltips carry sha+subject; refs render as right-gutter text chips.
+Dots that map to an agent AND rings reuse the existing `select_agent` event, so the right-hand detail panel behaves exactly as it does from the tree.
+The `.agents-legend` chips swap per view (status legend ↔ 3-chip commit-graph legend: Commit / Agent progress / Active agent ring); the right-hand detail panel is unchanged.
 All commit-graph fetching is async (`EvoDash.TaskSupervisor`, seam `:agents_commit_graph_runner`) and happens ONLY while the commit view is active — a tree-only session never issues a git RPC.
 Full assigns/async/throttle contract + the frozen DOM animation markers: `live/agents_live/CONTEXT.md` and `components/agents_components/CONTEXT.md`.
 
