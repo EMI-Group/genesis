@@ -59,7 +59,7 @@ Attributes (all declared with `attr/3`):
 
 - Root: `<div id="commit-graph" phx-hook="CommitGraph">`.
 - Immediately inside the root, the node-scoped wrapper `id={"commit-graph-body-" <> @node_key}` (a node switch changes the id → LiveView replaces the whole subtree).
-- Per repo: `id={"commit-graph-repo-" <> repo.repo_dom_id}` wrapper div (the builder's `repo_dom_id` ALREADY starts with `commit-graph-repo-`, so the rendered id carries the prefix twice — stable, deterministic, and pinned by tests; do not "fix" either side in isolation). The repo header is a plain div ABOVE the SVG inside this wrapper.
+- Per repo: the wrapper div's id IS `repo_dom_id` VERBATIM — the builder's `repo_dom_id` ALREADY carries the `commit-graph-repo-` prefix (`commit-graph-repo-<slug>-<hash>`), so the renderer adds NO prefix (prefixing would double it). The repo header is a plain div ABOVE the SVG inside this wrapper.
 - Each commit dot GROUP: `id={"commit-dot-" <> repo.repo_dom_id <> "-" <> commit.sha}` + `data-commit-graph-anim="node"`. The id/marker live on the `<g>`; the click binding lives on the inner circle.
 - Each edge path: `id={edge.id}` (already `"commit-edge-<repo_dom_id>-<child>-<parent>"` shaped, built by the assembly) + `data-commit-graph-anim="edge"`.
 - Each agent ring GROUP: `id={"commit-ring-" <> repo.repo_dom_id <> "-" <> to_string(ring.agent_id)}` + `data-commit-graph-anim="node"`.

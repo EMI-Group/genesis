@@ -18,7 +18,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   prepared `x`/`y`/`d` values.
 
   The frozen DOM markers (`#commit-graph` + `phx-hook="CommitGraph"`,
-  `#commit-graph-body-<node_key>`, `#commit-graph-repo-<repo_dom_id>`,
+  `#commit-graph-body-<node_key>`, the per-repo section whose id IS
+  `repo_dom_id` itself (the assembly already emits it
+  `commit-graph-repo-<slug>-<hash>`-shaped — the renderer adds NO prefix),
   `#commit-dot-<repo_dom_id>-<sha>` and `#commit-ring-<repo_dom_id>-<agent_id>`
   both with `data-commit-graph-anim="node"`, and the edge
   `#commit-edge-<repo_dom_id>-<child>-<parent>` ids with
@@ -151,7 +153,10 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   defp repo_section(assigns) do
     ~H"""
-    <div id={"commit-graph-repo-" <> @repo.repo_dom_id} class="space-y-1">
+    <%!-- The section id IS `repo_dom_id` verbatim: the builder already emits
+         a `commit-graph-repo-<slug>-<hash>`-shaped id, so prefixing it here
+         would double the prefix. --%>
+    <div id={@repo.repo_dom_id} class="space-y-1">
       <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
         <.icon
           name="hero-server-stack"
