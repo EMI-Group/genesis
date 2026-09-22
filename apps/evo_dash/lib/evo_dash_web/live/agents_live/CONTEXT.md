@@ -51,6 +51,10 @@ It emits the frozen DOM markers (`#commit-graph`, `#commit-graph-body-<node_key>
 Per-node `<title>` tooltips on the commit dots carry sha + subject (native SVG tooltips), and refs (branches/tags) render as text chips in the right gutter of each repo section.
 In the commit view the `.agents-legend` cluster swaps the three status chips for a THREE-chip commit-graph legend (title "Commit Graph Legend"), same `data-tip` + `phx-hook="LegendTooltip"` style: `agents-legend-commit` (a neutral dot swatch + "Commit" — a git commit rendered as a dot; hover a dot to see its message), `agents-legend-path` (a colored line swatch using the literal `#7c38dc` — the documented depth-0 hue, mirroring the depth→hue formula — + "Agent progress" — dots/edges take the covering agent's depth color, one hue per recursion depth, golden-angle rotation), and `agents-legend-ring` (a hollow `border-2 border-success` ring swatch + "Active agent (ring)" — a ring marks the commit an agent is currently on; ring color = agent status, same palette as the agent tree: green running, amber waiting, gray pending).
 
+### Commit-graph colors — emitted fields vs. consumed fields (do not "fix")
+
+`CommitGraph.build/2` emits a `color` (depth-hue) field on every `rings[]` entry and on each `commits[].agent` map, but the renderer DELIBERATELY ignores both — real colors come from elsewhere: dot fill = `commit.highlight_color` (the covering agent's depth hue, `ThemeColor.hsl_to_hex(hue, 70, 54)` with `hue = Integer.mod(round(depth * 137.508) + 265, 360)`), edge stroke = `edge.color` (agent-depth hue or `var(--color-base-content)` at 0.35 opacity when uncovered), and agent-ring stroke = `EvoDashWeb.Helpers.agent_status_svg_color(ring.status)` (`var(--color-success|warning|info|base-content)`) — NOT `ring.color`. `CommitGraph.dot_r/0` (4.5) / `ring_r/0` (8.5) are the single-source radii the renderer consumes.
+
 ## Send-Message Flow (in `agents_live.ex` + `agents_live.html.heex`)
 
 User-sent messages display optimistically via the `OptimisticMessages` support module (below).
