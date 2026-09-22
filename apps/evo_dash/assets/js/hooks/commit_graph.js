@@ -1,47 +1,41 @@
-// CommitGraph hook: enter-animations for the SVG git-graph (temporal commit
-// history) on the Agents page.
+// CommitGraph hook: enter-animations for the horizontal "agent swimlane"
+// commit-history view (temporal dimension) on the Agents page.
 //
 // Markup contract (frozen — see CommitGraphView / agents_components docs):
-//   #commit-graph                    root (this hook's element)
-//   #commit-graph-body-<node_key>    node-scoped wrapper (replaced wholesale
-//                                     on a node switch)
-//   commit-graph-repo-<slug>-<hash>  per-repo section wrapping one <svg>
-//   <g id="commit-dot-…">    data-commit-graph-anim="node"  commit dot group
-//   <g id="commit-ring-…">   data-commit-graph-anim="node"  agent ring group
-//   <path id="commit-edge-…"> data-commit-graph-anim="edge" straight/Bézier edge
+//   #commit-graph                       root (this hook's element)
+//   #commit-graph-body-<node_key>       node-scoped wrapper (replaced wholesale
+//                                       on a node switch)
+//   data-commit-graph-anim="node"       a commit marker element (plain HTML,
+//                                       e.g. a small <div>/<span>)
+//   data-commit-graph-anim="lane"       an agent's horizontal progress element
 //
-// The graph grows incrementally: new commits append at the BOTTOM (oldest at
-// top), and LiveView's patcher (morphdom) reuses existing elements by their
-// stable unique DOM ids, inserting only genuinely new ones — so ONLY newly
-// inserted elements animate. A MutationObserver on the root (childList +
-// subtree) sees exactly those insertions; the elements already present at
-// mount never animate, and an `updated()` re-scan covers wholesale subtree
-// replacements (view / node switches) without re-animating anything already
-// seen (WeakSet instance guard).
+// The view grows incrementally: new elements append at the end, and LiveView's
+// patcher (morphdom) reuses existing elements by their stable unique DOM ids,
+// inserting only genuinely new ones — so ONLY newly inserted elements animate.
+// A MutationObserver on the root (childList + subtree) sees exactly those
+// insertions; the elements already present at mount never animate, and an
+// `updated()` re-scan covers wholesale subtree replacements (view / node
+// switches) without re-animating anything already seen (WeakSet instance
+// guard).
 //
-// Animations (keyframes live in css/app.css):
-//   node → fade + scale-up (`.commit-node-enter`). SVG groups have no CSS box,
-//          so the hook pins the transform origin inline to the dot/ring center
-//          (read from the group's first <circle> cx/cy, view-box relative —
-//          every circle in these groups shares that center); a missing
-//          measurable center falls back to the group's own bounding-box center
-//          (transform-box: fill-box).
-//   edge → stroke-draw (`.commit-edge-enter`): getTotalLength() measures the
-//          path, the hook writes the inline start state (stroke-dasharray /
-//          stroke-dashoffset = path length), and the CSS animation drives
-//          dashoffset → 0 — drawing the edge from its start point (the new
-//          child commit, below) up to its parent. Unmeasurable paths (no
-//          getTotalLength / degenerate geometry) fall back to a plain fade.
+// Animations (keyframes live in css/app.css — HTML-only, no SVG geometry):
+//   node → fade + scale-up around the element's own center
+//          (`.commit-node-enter`). Plain HTML accepts a CSS transform origin
+//          as-is, so no inline origin pinning is needed.
+//   lane → horizontal GROW-IN from the LEFT (`.commit-lane-enter`): the CSS
+//          animation scales `transform: scaleX(0) → scaleX(1)` with
+//          `transform-origin: left center`, so the bar grows out from its
+//          leading edge. Purely a class add — nothing to measure, nothing that
+//          can fail.
 //
-// Per-element animation state (class + inline styles) is removed when the
-// animation settles (animationend OR animationcancel), when the element is
-// detached mid-flight, and on hook teardown — so no element can ever render
-// stuck at its hidden start state. prefers-reduced-motion is checked in JS
-// before touching the DOM (css/app.css carries the matching guard too).
+// Per-element animation state (class) is removed when the animation settles
+// (animationend OR animationcancel) and on hook teardown — so no element can
+// ever render stuck at its hidden start state. prefers-reduced-motion is
+// checked in JS before touching the DOM (css/app.css carries the matching
+// guard too).
 
 const NODE_CLASS = "commit-node-enter";
-const EDGE_CLASS = "commit-edge-enter";
-const EDGE_FADE_CLASS = "commit-edge-fade";
+const LANE_CLASS = "commit-lane-enter";
 
 const CommitGraph = {
   mounted() {
@@ -106,77 +100,27 @@ const CommitGraph = {
 
       const kind = el.dataset.commitGraphAnim;
       if (kind === "node") this.animateNode(el);
-      else if (kind === "edge") this.animateEdge(el); // unknown kinds ignored
+      else if (kind === "lane") this.animateLane(el); // unknown kinds ignored
     });
   },
 
-  // --- node (commit dot / agent ring <g>) ---------------------------------
+  // --- node (commit marker element) ---------------------------------------
 
-  animateNode(group) {
-    // SVG groups have no CSS box: pin the scale origin to the dot/ring center.
-    // Every circle in these groups (halo, glow band, dot, ring) shares the
-    // same cx/cy, so the first one always carries the center; view-box
-    // relative coordinates match the untransformed user units the SVG uses.
-    const circle = group.querySelector("circle");
-    const cx = circle ? parseFloat(circle.getAttribute("cx")) : NaN;
-    const cy = circle ? parseFloat(circle.getAttribute("cy")) : NaN;
-
-    this.onAnimationSettled(group, () => this.clearNodeState(group));
-
-    if (Number.isFinite(cx) && Number.isFinite(cy)) {
-      group.style.transformBox = "view-box";
-      group.style.transformOrigin = cx + "px " + cy + "px";
-    } else {
-      // No measurable center: scale around the group's own bounding box.
-      group.style.transformBox = "fill-box";
-      group.style.transformOrigin = "center";
-    }
-
-    group.classList.add(NODE_CLASS);
+  animateNode(el) {
+    // Plain HTML: the CSS keyframe scales around the element's own center, so
+    // there is no SVG transform origin to pin inline. Just opt the element
+    // into the animation and let it settle back to its base state.
+    this.onAnimationSettled(el, () => this.clearAnimations(el));
+    el.classList.add(NODE_CLASS);
   },
 
-  clearNodeState(group) {
-    group.classList.remove(NODE_CLASS);
-    group.style.removeProperty("transform-box");
-    group.style.removeProperty("transform-origin");
-  },
+  // --- lane (agent horizontal progress element) ---------------------------
 
-  // --- edge (child→parent <path>) ------------------------------------------
-
-  animateEdge(path) {
-    const length = this.edgeLength(path);
-
-    this.onAnimationSettled(path, () => {
-      path.classList.remove(length > 0 ? EDGE_CLASS : EDGE_FADE_CLASS);
-      path.style.removeProperty("stroke-dasharray");
-      path.style.removeProperty("stroke-dashoffset");
-    });
-
-    if (length > 0) {
-      // Start state: one dash exactly the path length, fully offset (hidden).
-      // The CSS animation drives dashoffset → 0, revealing the path from its
-      // start point (the new child commit) up to its parent; the animation's
-      // implicit 0% keyframe is synthesized from this inline base value.
-      path.style.strokeDasharray = String(length);
-      path.style.strokeDashoffset = String(length);
-      path.classList.add(EDGE_CLASS);
-    } else {
-      // Unmeasurable geometry (no getTotalLength / non-positive length):
-      // fade in instead, so edges never pop in harder than dots do.
-      path.classList.add(EDGE_FADE_CLASS);
-    }
-  },
-
-  // getTotalLength is pure path geometry, but older engines can throw on
-  // paths they refuse to measure — never let that break the page.
-  edgeLength(path) {
-    if (typeof path.getTotalLength !== "function") return 0;
-    try {
-      const length = path.getTotalLength();
-      return isFinite(length) && length > 0 ? length : 0;
-    } catch (_error) {
-      return 0;
-    }
+  animateLane(el) {
+    // Unconditional class add: the CSS keyframe drives scaleX 0 → 1 from the
+    // left edge. Nothing to measure, so nothing can fail.
+    this.onAnimationSettled(el, () => this.clearAnimations(el));
+    el.classList.add(LANE_CLASS);
   },
 
   // --- shared helpers --------------------------------------------------------
@@ -185,11 +129,7 @@ const CommitGraph = {
   // for detached elements and hook teardown.
   clearAnimations(root) {
     this.eachMarked(root, (el) => {
-      el.classList.remove(NODE_CLASS, EDGE_CLASS, EDGE_FADE_CLASS);
-      el.style.removeProperty("transform-box");
-      el.style.removeProperty("transform-origin");
-      el.style.removeProperty("stroke-dasharray");
-      el.style.removeProperty("stroke-dashoffset");
+      el.classList.remove(NODE_CLASS, LANE_CLASS);
     });
   },
 
