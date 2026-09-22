@@ -28,7 +28,7 @@ Attributes (all declared with `attr/3`):
 ```elixir
 %{repo_key:, repo_dom_id:, repo_name:, width: float, height: float, lane_count:, commit_count:,
   commits: [  # ordered TOP→BOTTOM (oldest first)
-    %{sha:, short_sha:, message:, parents:, lane:, row:, x: float, y: float, refs: [String],
+    %{sha:, short_sha:, message:, author_name:, date:, parents:, lane:, row:, x: float, y: float, refs: [String],
       highlight_color: String|nil,   # depth-hue hex when on an agent's progress path
       agent: nil | %{id:, task_local_id:, status:, depth:, color:, tip?: boolean}}],
   edges: [%{id: "commit-edge-<repo_dom_id>-<child>-<parent>", d: "M...C...", color: String|nil}],
@@ -75,9 +75,16 @@ Attributes (all declared with `attr/3`):
 - All user-facing strings are `gettext`-wrapped (Chinese anchoring comments next to ambiguous labels); do not run `mix gettext.extract`/`merge`/`translate` during development.
 - No `try/rescue`; every read of the prepared data is TOTAL (`Map.get/2` with pattern-matched normalization — nil coordinates fold to `0` via `num/1` before arithmetic) so odd shapes degrade instead of crashing.
 
+## Visual / geometry notes (for redesign work)
+
+- **Radii (from the assembly, `CommitGraph.dot_r/0` = 4.5, `ring_r/0` = 8.5)** drive every marker size; the renderer never hardcodes them. Per commit, up to FIVE stacked circles can render (bottom→top): the dot (`r` 4.5) inside its `<g>`; the dot's selection halo (`r = ring_r + 3.5` = 12.0 — notably much larger than the dot it encircles, since it is ring-radius based); then, drawn in a SEPARATE `<g>` on top when the commit is an agent tip, the ring glow band (`r = ring_r + 2` = 10.5), the ring's selection halo (`r = ring_r + 3.5` = 12.0) and the ring itself (`r` 8.5). Dots and rings are separate sibling groups at the same `(x, y)`.
+- **Graph natural size**: `width = 12 + lane_count*24 + 150`, `height = 14 + rows*26 + 14` (assembly constants). A narrow left panel therefore horizontal-scrolls (SVG `min-width` = natural width) rather than squashing lanes; tall graphs vertical-scroll inside the wrapper's `max-h-[32rem]` (512px).
+- **Ref-chip overflow is possible**: chips start at `gutter_x = repo.width - 146` and stack left→right with a per-chip width estimated from char count (`len*4.6 + 8`). A long branch/ref name (or several chips) can push a chip past the viewBox right edge — the SVG clips it (no scrollbar for SVG content outside the viewBox). The assembly reserves a 150px gutter, the renderer keeps a 4px inner margin (146).
+
 ## Notes for Agents
 
 - Geometry ownership is split: the ASSEMBLY module computes positions/paths/dimensions; this renderer only draws them (plus the gutter-chip layout, which is presentation-only geometry derived from `repo.width`).
+- Colour sources (do not "fix"): a commit dot's fill is the commit's `highlight_color` (depth hue) or `var(--color-base-content)`; an agent RING's stroke is ALWAYS derived from the ring `status` via `EvoDashWeb.Helpers.agent_status_svg_color/1`; edges use `edge.color` when present, else muted base ink. The `color` field the assembly emits on each `rings[]` entry (and on a commit's `agent` view map) is the depth hue and is UNUSED here — the /agents legend pins "Ring color = agent status", so the ring deliberately does not use the depth hue.
 - `fmt/1` compacts whole floats for the viewBox/min-width interpolations (`210.0` → `"210"`); circle `cx/cy` keep the raw float (harmless). The assembly has its own `num/1` for edge paths.
 - States handled: `:loading` (spinning `hero-arrow-path` + "Loading commit history…"), `:empty` (dimmed `hero-server` + "No commit history yet."), `:error` (small `text-error`/`bg-error/10` strip — only when there is no data), and `:repos` (last-good graph kept when `@error != nil`, with a subtle `text-warning` refresh-failed strip above it).
 - Wiring into the left panel (view switcher, `selected_id`/`node_key` assigns) is owned by `agents_live.ex` / `agents_live.html.heex` (outside this subtree).
