@@ -789,7 +789,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-      assert [c2, c3] = repo.commits
+      assert [c2, _c3] = repo.commits
 
       assert c2.sha == @c2
       assert c2.short_sha == "abcdef12"
@@ -982,10 +982,6 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   defp y(point_bin) do
     point_bin |> String.split(",") |> Enum.at(1) |> Float.parse() |> elem(0)
   end
-
-  defp ery({_, y}), do: y
-
-  defp c_x(positions, sha), do: positions[sha] |> elem(0)
 
   # Compact SVG number formatting — mirrors the assembler's own `num/1` so the
   # bezier assertion builds the exact expected path string.
