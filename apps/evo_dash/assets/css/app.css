@@ -903,18 +903,21 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Commit Graph (temporal view — Agents page) === */
-/* Enter-animation helpers for the commit-history visualization rendered by the
-   CommitGraph JS hook on the Agents page. The hook appends node dots, swim-lane
-   columns and connector edges when (re)building the history and tags each
-   NEWLY inserted element with the matching `-enter` class below, so a refresh
-   animates only what actually arrived. The animations are transform/opacity
-   only (no layout thrash) and color-free — the hook and the Tailwind utilities
-   own the visual styling, this block owns the motion. Opting out is honoured
-   by the guard at the end of the block (the hook checks the same media query in
-   JS — belt-and-braces). */
+/* Enter-animation helpers for the SVG git graph (commit dots + Bézier edges +
+   agent rings) rendered by the CommitGraph JS hook on the Agents page. The
+   hook tags each NEWLY inserted marked element (`data-commit-graph-anim` on
+   `#commit-dot-*` / `#commit-ring-*` groups and `#commit-edge-*` paths) with
+   the matching class below and pins the inline start state it needs (edge
+   dash length, node transform origin), so a refresh animates only what
+   actually arrived. The animations are stroke/transform/opacity only (no
+   layout thrash) and color-free — the inline SVG styles own the visuals, this
+   block owns the motion. Opting out is honoured by the guard at the end of
+   the block (the hook checks the same media query in JS — belt-and-braces). */
 
-/* Node dot: fade in while growing from 85% to its final size. Default
-   (center) transform origin is what a dot wants, so no base rule is needed. */
+/* Commit dot / agent ring GROUP: fade in while growing from 85% to its final
+   size. The scale origin is the dot/ring center — the hook writes
+   `transform-box` + `transform-origin` inline per element (SVG groups carry
+   no CSS box of their own), so this keyframe only owns scale/opacity. */
 @keyframes commit-node-in {
   0% { opacity: 0; transform: scale(0.85); }
   100% { opacity: 1; transform: scale(1); }
@@ -924,68 +927,50 @@ button, a, input, textarea, select, summary,
   animation: commit-node-in 0.3s ease-out both;
 }
 
-/* Swim-lane column/label: fade in with a slight slide from the left (pure
-   translate, so no transform-origin is required either). */
-@keyframes commit-lane-in {
-  0% { opacity: 0; transform: translateX(-8px); }
-  100% { opacity: 1; transform: translateX(0); }
-}
-
-.commit-lane-enter {
-  animation: commit-lane-in 0.3s ease-out both;
-}
-
-/* Connector edge: a "draw"/grow effect instead of a pop-in. The default shape
-   is a VERTICAL edge growing downwards from its anchor (scaleY, origin top);
-   add the `.commit-edge-horizontal` modifier to an edge that grows rightwards
-   from its left anchor instead (scaleX, origin left). */
-@keyframes commit-edge-grow-y {
-  0% { opacity: 0; transform: scaleY(0); }
-  100% { opacity: 1; transform: scaleY(1); }
-}
-
-@keyframes commit-edge-grow-x {
-  0% { opacity: 0; transform: scaleX(0); }
-  100% { opacity: 1; transform: scaleX(1); }
+/* Edge PATH: a stroke "draw". The hook measures the path (`getTotalLength`)
+   and writes the inline start state (`stroke-dasharray` =
+   `stroke-dashoffset` = length), and this animation drives the offset to 0 —
+   revealing the edge from its start point (the new child commit, drawn
+   bottom-up to its parent). The 0% frame is synthesized from that inline
+   offset, so a single keyframe serves every path length; no width/height
+   scaling is involved (the old box-lane grow tricks do not fit Bézier
+   geometry). Paths whose geometry cannot be measured fall back to
+   `.commit-edge-fade` below. */
+@keyframes commit-edge-draw {
+  100% { stroke-dashoffset: 0; }
 }
 
 .commit-edge-enter {
-  animation: commit-edge-grow-y 0.3s ease-out both;
+  animation: commit-edge-draw 0.45s ease-out both;
 }
 
-.commit-edge-enter.commit-edge-horizontal {
-  animation-name: commit-edge-grow-x;
+@keyframes commit-edge-fade-in {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
-/* Base styling the grow effect relies on: the edge must scale away from its
-   anchor, not from its center. Origin is declared for BOTH the structural
-   (`-edge`) and the animating (`-edge-enter`) class names, since the hook may
-   use either as the element's hook for the modifier; the `.commit-edge-horizontal`
-   pair is 2 classes deep, so it outranks the default whatever the source order.
-   Deliberately `transform-origin` only — the hook's inline sizing/positioning
-   and the Tailwind utilities stay authoritative for everything else (this
-   block is un-layered, so it beats `@layer utilities`). */
-.commit-edge,
-.commit-edge-enter {
-  transform-origin: top;
+.commit-edge-fade {
+  animation: commit-edge-fade-in 0.3s ease-out both;
 }
 
-.commit-edge.commit-edge-horizontal,
-.commit-edge-enter.commit-edge-horizontal {
-  transform-origin: left;
-}
-
-/* Reduced-motion guard. Only `animation` is switched off (plus opacity as a
-   harmless non-inline default) — deliberately NOT `transform: none`: graph
-   elements may be positioned with their own transform, and `none` would
-   collapse them all onto the origin. With no animation the `both` fill mode
-   holds nothing, so the element simply keeps its final (base) state. */
+/* Reduced-motion guard. `animation: none` plus final-state overrides: the
+   edge draw's inline `stroke-dashoffset: <length>` start state must never
+   survive as an invisible edge (an !important author declaration beats the
+   inline style), and the node/ring groups fall back to fully opaque.
+   Deliberately NOT `transform: none` — graph elements may be positioned with
+   their own transform, and `none` would collapse them onto the origin. With
+   no animation the `both` fill mode holds nothing, so the elements simply
+   keep their final (base) state. */
 @media (prefers-reduced-motion: reduce) {
   .commit-node-enter,
-  .commit-lane-enter,
-  .commit-edge-enter {
+  .commit-edge-fade {
     animation: none;
     opacity: 1;
+  }
+
+  .commit-edge-enter {
+    animation: none;
+    stroke-dashoffset: 0 !important;
   }
 }
 
