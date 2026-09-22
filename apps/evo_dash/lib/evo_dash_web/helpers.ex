@@ -83,6 +83,25 @@ defmodule EvoDashWeb.Helpers do
 
   def agent_status_label(_), do: gettext("Unknown")
 
+  @doc """
+  Returns a CSS color VALUE (a `var(--color-*)` string) for agent status,
+  suitable for SVG inline styles — `style="stroke: ..."` / `style="fill: ..."`.
+
+  SVG presentation attributes (`stroke=`, `fill=`) cannot consume `var()`,
+  but inline styles can — the same convention as the SystemLive charts'
+  SVG gridlines (`live/system_live/charts.ex`). This is the SINGLE
+  status→SVG-color mapping, the SVG-side sibling of the `agent_status_*`
+  Tailwind-class family above, consumed by the Agents page commit-graph
+  rings/dots. Like the class family, `:blocked` delegates to `:pending`
+  (the frontend merges both into "queued / waiting to be scheduled").
+  """
+  def agent_status_svg_color(:running), do: "var(--color-success)"
+  def agent_status_svg_color(:waiting), do: "var(--color-warning)"
+  def agent_status_svg_color(:ready), do: "var(--color-info)"
+  def agent_status_svg_color(:blocked), do: agent_status_svg_color(:pending)
+  def agent_status_svg_color(:pending), do: "var(--color-base-content)"
+  def agent_status_svg_color(_), do: "var(--color-base-content)"
+
   # ---------------------------------------------------------------------------
   # Task Status Helpers
   # ---------------------------------------------------------------------------
