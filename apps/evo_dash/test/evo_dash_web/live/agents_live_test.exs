@@ -1704,7 +1704,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # suite (test/evo_dash_web/components/commit_graph_view_test.exs) still pins
     # the DOM markers in isolation via render_component/2.
 
-    test "an applied commit graph is stored and built into lanes", %{conn: conn} do
+    test "an applied commit graph is stored and built into the SVG repo view", %{conn: conn} do
       install_agents([
         summary_agent(
           id: agent_id(),
@@ -1748,60 +1748,64 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert [repo] = assigns(view)[:commit_graph]
       assert repo.repo_name == "a"
 
-      assert [lane] = repo.lanes
-      assert lane.agent_id == agent_id()
-
-      assert [commit] = lane.commits
+      # The single fetched commit IS the agent's tip: one dot, one ring, no edges
+      # (its parent "b1" is absent from the fetch).
+      assert repo.commit_count == 1
+      assert [commit] = repo.commits
 
       # The message is truncated to its first line; refs come from the payload.
-      assert Map.take(commit, [:sha, :short_sha, :message, :parents, :author_name, :refs]) == %{
+      assert Map.take(commit, [:sha, :short_sha, :message, :parents, :refs]) == %{
                sha: "c1",
                short_sha: "c1",
                message: "subject line",
                parents: ["b1"],
-               author_name: "Ada",
                refs: ["main"]
              }
 
-      # "b1" is the exclusive base and is absent from the fetched graph, so the
-      # first parent "b1" is not owned by this lane.
-      assert commit.has_parent_in_lane? == false
+      assert [ring] = repo.rings
+      assert ring.agent_id == agent_id()
+      assert {ring.x, ring.y} == {commit.x, commit.y}
 
       # ── Page-level MARKUP assertions ─────────────────────────────────────
-      # The loaded graph renders at page level (the commits container carries no
-      # `phx-update` mode). Derive every id FROM THE LIVE SOCKET — the repo's
-      # `repo_dom_id` and the lane's `agent_id` — never a hardcoded dom id.
+      # The loaded graph renders at page level. Derive every id FROM THE LIVE
+      # SOCKET — the repo's `repo_dom_id` and the agent id — never a hardcoded
+      # dom id.
       dom = repo.repo_dom_id
-      aid = lane.agent_id
+      aid = ring.agent_id
 
       html = render(view)
 
       assert has_element?(view, "#commit-graph")
       assert html =~ ~s(phx-hook="CommitGraph")
 
-      assert has_element?(view, "#commit-graph-repo-#{dom}")
-      assert has_element?(view, "#commit-lane-#{dom}-#{aid}")
-      assert has_element?(view, "#commit-lane-commits-#{dom}-#{aid}")
-      assert has_element?(view, "#commit-node-#{dom}-c1")
-      assert has_element?(view, "#commit-agent-chip-#{aid}")
+      assert has_element?(view, "##{dom}")
+      assert has_element?(view, "#commit-dot-#{dom}-c1")
+      assert has_element?(view, "#commit-ring-#{dom}-#{aid}")
 
       tree = Floki.parse_document!(html)
 
-      # The commits container carries NO phx-update mode.
-      assert [container] = Floki.find(tree, "#commit-lane-commits-#{dom}-#{aid}")
-      assert Floki.attribute(container, "phx-update") == []
+      # No phx-update mode anywhere — incremental patching rides the stable ids.
+      assert Floki.find(tree, "[phx-update]") == []
 
-      # The commit node shows the short sha and the FIRST-LINE subject only —
+      # The commit dot's <title> tooltip carries the FIRST-LINE subject only —
       # the payload's body line is dropped.
-      assert [node] = Floki.find(tree, "#commit-node-#{dom}-c1")
-      assert node |> Floki.find("code") |> Floki.text() |> String.trim() == "c1"
+      assert [node] = Floki.find(tree, "#commit-dot-#{dom}-c1")
+      title = node |> Floki.find("title") |> Floki.text()
+      assert title =~ "subject line"
+      refute title =~ "body"
 
-      node_text = Floki.text(node)
-      assert node_text =~ "subject line"
-      refute node_text =~ "body"
+      # The tip's "main" ref renders as a text chip right of the dot.
+      assert node
+             |> Floki.find("text")
+             |> Enum.map(&String.trim(Floki.text(&1)))
+             |> Enum.member?("main")
 
-      # The tip's "main" ref renders as a badge on that commit node.
-      assert node |> Floki.find("span.badge") |> Floki.text() =~ "main"
+      # The ring is clickable and targets the agent.
+      [ring_group] = Floki.find(tree, "#commit-ring-#{dom}-#{aid}")
+
+      assert ring_group
+             |> Floki.find("circle[stroke-width=\"2\"]")
+             |> Enum.map(&Floki.attribute(&1, "phx-value-id")) == [[to_string(aid)]]
     end
 
     test "a stale commit-graph result is dropped", %{conn: conn} do

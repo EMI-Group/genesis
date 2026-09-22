@@ -1,24 +1,59 @@
 defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   @moduledoc """
-  Pure unit tests for EvoDashWeb.AgentsLive.CommitGraph — the temporal
-  (git commit history) graph assembler for the Agents page.
+  Pure unit tests for EvoDashWeb.AgentsLive.CommitGraph — the assembler behind
+  the Agents page TEMPORAL (git commit history) view, a CLASSIC git graph
+  (`git log --graph` style) later rendered as SVG dots + edges + agent rings.
 
   These are pure data-transformation functions operating on plain maps — no
   LiveView, Phoenix socket, repo I/O, or app-env seam is involved. Every
   fixture is a hand-crafted agent list plus a hand-crafted per-repo commit
-  graph, so each assertion can be traced back to the lane/ownership rules
-  documented on the module.
+  graph, so each assertion traces back to the lane/overlay rules documented on
+  the module:
+
+    - lane assignment (first-available-lane, merge folding, oldest-at-top),
+    - dot geometry (x/y/dimensions formulas),
+    - edges (child→parent `d` endpoints, same-lane vs cross-lane shapes),
+    - the depth→hue overlay colors (exact hex pins),
+    - agent rings on TIP commits only,
+    - the two-tier dot click-target mapping (tip vs path-covering).
   """
 
   use ExUnit.Case, async: true
 
   alias EvoDashWeb.AgentsLive.CommitGraph
 
-  # Four consecutive commits, oldest first (@c1 is the root of the chain).
+  # Fixture shas: @c1 is the OLDEST of the linear chain @c1 <- @c2 <- @c3 <- @c4;
+  # @s1 is a side-branch commit, @m the merge that folds it back, @b0 a commit
+  # deliberately ABSENT from every fetched graph.
   @c1 "11111111"
   @c2 "22222222"
   @c3 "33333333"
   @c4 "44444444"
+  @m "mmmmmmmm"
+  @s1 "ssssssss"
+  @b0 "b0000000"
+
+  # Exact depth→hue pins (hue = Integer.mod(round(depth * 137.508) + 265, 360),
+  # then ThemeColor.hsl_to_hex(hue, 70, 54)) — the documented formula.
+  @depth0_color "#7c38dc"
+  @depth1_color "#dcad38"
+  @depth2_color "#38dcdc"
+  @depth5_color "#384bdc"
+
+  # ---------------------------------------------------------------------------
+  # Geometry getters — the single source of truth consumed by the SVG renderer
+  # ---------------------------------------------------------------------------
+
+  describe "geometry getters" do
+    test "dot_r/0 and ring_r/0 expose the documented radii" do
+      assert CommitGraph.dot_r() == 4.5
+      assert CommitGraph.ring_r() == 8.5
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # grouping_key/1 + repo_display_name/1
+  # ---------------------------------------------------------------------------
 
   describe "grouping_key/1" do
     test "prefers repo_root (an absolute path) over repo_id" do
@@ -76,27 +111,39 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # build/2 — repo grouping and sorting
+  # ---------------------------------------------------------------------------
+
   describe "build/2 — repo grouping and sorting" do
-    test "one repo_view per distinct grouping key, with repo_id as the fallback" do
+    test "one repo_view per distinct grouping key, each fed ONLY its own graph" do
       agents = [
-        agent(1, nil, repo_root: "/a/alpha"),
+        agent(1, nil, repo_root: "/a/alpha", base_commit: @c1, current_commit: @c2),
         # Same repo_root -> the same group.
-        agent(2, nil, repo_root: "/a/alpha"),
+        agent(2, nil, repo_root: "/a/alpha", base_commit: @c1, current_commit: @c2),
         # No repo_root -> the primary group.
-        agent(3, nil, repo_id: "primary")
+        agent(3, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
       ]
 
-      views = CommitGraph.build(%{}, agents)
+      raw_by_repo = %{
+        "/a/alpha" => raw(chain([@c1, @c2])),
+        "primary" => raw(chain([@c1, @c2, @c3]))
+      }
+
+      views = CommitGraph.build(raw_by_repo, agents)
 
       assert length(views) == 2
-      # "Primary Repo" (uppercase P) sorts before "alpha" by name.
-      assert Enum.map(views, & &1.repo_key) == ["primary", "/a/alpha"]
-      assert Enum.map(views, & &1.repo_name) == ["Primary Repo", "alpha"]
 
-      assert Enum.map(views |> repo_by_key("/a/alpha") |> Map.fetch!(:lanes), & &1.agent_id) == [
-               1,
-               2
-             ]
+      alpha = repo_by_key(views, "/a/alpha")
+      primary = repo_by_key(views, "primary")
+
+      # Each view carries exactly its own graph's commits…
+      assert alpha.commit_count == 2
+      assert primary.commit_count == 3
+
+      # …and exactly its own agents' rings (both alpha agents tip inside alpha).
+      assert Enum.map(alpha.rings, & &1.agent_id) == [1, 2]
+      assert Enum.map(primary.rings, & &1.agent_id) == [3]
     end
 
     test "repos are sorted by display name ascending" do
@@ -147,310 +194,508 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
-  describe "build/2 — lane construction" do
-    test "one lane per agent with a 0-based lane_index" do
-      agents = [agent(1, nil, repo_id: "primary"), agent(2, 1, repo_id: "primary")]
+  # ---------------------------------------------------------------------------
+  # build/2 — geometry: dimensions + dot positions
+  # ---------------------------------------------------------------------------
 
-      [repo] = CommitGraph.build(%{}, agents)
+  describe "build/2 — geometry (dimensions and dot positions)" do
+    test "dimensions follow the documented formulas" do
+      # chain(@c1..@c4): 4 rows, 1 lane.
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [
+          agent(1, nil, repo_id: "primary")
+        ])
 
-      assert [l1, l2] = repo.lanes
-      assert l1.agent_id == 1
-      assert l1.lane_index == 0
-      assert l2.agent_id == 2
-      assert l2.lane_index == 1
+      assert repo.commit_count == 4
+      assert repo.lane_count == 1
+      # width  = pad_left + lane_count * lane_width + right_gutter
+      assert repo.width == 12 + 1 * 24 + 150
+      # height = pad_top + rows * row_height + pad_bottom
+      assert repo.height == 14 + 4 * 26 + 14
     end
 
-    test "depth-first order: parents before children, children ascending by id" do
-      # Deliberately shuffled input: a1 -> a2 -> a4 and a1 -> a3.
-      agents = [
-        agent(4, 2, repo_id: "primary", depth: 2),
-        agent(3, 1, repo_id: "primary", depth: 1),
-        agent(1, nil, repo_id: "primary", depth: 0),
-        agent(2, 1, repo_id: "primary", depth: 1)
-      ]
+    test "dot centers follow x(lane) / y(row) with the OLDEST commit at the top" do
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [
+          agent(1, nil, repo_id: "primary")
+        ])
 
-      [repo] = CommitGraph.build(%{}, agents)
+      # The output list is ordered TOP → BOTTOM (oldest first)…
+      assert Enum.map(repo.commits, & &1.sha) == [@c1, @c2, @c3, @c4]
 
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 2, 4, 3]
-      assert Enum.map(repo.lanes, & &1.lane_index) == [0, 1, 2, 3]
-      assert Enum.map(repo.lanes, & &1.depth) == [0, 1, 2, 1]
-    end
+      # …with row 0 at the top and strictly increasing y downwards.
+      assert Enum.map(repo.commits, & &1.row) == [0, 1, 2, 3]
+      ys = Enum.map(repo.commits, & &1.y)
+      assert ys == Enum.sort(ys) and Enum.uniq(ys) == ys
 
-    test "a lane carries the agent's metadata verbatim" do
-      a =
-        agent(1, nil,
-          repo_id: "primary",
-          depth: 3,
-          status: :completed,
-          agent_module: "EvoGit.Agents.Executor",
-          model_id: "profile-a",
-          task_local_id: "t1",
-          base_commit: @c1,
-          current_commit: @c2
-        )
-
-      [repo] = CommitGraph.build(%{}, [a])
-      [lane] = repo.lanes
-
-      assert lane.depth == 3
-      assert lane.status == :completed
-      assert lane.agent_module == "EvoGit.Agents.Executor"
-      assert lane.model_id == "profile-a"
-      assert lane.task_local_id == "t1"
-      assert lane.base_commit == @c1
-      assert lane.current_commit == @c2
-      assert lane.parent_agent_id == nil
-      assert lane.parent_lane_index == nil
-      assert lane.connects? == false
-      # No graph was fetched for the repo, so the range contributes nothing.
-      assert lane.commits == []
-    end
-
-    test "a missing or nil depth defaults to 0" do
-      agents = [
-        %{id: 1, parent_id: nil, repo_id: "primary", depth: nil},
-        %{id: 2, parent_id: nil, repo_id: "primary"}
-      ]
-
-      [repo] = CommitGraph.build(%{}, agents)
-
-      assert Enum.map(repo.lanes, & &1.depth) == [0, 0]
-    end
-
-    test "an id-less agent is not cross-linked into another root's child list" do
-      # The two id-less roots differ by task_local_id so they stay distinct values
-      # (the traversal's visited set compares agents by value).
-      agents = [
-        %{id: nil, parent_id: nil, repo_id: "primary", task_local_id: "t-a"},
-        %{id: nil, parent_id: nil, repo_id: "primary", task_local_id: "t-b"},
-        agent(1, nil, repo_id: "primary"),
-        agent(2, 1, repo_id: "primary")
-      ]
-
-      [repo] = CommitGraph.build(%{}, agents)
-
-      # Roots sort by id (number < atom/nil): a1, then the two id-less agents.
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 2, nil, nil]
-
-      assert repo.lanes
-             |> Enum.reject(&(&1.agent_id == 2))
-             |> Enum.all?(&(&1.parent_lane_index == nil))
+      for commit <- repo.commits do
+        # x(lane) = pad_left + lane * lane_width + lane_width / 2
+        assert commit.x == 12 + commit.lane * 24 + 12
+        # y(row) = pad_top + row * row_height + row_height / 2
+        assert commit.y == 14 + commit.row * 26 + 13
+      end
     end
   end
 
-  describe "build/2 — fork-point child lanes" do
-    test "a child lane connects to its parent's lane" do
-      agents = [agent(1, nil, repo_id: "primary"), agent(2, 1, repo_id: "primary")]
+  # ---------------------------------------------------------------------------
+  # build/2 — lane assignment (classic first-available-lane)
+  # ---------------------------------------------------------------------------
 
-      [repo] = CommitGraph.build(%{}, agents)
-      assert [l1, l2] = repo.lanes
+  describe "build/2 — lane assignment" do
+    test "a linear chain occupies a single lane" do
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [
+          agent(1, nil, repo_id: "primary")
+        ])
 
-      assert l1.parent_agent_id == nil
-      assert l1.parent_lane_index == nil
-      assert l1.connects? == false
-
-      assert l2.parent_agent_id == 1
-      assert l2.parent_lane_index == 0
-      assert l2.connects? == true
+      assert repo.lane_count == 1
+      assert Enum.map(repo.commits, & &1.lane) == [0, 0, 0, 0]
     end
 
-    test "a grandchild connects to its own parent's lane, not the root's" do
-      agents = [
-        agent(1, nil, repo_id: "primary"),
-        agent(2, 1, repo_id: "primary"),
-        agent(3, 2, repo_id: "primary")
+    test "a branch forks onto its own lane (first free slot), then merges fold back" do
+      # Newest-first input order (git log shape):
+      #
+      #   m   (parents: c3, s1)   <- a merge of the branch back into lane 0
+      #   c3  (parents: c2)
+      #   s1  (parents: c2)       <- the branch: 2nd parent slot
+      #   c2  (parents: c1)
+      #   c1  (parents: b0, absent from the fetch)
+      commits = [
+        commit(@m, parents: [@c3, @s1]),
+        commit(@c3, parents: [@c2]),
+        commit(@s1, parents: [@c2]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [@b0])
       ]
 
-      [repo] = CommitGraph.build(%{}, agents)
-      assert [l1, l2, l3] = repo.lanes
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      assert {l1.parent_lane_index, l1.connects?} == {nil, false}
-      assert {l2.parent_lane_index, l2.connects?} == {0, true}
-      assert l3.parent_agent_id == 2
-      assert {l3.parent_lane_index, l3.connects?} == {1, true}
+      # Two lanes total (the branch never exceeds one extra lane)…
+      assert repo.lane_count == 2
+
+      # …and the oldest-first lane assignment: the merge + trunk live on lane 0,
+      # the side commit on lane 1.
+      assert repo.commits
+             |> Enum.map(fn c -> {c.sha, c.lane} end)
+             |> Map.new() == %{@c1 => 0, @c2 => 0, @s1 => 1, @c3 => 0, @m => 0}
     end
 
-    test "a cross-repo parent yields no lane connection" do
-      agents = [
-        agent(1, nil, repo_root: "/r/alpha"),
-        # The parent lives in the alpha group, so this agent roots the beta group.
-        agent(2, 1, repo_root: "/r/beta")
+    test "two sibling branches off one parent spread onto separate lanes" do
+      # Newest-first input order: c3 and c2 both grow from c1 with no merge, so
+      # the FIRST parent claim keeps lane 0 (c3's walk) and the second fork
+      # (c2) is appended as lane 1.
+      commits = [
+        commit(@c3, parents: [@c1]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [])
       ]
 
-      views = CommitGraph.build(%{}, agents)
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      assert [alpha_lane] = repo_by_key(views, "/r/alpha").lanes
+      assert repo.lane_count == 2
 
-      assert {alpha_lane.agent_id, alpha_lane.parent_lane_index, alpha_lane.connects?} ==
-               {1, nil, false}
-
-      assert [beta_lane] = repo_by_key(views, "/r/beta").lanes
-      assert beta_lane.parent_agent_id == 1
-      assert beta_lane.parent_lane_index == nil
-      assert beta_lane.connects? == false
+      assert repo.commits
+             |> Enum.map(fn c -> {c.sha, c.lane} end)
+             |> Map.new() == %{@c1 => 0, @c2 => 1, @c3 => 0}
     end
 
-    test "an agent whose parent id is absent from its own group is a root" do
-      agents = [agent(1, 99, repo_id: "primary"), agent(2, nil, repo_id: "primary")]
+    test "a commit whose parents are all absent from the fetch ends its lane" do
+      # @c1's parent @b0 was not fetched — the root leaves its slot free, but the
+      # lane index it occupied still counts (lane_count never shrinks).
+      commits = [commit(@c2, parents: [@c1]), commit(@c1, parents: [@b0])]
 
-      [repo] = CommitGraph.build(%{}, agents)
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 2]
-      assert Enum.all?(repo.lanes, &(&1.parent_lane_index == nil))
-      assert Enum.all?(repo.lanes, &(&1.connects? == false))
-    end
+      assert repo.lane_count == 1
 
-    test "a malformed parent cycle still yields exactly one lane per agent" do
-      # a1's parent is a2 and a2's parent is a1: no agent is reachable from a root.
-      agents = [agent(1, 2, repo_id: "primary"), agent(2, 1, repo_id: "primary")]
-
-      [repo] = CommitGraph.build(%{}, agents)
-
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 2]
-      assert length(repo.lanes) == 2
+      assert repo.commits |> Enum.map(fn c -> {c.sha, c.lane} end) |> Map.new() == %{
+               @c1 => 0,
+               @c2 => 0
+             }
     end
   end
 
-  describe "build/2 — commit ownership (fork-point resolution)" do
-    test "an agent owns the commits from its base (exclusive) to its tip" do
-      commits = chain([@c1, @c2, @c3, @c4])
-      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4)
+  # ---------------------------------------------------------------------------
+  # build/2 — edges
+  # ---------------------------------------------------------------------------
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-      [lane] = repo.lanes
+  describe "build/2 — edges" do
+    test "one edge per (child, parent) pair with BOTH ends in the graph" do
+      # @c1's parent @b0 is absent -> no edge for it.
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [
+          agent(1, nil, repo_id: "primary")
+        ])
 
-      # Oldest -> newest, with the exclusive base commit left to another lane.
-      assert Enum.map(lane.commits, & &1.sha) == [@c2, @c3, @c4]
-      refute Enum.any?(lane.commits, &(&1.sha == @c1))
+      # Edges are emitted top → bottom (oldest commit first).
+      assert Enum.map(repo.edges, & &1.id) ==
+               Enum.map([{@c2, @c1}, {@c3, @c2}, {@c4, @c3}], fn {child, parent} ->
+                 "commit-edge-#{repo.repo_dom_id}-#{child}-#{parent}"
+               end)
     end
 
-    test "has_parent_in_lane? is false exactly at the lane's fork point" do
-      commits = chain([@c1, @c2, @c3, @c4])
-      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4)
-
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-      [lane] = repo.lanes
-
-      # @c2's first parent is the base @c1 (another lane's history) -> connector.
-      assert Enum.map(lane.commits, & &1.has_parent_in_lane?) == [false, true, true]
-      assert lane.commits |> List.last() |> Map.fetch!(:sha) == @c4
-    end
-
-    test "a child lane owns only the commits it produced" do
-      commits = chain([@c1, @c2, @c3, @c4])
-
-      agents = [
-        agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c2),
-        agent(2, 1, repo_id: "primary", base_commit: @c2, current_commit: @c4)
+    test "edges connect the real child and parent dot centers, child BELOW parent" do
+      commits = [
+        commit(@m, parents: [@c3, @s1]),
+        commit(@c3, parents: [@c2]),
+        commit(@s1, parents: [@c2]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [@b0])
       ]
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
-      assert [parent_lane, child_lane] = repo.lanes
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      assert Enum.map(parent_lane.commits, & &1.sha) == [@c2]
-      assert Enum.map(child_lane.commits, & &1.sha) == [@c3, @c4]
-      # The child's oldest commit is its own fork point off the parent's tip.
-      assert Enum.map(child_lane.commits, & &1.has_parent_in_lane?) == [false, true]
+      positions = repo.commits |> Enum.map(fn c -> {c.sha, {c.x, c.y}} end) |> Map.new()
+
+      for edge <- repo.edges do
+        suffix = String.replace_prefix(edge.id, "commit-edge-#{repo.repo_dom_id}-", "")
+        [child, parent] = String.split(suffix, "-")
+        {sx, sy, ex, ey} = endpoints(edge.d)
+
+        # The path starts exactly on the CHILD dot and ends exactly on the PARENT dot.
+        assert {sx, sy} == positions[child]
+        assert {ex, ey} == positions[parent]
+        # The child is newer, so it renders BELOW its parent.
+        assert sy > ey
+      end
+
+      # Every parent pair present in the graph got exactly one edge — @c1's
+      # absent parent @b0 contributes none.
+      assert length(repo.edges) == 5
     end
 
-    test "a commit reachable from two lanes is owned by exactly one lane" do
-      commits = chain([@c1, @c2, @c3, @c4])
-
-      agents = [
-        agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4),
-        agent(2, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
+    test "same-lane edges are straight lines; cross-lane edges are cubic beziers" do
+      commits = [
+        commit(@m, parents: [@c3, @s1]),
+        commit(@c3, parents: [@c2]),
+        commit(@s1, parents: [@c2]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [@b0])
       ]
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
-      assert [first_lane, second_lane] = repo.lanes
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      # The first lane in lane order claims the shared history.
-      assert Enum.map(first_lane.commits, & &1.sha) == [@c2, @c3, @c4]
-      # The second lane reaches claimed history immediately -> owns nothing.
-      assert second_lane.commits == []
+      edges = repo.edges |> Enum.map(fn e -> {e.id, e.d} end) |> Map.new()
 
-      shas = Enum.flat_map(repo.lanes, &Enum.map(&1.commits, fn c -> c.sha end))
-      assert shas == Enum.uniq(shas)
-      assert Enum.sort(shas) == [@c2, @c3, @c4]
+      # @m (lane 0) -> @c3 (lane 0): straight.
+      assert edges["commit-edge-#{repo.repo_dom_id}-#{@m}-#{@c3}"] =~
+               ~r/^M [0-9.]+,[0-9.]+ L [0-9.]+,[0-9.]+$/
+
+      # @m (lane 0) -> @s1 (lane 1): cubic with the two control points.
+      assert edges["commit-edge-#{repo.repo_dom_id}-#{@m}-#{@s1}"] =~
+               ~r/^M [0-9.]+,[0-9.]+ C [0-9.]+,[0-9.]+ [0-9.]+,[0-9.]+ [0-9.]+,[0-9.]+$/
+
+      # @s1 (lane 1) -> @c2 (lane 0): also a bezier.
+      assert edges["commit-edge-#{repo.repo_dom_id}-#{@s1}-#{@c2}"] =~ ~r/ C /
     end
 
-    test "a lane stopping at an earlier lane's history keeps only its own commits" do
-      commits = chain([@c1, @c2, @c3, @c4])
-
-      agents = [
-        agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3),
-        agent(2, 1, repo_id: "primary", base_commit: @c2, current_commit: @c4)
+    test "a cross-lane bezier bends at the vertical midpoint between the two rows" do
+      commits = [
+        commit(@c3, parents: [@c1]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [])
       ]
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
-      assert [lane_a, lane_b] = repo.lanes
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(commits)}, [agent(1, nil, repo_id: "primary")])
 
-      assert Enum.map(lane_a.commits, & &1.sha) == [@c2, @c3]
-      # @c4 is new, but its parent @c3 is already claimed, so the walk stops there.
-      assert Enum.map(lane_b.commits, & &1.sha) == [@c4]
-      assert Enum.map(lane_b.commits, & &1.has_parent_in_lane?) == [false]
+      # @c2 sits on lane 1; its edge back to @c1 (lane 0) is the bezier.
+      [edge] = Enum.filter(repo.edges, &String.ends_with?(&1.id, "#{@c2}-#{@c1}"))
+
+      positions = repo.commits |> Enum.map(fn c -> {c.sha, {c.x, c.y}} end) |> Map.new()
+      {xc, cy} = positions[@c2]
+      {xp, py} = positions[@c1]
+      mid = (cy + py) / 2
+
+      assert edge.d ==
+               "M #{num(xc)},#{num(cy)} C #{num(xc)},#{num(mid)} #{num(xp)},#{num(mid)} #{num(xp)},#{num(py)}"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # build/2 — depth → hue overlay colors
+  # ---------------------------------------------------------------------------
+
+  describe "build/2 — depth → hue colors" do
+    test "an agent's path dots and edges carry its EXACT depth hue" do
+      # Depth 0 agent over c2..c4 (base c1 in the graph).
+      a = agent(1, nil, repo_id: "primary", depth: 0, base_commit: @c1, current_commit: @c4)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [a])
+
+      assert @depth0_color == "#7c38dc"
+
+      assert repo.commits |> Enum.map(fn c -> {c.sha, c.highlight_color} end) |> Map.new() == %{
+               @c1 => nil,
+               @c2 => @depth0_color,
+               @c3 => @depth0_color,
+               @c4 => @depth0_color
+             }
+
+      # Every edge of the covered path (incl. the oldest→base edge) is colored.
+      assert repo.edges |> Enum.all?(&(&1.color == @depth0_color))
     end
 
-    test "base_commit == current_commit yields an empty lane" do
-      commits = chain([@c1, @c2])
-      a = agent(1, nil, repo_id: "primary", base_commit: @c2, current_commit: @c2)
+    test "distinct depths map to distinct documented hues" do
+      for {depth, expected} <- [
+            {0, @depth0_color},
+            {1, @depth1_color},
+            {2, @depth2_color},
+            {5, @depth5_color}
+          ] do
+        a = agent(1, nil, repo_id: "primary", depth: depth, base_commit: @c1, current_commit: @c2)
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+        [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
 
-      assert hd(repo.lanes).commits == []
-    end
-
-    test "a nil or non-binary base/current commit yields an empty lane" do
-      commits = chain([@c1, @c2])
-
-      for {base, current} <- [{nil, @c2}, {@c1, nil}, {nil, nil}, {123, @c2}, {@c1, :tip}] do
-        a = agent(1, nil, repo_id: "primary", base_commit: base, current_commit: current)
-        [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-
-        # No usable range -> the walk is skipped entirely (odd types never raise).
-        assert hd(repo.lanes).commits == []
+        # The tip dot, the covering edge and the ring all carry the same hue.
+        assert [_, tip] = repo.commits
+        assert tip.highlight_color == expected
+        assert hd(repo.rings).color == expected
+        assert hd(repo.edges).color == expected
       end
     end
 
-    test "a tip absent from the fetched graph owns nothing" do
-      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: "deadbeef")
-      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+    test "a non-integer, nil or negative depth folds to the depth-0 hue" do
+      for depth <- [nil, -1, 1.5, "2", :three] do
+        a = agent(1, nil, repo_id: "primary", depth: depth, base_commit: @c1, current_commit: @c2)
 
-      assert hd(repo.lanes).commits == []
+        [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+
+        assert hd(repo.rings).depth == 0
+        assert hd(repo.rings).color == @depth0_color
+      end
     end
 
-    test "a shallow fetch stops the walk at the first missing sha" do
-      # Only the tip is present; its parent was not fetched.
-      commits = [commit(@c4, parents: [@c3])]
-      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4)
+    test "overlay conflicts resolve first-write-wins in ascending {depth, id} order" do
+      # The shallow agent walks the WHOLE chain (its base is absent); the deep
+      # agent's path is only @c2. The shallow agent is processed FIRST (depth 0),
+      # so it claims @c2 before the deep agent ever sees it.
+      shallow = agent(9, nil, repo_id: "primary", depth: 0, base_commit: @b0, current_commit: @c3)
+      deep = agent(10, nil, repo_id: "primary", depth: 5, base_commit: @c1, current_commit: @c2)
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [shallow, deep])
 
-      assert Enum.map(hd(repo.lanes).commits, & &1.sha) == [@c4]
+      colors = repo.commits |> Enum.map(fn c -> {c.sha, c.highlight_color} end) |> Map.new()
+
+      # The first writer (depth 0) owns every dot it covered…
+      assert colors[@c1] == @depth0_color
+      assert colors[@c2] == @depth0_color
+      assert colors[@c3] == @depth0_color
+      # …and nothing of the deep agent's hue leaks into the graph.
+      refute @depth5_color in Map.values(colors)
+
+      # Rings are independent of dot-color conflicts: one PER agent.
+      assert Enum.map(repo.rings, & &1.color) == [@depth0_color, @depth5_color]
     end
 
-    test "an in-walk parent cycle terminates and claims each sha once" do
-      commits = [commit(@c2, parents: [@c4]), commit(@c4, parents: [@c2])]
-      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4)
+    test "the edge into an in-graph base is covered; an absent base contributes nothing" do
+      commits = chain([@c1, @c2, @c3])
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+      with_base =
+        CommitGraph.build(
+          %{"primary" => raw(commits)},
+          [agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)]
+        )
+        |> hd()
 
-      assert Enum.map(hd(repo.lanes).commits, & &1.sha) == [@c2, @c4]
+      # base in graph: the walk collects c3, c2 — and covers c2 -> c1 as well.
+      assert Enum.map(with_base.edges, & &1.color) == [@depth0_color, @depth0_color]
+
+      no_base =
+        CommitGraph.build(
+          %{"primary" => raw(commits)},
+          [agent(1, nil, repo_id: "primary", base_commit: @b0, current_commit: @c3)]
+        )
+        |> hd()
+
+      # base absent: the walk collects c3, c2, c1 — covering BOTH edges (the
+      # pair edge c3→c2 and c2→c1; there is no c1→b0 edge at all).
+      assert Enum.map(no_base.edges, & &1.color) == [@depth0_color, @depth0_color]
+
+      assert Enum.map(no_base.commits, & &1.highlight_color) == [
+               @depth0_color,
+               @depth0_color,
+               @depth0_color
+             ]
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # build/2 — agent overlay: rings on TIP commits
+  # ---------------------------------------------------------------------------
+
+  describe "build/2 — rings" do
+    test "an agent whose current_commit is in the graph contributes a ring there" do
+      a =
+        agent(1, nil,
+          repo_id: "primary",
+          task_local_id: 7,
+          status: :waiting,
+          base_commit: @c1,
+          current_commit: @c3
+        )
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [a])
+
+      assert [ring] = repo.rings
+
+      assert Map.take(ring, [:agent_id, :task_local_id, :status, :depth, :color]) == %{
+               agent_id: 1,
+               task_local_id: 7,
+               status: :waiting,
+               depth: 0,
+               color: @depth0_color
+             }
+
+      # The ring sits EXACTLY on the tip commit's dot.
+      tip = repo.commits |> Enum.find(&(&1.sha == @c3))
+      assert {ring.x, ring.y} == {tip.x, tip.y}
+    end
+
+    test "an agent whose current_commit is absent from the graph contributes NO ring" do
+      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: "deadbeef")
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+
+      assert repo.rings == []
+      # …and nothing it owns colors the graph either.
+      assert Enum.map(repo.commits, & &1.highlight_color) == [nil, nil]
+    end
+
+    test "rings accumulate one PER AGENT, in ascending {depth, id} order" do
+      # Two agents tipping at the SAME commit: two stacked rings.
+      agents = [
+        agent(2, nil, repo_id: "primary", depth: 1, base_commit: @c1, current_commit: @c4),
+        agent(1, nil, repo_id: "primary", depth: 0, base_commit: @c2, current_commit: @c4)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, agents)
+
+      assert Enum.map(repo.rings, & &1.agent_id) == [1, 2]
+      assert Enum.map(repo.rings, & &1.depth) == [0, 1]
+      assert Enum.map(repo.rings, & &1.color) == [@depth0_color, @depth1_color]
+    end
+
+    test "a nil or non-binary current_commit contributes no ring and never raises" do
+      for current <- [nil, 42, :tip] do
+        a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: current)
+
+        [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+
+        assert repo.rings == []
+      end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # build/2 — dot click-target mapping (tip tier vs path tier)
+  # ---------------------------------------------------------------------------
+
+  describe "build/2 — dot click targets" do
+    test "the TIP dot carries its agent with tip?: true" do
+      a =
+        agent(1, nil, repo_id: "primary", task_local_id: 3, base_commit: @c1, current_commit: @c3)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
+
+      agents = repo.commits |> Enum.map(fn c -> {c.sha, c.agent} end) |> Map.new()
+
+      assert %{
+               id: 1,
+               task_local_id: 3,
+               status: :running,
+               depth: 0,
+               color: @depth0_color,
+               tip?: true
+             } =
+               agents[@c3]
+    end
+
+    test "a path-covered NON-tip dot carries the covering agent with tip?: false" do
+      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
+
+      agents = repo.commits |> Enum.map(fn c -> {c.sha, c.agent} end) |> Map.new()
+
+      assert agents[@c2].tip? == false
+      assert agents[@c2].id == 1
+      # The exclusive base maps to NO agent at all.
+      assert agents[@c1] == nil
+    end
+
+    test "the tip tier beats the path tier regardless of {depth, id} order" do
+      # The DEEP agent tips at @c2; the SHALLOW agent merely walks over @c2.
+      # The shallow one is processed first, yet the tip tier must win the dot.
+      shallow = agent(1, nil, repo_id: "primary", depth: 0, base_commit: @b0, current_commit: @c3)
+      deep = agent(2, nil, repo_id: "primary", depth: 5, base_commit: @c1, current_commit: @c2)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [shallow, deep])
+
+      agents = repo.commits |> Enum.map(fn c -> {c.sha, c.agent} end) |> Map.new()
+
+      assert agents[@c2].id == 2
+      assert agents[@c2].tip? == true
+      assert agents[@c3].id == 1
+      assert agents[@c3].tip? == true
+      assert agents[@c1].id == 1
+      assert agents[@c1].tip? == false
+    end
+
+    test "two agents tipping at the same commit: first in {depth, id} order wins the dot" do
+      agents = [
+        agent(2, nil, repo_id: "primary", depth: 1, base_commit: @c1, current_commit: @c4),
+        agent(1, nil, repo_id: "primary", depth: 0, base_commit: @c2, current_commit: @c4)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, agents)
+
+      tip = repo.commits |> Enum.find(&(&1.sha == @c4))
+      assert tip.agent.id == 1
+      assert tip.agent.tip? == true
+    end
+
+    test "a commit no agent maps to carries a nil click target" do
+      # The side commit of a branch is on nobody's first-parent path.
+      commits = [
+        commit(@c3, parents: [@c1]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [])
+      ]
+
+      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+
+      agents = repo.commits |> Enum.map(fn c -> {c.sha, c.agent} end) |> Map.new()
+
+      assert agents[@c3].id == 1
+      assert agents[@c2] == nil
+      assert agents[@c1] == nil
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # build/2 — commit view fields
+  # ---------------------------------------------------------------------------
 
   describe "build/2 — commit view fields" do
     test "short_sha prefers the commit's own value and falls back to the sha prefix" do
       commits = [
-        commit(@c2, short_sha: "abcdef12", parents: [@c1]),
+        commit(@c4, short_sha: 12_345, parents: [@c3]),
         commit(@c3, short_sha: "", parents: [@c2]),
-        commit(@c4, short_sha: 12_345, parents: [@c3])
+        commit(@c2, short_sha: "abcdef12", parents: [@c1])
       ]
 
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c4)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-      assert [c2, c3, c4] = hd(repo.lanes).commits
+      assert [c2, c3, c4] = repo.commits
 
       assert c2.short_sha == "abcdef12"
       # Blank / non-binary short_sha falls back to the first 8 characters of the sha.
@@ -459,57 +704,54 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
 
     test "the sha prefix fallback truncates to 8 characters (a short sha stays whole)" do
-      commits = [commit("abc", parents: ["base-00"])]
-      a = agent(1, nil, repo_id: "primary", base_commit: "base-00", current_commit: "abc")
+      commits = [commit("abc", parents: [@b0])]
+      a = agent(1, nil, repo_id: "primary", base_commit: @b0, current_commit: "abc")
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert hd(hd(repo.lanes).commits).short_sha == "abc"
+      assert hd(repo.commits).short_sha == "abc"
     end
 
-    test "message, author, date, parents and refs are carried through" do
+    test "message is the first line only; parents and refs are carried through" do
       date = ~U[2026-01-02 03:04:05Z]
 
       commits = [
+        commit(@c3, parents: [@c2], message: "no body"),
         commit(@c2,
           parents: [@c1],
           message: "subject line\n\nbody text\nmore",
           author_name: "Ada",
           date: date
-        ),
-        commit(@c3, parents: [@c2], message: "no body")
+        )
       ]
 
       refs = %{@c3 => ["HEAD", "main"], @c4 => ["tag: v1"]}
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits, refs)}, [a])
-      assert [c2, c3] = hd(repo.lanes).commits
+      assert [c2, c3] = repo.commits
 
       assert c2.message == "subject line"
-      assert c2.author_name == "Ada"
-      assert c2.date == date
       assert c2.parents == [@c1]
       # No refs entry for @c2 in the repo's refs map.
       assert c2.refs == []
 
       assert c3.message == "no body"
-      assert c3.author_name == nil
       assert c3.parents == [@c2]
       assert c3.refs == ["HEAD", "main"]
     end
 
     test "a nil or non-binary message renders as an empty string" do
       commits = [
-        commit(@c2, parents: [@c1], message: nil),
-        commit(@c3, parents: [@c2], message: :not_a_string)
+        commit(@c3, parents: [@c2], message: :not_a_string),
+        commit(@c2, parents: [@c1], message: nil)
       ]
 
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert Enum.map(hd(repo.lanes).commits, & &1.message) == ["", ""]
+      assert Enum.map(repo.commits, & &1.message) == ["", ""]
     end
 
     test "malformed or absent refs render as []" do
@@ -520,10 +762,21 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits, refs)}, [a])
 
-      assert Enum.map(hd(repo.lanes).commits, & &1.refs) == [[], []]
+      assert Enum.map(repo.commits, & &1.refs) == [[], []]
     end
 
-    test "struct-shaped commits are map-like and their missing parents/refs degrade safely" do
+    test "repeated parents are de-duplicated (one edge, one lane reservation)" do
+      # Newest-first: @c2 lists the same parent twice.
+      commits = [commit(@c2, parents: [@c1, @c1]), commit(@c1, parents: [])]
+      a = agent(1, nil, repo_id: "primary", base_commit: @b0, current_commit: @c2)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+
+      assert repo.lane_count == 1
+      assert length(repo.edges) == 1
+    end
+
+    test "struct-shaped commits are map-like and their missing parents degrade safely" do
       struct_commit = %EvoGit.Review.CommitInfo{
         sha: @c2,
         short_sha: "abcdef12",
@@ -532,32 +785,37 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         date: nil
       }
 
-      commits = [struct_commit, commit(@c3, parents: [@c2])]
+      commits = [commit(@c3, parents: [@c2]), struct_commit]
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
-      assert [c2, c3] = hd(repo.lanes).commits
+      assert [c2, c3] = repo.commits
 
       assert c2.sha == @c2
       assert c2.short_sha == "abcdef12"
       assert c2.message == "struct subject"
       # A struct carries no :parents key -> treated as a root commit.
       assert c2.parents == []
-      assert c2.has_parent_in_lane? == false
-      # @c3's first parent is owned by the same lane.
-      assert c3.has_parent_in_lane? == true
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # build/2 — defensive handling
+  # ---------------------------------------------------------------------------
+
   describe "build/2 — defensive handling" do
-    test "a repo key absent from raw_by_repo yields lanes with empty commit lists" do
+    test "a repo key absent from raw_by_repo yields a well-formed EMPTY graph" do
       a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c2)
 
       [repo] = CommitGraph.build(%{}, [a])
 
-      assert [lane] = repo.lanes
-      assert lane.agent_id == 1
-      assert lane.commits == []
+      assert repo.commits == []
+      assert repo.edges == []
+      assert repo.rings == []
+      assert repo.lane_count == 0
+      assert repo.commit_count == 0
+      assert repo.width == 12 + 0 * 24 + 150
+      assert repo.height == 14 + 0 * 26 + 14
     end
 
     test "a non-map raw_by_repo degrades to empty graphs" do
@@ -565,7 +823,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       for bad <- ["garbage", nil, 42, [:a]] do
         [repo] = CommitGraph.build(bad, [a])
-        assert hd(repo.lanes).commits == []
+        assert repo.commits == []
+        assert repo.rings == []
       end
     end
 
@@ -585,7 +844,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       for graph <- bad_graphs do
         [repo] = CommitGraph.build(%{"primary" => graph}, [a])
-        assert hd(repo.lanes).commits == []
+        assert repo.commits == []
+        assert repo.rings == []
       end
     end
 
@@ -596,9 +856,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw}, [a])
 
-      assert [commit_view] = hd(repo.lanes).commits
-      assert commit_view.sha == @c2
-      assert commit_view.refs == []
+      assert Enum.map(repo.commits, & &1.refs) == [[], []]
     end
 
     test "commits without a usable :sha are not addressable and never raise" do
@@ -607,36 +865,45 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert hd(repo.lanes).commits == []
+      assert repo.commits == []
     end
 
-    test "an agent map missing every read key still yields a well-formed lane" do
+    test "duplicate shas are de-duplicated (no duplicate DOM ids)" do
+      commits = [
+        commit(@c2, parents: [@c1]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [])
+      ]
+
+      a = agent(1, nil, repo_id: "primary", base_commit: @c1, current_commit: @c2)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
+
+      assert repo.commit_count == 2
+      assert Enum.map(repo.commits, & &1.sha) == [@c1, @c2]
+    end
+
+    test "an agent map missing every read key still yields a well-formed repo view" do
       [repo] = CommitGraph.build(%{}, [%{}])
 
       assert repo.repo_key == nil
       # A nil key renders the primary label.
       assert repo.repo_name == "Primary Repo"
-      assert [lane] = repo.lanes
-      assert lane.agent_id == nil
-      assert lane.lane_index == 0
-      assert lane.depth == 0
-      assert lane.parent_agent_id == nil
-      assert lane.parent_lane_index == nil
-      assert lane.connects? == false
-      assert lane.status == nil
-      assert lane.agent_module == nil
-      assert lane.model_id == nil
-      assert lane.task_local_id == nil
-      assert lane.base_commit == nil
-      assert lane.current_commit == nil
-      assert lane.commits == []
+      assert repo.commits == []
+      assert repo.edges == []
+      assert repo.rings == []
+      assert repo.lane_count == 0
     end
 
     test "a single agent map (not a list) is accepted" do
-      [repo] = CommitGraph.build(%{}, %{id: 1, parent_id: nil, repo_id: "primary"})
+      [repo] =
+        CommitGraph.build(
+          %{"primary" => raw(chain([@c1, @c2]))},
+          %{id: 1, repo_id: "primary", base_commit: @c1, current_commit: @c2}
+        )
 
-      assert [lane] = repo.lanes
-      assert lane.agent_id == 1
+      assert Enum.map(repo.rings, & &1.agent_id) == [1]
+      assert repo.commit_count == 2
     end
 
     test "a non-binary repo key is still addressable and gets a stringified DOM id" do
@@ -679,8 +946,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     }
   end
 
-  # A linear chain of commits (oldest first): each commit's first parent is the
-  # previous one, so `chain([c1, c2, c3])` models c1 <- c2 <- c3.
+  # A linear chain of commits, `chain([c1, c2, c3])` modeling c1 <- c2 <- c3.
+  # The assembler consumes git-log order (NEWEST FIRST), so the fixture is
+  # built oldest-first for readability and reversed before it is returned.
   defp chain(shas) do
     shas
     |> Enum.with_index()
@@ -688,10 +956,41 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       parents = if index == 0, do: [], else: [Enum.at(shas, index - 1)]
       commit(sha, parents: parents)
     end)
+    |> Enum.reverse()
   end
 
   # The `raw_by_repo` value for ONE repo.
   defp raw(commits, refs \\ %{}), do: %{commits: commits, refs: refs}
 
   defp repo_by_key(views, repo_key), do: Enum.find(views, &(&1.repo_key == repo_key))
+
+  # --- edge-path helpers ------------------------------------------------------
+
+  # The four coordinates of an edge `d` path: {sx, sy, ex, ey} — the point after
+  # "M" (the CHILD dot) and the LAST space-separated token (the PARENT dot).
+  defp endpoints(d) do
+    parts = String.split(d, " ")
+    {x(sx(parts)), y(sx(parts)), x(Enum.at(parts, -1)), y(Enum.at(parts, -1))}
+  end
+
+  defp sx(parts), do: Enum.at(parts, 1)
+
+  defp x(point_bin) do
+    point_bin |> String.split(",") |> hd() |> Float.parse() |> elem(0)
+  end
+
+  defp y(point_bin) do
+    point_bin |> String.split(",") |> Enum.at(1) |> Float.parse() |> elem(0)
+  end
+
+  defp ery({_, y}), do: y
+
+  defp c_x(positions, sha), do: positions[sha] |> elem(0)
+
+  # Compact SVG number formatting — mirrors the assembler's own `num/1` so the
+  # bezier assertion builds the exact expected path string.
+  defp num(v) when is_float(v) do
+    s = Float.to_string(v)
+    if String.ends_with?(s, ".0"), do: binary_part(s, 0, byte_size(s) - 2), else: s
+  end
 end
