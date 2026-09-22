@@ -75,6 +75,12 @@ Attributes (all declared with `attr/3`):
 - All user-facing strings are `gettext`-wrapped (Chinese anchoring comments next to ambiguous labels); do not run `mix gettext.extract`/`merge`/`translate` during development.
 - No `try/rescue`; every read of the prepared data is TOTAL (`Map.get/2` with pattern-matched normalization — nil coordinates fold to `0` via `num/1` before arithmetic) so odd shapes degrade instead of crashing.
 
+## Visual / geometry notes (for redesign work)
+
+- **Radii (from the assembly, `CommitGraph.dot_r/0` = 4.5, `ring_r/0` = 8.5)** drive every marker size; the renderer never hardcodes them. Per commit, up to FIVE stacked circles can render (bottom→top): the dot (`r` 4.5) inside its `<g>`; the dot's selection halo (`r = ring_r + 3.5` = 12.0 — notably much larger than the dot it encircles, since it is ring-radius based); then, drawn in a SEPARATE `<g>` on top when the commit is an agent tip, the ring glow band (`r = ring_r + 2` = 10.5), the ring's selection halo (`r = ring_r + 3.5` = 12.0) and the ring itself (`r` 8.5). Dots and rings are separate sibling groups at the same `(x, y)`.
+- **Graph natural size**: `width = 12 + lane_count*24 + 150`, `height = 14 + rows*26 + 14` (assembly constants). A narrow left panel therefore horizontal-scrolls (SVG `min-width` = natural width) rather than squashing lanes; tall graphs vertical-scroll inside the wrapper's `max-h-[32rem]` (512px).
+- **Ref-chip overflow is possible**: chips start at `gutter_x = repo.width - 146` and stack left→right with a per-chip width estimated from char count (`len*4.6 + 8`). A long branch/ref name (or several chips) can push a chip past the viewBox right edge — the SVG clips it (no scrollbar for SVG content outside the viewBox). The assembly reserves a 150px gutter, the renderer keeps a 4px inner margin (146).
+
 ## Notes for Agents
 
 - Geometry ownership is split: the ASSEMBLY module computes positions/paths/dimensions; this renderer only draws them (plus the gutter-chip layout, which is presentation-only geometry derived from `repo.width`).
