@@ -67,7 +67,10 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
         {:ok, %{rows: unexpected_tables}} =
           XqliteNIF.query(
             conn,
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects')",
+            # `schema_migrations` is the Ecto migrator's own bookkeeping
+            # table (created by Boot at store start); the assertion's intent
+            # is that skip-and-log performs NO data-movement DDL of its own.
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations')",
             []
           )
 
@@ -179,7 +182,10 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
         {:ok, %{rows: unexpected_tables}} =
           XqliteNIF.query(
             conn,
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects')",
+            # `schema_migrations` is the Ecto migrator's own bookkeeping
+            # table (created by Boot at store start); the assertion's intent
+            # is that skip-and-log performs NO data-movement DDL of its own.
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations')",
             []
           )
 

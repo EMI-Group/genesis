@@ -2,7 +2,9 @@
 
 ## Intent
 
-Release-time Mix tasks for the `:evo_git` app: `mix changelog` (AI-generated Keep-a-Changelog section from git history) and `mix bump.version` (bump the single-source-of-truth `VERSION` and sync it to the desktop manifests + README badge). Both are interactive (shell `yes?` prompts) and run git/file operations. Both expose a call-time-resolved testability seam so their suites can run under `async: true`.
+Mix tasks for the `:evo_git` app.
+Release-time: `mix changelog` (AI-generated Keep-a-Changelog section from git history) and `mix bump.version` (bump the single-source-of-truth `VERSION` and sync it to the desktop manifests + README badge) — both interactive (shell `yes?` prompts), run git/file operations, and expose a call-time-resolved testability seam so their suites can run under `async: true`.
+Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
 
 ## API Surface
 
@@ -10,6 +12,7 @@ Release-time Mix tasks for the `:evo_git` app: `mix changelog` (AI-generated Kee
 |---|---|---|
 | `changelog.ex` | `Mix.Tasks.Changelog` | `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`. PR/merge-aware first-parent collection, two-stage (map-reduce) LLM summarization via `ReqLLM.stream_object`, keeps `CHANGELOG.md`. `@requirements ["app.config"]` kept. |
 | `bump.version.ex` | `Mix.Tasks.Bump.Version` | `mix bump.version <version>`. Rewrites `VERSION`, `desktop/src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock}`, `README.md`; interactively commits the touched files and optionally delegates to `Mix.Tasks.Changelog.run/1`. |
+| `migrate.store.ex` | `Mix.Tasks.Migrate.Store` | `mix migrate.store [db_path]`. Thin `Ecto.Migrator` wrapper: boots a private UNNAMED dynamic `EvoGit.Repo` instance on the target DB and runs `EvoGit.Store.Boot.run_migrations/1` — the EXACT call the store boot uses — then reports the applied versions (or "already current") and stops the instance. The store auto-migrates at boot, so this is NORMALLY A NO-OP; it exists for manual verification (a copied DB, an interrupted upgrade) and works when the app cannot boot (never starts `:evo_git`; only `ensure_all_started(:ecto_sql)`). Idempotent. |
 
 ### Injectable seams (call-time resolved, defaults byte-for-byte unchanged)
 
@@ -32,7 +35,7 @@ Release-time Mix tasks for the `:evo_git` app: `mix changelog` (AI-generated Kee
 
 ## Routing Table
 
-- `migrate.store.ex` (`Mix.Tasks.Migrate.Store`) → same directory, OUT of this seam's scope (not covered above).
+- `migrate.store.ex` (`Mix.Tasks.Migrate.Store`) → same directory, OUT of this seam's scope (not covered above); its migrations live in `lib/evo_git/priv/repo/migrations/` — detail `lib/evo_git/store/CONTEXT.md` (Boot & Migrations).
 - `mix changelog`/`Mix.Tasks.Changelog` design + CI workflow usage → root `./CONTEXT.md` ("AI changelog generation") and `.github/workflows/CONTEXT.md`.
 - Versioning (`VERSION` single source of truth, `mix bump.version` sync targets) → root `./CONTEXT.md` ("Versioning").
 - Existing suites that exercise these tasks → `apps/evo_git/test/mix/tasks/` (owned by the test-side workstream; not documented here).

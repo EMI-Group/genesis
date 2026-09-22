@@ -66,7 +66,10 @@ config :evo_git,
   sandbox: :auto,
   # Minutes a task may remain in :finalizing before the stuck-finalizing
   # watchdog (TaskRegistry) resolves it to :failed; false disables it.
-  finalizing_watchdog_grace_minutes: 60
+  finalizing_watchdog_grace_minutes: 60,
+  # Ecto repos for :evo_git (xqlite_ecto3 adapter). EvoGit.Repo is defined
+  # by a later refactor; an atom reference needs no module to exist yet.
+  ecto_repos: [EvoGit.Repo]
 
 config :req_llm,
   # HTTP timeouts (all values in milliseconds)
