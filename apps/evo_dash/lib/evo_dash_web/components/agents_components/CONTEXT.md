@@ -3,7 +3,7 @@
 ## Intent
 
 Sub-component modules of the Agents page left panel, extracted from the facade `EvoDashWeb.AgentsComponents` (`../agents_components.ex`).
-`CommitGraphView` is the TEMPORAL (git commit history) view: a CLASSIC git graph (`git log --graph` style) rendered as one SVG per repository — commit dots on lanes, bezier edges, ref chips and agent rings in the right gutter.
+`CommitGraphView` is the TEMPORAL (git commit history) view: a compact HORIZONTAL AGENT-SWIMLANE rendered with plain HTML/CSS (divs + flex, no SVG) — one row per agent lane, time flowing left → right, lanes stacked top → bottom by recursion depth.
 It is the counterpart of the SPATIAL agent tree (`path_tree/1`), which stays on the facade.
 
 ## API Surface
@@ -12,13 +12,13 @@ It is the counterpart of the SPATIAL agent tree (`path_tree/1`), which stays on 
 
 Public function component `commit_graph_view/1` (`use EvoDashWeb, :html` + `use Gettext, backend: EvoDashWeb.Gettext`).
 It is purely presentational: it does NO data assembly, NO I/O and never touches the socket.
-ALL geometry is owned by the pure assembly module `EvoDashWeb.AgentsLive.CommitGraph` (outside this subtree) — it computes every dot `(x, y)`, every edge `d` path, the SVG `width`/`height`, and exposes the radii as public zero-arity functions `CommitGraph.dot_r/0` / `CommitGraph.ring_r/0` (the single source of truth; the renderer calls them, never hardcodes radii).
+ALL column math is owned by the pure assembly module `EvoDashWeb.AgentsLive.CommitGraph` (`build/2`) — this renderer only maps each lane's `from_column`/`to_column` and each `marker.column` to track percentages and draws the DOM.
 Selection REUSES the existing `select_agent` event (`phx-value-id`) — there is no new event handler.
 
 Attributes (all declared with `attr/3`):
 
 - `:repos` (`:list`, **required**) — repo views from `CommitGraph.build/2` (input contract below).
-- `:selected_id` (`:any`, default `nil`) — the selected agent id; drives halo circles + dot prominence.
+- `:selected_id` (`:any`, default `nil`) — the selected agent id; adds the primary ring to that lane's tip marker + a faint row tint.
 - `:loading` (`:boolean`, default `false`) — a fetch is in flight.
 - `:error` (`:any`, default `nil`) — last fetch failed.
 - `:node_key` (`:string`, default `"local"`) — the viewed node's identity; scopes the graph wrapper so a node switch resets the DOM.
@@ -26,66 +26,77 @@ Attributes (all declared with `attr/3`):
 #### Input contract (repo view shape)
 
 ```elixir
-%{repo_key:, repo_dom_id:, repo_name:, width: float, height: float, lane_count:, commit_count:,
-  commits: [  # ordered TOP→BOTTOM (oldest first)
-    %{sha:, short_sha:, message:, author_name:, date:, parents:, lane:, row:, x: float, y: float, refs: [String],
-      highlight_color: String|nil,   # depth-hue hex when on an agent's progress path
-      agent: nil | %{id:, task_local_id:, status:, depth:, color:, tip?: boolean}}],
-  edges: [%{id: "commit-edge-<repo_dom_id>-<child>-<parent>", d: "M...C...", color: String|nil}],
-  rings: [%{agent_id:, task_local_id:, status:, depth:, color:, x:, y:}]}
+%{repo_key: term(), repo_dom_id: String.t(), repo_name: String.t(),
+  column_count: non_neg_integer(), commit_count: non_neg_integer(),
+  columns: [%{sha:, short_sha:, message:, author_name:, date:, refs:}],   # oldest -> newest
+  lanes: [%{
+    agent: %{id:, task_local_id:, status:, depth:, color:},
+    from_column: non_neg_integer() | nil, to_column: non_neg_integer() | nil, tip_column: non_neg_integer() | nil,
+    markers: [%{column: non_neg_integer(), sha:, short_sha:, message:, author_name:, date:, refs:, tip?: boolean()}]
+  }]}   # lanes ordered by {depth, id} ascending; markers ascending by :column
 ```
+
+`column_count` may be `0` (then every lane has `markers: []` and nil from/to/tip). The `columns` list is part of the view model but is NOT rendered by this component.
 
 #### Component render tree
 
-- `commit_graph_view/1` → `#commit-graph` root → `#commit-graph-body-<node_key>` wrapper → state dispatch (`view_state/3`: loading / empty / error / repos; the `:repos` state renders a stale-warning strip above the graph when `@error != nil` — the last-good graph is KEPT).
-- `repo_section/1` → per repo: the repo header (normal flex div ABOVE the SVG, unchanged markup: `hero-server-stack` icon + repo name) + `commit_graph_svg/1`.
-- `commit_graph_svg/1` → `<div class="overflow-auto max-h-[32rem]">` wrapper (vertical bound for tall graphs + horizontal scroll for narrow panels) → one `<svg viewBox="0 0 <w> <h>" width="100%" preserveAspectRatio="xMinYMin meet" role="img" style="min-width: <w>px">` drawn in three layers, bottom → top: `graph_edge/1` paths → `commit_dot/1` groups → `agent_ring/1` groups.
-- `graph_edge/1` — `<path d fill="none" stroke-linecap="round">`; uncolored edges stroke `var(--color-base-content)` with `stroke-opacity="0.35"` and `stroke-width` 1.75; agent-colored edges (edge.color hex) get `stroke-width` 2.25 at full opacity via inline `style="stroke: <hex>"`.
-- `commit_dot/1` — a `<g>` per commit holding: native SVG `<title>` tooltip (`message first line · short_sha · author · date`, total reads); an optional selection-halo `<circle r=ring_r+3.5 stroke=var(--color-primary) opacity 0.9>`; THE DOT `<circle r=CommitGraph.dot_r()>` (fill = `highlight_color` hex inline, else `var(--color-base-content)` with `fill-opacity="0.55"`; selection or highlight → full opacity; selected dot gains `stroke: var(--color-primary)`; class `transition-[fill,stroke] duration-300 motion-reduce:transition-none`); right-gutter ref chips; the agent tip marker. NO boxes, NO per-node sha/subject text.
-- `agent_ring/1` — a `<g>` per agent tip: `<title>` (`T<id> · <status label>`), a subtle same-color glow band (`r=ring_r+2`, `stroke-width 4`, `stroke-opacity 0.15`), an optional selection halo (same shape as the dot's), and THE RING `<circle r=CommitGraph.ring_r() fill="none" stroke-width="2">` with `style={"stroke: #{EvoDashWeb.Helpers.agent_status_svg_color(ring.status)}"}` — the shared SVG status-color helper in `EvoDashWeb.Helpers` is the ONLY status→color mapping (never re-implement).
+- `commit_graph_view/1` → `#commit-graph` root → `#commit-graph-body-<node_key>` wrapper → state dispatch (`view_state/3`: loading / empty / error / repos; the `:repos` state renders the stale-warning strip above the lanes when `@error != nil` — the last-good graph is KEPT).
+- `repo_section/1` → per repo: the repo header div (unchanged markup: `hero-server-stack` icon in a `bg-primary` rounded chip + `text-primary-content` glyph + the repo name in a plain bold `truncate` span with `title`) + `lane_list/1`.
+- `lane_list/1` → a `space-y-0.5` stack of `lane_row/1`, one per lane (top → bottom).
+- `lane_row/1` → a `flex items-center` row carrying the click binding: a FIXED-WIDTH left gutter (`w-28 shrink-0`) holding a status dot (inline `background-color: agent_status_svg_color(status)`) + `T<task_local_id || id>` (`font-mono text-xs text-base-content/80 truncate`), then a `flex-1 relative h-6 min-w-0` TIMELINE TRACK. All tracks are identical width (`flex-1` in the same row structure), so percentage positions line up across lanes and a shared commit lands in the SAME column. The row is `rounded-md px-1 py-0.5 cursor-pointer hover:bg-base-200/50`.
+- Timeline track contents, all absolutely positioned inside the track: a full-width baseline rail (`h-px bg-base-300/50`, vertically centered); the LANE PROGRESS element (rendered only when `from_column`/`to_column` are integers AND `column_count > 0`); then one `lane_marker/1` per marker (DOM order = paint order, so markers sit on top of the bar).
+- `lane_marker/1` → ONE `<span>` per commit: `absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full`, `size-2.5` (a TIP marker `size-3`), inline `left` % + `background-color`, plus a native `title` tooltip (`message first line · short_sha · author · date`, refs appended as a comma-joined segment when present).
 
-#### Gutter decorations (right of the lane area)
+#### Position math (percentages of the identical-width track)
 
-- **Ref chips** — rendered only when the repo has at least one ref anywhere (`repo_has_refs?/1` skips them wholesale otherwise). Per commit, refs (deduped, total reads) stack left→right from `gutter_x = repo.width - 146`: a `<rect rx=4 fill=var(--color-base-200) stroke=var(--color-base-300)>` sized from the estimated char width (`String.length(ref) * 4.6 + 8`, height 12) plus a mono `<text font-size="8" fill=var(--color-base-content)>`.
-- **Tip marker** — when a dot's `agent.tip?` is true, a minimal `<text>` right of the dot: `"T" <> to_string(task_local_id || id)`, font-size 8, mono, opacity 0.7; positioned after any ref chips on that commit, else at `dot.x + ring_r + 4`. NEVER a box/card.
+- Lane bar: `left = from_column / column_count * 100`, `width = (to_column - from_column + 1) / column_count * 100` (min one column).
+- Marker: `left = (marker.column + 0.5) / column_count * 100` (the column CENTER).
+- Both go through the private `pct/1` (3-decimal round, trims a whole value's `.0` → `"50"`, `"33.333"`); a non-positive/non-integer column count falls back to `"0"`.
+- The lane row also exposes a `title` (`T<id> · <status label>`).
+
+#### Colour sources
+
+- A non-tip marker's fill AND the lane bar's fill = the agent's depth hue (`agent.color`, a data-driven hex; missing/blank → `var(--color-base-content)`).
+- A TIP marker (`marker.tip?`) fill = `EvoDashWeb.Helpers.agent_status_svg_color(agent.status)` — the shared status→SVG-color helper is the ONLY status→color mapping (never re-implement).
+- The gutter status dot uses the same `agent_status_svg_color/1` via inline `background-color`.
+- Selection is a STYLE CHANGE on the existing elements: `ring-2 ring-primary-standalone` on that lane's TIP marker (no tip marker → no ring added anywhere) plus `bg-primary/5` on the lane row. No halo circles, no extra stacked elements.
 
 #### Click / selection contract
 
-- Each dot's `<circle>` carries `phx-click="select_agent"` + `phx-value-id={commit.agent.id}` ONLY when `commit.agent != nil` (plus `cursor-pointer` in its class list); agent-less dots render no click binding at all.
-- Each ring's main `<circle>` is always clickable (`phx-value-id={ring.agent_id}`).
-- Selection (`agent.id == selected_id` / `ring.agent_id == selected_id`) renders the extra faint primary halo and bumps the dot's fill opacity to 1.
+- `phx-click="select_agent"` + `phx-value-id={agent.id}` live on the ROW div (plus `cursor-pointer`), so clicking the row, the lane bar or any marker selects the agent (child clicks bubble up).
+- No other element carries a click binding.
 
 ### FROZEN DOM contract (the animation agent implements JS/CSS against these — do NOT rename or drop them)
 
 - Root: `<div id="commit-graph" phx-hook="CommitGraph">`.
 - Immediately inside the root, the node-scoped wrapper `id={"commit-graph-body-" <> @node_key}` (a node switch changes the id → LiveView replaces the whole subtree).
-- Per repo: the wrapper div's id IS `repo_dom_id` VERBATIM — the builder's `repo_dom_id` ALREADY carries the `commit-graph-repo-` prefix (`commit-graph-repo-<slug>-<hash>`), so the renderer adds NO prefix (prefixing would double it). The repo header is a plain div ABOVE the SVG inside this wrapper.
-- Each commit dot GROUP: `id={"commit-dot-" <> repo.repo_dom_id <> "-" <> commit.sha}` + `data-commit-graph-anim="node"`. The id/marker live on the `<g>`; the click binding lives on the inner circle.
-- Each edge path: `id={edge.id}` (already `"commit-edge-<repo_dom_id>-<child>-<parent>"` shaped, built by the assembly) + `data-commit-graph-anim="edge"`.
-- Each agent ring GROUP: `id={"commit-ring-" <> repo.repo_dom_id <> "-" <> to_string(ring.agent_id)}` + `data-commit-graph-anim="node"`.
+- Per repo: the section div's id IS `repo_dom_id` VERBATIM — the builder's `repo_dom_id` ALREADY carries the `commit-graph-repo-` prefix (`commit-graph-repo-<slug>-<hash>`), so the renderer adds NO prefix (prefixing would double it). The repo header is a plain div ABOVE the lanes inside this wrapper.
+- `data-commit-graph-anim` has EXACTLY two values:
+  - `"node"` — ONE marker element per commit PER LANE: `id={"commit-marker-" <> repo_dom_id <> "-" <> to_string(agent.id) <> "-" <> marker.sha}`.
+  - `"lane"` — the agent's single horizontal progress element: `id={"commit-lane-" <> repo_dom_id <> "-" <> to_string(agent.id)}`.
+  - There is NO `"edge"` value. The renderer does NOT emit the animation classes (`commit-node-enter` / `commit-lane-enter`) — the JS adds them.
+- Extra stable id (morphdom anchor, not part of the animation contract): the lane row `id={"commit-agent-row-" <> repo_dom_id <> "-" <> to_string(agent.id)}`.
 - State blocks keep their ids: `#commit-graph-error`, `#commit-graph-stale-warning`.
 - No `phx-update` mode anywhere; incremental patching rides morphdom's stable-unique-id matching.
 
 ## Constraints
 
 - `use EvoDashWeb, :html` is the entrypoint — it already imports `EvoDashWeb.Helpers`; the explicit `use Gettext, backend: EvoDashWeb.Gettext` mirrors the facade module.
-- Tailwind CSS 4 + DaisyUI classes for the wrappers/states ONLY, semantic theme tokens ONLY — inside the SVG all colors are inline `style="..."` consuming CSS vars (`var(--color-base-content)` etc.); the ONLY raw hex values are the `highlight_color`/`edge.color`/agent-depth hues that arrive from the DATA (they are data, not literals).
-- Agent status colours MUST come from `EvoDashWeb.Helpers.agent_status_svg_color/1` — never re-implement the mappings (locked, test-pinned contract; SVG sibling of the `agent_status_*` Tailwind-class family).
-- Radii MUST come from `EvoDashWeb.AgentsLive.CommitGraph.dot_r/0` / `ring_r/0` — single source of truth, never hardcoded here.
+- HTML/CSS only — NO SVG anywhere in this module. Semantic theme tokens only (`bg-base-*`, `text-base-content/*`, `border-base-*`, `bg-primary/5`, `text-primary-standalone`, `ring-primary-standalone`); NO raw hex/gray/slate/white literals. The ONLY raw color values are the data-driven depth hues + the status CSS-vars that arrive from the view model / `agent_status_svg_color/1`.
+- Agent status colours MUST come from `EvoDashWeb.Helpers.agent_status_svg_color/1` — never re-implement the mappings (locked, test-pinned contract).
+- Do NOT reference `EvoDashWeb.AgentsLive.CommitGraph.dot_r/0` / `ring_r/0` (removed with the SVG design) and do not hardcode marker radii math — the assembly owns all column math.
 - All user-facing strings are `gettext`-wrapped (Chinese anchoring comments next to ambiguous labels); do not run `mix gettext.extract`/`merge`/`translate` during development.
-- No `try/rescue`; every read of the prepared data is TOTAL (`Map.get/2` with pattern-matched normalization — nil coordinates fold to `0` via `num/1` before arithmetic) so odd shapes degrade instead of crashing.
+- No `try/rescue`; every read of the prepared data is TOTAL (`Map.get/2` + pattern-matched normalization — non-map repo/lane/agent/marker entries are dropped, the column count folds to `0` when non-positive/non-integer, odd percentages fall back to `"0"`) so odd shapes degrade instead of crashing.
 
-## Visual / geometry notes (for redesign work)
+## Visual notes
 
-- **Radii (from the assembly, `CommitGraph.dot_r/0` = 4.5, `ring_r/0` = 8.5)** drive every marker size; the renderer never hardcodes them. Per commit, up to FIVE stacked circles can render (bottom→top): the dot (`r` 4.5) inside its `<g>`; the dot's selection halo (`r = ring_r + 3.5` = 12.0 — notably much larger than the dot it encircles, since it is ring-radius based); then, drawn in a SEPARATE `<g>` on top when the commit is an agent tip, the ring glow band (`r = ring_r + 2` = 10.5), the ring's selection halo (`r = ring_r + 3.5` = 12.0) and the ring itself (`r` 8.5). Dots and rings are separate sibling groups at the same `(x, y)`.
-- **Graph natural size**: `width = 12 + lane_count*24 + 150`, `height = 14 + rows*26 + 14` (assembly constants). A narrow left panel therefore horizontal-scrolls (SVG `min-width` = natural width) rather than squashing lanes; tall graphs vertical-scroll inside the wrapper's `max-h-[32rem]` (512px).
-- **Ref-chip overflow is possible**: chips start at `gutter_x = repo.width - 146` and stack left→right with a per-chip width estimated from char count (`len*4.6 + 8`). A long branch/ref name (or several chips) can push a chip past the viewBox right edge — the SVG clips it (no scrollbar for SVG content outside the viewBox). The assembly reserves a 150px gutter, the renderer keeps a 4px inner margin (146).
+- Compact swimlane, NOT an oversized plot: each row is a 24px (`h-6`) track; the panel body scrolls vertically, so no max-height/overflow wrapper is added here.
+- NEVER clip horizontally: the percentage layout always fits 100% of the track width (no min-width, no horizontal scroll).
+- Layer widths: gutter 7rem (`w-28`) + `gap-2` + `flex-1` track; markers are 10px (`size-2.5`) / 12px (`size-3`, tip).
+- Paint order inside the track is DOM order (rail → lane bar → markers).
 
 ## Notes for Agents
 
-- Geometry ownership is split: the ASSEMBLY module computes positions/paths/dimensions; this renderer only draws them (plus the gutter-chip layout, which is presentation-only geometry derived from `repo.width`).
-- Colour sources (do not "fix"): a commit dot's fill is the commit's `highlight_color` (depth hue) or `var(--color-base-content)`; an agent RING's stroke is ALWAYS derived from the ring `status` via `EvoDashWeb.Helpers.agent_status_svg_color/1`; edges use `edge.color` when present, else muted base ink. The `color` field the assembly emits on each `rings[]` entry (and on a commit's `agent` view map) is the depth hue and is UNUSED here — the /agents legend pins "Ring color = agent status", so the ring deliberately does not use the depth hue.
-- `fmt/1` compacts whole floats for the viewBox/min-width interpolations (`210.0` → `"210"`); circle `cx/cy` keep the raw float (harmless). The assembly has its own `num/1` for edge paths.
-- States handled: `:loading` (spinning `hero-arrow-path` + "Loading commit history…"), `:empty` (dimmed `hero-server` + "No commit history yet."), `:error` (small `text-error`/`bg-error/10` strip — only when there is no data), and `:repos` (last-good graph kept when `@error != nil`, with a subtle `text-warning` refresh-failed strip above it).
+- Data/model ownership: the ASSEMBLY module (`EvoDashWeb.AgentsLive.CommitGraph`) computes the swimlane model (lane order by `{depth, id}`, `from/to/tip_column`, per-marker `column` / `tip?`); this renderer only maps columns to track percentages and draws the DOM.
+- States handled: `:loading` (spinning `hero-arrow-path` + "Loading commit history…"), `:empty` (dimmed `hero-server` + "No commit history yet."), `:error` (small `text-error`/`bg-error/10` strip — only when there is no data), and `:repos` (last-good lanes kept when `@error != nil`, with a subtle `text-warning` refresh-failed strip above them).
 - Wiring into the left panel (view switcher, `selected_id`/`node_key` assigns) is owned by `agents_live.ex` / `agents_live.html.heex` (outside this subtree).
-- `test/evo_dash_web/components/commit_graph_view_test.exs` asserts the PREVIOUS box-lane markup and is expected to FAIL until rewritten for the SVG design (the rewrite is a separate task; do not "fix" the component back).
