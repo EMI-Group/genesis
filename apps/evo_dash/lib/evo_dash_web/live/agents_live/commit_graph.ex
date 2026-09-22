@@ -90,18 +90,6 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   alias EvoGit.Platform
   alias EvoDashWeb.ThemeColor
 
-  # Marker radii, still consumed by the SVG renderer.
-  @dot_r 4.5
-  @ring_r 8.5
-
-  @doc "Commit-dot radius — the single source of truth for the SVG renderer."
-  @spec dot_r :: float()
-  def dot_r, do: @dot_r
-
-  @doc "Agent-tip ring radius — the single source of truth for the SVG renderer."
-  @spec ring_r :: float()
-  def ring_r, do: @ring_r
-
   @typedoc """
   One chronological column (commit) of the timeline, ordered OLDEST → NEWEST
   (left → right).
