@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.2] - 2026-09-22
+
+### Added
+
+- Add a TEMPORAL commit-history view to the Agents page, grouping git commits by repository with one lane per agent and a left-panel view switcher
+- Add a read-only commit-graph data API for querying commits across base/tip ranges with ref listing
+
+### Changed
+
+- Render the commit graph as a classic SVG git graph with lane dots, bezier edges, ref chips, agent tip rings, selection halos, and enter animations, honoring reduced-motion preferences
+- Migrate task storage from raw SQL to Ecto with an Ecto repo, schemas, and Operations modules; existing databases now upgrade automatically without crashing on missing columns
+
+### Fixed
+
+- Fix doubled commit-graph repo prefix in per-repo element IDs so anchors resolve correctly
+
+### Removed
+
+- Remove deprecated phx-update="append" from the commit graph view, eliminating LiveView warnings while preserving incremental DOM patching
+
 ## [0.13.1] - 2026-09-21
 
 ### Added
