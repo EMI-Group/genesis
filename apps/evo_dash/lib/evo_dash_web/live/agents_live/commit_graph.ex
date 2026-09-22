@@ -1,108 +1,219 @@
 defmodule EvoDashWeb.AgentsLive.CommitGraph do
   @moduledoc """
-  Pure graph-assembly logic for the Agents page's git-commit-history (temporal)
-  view.
+  Pure graph assembly for the Agents page's TEMPORAL (git commit history) view
+  — a CLASSIC git graph, `git log --graph` style: SVG dots arranged on lanes,
+  connected by straight/cubic edges, with refs and an agent-progress overlay
+  (colored dots/edges + rings at agent tips).
 
-  The Agents page already renders the SPATIAL dimension — the recursive agent
-  tree grouped by repository (`AgentsLive.build_repo_trees/1`). This module
-  assembles the TEMPORAL counterpart from the same agent maps: for every
-  repository group it produces one "lane" per agent carrying the commits that
-  agent produced, so the renderer can draw how the agents forked off one
-  another.
-
-  The module is deliberately PURE — no I/O, no socket, no process — mirroring
+  The module is deliberately PURE — no I/O, no socket, no processes — mirroring
   the sibling support modules (`HistoryGate`, `OptimisticMessages`,
   `PendingEvents`). It is fed:
 
-    - `agents` — the page's already-loaded agent maps
-      (`EvoDashWeb.AgentsLive.LoadData.build_agents/2`), and
     - `raw_by_repo` — the per-repo commit graph fetched by the node-aware
-      commit RPC (`%{repo_key => %{commits: [commit], refs: %{sha => [name]}}}`).
+      commit RPC (`%{repo_key => %{commits: [commit], refs: %{sha => [name]}}}`),
+      with `commits` NEWEST-FIRST (git log order); each commit is an
+      atom-keyed map (`:sha, :short_sha, :message, :author_name, :date,
+      :parents`, where `:parents` is the full SHA list, `[]` for a root); and
+    - `agents` — the page's already-loaded rich agent maps
+      (`EvoDashWeb.AgentsLive.LoadData.build_agents/2`).
 
-  Every commit field is read defensively through `Map.get/2` (a commit may be a
-  struct or a plain map), so the functions are TOTAL: odd input shapes never
-  raise.
+  Every commit/agent field is read through `Map.get/2` and every function is
+  TOTAL: odd input shapes degrade to empty graphs instead of raising.
 
-  ## Lane ordering
+  ## Direction
 
-  Lanes are ordered DEPTH-FIRST, a parent before its children, and children in
-  ascending agent `id` order — the same shape as the agent tree. An agent is a
-  root of its repo group when its `parent_id` is nil or when its parent lives
-  in ANOTHER repo group. A visited set makes the traversal cycle-safe: agents
-  the root pass never reaches (e.g. a malformed parent cycle) are still given a
-  lane by a second pass.
+  OLDEST commit at the TOP, NEWEST at the BOTTOM: the output `commits` list is
+  ordered top → bottom (oldest first) and `row`/`y` grow downwards, so new
+  commits append at the bottom — the shape LiveView's keyed patching and the
+  enter animations need.
 
-  ## Commit ownership (fork-point resolution)
+  ## Lane assignment (classic first-available-lane)
 
-  Commits are mapped onto lanes in lane order. For each lane we walk from the
-  agent's `current_commit` backwards along first parents, stopping at the
-  agent's `base_commit` (exclusive), at a sha the fetched graph does not
-  contain, or at a sha already claimed. Each visited commit is OWNED by the
-  first lane that reaches it, tracked by a per-repo `claimed` set — shared
-  history is therefore never duplicated across lanes, and a lane that joins an
-  already-claimed history simply owns no commits (its agent produced none of
-  its own yet).
+  The fetched commits are processed in input order (NEWEST → OLDEST) against a
+  `slots` list — an ordered list where each slot is either free (`nil`) or
+  holds the parent SHA that lane expects next:
 
-  A commit carries `has_parent_in_lane?`: whether its FIRST parent is owned by
-  the SAME lane. When it is false the renderer knows the lane's history
-  continues in another lane (at the fork point) and can draw the connector.
+    1. A commit takes the FIRST slot already waiting on its sha; else the
+       first FREE slot; else a brand-new slot appended at the end. That slot
+       index is the commit's `lane`.
+    2. EVERY slot waiting on the commit's sha is then freed — the matched one
+       plus any duplicates. This is how merge commits fold redundant lanes
+       back together.
+    3. The commit's parents THAT ARE PRESENT in the fetched graph reserve
+       slots: the first (in listed order) continues in the commit's own lane;
+       each extra parent (a merge's 2nd..nth) claims its own
+       first-free-or-appended slot.
+    4. A commit whose parents are all absent from the fetch (history truncated
+       by the fetch limit) leaves its slot free — its lane simply ends.
 
-  Lane commits are stored OLDEST → NEWEST, so the lane's tip is last and the
-  renderer appends new commits at the end.
+  Only the row axis is flipped afterwards: a commit processed at 0-based index
+  `r` renders at `row = total_rows - 1 - r`, so the newest commit gets the
+  largest `y`.
+
+  ## Geometry
+
+  Constants (module attributes): `lane_width 24`, `row_height 26`, `pad_left
+  12`, `pad_top 14`, `pad_bottom 14`, `right_gutter 150` (room for the ref
+  chips + agent markers rendered right of the dots), `dot_r 4.5`, `ring_r 8.5`
+  (the two radii are consumed by the SVG renderer — they live here as the
+  single source of truth).
+
+      x(lane) = pad_left + lane * lane_width + lane_width / 2   (dot CENTER x)
+      y(row)  = pad_top  + row  * row_height  + row_height / 2  (dot CENTER y)
+      width   = pad_left + lane_count * lane_width + right_gutter
+      height  = pad_top  + rows * row_height + pad_bottom
+
+  Edges — one per (child, parent) pair where BOTH ends are in the fetched
+  graph; the child is NEWER so it renders BELOW its parent:
+
+      same lane:  "M x,yc L x,yp"
+      different:  "M xc,yc C xc,mid xp,mid xp,yp"   with mid = (yc + yp) / 2
+
+  Parents absent from the fetch produce NO edge (the history is truncated by
+  the fetch limit).
+
+  ## Depth → hue
+
+  `color(depth) = EvoDashWeb.ThemeColor.hsl_to_hex(hue, 70, 54)` where
+  `hue = Integer.mod(round(depth * 137.508) + 265, 360)` — golden-angle step
+  137.508° per depth level (deterministic, maximally spread hues), +265°
+  offset so depth 0 lands on blue-violet and common shallow depths stay away
+  from the status colors (red/green/amber), saturation 70 / lightness 54
+  identical to `ThemeColor`'s project accents. The existing public
+  `EvoDashWeb.ThemeColor.hsl_to_hex/3` is reused — HSL→hex is NOT
+  reimplemented here. Non-integer/nil/negative depth → 0.
+
+  ## Agent overlay
+
+  Agents are processed in ascending `{depth, id}` order (mirroring how the
+  page sorts agents) so color conflicts resolve deterministically — the FIRST
+  agent to cover a dot/edge wins.
+
+  Each agent's progress path is a first-parent walk from its `current_commit`
+  backwards, stopping at (excluding) its `base_commit`, at a sha not in the
+  fetched graph, or at an already-seen sha (cycle guard). Every commit on that
+  path gets the agent's depth-hue as `highlight_color`; every edge between
+  consecutive path commits — PLUS the edge from the oldest path commit up to
+  its first parent (== base, when base is in the graph) — is covered by that
+  agent's color. An agent whose `current_commit` is present in the fetched
+  graph contributes a RING at that commit's position.
+
+  ## Output shape
+
+  `build/2` returns one map per repository group, sorted by
+  `{repo_name, repo_dom_id}`:
+
+      %{
+        repo_key: term(), repo_dom_id: String.t(), repo_name: String.t(),
+        width: float(), height: float(),
+        lane_count: non_neg_integer(), commit_count: non_neg_integer(),
+        commits: [%{sha:, short_sha:, message:, parents:, lane:, row:, x:, y:,
+                    refs:, highlight_color:, agent:}],
+        edges: [%{id:, d:, color:}],
+        rings: [%{agent_id:, task_local_id:, status:, depth:, color:, x:, y:}]
+      }
+
+  `commits` is ordered TOP → BOTTOM (oldest first); `message` is the commit
+  message's first line only. Edge ids are the stable DOM ids
+  `"commit-edge-<repo_dom_id>-<child_sha>-<parent_sha>"`. `commits[].agent`
+  is the click/select target for that dot: the TIP agent (`tip?: true`) when
+  the commit is some agent's `current_commit`, otherwise the first
+  path-covering agent (`tip?: false`), `nil` for commits no agent maps to.
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
 
   alias EvoGit.Platform
+  alias EvoDashWeb.ThemeColor
+
+  # --- Geometry constants (single source of truth for the SVG renderer) ------
+
+  @lane_width 24
+  @row_height 26
+  @pad_left 12
+  @pad_top 14
+  @pad_bottom 14
+  @right_gutter 150
+  @dot_r 4.5
+  @ring_r 8.5
+
+  @doc "Commit-dot radius — the single source of truth for the SVG renderer."
+  @spec dot_r :: float()
+  def dot_r, do: @dot_r
+
+  @doc "Agent-tip ring radius — the single source of truth for the SVG renderer."
+  @spec ring_r :: float()
+  def ring_r, do: @ring_r
 
   @typedoc """
-  A single commit as rendered inside a lane.
-
-  `short_sha` falls back to the first 8 characters of `sha`; `message` is the
-  commit message truncated to its first line; `refs` are the ref names pointing
-  at this sha (only shas present in the fetched graph carry refs).
+  One rendered commit (a dot). `row` is the RENDER row (top-based, oldest
+  commit = row 0); `x`/`y` are the dot CENTER coordinates.
   """
   @type commit_view :: %{
           sha: String.t(),
           short_sha: String.t(),
           message: String.t(),
-          author_name: String.t() | nil,
-          date: DateTime.t() | nil,
           parents: [String.t()],
+          lane: non_neg_integer(),
+          row: non_neg_integer(),
+          x: float(),
+          y: float(),
           refs: [String.t()],
-          has_parent_in_lane?: boolean()
+          highlight_color: String.t() | nil,
+          agent: agent_view() | nil
         }
 
   @typedoc """
-  One agent's lane within a repo group.
-
-  `lane_index` is the 0-based position of the lane in the repo's `lanes` list
-  (DOM order). `parent_lane_index` is the lane index of the agent's parent when
-  the parent is in the SAME repo group, else nil; `connects?` is true exactly
-  when `parent_lane_index != nil`.
+  The click/select target attached to a dot: the TIP agent (`tip?: true`)
+  when the commit is some agent's `current_commit`, otherwise the first
+  path-covering agent (`tip?: false`).
   """
-  @type lane :: %{
-          agent_id: term(),
-          lane_index: non_neg_integer(),
-          depth: non_neg_integer(),
-          parent_agent_id: term(),
-          parent_lane_index: non_neg_integer() | nil,
-          connects?: boolean(),
+  @type agent_view :: %{
+          id: term(),
           task_local_id: term(),
           status: term(),
-          agent_module: term(),
-          model_id: term(),
-          base_commit: String.t() | nil,
-          current_commit: String.t() | nil,
-          commits: [commit_view()]
+          depth: non_neg_integer(),
+          color: String.t(),
+          tip?: boolean()
         }
 
-  @typedoc "All lanes for one repository group, plus its display name and stable DOM id."
+  @typedoc """
+  One edge. `d` is a ready-to-render SVG path; `id` is the stable DOM id
+  `"commit-edge-<repo_dom_id>-<child_sha>-<parent_sha>"`; `color` is the
+  covering agent's depth-hue or nil.
+  """
+  @type edge_view :: %{
+          id: String.t(),
+          d: String.t(),
+          color: String.t() | nil
+        }
+
+  @typedoc "An agent tip ring, positioned exactly on its `current_commit` dot."
+  @type ring_view :: %{
+          agent_id: term(),
+          task_local_id: term(),
+          status: term(),
+          depth: non_neg_integer(),
+          color: String.t(),
+          x: float(),
+          y: float()
+        }
+
+  @typedoc """
+  All geometry + overlay data for one repository group, ready to render as a
+  single SVG.
+  """
   @type repo_view :: %{
           repo_key: term(),
           repo_dom_id: String.t(),
           repo_name: String.t(),
-          lanes: [lane()]
+          width: float(),
+          height: float(),
+          lane_count: non_neg_integer(),
+          commit_count: non_neg_integer(),
+          commits: [commit_view()],
+          edges: [edge_view()],
+          rings: [ring_view()]
         }
 
   # --- Public API -----------------------------------------------------------
@@ -143,15 +254,15 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   def repo_display_name(_), do: gettext("Unknown Repo")
 
   @doc """
-  Builds the per-repo commit-graph view.
+  Builds the per-repo classic git-graph view.
 
   `raw_by_repo` maps a repo grouping key to the fetched commit graph
   (`%{commits: [commit], refs: %{sha => [name]}}`); a key that is absent (or a
-  repo whose fetch failed) yields lanes with empty commit lists.
+  repo whose fetch failed) yields an empty graph (zero commits, zero lanes).
 
   Agents are grouped by `grouping_key/1` — exactly like the tree — and the
-  resulting `repo_view`s are sorted by `repo_name` ascending (ties broken by the
-  stable `repo_dom_id`, so the DOM order never flaps between refreshes).
+  resulting `repo_view`s are sorted by `repo_name` ascending (ties broken by
+  the stable `repo_dom_id`, so the DOM order never flaps between refreshes).
   """
   @spec build(map(), [map()]) :: [repo_view()]
   def build(raw_by_repo, agents) do
@@ -167,15 +278,31 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   # --- Repo assembly --------------------------------------------------------
 
   defp build_repo(repo_key, repo_agents, raw) do
-    commits = commits_list(raw)
+    # Newest-first, filtered to ADDRESSABLE commits (a map with a non-empty
+    # binary :sha) and de-duplicated by sha — git log never returns duplicates,
+    # but a malformed payload must not produce duplicate DOM ids either.
+    commits = addressable_commits(raw)
     lookup = commit_lookup(commits)
     refs = refs_map(raw)
+    dom_id = repo_dom_id(repo_key)
+
+    layout = layout_commits(commits, lookup)
+    overlay = agent_overlay(repo_agents, lookup, layout)
+
+    rows = length(commits)
+    lane_count = layout.lane_count
 
     %{
       repo_key: repo_key,
-      repo_dom_id: repo_dom_id(repo_key),
+      repo_dom_id: dom_id,
       repo_name: repo_display_name(repo_key),
-      lanes: build_lanes(repo_agents, lookup, refs)
+      width: (@pad_left + lane_count * @lane_width + @right_gutter) * 1.0,
+      height: (@pad_top + rows * @row_height + @pad_bottom) * 1.0,
+      lane_count: lane_count,
+      commit_count: rows,
+      commits: commit_views(commits, layout, refs, overlay),
+      edges: edge_views(commits, lookup, layout, dom_id, overlay),
+      rings: Enum.reverse(overlay.rings)
     }
   end
 
@@ -190,21 +317,29 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   defp raw_for(_raw_by_repo, _repo_key), do: %{}
 
-  defp commits_list(raw) do
+  defp addressable_commits(raw) do
     case Map.get(raw, :commits) do
-      list when is_list(list) -> Enum.filter(list, &is_map/1)
-      _ -> []
+      list when is_list(list) ->
+        list
+        |> Enum.filter(&is_map/1)
+        |> Enum.filter(fn commit ->
+          case Map.get(commit, :sha) do
+            sha when is_binary(sha) and sha != "" -> true
+            _ -> false
+          end
+        end)
+        |> Enum.uniq_by(&Map.get(&1, :sha))
+
+      _ ->
+        []
     end
   end
 
-  # The per-repo sha → commit lookup used by the parent walk. A commit without a
-  # non-empty binary `:sha` is not addressable (and is skipped from the view).
+  # The per-repo sha → commit lookup. Only addressable commits are in it, so
+  # presence in the lookup is exactly "part of the fetched graph".
   defp commit_lookup(commits) do
     Enum.reduce(commits, %{}, fn commit, acc ->
-      case Map.get(commit, :sha) do
-        sha when is_binary(sha) and sha != "" -> Map.put(acc, sha, commit)
-        _ -> acc
-      end
+      Map.put_new(acc, Map.get(commit, :sha), commit)
     end)
   end
 
@@ -215,82 +350,25 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     end
   end
 
-  # --- Lanes ----------------------------------------------------------------
-
-  defp build_lanes(repo_agents, lookup, refs) do
-    ordered = order_agents(repo_agents)
-    lane_index_by_id = lane_index_by_id(ordered)
-
-    {lanes, _claimed} =
-      ordered
-      |> Enum.with_index()
-      |> Enum.reduce({[], MapSet.new()}, fn {agent, lane_index}, {lanes, claimed} ->
-        parent_lane_index = parent_lane_index(agent, lane_index_by_id)
-        {shas, claimed} = lane_commit_shas(agent, lookup, claimed)
-
-        lane = build_lane(agent, lane_index, parent_lane_index, shas, lookup, refs)
-        {[lane | lanes], claimed}
-      end)
-
-    Enum.reverse(lanes)
-  end
-
-  # Maps agent ids to lane indices so a parent's lane can be resolved in O(1).
-  # An agent whose parent lives in another repo group (or a nil parent) simply
-  # has no entry here and therefore gets `parent_lane_index: nil`.
-  defp lane_index_by_id(ordered) do
-    ordered
-    |> Enum.with_index()
-    |> Enum.reduce(%{}, fn {agent, lane_index}, acc ->
-      Map.put(acc, agent_id(agent), lane_index)
-    end)
-  end
-
-  defp parent_lane_index(agent, lane_index_by_id) do
-    case Map.get(agent, :parent_id) do
-      nil -> nil
-      parent_id -> Map.get(lane_index_by_id, parent_id)
+  defp parents_list(commit) do
+    case Map.get(commit, :parents) do
+      list when is_list(list) -> list
+      _ -> []
     end
   end
 
-  defp build_lane(agent, lane_index, parent_lane_index, shas, lookup, refs) do
-    lane_shas = MapSet.new(shas)
-
-    commits =
-      Enum.map(shas, fn sha ->
-        build_commit(sha, Map.get(lookup, sha), refs, lane_shas)
-      end)
-
-    %{
-      agent_id: agent_id(agent),
-      lane_index: lane_index,
-      depth: Map.get(agent, :depth) || 0,
-      parent_agent_id: Map.get(agent, :parent_id),
-      parent_lane_index: parent_lane_index,
-      connects?: parent_lane_index != nil,
-      task_local_id: Map.get(agent, :task_local_id),
-      status: Map.get(agent, :status),
-      agent_module: Map.get(agent, :agent_module),
-      model_id: Map.get(agent, :model_id),
-      base_commit: Map.get(agent, :base_commit),
-      current_commit: Map.get(agent, :current_commit),
-      commits: commits
-    }
+  # A commit's parents that are present in the fetched graph (order preserved,
+  # de-duplicated so a malformed repeated parent never emits two identical
+  # edges / reservations).
+  defp present_parents(commit, lookup) do
+    parents_list(commit) |> Enum.uniq() |> Enum.filter(&Map.has_key?(lookup, &1))
   end
 
-  defp build_commit(sha, commit, refs, lane_shas) do
-    parents = parents_of(commit)
-
-    %{
-      sha: sha,
-      short_sha: short_sha(commit, sha),
-      message: first_line(Map.get(commit, :message)),
-      author_name: Map.get(commit, :author_name),
-      date: Map.get(commit, :date),
-      parents: parents,
-      refs: refs_for(refs, sha),
-      has_parent_in_lane?: first_parent_in?(parents, lane_shas)
-    }
+  defp first_parent(commit) do
+    case parents_list(commit) do
+      [first | _] -> first
+      [] -> nil
+    end
   end
 
   defp short_sha(commit, sha) do
@@ -309,160 +387,342 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   defp refs_for(_refs, _sha), do: []
 
-  defp parents_of(commit) do
-    case Map.get(commit, :parents) do
-      list when is_list(list) -> list
-      _ -> []
-    end
-  end
-
-  defp first_parent_in?(parents, lane_shas) do
-    case List.first(parents) do
-      sha when is_binary(sha) -> MapSet.member?(lane_shas, sha)
-      _ -> false
-    end
-  end
-
   defp first_line(message) when is_binary(message) do
     message |> String.split("\n", parts: 2) |> hd()
   end
 
   defp first_line(_message), do: ""
 
-  # --- Commit → lane mapping ------------------------------------------------
+  # --- Layout: lanes + rows ---------------------------------------------------
 
-  # The commit shas owned by one agent's lane, OLDEST → NEWEST.
-  #
-  # Walking is skipped entirely when the agent has no usable base/current
-  # commit (nil or non-binary) or when both are the same sha (no commits were
-  # produced since the base).
-  defp lane_commit_shas(agent, lookup, claimed) do
-    base = Map.get(agent, :base_commit)
-    current = Map.get(agent, :current_commit)
+  # Runs the classic first-available-lane slot machine over the NEWEST-FIRST
+  # commit list (see the moduledoc), then flips the row axis so the OLDEST
+  # commit renders at row 0 (top) and the NEWEST at row total-1 (bottom).
+  defp layout_commits(commits, lookup) do
+    total = length(commits)
+    {lanes, slots} = assign_lanes(commits, lookup)
 
-    if is_binary(base) and is_binary(current) and base != current do
-      # walk/5 collects NEWEST → OLDEST, the lane stores the reverse.
-      {newest_first, claimed} = walk(current, base, lookup, claimed, MapSet.new())
-      {Enum.reverse(newest_first), claimed}
-    else
-      {[], claimed}
+    rows =
+      commits
+      |> Enum.with_index()
+      |> Map.new(fn {commit, r} -> {Map.get(commit, :sha), total - 1 - r} end)
+
+    %{lanes: lanes, rows: rows, lane_count: length(slots)}
+  end
+
+  defp assign_lanes(commits, lookup) do
+    Enum.reduce(commits, {%{}, []}, fn commit, {lanes, slots} ->
+      sha = Map.get(commit, :sha)
+
+      # 1. First slot waiting on this sha, else first free slot, else a new one.
+      idx = find_slot(slots, sha)
+      slots = ensure_slot(slots, idx)
+
+      # 2. Free EVERY slot waiting on this sha — merge commits fold redundant
+      #    lanes back together here.
+      slots = clear_sha_slots(slots, sha)
+
+      # 3./4. Reserve slots for the parents present in the fetch; a commit
+      #       with none leaves its slot free (its lane ends).
+      slots =
+        case present_parents(commit, lookup) do
+          [] ->
+            slots
+
+          [first | extras] ->
+            slots = put_slot(slots, idx, first)
+
+            Enum.reduce(extras, slots, fn parent, slots ->
+              extra_idx = free_slot(slots)
+              slots = ensure_slot(slots, extra_idx)
+              put_slot(slots, extra_idx, parent)
+            end)
+        end
+
+      {Map.put(lanes, sha, idx), slots}
+    end)
+  end
+
+  # The slot index for a commit: the first lane already waiting on its sha,
+  # else the first free lane, else a brand-new lane appended at the end.
+  defp find_slot(slots, sha) do
+    case Enum.find_index(slots, fn s -> s == sha end) do
+      idx when is_integer(idx) -> idx
+      nil -> free_slot(slots)
     end
+  end
+
+  # The first free (nil) slot index, or `length(slots)` when none is free.
+  defp free_slot(slots) do
+    case Enum.find_index(slots, &is_nil/1) do
+      idx when is_integer(idx) -> idx
+      nil -> length(slots)
+    end
+  end
+
+  # Grows the slot list so index `idx` exists (new lanes are appended as nil).
+  defp ensure_slot(slots, idx) when idx < length(slots), do: slots
+
+  defp ensure_slot(slots, idx), do: slots ++ List.duplicate(nil, idx - length(slots) + 1)
+
+  defp put_slot(slots, idx, sha), do: List.replace_at(slots, idx, sha)
+
+  defp clear_sha_slots(slots, sha) do
+    Enum.map(slots, fn s -> if s == sha, do: nil, else: s end)
+  end
+
+  # --- Geometry ----------------------------------------------------------------
+
+  defp dot_x(lane), do: @pad_left + lane * @lane_width + @lane_width / 2
+  defp dot_y(row), do: @pad_top + row * @row_height + @row_height / 2
+
+  defp lane_of(layout, sha), do: Map.get(layout.lanes, sha, 0)
+  defp row_of(layout, sha), do: Map.get(layout.rows, sha, 0)
+
+  # Compact SVG number formatting: drops the trailing ".0" of whole floats
+  # (`24.0` → `"24"`) while keeping fractional values intact.
+  defp num(v) when is_float(v) do
+    s = Float.to_string(v)
+    if String.ends_with?(s, ".0"), do: binary_part(s, 0, byte_size(s) - 2), else: s
+  end
+
+  # --- Commit views -------------------------------------------------------------
+
+  # The output list is ordered TOP → BOTTOM (oldest first) — the reverse of the
+  # newest-first processing order.
+  defp commit_views(commits, layout, refs, overlay) do
+    commits
+    |> Enum.reverse()
+    |> Enum.map(fn commit ->
+      sha = Map.get(commit, :sha)
+      lane = lane_of(layout, sha)
+      row = row_of(layout, sha)
+
+      %{
+        sha: sha,
+        short_sha: short_sha(commit, sha),
+        message: first_line(Map.get(commit, :message)),
+        parents: parents_list(commit),
+        lane: lane,
+        row: row,
+        x: dot_x(lane),
+        y: dot_y(row),
+        refs: refs_for(refs, sha),
+        highlight_color: Map.get(overlay.dots, sha),
+        agent: Map.get(overlay.agents, sha)
+      }
+    end)
+  end
+
+  # --- Edge views ---------------------------------------------------------------
+
+  # One edge per (child, parent) pair with both ends in the fetched graph.
+  # Emitted in top → bottom (oldest commit first) order, parents in listed
+  # order — deterministic across refreshes.
+  defp edge_views(commits, lookup, layout, dom_id, overlay) do
+    commits
+    |> Enum.reverse()
+    |> Enum.flat_map(fn commit ->
+      sha = Map.get(commit, :sha)
+
+      present_parents(commit, lookup)
+      |> Enum.map(fn parent ->
+        %{
+          id: "commit-edge-#{dom_id}-#{sha}-#{parent}",
+          d: edge_d(sha, parent, layout),
+          color: Map.get(overlay.edges, {sha, parent})
+        }
+      end)
+    end)
+  end
+
+  # The child is NEWER than the parent, so it renders BELOW it (yc > yp):
+  # the path is always drawn from the child dot UP into the parent's lane.
+  defp edge_d(child_sha, parent_sha, layout) do
+    child_lane = lane_of(layout, child_sha)
+    parent_lane = lane_of(layout, parent_sha)
+    xc = dot_x(child_lane)
+    yc = dot_y(row_of(layout, child_sha))
+    xp = dot_x(parent_lane)
+    yp = dot_y(row_of(layout, parent_sha))
+
+    if child_lane == parent_lane do
+      "M #{num(xc)},#{num(yc)} L #{num(xc)},#{num(yp)}"
+    else
+      mid = (yc + yp) / 2
+
+      "M #{num(xc)},#{num(yc)} C #{num(xc)},#{num(mid)} #{num(xp)},#{num(mid)} #{num(xp)},#{num(yp)}"
+    end
+  end
+
+  # --- Agent overlay --------------------------------------------------------------
+
+  # Covers dots/edges with each agent's depth-hue and collects the tip rings.
+  # Agents are folded in ascending {depth, id} order and every write is
+  # first-write-wins, so overlay conflicts resolve deterministically.
+  #
+  # A dot's `agent` target has TWO tiers: the tip tier (an agent whose
+  # `current_commit` IS that dot — `tip?: true`) beats any path-covering tier
+  # (`tip?: false`), regardless of {depth, id} order; within a tier the first
+  # agent in {depth, id} order wins.
+  defp agent_overlay(repo_agents, lookup, layout) do
+    ordered =
+      Enum.sort_by(repo_agents, fn agent ->
+        {normalize_depth(Map.get(agent, :depth)), Map.get(agent, :id)}
+      end)
+
+    acc =
+      Enum.reduce(ordered, empty_overlay(), fn agent, acc ->
+        depth = normalize_depth(Map.get(agent, :depth))
+        color = depth_color(depth)
+        base = Map.get(agent, :base_commit)
+        current = Map.get(agent, :current_commit)
+        tip? = is_binary(current) and Map.has_key?(lookup, current)
+
+        acc
+        |> put_ring(agent, depth, color, current, layout, tip?)
+        |> put_tip(current, agent, depth, color, tip?)
+        |> put_path(base, current, lookup, agent, depth, color)
+      end)
+
+    # Tip targets override path-covering targets on the same dot.
+    %{acc | agents: Map.merge(acc.cover_agents, acc.tip_agents)}
+  end
+
+  defp empty_overlay,
+    do: %{dots: %{}, edges: %{}, cover_agents: %{}, tip_agents: %{}, agents: %{}, rings: []}
+
+  # An agent whose current_commit is in the fetched graph contributes a ring
+  # at that commit's position (accumulated reversed; build_repo flips once).
+  defp put_ring(acc, _agent, _depth, _color, _current, _layout, false), do: acc
+
+  defp put_ring(acc, agent, depth, color, current, layout, true) do
+    ring = %{
+      agent_id: Map.get(agent, :id),
+      task_local_id: Map.get(agent, :task_local_id),
+      status: Map.get(agent, :status),
+      depth: depth,
+      color: color,
+      x: dot_x(lane_of(layout, current)),
+      y: dot_y(row_of(layout, current))
+    }
+
+    %{acc | rings: [ring | acc.rings]}
+  end
+
+  # Records the agent as the dot's TIP target (`tip?: true`) — first agent in
+  # {depth, id} order wins among tips pointing at the same commit.
+  defp put_tip(acc, _current, _agent, _depth, _color, false), do: acc
+
+  defp put_tip(acc, current, agent, depth, color, true) do
+    %{
+      acc
+      | tip_agents: Map.put_new(acc.tip_agents, current, agent_view(agent, depth, color, true))
+    }
+  end
+
+  # Colors the agent's progress path (dots + consecutive edges), records the
+  # agent as the PATH-COVERING target for every dot on the path, and covers
+  # the edge linking the oldest path commit back into its base when the base
+  # is in the fetched graph.
+  defp put_path(acc, base, current, lookup, agent, depth, color) do
+    path = walk(current, base, lookup, MapSet.new())
+    view = agent_view(agent, depth, color, false)
+
+    acc =
+      Enum.reduce(path, acc, fn sha, acc ->
+        acc
+        |> Map.update!(:dots, &Map.put_new(&1, sha, color))
+        |> Map.update!(:cover_agents, &Map.put_new(&1, sha, view))
+      end)
+
+    cover_edges(acc, path, base, lookup, color)
+  end
+
+  defp agent_view(agent, depth, color, tip?) do
+    %{
+      id: Map.get(agent, :id),
+      task_local_id: Map.get(agent, :task_local_id),
+      status: Map.get(agent, :status),
+      depth: depth,
+      color: color,
+      tip?: tip?
+    }
+  end
+
+  defp cover_edges(acc, path, base, lookup, color) do
+    # Edges between consecutive path commits (child → first parent).
+    acc =
+      path
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.reduce(acc, fn [child, parent], acc ->
+        put_edge(acc, child, parent, color)
+      end)
+
+    # Plus the edge from the OLDEST path commit up to its first parent — that
+    # parent is the agent's base_commit exactly when the walk stopped on the
+    # base condition, and the edge only exists when the base is in the graph.
+    case List.last(path) do
+      nil ->
+        acc
+
+      oldest ->
+        parent = lookup |> Map.get(oldest) |> first_parent()
+
+        if parent == base and is_binary(base) and Map.has_key?(lookup, base) do
+          put_edge(acc, oldest, base, color)
+        else
+          acc
+        end
+    end
+  end
+
+  defp put_edge(acc, child, parent, color) do
+    %{acc | edges: Map.put_new(acc.edges, {child, parent}, color)}
   end
 
   # Follows first parents from `sha` towards the root, collecting shas in
-  # NEWEST → OLDEST order while claiming each one for this lane.
+  # NEWEST → OLDEST order.
   #
   # The walk stops without collecting the current sha when:
-  #   * it is the lane's exclusive `base_commit` (the fork point it grew from),
-  #   * it was already claimed by an earlier lane (shared history is never
-  #     duplicated; a lane joining claimed history owns nothing),
+  #   * it is not a binary (nil/garbage — agent has no usable commits),
+  #   * it is the agent's exclusive `base_commit` (the fork point it grew from),
   #   * it was already seen within this same walk (defensive cycle guard), or
   #   * it is absent from the fetched graph (shallow/partial fetch).
-  defp walk(sha, base, lookup, claimed, seen) do
+  defp walk(sha, base, lookup, seen) do
     cond do
       not is_binary(sha) ->
-        {[], claimed}
+        []
 
       sha == base ->
-        {[], claimed}
-
-      MapSet.member?(claimed, sha) ->
-        {[], claimed}
+        []
 
       MapSet.member?(seen, sha) ->
-        {[], claimed}
+        []
 
       not Map.has_key?(lookup, sha) ->
-        {[], claimed}
+        []
 
       true ->
         seen = MapSet.put(seen, sha)
-        claimed = MapSet.put(claimed, sha)
-        first_parent = lookup |> Map.get(sha) |> parents_of() |> List.first()
-        {older, claimed} = walk(first_parent, base, lookup, claimed, seen)
-        {[sha | older], claimed}
+        parent = lookup |> Map.get(sha) |> first_parent()
+        [sha | walk(parent, base, lookup, seen)]
     end
   end
 
-  # --- Agent ordering (depth-first, parents before children) ----------------
+  # --- Depth → hue ---------------------------------------------------------------
 
-  defp order_agents(repo_agents) do
-    by_id =
-      Enum.reduce(repo_agents, %{}, fn agent, acc ->
-        Map.put(acc, agent_id(agent), agent)
-      end)
+  # Only non-negative integer depths pass through; nil/floats/negative/garbage
+  # all fold to 0 so the hue stays deterministic for odd agent maps.
+  defp normalize_depth(depth) when is_integer(depth) and depth >= 0, do: depth
+  defp normalize_depth(_), do: 0
 
-    children_by_parent = Enum.group_by(repo_agents, fn agent -> Map.get(agent, :parent_id) end)
-
-    roots =
-      repo_agents
-      |> Enum.filter(fn agent -> root_of_group?(agent, by_id) end)
-      |> Enum.sort_by(&agent_id/1)
-
-    {reversed, visited} =
-      Enum.reduce(roots, {[], MapSet.new()}, fn root, {acc, visited} ->
-        visit(root, children_by_parent, visited, acc)
-      end)
-
-    # Cycle safety net: an agent whose parent chain never reaches a root (e.g. a
-    # malformed A<->B parent cycle) is unreachable from the root pass. Give it a
-    # lane too, still in ascending id order, so every agent in the group is
-    # represented exactly once.
-    leftovers =
-      repo_agents
-      |> Enum.reject(&MapSet.member?(visited, &1))
-      |> Enum.sort_by(&agent_id/1)
-
-    {reversed, _visited} =
-      Enum.reduce(leftovers, {reversed, visited}, fn agent, {acc, visited} ->
-        visit(agent, children_by_parent, visited, acc)
-      end)
-
-    Enum.reverse(reversed)
+  defp depth_color(depth) do
+    hue = Integer.mod(round(depth * 137.508) + 265, 360)
+    ThemeColor.hsl_to_hex(hue, 70, 54)
   end
 
-  # An agent is a root of its group when it has no parent, or when its parent is
-  # not part of this repo group (the tree starts a new root per group).
-  defp root_of_group?(agent, by_id) do
-    case Map.get(agent, :parent_id) do
-      nil -> true
-      parent_id -> not Map.has_key?(by_id, parent_id)
-    end
-  end
-
-  # Depth-first pre-order visit, accumulating in REVERSE order (a prepend is
-  # O(1); `order_agents/1` reverses once at the end). The visited set holds the
-  # agent maps themselves, which makes the traversal cycle-safe even for agents
-  # with a nil or duplicated id. Agents with no usable id expose no children —
-  # looking them up under a nil parent key would otherwise cross-link unrelated
-  # roots.
-  defp visit(agent, children_by_parent, visited, acc) do
-    if MapSet.member?(visited, agent) do
-      {acc, visited}
-    else
-      visited = MapSet.put(visited, agent)
-      acc = [agent | acc]
-
-      children =
-        case agent_id(agent) do
-          nil ->
-            []
-
-          id ->
-            children_by_parent
-            |> Map.get(id, [])
-            |> Enum.sort_by(&agent_id/1)
-        end
-
-      Enum.reduce(children, {acc, visited}, fn child, {acc, visited} ->
-        visit(child, children_by_parent, visited, acc)
-      end)
-    end
-  end
-
-  defp agent_id(agent), do: Map.get(agent, :id)
-
-  # --- DOM ids --------------------------------------------------------------
+  # --- DOM ids ---------------------------------------------------------------------
 
   # A deterministic, DOM-safe id derived ONLY from the repo key: the key
   # sanitized to `[A-Za-z0-9_-]` plus a stable hash suffix that disambiguates
