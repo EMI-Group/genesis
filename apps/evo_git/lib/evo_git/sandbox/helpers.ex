@@ -243,6 +243,47 @@ defmodule EvoGit.Sandbox.Helpers do
     end
   end
 
+  @doc """
+  Converts an env list into the charlist shape `Port.open/2`'s `{:env, ...}`
+  option requires.
+
+  `:erlang.open_port/2` demands **charlists** for BOTH the name and the value
+  of every `{:env, [{name, value}]}` pair — an Elixir binary anywhere in an env
+  tuple makes the WHOLE option list invalid and `Port.open/2` raises
+  `ArgumentError` ("invalid option in list"). `System.cmd/3` converts env pairs
+  itself, so code paths that go through `System.cmd/3` never hit this; a raw
+  `Port.open/2` must convert at the port boundary. This helper is that boundary.
+
+  Accepted name/value inputs:
+
+    * binary → `String.to_charlist/1`
+    * atom → `Atom.to_charlist/1`
+    * integer value → `Integer.to_charlist/1`
+    * charlist → passed through unchanged
+
+  Example:
+
+      iex> EvoGit.Sandbox.Helpers.port_env([{"TMPDIR", "/tmp/x"}])
+      [{~c"TMPDIR", ~c"/tmp/x"}]
+
+  Pure and unit-testable.
+  """
+  @spec port_env([{String.t() | atom(), String.t() | atom() | integer()}]) :: [
+          {charlist(), charlist()}
+        ]
+  def port_env(env) when is_list(env) do
+    Enum.map(env, fn {name, value} -> {env_name(name), env_value(value)} end)
+  end
+
+  defp env_name(name) when is_binary(name), do: String.to_charlist(name)
+  defp env_name(name) when is_atom(name), do: Atom.to_charlist(name)
+  defp env_name(name) when is_list(name), do: name
+
+  defp env_value(value) when is_binary(value), do: String.to_charlist(value)
+  defp env_value(value) when is_atom(value), do: Atom.to_charlist(value)
+  defp env_value(value) when is_integer(value), do: Integer.to_charlist(value)
+  defp env_value(value) when is_list(value), do: value
+
   # ---------------------------------------------------------------------------
   # Git metadata resolution (linked-worktree gitdir: pointer handling)
   # ---------------------------------------------------------------------------
@@ -427,14 +468,16 @@ defmodule EvoGit.Sandbox.Helpers do
 
   @doc """
   Waits for the OS PID of a spawned port to materialize (it is populated
-  asynchronously after spawn). Polls briefly; falls back to `:undefined` when
-  it never appears — the caller's timeout path then degrades to closing the
-  port (group/process-tree kill skipped).
+  asynchronously after spawn). `Port.info(port, :os_pid)` returns the tuple
+  `{:os_pid, pid}` while the port is open (and `nil` once it is closed), so
+  this helper unwraps that tuple and returns the integer pid. Polls briefly;
+  falls back to `:undefined` when it never appears — the caller's timeout path
+  then degrades to closing the port (group/process-tree kill skipped).
   """
   @spec wait_for_os_pid(port(), non_neg_integer()) :: pos_integer() | :undefined
   def wait_for_os_pid(port, attempts \\ 10) do
     case Port.info(port, :os_pid) do
-      pid when is_integer(pid) ->
+      {:os_pid, pid} when is_integer(pid) ->
         pid
 
       _ when attempts > 0 ->
@@ -457,6 +500,20 @@ defmodule EvoGit.Sandbox.Helpers do
     after
       0 -> :ok
     end
+  end
+
+  @doc """
+  Idempotently closes a port. `Port.close/1` RAISES `ArgumentError` on an
+  already-closed port (e.g. after `{:exit_status, _}` has been delivered), so
+  every timeout path closes through this guard instead of a bare
+  `Port.close/1`. A `nil` port is a no-op.
+  """
+  @spec close_port(port() | nil) :: :ok
+  def close_port(nil), do: :ok
+
+  def close_port(port) when is_port(port) do
+    if Port.info(port) != nil, do: Port.close(port)
+    :ok
   end
 
   # ---------------------------------------------------------------------------

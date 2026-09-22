@@ -633,6 +633,23 @@ defmodule EvoGit.RemoteNode do
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_commits(repo_path, branch_name))
 
   @doc """
+  Returns the commit-graph data for a set of git ranges on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.list_commit_graph/3` directly (which
+  delegates to `EvoGit.CommitGraph.for_ranges/3`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the git log runs inside the
+  remote VM against the remote filesystem.
+
+  `ranges` is a list of `{base_ref, tip_ref}` 2-tuples and `opts` a keyword
+  list (`:limit`). Returns `{:ok, %{commits: [commit], refs: %{sha => [ref]}}}`
+  or `{:error, {kind, reason}}` on RPC failure.
+  """
+  @spec list_commit_graph(node(), String.t(), [{String.t(), String.t()}], keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defnode(EvoGit.AgentScheduler.RemoteAPI.list_commit_graph(repo_path, ranges, opts))
+
+  @doc """
   Loads all review data (diff stat, full diff, parsed files) for a branch on
   the given node.
 

@@ -4,32 +4,47 @@ defmodule EvoGit.Executable do
 
   For desktop releases, git and ripgrep binaries are bundled in
   priv/vendor/{platform}/. This module tries the system PATH first, then falls
-  back to the bundled version.
+  back to the bundled version — but ONLY when that bundled file actually
+  exists. When no bundled file exists, the original name is returned
+  unchanged so that the normal PATH search (and any platform-specific
+  known-location fallback, e.g. Windows PowerShell) still applies.
   """
 
   @doc """
   Resolves the full path to an executable.
 
   Returns the name unchanged if found on system PATH (so System.cmd can find it).
-  Otherwise returns the absolute path to the bundled version in priv/vendor.
+  Otherwise returns the absolute path to the bundled version in priv/vendor when
+  that bundled file exists. When it does not exist, the name is returned
+  unchanged so that PATH search / `System.find_executable/1` / platform
+  known-location fallbacks can still resolve it — a non-existent absolute path
+  is NEVER returned.
 
-  Only "git" and "rg" are supported for bundling.
+  Only "git" and "rg" are actually bundled (MinGit + ripgrep).
   """
   @spec resolve(String.t()) :: String.t()
   def resolve(name) do
     case System.find_executable(name) do
-      nil -> bundled_path(name)
+      nil -> bundled_path(name, resolve_vendor_dir()) || name
       _path -> name
     end
   end
 
-  defp bundled_path(name) do
-    vendor_dir = resolve_vendor_dir()
+  @doc false
+  @spec bundled_path(String.t(), Path.t(), tuple()) :: String.t() | nil
+  def bundled_path(name, vendor_dir, os_type \\ :os.type()) do
+    name
+    |> candidates(vendor_dir, os_type)
+    |> Enum.find(&File.regular?/1)
+  end
 
-    case {name, :os.type()} do
-      {"git", {:win32, _}} -> Path.join([vendor_dir, "mingit", "cmd", "git.exe"])
-      {_, {:win32, _}} -> Path.join(vendor_dir, "#{name}.exe")
-      _ -> Path.join(vendor_dir, name)
+  @doc false
+  @spec candidates(String.t(), Path.t(), tuple()) :: [String.t()]
+  def candidates(name, vendor_dir, os_type \\ :os.type()) do
+    case {name, os_type} do
+      {"git", {:win32, _}} -> [Path.join([vendor_dir, "mingit", "cmd", "git.exe"])]
+      {_, {:win32, _}} -> [Path.join(vendor_dir, "#{name}.exe")]
+      _ -> [Path.join(vendor_dir, name)]
     end
   end
 

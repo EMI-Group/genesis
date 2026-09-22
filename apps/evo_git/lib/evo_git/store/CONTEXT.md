@@ -145,8 +145,10 @@ Pure classifier, two shape families mapping to the same disk-full class: `disk_f
 
 ## Known Gaps
 
-- **`type` and `review_status` are unindexed** — the "pending" review filter is driven by the indexed `status = 'completed'` predicate. Indexed columns: `status`, `finished_at`, `lease_expires_at`, `project_path`, `updated_at`, `started_at`.
-- **Search matches raw JSON text** — the pagination `:search` filter LIKEs the serialized `opts`/`result` JSON, so hits depend on JSON text representation (underscores escaped etc.).
+- **A data dir on a network/UNC path is accepted but unusable (Windows)**: `EvoGit.Platform.data_dir/0`'s `[data] dir` override validation (`absolute_path?/1`) accepts `\\server\share\...`, yet `Store.init/1` opens with `journal_mode: :wal` — SQLite's WAL needs the `-shm`/`-wal` shared-memory files, which network filesystems do not provide, so the open can fail and `init/1` returns `{:stop, {:failed_to_open_sqlite, reason}}` → the app never boots cleanly.
+- **Store boot failure is fatal, not degraded**: `init/1` calls `File.mkdir_p!(dir)` (bang → raises on an unwritable `[data] dir`) and `{:stop, ...}` on a failed `Xqlite.open/2`, so a bad/unwritable/UNC data dir crash-loops the application instead of falling back to a default location.
+- **`type` and `review_status` are unindexed** — the "pending" review filter is driven by the indexed `status = 'completed'` predicate. Indexed columns: `status`, `finished_at`, `lease_expires_at`, `project_path`, `updated_at`, `started_at` (`idx_tasks_started_at` makes the paginated list query's `ORDER BY started_at DESC` + `LIMIT`/`OFFSET` (an Ecto `order_by`/`limit`/`offset` in `Operations.Tasks.select_paginated/3`) O(page) instead of full-scan + sort).
+- **Search matches raw JSON text**: the `:search` filter is a 4-column OR-LIKE (`id`/`opts`/`project_path`/`result`, the ONE Ecto `fragment`), so hits depend on JSON key/string representation (e.g. underscores escaped) — a search matches only if the JSON text contains the value verbatim. The `result` column's JSON carries the final agent report under its `"result"` data key, making response-text fragments searchable.
 
 ## Routing Table
 

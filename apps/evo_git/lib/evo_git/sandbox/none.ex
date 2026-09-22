@@ -247,11 +247,18 @@ defmodule EvoGit.Sandbox.None do
     # A timeout is needed here, but System.cmd/3 is blocking, and wrapping it in
     # a Task would make Task.shutdown/1 kill only the DIRECT child process — any
     # process tree it spawned (e.g. a cmd.exe or powershell grandchild) would be
-    # orphaned and keep running. So instead we open the port ourselves, mirroring
-    # System.cmd's exact port options (binary, exit_status, hide, stderr_to_stdout,
-    # args, cd, env). Direct port ownership lets us read the OS PID and, on
-    # timeout, kill the WHOLE process tree via `taskkill /T /F` — Windows'
-    # built-in tree killer — before returning the partial output.
+    # orphaned and keep running. So instead we open the port ourselves with the
+    # options System.cmd uses (binary, exit_status, hide, stderr_to_stdout, args,
+    # cd, env). Direct port ownership lets us read the OS PID and, on timeout,
+    # kill the WHOLE process tree via `taskkill /T /F` — Windows' built-in tree
+    # killer — before returning the partial output.
+    #
+    # One option differs from System.cmd's own shape: `Port.open/2` requires
+    # CHARLISTS for both the name and the value of every `{:env, {name, value}}`
+    # pair — a binary anywhere in an env tuple makes the whole option list
+    # invalid and `Port.open/2` raises ArgumentError ("invalid option in list").
+    # System.cmd/3 converts env pairs itself, so only a raw port needs this;
+    # `Helpers.port_env/1` converts our binary env tuples at that boundary.
     #
     # Defense-in-depth: legacy direct callers may still pass `["-Command", cmd]`
     # to powershell/pwsh; transform to the canonical `-EncodedCommand` invocation
@@ -288,7 +295,7 @@ defmodule EvoGit.Sandbox.None do
       Port.open(
         {:spawn_executable, exec},
         [:binary, :exit_status, :hide, :stderr_to_stdout] ++
-          [{:args, args}, {:cd, cwd}, {:env, git_env}]
+          [{:args, args}, {:cd, cwd}, {:env, Helpers.port_env(git_env)}]
       )
 
     os_pid = Helpers.wait_for_os_pid(port)
@@ -312,7 +319,7 @@ defmodule EvoGit.Sandbox.None do
     after
       timeout ->
         kill_windows_tree(os_pid)
-        Port.close(port)
+        Helpers.close_port(port)
         Helpers.drain_port_messages(port)
 
         partial =

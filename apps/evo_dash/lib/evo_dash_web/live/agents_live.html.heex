@@ -21,100 +21,162 @@
         <!-- Agent Tree View -->
         <div class="agents-tree-panel card bg-base-100 shadow-md border border-base-300 rounded-xl">
           <div class="card-body p-4">
-            <h3 class="card-title mb-2">
-              <.icon name="hero-squares-2x2" class="size-5" /> {gettext("Agent Tree")}
-            </h3>
-
-            <%= if @agents_loading do %>
-              <div class="text-center py-16 bg-base-200/40 rounded-xl">
-                <.icon
-                  name="hero-arrow-path"
-                  class="size-20 mx-auto mb-4 text-base-content/40 animate-spin"
-                />
-                <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
-                <p class="text-lg text-base-content">{gettext("Loading agents…")}</p>
+            <div class="flex items-center gap-2 mb-2">
+              <.icon name="hero-squares-2x2" class="size-5 shrink-0" />
+              <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-base-200/60 border border-base-300">
+                <button
+                  id="left-view-tree"
+                  type="button"
+                  class={[
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                    @left_view == :tree && "bg-base-100 text-base-content shadow-sm",
+                    @left_view != :tree && "text-base-content/70 hover:text-base-content"
+                  ]}
+                  phx-click="switch_left_view"
+                  phx-value-view="tree"
+                >
+                  {gettext("Agent Tree")}
+                </button>
+                <button
+                  id="left-view-commits"
+                  type="button"
+                  class={[
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-colors",
+                    @left_view == :commits && "bg-base-100 text-base-content shadow-sm",
+                    @left_view != :commits && "text-base-content/70 hover:text-base-content"
+                  ]}
+                  phx-click="switch_left_view"
+                  phx-value-view="commits"
+                >
+                  <%!-- zh_CN: 提交历史 —— 时间维度（git 提交图）视图 --%>
+                  {gettext("Commit History")}
+                </button>
               </div>
-            <% else %>
-              <%= if @agents == [] do %>
-                <div class="text-center py-16">
+            </div>
+
+            <%= if @left_view == :tree do %>
+              <%= if @agents_loading do %>
+                <div class="text-center py-16 bg-base-200/40 rounded-xl">
                   <.icon
-                    name="hero-server"
-                    class="size-20 mx-auto mb-4 text-base-content/40 animate-float"
+                    name="hero-arrow-path"
+                    class="size-20 mx-auto mb-4 text-base-content/40 animate-spin"
                   />
-                  <p class="text-lg text-base-content">
-                    {gettext("No agents currently registered")}
-                  </p>
-                  <p class="text-sm mt-2 text-base-content/60">
-                    {gettext("Start a task from the dashboard to see agents here.")}
-                  </p>
+                  <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
+                  <p class="text-lg text-base-content">{gettext("Loading agents…")}</p>
                 </div>
               <% else %>
-                <div class="space-y-4">
-                  <%= for {repo_name, tree_nodes} <- @repo_trees do %>
-                    <div>
-                      <!-- Repo Header -->
-                      <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
-                        <.icon
-                          name="hero-server-stack"
-                          class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
-                        />
-                        <span class="font-bold text-base text-base-content">{repo_name}</span>
-                        <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
-                          "directories"
-                        )})</span>
+                <%= if @agents == [] do %>
+                  <div class="text-center py-16">
+                    <.icon
+                      name="hero-server"
+                      class="size-20 mx-auto mb-4 text-base-content/40 animate-float"
+                    />
+                    <p class="text-lg text-base-content">
+                      {gettext("No agents currently registered")}
+                    </p>
+                    <p class="text-sm mt-2 text-base-content/60">
+                      {gettext("Start a task from the dashboard to see agents here.")}
+                    </p>
+                  </div>
+                <% else %>
+                  <div class="space-y-4">
+                    <%= for {repo_name, tree_nodes} <- @repo_trees do %>
+                      <div>
+                        <!-- Repo Header -->
+                        <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
+                          <.icon
+                            name="hero-server-stack"
+                            class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
+                          />
+                          <span class="font-bold text-base text-base-content">{repo_name}</span>
+                          <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
+                            "directories"
+                          )})</span>
+                        </div>
+                        <div class="space-y-4 font-mono text-sm">
+                          <EvoDashWeb.AgentsComponents.path_tree
+                            nodes={tree_nodes}
+                            depth={0}
+                            selected_id={@selected_agent_id}
+                            new_agent_ids={@new_agent_ids}
+                            changed_status_ids={@changed_status_ids}
+                          />
+                        </div>
                       </div>
-                      <div class="space-y-4 font-mono text-sm">
-                        <EvoDashWeb.AgentsComponents.path_tree
-                          nodes={tree_nodes}
-                          depth={0}
-                          selected_id={@selected_agent_id}
-                          new_agent_ids={@new_agent_ids}
-                          changed_status_ids={@changed_status_ids}
-                        />
-                      </div>
-                    </div>
-                  <% end %>
-                </div>
+                    <% end %>
+                  </div>
+                <% end %>
               <% end %>
+            <% else %>
+              <EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view
+                repos={@commit_graph}
+                selected_id={@selected_agent_id}
+                loading={@commit_graph_loading}
+                error={@commit_graph_error}
+                node_key={@current_node_id || "local"}
+              />
             <% end %>
           </div>
 
           <!-- Legend — compact chip cluster, bottom-right of the tree box -->
           <div class="agents-legend">
-            <span class="agents-legend-title">{gettext("Status Legend")}</span>
-            <div
-              id="agents-legend-pending"
-              class="flex items-center gap-2"
-              data-tip={
-                gettext(
-                  "Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings."
-                )
-              }
-              phx-hook="LegendTooltip"
-            >
-              <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
-              <span>{gettext("Pending")}</span>
-            </div>
-            <div
-              id="agents-legend-running"
-              class="flex items-center gap-2"
-              data-tip={gettext("Agent is actively executing its assigned task.")}
-              phx-hook="LegendTooltip"
-            >
-              <span class="w-2.5 h-2.5 rounded-full bg-success shadow-sm shadow-success/50"></span>
-              <span>{gettext("Running")}</span>
-            </div>
-            <div
-              id="agents-legend-waiting"
-              class="flex items-center gap-2"
-              data-tip={
-                gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")
-              }
-              phx-hook="LegendTooltip"
-            >
-              <span class="w-2.5 h-2.5 rounded-full bg-warning shadow-sm shadow-warning/50"></span>
-              <span>{gettext("Waiting")}</span>
-            </div>
+            <%= if @left_view == :tree do %>
+              <span class="agents-legend-title">{gettext("Status Legend")}</span>
+              <div
+                id="agents-legend-pending"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext(
+                    "Agent is queued, waiting to be scheduled. May be limited by LLM or tool concurrency. Consider increasing concurrency in Settings."
+                  )
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
+                <span>{gettext("Pending")}</span>
+              </div>
+              <div
+                id="agents-legend-running"
+                class="flex items-center gap-2"
+                data-tip={gettext("Agent is actively executing its assigned task.")}
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-success shadow-sm shadow-success/50"></span>
+                <span>{gettext("Running")}</span>
+              </div>
+              <div
+                id="agents-legend-waiting"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext("Agent is waiting for subagents to finish. Nothing to do but wait.")
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-warning shadow-sm shadow-warning/50"></span>
+                <span>{gettext("Waiting")}</span>
+              </div>
+            <% else %>
+              <%!-- zh_CN: 提交图例 —— 时间维度视图的图例 --%>
+              <span class="agents-legend-title">{gettext("Commit Graph Legend")}</span>
+              <div
+                id="agents-legend-commit"
+                class="flex items-center gap-2"
+                data-tip={gettext("A git commit produced on an agent's branch.")}
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
+                <span>{gettext("Commit")}</span>
+              </div>
+              <div
+                id="agents-legend-agent"
+                class="flex items-center gap-2"
+                data-tip={gettext("An agent's lane — the commits that agent produced.")}
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-success shadow-sm shadow-success/50"></span>
+                <span>{gettext("Agent")}</span>
+              </div>
+            <% end %>
           </div>
         </div>
       </div>

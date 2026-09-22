@@ -3,13 +3,27 @@ defmodule EvoGit.ExecutableTest do
   Tests for `EvoGit.Executable`, which resolves executable paths with a
   system-first, bundled-fallback strategy.
 
-  The private helpers (`bundled_path/1`, `resolve_vendor_dir/0`,
-  `vendor_platform/0`, `arch_string/0`) are exercised indirectly through the
-  public `resolve/1` function.
+  The public `resolve/1` contract is exercised directly. The bundled-fallback
+  logic is exercised through the pure `candidates/3` and `bundled_path/3`
+  helpers, which take an explicit `vendor_dir` and `os_type` so both the
+  Windows (MinGit) and Unix vendor layouts are testable on Linux CI.
   """
   use ExUnit.Case, async: true
 
   alias EvoGit.Executable
+
+  setup do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_executable_test_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    {:ok, vendor_dir: dir}
+  end
 
   describe "resolve/1" do
     test "returns the name unchanged when found on system PATH" do
@@ -25,49 +39,36 @@ defmodule EvoGit.ExecutableTest do
       assert Executable.resolve("git") == "git"
     end
 
-    test "returns 'rg' when rg is on PATH, or a bundled fallback path" do
+    test "returns the original name when neither on PATH nor bundled" do
+      # The name is returned unchanged (never a fabricated vendor path) so that
+      # PATH search / System.find_executable / known-location fallbacks apply.
+      name = "evogit_nonexistent_binary_xyz"
+
+      assert System.find_executable(name) == nil
+      assert Executable.resolve(name) == name
+    end
+
+    test "never returns a non-existent absolute path" do
+      # The invariant that used to break: a fabricated absolute vendor path
+      # defeats every downstream resolution mechanism. An absolute result must
+      # always be an existing regular file.
+      for name <- [
+            "evogit_nonexistent_binary_a",
+            "evogit_nonexistent_binary_b",
+            "powershell_that_is_not_there",
+            "weird/name"
+          ] do
+        result = Executable.resolve(name)
+        assert result == name or File.regular?(result)
+      end
+    end
+
+    test "returns 'rg' unchanged, or an existing bundled path" do
+      # rg is the one binary that MAY be bundled; either the bare name comes
+      # back (found on PATH or nothing bundled) or a real file is returned.
       result = Executable.resolve("rg")
 
-      if result == "rg" do
-        assert System.find_executable("rg") != nil
-      else
-        # Not on PATH → must be the bundled path under priv/vendor
-        assert result =~ "vendor"
-        assert result =~ "rg"
-      end
-    end
-
-    test "falls back to priv/vendor path for nonexistent binary" do
-      result = Executable.resolve("nonexistent_binary_xyz")
-
-      # Should NOT return the name unchanged (not on PATH)
-      refute result == "nonexistent_binary_xyz"
-      # Should return a path under priv/vendor
-      assert result =~ "priv/vendor"
-    end
-
-    test "the bundled fallback path contains the binary name" do
-      result = Executable.resolve("definitely_not_on_path_xyz")
-
-      assert is_binary(result)
-      assert result =~ "definitely_not_on_path_xyz"
-    end
-
-    test "the bundled path ends with the binary name (or .exe on Windows)" do
-      result = Executable.resolve("no_such_binary_abc")
-      last_segment = Path.basename(result)
-
-      case :os.type() do
-        {:win32, _} -> assert last_segment == "no_such_binary_abc.exe"
-        _ -> assert last_segment == "no_such_binary_abc"
-      end
-    end
-
-    test "the bundled path is an absolute path" do
-      result = Executable.resolve("no_such_binary_abs")
-      # resolve_vendor_dir builds via Application.app_dir / :code.priv_dir,
-      # both of which yield absolute paths.
-      assert Path.type(result) == :absolute
+      assert result == "rg" or File.regular?(result)
     end
 
     test "always returns a binary string, never raises" do
@@ -83,58 +84,77 @@ defmodule EvoGit.ExecutableTest do
       second = Executable.resolve(nonexistent)
       assert first == second
     end
+  end
 
-    test "different nonexistent binaries share the same vendor directory" do
-      # The vendor dir is platform-specific, not executable-specific; only the
-      # terminal segment should differ between two bundled paths.
-      path_a = Executable.resolve("no_such_binary_aaa")
-      path_b = Executable.resolve("no_such_binary_bbb")
-
-      # Same parent directory (the vendor dir)…
-      assert Path.dirname(path_a) == Path.dirname(path_b)
-      # …but different terminal segments.
-      refute path_a == path_b
+  describe "candidates/3" do
+    test "uses the MinGit layout for git on Windows", %{vendor_dir: dir} do
+      assert Executable.candidates("git", dir, {:win32, :nt}) ==
+               [Path.join([dir, "mingit", "cmd", "git.exe"])]
     end
 
-    test "the bundled path encodes the current platform" do
-      # vendor_platform/1 produces macos-<arch> / linux-<arch> / windows-x64.
-      # We can't assert the exact segment (arch is host-dependent) but the
-      # platform family must appear.
-      result = Executable.resolve("no_such_binary_platform")
+    test "uses <name>.exe for other executables on Windows", %{vendor_dir: dir} do
+      assert Executable.candidates("powershell", dir, {:win32, :nt}) ==
+               [Path.join(dir, "powershell.exe")]
+    end
 
-      case :os.type() do
-        {:unix, :darwin} -> assert result =~ "macos"
-        {:win32, _} -> assert result =~ "windows"
-        {:unix, _} -> assert result =~ "linux"
+    test "uses the bare name on non-Windows platforms", %{vendor_dir: dir} do
+      assert Executable.candidates("rg", dir, {:unix, :linux}) == [Path.join(dir, "rg")]
+      assert Executable.candidates("git", dir, {:unix, :darwin}) == [Path.join(dir, "git")]
+    end
+
+    test "always yields absolute candidate paths inside the vendor dir", %{vendor_dir: dir} do
+      for {name, os} <- [{"git", {:win32, :nt}}, {"rg", {:win32, :nt}}, {"rg", {:unix, :linux}}] do
+        [candidate] = Executable.candidates(name, dir, os)
+        assert Path.type(candidate) == :absolute
+        assert String.starts_with?(candidate, dir)
       end
     end
+  end
 
-    test "the bundled path includes a recognized architecture segment" do
-      result = Executable.resolve("no_such_binary_arch")
+  describe "bundled_path/3" do
+    test "returns the bundled absolute path when the file exists", %{vendor_dir: dir} do
+      bundled = Path.join(dir, "mybin")
+      File.write!(bundled, "")
 
-      # arch_string/0 classifies into arm64, x86_64, or unknown (unix/macos),
-      # or hardcodes x64 on Windows.
-      arch_segment =
-        case :os.type() do
-          {:win32, _} ->
-            "x64"
+      assert Executable.bundled_path("mybin", dir, {:unix, :linux}) == bundled
+    end
 
-          _ ->
-            sys_arch = List.to_string(:erlang.system_info(:system_architecture))
+    test "returns nil when the bundled file does not exist", %{vendor_dir: dir} do
+      assert Executable.bundled_path("missing_binary", dir, {:unix, :linux}) == nil
+    end
 
-            cond do
-              String.starts_with?(sys_arch, "aarch64") or String.starts_with?(sys_arch, "arm64") ->
-                "arm64"
+    test "returns nil when the candidate is a directory, not a regular file", %{vendor_dir: dir} do
+      File.mkdir_p!(Path.join(dir, "somedir"))
 
-              String.starts_with?(sys_arch, "x86_64") or String.starts_with?(sys_arch, "amd64") ->
-                "x86_64"
+      assert Executable.bundled_path("somedir", dir, {:unix, :linux}) == nil
+    end
 
-              true ->
-                "unknown"
-            end
-        end
+    test "resolves the Windows MinGit git.exe layout when present", %{vendor_dir: dir} do
+      git = Path.join([dir, "mingit", "cmd", "git.exe"])
+      File.mkdir_p!(Path.dirname(git))
+      File.write!(git, "")
 
-      assert result =~ arch_segment
+      assert Executable.bundled_path("git", dir, {:win32, :nt}) == git
+    end
+
+    test "returns nil for git on Windows when MinGit is not bundled", %{vendor_dir: dir} do
+      assert Executable.bundled_path("git", dir, {:win32, :nt}) == nil
+    end
+
+    test "does not fall back to a bare <name>.exe candidate on Windows for git", %{
+      vendor_dir: dir
+    } do
+      # A `<vendor>/git.exe` (no mingit/ prefix) is not the bundled git layout.
+      File.write!(Path.join(dir, "git.exe"), "")
+
+      assert Executable.bundled_path("git", dir, {:win32, :nt}) == nil
+    end
+
+    test "returns the <name>.exe candidate on Windows when present", %{vendor_dir: dir} do
+      rg = Path.join(dir, "rg.exe")
+      File.write!(rg, "")
+
+      assert Executable.bundled_path("rg", dir, {:win32, :nt}) == rg
     end
   end
 end

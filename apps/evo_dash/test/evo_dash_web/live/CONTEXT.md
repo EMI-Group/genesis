@@ -17,8 +17,8 @@ ExUnit test files for the EvoDash LiveView pages and their support modules. Mirr
 - `./welcome_live_test.exs`, `./welcome_complete_live_test.exs` → Onboarding pages
 - `./system_live_test.exs` → System page (scheduler controls, system check, Status sandbox helpers). The file setup snapshot-restores the update/source/`:system_samples_runner` / `:system_samples_seed_retry_ms` app-env seams; the two "failed seed retries" tests set `:system_samples_seed_retry_ms` to 30ms before mounting (production default 3000ms) so they no longer sleep 3s each.
 - `./system_live/` → `charts_test.exs` — SystemLive chart/ring-buffer tests
-- `./agents_live_test.exs` → Agent tree (node-aware async loads, push-driven refresh)
-- `./agents_live/` → `optimistic_messages_test.exs` — agents page optimistic-message handling
+- `./agents_live_test.exs` → Agent tree (node-aware async loads, push-driven refresh) + the left-panel VIEW SWITCHER & TEMPORAL commit-history view (lazy fetch, async apply/stale-guard/error, node-switch reset) — see "Notes for Agents — Agents-page commit-history view tests"
+- `./agents_live/` → `optimistic_messages_test.exs` (agents-page optimistic user messages) + `commit_graph_test.exs` (pure `EvoDashWeb.AgentsLive.CommitGraph.build/2` graph assembly)
 - `./platform_info_test.exs` → Pure unit tests for `EvoDashWeb.PlatformInfo` (platform gating)
 - `../components/` → Function-component tests (sibling — read-only, escalate writes to parent)
 - `../live_hooks/` → Live-hook tests (NodeAware, Guide, DesktopQuit, UpdateStatus) (sibling — read-only, escalate writes to parent)
@@ -59,3 +59,18 @@ ExUnit test files for the EvoDash LiveView pages and their support modules. Mirr
 - **`agents_live_test.exs` is `async: true`**: it seeds the global `:evogit_sched_meta` / `:evogit_agent_state` ETS rows under a UNIQUE per-test agent id (`System.unique_integer([:positive]) + 10_000_000`, exposed via `agent_id/0` reading the process dictionary), so no two concurrent modules collide.
 - Unlocking the remaining sync page suites needs production changes (an injectable per-process config dir in `EvoGit.Platform.config_dir/1`); the `XDG_CONFIG_HOME` env var and the local `EvoDash.ActiveTasks` hub key are process-wide and shared.
 - **Mount/patch async-load settle**: `projects_live_test` + `review_live_test` + `settings_live_test` spawn a supervised `EvoDash.TaskSupervisor` child at mount whose late result apply can clobber test-driven state — they funnel every mount through a file-local settle helper (see `apps/evo_dash/test/CONTEXT.md` → "Notes for Agents — mount/patch async-load settle").
+
+## Notes for Agents — Agents-page commit-history view (temporal) tests
+
+The Agents page (`/agents`) has a left-panel VIEW SWITCHER: `@left_view` (`:tree` default | `:commits`), toggled by `handle_event("switch_left_view", %{"view" => "tree"|"commits"})` (any other value is a no-op); the segmented buttons are `#left-view-tree` / `#left-view-commits` in `agents_live.html.heex`.
+Switching to `:commits` lazily fetches the TEMPORAL commit graph via the app-env seam `:agents_commit_graph_runner` (default `&EvoDash.NodeContext.list_commit_graph/4`), resolved AT SPAWN TIME inside an `EvoDash.TaskSupervisor` child — stub it (`Application.put_env` + `on_exit`) BEFORE `live/3`, and never let a test reach the real RPC/core (the core `EvoGit.CommitGraph` may be absent).
+The runner is called ONCE PER DISTINCT `repo_root` as `runner.(node, repo_root, ranges, limit: 100)` (`ranges` = de-duplicated list of `{base_commit, current_commit}` 2-tuples); only agents with BINARY `repo_root`/`base_commit`/`current_commit` are eligible (others are skipped) — drive the agent list with the existing `:agents_list_runner` seam (`summary_agent/1` overrides). A non-`{:ok, _}` reply HALTS the per-repo loop.
+Result apply is `handle_info({:commit_graph_loaded, node, seq, result}, socket)`, stale-guarded on the viewed node AND `seq < commit_graph_seq`; `{:error, reason}` KEEPS the last good graph and only sets `commit_graph_error`.
+Test helpers live in `agents_live_test.exs`: `install_agents/1`, `install_commit_graph_runner/1` (records `{:commit_graph_call, node, repo_root, ranges, opts}` to the test pid), `graph_error_responder/0`, `graph_partial_responder/1`; `clear_agents_env/0` also clears `:agents_commit_graph_runner`.
+
+A loaded commit graph IS renderable at page level: the per-lane commits container (`components/agents_components/commit_graph_view.ex`) carries no `phx-update` mode and incremental patching relies on the stable, unique child ids.
+So the page suite asserts the loaded graph's markup directly from the rendered DOM (repo section / lane / commits container / commit node / ref `badge` / agent chip), deriving the `repo_dom_id` and lane `agent_id` from the live socket's `@commit_graph` rather than hardcoding ids.
+The sibling COMPONENT suite (`test/evo_dash_web/components/commit_graph_view_test.exs`) still pins the frozen DOM markers in isolation via `render_component/2` (which bypasses the diff path).
+Socket-state assertions remain the right tool for the stale-seq / foreign-node / failed-refresh cases (they assert state after a direct `send/2`).
+Node-switch reset is tested by invoking `EvoDashWeb.AgentsLive.handle_params(%{}, "/agents", socket)` directly on the socket from `:sys.get_state(view.pid)` with `previous_node` forced to differ (mutating `current_node` via `:sys.replace_state` does NOT run the reset); the reset clears the commit-graph assigns while `@left_view` SURVIVES.
+The sibling node `./agents_live/commit_graph_test.exs` unit-tests the PURE `EvoDashWeb.AgentsLive.CommitGraph` (`build/2`, `grouping_key/1`, `repo_display_name/1`) with no I/O.

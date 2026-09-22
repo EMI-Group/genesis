@@ -657,6 +657,36 @@ defmodule EvoGit.Adapters.Git do
   end
 
   @doc """
+  Lists local branches and tags with the commit SHA each points at.
+
+  Returns `{:ok, [{ref_short_name, full_sha}]}` or `{:error, {tag, output}}`
+  (see the module "## Return contract" section).
+  Uses `git for-each-ref --format='%(refname:short) %(objectname)' refs/heads refs/tags`.
+  """
+  def list_refs(repo_root) when is_binary(repo_root) do
+    parse_list_result(
+      run(
+        ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads", "refs/tags"],
+        repo_root
+      ),
+      fn output ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(&parse_ref_line/1)
+      end
+    )
+  end
+
+  # Parses one `%(refname:short) %(objectname)` line into `{name, sha}`. Ref
+  # names cannot contain spaces, so splitting on the first space is safe.
+  defp parse_ref_line(line) do
+    case String.split(String.trim(line), " ", parts: 2) do
+      [name, sha] when name != "" -> [{name, sha}]
+      _ -> []
+    end
+  end
+
+  @doc """
   Creates a branch pointing at a specific commit.
 
   Uses `git branch <name> <sha>`.

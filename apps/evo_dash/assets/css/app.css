@@ -902,6 +902,93 @@ button, a, input, textarea, select, summary,
   }
 }
 
+/* === Commit Graph (temporal view — Agents page) === */
+/* Enter-animation helpers for the commit-history visualization rendered by the
+   CommitGraph JS hook on the Agents page. The hook appends node dots, swim-lane
+   columns and connector edges when (re)building the history and tags each
+   NEWLY inserted element with the matching `-enter` class below, so a refresh
+   animates only what actually arrived. The animations are transform/opacity
+   only (no layout thrash) and color-free — the hook and the Tailwind utilities
+   own the visual styling, this block owns the motion. Opting out is honoured
+   by the guard at the end of the block (the hook checks the same media query in
+   JS — belt-and-braces). */
+
+/* Node dot: fade in while growing from 85% to its final size. Default
+   (center) transform origin is what a dot wants, so no base rule is needed. */
+@keyframes commit-node-in {
+  0% { opacity: 0; transform: scale(0.85); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.commit-node-enter {
+  animation: commit-node-in 0.3s ease-out both;
+}
+
+/* Swim-lane column/label: fade in with a slight slide from the left (pure
+   translate, so no transform-origin is required either). */
+@keyframes commit-lane-in {
+  0% { opacity: 0; transform: translateX(-8px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+.commit-lane-enter {
+  animation: commit-lane-in 0.3s ease-out both;
+}
+
+/* Connector edge: a "draw"/grow effect instead of a pop-in. The default shape
+   is a VERTICAL edge growing downwards from its anchor (scaleY, origin top);
+   add the `.commit-edge-horizontal` modifier to an edge that grows rightwards
+   from its left anchor instead (scaleX, origin left). */
+@keyframes commit-edge-grow-y {
+  0% { opacity: 0; transform: scaleY(0); }
+  100% { opacity: 1; transform: scaleY(1); }
+}
+
+@keyframes commit-edge-grow-x {
+  0% { opacity: 0; transform: scaleX(0); }
+  100% { opacity: 1; transform: scaleX(1); }
+}
+
+.commit-edge-enter {
+  animation: commit-edge-grow-y 0.3s ease-out both;
+}
+
+.commit-edge-enter.commit-edge-horizontal {
+  animation-name: commit-edge-grow-x;
+}
+
+/* Base styling the grow effect relies on: the edge must scale away from its
+   anchor, not from its center. Origin is declared for BOTH the structural
+   (`-edge`) and the animating (`-edge-enter`) class names, since the hook may
+   use either as the element's hook for the modifier; the `.commit-edge-horizontal`
+   pair is 2 classes deep, so it outranks the default whatever the source order.
+   Deliberately `transform-origin` only — the hook's inline sizing/positioning
+   and the Tailwind utilities stay authoritative for everything else (this
+   block is un-layered, so it beats `@layer utilities`). */
+.commit-edge,
+.commit-edge-enter {
+  transform-origin: top;
+}
+
+.commit-edge.commit-edge-horizontal,
+.commit-edge-enter.commit-edge-horizontal {
+  transform-origin: left;
+}
+
+/* Reduced-motion guard. Only `animation` is switched off (plus opacity as a
+   harmless non-inline default) — deliberately NOT `transform: none`: graph
+   elements may be positioned with their own transform, and `none` would
+   collapse them all onto the origin. With no animation the `both` fill mode
+   holds nothing, so the element simply keeps its final (base) state. */
+@media (prefers-reduced-motion: reduce) {
+  .commit-node-enter,
+  .commit-lane-enter,
+  .commit-edge-enter {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* === Diff Viewer (GitHub PR Style) === */
 /* The review page's layout, tab bar, and file-tree sidebar are styled with
    Tailwind utilities in the components; app.css carries only the shared

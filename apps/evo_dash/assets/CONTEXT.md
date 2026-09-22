@@ -7,7 +7,7 @@ This directory holds all frontend source assets (JavaScript, CSS, vendor librari
 ## Routing Table
 
 - `./js/` → JavaScript source (LiveSocket setup, inline hooks, topbar; `app.js` + `highlight_setup.js`)
-- `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
+- `./js/hooks/` → Standalone JS hook files (`sidebar_collapse.js`, `node_switch_fade.js`, `adaptive_input.js`, `legend_tooltip.js`, `diff_viewer.js`, `commit_graph.js`) — registration table + behavior notes in `js/hooks/CONTEXT.md`
 - `./css/` → Stylesheets (Tailwind CSS 4 configuration, DaisyUI themes)
 - `./vendor/` → Third-party JS libraries (DaisyUI, Heroicons, Topbar, highlight.js, brand SVGs)
 

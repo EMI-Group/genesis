@@ -6,7 +6,7 @@ The web interface layer for the EvoDash Phoenix application — a real-time dash
 ## Routing Table
 - `live/` → Phoenix LiveView pages (Projects, Home, Tasks, Agents, Settings, System, Review, Welcome) + `live/components/` LiveComponents
 - `live_hooks/` → On-mount hooks: `SetLocale`, `NodeAware`, `DesktopQuit`, `UpdateStatus`, `Guide` — registered in this order by `EvoDashWeb.live_view/0`
-- `components/` → Reusable HEEx UI components and layout templates
+- `components/` → Reusable HEEx UI components and layout templates (`components/agents_components/` → Agents-page commit-history view sub-components)
 - `controllers/` → Classic HTTP controllers and error handlers
 - `plugs/` → HTTP middleware plugs (Locale)
 
@@ -36,13 +36,23 @@ Dashboard UX: the task card's inline button is a graceful **Cancel** (`phx-click
 
 The frontend presents `:blocked` and `:pending` agents identically as **"Pending"** on all agent status surfaces — to the user, both mean "queued / waiting to be scheduled" (`Helpers.agent_status_label/1` is the single source of label text; the four `agent_status_*` presentation helpers delegate `:blocked` → the `:pending` clause). The backend scheduler keeps `:blocked` and `:pending` distinct. Note: the SystemLive scheduler charts (`live/system_live/charts.ex`) consume the raw `:blocked` COUNT as the slot-saturation "waiting" telemetry series — that is scheduler telemetry, not an agent-status display.
 
+### Agents page — left-panel view switcher (spatial tree / temporal commit history)
+
+The Agents page visualizes BOTH dimensions: the recursive agent tree (spatial) and a git commit-history graph (temporal) that makes the parent→child fork visually obvious.
+The left column (`live/agents_live.html.heex`) carries a compact segmented control (`#left-view-tree` / `#left-view-commits`) that swaps the panel body via the `switch_left_view` event (`phx-value-view` whitelisted by pattern match — never an atom conversion); the selection is the `@left_view` assign (`:tree | :commits`, default `:tree`) and it survives a node switch while the commit-graph data is reset.
+The commit view is rendered by `EvoDashWeb.AgentsComponents.CommitGraphView.commit_graph_view/1` (`components/agents_components/`) from `@commit_graph` — the per-repo lane view model built by the pure `EvoDashWeb.AgentsLive.CommitGraph.build/2`, which now also owns the shared repo `grouping_key/1` / `repo_display_name/1` naming (the tree delegates to it).
+Commit nodes AND agent chips reuse the existing `select_agent` event, so the right-hand detail panel behaves exactly as it does from the tree.
+The `.agents-legend` chips swap per view (status legend ↔ commit-graph legend); the right-hand detail panel is unchanged.
+All commit-graph fetching is async (`EvoDash.TaskSupervisor`, seam `:agents_commit_graph_runner`) and happens ONLY while the commit view is active — a tree-only session never issues a git RPC.
+Full assigns/async/throttle contract + the frozen DOM animation markers: `live/agents_live/CONTEXT.md` and `components/agents_components/CONTEXT.md`.
+
 ### Subdirectories
 | Directory | Purpose |
 |-----------|---------|
 | `live/` | Phoenix LiveView pages: Home, Projects, Agents, Settings, System, Tasks, Review, Welcome. Also contains the `live/components/` subdirectory (LiveComponents like `NodeSelectorComponent`). |
 | `live/components/` | LiveComponents (`use EvoDashWeb, :live_component`): `NodeSelectorComponent` (navbar node selector + connection manager modal for SSH Remote Development). |
 | `live_hooks/` | On-mount hooks: `SetLocale`, `NodeAware`, `DesktopQuit`, `UpdateStatus`, `Guide` (global overlays). |
-| `components/` | Reusable HEEx components: CoreComponents, ProjectComponents, TaskFormComponents, TaskCardComponents, AgentsComponents, RemoteGateComponents, Layouts. |
+| `components/` | Reusable HEEx components: CoreComponents, ProjectComponents, TaskFormComponents, TaskCardComponents, AgentsComponents, RemoteGateComponents, Layouts, plus the `components/agents_components/` sub-components (`CommitGraphView` — the Agents-page commit-history view). |
 | `controllers/` | Classic HTTP controllers and error handlers. Includes `TaskExportController` (JSON export of archived task metadata). |
 
 ### LiveView Routes
@@ -54,7 +64,7 @@ The frontend presents `:blocked` and `:pending` agents identically as **"Pending
 | `GET /welcome` | `WelcomeLive` | Onboarding page — stepwise first-LLM quick setup (provider → variant → model → credentials); `skip`/`get_started` redirect to `/welcome/complete`. |
 | `GET /welcome/complete` | `WelcomeCompleteLive` | Onboarding completion page — example task (copyable demo objective via the `ClipboardCopy` hook) + "Go to Dashboard" button that completes onboarding and navigates to `/projects`. |
 | `GET /tasks` | `TasksLive` | Task history page — full task list with status filters, pagination, archive details, cancel/force-kill actions. |
-| `GET /agents` | `AgentsLive` | Agent tree inspector with real-time hierarchy |
+| `GET /agents` | `AgentsLive` | Agent inspector — left-panel view switcher between the recursive agent tree (spatial) and the git commit history (temporal), plus the agent detail panel on the right |
 | `GET /settings` | `SettingsLive` | Runtime scheduler configuration |
 | `GET /system` | `SystemLive` | System page — Software Update card, System Self-Check (health banner + check grid incl. the Genesis Source card), scheduler-status charts, and the grouped System Controls section (System Dashboard + scheduler pause/resume + VM restart/stop) |
 | `GET /review/:task_id` | `ReviewLive` (`:show`) | Code review page — diff viewer with expandable context, commit list, merge/reject/resume actions. Supports post-merge re-review via persisted SHAs. |
