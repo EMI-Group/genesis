@@ -1,19 +1,28 @@
 defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   @moduledoc """
-  TEMPORAL (git commit history) view for the Agents page left panel.
+  TEMPORAL (git commit history) view for the Agents page left panel — a
+  CLASSIC git graph (`git log --graph` style) rendered as SVG.
 
-  `commit_graph_view/1` renders fully-prepared display data (built by the pure
-  `EvoDashWeb.AgentsLive.CommitGraph` module) grouped by repository, with ONE
-  LANE PER AGENT. Because lanes are ordered depth-first with each child's lane
-  indented under its parent and connected by an edge, the recursive
-  agent-spawns-agent structure is visible at a glance.
+  `commit_graph_view/1` draws the fully-prepared view models built by the pure
+  `EvoDashWeb.AgentsLive.CommitGraph` module: commits are DOTS arranged on
+  lanes and connected by bezier edges; refs render as small mono chips in the
+  right gutter; agent activity overlays the graph — each agent's progress path
+  is tinted with its depth hue (dot fill + edge stroke) and its tip commit
+  wears a status-colored RING plus a tiny `T<id>` marker. Clicking a dot that
+  maps to an agent (or any ring) fires the EXISTING `select_agent` event.
 
-  The component does NO data assembly, NO I/O and never touches the socket: it
-  is purely presentational and fires the EXISTING `select_agent` event. The
-  frozen DOM markers (`#commit-graph`, `#commit-graph-body-<node_key>`,
-  `#commit-graph-repo-*`, `#commit-lane-*`, `#commit-lane-commits-*`,
-  `#commit-node-*`, `#commit-agent-chip-*` and
-  `data-commit-graph-anim="lane|node|edge"`) are the contract consumed by the
+  The component is purely presentational — no data assembly, no I/O, never
+  touches the socket. ALL geometry (dot/edge positions, lane math, edge paths)
+  is owned by the assembly module; its public `dot_r/0` / `ring_r/0` are the
+  single source of truth for the two radii, and this renderer only DRAWS the
+  prepared `x`/`y`/`d` values.
+
+  The frozen DOM markers (`#commit-graph` + `phx-hook="CommitGraph"`,
+  `#commit-graph-body-<node_key>`, `#commit-graph-repo-<repo_dom_id>`,
+  `#commit-dot-<repo_dom_id>-<sha>` and `#commit-ring-<repo_dom_id>-<agent_id>`
+  both with `data-commit-graph-anim="node"`, and the edge
+  `#commit-edge-<repo_dom_id>-<child>-<parent>` ids with
+  `data-commit-graph-anim="edge"`) are the contract consumed by the
   client-side `CommitGraph` hook / CSS animation, which live in the assets
   subtree. Every element carries a stable, unique DOM id, so LiveView's
   patcher (morphdom) reuses existing nodes by id and inserts only genuinely
@@ -26,6 +35,20 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   use EvoDashWeb, :html
   use Gettext, backend: EvoDashWeb.Gettext
+
+  alias EvoDashWeb.AgentsLive.CommitGraph
+
+  # Estimated width of one mono glyph at font-size 8, plus the inner padding
+  # of a ref-chip background rect. Close enough for the mono face.
+  @ref_char_w 4.6
+  @ref_chip_pad 8.0
+  # Horizontal gap between stacked ref chips / before an agent tip marker.
+  @ref_chip_gap 3.0
+  # Full height of a ref-chip background rect (font-size 8 + breathing room).
+  @ref_chip_h 12.0
+  # Left edge of the right gutter (the assembly reserves a 150px gutter right
+  # of the lane area; the chips keep a small inner margin from the lane edge).
+  @gutter_margin 146
 
   # ---------------------------------------------------------------------------
   # commit_graph_view/1
@@ -120,7 +143,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   # ---------------------------------------------------------------------------
-  # repo_section/1 — one repository block (header + its ordered lanes).
+  # repo_section/1 — one repository block (header + its SVG graph).
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
@@ -138,169 +161,220 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
           {@repo.repo_name}
         </span>
       </div>
-      <.lane :for={lane <- @repo.lanes} repo={@repo} lane={lane} selected_id={@selected_id} />
+      <.commit_graph_svg repo={@repo} selected_id={@selected_id} />
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # lane/1 — one agent's commit lane: rail, parent connector, commits, chip.
+  # commit_graph_svg/1 — the classic git graph: edges, dots, rings.
+  #
+  # Draw order (bottom → top): edges, commit dots (each with its ref chips +
+  # agent tip marker), then the agent rings on top of the dots they encircle.
+  # The SVG scales to the wrapper width but never below its natural (viewBox)
+  # width, so a narrow panel scrolls the wrapper horizontally instead of
+  # squashing the lanes; tall graphs are bounded by the wrapper's max-height
+  # and scroll vertically inside it.
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
-  attr(:lane, :map, required: true)
   attr(:selected_id, :any, default: nil)
 
-  defp lane(assigns) do
+  defp commit_graph_svg(assigns) do
     ~H"""
-    <div
-      id={"commit-lane-" <> @repo.repo_dom_id <> "-" <> to_string(@lane.agent_id)}
-      data-commit-graph-anim="lane"
-      class="relative"
-      style={"margin-left: #{lane_indent(@lane)}"}
-    >
-      <%!-- Vertical lane rail. Each segment between consecutive commits is also
-           covered by an explicit edge element below (frozen animation marker). --%>
-      <div
-        data-commit-graph-anim="edge"
-        aria-hidden="true"
-        class="pointer-events-none absolute left-1.5 top-1 bottom-1 -translate-x-1/2 w-px bg-base-content/20"
+    <% show_refs = repo_has_refs?(@repo) %>
+    <div class="overflow-auto max-h-[32rem]">
+      <svg
+        viewBox={"0 0 #{fmt(dim(@repo, :width))} #{fmt(dim(@repo, :height))}"}
+        width="100%"
+        preserveAspectRatio="xMinYMin meet"
+        role="img"
+        aria-label={graph_aria_label()}
+        style={"min-width: #{fmt(dim(@repo, :width))}px"}
+        class="block select-none"
       >
-      </div>
-
-      <%!-- Parent → child connector: an elbow from the parent lane's rail into
-           this lane's start, making the recursive spawn structure obvious. --%>
-      <%= if @lane.connects? do %>
-        <div
-          data-commit-graph-anim="edge"
-          aria-hidden="true"
-          class="pointer-events-none absolute -left-3 top-1.5 h-3 w-[18px] rounded-bl-md border-l-2 border-b-2 border-primary/40"
-        >
-        </div>
-      <% end %>
-
-      <%!-- Keyed commits container: every child carries a stable, unique id
-           (`commit-node-*` / `commit-edge-*`), so morphdom matches and REUSES
-           existing elements by id and only inserts genuinely new ones.
-           Incremental patching therefore relies on the unique ids, not on any
-           `phx-update` mode — existing nodes are never recreated, so the
-           `CommitGraph` hook only animates the newly inserted ones. --%>
-      <div id={"commit-lane-commits-" <> @repo.repo_dom_id <> "-" <> to_string(@lane.agent_id)}>
-        <%= for {commit, index} <- Enum.with_index(@lane.commits) do %>
-          <%= if index > 0 do %>
-            <div
-              id={"commit-edge-" <> @repo.repo_dom_id <> "-" <> commit.sha}
-              data-commit-graph-anim="edge"
-              aria-hidden="true"
-              class="pointer-events-none relative h-3"
-            >
-              <span class="absolute left-1.5 top-0 bottom-0 -translate-x-1/2 w-px bg-base-content/20"></span>
-            </div>
-          <% end %>
-          <.commit_row repo={@repo} lane={@lane} commit={commit} />
-        <% end %>
-      </div>
-
-      <.agent_chip lane={@lane} selected_id={@selected_id} />
+        <.graph_edge :for={edge <- edges(@repo)} edge={edge} />
+        <.commit_dot
+          :for={commit <- commits(@repo)}
+          repo={@repo}
+          commit={commit}
+          selected_id={@selected_id}
+          show_refs={show_refs}
+        />
+        <.agent_ring :for={ring <- rings(@repo)} repo={@repo} ring={ring} selected_id={@selected_id} />
+      </svg>
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # commit_row/1 — one commit node on the lane rail.
+  # graph_edge/1 — one child→parent connector. Uncolored edges use the muted
+  # base ink at low opacity; agent-covered edges carry the agent's depth hue
+  # at full opacity and a slightly heavier stroke.
+  # ---------------------------------------------------------------------------
+
+  attr(:edge, :map, required: true)
+
+  defp graph_edge(assigns) do
+    ~H"""
+    <path
+      id={Map.get(@edge, :id)}
+      data-commit-graph-anim="edge"
+      d={Map.get(@edge, :d)}
+      fill="none"
+      stroke-linecap="round"
+      stroke-width={if edge_color(@edge), do: 2.25, else: 1.75}
+      stroke-opacity={if edge_color(@edge), do: nil, else: "0.35"}
+      style={"stroke: #{edge_color(@edge) || "var(--color-base-content)"}"}
+    />
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # commit_dot/1 — one commit: the dot circle, its native tooltip, its
+  # selection halo, and its decorations (right-gutter ref chips + the agent
+  # tip marker). Only the circle is clickable (when the commit maps to an
+  # agent); the id + animation marker live on the wrapping group so morphdom
+  # matches the whole commit as one unit.
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
-  attr(:lane, :map, required: true)
   attr(:commit, :map, required: true)
+  attr(:selected_id, :any, default: nil)
+  attr(:show_refs, :boolean, default: false)
 
-  defp commit_row(assigns) do
+  defp commit_dot(assigns) do
     ~H"""
-    <div
-      id={"commit-node-" <> @repo.repo_dom_id <> "-" <> @commit.sha}
+    <% refs = if @show_refs, do: commit_refs(@commit, gutter_x(@repo)), else: [] %>
+    <% tip = tip_marker(@commit, refs) %>
+    <g
+      id={"commit-dot-" <> @repo.repo_dom_id <> "-" <> Map.get(@commit, :sha)}
       data-commit-graph-anim="node"
-      class="group relative pl-6 pr-1 py-1 rounded-lg cursor-pointer transition-colors hover:bg-base-200/50"
-      phx-click="select_agent"
-      phx-value-id={@lane.agent_id}
     >
-      <span
-        aria-hidden="true"
-        class="pointer-events-none absolute left-1.5 top-2 -translate-x-1/2 size-2.5 rounded-full border-2 border-primary bg-base-100"
-      ></span>
+      <title>{dot_title(@commit)}</title>
 
-      <div class="flex items-center gap-2 min-w-0">
-        <code class="shrink-0 font-mono text-xs text-base-content/80">{@commit.short_sha}</code>
-        <span class="truncate text-sm text-base-content" title={@commit.message}>
-          {first_line(@commit.message)}
-        </span>
-        <span
-          :for={ref <- ref_list(@commit.refs)}
-          class="badge badge-outline badge-xs shrink-0 font-mono border-base-content/25 text-base-content/80"
-        >
-          {ref}
-        </span>
-      </div>
-
-      <%= if meta_line(@commit) != "" do %>
-        <div class="mt-0.5 truncate text-xs text-base-content/60">{meta_line(@commit)}</div>
+      <%= if dot_selected?(@commit, @selected_id) do %>
+        <%!-- Selection halo: a faint primary ring just outside the dot. --%>
+        <circle
+          cx={Map.get(@commit, :x)}
+          cy={Map.get(@commit, :y)}
+          r={CommitGraph.ring_r() + 3.5}
+          fill="none"
+          stroke-width="1.5"
+          stroke-opacity="0.9"
+          style="stroke: var(--color-primary)"
+        />
       <% end %>
-    </div>
+
+      <circle
+        cx={Map.get(@commit, :x)}
+        cy={Map.get(@commit, :y)}
+        r={CommitGraph.dot_r()}
+        fill-opacity={dot_fill_opacity(@commit, @selected_id)}
+        stroke-width="1.5"
+        class={[
+          "transition-[fill,stroke] duration-300 motion-reduce:transition-none",
+          agent_id(@commit) != nil && "cursor-pointer"
+        ]}
+        style={dot_style(@commit, @selected_id)}
+        phx-click={if agent_id(@commit) != nil, do: "select_agent"}
+        phx-value-id={agent_id(@commit)}
+      />
+
+      <%= for chip <- refs do %>
+        <g>
+          <rect
+            x={chip.x}
+            y={chip.y - ref_chip_h() / 2}
+            width={chip.w}
+            height={ref_chip_h()}
+            rx="4"
+            stroke-width="1"
+            style="fill: var(--color-base-200); stroke: var(--color-base-300)"
+          />
+          <text
+            x={chip.tx}
+            y={chip.y + 3}
+            font-size="8"
+            class="font-mono"
+            style="fill: var(--color-base-content)"
+          >
+            {chip.name}
+          </text>
+        </g>
+      <% end %>
+
+      <%= if tip do %>
+        <text
+          x={tip.x}
+          y={tip.y}
+          font-size="8"
+          opacity="0.7"
+          class="font-mono"
+          style="fill: var(--color-base-content)"
+        >
+          {tip.label}
+        </text>
+      <% end %>
+    </g>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # agent_chip/1 — the lane tip; reuses the tree's agent-card status styling
-  # helpers (never re-implement the mappings).
+  # agent_ring/1 — an agent's tip marker: a status-colored ring on the
+  # agent's current commit, with a subtle same-color glow band behind it.
+  # Status colors come from the shared `agent_status_svg_color/1` helper —
+  # never re-implemented here.
   # ---------------------------------------------------------------------------
 
-  attr(:lane, :map, required: true)
+  attr(:repo, :map, required: true)
+  attr(:ring, :map, required: true)
   attr(:selected_id, :any, default: nil)
 
-  defp agent_chip(assigns) do
+  defp agent_ring(assigns) do
     ~H"""
-    <div
-      id={"commit-agent-chip-" <> to_string(@lane.agent_id)}
+    <g
+      id={"commit-ring-" <> @repo.repo_dom_id <> "-" <> to_string(Map.get(@ring, :agent_id))}
       data-commit-graph-anim="node"
-      class={[
-        "relative ml-6 mt-1 flex flex-col gap-1 p-2 rounded-xl border shadow-sm transition-[background-color,border-color,color,box-shadow] duration-300 motion-reduce:transition-none cursor-pointer hover:shadow-lg hover:shadow-primary/20",
-        agent_status_bg(@lane.status),
-        agent_status_border(@lane.status),
-        @selected_id == @lane.agent_id &&
-          "ring-2 ring-primary-standalone ring-offset-1 ring-offset-base-100",
-        @selected_id != @lane.agent_id && "hover:ring-1 hover:ring-primary-standalone/40"
-      ]}
-      phx-click="select_agent"
-      phx-value-id={@lane.agent_id}
     >
-      <div class="flex items-center gap-2 justify-between min-w-0">
-        <div class="flex items-center gap-1.5 min-w-0">
-          <.icon
-            name={agent_status_icon(@lane.status)}
-            class={"size-4 shrink-0 #{agent_status_color(@lane.status)}"}
-          />
-          <span class="shrink-0 font-bold text-sm">{chip_label(@lane)}</span>
-          <span class="truncate text-xs text-base-content/80">
-            {format_module_name(@lane.agent_module)}
-          </span>
-        </div>
-        <span class={[
-          "shrink-0 text-[10px] px-1.5 py-0.5 rounded uppercase font-bold",
-          agent_status_color(@lane.status),
-          agent_status_bg(@lane.status)
-        ]}>
-          {agent_status_label(@lane.status)}
-        </span>
-      </div>
+      <title>{ring_title(@ring)}</title>
 
-      <%= if model_id(@lane) do %>
-        <div
-          class="truncate font-mono text-[10px] text-base-content/70"
-          title={model_id(@lane)}
-        >
-          {model_id(@lane)}
-        </div>
+      <%!-- Subtle same-color glow band behind the ring. --%>
+      <circle
+        cx={Map.get(@ring, :x)}
+        cy={Map.get(@ring, :y)}
+        r={CommitGraph.ring_r() + 2}
+        fill="none"
+        stroke-width="4"
+        stroke-opacity="0.15"
+        style={"stroke: #{ring_color(@ring)}"}
+      />
+
+      <%= if Map.get(@ring, :agent_id) == @selected_id do %>
+        <%!-- Selection halo: a faint primary ring just outside the glow. --%>
+        <circle
+          cx={Map.get(@ring, :x)}
+          cy={Map.get(@ring, :y)}
+          r={CommitGraph.ring_r() + 3.5}
+          fill="none"
+          stroke-width="1.5"
+          stroke-opacity="0.9"
+          style="stroke: var(--color-primary)"
+        />
       <% end %>
-    </div>
+
+      <circle
+        cx={Map.get(@ring, :x)}
+        cy={Map.get(@ring, :y)}
+        r={CommitGraph.ring_r()}
+        fill="none"
+        stroke-width="2"
+        class="cursor-pointer transition-[stroke] duration-300 motion-reduce:transition-none"
+        style={"stroke: #{ring_color(@ring)}"}
+        phx-click="select_agent"
+        phx-value-id={Map.get(@ring, :agent_id)}
+      />
+    </g>
     """
   end
 
@@ -308,24 +382,196 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # Pure helpers — all TOTAL against missing / malformed data.
   # ---------------------------------------------------------------------------
 
-  defp lane_indent(lane) do
-    depth = Map.get(lane, :depth)
-
-    if is_integer(depth) and depth > 0 do
-      "#{depth * 0.75}rem"
-    else
-      "0rem"
+  defp commits(repo) do
+    case Map.get(repo, :commits) do
+      list when is_list(list) -> list
+      _ -> []
     end
   end
 
-  defp chip_label(lane) do
-    id = Map.get(lane, :task_local_id) || Map.get(lane, :agent_id)
-    "T" <> to_string(id)
+  defp edges(repo) do
+    case Map.get(repo, :edges) do
+      list when is_list(list) -> list
+      _ -> []
+    end
   end
 
-  defp model_id(lane) do
-    case Map.get(lane, :model_id) do
-      model when is_binary(model) and model != "" -> model
+  defp rings(repo) do
+    case Map.get(repo, :rings) do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  # A repo dimension (width/height) — any non-numeric shape degrades to 0 so
+  # the viewBox/style interpolations never raise.
+  defp dim(repo, key) do
+    case Map.get(repo, key) do
+      value when is_number(value) -> value
+      _ -> 0
+    end
+  end
+
+  # Compact SVG number formatting: drops the trailing ".0" of whole floats
+  # (`210.0` → `"210"`) while keeping fractional values intact. Mirrors the
+  # assembly module's own `num/1` — the renderer's copy exists only for the
+  # viewBox/min-width interpolations (the x/y/d values arrive pre-formatted
+  # inside `edge.d` and raw for the circles, where the extra ".0" is harmless).
+  # Only numbers reach it: `dim/2` already degrades odd shapes to `0`.
+  defp fmt(value) when is_float(value) do
+    s = Float.to_string(value)
+    if String.ends_with?(s, ".0"), do: binary_part(s, 0, byte_size(s) - 2), else: s
+  end
+
+  defp fmt(value) when is_integer(value), do: Integer.to_string(value)
+
+  # Full height of a ref-chip background rect — exposed as a function because
+  # module attributes are NOT visible inside HEEx templates (an `@name` there
+  # reads the assign of that name).
+  defp ref_chip_h, do: @ref_chip_h
+
+  defp repo_has_refs?(repo) do
+    Enum.any?(commits(repo), &(ref_list(Map.get(&1, :refs)) != []))
+  end
+
+  # The left edge of the right gutter (ref chips + agent markers live here).
+  defp gutter_x(repo), do: dim(repo, :width) - @gutter_margin
+
+  # A coordinate readied for SVG arithmetic — non-numeric shapes degrade to 0
+  # so the chip/tip positioning math never raises on malformed data.
+  defp num(value) when is_number(value), do: value
+  defp num(_value), do: 0
+
+  # Prepared ref chips for one commit — `%{name:, x:, w:, tx:, y:}` stacked
+  # left → right from the gutter's left edge with a small gap between chips.
+  defp commit_refs(commit, gutter) do
+    y = num(Map.get(commit, :y))
+
+    {chips, _next_x} =
+      commit
+      |> Map.get(:refs)
+      |> ref_list()
+      |> Enum.reduce({[], gutter}, fn ref, {acc, x} ->
+        w = String.length(ref) * @ref_char_w + @ref_chip_pad
+        chip = %{name: ref, x: x, w: w, tx: x + @ref_chip_pad / 2, y: y}
+        {[chip | acc], x + w + @ref_chip_gap}
+      end)
+
+    Enum.reverse(chips)
+  end
+
+  # The `T<id>` text marker for an agent's TIP commit, right of the dot —
+  # after any ref chips on that commit, else just outside the ring.
+  defp tip_marker(commit, refs) do
+    case Map.get(commit, :agent) do
+      agent when is_map(agent) ->
+        if Map.get(agent, :tip?) == true do
+          x =
+            case List.last(refs) do
+              nil -> num(Map.get(commit, :x)) + CommitGraph.ring_r() + 4
+              chip -> chip.x + chip.w + @ref_chip_gap
+            end
+
+          %{
+            label: "T" <> to_string(Map.get(agent, :task_local_id) || Map.get(agent, :id)),
+            x: x,
+            y: num(Map.get(commit, :y)) + 3
+          }
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp agent_id(commit) do
+    case Map.get(commit, :agent) do
+      agent when is_map(agent) -> Map.get(agent, :id)
+      _ -> nil
+    end
+  end
+
+  defp dot_selected?(commit, selected_id) do
+    id = agent_id(commit)
+    id != nil and id == selected_id
+  end
+
+  # Uncolored dots render at reduced opacity; a highlight color or the
+  # selection bumps the dot to full prominence.
+  defp dot_fill_opacity(commit, selected_id) do
+    cond do
+      dot_selected?(commit, selected_id) -> 1.0
+      highlight_color(commit) != nil -> 1.0
+      true -> 0.55
+    end
+  end
+
+  defp dot_style(commit, selected_id) do
+    fill = highlight_color(commit) || "var(--color-base-content)"
+
+    if dot_selected?(commit, selected_id) do
+      "fill: #{fill}; stroke: var(--color-primary)"
+    else
+      "fill: #{fill}"
+    end
+  end
+
+  defp highlight_color(commit) do
+    case Map.get(commit, :highlight_color) do
+      color when is_binary(color) and color != "" -> color
+      _ -> nil
+    end
+  end
+
+  defp edge_color(edge) do
+    case Map.get(edge, :color) do
+      color when is_binary(color) and color != "" -> color
+      _ -> nil
+    end
+  end
+
+  defp ring_color(ring), do: agent_status_svg_color(Map.get(ring, :status))
+
+  defp dot_title(commit) do
+    [
+      first_line(Map.get(commit, :message)),
+      short_sha(commit),
+      author(commit),
+      commit_date(commit)
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" · ")
+  end
+
+  defp ring_title(ring) do
+    id = Map.get(ring, :task_local_id) || Map.get(ring, :agent_id)
+
+    ["T" <> to_string(id), agent_status_label(Map.get(ring, :status))]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" · ")
+  end
+
+  defp short_sha(commit) do
+    case Map.get(commit, :short_sha) do
+      sha when is_binary(sha) and sha != "" -> sha
+      _ -> nil
+    end
+  end
+
+  defp author(commit) do
+    case Map.get(commit, :author_name) do
+      name when is_binary(name) and name != "" -> name
+      _ -> nil
+    end
+  end
+
+  defp commit_date(commit) do
+    case Map.get(commit, :date) do
+      date when is_binary(date) -> format_datetime(date)
+      %DateTime{} = date -> format_datetime(date)
+      %NaiveDateTime{} = date -> format_datetime(date)
       _ -> nil
     end
   end
@@ -351,25 +597,10 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   defp ref_name(ref) when is_atom(ref) and not is_nil(ref), do: [Atom.to_string(ref)]
   defp ref_name(_ref), do: []
 
-  defp meta_line(commit) do
-    [commit_author(commit), commit_date(commit)]
-    |> Enum.reject(&(&1 in [nil, ""]))
-    |> Enum.join(" · ")
-  end
-
-  defp commit_author(commit) do
-    case Map.get(commit, :author_name) do
-      name when is_binary(name) and name != "" -> name
-      _ -> nil
-    end
-  end
-
-  defp commit_date(commit) do
-    case Map.get(commit, :date) do
-      date when is_binary(date) -> format_datetime(date)
-      %DateTime{} = date -> format_datetime(date)
-      %NaiveDateTime{} = date -> format_datetime(date)
-      _ -> nil
-    end
+  # The SVG's accessible name (kept here so the gettext call sits next to its
+  # meaning anchor).
+  defp graph_aria_label do
+    # zh_CN: 无障碍标签 —— 整个 git 提交历史 SVG 图形的朗读名称
+    gettext("Git commit history graph")
   end
 end
