@@ -156,25 +156,51 @@
                 <span>{gettext("Waiting")}</span>
               </div>
             <% else %>
-              <%!-- zh_CN: 提交图例 —— 时间维度视图的图例 --%>
+              <%!-- zh_CN: 提交图例 —— 时间维度视图（git 提交图）的图例 --%>
               <span class="agents-legend-title">{gettext("Commit Graph Legend")}</span>
               <div
                 id="agents-legend-commit"
                 class="flex items-center gap-2"
-                data-tip={gettext("A git commit produced on an agent's branch.")}
+                data-tip={
+                  gettext(
+                    "A git commit, rendered as a dot on the graph. Hover a dot to see its message."
+                  )
+                }
                 phx-hook="LegendTooltip"
               >
                 <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
                 <span>{gettext("Commit")}</span>
               </div>
+              <%!-- zh_CN: 智能体进度 —— 提交点/连线按智能体递归深度着色（每层一个色相，黄金角旋转）；此色样为深度 0 的色相，与 CommitGraph 的深度→色相公式一致 --%>
               <div
-                id="agents-legend-agent"
+                id="agents-legend-path"
                 class="flex items-center gap-2"
-                data-tip={gettext("An agent's lane — the commits that agent produced.")}
+                data-tip={
+                  gettext(
+                    "Dots and edges take the color of the agent working on them — one hue per recursion depth."
+                  )
+                }
                 phx-hook="LegendTooltip"
               >
-                <span class="w-2.5 h-2.5 rounded-full bg-success shadow-sm shadow-success/50"></span>
-                <span>{gettext("Agent")}</span>
+                <%!-- Legend swatch mirrors the depth→hue formula in
+                     AgentsLive.CommitGraph (depth 0 lands on this blue-violet);
+                     the literal is acceptable in a static legend chip. --%>
+                <span class="w-4 h-0.5 rounded-full" style="background-color: #7c38dc"></span>
+                <span>{gettext("Agent progress")}</span>
+              </div>
+              <%!-- zh_CN: 活动智能体（圆环）—— 圆环标记智能体当前所在的提交；圆环颜色＝智能体状态（与左侧智能体树同色系：绿＝运行、琥珀＝等待、灰＝排队） --%>
+              <div
+                id="agents-legend-ring"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext(
+                    "A ring marks the commit an agent is currently on. Ring color = agent status, same palette as the agent tree."
+                  )
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full border-2 border-success"></span>
+                <span>{gettext("Active agent (ring)")}</span>
               </div>
             <% end %>
           </div>

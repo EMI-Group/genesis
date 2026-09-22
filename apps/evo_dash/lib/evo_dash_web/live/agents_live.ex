@@ -363,8 +363,8 @@ defmodule EvoDashWeb.AgentsLive do
         true -> socket
       end
 
-    # A burst of agent commits advances the lanes (throttled/coalesced); no-op
-    # unless the commit-history view is active.
+    # A burst of agent commits extends the graph (new dots + moved rings;
+    # throttled/coalesced); no-op unless the commit-history view is active.
     socket = maybe_load_commit_graph(socket, [])
 
     {:noreply, socket}
@@ -461,9 +461,9 @@ defmodule EvoDashWeb.AgentsLive do
 
   @impl true
   # One-shot retry armed by schedule_commit_graph_tick/1 when a refresh request was
-  # throttled: re-attempt with the throttle bypassed so a lane tip that advanced
-  # inside the throttle window is still reflected. Not periodic — it is armed ONLY
-  # by a throttled request.
+  # throttled: re-attempt with the throttle bypassed so a commit created inside
+  # the throttle window (a new dot, or an agent ring that moved to a fresh tip)
+  # is still reflected. Not periodic — it is armed ONLY by a throttled request.
   def handle_info(:commit_graph_tick, socket) do
     socket = assign(socket, :commit_graph_tick_scheduled, false)
     {:noreply, maybe_load_commit_graph(socket, force: true)}
@@ -750,10 +750,11 @@ defmodule EvoDashWeb.AgentsLive do
   # the LiveView process), the runner seam is resolved AT SPAWN TIME (inside the
   # task), and the result is stale-guarded on a monotonic seq + the viewed node.
   #
-  # First keeps the rendered lane set in sync with the CURRENT agent list (a
-  # newly-spawned child lane must appear immediately), then refetches — throttled
-  # to @commit_graph_min_interval_ms; a throttled request arms a one-shot tick.
-  # `force: true` bypasses the throttle (first activation, tick fire).
+  # First keeps the rendered graph in sync with the CURRENT agent list (a
+  # newly-spawned child's progress path/ring appears immediately), then
+  # refetches — throttled to @commit_graph_min_interval_ms; a throttled request
+  # arms a one-shot tick. `force: true` bypasses the throttle (first
+  # activation, tick fire).
   defp maybe_load_commit_graph(socket, opts) do
     if socket.assigns.left_view != :commits do
       socket
@@ -776,8 +777,8 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   # Rebuilds @commit_graph from the last fetched raw data + the current agents, so
-  # the lane set (and each lane's chip) tracks agents without a git RPC. A no-op
-  # before the first successful fetch.
+  # the overlay (progress paths, ring positions) tracks agents without a git RPC.
+  # A no-op before the first successful fetch.
   defp rebuild_commit_graph(socket) do
     if socket.assigns.commit_graph_loaded do
       assign(
