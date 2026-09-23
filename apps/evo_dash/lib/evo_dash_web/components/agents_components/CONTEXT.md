@@ -91,8 +91,10 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 #### Geometry (grid → pixels; renderer-owned)
 
 - Layout constants: `@col_w 150`, `@row_h 46`, `@gutter 132`, `@node_r 7`, `@base_r 5`, `@band_h 18`, `@vpad 20`, `@readout_h 24`, `@min_w 320`, `@min_h 140`, `@max_h 640`, `@band_pad 12`.
-- `px(x) = ox + gutter + column(x) * col_w`; `py(y) = oy + top + row(y) * row_h + row_h / 2`; `column/1` / `row/1` fold any non-integer/negative value to `0`.
-- `content_w = max(@min_w, ox * 2 + gutter + max_column * col_w + node_r)`; `content_h = oy * 2 + top + row_count * row_h`; `viewBox = "0 0 <content_w> <content_h>"`; the `height` attr = `content_h` clamped to `[@min_h, @max_h]`.
+- `px(x) = ox + gutter + (column(x) - min_x) * col_w`; `py(y) = oy + top + row(y) * row_h + row_h / 2`.
+- The mapping is MIN-OFFSET aware: `min_x` is the minimum grid `x` over the ACTUAL content (node `:x`, edge `from`/`to` x, lane `:x_start`/`:x_end`), so the SYNTHESIZED BASE node (the model places it at `x = min_real_rank - 1`, one column LEFT of the oldest real commit) renders as its own leftmost column instead of collapsing onto column `0`. `column/1` folds a non-integer `x` to `0` and keeps its sign (never clamps — a per-coordinate clamp is exactly what would collapse the base column onto `0` and drop its zero-length edge); `row/1` clamps to `0` (a lane row is always ≥ 0).
+- `min_x`/`max_x` come from `grid_bounds/1` (nodes + edge endpoints + lane ranges); the model's `:max_x` is only a WIDTH HINT and is deliberately ignored so a stale hint can never shift or clip the graph. `grid_columns/1` = the COLUMN COUNT `max(max_x - min_x + 1, 1)`.
+- `content_w = max(@min_w, ox * 2 + gutter + column_count * col_w + node_r)`; `content_h = oy * 2 + top + row_count * row_h`; `viewBox = "0 0 <content_w> <content_h>"`; the `height` attr = `content_h` clamped to `[@min_h, @max_h]`.
 - SVG numbers go through the private `n/1` (`210.0` → `"210"`, `33.33` → `"33.33"`).
 
 ### FROZEN DOM contract (the JS hook `assets/js/hooks/commit_graph.js` + CSS animation target these — do NOT rename or drop them)
