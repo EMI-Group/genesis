@@ -650,6 +650,29 @@ defmodule EvoGit.RemoteNode do
   defnode(EvoGit.AgentScheduler.RemoteAPI.list_commit_graph(repo_path, ranges, opts))
 
   @doc """
+  Returns the TASK-SCOPED commit-graph data for a task on the given node.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.list_task_commit_graph/4` directly (which
+  delegates to `EvoGit.TaskCommitGraph.for_task/4`). On a remote node, routes
+  the call through `:erpc` via `call_remote/4` so the task-row lookup and the
+  git log run inside the remote VM against the remote filesystem.
+
+  `task_id` identifies the persisted task whose durable refs
+  (`commit_sha`/`branch_name` + result `"repos"` entries) seed the graph,
+  `repo_path` is the absolute repository path, `live_tips` a list of live agent
+  tip SHA/ref strings (nils allowed) and `opts` a keyword list (`:limit`,
+  optional `:base_sha`/`:foreign_repos`). Returns
+  `{:ok, %{commits: [commit], refs: %{sha => [ref]}}}` or
+  `{:error, {kind, reason}}` on RPC failure.
+  """
+  @spec list_task_commit_graph(node(), String.t(), String.t(), [String.t() | nil], keyword()) ::
+          {:ok, map()} | {:error, term()}
+  defnode(
+    EvoGit.AgentScheduler.RemoteAPI.list_task_commit_graph(task_id, repo_path, live_tips, opts)
+  )
+
+  @doc """
   Loads all review data (diff stat, full diff, parsed files) for a branch on
   the given node.
 

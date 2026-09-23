@@ -222,6 +222,99 @@ defmodule EvoGit.CommitGraphTest do
              {:ok, %{commits: commits, refs: refs}}
   end
 
+  describe "for_task/4" do
+    test "unions every tip, dedupes, and appends the base commit node", %{repo: repo} do
+      # c1 is the pre-base commit that must NOT appear in the task graph.
+      c1 = commit!(repo, "f1.txt", "1\n", "one")
+      c2 = commit!(repo, "f2.txt", "2\n", "two (base)")
+      {:ok, _} = Git.tag(repo, "base-tag", c2)
+
+      # Branch `a` from the base.
+      git!(repo, ["checkout", "-b", "a"])
+      c3 = commit!(repo, "a1.txt", "a1\n", "a1")
+      c4 = commit!(repo, "a2.txt", "a2\n", "a2")
+
+      # Branch `b` from the base.
+      git!(repo, ["checkout", "main"])
+      git!(repo, ["checkout", "-b", "b"])
+      c5 = commit!(repo, "b1.txt", "b1\n", "b1")
+      c6 = commit!(repo, "b2.txt", "b2\n", "b2")
+
+      # tips intentionally include nil/blank/duplicate entries.
+      assert {:ok, %{commits: commits, refs: refs}} =
+               CommitGraph.for_task(repo, c2, [c4, c6, c4, nil, "", "", c3], [])
+
+      # Range commits newest-first per range, then the base appended last.
+      assert Enum.map(commits, & &1.sha) == [c4, c3, c6, c5, c2]
+
+      # The base commit itself is a node with its REAL parents (c1 is NOT
+      # fetched — it marks the graph boundary).
+      base_node = Enum.find(commits, &(&1.sha == c2))
+      assert base_node.parents == [c1]
+      refute Enum.any?(commits, &(&1.sha == c1))
+
+      # The base node carries the branch/tag labels pointing at it.
+      assert "base-tag" in refs[c2]
+      assert "main" in refs[c2]
+      assert refs[c4] == ["a"]
+      assert refs[c6] == ["b"]
+    end
+
+    test "a nil/blank base yields an empty graph", %{repo: repo} do
+      c1 = commit!(repo, "f1.txt", "1\n", "one")
+
+      assert CommitGraph.for_task(repo, nil, [c1], []) == {:ok, %{commits: [], refs: %{}}}
+      assert CommitGraph.for_task(repo, "", [c1], []) == {:ok, %{commits: [], refs: %{}}}
+      assert CommitGraph.for_task(repo, "   ", [c1], []) == {:ok, %{commits: [], refs: %{}}}
+    end
+
+    test "no usable tips yields only the base node", %{repo: repo} do
+      _c1 = commit!(repo, "f1.txt", "1\n", "one")
+      c2 = commit!(repo, "f2.txt", "2\n", "two (base)")
+
+      assert {:ok, %{commits: [node], refs: refs}} = CommitGraph.for_task(repo, c2, [], [])
+      assert node.sha == c2
+      assert refs[c2] == ["main"]
+
+      assert CommitGraph.for_task(repo, c2, [nil, "", 123, :nope], []) ==
+               {:ok, %{commits: [node], refs: refs}}
+    end
+
+    test "caps range commits at opts[:limit] while always keeping the base", %{repo: repo} do
+      shas = for i <- 1..5, do: commit!(repo, "f#{i}.txt", "#{i}\n", "commit #{i}")
+      [base | _] = shas
+      tip = List.last(shas)
+
+      assert {:ok, %{commits: commits}} = CommitGraph.for_task(repo, base, [tip], limit: 2)
+      assert Enum.map(commits, & &1.sha) == [tip, Enum.at(shas, 3), base]
+    end
+
+    test "degrades to empty for an unresolvable base or a non-git directory", %{repo: repo} do
+      c1 = commit!(repo, "f1.txt", "1\n", "one")
+      c2 = commit!(repo, "f2.txt", "2\n", "two")
+
+      # Unresolvable base ref → no range commits, no base node.
+      assert CommitGraph.for_task(repo, "no-such-ref", [c2], []) ==
+               {:ok, %{commits: [], refs: %{}}}
+
+      # Unresolvable tips drop, but the base node still resolves.
+      assert {:ok, %{commits: [node]}} = CommitGraph.for_task(repo, c1, ["nope-ref", 42], [])
+      assert node.sha == c1
+
+      plain =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_commit_graph_task_plain_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      File.mkdir_p!(plain)
+      on_exit(fn -> File.rm_rf!(plain) end)
+
+      assert CommitGraph.for_task(plain, "HEAD", ["HEAD"], []) ==
+               {:ok, %{commits: [], refs: %{}}}
+    end
+  end
+
   # Writes/overwrites a file, stages it, commits, and returns the full SHA.
   defp commit!(repo, filename, content, message) do
     File.write!(Path.join(repo, filename), content)

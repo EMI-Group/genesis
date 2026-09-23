@@ -700,6 +700,24 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
+  Returns the TASK-SCOPED commit-graph data for a task on the remote node.
+
+  Delegates to `EvoGit.TaskCommitGraph.for_task/4`, which resolves the task's
+  durable refs (via `EvoGit.TaskRegistry.get_task/1` in this VM) plus the
+  caller-supplied `live_tips` and draws the whole task from its base commit
+  through every branch. `repo_path` is the absolute path of the repository,
+  `live_tips` a list of tip SHA/ref strings (nils allowed). Runs on the REMOTE
+  node when called via `:erpc.call/5`.
+
+  Returns `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}`.
+  """
+  @spec list_task_commit_graph(String.t(), String.t(), [String.t() | nil], keyword()) ::
+          {:ok, map()}
+  def list_task_commit_graph(task_id, repo_path, live_tips, opts) do
+    EvoGit.TaskCommitGraph.for_task(task_id, repo_path, live_tips, opts)
+  end
+
+  @doc """
   Loads all review data (diff stat, full diff, parsed files) for a branch on
   the remote node.
 
