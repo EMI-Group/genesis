@@ -1044,6 +1044,26 @@ defmodule EvoDash.NodeContext do
     EvoGit.RemoteNode.list_commit_graph(node, repo_path, ranges, opts)
   end
 
+  @doc """
+  Lists the TASK-SCOPED commit graph for the given task on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_task_commit_graph/5`. This is the
+  task-scoped variant of `list_commit_graph/4`: it resolves the task's durable
+  refs (`commit_sha`/`branch_name` plus the result `"repos"` entries) so the
+  WHOLE task — including commits made by recycled agents — is drawn. `task_id`
+  is the task's STRING id, `repo_path` the absolute repository path, `live_tips`
+  a list of live agent tip SHA/ref strings (nils allowed) and `opts` a keyword
+  list (e.g. `[limit: n]`, optional `:base_sha`/`:foreign_repos`). Returns
+  `{:ok, %{commits: [commit], refs: %{sha => [name]}}}` or `{:error, reason}` —
+  the VERBATIM underlying value in BOTH the local and remote paths; only
+  transport failures surface as `{:error, {kind, reason}}`.
+  """
+  @spec list_task_commit_graph(node(), String.t(), String.t(), [String.t() | nil], keyword()) ::
+          {:ok, %{commits: [map()], refs: %{String.t() => [String.t()]}}} | {:error, term()}
+  def list_task_commit_graph(node, task_id, repo_path, live_tips, opts) do
+    EvoGit.RemoteNode.list_task_commit_graph(node, task_id, repo_path, live_tips, opts)
+  end
+
   # ── Private helpers ──────────────────────────────────────────────
 
   # Invokes `apply(EvoGit.RemoteConnection, function, args)`, returning

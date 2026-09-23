@@ -119,7 +119,16 @@ defmodule EvoDashWeb.AgentsLive do
         # mirroring :refresh_seq.
         commit_graph_seq: 0,
         commit_graph_fetched_at: nil,
-        commit_graph_tick_scheduled: false
+        commit_graph_tick_scheduled: false,
+        # In-session RETENTION of ended agents: agent_id => the agent's last
+        # known map with `ended: true`. The core DELETES an agent's ETS rows (and
+        # its evogit-agent-* branch) when it is recycled, so a finished agent
+        # would otherwise vanish from the commit-history view and take its lane
+        # (plus its START/END markers) with it. Retained agents feed the
+        # commit-graph lanes ONLY — never the agent tree. Reset on a node switch
+        # (agent ids are per-node). In-session only: the core persists no
+        # per-agent commit attribution, so it does not survive a page reload.
+        retained_agents: %{}
       )
 
     {:ok, socket}
@@ -175,7 +184,9 @@ defmodule EvoDashWeb.AgentsLive do
           commit_graph_loading: false,
           commit_graph_error: nil,
           commit_graph_fetched_at: nil,
-          commit_graph_tick_scheduled: false
+          commit_graph_tick_scheduled: false,
+          # Retained ended agents are per-node too (agent ids are per-node).
+          retained_agents: %{}
         )
       else
         assign(socket, :previous_node, current_node)
@@ -438,7 +449,10 @@ defmodule EvoDashWeb.AgentsLive do
     else
       case result do
         {:ok, raw_by_repo} ->
-          graph = CommitGraph.build(raw_by_repo, socket.assigns.agents)
+          # Lanes come from the MERGED agent set (live + in-session retained) so
+          # a recycled agent's lane/START-END markers survive; the agent tree
+          # (@agents) is untouched.
+          graph = CommitGraph.build(raw_by_repo, commit_graph_agents(socket))
 
           {:noreply,
            assign(socket,
@@ -760,7 +774,7 @@ defmodule EvoDashWeb.AgentsLive do
       socket
     else
       socket = rebuild_commit_graph(socket)
-      groups = commit_graph_groups(socket.assigns.agents)
+      groups = commit_graph_groups(commit_graph_agents(socket))
       force? = Keyword.get(opts, :force, false) or not socket.assigns.commit_graph_loaded
 
       cond do
@@ -784,24 +798,55 @@ defmodule EvoDashWeb.AgentsLive do
       assign(
         socket,
         :commit_graph,
-        CommitGraph.build(socket.assigns.commit_graph_raw, socket.assigns.agents)
+        CommitGraph.build(socket.assigns.commit_graph_raw, commit_graph_agents(socket))
       )
     else
       socket
     end
   end
 
-  # Eligible agents' commit ranges grouped by repo_root for the commit-graph RPC:
-  # {base_commit, current_commit} per agent, de-duplicated. Agents lacking a
-  # repo_root or either commit are skipped. Sorted for deterministic task input.
+  # The agent set the TEMPORAL view is built from: the LIVE agents (@agents)
+  # MERGED with the in-session RETAINED (ended) agents (@retained_agents),
+  # de-duplicated by id with the LIVE copy winning. Retained agents contribute
+  # lane metadata (and their START/END markers) but never tips, because their
+  # commits already live in the task's durable ref ancestry. The agent TREE
+  # (@agents) is deliberately NOT fed from here.
+  defp commit_graph_agents(socket) do
+    live = socket.assigns.agents
+    live_ids = MapSet.new(live, & &1.id)
+
+    retained =
+      socket.assigns.retained_agents
+      |> Map.values()
+      |> Enum.reject(&MapSet.member?(live_ids, &1.id))
+
+    live ++ retained
+  end
+
+  # Eligible agents' commit ranges grouped for the TASK-scoped commit-graph RPC.
+  # A group is `{repo_key, task_id}` (both binaries — the durable task ref is
+  # per task AND per repo) and carries only the NON-ended agents' tips
+  # (`live_tips`): a retained/ended agent's commits are already in the task's
+  # durable ref ancestry, so it contributes its lane but no tip. Agents lacking
+  # a repo_key, base_commit, current_commit or task_id are skipped. Sorted by
+  # `{repo_key, task_id}` for deterministic task input.
   defp commit_graph_groups(agents) do
     agents
     |> Enum.filter(fn a ->
-      is_binary(a.repo_root) and is_binary(a.base_commit) and is_binary(a.current_commit)
+      is_binary(Map.get(a, :repo_root)) and is_binary(Map.get(a, :base_commit)) and
+        is_binary(Map.get(a, :current_commit)) and is_binary(Map.get(a, :task_id))
     end)
-    |> Enum.group_by(& &1.repo_root, fn a -> {a.base_commit, a.current_commit} end)
-    |> Enum.map(fn {repo_root, ranges} -> {repo_root, Enum.uniq(ranges)} end)
-    |> Enum.sort_by(fn {repo_root, _ranges} -> repo_root end)
+    |> Enum.group_by(fn a -> {Map.get(a, :repo_root), Map.get(a, :task_id)} end)
+    |> Enum.map(fn {{repo_key, task_id}, group} ->
+      live_tips =
+        group
+        |> Enum.reject(&(Map.get(&1, :ended) == true))
+        |> Enum.map(&Map.get(&1, :current_commit))
+        |> Enum.uniq()
+
+      %{repo_key: repo_key, task_id: task_id, live_tips: live_tips}
+    end)
+    |> Enum.sort_by(fn %{repo_key: repo_key, task_id: task_id} -> {repo_key, task_id} end)
   end
 
   # True when the last fetch is inside the minimum interval.
@@ -823,10 +868,13 @@ defmodule EvoDashWeb.AgentsLive do
     end
   end
 
-  # Spawns the async commit-graph fetch: ONE runner call per distinct repo_root,
-  # passing all that repo's ranges + the limit. The seam
-  # :agents_commit_graph_runner (default &EvoDash.NodeContext.list_commit_graph/4)
-  # is resolved AT SPAWN TIME so tests can stub it.
+  # Spawns the async commit-graph fetch: ONE runner call per `{repo_key, task_id}`
+  # group, passing that task's live tips + the limit. The seam
+  # :agents_commit_graph_runner (default &EvoDash.NodeContext.list_task_commit_graph/5)
+  # is resolved AT SPAWN TIME so tests can stub it. Groups sharing a repo_key
+  # (two tasks in one repo) are UNIONED into ONE `%{repo_key => %{commits, refs}}`
+  # entry — the keying the pure assembler expects (it groups agents by
+  # `repo_root || repo_id`).
   defp spawn_commit_graph_fetch(socket, groups) do
     parent = self()
     node = socket.assigns.current_node
@@ -853,17 +901,19 @@ defmodule EvoDashWeb.AgentsLive do
             Application.get_env(
               :evo_dash,
               :agents_commit_graph_runner,
-              &EvoDash.NodeContext.list_commit_graph/4
+              &EvoDash.NodeContext.list_task_commit_graph/5
             )
 
-          Enum.reduce_while(groups, {:ok, %{}}, fn {repo_root, ranges}, {:ok, acc} ->
-            case runner.(node, repo_root, ranges, limit: @commit_graph_limit) do
+          Enum.reduce_while(groups, {:ok, %{}}, fn group, {:ok, acc} ->
+            %{repo_key: repo_key, task_id: task_id, live_tips: live_tips} = group
+
+            case runner.(node, task_id, repo_key, live_tips, limit: @commit_graph_limit) do
               {:ok, %{commits: commits} = payload} when is_list(commits) ->
                 refs = Map.get(payload, :refs, %{})
-                {:cont, {:ok, Map.put(acc, repo_root, %{commits: commits, refs: refs})}}
+                {:cont, {:ok, merge_repo_graph(acc, repo_key, commits, refs)}}
 
               other ->
-                {:halt, {:error, {:commit_graph_repo_failed, repo_root, other}}}
+                {:halt, {:error, {:commit_graph_repo_failed, {repo_key, task_id}, other}}}
             end
           end)
         rescue
@@ -876,6 +926,35 @@ defmodule EvoDashWeb.AgentsLive do
     socket
   end
 
+  # Unions one group's reply into `acc` under its `repo_key`: commits de-duped by
+  # `:sha` (a sha shared by two tasks in the same repo appears once) and ref name
+  # lists unioned per sha. Total — a malformed refs payload degrades to an empty
+  # map and non-map commit entries are dropped.
+  defp merge_repo_graph(acc, repo_key, commits, refs) do
+    existing = Map.get(acc, repo_key, %{commits: [], refs: %{}})
+
+    merged = %{
+      commits: dedupe_commits(List.wrap(existing.commits) ++ List.wrap(commits)),
+      refs: merge_refs(Map.get(existing, :refs), refs)
+    }
+
+    Map.put(acc, repo_key, merged)
+  end
+
+  defp dedupe_commits(commits) do
+    commits |> Enum.filter(&is_map/1) |> Enum.uniq_by(&Map.get(&1, :sha))
+  end
+
+  defp merge_refs(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _sha, names_a, names_b ->
+      (List.wrap(names_a) ++ List.wrap(names_b)) |> Enum.uniq()
+    end)
+  end
+
+  defp merge_refs(left, _right) when is_map(left), do: left
+  defp merge_refs(_left, right) when is_map(right), do: right
+  defp merge_refs(_left, _right), do: %{}
+
   # Shared application of a fresh agent list (from the async load or a refresh
   # task): recomputes all the tracking assigns, carries over already-fetched
   # histories when the history gate says they are still current, records the
@@ -884,6 +963,20 @@ defmodule EvoDashWeb.AgentsLive do
   defp apply_agents_result(socket, agents) do
     current_ids = MapSet.new(agents, & &1.id)
     current_statuses = Map.new(agents, fn a -> {a.id, a.status} end)
+
+    # In-session retention of ended agents: an id that was previously known (live
+    # or already retained) but is ABSENT from the fresh list has ended — keep its
+    # last-known row marked `ended: true` so the commit-history view keeps its
+    # lane and START/END markers after the core recycles the agent (which deletes
+    # the agent's ETS rows AND its branch). A live id always SUPERSEDES its
+    # retained copy. The FIRST apply (and the first after a node switch) sees an
+    # empty @agents + empty @retained_agents, so nothing is mass-retained on
+    # load. The agent tree renders @agents only — retained agents never appear
+    # there.
+    retained_agents =
+      socket.assigns.retained_agents
+      |> retain_absent_agents(socket.assigns.agents, current_ids)
+      |> Map.drop(MapSet.to_list(current_ids))
 
     # Detect new agents. The FIRST apply per node (initial page mount and the
     # first load after a node switch) must not mark pre-existing agents as
@@ -954,10 +1047,25 @@ defmodule EvoDashWeb.AgentsLive do
       new_agent_ids: new_agent_ids,
       changed_status_ids: changed_status_ids,
       agents_initialized: true,
-      history_gate: history_gate
+      history_gate: history_gate,
+      retained_agents: retained_agents
     )
     |> maybe_fetch_selected_history()
     |> maybe_load_commit_graph([])
+  end
+
+  # Folds the old live agents that are ABSENT from `current_ids` into the
+  # retained map (marked `ended: true`), preserving every field the
+  # commit-history view reads (id, task_local_id, task_id, repo_id, repo_root,
+  # depth, status, base_commit, current_commit, usage, ...).
+  defp retain_absent_agents(retained, old_agents, current_ids) do
+    Enum.reduce(old_agents, retained, fn agent, acc ->
+      if MapSet.member?(current_ids, agent.id) do
+        acc
+      else
+        Map.put(acc, agent.id, Map.put(agent, :ended, true))
+      end
+    end)
   end
 
   # Triggers an async history fetch for the selected agent when the history
@@ -1224,9 +1332,12 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Applies ONE buffered {:agent_removed, id, node} event to the socket's
   # in-memory agent tree (the body of the former handle_info clause): drops the
-  # row, orphans its children to parent_id: nil, refreshes the parent's
-  # children list, cleans the tracking sets/repo_trees, and clears the
-  # selection when the removed agent was selected. Returns the socket.
+  # row from @agents (the TREE view — an ended agent must not linger there),
+  # orphans its children to parent_id: nil, refreshes the parent's children list,
+  # cleans the tracking sets/repo_trees, and RETAINS the removed row in
+  # @retained_agents (marked `ended: true`) so the commit-history view keeps its
+  # lane and START/END markers — the core deletes the agent's ETS rows and
+  # branch when it recycles, so nothing else remembers it. Returns the socket.
   defp apply_agent_removed(socket, agent_id) do
     agents = socket.assigns.agents
     removed_agent = Enum.find(agents, fn a -> a.id == agent_id end)
@@ -1254,15 +1365,14 @@ defmodule EvoDashWeb.AgentsLive do
       new_agent_ids = MapSet.delete(socket.assigns.new_agent_ids, agent_id)
       previous_statuses = Map.delete(socket.assigns.previous_statuses, agent_id)
 
-      # Clear selection if the removed agent was selected
-      selected_agent_id =
-        if socket.assigns.selected_agent_id == agent_id do
-          nil
-        else
-          socket.assigns.selected_agent_id
-        end
-
       repo_trees = build_repo_trees(agents)
+
+      # Retain the ended agent for the commit-history view. @selected_agent_id is
+      # deliberately NOT cleared: the selection drives the graph's START/END
+      # annotation for the retained lane, and the right-hand detail panel shows
+      # its (natural) "Agent not found" empty state while the agent is gone.
+      retained_agents =
+        Map.put(socket.assigns.retained_agents, agent_id, Map.put(removed_agent, :ended, true))
 
       assign(socket,
         agents: agents,
@@ -1271,7 +1381,7 @@ defmodule EvoDashWeb.AgentsLive do
         previous_agent_ids: previous_agent_ids,
         new_agent_ids: new_agent_ids,
         previous_statuses: previous_statuses,
-        selected_agent_id: selected_agent_id
+        retained_agents: retained_agents
       )
     end
   end
@@ -1358,13 +1468,18 @@ defmodule EvoDashWeb.AgentsLive do
         id_to_display =
           Map.put(socket.assigns.id_to_display, agent_id, new_agent.task_local_id || agent_id)
 
+        # A (re-)registered agent is LIVE again — it supersedes any retained
+        # (ended) copy of the same id in the commit-history view.
+        retained_agents = Map.delete(socket.assigns.retained_agents, agent_id)
+
         {:ok,
          assign(socket,
            agents: agents,
            id_to_display: id_to_display,
            previous_agent_ids: MapSet.put(socket.assigns.previous_agent_ids, agent_id),
            new_agent_ids: MapSet.put(socket.assigns.new_agent_ids, agent_id),
-           repo_trees: build_repo_trees(agents)
+           repo_trees: build_repo_trees(agents),
+           retained_agents: retained_agents
          )}
 
       :error ->

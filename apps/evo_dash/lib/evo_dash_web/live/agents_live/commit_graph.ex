@@ -68,8 +68,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   One lane per agent, ordered by `{depth, id}` ASCENDING so the row order
   matches the agent tree; a lane's `y` is its index. Each lane reports the span
   of the nodes it OWNS (`x_start`/`x_end`, nil when it owns none), how many
-  nodes it owns (`node_count`) and its `start_sha` (`:base_commit`) /
-  `end_sha` (`:current_commit`).
+  nodes it owns (`node_count`), its `start_sha` (`:base_commit`) / `end_sha`
+  (`:current_commit`) and whether the agent has ENDED (`ended`, from the
+  agent map's `:ended` flag — set by the page for in-session RETAINED agents
+  that are no longer in the live list, so a lane can outlive its agent; it is
+  `false` for every live agent).
 
   Node ownership (`node.owner_id` + `node.y`):
 
@@ -127,7 +130,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
                   x:, y:, kind:, owner_id:, start_ids:, end_ids:}],
         edges: [%{from_sha:, to_sha:, from:, to:, kind:, owner_id:}],
         lanes: [%{agent_id:, task_local_id:, status:, depth:, color:, y:,
-                  x_start:, x_end:, node_count:, start_sha:, end_sha:}]
+                  x_start:, x_end:, node_count:, start_sha:, end_sha:, ended:}]
       }
 
   `nodes` is sorted by `{x, y, sha}`, `edges` by `{from_sha, to_sha}` and
@@ -179,8 +182,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   @typedoc """
   One agent lane (a horizontal band of the graph). `y` is the lane index,
-  `x_start`/`x_end` bound the nodes the lane owns (nil when it owns none), and
-  `start_sha`/`end_sha` are the agent's `:base_commit`/`:current_commit`.
+  `x_start`/`x_end` bound the nodes the lane owns (nil when it owns none),
+  `start_sha`/`end_sha` are the agent's `:base_commit`/`:current_commit`, and
+  `ended` is true for an in-session retained agent that is no longer live.
   """
   @type lane_view :: %{
           agent_id: term(),
@@ -193,7 +197,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           x_end: integer() | nil,
           node_count: non_neg_integer(),
           start_sha: String.t() | nil,
-          end_sha: String.t() | nil
+          end_sha: String.t() | nil,
+          ended: boolean()
         }
 
   @typedoc """
@@ -536,7 +541,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         x_end: if(xs == [], do: nil, else: Enum.max(xs)),
         node_count: length(lane_nodes),
         start_sha: sha_or_nil(Map.get(agent, :base_commit)),
-        end_sha: sha_or_nil(Map.get(agent, :current_commit))
+        end_sha: sha_or_nil(Map.get(agent, :current_commit)),
+        # Retained (ended) agents still get a lane so their START/END markers
+        # survive agent recycling; live agents are never marked.
+        ended: Map.get(agent, :ended) == true
       }
     end)
   end
