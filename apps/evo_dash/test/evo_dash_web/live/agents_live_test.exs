@@ -1818,12 +1818,21 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # …and the ref NAME lists unioned per sha.
       assert refs == %{"shared" => ["main", "other"], "c1" => ["tag-1"], "c2" => ["tag-2"]}
 
-      # The unioned entry assembles into ONE repo graph holding both tasks' lanes.
+      # The unioned entry assembles into ONE repo graph holding both tasks'
+      # commits as their own rows.
       assert [repo] = assigns(view)[:commit_graph]
       assert repo.repo_key == "/repo/a"
 
-      assert Enum.map(repo.lanes, & &1.agent_id) |> Enum.sort() ==
+      assert Enum.map(repo.agents, & &1.agent_id) |> Enum.sort() ==
                Enum.sort([agent_id(), agent_id() + 1])
+
+      # Both agents fork from the synthesized base "b1" and share the "shared"
+      # commit, so the union assembles into four rows: the fork point, the shared
+      # commit, then each task's tip.
+      assert Enum.map(repo.nodes, & &1.sha) |> Enum.sort() == ["b1", "c1", "c2", "shared"]
+      assert repo.row_count == 4
+      assert repo.node_count == 4
+      assert repo.edge_count == 3
     end
 
     test "an all-ended group is still fetched, with no live tips", %{conn: conn} do
@@ -1911,29 +1920,33 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # The fork annotation still lands on it (it IS the agent's base_commit).
       assert base_node.start_ids == [agent_id()]
 
-      # Two fetched commits → two nodes, no synthesized extra column.
+      # Two fetched commits → two rows, no synthesized extra node and no extra
+      # gutter column (both commits belong to the same depth-0 agent).
       assert repo.node_count == 2
-      assert repo.max_x == 1
+      assert repo.row_count == 2
+      assert repo.column_count == 1
+      assert Enum.map(repo.nodes, & &1.row) == [0, 1]
+      assert Enum.all?(repo.nodes, &(&1.column == 0))
 
       # …and the DOM holds exactly one node element for "b1", with no base label
-      # (the short-sha label below the dot is reserved for kind: :base).
+      # (`cg-base-label` is reserved for a synthesized kind: :base node).
       html = render(view)
       dom = repo.repo_dom_id
       assert length(Floki.find(Floki.parse_document!(html), "#commit-node-#{dom}-b1")) == 1
-      refute html =~ "commit-base-label-"
+      refute html =~ "cg-base-label"
     end
   end
 
   describe "commit history view — async state and interactions" do
-    # A loaded commit graph is renderable AT PAGE LEVEL: the SVG commit DAG
-    # (`components/agents_components/commit_graph_view.ex`) carries no
+    # A loaded commit graph is renderable AT PAGE LEVEL: the vertical commit
+    # list (`components/agents_components/commit_graph_view.ex`) carries no
     # `phx-update` mode — incremental patching relies on the stable, unique
     # child ids — so LiveViewTest renders the loaded markup directly and the
     # tests below assert it from the DOM. The sibling component suite
     # (test/evo_dash_web/components/commit_graph_view_test.exs) renders the
     # component in isolation via render_component/2 (bypassing the diff path).
 
-    test "an applied commit graph is stored and rendered as the SVG commit DAG",
+    test "an applied commit graph is stored and rendered as the vertical commit list",
          %{conn: conn} do
       install_agents([
         summary_agent(
@@ -1979,30 +1992,41 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert repo.repo_name == "a"
       assert repo.node_count == 2
       assert repo.edge_count == 1
-      assert repo.lane_count == 1
-      assert repo.row_count == 1
-      assert repo.max_x == 0
+      assert repo.row_count == 2
+      assert repo.column_count == 1
 
-      # Two nodes — the synthesized BASE/fork node ("b1", absent from the fetch,
-      # placed one column LEFT of the oldest real commit) then the single real
-      # commit ("c1"); sorted `{x, y, sha}`.
+      # Two rows, TOP → BOTTOM: the synthesized BASE/fork node ("b1", absent from
+      # the fetch) then the single real commit ("c1"). Every row is unique, so the
+      # rows are exactly `0 .. node_count - 1`.
       assert [base_node, commit_node] = repo.nodes
+      assert Enum.map(repo.nodes, & &1.row) == [0, 1]
 
-      assert Map.take(base_node, [:sha, :short_sha, :kind, :x, :y, :message, :date, :refs]) ==
-               %{
-                 sha: "b1",
-                 short_sha: "b1",
-                 kind: :base,
-                 x: -1,
-                 y: 0,
-                 message: "",
-                 date: nil,
-                 refs: []
-               }
+      assert Map.take(base_node, [
+               :sha,
+               :short_sha,
+               :kind,
+               :row,
+               :column,
+               :depth,
+               :message,
+               :date,
+               :refs
+             ]) == %{
+               sha: "b1",
+               short_sha: "b1",
+               kind: :base,
+               row: 0,
+               column: 0,
+               depth: 0,
+               message: "",
+               date: nil,
+               refs: []
+             }
 
-      # The base node is the agent's fork point.
+      # The base node is the agent's fork point (and it is owned by that agent).
       assert base_node.start_ids == [agent_id()]
       assert base_node.end_ids == []
+      assert base_node.owner_id == agent_id()
 
       # The message is truncated to its first line; refs come from the payload.
       # A node carries no `:parents` field — parent links live only in `:edges`.
@@ -2010,8 +2034,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
                :sha,
                :short_sha,
                :kind,
-               :x,
-               :y,
+               :row,
+               :column,
+               :depth,
                :message,
                :refs,
                :author_name
@@ -2019,51 +2044,61 @@ defmodule EvoDashWeb.AgentsLiveTest do
                sha: "c1",
                short_sha: "c1",
                kind: :commit,
-               x: 0,
-               y: 0,
+               row: 1,
+               column: 0,
+               depth: 0,
                message: "subject line",
                refs: ["main"],
                author_name: "Ada"
              }
+
+      assert commit_node.date == nil
 
       # The single fetched commit IS the agent's tip.
       assert commit_node.owner_id == agent_id()
       assert commit_node.end_ids == [agent_id()]
       assert commit_node.start_ids == []
 
-      # One child → parent edge: the tip points back at the fork point.
+      # One child → parent edge: the tip points back at the fork point, one row
+      # ABOVE it — both in the depth-0 gutter column.
       assert [edge] = repo.edges
 
-      assert Map.take(edge, [:from_sha, :to_sha, :from, :to, :kind]) == %{
-               from_sha: "c1",
-               to_sha: "b1",
-               from: {0, 0},
-               to: {-1, 0},
-               kind: :parent
-             }
+      assert Map.take(edge, [:from_sha, :to_sha, :from_column, :from_row, :to_column, :to_row, :kind]) ==
+               %{
+                 from_sha: "c1",
+                 to_sha: "b1",
+                 from_column: 0,
+                 from_row: 1,
+                 to_column: 0,
+                 to_row: 0,
+                 kind: :parent
+               }
 
       assert edge.owner_id == agent_id()
 
-      # One lane (a horizontal band) per agent, spanning base → tip columns.
-      assert [lane] = repo.lanes
-      assert lane.agent_id == agent_id()
-      assert lane.depth == 0
-      assert lane.color == "#7c38dc"
-      assert lane.y == 0
-      assert lane.x_start == -1
-      assert lane.x_end == 0
-      assert lane.node_count == 2
-      assert lane.start_sha == "b1"
-      assert lane.end_sha == "c1"
-      # A LIVE agent's lane is never marked ended (only in-session retained ones).
-      assert lane.ended == false
+      # One AGENT entry per agent — metadata only (the vertical model has no
+      # per-agent row bands), carrying the depth hue and its start → end shas.
+      assert [agent] = repo.agents
+
+      assert Map.take(agent, [:agent_id, :task_local_id, :status, :depth, :color, :start_sha, :end_sha, :ended]) ==
+               %{
+                 agent_id: agent_id(),
+                 task_local_id: nil,
+                 status: :running,
+                 depth: 0,
+                 color: "#7c38dc",
+                 start_sha: "b1",
+                 end_sha: "c1",
+                 ended: false
+               }
 
       # ── Page-level MARKUP assertions ─────────────────────────────────────
       # The loaded graph renders at page level. Derive every id FROM THE LIVE
       # SOCKET — the repo's `repo_dom_id` and the agent id — never a hardcoded
       # dom id.
       dom = repo.repo_dom_id
-      aid = lane.agent_id
+      aid = agent.agent_id
+      akey = to_string(aid)
 
       html = render(view)
 
@@ -2071,26 +2106,41 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ ~s(phx-hook="CommitGraph")
 
       assert has_element?(view, "##{dom}")
+      assert has_element?(view, "#cg-list-#{dom}")
+      assert has_element?(view, "#cg-gutter-#{dom}")
       assert has_element?(view, "#commit-node-#{dom}-c1")
       assert has_element?(view, "#commit-node-#{dom}-b1")
       assert has_element?(view, "#commit-edge-#{dom}-c1-b1")
-      assert has_element?(view, "#commit-agent-row-#{dom}-#{aid}")
-      assert has_element?(view, "#commit-lane-#{dom}-#{aid}")
+      assert has_element?(view, "#commit-row-#{dom}-c1")
+      assert has_element?(view, "#commit-row-#{dom}-b1")
+      # The fork point carries the agent's START chip, the tip its END chip.
+      assert has_element?(view, "#commit-agent-tag-#{dom}-b1-start-#{akey}")
+      assert has_element?(view, "#commit-agent-tag-#{dom}-c1-end-#{akey}")
+      # The payload's ref lands as a chip on the tip row.
+      assert has_element?(view, "#commit-ref-tag-#{dom}-c1-main")
 
       tree = Floki.parse_document!(html)
 
       # No phx-update mode anywhere — incremental patching rides the stable ids.
       assert Floki.find(tree, "[phx-update]") == []
 
-      # The DAG is a single `<svg class="cg-svg">` whose ONLY child is
-      # `<g class="cg-viewport">` holding every edge, node and lane band; the
-      # initial `viewBox` is what the client `CommitGraph` hook pans/zooms.
+      # The graph geometry lives in ONE absolute gutter overlay
+      # `<svg class="cg-gutter">` at the top-left of the relative list wrapper;
+      # its `viewBox` matches the derived width/height (1 SVG unit == 1 CSS px)
+      # and there is NO pan/zoom viewport — vertical scrolling is native.
       assert html =~ "viewBox="
-      assert [svg] = Floki.find(tree, "svg.cg-svg")
-      assert [_viewport] = Floki.find(svg, "g.cg-viewport")
+      assert [gutter_svg] = Floki.find(tree, "svg.cg-gutter")
+      assert Floki.attribute(gutter_svg, "id") == ["cg-gutter-#{dom}"]
+      assert Floki.attribute(gutter_svg, "viewbox") == ["0 0 40 88"]
+      assert Floki.find(tree, "g.cg-viewport") == []
 
-      # The real commit is a `g.cg-node` SVG node carrying the `select_agent`
-      # click contract and the node animation marker.
+      # The rows are left-padded by the gutter width so they never overlap it.
+      assert [rows] = Floki.find(tree, "#cg-list-#{dom} .cg-rows")
+      assert Floki.attribute(rows, "style") == ["padding-left: 40px"]
+
+      # The real commit is a `g.cg-node` gutter dot carrying the node animation
+      # marker plus the sha/owner data attributes. The click contract lives on
+      # the ROW (the gutter overlay is `pointer-events: none`).
       assert [node_c1] = Floki.find(tree, "#commit-node-#{dom}-c1")
       assert {"g", _, _} = node_c1
 
@@ -2102,15 +2152,17 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert Floki.attribute(node_c1, "data-commit-graph-anim") == ["node"]
       assert Floki.attribute(node_c1, "data-cg-sha") == ["c1"]
-      assert Floki.attribute(node_c1, "phx-click") == ["select_agent"]
-      assert Floki.attribute(node_c1, "phx-value-id") == [to_string(aid)]
+      assert Floki.attribute(node_c1, "data-cg-agent-id") == [to_string(aid)]
+      assert Floki.attribute(node_c1, "phx-click") == []
 
-      # The synthesized base node is a node too.
+      # The synthesized base node is a gutter node too.
       assert [node_b1] = Floki.find(tree, "#commit-node-#{dom}-b1")
       assert Floki.attribute(node_b1, "data-commit-graph-anim") == ["node"]
+      assert Floki.attribute(node_b1, "data-cg-sha") == ["b1"]
+      assert Floki.attribute(node_b1, "data-cg-agent-id") == [to_string(aid)]
 
-      # The child → parent link is a `path.cg-edge`. It is SOLID here — the
-      # dashes are reserved for a `:merge` side parent, which this
+      # The child → parent link is a `path.cg-edge` vertical bezier. It is SOLID
+      # here — the dashes are reserved for a `:merge` side parent, which this
       # single-parent payload has none of.
       assert [edge_node] = Floki.find(tree, "#commit-edge-#{dom}-c1-b1")
       assert {"path", _, _} = edge_node
@@ -2126,29 +2178,57 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert [edge_d] = Floki.attribute(edge_node, "d")
       assert edge_d =~ "M "
 
-      # The agent has its OWN lane group, carrying the `select_agent` click
-      # contract and the lane animation marker.
-      assert [row] = Floki.find(tree, "#commit-agent-row-#{dom}-#{aid}")
-      assert {"g", _, _} = row
+      # The tip ROW carries the `select_agent` contract (its owner), the row
+      # animation marker, the fixed height and the sha/owner data attributes.
+      assert [row_c1] = Floki.find(tree, "#commit-row-#{dom}-c1")
+      assert {"div", _, _} = row_c1
 
-      assert row
+      assert row_c1
              |> Floki.attribute("class")
              |> hd()
              |> String.split()
-             |> Enum.member?("cg-lane")
+             |> Enum.member?("cg-row")
 
-      assert Floki.attribute(row, "data-commit-graph-anim") == ["lane"]
-      assert Floki.attribute(row, "phx-click") == ["select_agent"]
-      assert Floki.attribute(row, "phx-value-id") == [to_string(aid)]
+      assert Floki.attribute(row_c1, "data-commit-graph-anim") == ["row"]
+      assert Floki.attribute(row_c1, "data-cg-sha") == ["c1"]
+      assert Floki.attribute(row_c1, "data-cg-agent-id") == [to_string(aid)]
+      assert Floki.attribute(row_c1, "style") == ["height: 44px"]
+      assert Floki.attribute(row_c1, "phx-click") == ["select_agent"]
+      assert Floki.attribute(row_c1, "phx-value-id") == [to_string(aid)]
 
-      # …and its band, spanning the agent's own base → tip columns.
-      assert [band] = Floki.find(row, "#commit-lane-#{dom}-#{aid}")
+      # The row shows the truncated first-line message (the body line is dropped)
+      # and the `author · date` meta (no date in the payload → author only).
+      assert text(row_c1, ".cg-row-sha") == "c1"
+      assert text(row_c1, ".cg-row-message") == "subject line"
+      assert text(row_c1, ".cg-row-meta") == "Ada"
 
-      assert band
-             |> Floki.attribute("class")
-             |> hd()
-             |> String.split()
-             |> Enum.member?("cg-lane-band")
+      # The agent chips are BUTTONs firing the same `select_agent` contract, and
+      # the ref chip is a non-clickable span.
+      assert [start_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-b1-start-#{akey}")
+      assert {"button", _, _} = start_chip
+      assert Floki.attribute(start_chip, "phx-click") == ["select_agent"]
+      assert Floki.attribute(start_chip, "phx-value-id") == [to_string(aid)]
+      assert hd(Floki.attribute(start_chip, "class")) =~ "cg-agent-tag-start"
+
+      assert [end_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-c1-end-#{akey}")
+      assert {"button", _, _} = end_chip
+      assert Floki.attribute(end_chip, "phx-value-id") == [to_string(aid)]
+      assert hd(Floki.attribute(end_chip, "class")) =~ "cg-agent-tag-end"
+
+      assert [ref_chip] = Floki.find(tree, "#commit-ref-tag-#{dom}-c1-main")
+      assert {"span", _, _} = ref_chip
+      assert Floki.attribute(ref_chip, "phx-click") == []
+      assert text(tree, "#commit-ref-tag-#{dom}-c1-main") == "main"
+
+      # The base row is a row too — but it shows the `base` label instead of a
+      # commit message.
+      assert [row_b1] = Floki.find(tree, "#commit-row-#{dom}-b1")
+      assert Floki.attribute(row_b1, "data-commit-graph-anim") == ["row"]
+      assert text(tree, "#commit-row-#{dom}-b1 .cg-base-label") == "base"
+      assert Floki.find(row_b1, ".cg-row-message") == []
+
+      # Nothing selected → no selection readout above the list.
+      assert Floki.find(tree, "#cg-selection-readout-#{dom}") == []
     end
 
     test "a stale commit-graph result is dropped", %{conn: conn} do
@@ -2288,11 +2368,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # recycles it — the SAME {:agent_removed, id, node} broadcast fires in both
     # cases, so the page cannot tell a deleted agent from a finished one. It
     # therefore RETAINS the removed agent's last-known map (@retained_agents,
-    # `ended: true`), which feeds the commit-history view ONLY: the lane (drawn
-    # dim, `ended: true`) and the START/END annotation survive, while the agent
-    # TREE (@agents) drops the row. In-session only — nothing else remembers it.
+    # `ended: true`), which feeds the commit-history view ONLY: its graph AGENT
+    # entry (drawn dim, `ended: true`) and the START/END annotation survive,
+    # while the agent TREE (@agents) drops the row. In-session only — nothing
+    # else remembers it.
 
-    test "a removed agent keeps its lane (ended) and its selection annotation", %{conn: conn} do
+    test "a removed agent stays in the graph (ended) with its selection annotation", %{conn: conn} do
       # `select: true` selects the agent BEFORE the commits switch (its card only
       # exists in the tree view) so the graph's START/END annotation for the
       # selection is observable afterwards.
@@ -2310,22 +2391,39 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # Retained, marked ended…
       assert assigns(view)[:retained_agents][aid].ended == true
 
-      # The lane persists on the re-rendered GRAPH, marked ended…
+      # …its graph AGENT entry persists, marked ended…
       assert [repo] = assigns(view)[:commit_graph]
-      assert [lane] = repo.lanes
-      assert lane.agent_id == aid
-      assert lane.ended == true
+      assert [agent] = repo.agents
+      assert agent.agent_id == aid
+      assert agent.ended == true
 
       # …and the selection was NOT cleared, so its START/END annotation still
-      # renders on the retained lane (the detail panel itself degrades to its
-      # "not found" state, which is the natural view of an agent that is gone).
+      # renders on the retained agent's rows (the detail panel itself degrades to
+      # its "not found" state, which is the natural view of an agent that is
+      # gone).
       assert assigns(view)[:selected_agent_id] == aid
 
       html = render(view)
-      assert has_element?(view, "#commit-agent-row-#{dom}-#{aid}")
+      tree = Floki.parse_document!(html)
+
+      assert has_element?(view, "#commit-row-#{dom}-b1")
+      assert has_element?(view, "#commit-row-#{dom}-c1")
       assert has_element?(view, "#cg-selection-readout-#{dom}")
-      assert html =~ "cg-selection-start"
-      assert html =~ "cg-selection-end"
+
+      # The readout names the retained agent with its start → end short shas…
+      assert Floki.text(Floki.find(tree, "#cg-selection-readout-#{dom}")) =~
+               "Selected T#{aid} · b1 → c1"
+
+      # …its fork-point row wears the `start` marker and its tip row the `end`
+      # marker (the rows are marked, not the gutter)…
+      [start_row] = Floki.find(tree, "#commit-row-#{dom}-b1")
+      [end_row] = Floki.find(tree, "#commit-row-#{dom}-c1")
+      assert Floki.text(Floki.find(start_row, ".cg-row-marker")) =~ "start"
+      assert Floki.text(Floki.find(end_row, ".cg-row-marker")) =~ "end"
+
+      # …and both rows render DIM (the ended agent's rows drop to `opacity-50`).
+      assert hd(Floki.attribute(start_row, "class")) =~ "opacity-50"
+      assert hd(Floki.attribute(end_row, "class")) =~ "opacity-50"
 
       # The agent TREE, however, no longer lists it — the retained copy is
       # commit-graph-only (the tree pane is only rendered in the tree view).
@@ -2334,7 +2432,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       refute has_element?(view, "#agent-card-#{aid}")
     end
 
-    test "a live agent supersedes its retained copy — exactly one lane", %{conn: conn} do
+    test "a live agent supersedes its retained copy — exactly one agent entry", %{conn: conn} do
       view = mount_loaded_commit_graph(conn)
       aid = agent_id()
 
@@ -2356,11 +2454,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:retained_agents] == %{}
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [aid]
 
-      # …and the graph holds EXACTLY ONE lane for the id, live.
+      # …and the graph holds EXACTLY ONE agent entry for the id, live.
       assert [repo] = assigns(view)[:commit_graph]
-      assert [lane] = repo.lanes
-      assert lane.agent_id == aid
-      assert lane.ended == false
+      assert [agent] = repo.agents
+      assert agent.agent_id == aid
+      assert agent.ended == false
 
       # ── 2. a FULL REFRESH carrying the row (the authoritative path) ──────
       send(view.pid, {:agent_removed, aid, node()})
@@ -2391,9 +2489,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:retained_agents] == %{}
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [aid]
       assert [repo] = assigns(view)[:commit_graph]
-      assert [lane] = repo.lanes
-      assert lane.agent_id == aid
-      assert lane.ended == false
+      assert [agent] = repo.agents
+      assert agent.agent_id == aid
+      assert agent.ended == false
     end
 
     test "a node switch resets the retained agents", %{conn: conn} do
@@ -2430,6 +2528,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
   # system_live_test / welcome_live_test / settings_live_agents_test).
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+  # The trimmed text of `selector` within a parsed tree — Floki.text/1 keeps the
+  # whitespace the HEEx template indents around the content.
+  defp text(tree, selector) do
+    tree |> Floki.find(selector) |> Floki.text() |> String.trim()
+  end
 
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
   defp flush_agents_load(view, timeout \\ 5000),
