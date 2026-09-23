@@ -200,7 +200,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert [lane] = repo.lanes
 
       assert keys(lane) ==
-               ~w(agent_id color depth end_sha node_count start_sha status task_local_id x_end x_start y)a
+               ~w(agent_id color depth end_sha ended node_count start_sha status task_local_id x_end x_start y)a
 
       # The counts agree with the lists and row_count mirrors lane_count.
       assert repo.node_count == length(repo.nodes)
@@ -244,6 +244,28 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert node(repo, @c1).kind == :commit
       assert repo.node_count == 3
       assert Enum.all?(repo.nodes, &(&1.kind == :commit))
+    end
+
+    test "a covered base_commit is NOT synthesized; an uncovered one still is" do
+      # Two agents in ONE repo: agent 1 forks from a sha the fetch covers, agent
+      # 2 from a fork point the fetch does not — only the latter gets a node.
+      covered = agent(1, nil, base_commit: @c1, current_commit: @c3)
+      uncovered = agent(2, nil, base_commit: @b0, current_commit: @c3)
+
+      [repo] =
+        CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [covered, uncovered])
+
+      # 3 fetched commits + exactly 1 synthesized base.
+      assert repo.node_count == 4
+      assert Enum.count(repo.nodes, &(&1.kind == :commit)) == 3
+      assert Enum.count(repo.nodes, &(&1.kind == :base)) == 1
+
+      # The covered base sha appears exactly ONCE, as a normal commit node.
+      assert Enum.count(repo.nodes, &(&1.sha == @c1)) == 1
+      assert node(repo, @c1).kind == :commit
+
+      # The only synthesized base is the uncovered fork point.
+      assert for(n <- repo.nodes, n.kind == :base, do: n.sha) == [@b0]
     end
 
     test "a distinct agent base_commit absent from the fetch is synthesized as a :base node" do
@@ -629,7 +651,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
                x_end: 2,
                node_count: 3,
                start_sha: @c1,
-               end_sha: @c3
+               end_sha: @c3,
+               # A live agent (no `:ended` on its map) is never marked ended.
+               ended: false
              }
 
       # A non-binary base/current renders nil (never the raw term).
@@ -640,6 +664,27 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         assert hd(empty.lanes).start_sha == nil
         assert hd(empty.lanes).end_sha == nil
       end
+    end
+
+    test "ended is true ONLY for an agent whose map carries :ended == true" do
+      # A retained (ended) agent keeps its lane so its START/END markers survive
+      # agent recycling.
+      [retained] = CommitGraph.build(%{}, [agent(1, nil, ended: true)])
+
+      assert [lane] = retained.lanes
+      assert lane.ended == true
+
+      # A live agent — key present but nil, or any non-`true` value — never is.
+      for ended <- [nil, false, "yes", 1] do
+        [view] = CommitGraph.build(%{}, [agent(2, nil, ended: ended)])
+
+        assert hd(view.lanes).ended == false
+      end
+
+      # An agent map without the key at all is false too.
+      [bare] = CommitGraph.build(%{}, [%{}])
+
+      assert hd(bare.lanes).ended == false
     end
 
     test "x_start/x_end bound the owned nodes; a lane owning none has nil bounds" do
@@ -1037,7 +1082,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
                x_end: nil,
                node_count: 0,
                start_sha: nil,
-               end_sha: nil
+               end_sha: nil,
+               ended: false
              }
     end
 
@@ -1080,7 +1126,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       task_local_id: Keyword.get(opts, :task_local_id),
       status: Keyword.get(opts, :status, :running),
       base_commit: Keyword.get(opts, :base_commit),
-      current_commit: Keyword.get(opts, :current_commit)
+      current_commit: Keyword.get(opts, :current_commit),
+      ended: Keyword.get(opts, :ended)
     }
   end
 
