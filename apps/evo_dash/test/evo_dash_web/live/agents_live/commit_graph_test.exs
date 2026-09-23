@@ -1,18 +1,20 @@
 defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   @moduledoc """
   Pure unit tests for EvoDashWeb.AgentsLive.CommitGraph — the assembler behind
-  the Agents page TEMPORAL (git commit history) view, rendered as a
-  COMMIT-CENTRIC HORIZONTAL DAG: one NODE per commit, one EDGE per child →
-  parent link present in the fetched graph, ancestry flowing left → right
-  (oldest → newest), plus one horizontal LANE (band) per agent.
+  the Agents page TEMPORAL (git commit history) view, rendered as a VERTICAL,
+  commit-centric DAG: one NODE (row) per commit, ordered top → bottom by agent
+  depth, one EDGE per child → parent link present in the fetched graph, plus a
+  left GUTTER COLUMN per node.
 
   These are pure data transformations over plain maps — no LiveView, socket,
   repo I/O, or app-env seam. Every fixture is hand-crafted, so each assertion
   traces back to a rule documented on the module: node synthesis (fetched
-  commits + one `kind: :base` node per uncovered agent `base_commit`), the `x`
-  topological rank, ownership and the first-parent progress path, the `:parent`
-  / `:merge` edges, the `start_ids` / `end_ids` annotations, the lane model and
-  the depth → hue colors.
+  commits + one `kind: :base` node per uncovered agent `base_commit`), the row
+  grouping (agent order `{depth, task_local_id, agent_id}`, contiguous per
+  owner, ancestry order within a group), the `column = depth` gutter
+  assignment, ownership and the first-parent progress path, the `:parent` /
+  `:merge` edges, the `start_ids` / `end_ids` annotations, the vertical `agents`
+  list and the depth → hue colors.
   """
 
   use ExUnit.Case, async: true
@@ -127,9 +129,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert node_shas(alpha) |> Enum.sort() == [@c1, @c2]
       assert node_shas(primary) |> Enum.sort() == [@c1, @c2, @c3]
 
-      # …and only its own agents (two lanes for alpha, one for primary).
-      assert Enum.map(alpha.lanes, & &1.agent_id) == [1, 2]
-      assert Enum.map(primary.lanes, & &1.agent_id) == [3]
+      # …and only its own agents (two for alpha, one for primary).
+      assert Enum.map(alpha.agents, & &1.agent_id) == [1, 2]
+      assert Enum.map(primary.agents, & &1.agent_id) == [3]
     end
 
     test "repos are sorted by display name ascending" do
@@ -180,36 +182,57 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   end
 
   describe "build/2 — output shape and counts" do
-    test "a repo_view exposes exactly its documented keys, counts and max_x" do
+    test "a repo_view exposes exactly its documented keys, counts and column_count" do
       a = agent(1, nil, base_commit: @b0, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
 
       assert keys(repo) ==
-               ~w(edge_count edges lane_count lanes max_x node_count nodes repo_dom_id repo_key repo_name row_count)a
+               ~w(agents column_count edge_count edges node_count nodes repo_dom_id repo_key repo_name row_count)a
 
       assert [node | _] = repo.nodes
 
       assert keys(node) ==
-               ~w(author_name date end_ids kind message owner_id refs sha short_sha start_ids x y)a
+               ~w(author_name column date depth end_ids kind message owner_id refs row sha short_sha start_ids)a
 
       assert [edge | _] = repo.edges
 
-      assert keys(edge) == ~w(from from_sha kind owner_id to to_sha)a
+      assert keys(edge) ==
+               ~w(from_column from_row from_sha kind owner_id to_column to_row to_sha)a
 
-      assert [lane] = repo.lanes
+      assert [entry] = repo.agents
 
-      assert keys(lane) ==
-               ~w(agent_id color depth end_sha ended node_count start_sha status task_local_id x_end x_start y)a
+      assert keys(entry) ==
+               ~w(agent_id color depth end_sha ended start_sha status task_local_id)a
 
-      # The counts agree with the lists and row_count mirrors lane_count.
+      # The counts agree with the lists; row_count mirrors node_count and the
+      # gutter is max(column) + 1.
       assert repo.node_count == length(repo.nodes)
       assert repo.edge_count == length(repo.edges)
-      assert repo.lane_count == length(repo.lanes)
-      assert repo.row_count == repo.lane_count
-      # The chain's oldest real commit ranks 0, so max_x is the tip's rank.
-      assert repo.max_x == repo.nodes |> Enum.map(& &1.x) |> Enum.max()
-      assert repo.max_x == 2
+      assert repo.row_count == repo.node_count
+      assert repo.column_count == (repo.nodes |> Enum.map(& &1.column) |> Enum.max()) + 1
+      # Every node of this single depth-0 agent shares the leftmost column.
+      assert repo.column_count == 1
+    end
+
+    test "no node, edge or agent ever carries the retired horizontal keys" do
+      a = agent(1, nil, base_commit: @c1, current_commit: @c3)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
+
+      refute Map.has_key?(repo, :lanes)
+      refute Map.has_key?(repo, :lane_count)
+      refute Map.has_key?(repo, :max_x)
+
+      for node <- repo.nodes do
+        refute Map.has_key?(node, :x)
+        refute Map.has_key?(node, :y)
+      end
+
+      for edge <- repo.edges do
+        refute Map.has_key?(edge, :from)
+        refute Map.has_key?(edge, :to)
+      end
     end
   end
 
@@ -234,6 +257,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert repo.node_count == 3
       assert node_shas(repo) |> Enum.sort() == [@c1, @c2, @c3]
       assert Enum.all?(repo.nodes, &(&1.kind == :commit))
+      # Oldest → newest inside the single depth-0 agent group.
+      assert node_shas(repo) == [@c1, @c2, @c3]
     end
 
     test "a fetched commit that equals an agent base_commit stays a NORMAL :commit node" do
@@ -275,7 +300,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       assert repo.node_count == 4
 
-      # A base node carries no metadata of its own — only the fork shas…
+      # A base node carries no metadata of its own — only the fork shas. It sits
+      # at the TOP of its owner's group (older than every real commit).
       assert node(repo, @b0) == %{
                sha: @b0,
                short_sha: @b0,
@@ -283,17 +309,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
                author_name: nil,
                date: nil,
                refs: [],
-               x: -1,
-               y: 0,
+               row: 0,
+               column: 0,
+               depth: 0,
                kind: :base,
                owner_id: 1,
                start_ids: [1],
                end_ids: []
              }
 
-      # …while the real commits stay untouched.
+      # …while the real commits stay untouched, one row below the fork point.
       assert node(repo, @c1).kind == :commit
-      assert node(repo, @c1).x == 0
+      assert node(repo, @c1).row == 1
+      assert node_shas(repo) == [@b0, @c1, @c2, @c3]
     end
 
     test "each distinct base gets its own node; long/garbage base shas are handled" do
@@ -312,6 +340,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       [repo2] = CommitGraph.build(%{"primary" => raw([])}, [long_base])
 
       assert node(repo2, "1234567890").short_sha == "12345678"
+      assert node(repo2, "1234567890").row == 0
 
       # A non-binary / blank base is not a fork point at all.
       for base <- [nil, "", 42, :base] do
@@ -404,8 +433,53 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
-  describe "build/2 — x (topological rank → grid column)" do
-    test "x is the topological rank, NOT the fetch order of the commit list" do
+  describe "build/2 — rows (the vertical order)" do
+    test "rows are grouped by owner and the owner depth is NON-DECREASING top → bottom" do
+      # Agent 1 (depth 0) built c2; agent 2 (depth 1) built c3.
+      agents = [
+        agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c2),
+        agent(2, nil, depth: 1, base_commit: @c2, current_commit: @c3)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, agents)
+
+      assert Enum.map(repo.nodes, &{&1.sha, &1.owner_id, &1.depth, &1.row}) == [
+               {@c1, 1, 0, 0},
+               {@c2, 1, 0, 1},
+               {@c3, 2, 1, 2}
+             ]
+
+      depths = Enum.map(repo.nodes, & &1.depth)
+
+      assert depths == Enum.sort(depths)
+      # Every agent owns a contiguous run of rows.
+      assert Enum.map(repo.nodes, & &1.owner_id) == [1, 1, 2]
+    end
+
+    test "every row is unique and the rows are exactly 0..node_count-1" do
+      commits = [
+        commit(@m, parents: [@c3, @s1]),
+        commit(@c3, parents: [@c2]),
+        commit(@s1, parents: [@c2]),
+        commit(@c2, parents: [@c1]),
+        commit(@c1, parents: [])
+      ]
+
+      agents = [
+        agent(1, nil, depth: 0, base_commit: @b0, current_commit: @m),
+        agent(2, nil, depth: 1, base_commit: @other_base, current_commit: @s1)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, agents)
+
+      rows = Enum.map(repo.nodes, & &1.row)
+
+      assert rows == Enum.to_list(0..(repo.node_count - 1))
+      assert Enum.uniq(rows) == rows
+      assert repo.row_count == repo.node_count
+    end
+
+    test "within one group commits are ordered oldest → newest by rank, NOT by fetch order" do
       # The fetched list is deliberately scrambled; the parent links decide the order.
       scrambled = [
         commit(@c3, parents: [@c2]),
@@ -418,7 +492,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(scrambled)}, [a])
 
-      assert Enum.map(repo.nodes, & &1.x) == [0, 1, 2, 3]
+      assert node_shas(repo) == [@c1, @c2, @c3, @c4]
+      assert Enum.map(repo.nodes, & &1.row) == [0, 1, 2, 3]
 
       # The same graph in the opposite input order yields the same nodes.
       [bwd] = CommitGraph.build(%{"primary" => raw(Enum.reverse(scrambled))}, [a])
@@ -426,57 +501,57 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
 
     test "rank is 1 + MAX(fetched parent rank), not 1 + parent count" do
-      # @m merges two rank-0 roots (rank 1); the @c4 chain is deeper (rank 2).
-      # With a 1+COUNT rule @m would rank 3 and land right of @c4.
+      # @m merges two rank-0 roots (rank 1) and @c4 builds on @m (rank 2). Under
+      # a 1+COUNT rule @m would rank 3 and land BELOW @c4.
       commits = [
+        commit(@c4, parents: [@m]),
         commit(@m, parents: [@c1, @s1]),
         commit(@s1, parents: []),
-        commit(@c4, parents: [@c3]),
-        commit(@c3, parents: [@c2]),
-        commit(@c2, parents: []),
         commit(@c1, parents: [])
       ]
 
-      a1 = agent(1, nil, base_commit: nil, current_commit: @m)
-      a2 = agent(2, nil, base_commit: nil, current_commit: @c4)
+      a = agent(1, nil, base_commit: nil, current_commit: @c4)
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a1, a2])
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert node(repo, @m).x == 1
-      assert node(repo, @c4).x == 2
-      assert node(repo, @c1).x == 0
-      assert node(repo, @s1).x == 0
+      assert node(repo, @m).row == 2
+      assert node(repo, @c4).row == 3
+      assert node(repo, @m).row < node(repo, @c4).row
+      # The two rank-0 roots tie, broken by sha ascending.
+      assert node(repo, @c1).row == 0
+      assert node(repo, @s1).row == 1
     end
 
     test "an unfetched parent contributes no rank (the commit still ranks as a root)" do
       # @c1 lists the ABSENT @b0 as a parent: it is still a rank-0 root, so both
-      # roots tie. If the absent parent counted, @c1 would rank 1.
+      # rank-0 commits tie and the sha breaks the tie. If the absent parent
+      # counted, @c1 would rank 1 and land BELOW @c2.
       commits = [commit(@c2, parents: []), commit(@c1, parents: [@b0])]
 
-      a1 = agent(1, nil, base_commit: nil, current_commit: @c1)
-      a2 = agent(2, nil, base_commit: nil, current_commit: @c2)
+      a = agent(1, nil, base_commit: nil, current_commit: @c2)
 
-      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a1, a2])
+      [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
 
-      assert node(repo, @c1).x == 0
-      assert node(repo, @c2).x == 0
+      assert node_shas(repo) == [@c1, @c2]
     end
 
-    test "a synthesized base node sits ONE column left of the oldest real commit" do
+    test "a base node always leads its owner's group" do
       a = agent(1, nil, base_commit: @b0, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
 
-      assert node(repo, @c1).x == 0
-      assert node(repo, @b0).x == -1
-      assert Enum.min(Enum.map(repo.nodes, & &1.x)) == -1
+      assert node_shas(repo) == [@b0, @c1, @c2, @c3]
+      assert hd(repo.nodes).kind == :base
+      assert hd(repo.nodes).row == 0
 
-      # With no real commit at all the lone base node still lands at -1 (max_x = -1).
+      # With no real commit at all the lone base node still lands at row 0.
       b = agent(1, nil, base_commit: @b0, current_commit: @b0)
       [repo2] = CommitGraph.build(%{"primary" => raw([])}, [b])
 
       assert node_shas(repo2) == [@b0]
-      assert repo2.max_x == -1
+      assert hd(repo2.nodes).row == 0
+      assert hd(repo2.nodes).column == 0
+      assert repo2.column_count == 1
     end
 
     test "a malformed parent CYCLE terminates deterministically" do
@@ -490,8 +565,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       assert repo.node_count == 2
       assert node_shas(repo) |> Enum.sort() == [@cyc_a, @cyc_b]
-      # The `visiting` set folds the back edge to rank 0, so the pair ranks 1 and 2.
-      assert Enum.map(repo.nodes, & &1.x) |> Enum.sort() == [1, 2]
+      # The `visiting` set folds the back edge to rank 0, so the pair ranks 1 and
+      # 2 — the lower rank (the oldest) sits on top.
+      assert node_shas(repo) == [@cyc_b, @cyc_a]
+      assert Enum.map(repo.nodes, & &1.row) == [0, 1]
 
       # Same input -> same result (the rank memo is deterministic).
       [again] = CommitGraph.build(%{"primary" => raw(commits)}, [a])
@@ -499,8 +576,70 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
+  describe "build/2 — gutter columns" do
+    test "column equals the owner's depth (a staircase) and column_count counts the gutter" do
+      # Three agents, each recursing one level deeper on the same chain.
+      agents = [
+        agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c2),
+        agent(2, nil, depth: 1, base_commit: @c2, current_commit: @c3),
+        agent(3, nil, depth: 2, base_commit: @c3, current_commit: @c4)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, agents)
+
+      assert Enum.map(repo.nodes, &{&1.sha, &1.row, &1.column, &1.depth, &1.owner_id}) == [
+               {@c1, 0, 0, 0, 1},
+               {@c2, 1, 0, 0, 1},
+               {@c3, 2, 1, 1, 2},
+               {@c4, 3, 2, 2, 3}
+             ]
+
+      assert repo.column_count == 3
+    end
+
+    test "edge endpoints span the gutter columns of the child and the parent" do
+      agents = [
+        agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c2),
+        agent(2, nil, depth: 1, base_commit: @c2, current_commit: @c3),
+        agent(3, nil, depth: 2, base_commit: @c3, current_commit: @c4)
+      ]
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, agents)
+
+      assert edge(repo, @c3, @c2) == %{
+               from_sha: @c3,
+               to_sha: @c2,
+               from_column: 1,
+               from_row: 2,
+               to_column: 0,
+               to_row: 1,
+               kind: :parent,
+               owner_id: 2
+             }
+
+      assert edge(repo, @c4, @c3).from_column == 2
+      assert edge(repo, @c4, @c3).to_column == 1
+    end
+
+    test "columns may be sparse — a depth that owns no node leaves its column empty" do
+      a = agent(1, nil, depth: 5, base_commit: @c1, current_commit: @c2)
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+
+      assert Enum.map(repo.nodes, & &1.column) == [5, 5]
+      assert repo.column_count == 6
+    end
+
+    test "column_count is 1 when the repo has no nodes" do
+      [repo] = CommitGraph.build(%{}, [agent(1, nil)])
+
+      assert repo.nodes == []
+      assert repo.column_count == 1
+    end
+  end
+
   describe "build/2 — edges (child → parent)" do
-    test "one :parent edge per present parent, with the nodes' grid coordinates" do
+    test "one :parent edge per present parent, with the nodes' row/column coordinates" do
       a = agent(1, nil, base_commit: @c1, current_commit: @c3)
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
@@ -510,8 +649,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert edge(repo, @c3, @c2) == %{
                from_sha: @c3,
                to_sha: @c2,
-               from: {2, 0},
-               to: {1, 0},
+               from_column: 0,
+               from_row: 2,
+               to_column: 0,
+               to_row: 1,
                kind: :parent,
                owner_id: 1
              }
@@ -519,8 +660,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert edge(repo, @c2, @c1) == %{
                from_sha: @c2,
                to_sha: @c1,
-               from: {1, 0},
-               to: {0, 0},
+               from_column: 0,
+               from_row: 1,
+               to_column: 0,
+               to_row: 0,
                kind: :parent,
                owner_id: 1
              }
@@ -549,15 +692,20 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert edge(repo, @s1, @c2).kind == :parent
       assert edge(repo, @c2, @c1).kind == :parent
 
-      # The merge edge keeps the child's owner and the parents' coordinates.
+      # The merge edge keeps the child's owner and the parents' row/column.
+      # @c3 and @s1 share rank 2, so the sha tie-break puts @c3 on top.
       assert edge(repo, @m, @s1) == %{
                from_sha: @m,
                to_sha: @s1,
-               from: {3, 0},
-               to: {2, 0},
+               from_column: 0,
+               from_row: 4,
+               to_column: 0,
+               to_row: 3,
                kind: :merge,
                owner_id: 1
              }
+
+      assert node_shas(repo) == [@c1, @c2, @c3, @s1, @m]
     end
 
     test "an absent parent produces no edge, and the first PRESENT parent is :parent" do
@@ -603,8 +751,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert edge(repo3, @c1, @b0) == %{
                from_sha: @c1,
                to_sha: @b0,
-               from: {0, 0},
-               to: {-1, 0},
+               from_column: 0,
+               from_row: 1,
+               to_column: 0,
+               to_row: 0,
                kind: :parent,
                owner_id: 1
              }
@@ -613,81 +763,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     end
   end
 
-  describe "build/2 — lanes (one row per agent)" do
-    test "one lane per agent ordered by {depth, id} ascending; y is the lane index" do
-      agents = [agent(2, nil, depth: 1), agent(1, nil, depth: 0), agent(3, nil, depth: 0)]
-
-      [repo] = CommitGraph.build(%{}, agents)
-
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 3, 2]
-      assert Enum.map(repo.lanes, & &1.y) == [0, 1, 2]
-      assert Enum.map(repo.lanes, & &1.depth) == [0, 0, 1]
-      assert repo.lane_count == 3
-      assert repo.row_count == repo.lane_count
-    end
-
-    test "a lane exposes exactly its documented fields and values" do
-      a =
-        agent(1, nil,
-          task_local_id: 7,
-          status: :waiting,
-          depth: 0,
-          base_commit: @c1,
-          current_commit: @c3
-        )
-
-      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
-
-      assert [lane] = repo.lanes
-
-      assert lane == %{
-               agent_id: 1,
-               task_local_id: 7,
-               status: :waiting,
-               depth: 0,
-               color: @depth0_color,
-               y: 0,
-               x_start: 0,
-               x_end: 2,
-               node_count: 3,
-               start_sha: @c1,
-               end_sha: @c3,
-               # A live agent (no `:ended` on its map) is never marked ended.
-               ended: false
-             }
-
-      # A non-binary base/current renders nil (never the raw term).
-      for {base, current} <- [{nil, nil}, {42, :tip}, {"", ""}] do
-        bare = agent(1, nil, base_commit: base, current_commit: current)
-        [empty] = CommitGraph.build(%{}, [bare])
-
-        assert hd(empty.lanes).start_sha == nil
-        assert hd(empty.lanes).end_sha == nil
-      end
-    end
-
-    test "ended is true ONLY for an agent whose map carries :ended == true" do
-      # A retained (ended) agent keeps its lane so its START/END markers survive
-      # agent recycling.
-      [retained] = CommitGraph.build(%{}, [agent(1, nil, ended: true)])
-
-      assert [lane] = retained.lanes
-      assert lane.ended == true
-
-      # A live agent — key present but nil, or any non-`true` value — never is.
-      for ended <- [nil, false, "yes", 1] do
-        [view] = CommitGraph.build(%{}, [agent(2, nil, ended: ended)])
-
-        assert hd(view.lanes).ended == false
-      end
-
-      # An agent map without the key at all is false too.
-      [bare] = CommitGraph.build(%{}, [%{}])
-
-      assert hd(bare.lanes).ended == false
-    end
-
-    test "x_start/x_end bound the owned nodes; a lane owning none has nil bounds" do
+  describe "build/2 — ownership (a single owner per node)" do
+    test "a commit on more than one path belongs to the DEEPEST agent (ties: smallest index)" do
       agents = [
         agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c3),
         agent(2, nil, depth: 1, base_commit: @c1, current_commit: @c3)
@@ -695,68 +772,24 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, agents)
 
-      # Both agents walk c2..c3, so the deepest lane wins every node…
-      [shallow, deep] = repo.lanes
-
-      assert deep.node_count == 3
-      assert {deep.x_start, deep.x_end} == {0, 2}
-      assert shallow.node_count == 0
-      assert shallow.x_start == nil
-      assert shallow.x_end == nil
-
-      # …and when each lane walks its own range the bounds follow the owned rows.
-      split = [
-        agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c3),
-        agent(2, nil, depth: 1, base_commit: @c2, current_commit: @c3)
-      ]
-
-      [repo2] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, split)
-
-      for lane <- repo2.lanes do
-        xs = for n <- repo2.nodes, n.y == lane.y, do: n.x
-
-        assert xs != []
-        assert lane.node_count == length(xs)
-        assert lane.x_start == Enum.min(xs)
-        assert lane.x_end == Enum.max(xs)
-      end
-    end
-
-    test "an invalid depth normalizes to 0 (in the lane AND in the sort order)" do
-      for depth <- [nil, -1, 1.5, "2", :three] do
-        a = agent(1, nil, depth: depth, base_commit: @c1, current_commit: @c2)
-
-        [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
-
-        assert hd(repo.lanes).depth == 0
-      end
-
-      agents = [agent(5, nil, depth: nil), agent(2, nil, depth: 0), agent(9, nil, depth: 3)]
-
-      [repo] = CommitGraph.build(%{}, agents)
-
-      assert Enum.map(repo.lanes, & &1.agent_id) == [2, 5, 9]
-      assert Enum.map(repo.lanes, & &1.depth) == [0, 0, 3]
-    end
-  end
-
-  describe "build/2 — node ownership" do
-    test "a commit on more than one path belongs to the DEEPEST lane (ties: lowest index)" do
-      agents = [
-        agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c3),
-        agent(2, nil, depth: 1, base_commit: @c1, current_commit: @c3)
-      ]
-
-      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, agents)
-
-      # Agent 2 (depth 1) is the deeper lane, so it owns every shared commit.
-      assert node(repo, @c3).y == 1
+      # Agent 2 (depth 1) is deeper, so it owns every shared commit — and every
+      # node therefore sits in the depth-1 gutter column.
       assert node(repo, @c3).owner_id == 2
-      assert node(repo, @c2).y == 1
-      # @c1 is on no path (it is the exclusive fork point) -> it inherits @c2's lane.
-      assert node(repo, @c1).y == 1
+      assert node(repo, @c3).depth == 1
+      assert node(repo, @c3).column == 1
+      assert node(repo, @c2).owner_id == 2
+      # @c1 is on no path (it is the exclusive fork point) -> it inherits @c2's owner.
+      assert node(repo, @c1).owner_id == 2
 
-      # Equal depths tie-break on the SMALLEST lane index.
+      # The deeper agent's group is contiguous and starts at row 0 (the shallow
+      # agent owns nothing at all).
+      assert Enum.map(repo.nodes, &{&1.sha, &1.owner_id, &1.row}) == [
+               {@c1, 2, 0},
+               {@c2, 2, 1},
+               {@c3, 2, 2}
+             ]
+
+      # Equal depths tie-break on the SMALLEST agent-order index.
       ties = [
         agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c3),
         agent(2, nil, depth: 0, base_commit: @c1, current_commit: @c3)
@@ -764,8 +797,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [tied] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, ties)
 
-      assert node(tied, @c3).y == 0
       assert node(tied, @c3).owner_id == 1
+      assert node(tied, @c3).column == 0
     end
 
     test "a commit on NO path inherits the owner of its first-parent child (the deepest)" do
@@ -777,12 +810,16 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [shallow, deep])
 
-      # @p's first-parent children are owned by lanes 0 (@y2) and 1 (@y1); the deeper wins.
-      assert node(repo, @p).y == 1
+      # @p's first-parent children are owned by agents 1 (@y2) and 2 (@y1); the deeper wins.
       assert node(repo, @p).owner_id == 2
+      assert node(repo, @p).depth == 1
+      assert node(repo, @p).column == 1
+
+      assert node(repo, @y2).owner_id == 1
+      assert node(repo, @y2).column == 0
     end
 
-    test "an unowned commit with no owned child falls back to the FIRST lane" do
+    test "an unowned commit with no owned child falls back to the FIRST agent" do
       # @orphan is a fetched root nobody points at (no first-parent child) and no
       # agent walks it, so no inheritance is available.
       commits = [
@@ -796,15 +833,17 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [shallow, deep])
 
-      assert Enum.map(repo.lanes, & &1.agent_id) == [1, 2]
+      assert Enum.map(repo.agents, & &1.agent_id) == [1, 2]
 
-      assert node(repo, @orphan).y == 0
       assert node(repo, @orphan).owner_id == 1
-      # @c1 is off both paths (exclusive fork point) -> it inherits @c2's deep lane.
-      assert node(repo, @c1).y == 1
+      assert node(repo, @orphan).depth == 0
+      assert node(repo, @orphan).column == 0
+      assert node(repo, @orphan).row == 0
+      # @c1 is off both paths (exclusive fork point) -> it inherits @c2's deeper owner.
+      assert node(repo, @c1).owner_id == 2
     end
 
-    test "a synthesized base node belongs to the SHALLOWEST lane forked from it" do
+    test "a synthesized base node belongs to the SHALLOWEST agent forked from it" do
       agents = [
         agent(1, nil, depth: 0, base_commit: @b0, current_commit: @c3),
         agent(2, nil, depth: 1, base_commit: @b0, current_commit: @c3)
@@ -812,23 +851,24 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, agents)
 
-      # Agent 1 (depth 0) is lane 0, so the shared fork point lands in the root lane…
+      # Agent 1 (depth 0) forks the shared base, so it lands in the root group…
       assert node(repo, @b0).kind == :base
-      assert node(repo, @b0).y == 0
       assert node(repo, @b0).owner_id == 1
+      assert node(repo, @b0).depth == 0
+      assert node(repo, @b0).column == 0
+      assert node(repo, @b0).row == 0
 
-      # …while the real commits belong to the deeper lane.
-      assert node(repo, @c3).y == 1
-
-      [shallow, deep] = repo.lanes
-      assert shallow.node_count == 1
-      assert {shallow.x_start, shallow.x_end} == {-1, -1}
-      assert deep.node_count == 3
+      # …while the real commits belong to the deeper agent, one column right.
+      assert node(repo, @c3).owner_id == 2
+      assert node(repo, @c3).column == 1
+      assert node(repo, @c1).row == 1
+      assert node(repo, @c2).row == 2
+      assert node(repo, @c3).row == 3
     end
   end
 
   describe "build/2 — start_ids / end_ids" do
-    test "start_ids / end_ids list the forking / tipping agents in lane order" do
+    test "start_ids / end_ids list the forking / tipping agents in agent order" do
       a1 = agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c3)
       a2 = agent(2, nil, depth: 1, base_commit: @c1, current_commit: @c2)
 
@@ -872,18 +912,19 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         commit(@c1, parents: [])
       ]
 
-      # The shallow lane walks the side commit; the deep lane walks the merge's
+      # The shallow agent walks the side commit; the deep agent walks the merge's
       # first-parent line, so it must NOT collect @s1.
       shallow = agent(1, nil, depth: 0, base_commit: nil, current_commit: @s1)
       deep = agent(2, nil, depth: 1, base_commit: nil, current_commit: @m)
 
       [repo] = CommitGraph.build(%{"primary" => raw(commits)}, [shallow, deep])
 
-      # If the merge's second parent were walked, the deeper lane would win @s1.
-      assert node(repo, @s1).y == 0
+      # If the merge's second parent were walked, the deeper agent would win @s1.
       assert node(repo, @s1).owner_id == 1
-      assert node(repo, @m).y == 1
-      assert node(repo, @c3).y == 1
+      assert node(repo, @s1).column == 0
+      assert node(repo, @m).owner_id == 2
+      assert node(repo, @m).column == 1
+      assert node(repo, @c3).owner_id == 2
     end
 
     test "the walk excludes the agent's base_commit" do
@@ -894,12 +935,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       [repo] =
         CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3, @c4]))}, [shallow, deep])
 
-      # Both agents walk c3, so the deeper lane owns it.
-      assert node(repo, @c3).y == 1
+      # Both agents walk c3, so the deeper one owns it.
+      assert node(repo, @c3).owner_id == 2
       # Only the shallow agent walks c2 (the deep agent's base is excluded)…
-      assert node(repo, @c2).y == 0
+      assert node(repo, @c2).owner_id == 1
+      assert node(repo, @c2).column == 0
       # …and @c1 is off every path, so it inherits from its child @c2.
-      assert node(repo, @c1).y == 0
+      assert node(repo, @c1).owner_id == 1
     end
 
     test "the walk stops at an unfetched sha, and a self-parent cannot loop" do
@@ -918,10 +960,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert node_shas(repo) |> Enum.sort() == [@c1, @c2, @c3]
       refute @b0 in node_shas(repo)
       assert repo.edge_count == 2
-
-      [lane] = repo.lanes
-      assert lane.node_count == 3
-      assert {lane.x_start, lane.x_end} == {0, 2}
+      assert node_shas(repo) == [@c1, @c2, @c3]
 
       # A self-parenting commit is collected once, then the seen guard stops the walk.
       selfy = agent(1, nil, base_commit: nil, current_commit: @cyc_a)
@@ -930,9 +969,110 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         CommitGraph.build(%{"primary" => raw([commit(@cyc_a, parents: [@cyc_a])])}, [selfy])
 
       assert loop.node_count == 1
-      # The cycle rank is 1 + rank(self), and the visiting guard resolves self to 0.
-      assert node(loop, @cyc_a).x == 1
-      assert hd(loop.lanes).node_count == 1
+      assert node(loop, @cyc_a).row == 0
+      assert node(loop, @cyc_a).owner_id == 1
+    end
+  end
+
+  describe "build/2 — the agents list" do
+    test "agents are ordered by {depth, task_local_id, agent_id} ascending" do
+      agents = [
+        agent(2, nil, depth: 1, task_local_id: 5),
+        agent(1, nil, depth: 0, task_local_id: 9),
+        agent(3, nil, depth: 0, task_local_id: 1),
+        agent(4, nil, depth: 0, task_local_id: 1)
+      ]
+
+      [repo] = CommitGraph.build(%{}, agents)
+
+      # depth 0 first (slot id 1 -> agents 3, 4; then slot id 9 -> agent 1), then depth 1.
+      assert Enum.map(repo.agents, & &1.agent_id) == [3, 4, 1, 2]
+      assert Enum.map(repo.agents, & &1.depth) == [0, 0, 0, 1]
+
+      # A nil slot id sorts after every integer (Erlang term order) — deterministic.
+      [nil_slot] =
+        CommitGraph.build(%{}, [
+          agent(1, nil, task_local_id: nil),
+          agent(2, nil, task_local_id: 3)
+        ])
+
+      assert Enum.map(nil_slot.agents, & &1.agent_id) == [2, 1]
+    end
+
+    test "an agent exposes exactly its documented fields and values" do
+      a =
+        agent(1, nil,
+          task_local_id: 7,
+          status: :waiting,
+          depth: 0,
+          base_commit: @c1,
+          current_commit: @c3
+        )
+
+      [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
+
+      assert [entry] = repo.agents
+
+      assert entry == %{
+               agent_id: 1,
+               task_local_id: 7,
+               status: :waiting,
+               depth: 0,
+               color: @depth0_color,
+               start_sha: @c1,
+               end_sha: @c3,
+               # A live agent (no `:ended` on its map) is never marked ended.
+               ended: false
+             }
+
+      # A non-binary base/current renders nil (never the raw term).
+      for {base, current} <- [{nil, nil}, {42, :tip}, {"", ""}] do
+        bare = agent(1, nil, base_commit: base, current_commit: current)
+        [empty] = CommitGraph.build(%{}, [bare])
+
+        assert hd(empty.agents).start_sha == nil
+        assert hd(empty.agents).end_sha == nil
+      end
+    end
+
+    test "ended is true ONLY for an agent whose map carries :ended == true" do
+      # A retained (ended) agent still appears so its START/END markers survive
+      # agent recycling.
+      [retained] = CommitGraph.build(%{}, [agent(1, nil, ended: true)])
+
+      assert [entry] = retained.agents
+      assert entry.ended == true
+
+      # A live agent — key present but nil, or any non-`true` value — never is.
+      for ended <- [nil, false, "yes", 1] do
+        [view] = CommitGraph.build(%{}, [agent(2, nil, ended: ended)])
+
+        assert hd(view.agents).ended == false
+      end
+
+      # An agent map without the key at all is false too.
+      [bare] = CommitGraph.build(%{}, [%{}])
+
+      assert hd(bare.agents).ended == false
+    end
+
+    test "an invalid depth normalizes to 0 (in the agents list AND in the sort order)" do
+      for depth <- [nil, -1, 1.5, "2", :three] do
+        a = agent(1, nil, depth: depth, base_commit: @c1, current_commit: @c2)
+
+        [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
+
+        assert hd(repo.agents).depth == 0
+        # The gutter column follows the normalized depth.
+        assert hd(repo.nodes).column == 0
+      end
+
+      agents = [agent(5, nil, depth: nil), agent(2, nil, depth: 0), agent(9, nil, depth: 3)]
+
+      [repo] = CommitGraph.build(%{}, agents)
+
+      assert Enum.map(repo.agents, & &1.agent_id) == [2, 5, 9]
+      assert Enum.map(repo.agents, & &1.depth) == [0, 0, 3]
     end
   end
 
@@ -955,7 +1095,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
         [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2]))}, [a])
 
-        assert hd(repo.lanes).color == expected
+        assert hd(repo.agents).color == expected
       end
     end
   end
@@ -976,9 +1116,12 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       raw_by_repo = %{"primary" => raw(commits, %{@c3 => ["main"]})}
       [repo] = CommitGraph.build(raw_by_repo, [a1, a2])
 
-      assert repo.nodes == Enum.sort_by(repo.nodes, &{&1.x, &1.y, &1.sha})
+      assert repo.nodes == Enum.sort_by(repo.nodes, & &1.row)
+      assert Enum.map(repo.nodes, & &1.row) == Enum.to_list(0..(repo.node_count - 1))
       assert repo.edges == Enum.sort_by(repo.edges, &{&1.from_sha, &1.to_sha})
-      assert repo.lanes == Enum.sort_by(repo.lanes, &{&1.depth, &1.agent_id})
+
+      assert repo.agents ==
+               Enum.sort_by(repo.agents, &{&1.depth, &1.task_local_id, &1.agent_id})
 
       # The agent input order never changes the view model.
       assert CommitGraph.build(raw_by_repo, [a2, a1]) == [repo]
@@ -997,14 +1140,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         assert repo.edges == []
         assert repo.node_count == 0
         assert repo.edge_count == 0
-        assert repo.max_x == 0
-        assert repo.lane_count == 1
-        assert repo.row_count == 1
+        assert repo.row_count == 0
+        assert repo.column_count == 1
 
-        [lane] = repo.lanes
-        assert lane.node_count == 0
-        assert lane.x_start == nil
-        assert lane.x_end == nil
+        assert [entry] = repo.agents
+        assert entry.agent_id == 1
       end
 
       # A base_commit is still synthesized when nothing at all was fetched.
@@ -1012,8 +1152,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       [base_only] = CommitGraph.build(%{}, [fork])
 
       assert node_shas(base_only) == [@b0]
-      assert node(base_only, @b0).x == -1
-      assert base_only.max_x == -1
+      assert node(base_only, @b0).row == 0
+      assert node(base_only, @b0).column == 0
+      assert base_only.column_count == 1
       assert base_only.edge_count == 0
     end
 
@@ -1038,6 +1179,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
         assert repo.nodes == []
         assert repo.node_count == 0
+        assert repo.row_count == 0
       end
     end
 
@@ -1048,8 +1190,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
           %{id: 1, repo_id: "primary", base_commit: @c1, current_commit: @c2}
         )
 
-      assert repo.lane_count == 1
-      assert hd(repo.lanes).agent_id == 1
+      assert length(repo.agents) == 1
+      assert hd(repo.agents).agent_id == 1
       assert repo.node_count == 2
 
       [other] = CommitGraph.build(%{123 => %{}}, [%{id: 1, repo_id: 123}])
@@ -1066,21 +1208,16 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       # A nil key renders the primary label.
       assert repo.repo_name == "Primary Repo"
       assert repo.nodes == []
-      assert repo.max_x == 0
-      assert repo.lane_count == 1
+      assert repo.column_count == 1
 
-      assert [lane] = repo.lanes
+      assert [entry] = repo.agents
 
-      assert lane == %{
+      assert entry == %{
                agent_id: nil,
                task_local_id: nil,
                status: nil,
                depth: 0,
                color: @depth0_color,
-               y: 0,
-               x_start: nil,
-               x_end: nil,
-               node_count: 0,
                start_sha: nil,
                end_sha: nil,
                ended: false
@@ -1107,8 +1244,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       assert c2.short_sha == "abcdef12"
       assert c2.message == "struct subject"
       assert c2.author_name == "Ada"
-      assert c2.x == 0
-      assert c3.x == 1
+      assert c2.row == 0
+      assert c3.row == 1
     end
   end
 
@@ -1166,7 +1303,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
     Enum.find(repo.edges, &(&1.from_sha == from_sha and &1.to_sha == to_sha))
   end
 
-  # The node shas in the module's documented `{x, y, sha}` order.
+  # The node shas in the module's documented top → bottom row order.
   defp node_shas(repo), do: Enum.map(repo.nodes, & &1.sha)
 
   # A view's key set, sorted (so an assertion reads as the documented key list).

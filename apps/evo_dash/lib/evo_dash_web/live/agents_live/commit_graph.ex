@@ -1,9 +1,10 @@
 defmodule EvoDashWeb.AgentsLive.CommitGraph do
   @moduledoc """
   Pure view-model assembly for the Agents page's TEMPORAL (git commit history)
-  view — a COMMIT-CENTRIC HORIZONTAL DAG: one node per commit, one edge per
-  child → parent link present in the fetched graph, ancestry flowing
-  left → right, with one horizontal LANE (band) per agent.
+  view — a VERTICAL, commit-centric DAG: ONE VISIBLE ROW per commit, ordered
+  top → bottom by agent depth, plus a left GUTTER COLUMN per node so the
+  renderer can draw the child → parent edges between the rows (the
+  GitKraken/GitLen-style graph shape).
 
   The module is deliberately PURE — no I/O, no socket, no processes — mirroring
   the sibling support modules (`HistoryGate`, `OptimisticMessages`,
@@ -20,28 +21,59 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
       `:base_commit` and `:current_commit`.
 
   Every commit/agent field is read through `Map.get/2` and every function is
-  TOTAL: odd input shapes degrade to empty nodes/edges/lanes instead of raising.
+  TOTAL: odd input shapes degrade to empty nodes/edges/agents instead of raising.
 
-  ## Nodes (the horizontal time axis)
+  ## Nodes (one row per commit)
 
   One node per ADDRESSABLE fetched commit (a map with a non-empty binary
-  `:sha`), de-duplicated by sha, PLUS one synthesized node per distinct agent
-  `:base_commit` absent from the fetched commits.
+  `:sha`), de-duplicated by sha, PLUS one synthesized `kind: :base` node per
+  distinct agent `:base_commit` absent from the fetched commits (see
+  "Base synthesis" below).
 
-  A node's `x` is its grid COLUMN (left → right, oldest → newest):
+  ## Rows — the vertical order
 
-    - a real commit's `x` is a memoized TOPOLOGICAL rank over the FETCHED
-      parents: a commit with no fetched parent ranks `0`, otherwise
-      `1 + max(rank(parent))`. A memoized DFS carrying a `visiting` set makes a
-      malformed parent cycle terminate — a revisit returns the memoized rank
-      when there is one, else `0`. Ranking rather than the fetch order matters:
-      the fetch concatenates one `git log` per agent range, so the input list is
-      not globally newest-first, and `%DateTime{}` structs must never be
-      compared directly (term order looks at `day` before `month`/`year`).
-    - a synthesized base node gets `x = min_real_rank - 1` — one column left of
-      the oldest real commits (`-1` when the repo has no real commits).
+  `nodes` is ordered TOP → BOTTOM (ascending `row`, `0` = top) and every `row`
+  is UNIQUE, so `row_count == node_count` and the rows are exactly
+  `0 .. node_count - 1`.
 
-  A node's `y` is its grid ROW: the index of the agent LANE it belongs to.
+  Rows are grouped by OWNING AGENT: every node an agent owns is CONTIGUOUS and
+  the groups appear in the agent order, so the owner depth is NON-DECREASING
+  down the rows.
+
+  The agent order — shared with the `agents` list — is ascending
+  `{depth, task_local_id, agent_id}`: `depth` is normalized (nil/negative/
+  non-integer → `0`, for both the sort and the emitted value), `task_local_id`
+  is the agent's slot id (it may be `nil` for odd maps — Erlang term order
+  places `nil` after every integer, which stays deterministic) and the
+  `agent_id` term is the FINAL tie-break, so the order never flaps between
+  refreshes.
+
+  Within one agent's group the owned nodes are ordered along ANCESTRY:
+
+    1. a synthesized `:base` node first — it is the group's fork point, older
+       than anything the agent built — then
+    2. the agent's real commits by ascending first-parent topological rank
+       (oldest → newest), ties broken by `sha`.
+
+  Along a first-parent progress path the rank increases monotonically in a
+  linear history, so this is exactly that path oldest → newest; merged-in side
+  commits and the inherited fork point land at their own rank. `row` is the
+  node's absolute 0-based position in this flattened sequence.
+
+  ## Gutter columns
+
+  A node's `column` is its GUTTER COLUMN (left → right, `0` = leftmost). The
+  assignment is `column = depth` — the NODE's depth, i.e. its OWNER agent's
+  normalized depth. Every node owned by an agent of the same depth therefore
+  shares a column, so a root agent's chain sits in the leftmost column and each
+  deeper recursion step shifts one column right (a staircase). Columns may be
+  SPARSE: a depth that owns no node leaves its column empty. `column_count` is
+  `max(column) + 1` over the emitted nodes, and `1` when the repo has no nodes.
+
+  There is deliberately NO one-column-per-agent / per-agent band concept:
+  columns carry the graph geometry, the row grouping carries agent ownership.
+  The renderer ROUTES the line/curve between edge endpoints — the model only
+  supplies the integers.
 
   ## Base synthesis
 
@@ -55,40 +87,35 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   ## Edges (child → parent)
 
-  For every real commit node and every one of its `:parents` present in the
-  node set (fetched commits ∪ synthesized base shas), one edge is emitted from
-  the child to that parent: `kind: :parent` for the FIRST present parent in the
-  commit's `:parents` order (the first-parent lineage) and `kind: :merge` for
-  every other present parent (a folded side branch). Parents absent from the
-  node set produce no edge; identical `{from_sha, to_sha}` edges are
-  de-duplicated. A base node has no parents, so it is always an edge target.
+  For every real commit node and every one of its `:parents` present in the node
+  set (fetched commits ∪ synthesized base shas), one edge is emitted from the
+  child to that parent, carrying both endpoints' `{column, row}`: `kind: :parent`
+  for the FIRST present parent in the commit's `:parents` order (the first-parent
+  lineage) and `kind: :merge` for every other present parent (a folded side
+  branch). Parents absent from the node set produce no edge; identical
+  `{from_sha, to_sha}` edges are de-duplicated; the `owner_id` is the CHILD
+  node's owner. A base node has no parents, so it is always an edge target.
+  Edges are sorted by `{from_sha, to_sha}` so the list is stable between
+  refreshes.
 
-  ## Lanes (the vertical agent axis)
+  ## Ownership (a single owner per node)
 
-  One lane per agent, ordered by `{depth, id}` ASCENDING so the row order
-  matches the agent tree; a lane's `y` is its index. Each lane reports the span
-  of the nodes it OWNS (`x_start`/`x_end`, nil when it owns none), how many
-  nodes it owns (`node_count`), its `start_sha` (`:base_commit`) / `end_sha`
-  (`:current_commit`) and whether the agent has ENDED (`ended`, from the
-  agent map's `:ended` flag — set by the page for in-session RETAINED agents
-  that are no longer in the live list, so a lane can outlive its agent; it is
-  `false` for every live agent).
-
-  Node ownership (`node.owner_id` + `node.y`):
+  A node's `depth` is its OWNER's depth, and owner groups are depth-ordered, so
+  the depth is monotonic down the rows. Ownership keeps ONE owner per node:
 
     - a commit on at least one agent's progress path belongs to the agent with
-      the MAXIMUM depth (ties broken by the SMALLEST lane index), so a shared
-      commit lands in the deepest lane that worked on it;
+      the MAXIMUM depth (ties broken by the SMALLEST agent-order index), so a
+      shared commit lands with the deepest agent that worked on it;
     - a fetched commit on NO path (a merged-in side commit) inherits the owner
       of the commit it is the FIRST parent of — the deepest such child, ties by
-      smallest lane index — falling back to the first lane when it has no owned
+      smallest index — falling back to the first agent when it has no owned
       child. Commits are resolved in DESCENDING rank order, so children are
       owned before their parents;
     - a synthesized base node belongs to the agent with the SMALLEST
-      `{depth, lane index}` among the agents forked from it, so a shared task
-      base lands in the shallowest root lane.
+      `{depth, index}` among the agents forked from it, so a shared task base
+      lands with the shallowest root agent.
 
-  A repo without agents has no lanes and therefore no nodes, edges or spans.
+  A repo without agents has no owners and therefore no nodes, edges or agents.
 
   ## Progress path (first-parent walk)
 
@@ -101,9 +128,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   Every node carries the agent ids that fork from it (`start_ids`, from
   `:base_commit`) and the agent ids that tip at it (`end_ids`, from
-  `:current_commit`), in lane order, so a lane's endpoints can be marked without
-  re-scanning the agent list. A node can be a start for one agent and an end for
-  another.
+  `:current_commit`), in agent order, so a group's endpoints can be marked
+  without re-scanning the agent list. A node can be a start for one agent and an
+  end for another.
 
   ## Depth → hue
 
@@ -124,20 +151,20 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
       %{
         repo_key: term(), repo_dom_id: String.t(), repo_name: String.t(),
         node_count: non_neg_integer(), edge_count: non_neg_integer(),
-        lane_count: non_neg_integer(), row_count: non_neg_integer(),
-        max_x: integer(),
+        row_count: non_neg_integer(), column_count: non_neg_integer(),
         nodes: [%{sha:, short_sha:, message:, author_name:, date:, refs:,
-                  x:, y:, kind:, owner_id:, start_ids:, end_ids:}],
-        edges: [%{from_sha:, to_sha:, from:, to:, kind:, owner_id:}],
-        lanes: [%{agent_id:, task_local_id:, status:, depth:, color:, y:,
-                  x_start:, x_end:, node_count:, start_sha:, end_sha:, ended:}]
+                  row:, column:, depth:, kind:, owner_id:, start_ids:, end_ids:}],
+        edges: [%{from_sha:, to_sha:, from_column:, from_row:, to_column:,
+                  to_row:, kind:, owner_id:}],
+        agents: [%{agent_id:, task_local_id:, status:, depth:, color:,
+                   start_sha:, end_sha:, ended:}]
       }
 
-  `nodes` is sorted by `{x, y, sha}`, `edges` by `{from_sha, to_sha}` and
-  `lanes` by `{depth, id}` — all deterministic, so LiveView can patch the graph
-  incrementally instead of re-rendering it on every refresh. The module emits no
-  rendering concerns: no DOM ids beyond `repo_dom_id`, no colors beyond
-  `lane.color`, no SVG geometry.
+  `nodes` is sorted top → bottom (ascending `row`), `edges` by
+  `{from_sha, to_sha}` and `agents` by `{depth, task_local_id, agent_id}` — all
+  deterministic, so LiveView can patch the graph incrementally instead of
+  re-rendering it on every refresh. The module emits no rendering concerns: no
+  DOM ids beyond `repo_dom_id`, no colors beyond `agent.color`, no SVG geometry.
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
@@ -146,10 +173,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   alias EvoDashWeb.ThemeColor
 
   @typedoc """
-  One commit of the graph — a fetched commit (`kind: :commit`) or a synthesized
-  fork point (`kind: :base`). `x` is the grid column (the topological rank),
-  `y` the owning lane's row, `owner_id` the owning agent's id, and
-  `start_ids`/`end_ids` the agent ids that fork from / tip at this sha.
+  One commit ROW of the vertical graph — a fetched commit (`kind: :commit`) or a
+  synthesized fork point (`kind: :base`). `row` is the unique top → bottom
+  position, `column` the gutter column, `depth` the OWNER agent's depth,
+  `owner_id` the owning agent's id and `start_ids`/`end_ids` the agent ids that
+  fork from / tip at this sha.
   """
   @type node_view :: %{
           sha: String.t(),
@@ -158,8 +186,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           author_name: String.t() | nil,
           date: DateTime.t() | nil,
           refs: [String.t()],
-          x: integer(),
-          y: non_neg_integer(),
+          row: non_neg_integer(),
+          column: non_neg_integer(),
+          depth: non_neg_integer(),
           kind: :commit | :base,
           owner_id: term() | nil,
           start_ids: [term()],
@@ -167,42 +196,42 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         }
 
   @typedoc """
-  One child → parent edge. `from`/`to` are the `{x, y}` grid coordinates of the
-  child/parent nodes and `kind` is `:parent` for the first present parent,
-  `:merge` for every other present parent.
+  One child → parent edge. The `from_*` fields are the child node's gutter
+  position, the `to_*` fields the parent's; `kind` is `:parent` for the first
+  present parent, `:merge` for every other present parent, and `owner_id` is
+  the CHILD node's owner.
   """
   @type edge_view :: %{
           from_sha: String.t(),
           to_sha: String.t(),
-          from: {integer(), non_neg_integer()},
-          to: {integer(), non_neg_integer()},
+          from_column: non_neg_integer(),
+          from_row: non_neg_integer(),
+          to_column: non_neg_integer(),
+          to_row: non_neg_integer(),
           kind: :parent | :merge,
           owner_id: term() | nil
         }
 
   @typedoc """
-  One agent lane (a horizontal band of the graph). `y` is the lane index,
-  `x_start`/`x_end` bound the nodes the lane owns (nil when it owns none),
-  `start_sha`/`end_sha` are the agent's `:base_commit`/`:current_commit`, and
-  `ended` is true for an in-session retained agent that is no longer live.
+  One agent of the graph — metadata only (there are no per-agent row bands).
+  `depth` is normalized, `color` the depth hue, `start_sha`/`end_sha` the
+  agent's `:base_commit`/`:current_commit`, and `ended` is true for an in-session
+  retained agent that is no longer live.
   """
-  @type lane_view :: %{
+  @type agent_view :: %{
           agent_id: term(),
           task_local_id: term(),
           status: term(),
           depth: non_neg_integer(),
           color: String.t(),
-          y: non_neg_integer(),
-          x_start: integer() | nil,
-          x_end: integer() | nil,
-          node_count: non_neg_integer(),
           start_sha: String.t() | nil,
           end_sha: String.t() | nil,
           ended: boolean()
         }
 
   @typedoc """
-  The commit-DAG view model for one repository group, ready to render.
+  The vertical commit-graph view model for one repository group, ready to
+  render.
   """
   @type repo_view :: %{
           repo_key: term(),
@@ -210,12 +239,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           repo_name: String.t(),
           node_count: non_neg_integer(),
           edge_count: non_neg_integer(),
-          lane_count: non_neg_integer(),
           row_count: non_neg_integer(),
-          max_x: integer(),
+          column_count: non_neg_integer(),
           nodes: [node_view()],
           edges: [edge_view()],
-          lanes: [lane_view()]
+          agents: [agent_view()]
         }
 
   # --- Public API -----------------------------------------------------------
@@ -256,11 +284,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   def repo_display_name(_), do: gettext("Unknown Repo")
 
   @doc """
-  Builds the per-repo commit-DAG view model.
+  Builds the per-repo VERTICAL commit-graph view model.
 
   `raw_by_repo` maps a repo grouping key to the fetched commit graph
   (`%{commits: [commit], refs: %{sha => [name]}}`); a key that is absent (or a
-  repo whose fetch failed) yields empty nodes, edges and lanes.
+  repo whose fetch failed) yields empty nodes, edges and agents.
 
   Agents are grouped by `grouping_key/1` — exactly like the tree — and the
   resulting `repo_view`s are sorted by `repo_name` ascending (ties broken by
@@ -296,18 +324,17 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     )
   end
 
-  # No agents means no lanes, and a lane is the only thing that can own a node —
-  # so a repo without agents has no graph at all.
+  # No agents means no owners, and an owner is the only thing that can claim a
+  # node — so a repo without agents has no graph at all.
   defp empty_body do
     %{
       node_count: 0,
       edge_count: 0,
-      lane_count: 0,
       row_count: 0,
-      max_x: 0,
+      column_count: 1,
       nodes: [],
       edges: [],
-      lanes: []
+      agents: []
     }
   end
 
@@ -345,19 +372,16 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
     nodes = build_nodes(graph, ordered)
     edges = build_edges(commits, nodes)
-    lanes = build_lanes(ordered, nodes)
-
-    x_values = Enum.map(nodes, & &1.x)
+    columns = Enum.map(nodes, & &1.column)
 
     %{
       node_count: length(nodes),
       edge_count: length(edges),
-      lane_count: length(lanes),
-      row_count: length(lanes),
-      max_x: if(x_values == [], do: 0, else: Enum.max(x_values)),
+      row_count: length(nodes),
+      column_count: if(columns == [], do: 1, else: Enum.max(columns) + 1),
       nodes: nodes,
       edges: edges,
-      lanes: lanes
+      agents: build_agents(ordered)
     }
   end
 
@@ -407,17 +431,18 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   # --- Agents ---------------------------------------------------------------
 
-  # Agents are folded in ascending `{depth, id}` order — the same order the
-  # page sorts them in — so the lane order and every color/ownership assignment
-  # stay deterministic across refreshes.
+  # Agents are folded in ascending `{depth, task_local_id, id}` order — the
+  # order the `agents` list and every row group use — so ownership, columns and
+  # colors stay deterministic across refreshes.
   defp ordered_agents(repo_agents) do
     Enum.sort_by(List.wrap(repo_agents), fn agent ->
-      {normalize_depth(Map.get(agent, :depth)), Map.get(agent, :id)}
+      {normalize_depth(Map.get(agent, :depth)), Map.get(agent, :task_local_id),
+       Map.get(agent, :id)}
     end)
   end
 
-  # Per-lane ownership scores, keyed by lane index: `{-depth, index}` sorts the
-  # deepest lane first and breaks ties on the smallest lane index.
+  # Per-agent ownership scores, keyed by agent-order index: `{-depth, index}`
+  # sorts the deepest agent first and breaks ties on the smallest index.
   defp index_scores(ordered) do
     ordered
     |> Enum.with_index()
@@ -426,109 +451,167 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     end)
   end
 
-  # --- Nodes ---
+  # `{agent_id, depth}` per agent-order index, so a node can read its owner's id
+  # and depth (which is also its gutter column) without rescanning the list.
+  defp index_meta(ordered) do
+    Enum.map(ordered, fn agent ->
+      {Map.get(agent, :id), normalize_depth(Map.get(agent, :depth))}
+    end)
+  end
+
+  defp owner_meta(meta, index) do
+    case Enum.at(meta, index) do
+      {id, depth} -> {id, depth}
+      _ -> {nil, 0}
+    end
+  end
+
+  # --- Nodes (one row per commit) -------------------------------------------
 
   defp build_nodes(graph, ordered) do
-    base_x = min_real_x(graph.ranks) - 1
+    meta = index_meta(ordered)
 
     real =
       Enum.map(graph.commits, fn commit ->
         sha = Map.get(commit, :sha)
-        index = Map.get(graph.owners, sha, 0)
 
-        %{
+        internal_node(
           sha: sha,
           short_sha: short_sha(commit, sha),
           message: first_line(Map.get(commit, :message)),
           author_name: author_name(commit),
           date: date_of(commit),
           refs: refs_for(graph.refs, sha),
-          x: Map.get(graph.ranks, sha, 0),
-          y: index,
           kind: :commit,
-          owner_id: owner_id(ordered, index),
+          rank: Map.get(graph.ranks, sha, 0),
+          owner_index: Map.get(graph.owners, sha, 0),
           start_ids: Map.get(graph.start_ids, sha, []),
-          end_ids: Map.get(graph.end_ids, sha, [])
-        }
+          end_ids: Map.get(graph.end_ids, sha, []),
+          meta: meta
+        )
       end)
 
     base =
       Enum.map(graph.base_shas, fn sha ->
-        index = Map.get(graph.base_owners, sha, 0)
-
-        %{
+        internal_node(
           sha: sha,
           short_sha: String.slice(sha, 0, 8),
           message: "",
           author_name: nil,
           date: nil,
           refs: [],
-          x: base_x,
-          y: index,
           kind: :base,
-          owner_id: owner_id(ordered, index),
+          # A fork point predates every real commit, so it always sorts first in
+          # its agent's group.
+          rank: -1,
+          owner_index: Map.get(graph.base_owners, sha, 0),
           start_ids: Map.get(graph.start_ids, sha, []),
-          end_ids: Map.get(graph.end_ids, sha, [])
-        }
+          end_ids: Map.get(graph.end_ids, sha, []),
+          meta: meta
+        )
       end)
 
-    Enum.sort_by(real ++ base, fn node -> {node.x, node.y, node.sha} end)
+    owned = Enum.group_by(real ++ base, & &1.owner_index)
+
+    ordered
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {_agent, index} ->
+      owned |> Map.get(index, []) |> Enum.sort_by(& &1.order_key)
+    end)
+    |> Enum.with_index()
+    |> Enum.map(fn {node, row} -> node_view(node, row) end)
   end
 
-  # The minimum topological rank over the FETCHED commits — `0` when the repo
-  # has no real commit at all, which puts a lone base node at `x = -1`.
-  defp min_real_x(ranks) do
-    ranks |> Map.values() |> Enum.min(fn -> 0 end)
+  defp internal_node(opts) do
+    {owner_id, depth} = owner_meta(Keyword.fetch!(opts, :meta), opts[:owner_index])
+    kind = Keyword.fetch!(opts, :kind)
+    sha = Keyword.fetch!(opts, :sha)
+
+    %{
+      sha: sha,
+      short_sha: Keyword.fetch!(opts, :short_sha),
+      message: Keyword.fetch!(opts, :message),
+      author_name: Keyword.fetch!(opts, :author_name),
+      date: Keyword.fetch!(opts, :date),
+      refs: Keyword.fetch!(opts, :refs),
+      kind: kind,
+      owner_id: owner_id,
+      owner_index: opts[:owner_index],
+      depth: depth,
+      # Base nodes first (kind_rank 0), then ascending ancestry rank, then sha.
+      order_key: {kind_rank(kind), Keyword.fetch!(opts, :rank), sha},
+      start_ids: Keyword.fetch!(opts, :start_ids),
+      end_ids: Keyword.fetch!(opts, :end_ids)
+    }
   end
 
-  defp owner_id(ordered, index) do
-    case Enum.at(ordered, index) do
-      %{} = agent -> Map.get(agent, :id)
-      _ -> nil
-    end
+  defp kind_rank(:base), do: 0
+  defp kind_rank(_kind), do: 1
+
+  # The gutter column IS the node's depth (its owner's depth).
+  defp node_view(node, row) do
+    %{
+      sha: node.sha,
+      short_sha: node.short_sha,
+      message: node.message,
+      author_name: node.author_name,
+      date: node.date,
+      refs: node.refs,
+      row: row,
+      column: node.depth,
+      depth: node.depth,
+      kind: node.kind,
+      owner_id: node.owner_id,
+      start_ids: node.start_ids,
+      end_ids: node.end_ids
+    }
   end
 
   # --- Edges (child → parent) -----------------------------------------------
 
   defp build_edges(commits, nodes) do
-    coords = Map.new(nodes, fn node -> {node.sha, {node.x, node.y}} end)
+    coords = Map.new(nodes, fn node -> {node.sha, {node.column, node.row}} end)
     owners = Map.new(nodes, fn node -> {node.sha, node.owner_id} end)
 
     commits
     |> Enum.flat_map(fn commit ->
       sha = Map.get(commit, :sha)
 
-      commit
-      |> parents_list()
-      |> Enum.uniq()
-      |> Enum.filter(&Map.has_key?(coords, &1))
-      |> Enum.with_index()
-      |> Enum.map(fn {parent_sha, position} ->
-        %{
-          from_sha: sha,
-          to_sha: parent_sha,
-          from: Map.get(coords, sha),
-          to: Map.get(coords, parent_sha),
-          kind: if(position == 0, do: :parent, else: :merge),
-          owner_id: Map.get(owners, sha)
-        }
-      end)
+      case Map.fetch(coords, sha) do
+        {:ok, {from_column, from_row}} ->
+          commit
+          |> parents_list()
+          |> Enum.uniq()
+          |> Enum.filter(&Map.has_key?(coords, &1))
+          |> Enum.with_index()
+          |> Enum.map(fn {parent_sha, position} ->
+            {to_column, to_row} = Map.fetch!(coords, parent_sha)
+
+            %{
+              from_sha: sha,
+              to_sha: parent_sha,
+              from_column: from_column,
+              from_row: from_row,
+              to_column: to_column,
+              to_row: to_row,
+              kind: if(position == 0, do: :parent, else: :merge),
+              owner_id: Map.get(owners, sha)
+            }
+          end)
+
+        :error ->
+          []
+      end
     end)
     |> Enum.uniq_by(fn edge -> {edge.from_sha, edge.to_sha} end)
     |> Enum.sort_by(fn edge -> {edge.from_sha, edge.to_sha} end)
   end
 
-  # --- Lanes (one row per agent) --------------------------------------------
+  # --- Agents view ----------------------------------------------------------
 
-  defp build_lanes(ordered, nodes) do
-    owned = Enum.group_by(nodes, & &1.y)
-
-    ordered
-    |> Enum.with_index()
-    |> Enum.map(fn {agent, index} ->
+  defp build_agents(ordered) do
+    Enum.map(ordered, fn agent ->
       depth = normalize_depth(Map.get(agent, :depth))
-      lane_nodes = Map.get(owned, index, [])
-      xs = Enum.map(lane_nodes, & &1.x)
 
       %{
         agent_id: Map.get(agent, :id),
@@ -536,14 +619,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         status: Map.get(agent, :status),
         depth: depth,
         color: depth_color(depth),
-        y: index,
-        x_start: if(xs == [], do: nil, else: Enum.min(xs)),
-        x_end: if(xs == [], do: nil, else: Enum.max(xs)),
-        node_count: length(lane_nodes),
         start_sha: sha_or_nil(Map.get(agent, :base_commit)),
         end_sha: sha_or_nil(Map.get(agent, :current_commit)),
-        # Retained (ended) agents still get a lane so their START/END markers
-        # survive agent recycling; live agents are never marked.
+        # Retained (ended) agents still appear so their START/END markers survive
+        # agent recycling; live agents are never marked.
         ended: Map.get(agent, :ended) == true
       }
     end)
@@ -551,9 +630,9 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   # --- Ownership ------------------------------------------------------------
 
-  # sha → the lane index that owns it: the deepest lane whose progress path
-  # contains the commit, plus — for merged-in side commits — the lane inherited
-  # from the first child.
+  # sha → the agent-order index that owns it: the deepest agent whose progress
+  # path contains the commit, plus — for merged-in side commits — the index
+  # inherited from the first child.
   defp node_owners(commits, ordered, paths, ranks) do
     owned = path_owners(ordered, paths)
     children = children_index(commits)
@@ -571,8 +650,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     end)
   end
 
-  # Walks every agent's progress path, keeping the lane with the best ownership
-  # score (deepest, ties on the smallest lane index).
+  # Walks every agent's progress path, keeping the index with the best ownership
+  # score (deepest, ties on the smallest agent-order index).
   defp path_owners(ordered, paths) do
     ordered
     |> Enum.with_index()
@@ -603,8 +682,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   end
 
   # A merged-in side commit inherits the owner of the commit it is the FIRST
-  # parent of — the deepest such child (ties on the smallest lane index) — and
-  # falls back to the first lane when no owned child claims it.
+  # parent of — the deepest such child (ties on the smallest index) — and falls
+  # back to the first agent when no owned child claims it.
   defp inherited_index(children, commit, owners, scores) do
     children
     |> Map.get(Map.get(commit, :sha), [])
@@ -634,8 +713,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     |> Enum.uniq()
   end
 
-  # The SHALLOWEST lane forked from a synthesized base wins it, so a shared task
-  # base lands in the root lane rather than in a deep child lane.
+  # The SHALLOWEST agent forked from a synthesized base wins it, so a shared
+  # task base lands with the root agent rather than a deep child.
   defp base_owners(ordered, lookup) do
     ordered
     |> Enum.with_index()
@@ -656,7 +735,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
     |> Map.new(fn {sha, {_depth, index}} -> {sha, index} end)
   end
 
-  # sha → the agent ids that fork from (start) / tip at (end) it, in lane order.
+  # sha → the agent ids that fork from (start) / tip at (end) it, in agent order.
   defp annotations(ordered) do
     Enum.reduce(ordered, {%{}, %{}}, fn agent, {starts, ends} ->
       id = Map.get(agent, :id)
@@ -676,9 +755,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   # --- Ranks ------------------------------------------------------------------
 
   # Memoized topological ranks over the FETCHED parents: no fetched parent → 0,
-  # otherwise 1 + max(rank(parent)). The `visiting` set makes a malformed parent
-  # cycle terminate — a revisit returns the memoized rank when there is one,
-  # else 0 — so a cyclic payload can never recurse forever.
+  # otherwise 1 + max(rank(parent)). Ranking rather than the fetch order matters:
+  # the fetch concatenates one `git log` per agent range, so the input list is
+  # not globally newest-first, and `%DateTime{}` structs must never be compared
+  # directly (term order looks at `day` before `month`/`year`). The `visiting`
+  # set makes a malformed parent cycle terminate — a revisit returns the
+  # memoized rank when there is one, else 0 — so a cyclic payload can never
+  # recurse forever.
   defp ranks(lookup) do
     lookup
     |> Map.keys()
