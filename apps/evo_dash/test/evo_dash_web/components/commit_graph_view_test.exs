@@ -28,6 +28,13 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     * `g.cg-lane[data-commit-graph-anim="lane"]` with the stable anchor id
       `#commit-agent-row-<repo_dom_id>-<agent_id>`, an inner `<title>`, the
       `#commit-lane-<dom>-<id>` band and the `T<task_local_id>` label;
+    * an ENDED (retained) lane (`ended: true` — an agent terminated/recycled but
+      kept in-session) renders at HALF opacity: band `fill-opacity: 0.06` /
+      `stroke-opacity: 0.2` (`0.2` / `0.45` when selected), label `opacity="0.5"`,
+      owned nodes `fill-opacity: 0.5`, owned edges `stroke-opacity: 0.4`, and a
+      `<title>` gaining `· terminated` — while base nodes stay `1`, unowned edges
+      `0.3` and a lane without the OPTIONAL flag (or with any non-`true` value)
+      stays byte-identical;
     * selection (`selected_id`) rings the selected agent's START (solid) and END
       (dashed) nodes, tints its lane band and renders the
       `#cg-selection-readout-<dom>` annotation;
@@ -522,6 +529,175 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
       assert a1.task_local_id == 1
       assert a2.task_local_id == 2
+    end
+  end
+
+  describe "commit_graph_view/1 — ended (retained) lanes" do
+    test "an ENDED lane renders its band, label and tooltip dimmed" do
+      {repo, dom, tree} = happy_ended()
+
+      [a1, a2] = repo.lanes
+      assert a1.agent_id == "a1"
+      assert a1.ended == true
+      # The live lane is NOT flagged (the assembler emits `ended: false`).
+      assert a2.ended == false
+
+      # The band rests at HALF the live fill/stroke opacity.
+      [band] = Floki.find(tree, "#commit-lane-#{dom}-a1")
+
+      assert attr(band, "style") == [
+               "fill: #{a1.color}; fill-opacity: 0.06; stroke: #{a1.color}; stroke-opacity: 0.2"
+             ]
+
+      # The `T<id>` glyph drops to half opacity through the SVG `opacity`
+      # attribute (the fill hue itself is unchanged).
+      [label] = Floki.find(tree, "#commit-lane-label-#{dom}-a1")
+      assert attr(label, "opacity") == ["0.5"]
+      assert attr(label, "style") == ["fill: #{a1.color}"]
+      assert String.trim(Floki.text(label)) == "T1"
+
+      # The tooltip gains the `terminated` marker AFTER the status.
+      assert lane_title(tree, "commit-agent-row-#{dom}-a1") == "T1 · Running · terminated"
+
+      # The id / click contract is untouched — a dimmed lane still selects.
+      [lane_el] = Floki.find(tree, "#commit-agent-row-#{dom}-a1")
+      assert attr(lane_el, "class") == ["cg-lane"]
+      assert attr(lane_el, "data-commit-graph-anim") == ["lane"]
+      assert attr(lane_el, "data-cg-agent-id") == ["a1"]
+      assert attr(lane_el, "phx-click") == ["select_agent"]
+      assert attr(lane_el, "phx-value-id") == ["a1"]
+    end
+
+    test "a lane WITHOUT `ended` (or with any non-`true` value) is byte-identical to a live lane" do
+      {repo, dom, tree} = happy_ended()
+
+      # The untouched lane of the same repo renders at the resting values (the
+      # real builder always emits the flag, `false` for a live agent).
+      [a2] = Enum.filter(repo.lanes, &(&1.agent_id == "a2"))
+      assert Map.has_key?(a2, :ended)
+      assert a2.ended == false
+
+      [band] = Floki.find(tree, "#commit-lane-#{dom}-a2")
+
+      assert attr(band, "style") == [
+               "fill: #{a2.color}; fill-opacity: 0.12; stroke: #{a2.color}; stroke-opacity: 0.35"
+             ]
+
+      [label] = Floki.find(tree, "#commit-lane-label-#{dom}-a2")
+      # `nil` → the attribute is OMITTED entirely, never `opacity="1"`.
+      assert attr(label, "opacity") == []
+      assert lane_title(tree, "commit-agent-row-#{dom}-a2") == "T2 · Completed"
+
+      # Strict parity: the OPTIONAL flag is keyed on `ended == true` ONLY, so an
+      # absent key and every non-`true` value render the very same lane group.
+      baseline = lane_group_html(:absent)
+
+      for ended <- [false, nil, "yes", 1] do
+        assert lane_group_html(ended) == baseline
+      end
+
+      # The probe is not vacuous: a `true` flag really does change the markup.
+      refute lane_group_html(true) == baseline
+      assert lane_group_html(true) =~ ~s(opacity="0.5")
+      assert lane_group_html(true) =~ "terminated"
+      assert baseline =~ "fill-opacity: 0.12"
+      refute baseline =~ "terminated"
+    end
+
+    test "a SELECTED ended lane keeps the primary band stroke at the dimmed stroke opacity" do
+      {repo, dom, tree} = happy_ended_selected("a1")
+
+      [a1, a2] = repo.lanes
+      assert a1.ended == true
+
+      [band] = Floki.find(tree, "#commit-lane-#{dom}-a1")
+
+      assert attr(band, "style") == [
+               "fill: #{a1.color}; fill-opacity: 0.2; stroke: var(--color-primary); stroke-opacity: 0.45"
+             ]
+
+      # Selection still reads: the label stays dim, the rings/readout are drawn.
+      [label] = Floki.find(tree, "#commit-lane-label-#{dom}-a1")
+      assert attr(label, "opacity") == ["0.5"]
+
+      assert Floki.find(tree, "circle.cg-selection-start") != []
+      assert Floki.find(tree, "circle.cg-selection-end") != []
+
+      assert [readout] = Floki.find(tree, "text#cg-selection-readout-#{dom}")
+      assert String.trim(Floki.text(readout)) == "Selected T1 · b0000000 → c2000000"
+
+      # The live lane is neither dimmed NOR selected.
+      [live_band] = Floki.find(tree, "#commit-lane-#{dom}-a2")
+
+      assert attr(live_band, "style") == [
+               "fill: #{a2.color}; fill-opacity: 0.12; stroke: #{a2.color}; stroke-opacity: 0.35"
+             ]
+    end
+
+    test "an ended lane's OWNED nodes and edges are dimmed; base nodes and unowned edges are not" do
+      {repo, dom, tree} = happy_ended()
+
+      [a1, a2] = repo.lanes
+
+      dot_style = fn sha ->
+        [dot] = Floki.find(tree, "#commit-node-#{dom}-#{sha} circle.cg-node-dot")
+        attr(dot, "style") |> hd()
+      end
+
+      # a1 owns three edges (c1 → base, c2 → c1 and the folded side branch).
+      a1_edges = Enum.filter(repo.edges, &(&1.owner_id == "a1"))
+      assert length(a1_edges) == 3
+
+      for edge <- a1_edges do
+        [el] = Floki.find(tree, "#{edge_selector(dom, edge)}")
+
+        assert attr(el, "style") == ["stroke: #{a1.color}; stroke-opacity: 0.4"]
+      end
+
+      # A LIVE lane's edges keep their resting opacity.
+      live_edge = Enum.find(repo.edges, &(&1.owner_id == "a2"))
+      [live_el] = Floki.find(tree, "#{edge_selector(dom, live_edge)}")
+      assert attr(live_el, "style") == ["stroke: #{a2.color}; stroke-opacity: 0.75"]
+
+      # Owned commit nodes drop to half fill opacity — hue / status colour is
+      # unchanged. c1 is a mid-path commit, c2 is a1's END commit.
+      assert dot_style.(@sha_c1) == "fill: #{a1.color}; fill-opacity: 0.5; stroke: #{a1.color}"
+
+      running = Helpers.agent_status_svg_color(:running)
+
+      assert dot_style.(@sha_c2) ==
+               "fill: #{running}; fill-opacity: 0.5; stroke: #{running}"
+
+      # The base (fork) node belongs to the ended lane but stays fully opaque.
+      assert Enum.find(repo.nodes, &(&1.sha == @sha_base)).owner_id == "a1"
+
+      assert dot_style.(@sha_base) ==
+               "fill: none; fill-opacity: 1; stroke: var(--color-base-content)"
+
+      # A node of the live lane is untouched.
+      assert dot_style.(@sha_c3) =~ "fill-opacity: 1"
+
+      # An edge with NO owning lane ignores the ended flag entirely — it keeps
+      # its own muted resting opacity next to an ended lane.
+      bare =
+        repo_view(
+          edges: [edge(owner_id: "ghost")],
+          lanes: [lane(ended: true, x_start: 0, x_end: 0)]
+        )
+
+      bare_tree = parse(render_repos([bare]))
+      bare_dom = bare.repo_dom_id
+
+      [ghost] =
+        Floki.find(bare_tree, "#{edge_selector(bare_dom, edge(owner_id: "ghost"))}")
+
+      assert attr(ghost, "style") == [
+               "stroke: var(--color-base-content); stroke-opacity: 0.3"
+             ]
+
+      # The probe really carries an ended lane (its band is dimmed).
+      [bare_band] = Floki.find(bare_tree, "#commit-lane-#{bare_dom}-hand1")
+      assert attr(bare_band, "style") |> hd() =~ "fill-opacity: 0.06"
     end
   end
 
@@ -1088,6 +1264,29 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     {hd(repos), dom_id(repos), parse(render_repos(repos))}
   end
 
+  # ... with a1's lane flagged `ended: true` (the exact shape the assembler
+  # emits for a RETAINED / terminated in-session agent, see `CommitGraph.build/2`).
+  # Only the flag is injected — the real builder output stays untouched.
+  defp happy_ended do
+    repos = mark_lane_ended(happy_repos(), "a1")
+    {hd(repos), dom_id(repos), parse(render_repos(repos))}
+  end
+
+  defp happy_ended_selected(selected_id) do
+    repos = mark_lane_ended(happy_repos(), "a1")
+    {hd(repos), dom_id(repos), parse(render_repos(repos, selected_id: selected_id))}
+  end
+
+  defp mark_lane_ended(repos, agent_id) do
+    Enum.map(repos, fn repo ->
+      Map.update!(repo, :lanes, fn lanes ->
+        Enum.map(lanes, fn lane ->
+          if Map.get(lane, :agent_id) == agent_id, do: Map.put(lane, :ended, true), else: lane
+        end)
+      end)
+    end)
+  end
+
   defp happy_selected(selected_id) do
     repos = happy_repos()
     {hd(repos), dom_id(repos), parse(render_repos(repos, selected_id: selected_id))}
@@ -1096,6 +1295,17 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   defp happy_error(error) do
     repos = happy_repos()
     {hd(repos), dom_id(repos), parse(render_repos(repos, error: error))}
+  end
+
+  # The RAW html of a hand-crafted single-lane repo's lane group — the strict
+  # parity probe for the OPTIONAL `ended` flag (`:absent` omits the key entirely).
+  defp lane_group_html(ended) do
+    overrides = [x_start: 0, x_end: 0] ++ if(ended == :absent, do: [], else: [ended: ended])
+    repo = repo_view(nodes: [graph_node(sha: "l0000001", x: 0)], lanes: [lane(overrides)])
+    tree = parse(render_repos([repo]))
+
+    [lane_el] = Floki.find(tree, "#commit-agent-row-#{repo.repo_dom_id}-hand1")
+    Floki.raw_html(lane_el)
   end
 
   # The class of every element child of the repo's `g.cg-viewport`, in DOM order.
