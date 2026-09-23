@@ -73,6 +73,7 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 - `node_group/1` → `g#commit-node-<dom>-<sha>.cg-node[data-commit-graph-anim="node"][data-cg-agent-id={owner_id}][data-cg-sha={sha}]` with `phx-click="select_agent"` + `phx-value-id={owner_id}` (both OMITTED when `owner_id` is nil).
 - Contains a native `<title>` (`base · ` prefix for base nodes, then message first line · short sha · author · date · refs; empties dropped) and a `circle.cg-node-dot` (`cx`/`cy`/`r` — r = 7 normal, r = 5 base) with inline `fill` / `fill-opacity` / `stroke`.
 - Node fill: the owner lane's depth hue; a node that is its owner's END (`owner_id ∈ node.end_ids`) → `EvoDashWeb.Helpers.agent_status_svg_color(<owner lane status>)`; a base node (`kind: :base`) is HOLLOW (`fill:none`, base-content stroke); an unowned non-base node is muted `var(--color-base-content)` at `fill-opacity 0.55`.
+- A BASE node (`kind: :base` — it has no message/date) ALSO renders a VISIBLE short-sha label `text#commit-base-label-<dom>-<sha>.cg-base-label.font-mono` as an EXTRA child of the same `g.cg-node`, BELOW the dot (`x = cx`, `y = cy + node_r + 11`, `font-size="9"`, `text-anchor="middle"`, inline `fill: var(--color-primary-standalone)`), its content = `commit_short_sha/1 || short_sha/1`. Regular `:commit` nodes are UNLABELED (hover `<title>` tooltip only).
 - Selection markers (inline-styled, visible WITHOUT CSS): the START node (`selected_id ∈ node.start_ids`) → `circle.cg-selection-start` (solid `var(--color-primary)` ring, r = `node_r + 3.5`) + a `text.cg-selection-tag` BELOW it reading gettext `"start"`; the END node (`selected_id ∈ node.end_ids`) → `circle.cg-selection-end` (DASHED primary ring) + a `text.cg-selection-tag` ABOVE it reading gettext `"end"`.
 
 #### Lanes
@@ -103,7 +104,7 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 - Immediately inside: the node-scoped wrapper `id={"commit-graph-body-" <> @node_key}` (a node switch changes the id → LiveView replaces the whole subtree).
 - Per repo: the wrapper `div` whose id IS `repo_dom_id` VERBATIM; inside it `.cg-graph[data-cg-repo-id]` → `.cg-toolbar` (zoom buttons) → `svg.cg-svg[viewBox][width="100%"][height]` → `g.cg-viewport`.
 - `data-commit-graph-anim` takes EXACTLY three values: `"edge"` (`path.cg-edge`), `"node"` (`g.cg-node`), `"lane"` (`g.cg-lane`). The animation classes (`commit-node-enter` / `commit-lane-enter`) are NEVER emitted here — the JS adds them.
-- `g.cg-node` carries `data-cg-agent-id` + `data-cg-sha` + `phx-click="select_agent"` / `phx-value-id` (omitted when `owner_id` is nil).
+- `g.cg-node` carries `data-cg-agent-id` + `data-cg-sha` + `phx-click="select_agent"` / `phx-value-id` (omitted when `owner_id` is nil). A base node's VISIBLE short-sha `text.cg-base-label#commit-base-label-<dom>-<sha>` is an EXTRA child of the group — the group's id/class/data-* stay untouched.
 - `g.cg-lane` carries `data-cg-agent-id` + `phx-click="select_agent"` / `phx-value-id` (omitted when `agent_id` is nil) AND the stable anchor id `#commit-agent-row-<repo_dom_id>-<agent_key>`.
 - Zoom buttons carry `data-cg-action="zoom-in" | "zoom-out" | "fit"`; the sibling `.cg-zoom-readout` span is intentionally EMPTY (the hook writes into it).
 - State blocks keep their ids: `#commit-graph-error`, `#commit-graph-stale-warning`.

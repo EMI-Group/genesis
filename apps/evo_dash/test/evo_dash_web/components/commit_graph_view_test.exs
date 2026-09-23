@@ -355,6 +355,34 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Enum.count(repo.nodes, &(&1.kind == :base)) == 1
     end
 
+    test "a base node also renders a VISIBLE short-sha label; commit nodes stay unlabeled" do
+      {repo, dom, tree} = happy()
+
+      # The synthesized base node has no message/date — its short sha must be
+      # readable WITHOUT hovering (it only lived in the <title> tooltip before).
+      [label] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_base} text.cg-base-label")
+      assert attr(label, "id") == ["commit-base-label-#{dom}-#{@sha_base}"]
+      assert attr(label, "class") == ["cg-base-label font-mono"]
+      assert attr(label, "text-anchor") == ["middle"]
+      assert String.trim(Floki.text(label)) == String.slice(@sha_base, 0, 8)
+
+      # Positioned BELOW the node dot, horizontally centred on it.
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_base} circle.cg-node-dot")
+      assert num_attr(label, "x") == num_attr(dot, "cx")
+      assert num_attr(label, "y") > num_attr(dot, "cy")
+
+      # One label per base node — and the happy fixture has exactly one base.
+      assert length(Floki.find(tree, "text.cg-base-label")) == 1
+
+      assert length(Floki.find(tree, "text.cg-base-label")) ==
+               Enum.count(repo.nodes, &(&1.kind == :base))
+
+      # Regular commit nodes carry NO visible label (tooltip only).
+      for sha <- [@sha_c1, @sha_c2, @sha_side, @sha_c3] do
+        assert Floki.find(tree, "#commit-node-#{dom}-#{sha} text.cg-base-label") == []
+      end
+    end
+
     test "an owner's END node takes the shared status fill; other owned nodes the depth hue" do
       {repo, dom, tree} = happy()
 

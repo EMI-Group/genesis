@@ -400,6 +400,21 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         style={"fill: #{v.fill}; fill-opacity: #{v.fill_opacity}; stroke: #{v.stroke}"}
       />
 
+      <%= if Map.get(@node, :kind) == :base do %>
+        <%!-- zh_CN：合成基线节点（无提交信息/日期）额外显示可见的短 SHA 标签 --%>
+        <text
+          id={"commit-base-label-" <> @dom <> "-" <> sha_key(@node, :sha)}
+          class="cg-base-label font-mono"
+          x={v.cx}
+          y={v.cy + node_r() + 11}
+          font-size="9"
+          text-anchor="middle"
+          style="fill: var(--color-primary-standalone)"
+        >
+          {commit_short_sha(@node) || short_sha(Map.get(@node, :sha))}
+        </text>
+      <% end %>
+
       <%= if v.start? do %>
         <circle
           class="cg-selection-start"
