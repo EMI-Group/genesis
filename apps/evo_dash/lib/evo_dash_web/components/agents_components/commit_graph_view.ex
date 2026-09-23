@@ -1,92 +1,139 @@
 defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   @moduledoc """
-  TEMPORAL (git commit history) view for the Agents page left panel — an SVG
-  COMMIT-CENTRIC HORIZONTAL DAG (GitKraken-style): commits are nodes on a grid
-  (one COLUMN per ancestry step, time flowing LEFT → RIGHT — the repository's
-  base/fork node sits one column left of the oldest commit), connected by
-  child → parent edges, with one LANE ROW per agent (row order = the model's
-  `{depth, id}` order) whose band spans that agent's own progress range.
+  TEMPORAL (git commit history) view for the Agents page left panel — a
+  VERTICAL, GitLen/GitKraken-style commit graph: ONE ROW per commit, ordered
+  top → bottom by agent depth, with a fixed-width left GUTTER drawing the
+  commit DOTS and the child → parent EDGES between the rows.
 
   `commit_graph_view/1` is purely presentational: it consumes the fully
   prepared per-repo graph model built by the pure
-  `EvoDashWeb.AgentsLive.CommitGraph.build/2` (nodes / edges / lanes carrying
-  GRID coordinates `x`/`y`) and does NO data assembly, NO I/O and never touches
-  the socket. THIS module owns the grid → pixel mapping and the initial
-  viewport: each repo's `<svg class="cg-svg">` gets a `viewBox` equal to the
-  content bounds plus `20` user units of padding, and the client hook
-  (`assets/js/hooks/commit_graph.js`) pans/zooms by mutating that `viewBox`
-  (never a group transform) — `fit` recomputes it from
-  `.cg-viewport.getBBox()`.
+  `EvoDashWeb.AgentsLive.CommitGraph.build/2` (a vertical model carrying
+  `row`/`column` per node and `{column, row}` per edge endpoint) and does NO
+  data assembly, NO I/O and never touches the socket. THIS module owns the
+  grid → pixel mapping (the gutter geometry constants below), the row markup
+  and the selection marking. It never raises and never uses `try/rescue`;
+  every model read is TOTAL (`Map.get/2`, lists filtered to maps, grid values
+  folded to `0`, non-map/odd shapes dropped).
 
-  Colours: a node is filled with its OWNER lane's depth hue, or with
-  `EvoDashWeb.Helpers.agent_status_svg_color/1` when `owner_id ∈ node.end_ids`
-  (the owner's END commit); an edge is stroked with the child owner's depth hue
-  (looked up by `edge.owner_id`) and a `:merge` edge is dashed; a lane band and
-  its `T<id>` label are tinted with that lane's depth hue. Status colours are
-  NEVER mapped locally — always through that shared helper.
+  ## Layout
 
-  An ENDED lane (`ended: true` — the agent has ended / been recycled and is
-  retained in-session) is rendered DIM: its band fill/stroke opacity, its label
-  glyph opacity and the fill/stroke opacity of its OWNED nodes/edges are halved,
-  and its tooltip gains a `terminated` marker. The flag is OPTIONAL and read
-  TOTALLY — a lane without it renders exactly like a live lane.
+  One repository block per `repos` entry: a header (hero-server-stack icon in a
+  `bg-primary` chip + the repo name) followed by the vertical commit list. The
+  list is a `position: relative` column; an absolutely-positioned `<svg
+  class="cg-gutter">` spans the whole list height and is aligned so that:
 
-  Every read is TOTAL (`Map.get/2`, lists filtered to maps, grid values folded
-  to `0`, non-map/odd shapes dropped) so malformed data degrades to a
-  smaller/empty graph instead of raising. No `try/rescue`.
+    * commit at row `i` sits at `y = i * @row_h + @row_h / 2`;
+    * gutter column `c` sits at `x = @gutter_pad + c * @col_w + @col_w / 2`.
 
-  Frozen DOM markers (consumed by the client-side `CommitGraph` hook / CSS
-  animation in the assets subtree): `#commit-graph` + `phx-hook="CommitGraph"`,
-  `#commit-graph-body-<node_key>`, the per-repo wrapper whose id IS
-  `repo_dom_id` (the assembly already emits it `commit-graph-repo-<slug>-<hash>`
-  shaped — NO prefix is added here), then `.cg-graph` → the zoom buttons
-  (`data-cg-action="zoom-in" | "zoom-out" | "fit"`) → `<svg class="cg-svg">`
-  whose SOLE child is `<g class="cg-viewport">` holding all edges, then all
-  nodes, then all lane bands (DOM order = paint order). Edges are
-  `<path class="cg-edge" data-commit-graph-anim="edge">`, nodes are
-  `<g class="cg-node" data-commit-graph-anim="node" data-cg-agent-id data-cg-sha>`,
-  lanes are `<g class="cg-lane" data-commit-graph-anim="lane" data-cg-agent-id>`
-  (with the stable anchor id `#commit-agent-row-<repo_dom_id>-<agent_id>`).
-  `data-commit-graph-anim` takes EXACTLY those three values; the animation
-  classes (`commit-node-enter` / `commit-lane-enter`) are added by the JS, never
-  emitted here. Every element carries a stable, unique DOM id, so LiveView's
-  patcher (morphdom) reuses existing nodes by id — no `phx-update` mode anywhere.
+  The rows themselves are left-padded by the gutter width
+  (`@gutter_pad * 2 + column_count * @col_w`) so the svg and the row content
+  never overlap. Vertical scrolling is native (the page scrolls) — there is NO
+  pan/zoom.
+
+  ## Gutter paint
+
+  The gutter `<svg>` holds, in DOM order (paint order), every edge then every
+  node. An edge is a vertical cubic bezier whose control points sit at the
+  vertical midpoint between the two rows, stroked with the CHILD owner's depth
+  hue (`agents[].color`, looked up by `edge.owner_id`); a `:merge` edge is
+  dashed. A node is a circle filled with its OWNER agent's depth hue, EXCEPT a
+  commit that is an END commit for its owner (`owner_id ∈ node.end_ids`) which
+  uses `EvoDashWeb.Helpers.agent_status_svg_color/1` (status colours are NEVER
+  mapped locally); a `:base` node is drawn smaller + hollow and an unowned node
+  in muted base ink. An agent that `ended: true` (terminated / recycled but
+  retained in-session) renders DIM: its own nodes drop to half fill opacity and
+  its edges to a lower stroke opacity.
+
+  ## Rows, tags and selection
+
+  Each row shows the short sha (mono), the first-line message (truncated to one
+  line), `author · date`, and — on a second line — its TAGS:
+
+    * AGENT tags: one chip per agent that STARTS at this commit
+      (`node.start_ids` — its fork point) and per agent that TIPS here
+      (`node.end_ids`). Each chip is labelled `T<task_local_id>` in that agent's
+      depth hue and carries a `start`/`end` marker (solid vs dashed border);
+      every agent chip is clickable (`phx-click="select_agent"`).
+    * REF tags: one mono chip per entry in `node.refs` (non-clickable).
+
+  Clicking a ROW selects its owner (`phx-click="select_agent"` +
+  `phx-value-id={node.owner_id}`, both omitted when `owner_id` is nil). A
+  selected agent's START node wears a solid primary ring and its END node a
+  dashed primary ring on the gutter dot, plus a primary-tinted row accent and a
+  `start`/`end` marker. A small `Selected <agent> · <start>→<end>` readout
+  renders above the list while the selection is one of THIS repo's agents.
+
+  ## Frozen DOM contract
+
+  Consumed by the client-side `CommitGraph` hook (enter animations) and the
+  component tests — do NOT rename or drop these ids/classes/`data-*` values:
+
+    * `#commit-graph` + `phx-hook="CommitGraph"` — rendered ONCE per page,
+      persists across node switches.
+    * `#commit-graph-body-<node_key>` — node-scoped wrapper (its id changes on a
+      node switch, so LiveView replaces the subtree).
+    * one repo wrapper `div` whose id IS `repo_dom_id` VERBATIM (the builder
+      already emits a `commit-graph-repo-<slug>-<hash>` id — no prefix added
+      here).
+    * `#cg-selection-readout-<repo_dom_id>` — the optional selected-agent
+      readout above the list.
+    * `#cg-list-<repo_dom_id>` — the `relative` list wrapper (carries
+      `data-cg-repo-id`).
+    * `svg.cg-gutter#cg-gutter-<repo_dom_id>` — the absolute gutter overlay
+      (`left: 0; top: 0`, `pointer-events: none`); its `<title>`-less children
+      are `path.cg-edge` then `g.cg-node`.
+    * `path.cg-edge[data-commit-graph-anim="edge"]` with the stable id
+      `#commit-edge-<repo_dom_id>-<from_sha>-<to_sha>` (merge edges carry
+      `stroke-dasharray`).
+    * `g.cg-node[data-commit-graph-anim="node"]` with the stable id
+      `#commit-node-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`
+      and an inner `<title>` tooltip.
+    * `div.cg-row[data-commit-graph-anim="row"]` with the stable id
+      `#commit-row-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`
+      and the row `select_agent` contract.
+    * agent tags `button.cg-agent-tag` with ids
+      `#commit-agent-tag-<repo_dom_id>-<sha>-<start|end>-<agent_key>`; ref tags
+      `span.cg-ref-tag` with ids
+      `#commit-ref-tag-<repo_dom_id>-<sha>-<ref_key>`.
+    * `data-commit-graph-anim` takes EXACTLY the values `"row"`, `"node"` or
+      `"edge"`; the animation classes (`commit-row-enter` / `commit-node-enter` /
+      `commit-edge-enter`) are added by the JS, never emitted here.
+
+  Every element carries a stable, unique DOM id, so LiveView's patcher reuses
+  existing nodes by id — no `phx-update` mode anywhere.
+
+  ### Geometry constants
+
+      @row_h      44   # fixed row height (px) — the gutter aligns to this
+      @col_w      16   # gutter column width (px)
+      @gutter_pad 12   # padding on each side of the gutter columns (px)
+      @node_r      6   # commit node radius (px)
+      @base_r      4   # synthesized base node radius (px)
+
+  Gutter width (`@gutter_pad * 2 + column_count * @col_w`) and total height
+  (`node_count * @row_h`) are derived from the model; the gutter `<svg>` carries
+  a matched `viewBox`, so SVG user units equal CSS pixels 1:1.
   """
-
-  # zh_CN glossary used in this module:
-  #   Commit history → "提交历史", Repository → "仓库",
-  #   Loading → "加载中", No commit history yet → "暂无提交历史",
-  #   Zoom in → "放大", Zoom out → "缩小", Fit to view → "适应视图"
 
   use EvoDashWeb, :html
   use Gettext, backend: EvoDashWeb.Gettext
 
-  # --- Grid → pixel layout constants ----------------------------------------
-  # One grid COLUMN (one ancestry step) and one grid ROW (one agent lane).
-  @col_w 150
-  @row_h 46
-  # Left gutter INSIDE the plot, reserved for the `T<id>` lane labels so a lane
-  # label never covers the nodes/edges of its own row.
-  @gutter 132
-  # Commit node radius; an agent's END node keeps this fill and wears a ring.
-  @node_r 7
-  # Base (fork-point) nodes draw smaller + hollow so the oldest column reads
-  # differently from real commits.
-  @base_r 5
-  # Lane band height, vertically centered on its lane row.
-  @band_h 18
-  # Padding the initial `viewBox` keeps around the content bounds (all sides).
-  @vpad 20
-  # Extra top strip reserved for the selection readout (only while an agent of
-  # this repo is selected) so the readout never overlaps the first lane row.
-  @readout_h 24
-  # The intrinsic SVG box: never narrower than @min_w / taller than @max_h — a
-  # taller graph is scaled down by `preserveAspectRatio` (the hook's `fit`).
-  @min_w 320
-  @min_h 140
-  @max_h 640
-  # Horizontal breathing room a lane band keeps beyond its first/last node.
-  @band_pad 12
+  # zh_CN glossary used in this module:
+  #   Commit history → "提交历史", Loading → "加载中",
+  #   No commit history yet → "暂无提交历史", base → "基线",
+  #   start → "起始", end → "结束", terminated → "已终止"
+
+  # --- Gutter geometry (px; SVG user units == CSS pixels via the matched viewBox) ---
+
+  # Fixed row height — every row is EXACTLY this tall so the gutter can align.
+  @row_h 44
+  # Gutter column width (one depth level = one column).
+  @col_w 16
+  # Padding kept on each side of the gutter columns (dot radius + edge room).
+  @gutter_pad 12
+  # Commit node radius; a synthesized base node is smaller + hollow.
+  @node_r 6
+  @base_r 4
 
   # ---------------------------------------------------------------------------
   # commit_graph_view/1
@@ -181,7 +228,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   # ---------------------------------------------------------------------------
-  # repo_section/1 — one repository block (header + its SVG DAG).
+  # repo_section/1 — one repository block (header + its vertical commit list).
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
@@ -192,7 +239,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     <%!-- The wrapper id IS `repo_dom_id` verbatim: the builder already emits a
          `commit-graph-repo-<slug>-<hash>`-shaped id, so prefixing it here would
          double the prefix. --%>
-    <div id={repo_dom_id(@repo)} class="space-y-1">
+    <div id={repo_dom_id(@repo)} class="space-y-1" data-cg-repo-id={repo_dom_id(@repo)}>
       <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
         <.icon
           name="hero-server-stack"
@@ -205,198 +252,147 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
           {repo_name(@repo)}
         </span>
       </div>
-      <.graph_block repo={@repo} selected_id={@selected_id} />
+      <.commit_list repo={@repo} selected_id={@selected_id} />
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # graph_block/1 — the `.cg-graph` block: zoom toolbar + the SVG DAG.
-  #
-  # The `<svg class="cg-svg">` has exactly ONE child, `<g class="cg-viewport">`,
-  # which holds — in DOM order (paint order) — every edge, then every node, then
-  # every lane band, and finally the optional selection readout annotation.
+  # commit_list/1 — the optional selection readout + the relative list wrapper
+  # (rows) with the absolute gutter overlay.
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
   attr(:selected_id, :any, default: nil)
 
-  defp graph_block(assigns) do
+  defp commit_list(assigns) do
     ~H"""
     <% dom = repo_dom_id(@repo) %>
-    <% geom = geom(@repo, @selected_id) %>
-    <% lanes_index = lane_index(@repo) %>
+    <% nodes = entry_list(@repo, :nodes) %>
+    <% agents_index = agent_index(@repo) %>
+    <% positions = positions(nodes) %>
+    <% geom = geom(@repo, nodes) %>
     <% readout = selection_readout_data(@repo, @selected_id) %>
-    <div class="cg-graph" data-cg-repo-id={dom}>
-      <.zoom_toolbar dom={dom} />
 
-      <svg
-        id={"cg-svg-" <> dom}
-        class="cg-svg"
-        viewBox={view_box(@repo, @selected_id)}
-        width="100%"
-        height={svg_height(@repo, @selected_id)}
-        preserveAspectRatio="xMinYMin meet"
-        role="img"
-        aria-label={graph_aria_label()}
+    <%= if readout do %>
+      <div
+        id={"cg-selection-readout-" <> dom}
+        class="flex items-center gap-1.5 text-xs text-primary font-mono py-0.5"
       >
-        <g id={"cg-viewport-" <> dom} class="cg-viewport">
+        <.icon name="hero-cursor-arrow-rays" class="size-3.5 shrink-0" />
+        <span class="truncate">{readout_text(readout)}</span>
+      </div>
+    <% end %>
+
+    <div id={"cg-list-" <> dom} class="cg-list relative">
+      <%= if nodes == [] do %>
+        <%!-- 空态：该仓库没有任何可展示的提交（例如智能体尚未在该仓库产生提交） --%>
+        <p class="cg-empty-note text-xs text-base-content/60 py-3">
+          {gettext("No commit history for this repository.")}
+        </p>
+      <% else %>
+        <svg
+          id={"cg-gutter-" <> dom}
+          class="cg-gutter absolute left-0 top-0 pointer-events-none"
+          width={geom.gutter_w}
+          height={geom.total_h}
+          viewBox={"0 0 #{geom.gutter_w} #{geom.total_h}"}
+          role="img"
+          aria-label={graph_aria_label()}
+        >
           <.edge_path
             :for={edge <- entry_list(@repo, :edges)}
             dom={dom}
             edge={edge}
             geom={geom}
-            lanes_index={lanes_index}
+            positions={positions}
+            agents_index={agents_index}
           />
-          <.node_group
-            :for={node <- entry_list(@repo, :nodes)}
+          <.node_dot
+            :for={node <- nodes}
             dom={dom}
             node={node}
             geom={geom}
-            lanes_index={lanes_index}
+            positions={positions}
+            agents_index={agents_index}
             selected_id={@selected_id}
           />
-          <.lane_group
-            :for={lane <- entry_list(@repo, :lanes)}
-            dom={dom}
-            lane={lane}
-            geom={geom}
-            selected_id={@selected_id}
-          />
-          <%= if readout do %>
-            <.selection_readout dom={dom} geom={geom} readout={readout} />
-          <% end %>
-        </g>
-      </svg>
+        </svg>
 
-      <%= if entry_list(@repo, :nodes) == [] and entry_list(@repo, :lanes) == [] do %>
-        <%!-- 空态：该仓库没有任何可展示的提交（例如智能体尚未在该仓库产生提交） --%>
-        <p class="cg-empty-note text-xs text-base-content/60 py-3">
-          {gettext("No commit history for this repository.")}
-        </p>
+        <div class="cg-rows" style={"padding-left: #{geom.gutter_w}px"}>
+          <.commit_row
+            :for={node <- nodes}
+            dom={dom}
+            node={node}
+            agents_index={agents_index}
+            selected_id={@selected_id}
+          />
+        </div>
       <% end %>
     </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # zoom_toolbar/1 — the buttons the client hook binds to (pan/zoom by mutating
-  # the sibling `<svg class="cg-svg">` viewBox; `fit` recomputes it from
-  # `.cg-viewport.getBBox()`). The readout span is intentionally EMPTY — the
-  # hook writes the current zoom level into it.
-  # ---------------------------------------------------------------------------
-
-  attr(:dom, :string, required: true)
-
-  defp zoom_toolbar(assigns) do
-    ~H"""
-    <div class="cg-toolbar flex items-center gap-1 mb-1">
-      <button
-        id={"cg-zoom-in-" <> @dom}
-        type="button"
-        class="cg-zoom-btn btn btn-ghost btn-xs btn-square"
-        data-cg-action="zoom-in"
-        title={gettext("Zoom in")}
-        aria-label={gettext("Zoom in")}
-      >
-        <.icon name="hero-magnifying-glass-plus" class="size-3.5" />
-      </button>
-      <button
-        id={"cg-zoom-out-" <> @dom}
-        type="button"
-        class="cg-zoom-btn btn btn-ghost btn-xs btn-square"
-        data-cg-action="zoom-out"
-        title={gettext("Zoom out")}
-        aria-label={gettext("Zoom out")}
-      >
-        <.icon name="hero-magnifying-glass-minus" class="size-3.5" />
-      </button>
-      <button
-        id={"cg-zoom-fit-" <> @dom}
-        type="button"
-        class="cg-zoom-btn btn btn-ghost btn-xs btn-square"
-        data-cg-action="fit"
-        title={gettext("Fit to view")}
-        aria-label={gettext("Fit to view")}
-      >
-        <.icon name="hero-arrows-pointing-out" class="size-3.5" />
-      </button>
-      <span
-        id={"cg-zoom-readout-" <> @dom}
-        class="cg-zoom-readout text-xs text-base-content/60 font-mono"
-        aria-live="polite"
-      ></span>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # edge_path/1 — one child → parent connector. The curve is a horizontal
-  # cubic bezier (control points at the horizontal midpoint) so same-row edges
-  # read as straight lines and lane crossings sweep gently; a `:merge` edge is
-  # DASHED so merges read distinctly. The stroke is the CHILD owner's depth hue
-  # (edges without an owning lane stay muted base ink).
+  # edge_path/1 — one child → parent connector. The curve is a VERTICAL cubic
+  # bezier (control points at the vertical midpoint between the two rows) so
+  # same-column edges read as straight lines and cross-column edges sweep
+  # gently; a `:merge` edge is DASHED so merges read distinctly. The stroke is
+  # the CHILD owner's depth hue (edges without an owning agent stay muted).
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
   attr(:edge, :map, required: true)
   attr(:geom, :map, required: true)
-  attr(:lanes_index, :map, default: %{})
+  attr(:positions, :map, required: true)
+  attr(:agents_index, :map, default: %{})
 
   defp edge_path(assigns) do
     ~H"""
-    <%= if d = edge_d(@edge, @geom) do %>
-      <% merge? = Map.get(@edge, :kind) == :merge %>
-      <path
-        id={
-          "commit-edge-" <>
-            @dom <> "-" <> sha_key(@edge, :from_sha) <> "-" <> sha_key(@edge, :to_sha)
-        }
-        class="cg-edge"
-        data-commit-graph-anim="edge"
-        d={d}
-        fill="none"
-        stroke-linecap="round"
-        stroke-width={if merge?, do: "1.6", else: "2"}
-        stroke-dasharray={if merge?, do: "4 3", else: nil}
-        style={"stroke: #{edge_color(@edge, @lanes_index)}; stroke-opacity: #{edge_opacity(@edge, @lanes_index)}"}
-      />
-    <% end %>
+    <% d = edge_d(@edge, @positions, @geom) %>
+    <% merge? = edge_kind(@edge) == :merge %>
+    <path
+      :if={d}
+      id={
+        "commit-edge-" <>
+          @dom <> "-" <> sha_key_of(@edge, :from_sha) <> "-" <> sha_key_of(@edge, :to_sha)
+      }
+      class="cg-edge"
+      data-commit-graph-anim="edge"
+      d={d}
+      fill="none"
+      stroke-linecap="round"
+      stroke-width={if merge?, do: "1.6", else: "2"}
+      stroke-dasharray={if merge?, do: "4 3", else: nil}
+      style={"stroke: #{edge_color(@edge, @agents_index)}; stroke-opacity: #{edge_opacity(@edge, @agents_index)}"}
+    />
     """
   end
 
   # ---------------------------------------------------------------------------
-  # node_group/1 — one commit (or base/fork) node. The click contract lives on
-  # the GROUP (omitted entirely when the node has no owning agent), the native
-  # `<title>` carries the commit tooltip, and the circle is filled with the
-  # owner lane's depth hue — or the shared STATUS color when this node is its
-  # owner's END commit.
-  #
-  # Selection: the selected agent's START node wears a solid primary ring (+ a
-  # `start` tag BELOW the node) and its END node a DASHED primary ring (+ an
-  # `end` tag ABOVE the node) — both inline-styled, so they read without CSS.
+  # node_dot/1 — one gutter commit dot. The click contract lives on the ROW, so
+  # the gutter stays `pointer-events: none`. Selection marks a START node with a
+  # SOLID primary ring and an END node with a DASHED primary ring.
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
   attr(:node, :map, required: true)
   attr(:geom, :map, required: true)
-  attr(:lanes_index, :map, default: %{})
+  attr(:positions, :map, required: true)
+  attr(:agents_index, :map, required: true)
   attr(:selected_id, :any, default: nil)
 
-  defp node_group(assigns) do
+  defp node_dot(assigns) do
     ~H"""
-    <% v = node_view(@node, @lanes_index, @selected_id, @geom) %>
+    <% v = dot_view(@node, @positions, @agents_index, @selected_id, @geom) %>
     <g
-      id={"commit-node-" <> @dom <> "-" <> sha_key(@node, :sha)}
+      id={"commit-node-" <> @dom <> "-" <> sha_key_of(@node, :sha)}
       class="cg-node"
       data-commit-graph-anim="node"
-      data-cg-agent-id={v.owner}
       data-cg-sha={Map.get(@node, :sha)}
-      phx-click={if v.owner != nil, do: "select_agent"}
-      phx-value-id={v.owner}
+      data-cg-agent-id={v.owner}
     >
       <title>{node_title(@node)}</title>
-
       <circle
         class="cg-node-dot"
         cx={v.cx}
@@ -405,336 +401,271 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         stroke-width="1.5"
         style={"fill: #{v.fill}; fill-opacity: #{v.fill_opacity}; stroke: #{v.stroke}"}
       />
-
-      <%= if Map.get(@node, :kind) == :base do %>
-        <%!-- zh_CN：合成基线节点（无提交信息/日期）额外显示可见的短 SHA 标签 --%>
-        <text
-          id={"commit-base-label-" <> @dom <> "-" <> sha_key(@node, :sha)}
-          class="cg-base-label font-mono"
-          x={v.cx}
-          y={v.cy + node_r() + 11}
-          font-size="9"
-          text-anchor="middle"
-          style="fill: var(--color-primary-standalone)"
-        >
-          {commit_short_sha(@node) || short_sha(Map.get(@node, :sha))}
-        </text>
-      <% end %>
-
-      <%= if v.start? do %>
-        <circle
-          class="cg-selection-start"
-          cx={v.cx}
-          cy={v.cy}
-          r={node_r() + 3.5}
-          stroke-width="2"
-          style="fill: none; stroke: var(--color-primary)"
-        />
-        <text
-          class="cg-selection-tag font-mono"
-          x={v.cx}
-          y={v.cy + node_r() + 13}
-          font-size="9"
-          text-anchor="middle"
-          style="fill: var(--color-primary)"
-        >
-          <%!-- zh_CN：选中智能体的“起始提交”标注（图上小标签） --%>
-          {gettext("start")}
-        </text>
-      <% end %>
-
-      <%= if v.end? do %>
-        <circle
-          class="cg-selection-end"
-          cx={v.cx}
-          cy={v.cy}
-          r={node_r() + 3.5}
-          stroke-dasharray="3 2"
-          stroke-width="2"
-          style="fill: none; stroke: var(--color-primary)"
-        />
-        <text
-          class="cg-selection-tag font-mono"
-          x={v.cx}
-          y={v.cy - node_r() - 6}
-          font-size="9"
-          text-anchor="middle"
-          style="fill: var(--color-primary)"
-        >
-          <%!-- zh_CN：选中智能体的“结束提交”标注（图上小标签） --%>
-          {gettext("end")}
-        </text>
-      <% end %>
+      <circle
+        :if={v.start? or v.end?}
+        class="cg-node-ring"
+        cx={v.cx}
+        cy={v.cy}
+        r={v.ring_r}
+        stroke-width="2"
+        stroke-dasharray={if(v.end?, do: "3 2", else: nil)}
+        style="fill: none; stroke: var(--color-primary)"
+      />
     </g>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # lane_group/1 — one agent lane: a subtle depth-hue band spanning the lane's
-  # own `x_start` → `x_end` grid range at its row, plus the `T<task_local_id>`
-  # label in the left gutter. The click contract lives on the group (reusing
-  # `select_agent`), and the band is `pointer-events="none"` so it never
-  # swallows a click meant for a node painted under it.
-  #
-  # An ENDED lane (`ended: true` — the agent has ended / been recycled and is
-  # retained in-session) is DRAWN DIM: its band fill/stroke and its `T<id>`
-  # label glyph drop to roughly half their resting opacity, so live lanes stay
-  # visually dominant. Selection still works unchanged — a selected ended lane
-  # keeps the primary band stroke, just at the ended stroke opacity.
+  # commit_row/1 — one commit ROW: sha + message + meta on the first line, its
+  # agent/ref tags on the second. The row carries the `select_agent` contract
+  # (omitted entirely when the node has no owning agent).
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
-  attr(:lane, :map, required: true)
-  attr(:geom, :map, required: true)
+  attr(:node, :map, required: true)
+  attr(:agents_index, :map, required: true)
   attr(:selected_id, :any, default: nil)
 
-  defp lane_group(assigns) do
+  defp commit_row(assigns) do
     ~H"""
-    <% agent_id = Map.get(@lane, :agent_id) %>
-    <% color = lane_color(@lane) %>
-    <% selected? = agent_id != nil and agent_id == @selected_id %>
-    <% ended? = lane_ended?(@lane) %>
-    <g
-      id={"commit-agent-row-" <> @dom <> "-" <> agent_key(agent_id)}
-      class="cg-lane"
-      data-commit-graph-anim="lane"
-      data-cg-agent-id={agent_id}
-      phx-click={if agent_id != nil, do: "select_agent"}
-      phx-value-id={agent_id}
+    <% v = row_view(@node, @agents_index, @selected_id) %>
+    <% tags? = v.start_ids != [] or v.end_ids != [] or ref_list(Map.get(@node, :refs)) != [] %>
+    <div
+      id={"commit-row-" <> @dom <> "-" <> sha_key_of(@node, :sha)}
+      class={[
+        "cg-row flex flex-col justify-center gap-0.5 px-2 rounded",
+        v.owner != nil && "cursor-pointer hover:bg-base-200/60",
+        v.selected? && "bg-primary/10",
+        (v.start? or v.end?) && "ring-1 ring-inset ring-primary/40",
+        v.ended? && "opacity-50"
+      ]}
+      style={"height: #{row_h()}px"}
+      data-commit-graph-anim="row"
+      data-cg-sha={Map.get(@node, :sha)}
+      data-cg-agent-id={v.owner}
+      phx-click={if v.owner != nil, do: "select_agent"}
+      phx-value-id={v.owner}
     >
-      <title>{lane_title(@lane)}</title>
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="cg-row-sha font-mono text-xs text-base-content/60 shrink-0">
+          {commit_short_sha(@node) || short_sha(Map.get(@node, :sha))}
+        </span>
+        <%= if Map.get(@node, :kind) == :base do %>
+          <%!-- zh_CN：合成基线节点（智能体的分叉起点，无提交信息/日期） --%>
+          <span class="cg-base-label inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-base-200 text-base-content/60 shrink-0">
+            {gettext("base")}
+          </span>
+        <% else %>
+          <span class="cg-row-message truncate text-sm text-base-content">
+            {first_line(Map.get(@node, :message))}
+          </span>
+        <% end %>
+        <span
+          :if={v.start?}
+          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-primary/15 text-primary"
+        >
+          <%!-- zh_CN：选中智能体的“起始提交”行标记 --%>
+          {gettext("start")}
+        </span>
+        <span
+          :if={v.end?}
+          class="cg-row-marker shrink-0 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-primary/15 text-primary"
+        >
+          <%!-- zh_CN：选中智能体的“结束提交”行标记 --%>
+          {gettext("end")}
+        </span>
+        <span
+          :if={meta_text(@node) != ""}
+          class="cg-row-meta ml-auto text-xs text-base-content/50 font-mono truncate shrink-0"
+        >
+          {meta_text(@node)}
+        </span>
+      </div>
 
-      <%= if band = lane_band(@lane, @geom) do %>
-        <rect
-          id={"commit-lane-" <> @dom <> "-" <> agent_key(agent_id)}
-          class="cg-lane-band"
-          x={band.x}
-          y={band.y}
-          width={band.w}
-          height={band.h}
-          rx="6"
-          pointer-events="none"
-          stroke-width="1"
-          style={"fill: #{color}; fill-opacity: #{band_fill_opacity(selected?, ended?)}; stroke: #{if selected?, do: "var(--color-primary)", else: color}; stroke-opacity: #{band_stroke_opacity(selected?, ended?)}"}
-        />
-      <% end %>
+      <div :if={tags?} class="flex items-center gap-1 flex-wrap min-w-0">
+        <button
+          :for={id <- v.start_ids}
+          :key={"start-" <> agent_key(id)}
+          id={"commit-agent-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-start-" <> agent_key(id)}
+          type="button"
+          class="cg-agent-tag cg-agent-tag-start inline-flex items-center gap-1 rounded border border-solid px-1.5 py-0.5 text-[10px] font-mono"
+          style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
+          title={agent_tag_title(@agents_index, id, "start")}
+          phx-click="select_agent"
+          phx-value-id={id}
+        >
+          <span>{agent_label(@agents_index, id)}</span>
+          <span class="opacity-70">{gettext("start")}</span>
+        </button>
 
-      <text
-        id={"commit-lane-label-" <> @dom <> "-" <> agent_key(agent_id)}
-        class="cg-lane-label font-mono"
-        x={@geom.ox}
-        y={py(Map.get(@lane, :y), @geom) + 4}
-        font-size="11"
-        opacity={lane_dim_opacity(ended?)}
-        style={"fill: #{color}"}
-      >
-        {lane_label(@lane)}
-      </text>
-    </g>
+        <button
+          :for={id <- v.end_ids}
+          :key={"end-" <> agent_key(id)}
+          id={"commit-agent-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-end-" <> agent_key(id)}
+          type="button"
+          class="cg-agent-tag cg-agent-tag-end inline-flex items-center gap-1 rounded border border-dashed px-1.5 py-0.5 text-[10px] font-mono"
+          style={"border-color: #{agent_color(@agents_index, id)}; color: #{agent_color(@agents_index, id)}"}
+          title={agent_tag_title(@agents_index, id, "end")}
+          phx-click="select_agent"
+          phx-value-id={id}
+        >
+          <span>{agent_label(@agents_index, id)}</span>
+          <span class="opacity-70">{gettext("end")}</span>
+        </button>
+
+        <span
+          :for={ref <- ref_list(Map.get(@node, :refs))}
+          :key={"ref-" <> ref}
+          id={"commit-ref-tag-" <> @dom <> "-" <> sha_key_of(@node, :sha) <> "-" <> ref_key(ref)}
+          class="cg-ref-tag inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono bg-base-200 text-base-content/70"
+          title={ref}
+        >
+          {ref}
+        </span>
+      </div>
+    </div>
     """
   end
 
   # ---------------------------------------------------------------------------
-  # selection_readout/1 — the on-graph annotation naming the selected agent
-  # (`T<task_local_id>`) with its start → end short SHAs, rendered in the top
-  # strip (`@readout_h`) reserved by `top_offset/2` while a selection exists.
+  # Geometry — grid (column, row) → pixels. SVG user units == CSS pixels.
   # ---------------------------------------------------------------------------
 
-  attr(:dom, :string, required: true)
-  attr(:geom, :map, required: true)
-  attr(:readout, :map, required: true)
-
-  defp selection_readout(assigns) do
-    ~H"""
-    <text
-      id={"cg-selection-readout-" <> @dom}
-      class="cg-selection-readout font-mono"
-      x={@geom.ox}
-      y={@geom.top - 9}
-      font-size="11"
-      style="fill: var(--color-primary)"
-    >
-      {readout_text(@readout)}
-    </text>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # Geometry — grid (x = ancestry column, y = lane row) → pixels. The initial
-  # `viewBox` is the content bounds grown by `@vpad` on every side.
-  # ---------------------------------------------------------------------------
-
-  defp geom(repo, selected_id) do
-    {min_x, _max_x} = grid_bounds(repo)
+  defp geom(repo, nodes) do
+    cols = column_count(repo, nodes)
 
     %{
-      ox: @vpad,
-      oy: @vpad,
-      gutter: @gutter,
       col_w: @col_w,
       row_h: @row_h,
-      min_x: min_x,
-      top: top_offset(repo, selected_id)
+      pad: @gutter_pad,
+      col_count: cols,
+      gutter_w: @gutter_pad * 2 + cols * @col_w,
+      total_h: length(nodes) * @row_h
     }
   end
 
-  defp top_offset(repo, selected_id) do
-    if selection_readout_data(repo, selected_id), do: @readout_h, else: 0
-  end
+  defp dot_x(c, geom), do: geom.pad + c * geom.col_w + geom.col_w / 2
+  defp dot_y(r, geom), do: r * geom.row_h + geom.row_h / 2
 
-  # The grid is drawn MIN-OFFSET aware: the leftmost grid column of the actual
-  # content (`min_x`) maps to the plot origin, so the SYNTHESIZED BASE node —
-  # which the model places at `x = min_real_rank - 1`, i.e. one column LEFT of
-  # the oldest real commit — is rendered as its own leftmost column instead of
-  # collapsing onto column `0` (which would overlap it with the commit at
-  # `x = 0` and drop its edge as zero-length). Never clamp a per-coordinate `x`.
-  defp px(x, geom), do: geom.ox + geom.gutter + (column(x) - geom.min_x) * geom.col_w
+  # --- attribute mirrored for the template (module attributes are NOT
+  # reachable from HEEx — an `@name` there reads the assign of that name) ------
 
-  defp py(y, geom), do: geom.oy + geom.top + row(y) * geom.row_h + geom.row_h / 2
+  defp row_h, do: @row_h
 
-  # Grid `x` folds to `0` for any non-integer shape and keeps its sign — the
-  # base column is legitimately negative. `y` (a lane row) is always ≥ 0.
-  defp column(x), do: int(x)
-  defp row(y), do: max(int(y), 0)
-
-  defp content_size(repo, selected_id) do
-    geom = geom(repo, selected_id)
-    cols = grid_columns(repo)
-    rows = grid_rows(repo)
-    w = max(@min_w, geom.ox * 2 + geom.gutter + cols * geom.col_w + @node_r)
-    h = geom.oy * 2 + geom.top + rows * geom.row_h
-    {w, h}
-  end
-
-  defp view_box(repo, selected_id) do
-    {w, h} = content_size(repo, selected_id)
-    "0 0 #{n(w)} #{n(h)}"
-  end
-
-  defp svg_height(repo, selected_id) do
-    {_w, h} = content_size(repo, selected_id)
-    h |> max(@min_h) |> min(@max_h)
-  end
-
-  # The grid's horizontal bounds `{min_x, max_x}` derived from the ACTUAL
-  # content — node columns, edge endpoints and lane `x_start`/`x_end` ranges.
-  # The model's `:max_x` is only a WIDTH HINT and is deliberately ignored, so a
-  # stale hint can never shift or clip the graph. Missing/non-integer values are
-  # skipped; an empty repo folds to `{0, 0}`.
-  defp grid_bounds(repo) do
-    xs =
-      node_grid_xs(repo) ++
-        edge_grid_xs(repo) ++
-        lane_grid_xs(repo)
-
-    case xs do
-      [] -> {0, 0}
-      xs -> {Enum.min(xs), Enum.max(xs)}
-    end
-  end
-
-  defp node_grid_xs(repo) do
-    repo
-    |> entry_list(:nodes)
-    |> Enum.map(&grid_x(Map.get(&1, :x)))
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp edge_grid_xs(repo) do
-    repo
-    |> entry_list(:edges)
-    |> Enum.flat_map(fn edge ->
-      [grid_x(point_x(Map.get(edge, :from))), grid_x(point_x(Map.get(edge, :to)))]
+  # `%{sha => %{col, row}}` for every emitted node, row = its INDEX in the
+  # rendered top → bottom order (the model already sorts by ascending `row`, and
+  # the rows are exactly `0..node_count-1`, so index == model row; using the
+  # index keeps the gutter aligned with the DOM even for odd model data).
+  defp positions(nodes) do
+    nodes
+    |> Enum.with_index()
+    |> Enum.reduce(%{}, fn {node, index}, acc ->
+      case Map.get(node, :sha) do
+        nil -> acc
+        sha -> Map.put_new(acc, sha, %{col: col(Map.get(node, :column)), row: index})
+      end
     end)
-    |> Enum.reject(&is_nil/1)
   end
 
-  defp lane_grid_xs(repo) do
-    repo
-    |> entry_list(:lanes)
-    |> Enum.flat_map(fn lane ->
-      [grid_x(Map.get(lane, :x_start)), grid_x(Map.get(lane, :x_end))]
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
+  # A gutter COLUMN index — non-integer shapes fold to `0`.
+  defp col(value), do: max(int(value), 0)
 
-  defp point_x({x, _y}) when is_integer(x), do: x
-  defp point_x(_point), do: nil
-
-  # An integer grid coordinate, or nil (a non-integer shape is skipped rather
-  # than folded to `0`, which would widen the bounds with a phantom column).
-  defp grid_x(value) when is_integer(value), do: value
-  defp grid_x(_value), do: nil
-
-  # The grid's COLUMN COUNT — `(max_x - min_x + 1)`, i.e. the full span
-  # INCLUDING the leftmost (base) column, at least 1.
-  defp grid_columns(repo) do
-    {min_x, max_x} = grid_bounds(repo)
-    max(max_x - min_x + 1, 1)
-  end
-
-  # The lane ROW COUNT (highest zero-based row index + 1), at least 1.
-  defp grid_rows(repo) do
-    from_lanes = Enum.map(entry_list(repo, :lanes), &row(Map.get(&1, :y)))
-    from_nodes = Enum.map(entry_list(repo, :nodes), &row(Map.get(&1, :y)))
+  # `column_count` — the model hint when usable, else derived from the nodes,
+  # never below `1`. (The builder emits `max(column) + 1`.)
+  defp column_count(repo, nodes) do
+    from_nodes =
+      if nodes == [], do: 0, else: Enum.max(Enum.map(nodes, &col(Map.get(&1, :column)))) + 1
 
     hint =
-      case Map.get(repo, :row_count) do
-        n when is_integer(n) and n > 0 -> [n - 1]
-        _ -> []
+      case Map.get(repo, :column_count) do
+        n when is_integer(n) and n > 0 -> n
+        _ -> 0
       end
 
-    Enum.max(from_lanes ++ from_nodes ++ hint ++ [0]) + 1
+    max(max(from_nodes, hint), 1)
   end
 
   # --- edges -----------------------------------------------------------------
 
-  defp edge_d(edge, geom) do
-    with {fx, fy} when is_number(fx) <- point(Map.get(edge, :from), geom),
-         {tx, ty} when is_number(tx) <- point(Map.get(edge, :to), geom) do
-      if fx == tx and fy == ty do
-        nil
-      else
-        cx = (fx + tx) / 2
-        "M #{n(fx)} #{n(fy)} C #{n(cx)} #{n(fy)}, #{n(cx)} #{n(ty)}, #{n(tx)} #{n(ty)}"
-      end
+  # A vertical cubic bezier `M fx fy C fx my, tx my, tx ty` (control points at
+  # the vertical midpoint), or nil when the endpoints collapse onto each other.
+  defp edge_d(edge, positions, geom) do
+    {fx, fy} = endpoint(edge, :from, positions, geom)
+    {tx, ty} = endpoint(edge, :to, positions, geom)
+
+    if fx == tx and fy == ty do
+      nil
     else
-      _ -> nil
+      my = (fy + ty) / 2
+      "M #{n(fx)} #{n(fy)} C #{n(fx)} #{n(my)}, #{n(tx)} #{n(my)}, #{n(tx)} #{n(ty)}"
     end
   end
 
-  defp point({x, y}, geom), do: {px(x, geom), py(y, geom)}
-  defp point(_point, _geom), do: nil
+  # An edge endpoint in px: prefer the NODE position (so a dot and its edges can
+  # never drift), falling back to the edge's own `{column, row}` when the node
+  # is absent from the model.
+  defp endpoint(edge, side, positions, geom) do
+    sha = Map.get(edge, sha_field(side))
 
-  defp edge_color(edge, lanes_index) do
-    case lane_for(lanes_index, Map.get(edge, :owner_id)) do
+    case Map.fetch(positions, sha) do
+      {:ok, %{col: c, row: r}} ->
+        {dot_x(c, geom), dot_y(r, geom)}
+
+      _ ->
+        c = col(Map.get(edge, col_field(side)))
+        r = max(int(Map.get(edge, row_field(side))), 0)
+        {dot_x(c, geom), dot_y(r, geom)}
+    end
+  end
+
+  defp sha_field(:from), do: :from_sha
+  defp sha_field(:to), do: :to_sha
+  defp col_field(:from), do: :from_column
+  defp col_field(:to), do: :to_column
+  defp row_field(:from), do: :from_row
+  defp row_field(:to), do: :to_row
+
+  defp edge_kind(edge) do
+    case Map.get(edge, :kind) do
+      :merge -> :merge
+      _ -> :parent
+    end
+  end
+
+  # Edge stroke = the CHILD owner's depth hue (looked up by `edge.owner_id`).
+  defp edge_color(edge, agents_index) do
+    case agent_for(agents_index, Map.get(edge, :owner_id)) do
       nil -> "var(--color-base-content)"
-      lane -> lane_color(lane)
+      agent -> agent_color_of(agent)
     end
   end
 
-  defp edge_opacity(edge, lanes_index) do
-    case lane_for(lanes_index, Map.get(edge, :owner_id)) do
+  defp edge_opacity(edge, agents_index) do
+    case agent_for(agents_index, Map.get(edge, :owner_id)) do
       nil -> "0.3"
-      lane -> if lane_ended?(lane), do: "0.4", else: "0.75"
+      agent -> if(agent_ended?(agent), do: "0.4", else: "0.75")
     end
   end
 
-  # --- nodes -----------------------------------------------------------------
+  # --- dots ------------------------------------------------------------------
 
-  defp node_view(node, lanes_index, selected_id, geom) do
+  defp dot_view(node, positions, agents_index, selected_id, geom) do
     owner = Map.get(node, :owner_id)
-    lane = lane_for(lanes_index, owner)
-    base? = Map.get(node, :kind) == :base
+    agent = agent_for(agents_index, owner)
     end_ids = id_list(node, :end_ids)
     start_ids = id_list(node, :start_ids)
-    {fill, fill_opacity} = node_paint(owner, lane, end_ids, base?)
+    base? = Map.get(node, :kind) == :base
+
+    pos = Map.get(positions, Map.get(node, :sha), %{col: 0, row: 0})
+    {fill, fill_opacity} = dot_paint(owner, agent, end_ids, base?)
+    r = if(base?, do: @base_r, else: @node_r)
 
     %{
       owner: owner,
-      cx: px(Map.get(node, :x), geom),
-      cy: py(Map.get(node, :y), geom),
-      r: if(base?, do: @base_r, else: @node_r),
+      cx: n(dot_x(pos.col, geom)),
+      cy: n(dot_y(pos.row, geom)),
+      r: r,
+      ring_r: r + 3,
       fill: fill,
       fill_opacity: fill_opacity,
       stroke: if(base?, do: "var(--color-base-content)", else: fill),
@@ -744,64 +675,126 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   # Base/fork nodes are hollow; an agent's END commit takes the shared STATUS
-  # color; every other owned node takes its owner lane's depth hue; an
-  # unowned node stays muted base ink. A node owned by an ENDED lane is painted
-  # at half fill opacity (the hue/status color itself is unchanged), so a
-  # terminated lane's commits recede together with its band.
-  defp node_paint(owner, lane, end_ids, base?) do
+  # color; every other owned node takes its owner agent's depth hue; an unowned
+  # node stays muted base ink. A node owned by an ENDED agent is painted at half
+  # fill opacity (the hue/status color itself is unchanged).
+  defp dot_paint(owner, agent, end_ids, base?) do
     cond do
       base? ->
         {"none", "1"}
 
       owner != nil and owner in end_ids ->
-        {agent_status_svg_color(lane_status(lane)), lane_node_opacity(lane)}
+        {agent_status_svg_color(agent_status(agent)), agent_node_opacity(agent)}
 
-      lane != nil ->
-        {lane_color(lane), lane_node_opacity(lane)}
+      agent != nil ->
+        {agent_color_of(agent), agent_node_opacity(agent)}
 
       true ->
         {"var(--color-base-content)", "0.55"}
     end
   end
 
-  # Nodes owned by an ENDED lane are dimmed (the hue/status colour is unchanged).
-  defp lane_node_opacity(lane), do: if(lane_ended?(lane), do: "0.5", else: "1")
+  defp agent_node_opacity(agent), do: if(agent_ended?(agent), do: "0.5", else: "1")
 
-  # --- lanes -----------------------------------------------------------------
+  # --- rows ------------------------------------------------------------------
 
-  # A lane band spans its `x_start` → `x_end` grid range plus `@band_pad` on
-  # each side (so the band's ends clear the first/last node circles). Reversed
-  # bounds are tolerated (sorted); missing/non-integer bounds drop the band and
-  # leave the lane label + tooltip (the lane group still selects on click).
-  defp lane_band(lane, geom) do
-    with xs when is_integer(xs) <- Map.get(lane, :x_start),
-         xe when is_integer(xe) <- Map.get(lane, :x_end) do
-      lo = min(column(xs), column(xe))
-      hi = max(column(xs), column(xe))
-      y = py(Map.get(lane, :y), geom)
+  defp row_view(node, agents_index, selected_id) do
+    owner = Map.get(node, :owner_id)
+    start_ids = id_list(node, :start_ids)
+    end_ids = id_list(node, :end_ids)
+    agent = agent_for(agents_index, owner)
 
-      %{
-        x: n(px(lo, geom) - @band_pad),
-        y: n(y - @band_h / 2),
-        w: n((hi - lo) * geom.col_w + @band_pad * 2),
-        h: n(@band_h)
-      }
-    else
-      _ -> nil
+    %{
+      owner: owner,
+      start_ids: start_ids,
+      end_ids: end_ids,
+      selected?: owner != nil and owner == selected_id,
+      start?: selected_id != nil and selected_id in start_ids,
+      end?: selected_id != nil and selected_id in end_ids,
+      ended?: agent_ended?(agent)
+    }
+  end
+
+  # --- agents index / lookups -------------------------------------------------
+
+  # `%{agent_id => agent}` — the ONE lookup used to colour nodes, edges and tags
+  # by their owning agent. Agents without an id are skipped (`owner_id` /
+  # `agent_id` are compared as the RAW model terms).
+  defp agent_index(repo) do
+    Enum.reduce(entry_list(repo, :agents), %{}, fn agent, acc ->
+      case Map.get(agent, :agent_id) do
+        nil -> acc
+        id -> Map.put_new(acc, id, agent)
+      end
+    end)
+  end
+
+  defp agent_for(index, id) when is_map(index) and not is_nil(id), do: Map.get(index, id)
+  defp agent_for(_index, _id), do: nil
+
+  defp agent_color(index, id) do
+    case agent_for(index, id) do
+      nil -> "var(--color-base-content)"
+      agent -> agent_color_of(agent)
+    end
+  end
+
+  defp agent_color_of(agent) when is_map(agent) do
+    case Map.get(agent, :color) do
+      color when is_binary(color) and color != "" -> color
+      _ -> "var(--color-base-content)"
+    end
+  end
+
+  defp agent_color_of(_agent), do: "var(--color-base-content)"
+
+  defp agent_status(agent) when is_map(agent), do: Map.get(agent, :status)
+  defp agent_status(_agent), do: nil
+
+  # An agent is ENDED only when the model explicitly flags it (`ended: true`).
+  # The key is OPTIONAL and read TOTALLY — an agent without it (or with any
+  # non-`true` value) renders exactly like a live agent.
+  defp agent_ended?(agent) when is_map(agent), do: Map.get(agent, :ended) == true
+  defp agent_ended?(_agent), do: false
+
+  defp agent_label(index, id) do
+    case agent_for(index, id) do
+      nil ->
+        "T" <> safe_string(id)
+
+      agent ->
+        "T" <> safe_string(Map.get(agent, :task_local_id) || Map.get(agent, :agent_id) || id)
+    end
+  end
+
+  defp agent_tag_title(index, id, kind) do
+    label = agent_label(index, id)
+
+    case agent_for(index, id) do
+      nil ->
+        label
+
+      agent ->
+        marker = if(kind == "end", do: gettext("end"), else: gettext("start"))
+        ended = if(agent_ended?(agent), do: [gettext("terminated")], else: [])
+
+        [label, marker, agent_status_label(agent_status(agent)) | ended]
+        |> Enum.reject(&(&1 in [nil, ""]))
+        |> Enum.join(" · ")
     end
   end
 
   # --- selection --------------------------------------------------------------
 
-  # The on-graph readout for the selected agent, or nil when nothing is
-  # selected / the selection is not one of THIS repo's lanes.
+  # The readout data for the selected agent, or nil when nothing is selected /
+  # the selection is not one of THIS repo's agents.
   defp selection_readout_data(repo, selected_id) do
     with id when not is_nil(id) <- selected_id,
-         lane when is_map(lane) <- lane_for(lane_index(repo), id) do
+         agent when is_map(agent) <- agent_for(agent_index(repo), id) do
       %{
-        label: lane_label(lane),
-        start_sha: short_sha(Map.get(lane, :start_sha)),
-        end_sha: short_sha(Map.get(lane, :end_sha))
+        label: agent_label(agent_index(repo), id),
+        start_sha: short_sha(Map.get(agent, :start_sha)),
+        end_sha: short_sha(Map.get(agent, :end_sha))
       }
     else
       _ -> nil
@@ -821,60 +814,6 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       # zh_CN：图中选中智能体的标注读数 —— "Selected T7 · a1b2c3d4 → e5f6a7b8"
       gettext("Selected %{agent} · %{range}", agent: readout.label, range: range)
     end
-  end
-
-  # --- lane index / lookups ---------------------------------------------------
-
-  # `%{agent_id => lane}` — the ONE lookup used to colour nodes, edges and
-  # selection markers by their owning lane. Lanes without an id are skipped
-  # (`owner_id`/`agent_id` are compared as the RAW model terms).
-  defp lane_index(repo) do
-    Enum.reduce(entry_list(repo, :lanes), %{}, fn lane, acc ->
-      case Map.get(lane, :agent_id) do
-        nil -> acc
-        id -> Map.put_new(acc, id, lane)
-      end
-    end)
-  end
-
-  defp lane_for(index, id) when is_map(index) and not is_nil(id), do: Map.get(index, id)
-  defp lane_for(_index, _id), do: nil
-
-  defp lane_color(lane) do
-    case Map.get(lane, :color) do
-      color when is_binary(color) and color != "" -> color
-      _ -> "var(--color-base-content)"
-    end
-  end
-
-  defp lane_status(lane) when is_map(lane), do: Map.get(lane, :status)
-  defp lane_status(_lane), do: nil
-
-  # A lane is ENDED only when the model explicitly flags it (`ended: true`).
-  # The key is OPTIONAL and read TOTALLY — a lane without it (or with any
-  # non-`true` value) renders exactly like a live lane.
-  defp lane_ended?(lane) when is_map(lane), do: Map.get(lane, :ended) == true
-  defp lane_ended?(_lane), do: false
-
-  # Dim factors for an ended lane: the band rests at HALF its live fill/stroke
-  # opacity and its label glyph at half opacity, so a terminated lane recedes
-  # behind the live ones. A SELECTED ended lane keeps its selected band
-  # fill/stroke (only the stroke opacity is halved) — selection stays readable.
-  defp band_fill_opacity(true, _ended?), do: "0.2"
-  defp band_fill_opacity(false, true), do: "0.06"
-  defp band_fill_opacity(false, false), do: "0.12"
-
-  defp band_stroke_opacity(true, true), do: "0.45"
-  defp band_stroke_opacity(true, false), do: "0.9"
-  defp band_stroke_opacity(false, true), do: "0.2"
-  defp band_stroke_opacity(false, false), do: "0.35"
-
-  # `nil` omits the SVG `opacity` attribute entirely for a live lane.
-  defp lane_dim_opacity(true), do: "0.5"
-  defp lane_dim_opacity(false), do: nil
-
-  defp lane_label(lane) do
-    "T" <> safe_string(Map.get(lane, :task_local_id) || Map.get(lane, :agent_id))
   end
 
   # ---------------------------------------------------------------------------
@@ -903,15 +842,17 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     if Map.get(node, :kind) == :base, do: gettext("base"), else: nil
   end
 
-  defp lane_title(lane) do
-    [lane_label(lane), agent_status_label(lane_status(lane)), lane_ended_label(lane)]
+  # `author · date`, or "" when the node carries neither (a base node).
+  defp meta_text(node) do
+    [author(node), commit_date(node)]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.join(" · ")
   end
 
-  # zh_CN：该智能体已结束/已被回收（在会话中保留的、已终止的泳道）
-  defp lane_ended_label(lane) do
-    if lane_ended?(lane), do: gettext("terminated"), else: nil
+  # The SVG's accessible name.
+  defp graph_aria_label do
+    # zh_CN：无障碍标签 —— 整个 git 提交历史图形的朗读名称
+    gettext("Git commit history graph")
   end
 
   # ---------------------------------------------------------------------------
@@ -930,9 +871,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   defp entry_list(_container, _key), do: []
 
-  # `end_ids` / `start_ids` are the agent ids for which this node is the END /
-  # START commit; any non-list shape folds to `[]`.
-  defp id_list(%{} = node, key) do
+  # `start_ids` / `end_ids` are the agent ids that fork from / tip at this node;
+  # any non-list shape folds to `[]`.
+  defp id_list(node, key) do
     case Map.get(node, key) do
       list when is_list(list) -> list
       _ -> []
@@ -942,8 +883,8 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   defp repo_dom_id(repo) do
     case Map.get(repo, :repo_dom_id) do
       id when is_binary(id) -> id
-      id when is_atom(id) and not is_nil(id) -> Atom.to_string(id)
       id when is_integer(id) -> Integer.to_string(id)
+      id when is_atom(id) and not is_nil(id) -> Atom.to_string(id)
       _ -> ""
     end
   end
@@ -956,14 +897,17 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   # A DOM-safe fragment for an element id: the term stringified, then anything
-  # outside `[A-Za-z0-9_-]` folded to `-` (a raw agent id may be any term).
+  # outside `[A-Za-z0-9_-]` folded to `-` (a raw agent id / sha may be any term).
   defp agent_key(id) do
     id |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
   end
 
-  defp sha_key(container, key) do
+  defp sha_key_of(container, key) do
     container |> Map.get(key) |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
   end
+
+  # A DOM-safe fragment for a ref chip id.
+  defp ref_key(ref), do: ref |> safe_string() |> String.replace(~r/[^A-Za-z0-9_-]/, "-")
 
   defp safe_string(value) when is_binary(value), do: value
   defp safe_string(value) when is_atom(value), do: Atom.to_string(value)
@@ -974,8 +918,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   defp int(_value), do: 0
 
   # Compact SVG number: `210.0` → `"210"`, `33.33` → `"33.33"`. Every call site
-  # feeds a value already folded through `column/1`, `row/1` or arithmetic on
-  # them, so only numbers reach this.
+  # feeds a value already folded through `col/1`, `int/1` or arithmetic on them.
   defp n(value) when is_number(value) do
     rounded = Float.round(value * 1.0, 2)
 
@@ -1036,15 +979,4 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   defp ref_name(ref) when is_atom(ref) and not is_nil(ref), do: [Atom.to_string(ref)]
   defp ref_name(_ref), do: []
-
-  # --- attributes mirrored for the template (module attributes are NOT
-  # reachable from HEEx — an `@name` there reads the assign of that name) -----
-
-  defp node_r, do: @node_r
-
-  # The SVG's accessible name (kept next to its meaning anchor).
-  defp graph_aria_label do
-    # zh_CN：无障碍标签 —— 整个 git 提交历史 SVG 图形的朗读名称
-    gettext("Git commit history graph")
-  end
 end

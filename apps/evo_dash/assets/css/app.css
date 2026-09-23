@@ -903,33 +903,36 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Commit Graph (temporal view — Agents page) === */
-/* Interactive, commit-centric SVG DAG viewer (horizontal GitKraken-style graph)
-   for the /agents commit-history view, driven by the CommitGraph JS hook. The
-   renderer owns geometry, sizing, stroke/fill colours and the zoom-toolbar
-   markup; this block owns the MOTION (enter animations) and the minimal
-   pan/zoom surface styling. Semantic theme tokens only — no colour literals
-   (SVG colours arrive from the renderer, never from here). */
+/* VERTICAL, GitLen/GitKraken-style commit graph for the /agents commit-history
+   view, driven by the CommitGraph JS hook. The renderer owns geometry, sizing
+   and stroke/fill colours (SVG colours arrive from the renderer, never from
+   here); this block owns the MOTION (enter animations) and the minimal gutter
+   surface styling. Vertical scrolling is native — there is NO pan/zoom
+   surface. Semantic theme tokens only — no colour literals. */
 
-/* Pan/zoom surface. `touch-action: none` hands the whole gesture to the hook
-   (pointer drag = pan, wheel = zoom about the cursor); `cursor: grab` becomes
-   `.cg-dragging` while a drag is in flight. The hook mutates this element's
-   `viewBox`, so nothing here may set a `transform` on the svg. */
-.cg-svg {
+/* The gutter overlay's positioning (`absolute left-0 top-0`) and
+   `pointer-events: none` come from Tailwind utilities on the element; this
+   rule only guarantees a block-level SVG with no transform interference. */
+.cg-gutter {
   display: block;
-  touch-action: none;
-  cursor: grab;
-  user-select: none;
 }
 
-.cg-svg.cg-dragging {
-  cursor: grabbing;
+/* Enter animations. Each animated element gets exactly one class, keyed on its
+   `data-commit-graph-anim` value: `row` | `node` | `edge` (unknown kinds are
+   ignored). A row is an HTML block; a node/edge is SVG (no CSS box), so every
+   scale keyframe MUST pin `transform-box: fill-box` to scale around the
+   element's own box instead of the SVG viewport origin. */
+
+/* Commit ROW: fade in while sliding up slightly. Animates the CSS `transform`
+   property — the row carries no `transform` attribute, so this is safe. */
+@keyframes commit-row-in {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
-/* Enter animations. SVG elements have NO CSS box, so every scale keyframe MUST
-   pin `transform-box: fill-box` — otherwise `scale()` animates around the SVG
-   viewport origin instead of the element's own box. The hook adds exactly one
-   class per marked element, keyed on the element's `data-commit-graph-anim`
-   value: `node` | `lane` | `edge` (unknown kinds are ignored). */
+.commit-row-enter {
+  animation: commit-row-in 0.28s ease-out both;
+}
 
 /* Commit node: fade in while growing from 85% to its final size around its own
    center. NOTE: this animates the CSS `transform` property — the node `<g>`
@@ -946,19 +949,6 @@ button, a, input, textarea, select, summary,
   animation: commit-node-in 0.3s ease-out both;
 }
 
-/* Agent lane band: grow in horizontally from the LEFT — the band scales out of
-   its leading edge with no width/height animation (transform only). */
-@keyframes commit-lane-in {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
-}
-
-.commit-lane-enter {
-  transform-box: fill-box;
-  transform-origin: left center;
-  animation: commit-lane-in 0.45s ease-out both;
-}
-
 /* Edge: a plain opacity fade-in — deliberately NOT a stroke-draw, so it is
    robust for both <path> and <polyline>: nothing measured, nothing that can
    fail. */
@@ -971,22 +961,19 @@ button, a, input, textarea, select, summary,
   animation: commit-edge-in 0.4s ease-out both;
 }
 
-/* Reduced-motion guard. `animation: none` plus final-state overrides: nodes and
-   edges fall back to fully opaque, and the lanes fall back to their final
-   (unscaled) state so a paused lane can never render collapsed onto its left
-   edge. Deliberately NOT `transform: none` for nodes/edges — an SVG node may be
-   positioned with its own transform attribute and `none` would collapse it onto
-   the origin; the lanes' own keyframe IS the scale, so `transform: none` is
-   correct there. With no animation the `both` fill mode holds nothing, so the
+/* Reduced-motion guard. `animation: none` plus final-state overrides: rows and
+   edges fall back to fully opaque, and nodes fall back to their final
+   (unscaled) state so a paused node can never render collapsed onto its
+   origin. With no animation the `both` fill mode holds nothing, so the
    elements simply keep their final (base) state. */
 @media (prefers-reduced-motion: reduce) {
-  .commit-node-enter,
+  .commit-row-enter,
   .commit-edge-enter {
     animation: none;
     opacity: 1;
   }
 
-  .commit-lane-enter {
+  .commit-node-enter {
     animation: none;
     transform: none;
   }
