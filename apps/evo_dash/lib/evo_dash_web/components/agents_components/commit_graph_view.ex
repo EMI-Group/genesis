@@ -25,6 +25,12 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   its `T<id>` label are tinted with that lane's depth hue. Status colours are
   NEVER mapped locally — always through that shared helper.
 
+  An ENDED lane (`ended: true` — the agent has ended / been recycled and is
+  retained in-session) is rendered DIM: its band fill/stroke opacity, its label
+  glyph opacity and the fill/stroke opacity of its OWNED nodes/edges are halved,
+  and its tooltip gains a `terminated` marker. The flag is OPTIONAL and read
+  TOTALLY — a lane without it renders exactly like a live lane.
+
   Every read is TOTAL (`Map.get/2`, lists filtered to maps, grid values folded
   to `0`, non-map/odd shapes dropped) so malformed data degrades to a
   smaller/empty graph instead of raising. No `try/rescue`.
@@ -469,6 +475,12 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # label in the left gutter. The click contract lives on the group (reusing
   # `select_agent`), and the band is `pointer-events="none"` so it never
   # swallows a click meant for a node painted under it.
+  #
+  # An ENDED lane (`ended: true` — the agent has ended / been recycled and is
+  # retained in-session) is DRAWN DIM: its band fill/stroke and its `T<id>`
+  # label glyph drop to roughly half their resting opacity, so live lanes stay
+  # visually dominant. Selection still works unchanged — a selected ended lane
+  # keeps the primary band stroke, just at the ended stroke opacity.
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
@@ -481,6 +493,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     <% agent_id = Map.get(@lane, :agent_id) %>
     <% color = lane_color(@lane) %>
     <% selected? = agent_id != nil and agent_id == @selected_id %>
+    <% ended? = lane_ended?(@lane) %>
     <g
       id={"commit-agent-row-" <> @dom <> "-" <> agent_key(agent_id)}
       class="cg-lane"
@@ -502,7 +515,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
           rx="6"
           pointer-events="none"
           stroke-width="1"
-          style={"fill: #{color}; fill-opacity: #{if selected?, do: "0.2", else: "0.12"}; stroke: #{if selected?, do: "var(--color-primary)", else: color}; stroke-opacity: #{if selected?, do: "0.9", else: "0.35"}"}
+          style={"fill: #{color}; fill-opacity: #{band_fill_opacity(selected?, ended?)}; stroke: #{if selected?, do: "var(--color-primary)", else: color}; stroke-opacity: #{band_stroke_opacity(selected?, ended?)}"}
         />
       <% end %>
 
@@ -512,6 +525,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         x={@geom.ox}
         y={py(Map.get(@lane, :y), @geom) + 4}
         font-size="11"
+        opacity={lane_dim_opacity(ended?)}
         style={"fill: #{color}"}
       >
         {lane_label(@lane)}
@@ -700,7 +714,10 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   defp edge_opacity(edge, lanes_index) do
-    if lane_for(lanes_index, Map.get(edge, :owner_id)) != nil, do: "0.75", else: "0.3"
+    case lane_for(lanes_index, Map.get(edge, :owner_id)) do
+      nil -> "0.3"
+      lane -> if lane_ended?(lane), do: "0.4", else: "0.75"
+    end
   end
 
   # --- nodes -----------------------------------------------------------------
@@ -728,15 +745,27 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   # Base/fork nodes are hollow; an agent's END commit takes the shared STATUS
   # color; every other owned node takes its owner lane's depth hue; an
-  # unowned node stays muted base ink.
+  # unowned node stays muted base ink. A node owned by an ENDED lane is painted
+  # at half fill opacity (the hue/status color itself is unchanged), so a
+  # terminated lane's commits recede together with its band.
   defp node_paint(owner, lane, end_ids, base?) do
     cond do
-      base? -> {"none", "1"}
-      owner != nil and owner in end_ids -> {agent_status_svg_color(lane_status(lane)), "1"}
-      lane != nil -> {lane_color(lane), "1"}
-      true -> {"var(--color-base-content)", "0.55"}
+      base? ->
+        {"none", "1"}
+
+      owner != nil and owner in end_ids ->
+        {agent_status_svg_color(lane_status(lane)), lane_node_opacity(lane)}
+
+      lane != nil ->
+        {lane_color(lane), lane_node_opacity(lane)}
+
+      true ->
+        {"var(--color-base-content)", "0.55"}
     end
   end
+
+  # Nodes owned by an ENDED lane are dimmed (the hue/status colour is unchanged).
+  defp lane_node_opacity(lane), do: if(lane_ended?(lane), do: "0.5", else: "1")
 
   # --- lanes -----------------------------------------------------------------
 
@@ -821,6 +850,29 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   defp lane_status(lane) when is_map(lane), do: Map.get(lane, :status)
   defp lane_status(_lane), do: nil
 
+  # A lane is ENDED only when the model explicitly flags it (`ended: true`).
+  # The key is OPTIONAL and read TOTALLY — a lane without it (or with any
+  # non-`true` value) renders exactly like a live lane.
+  defp lane_ended?(lane) when is_map(lane), do: Map.get(lane, :ended) == true
+  defp lane_ended?(_lane), do: false
+
+  # Dim factors for an ended lane: the band rests at HALF its live fill/stroke
+  # opacity and its label glyph at half opacity, so a terminated lane recedes
+  # behind the live ones. A SELECTED ended lane keeps its selected band
+  # fill/stroke (only the stroke opacity is halved) — selection stays readable.
+  defp band_fill_opacity(true, _ended?), do: "0.2"
+  defp band_fill_opacity(false, true), do: "0.06"
+  defp band_fill_opacity(false, false), do: "0.12"
+
+  defp band_stroke_opacity(true, true), do: "0.45"
+  defp band_stroke_opacity(true, false), do: "0.9"
+  defp band_stroke_opacity(false, true), do: "0.2"
+  defp band_stroke_opacity(false, false), do: "0.35"
+
+  # `nil` omits the SVG `opacity` attribute entirely for a live lane.
+  defp lane_dim_opacity(true), do: "0.5"
+  defp lane_dim_opacity(false), do: nil
+
   defp lane_label(lane) do
     "T" <> safe_string(Map.get(lane, :task_local_id) || Map.get(lane, :agent_id))
   end
@@ -852,9 +904,14 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   defp lane_title(lane) do
-    [lane_label(lane), agent_status_label(lane_status(lane))]
+    [lane_label(lane), agent_status_label(lane_status(lane)), lane_ended_label(lane)]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.join(" · ")
+  end
+
+  # zh_CN：该智能体已结束/已被回收（在会话中保留的、已终止的泳道）
+  defp lane_ended_label(lane) do
+    if lane_ended?(lane), do: gettext("terminated"), else: nil
   end
 
   # ---------------------------------------------------------------------------

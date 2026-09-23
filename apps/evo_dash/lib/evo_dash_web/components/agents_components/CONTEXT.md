@@ -40,12 +40,14 @@ Attributes (all declared with `attr/3`, UNCHANGED):
   lanes: [%{agent_id, task_local_id, status, depth, color: String.t(),  # color = depth hue
             y: non_neg_integer(),                    # = lane index (grid row)
             x_start: integer() | nil, x_end: integer() | nil, node_count: non_neg_integer(),
-            start_sha: String.t() | nil, end_sha: String.t() | nil}]
+            start_sha: String.t() | nil, end_sha: String.t() | nil,
+            ended: boolean()}]  # OPTIONAL: true = the agent has ended / been recycled (retained in-session)
 }
 ```
 
 `lane_count == length(lanes)` and `row_count == lane_count`; everything is a plain map (NO structs).
 `max_x` is only a WIDTH HINT — the renderer derives the true content width from the nodes/lanes so a stale hint can never clip.
+`ended` is OPTIONAL at the renderer (read TOTALLY via a `lane_ended?/1` map guard — `Map.get(lane, :ended) == true`, any non-`true`/missing value = live lane).
 
 #### Render tree
 
@@ -66,22 +68,23 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 
 - `edge_path/1` → `path#commit-edge-<dom>-<from_sha>-<to_sha>.cg-edge[data-commit-graph-anim="edge"]` with `d` = a horizontal cubic bezier (`M fx fy C cx fy, cx ty, tx ty`, control points at the horizontal midpoint) so same-row edges read straight and lane crossings sweep gently; a duplicate/zero-length edge is dropped.
 - `:merge` edges are DASHED (`stroke-width="1.6"` + `stroke-dasharray="4 3"`); `:parent` edges are `stroke-width="2"`.
-- Stroke = the CHILD owner's depth hue (lane looked up by `edge.owner_id`) at `stroke-opacity 0.75`; an unowned edge falls back to `var(--color-base-content)` at `0.3`.
+- Stroke = the CHILD owner's depth hue (lane looked up by `edge.owner_id`) at `stroke-opacity 0.75` (an edge owned by an ENDED lane → `0.4`); an unowned edge falls back to `var(--color-base-content)` at `0.3`.
 
 #### Nodes
 
 - `node_group/1` → `g#commit-node-<dom>-<sha>.cg-node[data-commit-graph-anim="node"][data-cg-agent-id={owner_id}][data-cg-sha={sha}]` with `phx-click="select_agent"` + `phx-value-id={owner_id}` (both OMITTED when `owner_id` is nil).
 - Contains a native `<title>` (`base · ` prefix for base nodes, then message first line · short sha · author · date · refs; empties dropped) and a `circle.cg-node-dot` (`cx`/`cy`/`r` — r = 7 normal, r = 5 base) with inline `fill` / `fill-opacity` / `stroke`.
-- Node fill: the owner lane's depth hue; a node that is its owner's END (`owner_id ∈ node.end_ids`) → `EvoDashWeb.Helpers.agent_status_svg_color(<owner lane status>)`; a base node (`kind: :base`) is HOLLOW (`fill:none`, base-content stroke); an unowned non-base node is muted `var(--color-base-content)` at `fill-opacity 0.55`.
+- Node fill: the owner lane's depth hue; a node that is its owner's END (`owner_id ∈ node.end_ids`) → `EvoDashWeb.Helpers.agent_status_svg_color(<owner lane status>)`; a base node (`kind: :base`) is HOLLOW (`fill:none`, base-content stroke); an unowned non-base node is muted `var(--color-base-content)` at `fill-opacity 0.55`. A node owned by an ENDED lane keeps its fill but drops to `fill-opacity 0.5` (`lane_node_opacity/1`); base nodes keep `1`.
 - A BASE node (`kind: :base` — it has no message/date) ALSO renders a VISIBLE short-sha label `text#commit-base-label-<dom>-<sha>.cg-base-label.font-mono` as an EXTRA child of the same `g.cg-node`, BELOW the dot (`x = cx`, `y = cy + node_r + 11`, `font-size="9"`, `text-anchor="middle"`, inline `fill: var(--color-primary-standalone)`), its content = `commit_short_sha/1 || short_sha/1`. Regular `:commit` nodes are UNLABELED (hover `<title>` tooltip only).
 - Selection markers (inline-styled, visible WITHOUT CSS): the START node (`selected_id ∈ node.start_ids`) → `circle.cg-selection-start` (solid `var(--color-primary)` ring, r = `node_r + 3.5`) + a `text.cg-selection-tag` BELOW it reading gettext `"start"`; the END node (`selected_id ∈ node.end_ids`) → `circle.cg-selection-end` (DASHED primary ring) + a `text.cg-selection-tag` ABOVE it reading gettext `"end"`.
 
 #### Lanes
 
 - `lane_group/1` → `g#commit-agent-row-<dom>-<agent_key>.cg-lane[data-commit-graph-anim="lane"][data-cg-agent-id={agent_id}]` with `phx-click="select_agent"` + `phx-value-id={agent_id}` (both OMITTED when `agent_id` is nil).
-- Contains a native `<title>` (`T<id> · <status label>`) and, when its `x_start`/`x_end` are integers, a `rect#commit-lane-<dom>-<agent_key>.cg-lane-band` spanning that grid range (plus `@band_pad` each side) at the lane's row (`rx="6"`, `pointer-events="none"`, inline fill = lane depth hue at `fill-opacity 0.12`; selected → `0.2` + `var(--color-primary)` stroke).
+- Contains a native `<title>` (`T<id> · <status label>`, plus ` · ` + gettext `"terminated"` when the lane is ENDED) and, when its `x_start`/`x_end` are integers, a `rect#commit-lane-<dom>-<agent_key>.cg-lane-band` spanning that grid range (plus `@band_pad` each side) at the lane's row (`rx="6"`, `pointer-events="none"`, inline fill = lane depth hue at `fill-opacity 0.12`; selected → `0.2` + `var(--color-primary)` stroke).
 - Also a `text#commit-lane-label-<dom>-<agent_key>.cg-lane-label.font-mono` showing `T<task_local_id || agent_id>` in the `@gutter` (132px) left gutter inside the plot, filled with the depth hue.
 - Lane bands/labels are painted AFTER nodes (paint order) and the band is `pointer-events="none"` — a click meant for a node painted under it still reaches the node; the lane group itself selects on click.
+- **ENDED lanes are rendered DIM** (the `ended: true` flag, i.e. the agent has ended / been recycled and is retained in-session): `band_fill_opacity/2` → `0.06` (selected ended → `0.2`), `band_stroke_opacity/2` → `0.2` (selected ended → `0.45`, keeping the primary stroke so selection stays readable), the label `text` gets SVG `opacity="0.5"` (via `lane_dim_opacity/1`, which returns `nil` for a live lane so the attribute is OMITTED) — and the SAME flag dims that lane's owned paint: `node_paint/4` uses `lane_node_opacity/1` (`0.5` vs `1`) for the owner's nodes and `edge_opacity/2` uses `0.4` vs `0.75` for edges whose `owner_id` resolves to the ended lane. Only the fill/stroke OPACITY changes — hue choices (`lane.color`, `agent_status_svg_color/1`) are untouched. A lane WITHOUT the key renders byte-identically to before (live values `0.12`/`0.35`/no `opacity` attr, nodes `1`, edges `0.75`).
 
 #### Selection readout
 
