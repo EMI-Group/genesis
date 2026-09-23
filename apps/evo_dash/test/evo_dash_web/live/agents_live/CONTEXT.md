@@ -23,3 +23,6 @@ stateful AgentsLive page integration tests live in `../agents_live_test.exs`
   `chain/1`, `raw/2`) deliberately mirroring the shapes the module reads.
 - Assertion styles follow the sibling convention: one-sentence explanatory
   comments above non-obvious expectations.
+- `commit_graph_test.exs` is ~1127 lines — a legitimately long suite (one
+  `describe` per model rule group plus an explicit totality matrix); don't split
+  casually.
