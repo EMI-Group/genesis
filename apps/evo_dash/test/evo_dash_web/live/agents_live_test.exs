@@ -2063,7 +2063,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # ABOVE it — both in the depth-0 gutter column.
       assert [edge] = repo.edges
 
-      assert Map.take(edge, [:from_sha, :to_sha, :from_column, :from_row, :to_column, :to_row, :kind]) ==
+      assert Map.take(edge, [
+               :from_sha,
+               :to_sha,
+               :from_column,
+               :from_row,
+               :to_column,
+               :to_row,
+               :kind
+             ]) ==
                %{
                  from_sha: "c1",
                  to_sha: "b1",
@@ -2080,7 +2088,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # per-agent row bands), carrying the depth hue and its start → end shas.
       assert [agent] = repo.agents
 
-      assert Map.take(agent, [:agent_id, :task_local_id, :status, :depth, :color, :start_sha, :end_sha, :ended]) ==
+      assert Map.take(agent, [
+               :agent_id,
+               :task_local_id,
+               :status,
+               :depth,
+               :color,
+               :start_sha,
+               :end_sha,
+               :ended
+             ]) ==
                %{
                  agent_id: agent_id(),
                  task_local_id: nil,
