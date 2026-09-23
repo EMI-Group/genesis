@@ -1697,14 +1697,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "commit history view — async state and interactions" do
-    # A loaded commit graph is renderable AT PAGE LEVEL: the HTML/CSS swimlane
-    # rows carry no `phx-update` mode — incremental patching relies on the
-    # stable, unique child ids — so LiveViewTest renders the loaded markup
-    # directly and the tests below assert it from the DOM. The sibling component
-    # suite (test/evo_dash_web/components/commit_graph_view_test.exs) still pins
-    # the DOM markers in isolation via render_component/2.
+    # A loaded commit graph is renderable AT PAGE LEVEL: the SVG commit DAG
+    # (`components/agents_components/commit_graph_view.ex`) carries no
+    # `phx-update` mode — incremental patching relies on the stable, unique
+    # child ids — so LiveViewTest renders the loaded markup directly and the
+    # tests below assert it from the DOM. The sibling component suite
+    # (test/evo_dash_web/components/commit_graph_view_test.exs) renders the
+    # component in isolation via render_component/2 (bypassing the diff path).
 
-    test "an applied commit graph is stored and rendered as the HTML agent swimlane",
+    test "an applied commit graph is stored and rendered as the SVG commit DAG",
          %{conn: conn} do
       install_agents([
         summary_agent(
@@ -1748,46 +1749,91 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert [repo] = assigns(view)[:commit_graph]
       assert repo.repo_name == "a"
+      assert repo.node_count == 2
+      assert repo.edge_count == 1
+      assert repo.lane_count == 1
+      assert repo.row_count == 1
+      assert repo.max_x == 0
 
-      # The single fetched commit IS the agent's tip: one column, one lane and
-      # one marker (its parent "b1" is absent from the fetch).
-      assert repo.commit_count == 1
-      assert repo.column_count == 1
-      assert [column] = repo.columns
+      # Two nodes — the synthesized BASE/fork node ("b1", absent from the fetch,
+      # placed one column LEFT of the oldest real commit) then the single real
+      # commit ("c1"); sorted `{x, y, sha}`.
+      assert [base_node, commit_node] = repo.nodes
+
+      assert Map.take(base_node, [:sha, :short_sha, :kind, :x, :y, :message, :date, :refs]) ==
+               %{
+                 sha: "b1",
+                 short_sha: "b1",
+                 kind: :base,
+                 x: -1,
+                 y: 0,
+                 message: "",
+                 date: nil,
+                 refs: []
+               }
+
+      # The base node is the agent's fork point.
+      assert base_node.start_ids == [agent_id()]
+      assert base_node.end_ids == []
 
       # The message is truncated to its first line; refs come from the payload.
-      # A column has no `:parents` field — parent links live only in the raw
-      # payload the assembly walked.
-      assert Map.take(column, [:sha, :short_sha, :message, :refs]) == %{
+      # A node carries no `:parents` field — parent links live only in `:edges`.
+      assert Map.take(commit_node, [
+               :sha,
+               :short_sha,
+               :kind,
+               :x,
+               :y,
+               :message,
+               :refs,
+               :author_name
+             ]) == %{
                sha: "c1",
                short_sha: "c1",
+               kind: :commit,
+               x: 0,
+               y: 0,
                message: "subject line",
-               refs: ["main"]
+               refs: ["main"],
+               author_name: "Ada"
              }
 
+      # The single fetched commit IS the agent's tip.
+      assert commit_node.owner_id == agent_id()
+      assert commit_node.end_ids == [agent_id()]
+      assert commit_node.start_ids == []
+
+      # One child → parent edge: the tip points back at the fork point.
+      assert [edge] = repo.edges
+
+      assert Map.take(edge, [:from_sha, :to_sha, :from, :to, :kind]) == %{
+               from_sha: "c1",
+               to_sha: "b1",
+               from: {0, 0},
+               to: {-1, 0},
+               kind: :parent
+             }
+
+      assert edge.owner_id == agent_id()
+
+      # One lane (a horizontal band) per agent, spanning base → tip columns.
       assert [lane] = repo.lanes
-      assert lane.agent.id == agent_id()
-      assert lane.from_column == 0
-      assert lane.to_column == 0
-      assert lane.tip_column == 0
-
-      assert [marker] = lane.markers
-      assert marker.tip? == true
-
-      assert Map.take(marker, [:column, :sha, :short_sha, :message, :refs]) == %{
-               column: 0,
-               sha: "c1",
-               short_sha: "c1",
-               message: "subject line",
-               refs: ["main"]
-             }
+      assert lane.agent_id == agent_id()
+      assert lane.depth == 0
+      assert lane.color == "#7c38dc"
+      assert lane.y == 0
+      assert lane.x_start == -1
+      assert lane.x_end == 0
+      assert lane.node_count == 2
+      assert lane.start_sha == "b1"
+      assert lane.end_sha == "c1"
 
       # ── Page-level MARKUP assertions ─────────────────────────────────────
       # The loaded graph renders at page level. Derive every id FROM THE LIVE
       # SOCKET — the repo's `repo_dom_id` and the agent id — never a hardcoded
       # dom id.
       dom = repo.repo_dom_id
-      aid = lane.agent.id
+      aid = lane.agent_id
 
       html = render(view)
 
@@ -1795,8 +1841,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ ~s(phx-hook="CommitGraph")
 
       assert has_element?(view, "##{dom}")
+      assert has_element?(view, "#commit-node-#{dom}-c1")
+      assert has_element?(view, "#commit-node-#{dom}-b1")
+      assert has_element?(view, "#commit-edge-#{dom}-c1-b1")
       assert has_element?(view, "#commit-agent-row-#{dom}-#{aid}")
-      assert has_element?(view, "#commit-marker-#{dom}-#{aid}-c1")
       assert has_element?(view, "#commit-lane-#{dom}-#{aid}")
 
       tree = Floki.parse_document!(html)
@@ -1804,64 +1852,73 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # No phx-update mode anywhere — incremental patching rides the stable ids.
       assert Floki.find(tree, "[phx-update]") == []
 
-      # The old VERTICAL graph drew parent → child edges as SVG paths; the
-      # HTML/CSS swimlane has no edge element at all.
-      graph = Floki.find(tree, "#commit-graph")
-      assert Floki.find(graph, "[data-commit-graph-anim=\"edge\"]") == []
+      # The DAG is a single `<svg class="cg-svg">` whose ONLY child is
+      # `<g class="cg-viewport">` holding every edge, node and lane band; the
+      # initial `viewBox` is what the client `CommitGraph` hook pans/zooms.
+      assert html =~ "viewBox="
+      assert [svg] = Floki.find(tree, "svg.cg-svg")
+      assert [_viewport] = Floki.find(svg, "g.cg-viewport")
 
-      # EXACTLY ONE marker per commit per lane — and it is a plain HTML element
-      # (never SVG geometry).
-      assert [marker_node] = Floki.find(graph, "[id^=\"commit-marker-\"]")
-      assert {"span", _attrs, _children} = marker_node
+      # The real commit is a `g.cg-node` SVG node carrying the `select_agent`
+      # click contract and the node animation marker.
+      assert [node_c1] = Floki.find(tree, "#commit-node-#{dom}-c1")
+      assert {"g", _, _} = node_c1
 
-      assert Floki.attribute(marker_node, "id") == ["commit-marker-#{dom}-#{aid}-c1"]
-
-      # The tip marker is LARGER and status-colored: the shared status-color
-      # helper — never the lane's depth hue — driving an inline background.
-      tip_color = Helpers.agent_status_svg_color(:running)
-      assert tip_color == "var(--color-success)"
-
-      assert Floki.attribute(marker_node, "class")
+      assert node_c1
+             |> Floki.attribute("class")
              |> hd()
              |> String.split()
-             |> Enum.member?("size-3")
+             |> Enum.member?("cg-node")
 
-      assert Floki.attribute(marker_node, "data-commit-graph-anim") == ["node"]
+      assert Floki.attribute(node_c1, "data-commit-graph-anim") == ["node"]
+      assert Floki.attribute(node_c1, "data-cg-sha") == ["c1"]
+      assert Floki.attribute(node_c1, "phx-click") == ["select_agent"]
+      assert Floki.attribute(node_c1, "phx-value-id") == [to_string(aid)]
 
-      assert [marker_style] = Floki.attribute(marker_node, "style")
-      # Percentage positioning across the (identical-width) track.
-      assert marker_style =~ "left: 50%"
-      assert marker_style =~ "background-color: #{tip_color}"
+      # The synthesized base node is a node too.
+      assert [node_b1] = Floki.find(tree, "#commit-node-#{dom}-b1")
+      assert Floki.attribute(node_b1, "data-commit-graph-anim") == ["node"]
 
-      # The marker's `title` ATTRIBUTE carries the FIRST-LINE subject only — the
-      # payload's body line is dropped — with the refs folded in (there is no
-      # separate ref-chip text node).
-      assert [marker_title] = Floki.attribute(marker_node, "title")
-      assert marker_title =~ "subject line"
-      refute marker_title =~ "body"
-      assert marker_title =~ "main"
+      # The child → parent link is a `path.cg-edge`. It is SOLID here — the
+      # dashes are reserved for a `:merge` side parent, which this
+      # single-parent payload has none of.
+      assert [edge_node] = Floki.find(tree, "#commit-edge-#{dom}-c1-b1")
+      assert {"path", _, _} = edge_node
 
-      # The agent has its OWN row, carrying the lane progress bar that spans
-      # base → current (here: the whole single-column track) and the EXISTING
-      # click contract.
+      assert edge_node
+             |> Floki.attribute("class")
+             |> hd()
+             |> String.split()
+             |> Enum.member?("cg-edge")
+
+      assert Floki.attribute(edge_node, "data-commit-graph-anim") == ["edge"]
+      assert Floki.attribute(edge_node, "stroke-dasharray") == []
+      assert [edge_d] = Floki.attribute(edge_node, "d")
+      assert edge_d =~ "M "
+
+      # The agent has its OWN lane group, carrying the `select_agent` click
+      # contract and the lane animation marker.
       assert [row] = Floki.find(tree, "#commit-agent-row-#{dom}-#{aid}")
+      assert {"g", _, _} = row
+
+      assert row
+             |> Floki.attribute("class")
+             |> hd()
+             |> String.split()
+             |> Enum.member?("cg-lane")
+
+      assert Floki.attribute(row, "data-commit-graph-anim") == ["lane"]
       assert Floki.attribute(row, "phx-click") == ["select_agent"]
       assert Floki.attribute(row, "phx-value-id") == [to_string(aid)]
 
-      assert [lane_node] = Floki.find(row, "#commit-lane-#{dom}-#{aid}")
-      assert Floki.attribute(lane_node, "data-commit-graph-anim") == ["lane"]
+      # …and its band, spanning the agent's own base → tip columns.
+      assert [band] = Floki.find(row, "#commit-lane-#{dom}-#{aid}")
 
-      assert [lane_style] = Floki.attribute(lane_node, "style")
-      assert lane_style =~ "left: 0%"
-      assert lane_style =~ "width: 100%"
-
-      # Plain HTML/CSS with PERCENTAGE positioning: no SVG at all inside the row,
-      # no `min-width` anywhere in the graph, no ref-chip text node.
-      assert Floki.find(row, "svg") == []
-      assert Floki.find(row, "circle") == []
-      assert Floki.find(row, "path") == []
-      assert Floki.find(row, "text") == []
-      refute Floki.raw_html(graph) =~ "min-width"
+      assert band
+             |> Floki.attribute("class")
+             |> hd()
+             |> String.split()
+             |> Enum.member?("cg-lane-band")
     end
 
     test "a stale commit-graph result is dropped", %{conn: conn} do
