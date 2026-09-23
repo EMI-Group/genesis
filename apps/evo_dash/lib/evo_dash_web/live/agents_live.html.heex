@@ -156,15 +156,15 @@
                 <span>{gettext("Waiting")}</span>
               </div>
             <% else %>
-              <%!-- zh_CN: 提交图例 —— 时间维度视图（横向智能体泳道图）的图例 --%>
+              <%!-- zh_CN: 提交图例 —— 时间维度视图（以提交为中心的横向 DAG）的图例 --%>
               <span class="agents-legend-title">{gettext("Commit Graph Legend")}</span>
-              <%!-- zh_CN: 提交 —— 每个提交在智能体泳道上只画「一个标记点」；多个智能体共享的提交会排在同一列 --%>
+              <%!-- zh_CN: 提交 —— 每个提交在图上画「一个节点」；被多个智能体共享的同一提交只是一个节点（不是每泳道一个点） --%>
               <div
                 id="agents-legend-commit"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "One marker per commit on an agent's lane. Commits shared by several agents line up in the same column. Hover a marker to see its message."
+                    "One node per commit. Commits shared by several agents remain a single node. Hover a node to see its message."
                   )
                 }
                 phx-hook="LegendTooltip"
@@ -172,13 +172,13 @@
                 <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
                 <span>{gettext("Commit")}</span>
               </div>
-              <%!-- zh_CN: 智能体进度 —— 每个智能体占一条水平泳道；这条彩色横条从其基线提交延伸到当前提交，并按递归深度着色（每层一个色相） --%>
+              <%!-- zh_CN: 智能体泳道 —— 每个智能体占一条水平泳道带；祖先关系自左向右延伸，泳道按递归深度着色（每层一个色相） --%>
               <div
                 id="agents-legend-path"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "Each agent gets its own horizontal lane. The colored bar runs from the agent's base commit to its current commit — one hue per recursion depth."
+                    "Each agent owns one horizontal lane band. Ancestry flows left to right, and the lane is tinted by the agent's recursion depth — one hue per depth."
                   )
                 }
                 phx-hook="LegendTooltip"
@@ -187,21 +187,35 @@
                      AgentsLive.CommitGraph (depth 0 lands on this blue-violet);
                      the literal is acceptable in a static legend chip. --%>
                 <span class="w-4 h-0.5 rounded-full" style="background-color: #7c38dc"></span>
-                <span>{gettext("Agent progress")}</span>
+                <span>{gettext("Agent lane")}</span>
               </div>
-              <%!-- zh_CN: 智能体状态 —— 智能体泳道末端的最新提交标记按该智能体的状态着色（与左侧智能体树同一色系：绿＝运行、琥珀＝等待、灰＝排队） --%>
+              <%!-- zh_CN: 智能体状态 —— 智能体泳道末端的最新提交节点按该智能体的状态着色（与左侧智能体树同一色系：绿＝运行、琥珀＝等待、灰＝排队） --%>
               <div
                 id="agents-legend-ring"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "An agent's tip marker is colored by its status — same palette as the agent tree."
+                    "An agent's tip node is colored by its status — same palette as the agent tree."
                   )
                 }
                 phx-hook="LegendTooltip"
               >
                 <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
                 <span>{gettext("Agent status")}</span>
+              </div>
+              <%!-- zh_CN: 合并边 —— 当某个提交有第二个父提交时（合并提交），用一条虚线把它跨泳道连到另一个智能体 --%>
+              <div
+                id="agents-legend-merge"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext(
+                    "A dashed edge marks a commit with a second parent, linking a merge across agent lanes."
+                  )
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-4 h-0 border-t-2 border-dashed border-base-content/60"></span>
+                <span>{gettext("Merge edge")}</span>
               </div>
             <% end %>
           </div>
