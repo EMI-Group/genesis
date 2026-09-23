@@ -536,12 +536,15 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # ---------------------------------------------------------------------------
 
   defp geom(repo, selected_id) do
+    {min_x, _max_x} = grid_bounds(repo)
+
     %{
       ox: @vpad,
       oy: @vpad,
       gutter: @gutter,
       col_w: @col_w,
       row_h: @row_h,
+      min_x: min_x,
       top: top_offset(repo, selected_id)
     }
   end
@@ -550,14 +553,19 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     if selection_readout_data(repo, selected_id), do: @readout_h, else: 0
   end
 
-  defp px(x, geom), do: geom.ox + geom.gutter + column(x) * geom.col_w
+  # The grid is drawn MIN-OFFSET aware: the leftmost grid column of the actual
+  # content (`min_x`) maps to the plot origin, so the SYNTHESIZED BASE node —
+  # which the model places at `x = min_real_rank - 1`, i.e. one column LEFT of
+  # the oldest real commit — is rendered as its own leftmost column instead of
+  # collapsing onto column `0` (which would overlap it with the commit at
+  # `x = 0` and drop its edge as zero-length). Never clamp a per-coordinate `x`.
+  defp px(x, geom), do: geom.ox + geom.gutter + (column(x) - geom.min_x) * geom.col_w
 
   defp py(y, geom), do: geom.oy + geom.top + row(y) * geom.row_h + geom.row_h / 2
 
-  # Grid indices fold to `0` for any non-integer/negative shape; `x` may be a
-  # non-positive value only for malformed input, so it is clamped to the base
-  # column instead of drawing off-canvas.
-  defp column(x), do: max(int(x), 0)
+  # Grid `x` folds to `0` for any non-integer shape and keeps its sign — the
+  # base column is legitimately negative. `y` (a lane row) is always ≥ 0.
+  defp column(x), do: int(x)
   defp row(y), do: max(int(y), 0)
 
   defp content_size(repo, selected_id) do
@@ -579,19 +587,61 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     h |> max(@min_h) |> min(@max_h)
   end
 
-  # The highest grid COLUMN reached by a node (the model's `max_x` is only a
-  # hint — the nodes/lanes own the truth, so a stale hint can never clip).
+  # The grid's horizontal bounds `{min_x, max_x}` derived from the ACTUAL
+  # content — node columns, edge endpoints and lane `x_start`/`x_end` ranges.
+  # The model's `:max_x` is only a WIDTH HINT and is deliberately ignored, so a
+  # stale hint can never shift or clip the graph. Missing/non-integer values are
+  # skipped; an empty repo folds to `{0, 0}`.
+  defp grid_bounds(repo) do
+    xs =
+      node_grid_xs(repo) ++
+        edge_grid_xs(repo) ++
+        lane_grid_xs(repo)
+
+    case xs do
+      [] -> {0, 0}
+      xs -> {Enum.min(xs), Enum.max(xs)}
+    end
+  end
+
+  defp node_grid_xs(repo) do
+    repo
+    |> entry_list(:nodes)
+    |> Enum.map(&grid_x(Map.get(&1, :x)))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp edge_grid_xs(repo) do
+    repo
+    |> entry_list(:edges)
+    |> Enum.flat_map(fn edge ->
+      [grid_x(point_x(Map.get(edge, :from))), grid_x(point_x(Map.get(edge, :to)))]
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp lane_grid_xs(repo) do
+    repo
+    |> entry_list(:lanes)
+    |> Enum.flat_map(fn lane ->
+      [grid_x(Map.get(lane, :x_start)), grid_x(Map.get(lane, :x_end))]
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp point_x({x, _y}) when is_integer(x), do: x
+  defp point_x(_point), do: nil
+
+  # An integer grid coordinate, or nil (a non-integer shape is skipped rather
+  # than folded to `0`, which would widen the bounds with a phantom column).
+  defp grid_x(value) when is_integer(value), do: value
+  defp grid_x(_value), do: nil
+
+  # The grid's COLUMN COUNT — `(max_x - min_x + 1)`, i.e. the full span
+  # INCLUDING the leftmost (base) column, at least 1.
   defp grid_columns(repo) do
-    from_nodes = Enum.map(entry_list(repo, :nodes), &column(Map.get(&1, :x)))
-    from_lanes = Enum.map(entry_list(repo, :lanes), &column(Map.get(&1, :x_end)))
-
-    hint =
-      case Map.get(repo, :max_x) do
-        n when is_integer(n) and n >= 0 -> [n]
-        _ -> []
-      end
-
-    Enum.max(from_nodes ++ from_lanes ++ hint ++ [0])
+    {min_x, max_x} = grid_bounds(repo)
+    max(max_x - min_x + 1, 1)
   end
 
   # The lane ROW COUNT (highest zero-based row index + 1), at least 1.
