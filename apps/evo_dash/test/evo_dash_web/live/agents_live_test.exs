@@ -1524,15 +1524,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   describe "commit history view — switcher and lazy fetch" do
     # The left pane is a segmented switcher (@left_view): :tree (default) vs
-    # :commits. Switching to :commits lazily fetches the git commit graph via the
-    # :agents_commit_graph_runner seam — ONE runner call per distinct repo_root,
-    # resolved AT SPAWN TIME inside the EvoDash.TaskSupervisor child. Every call
-    # is recorded to the TEST process as
-    # {:commit_graph_call, node, repo_root, ranges, opts}.
+    # :commits. Switching to :commits lazily fetches the TASK-SCOPED git commit
+    # graph via the :agents_commit_graph_runner seam — ONE runner call per
+    # {repo_root, task_id} GROUP, resolved AT SPAWN TIME inside the
+    # EvoDash.TaskSupervisor child. Every call is recorded to the TEST process as
+    # the 6-tuple
+    # {:commit_graph_call, node, task_id, repo_root, live_tips, opts}.
     #
     # These tests stub the seam BEFORE live/3 (composition-time resolution) and
     # synchronize on the recorded messages; the real
-    # EvoDash.NodeContext.list_commit_graph/4 is NEVER invoked.
+    # EvoDash.NodeContext.list_task_commit_graph/5 is NEVER invoked.
 
     test "defaults to the agent tree view and renders the segmented switcher", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
@@ -1598,7 +1599,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       render_click(view, "switch_left_view", %{"view" => "bogus"})
 
       assert assigns(view)[:left_view] == :tree
-      refute_receive {:commit_graph_call, _, _, _, _}, 200
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
     end
 
     test "viewing the tree never invokes the commit runner", %{conn: conn} do
@@ -1617,10 +1618,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
       flush_agents_load(view)
 
       # The default tree view must never trigger a git RPC.
-      refute_receive {:commit_graph_call, _, _, _, _}, 200
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
     end
 
-    test "switching to commits fetches once per distinct repo_root with its ranges and the limit",
+    test "switching to commits fetches once per {repo_root, task_id} group with its live tips and the limit",
          %{conn: conn} do
       install_agents([
         summary_agent(
@@ -1635,8 +1636,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
           base_commit: "b2",
           current_commit: "c2"
         ),
-        # A SECOND agent in /repo/a with a different range → both ranges travel
-        # in ONE call for that repo_root (de-duplicated).
+        # A SECOND agent in /repo/a on the SAME task → both of its live tips
+        # travel in ONE call for that group (de-duplicated).
         summary_agent(
           id: agent_id() + 2,
           repo_root: "/repo/a",
@@ -1652,17 +1653,18 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      # Exactly ONE call per distinct repo_root, carrying that repo's
-      # de-duplicated {base, current} ranges and the limit.
-      assert_receive {:commit_graph_call, _node, "/repo/a", ranges_a, opts_a}, 1000
-      assert_receive {:commit_graph_call, _node, "/repo/b", ranges_b, opts_b}, 1000
+      # Exactly ONE call per {repo_root, task_id} group, carrying that group's
+      # de-duplicated LIVE TIPS (the non-ended agents' current commits, in agent
+      # order) and the limit.
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips_a, opts_a}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/b", tips_b, opts_b}, 1000
 
       assert opts_a == [limit: 100]
       assert opts_b == [limit: 100]
-      assert Enum.sort(ranges_a) == Enum.sort([{"b1", "c1"}, {"b1b", "c1b"}])
-      assert ranges_b == [{"b2", "c2"}]
+      assert tips_a == ["c1", "c1b"]
+      assert tips_b == ["c2"]
 
-      refute_receive {:commit_graph_call, _, _, _, _}, 200
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
     end
 
     test "agents lacking commit metadata are skipped by the fetch", %{conn: conn} do
@@ -1678,7 +1680,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
         # missing base_commit → skipped
         summary_agent(id: agent_id() + 2, repo_root: "/repo/c", base_commit: nil),
         # missing current_commit → skipped
-        summary_agent(id: agent_id() + 3, repo_root: "/repo/d", current_commit: nil)
+        summary_agent(id: agent_id() + 3, repo_root: "/repo/d", current_commit: nil),
+        # missing task_id → skipped (the RPC is task-scoped; the durable task ref
+        # is what makes a recycled agent's commits reachable)
+        summary_agent(
+          id: agent_id() + 4,
+          repo_root: "/repo/e",
+          base_commit: "b5",
+          current_commit: "c5",
+          task_id: nil
+        )
       ])
 
       install_commit_graph_runner(graph_error_responder())
@@ -1688,11 +1699,228 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      # Only the eligible agent's repo is fetched — exactly one call, and never
-      # for a nil/blank repo_root.
-      assert_receive {:commit_graph_call, _node, repo_root, _ranges, _opts}, 1000
+      # Only the fully-eligible agent's group is fetched — exactly one call, and
+      # never for a nil/blank repo_root, commit or task_id.
+      assert_receive {:commit_graph_call, _node, "task-1", repo_root, _tips, _opts}, 1000
       assert repo_root == "/repo/a"
-      refute_receive {:commit_graph_call, _, _, _, _}, 200
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+    end
+  end
+
+  describe "commit history view — task-scoped groups" do
+    # The runner is called ONCE per {repo_key, task_id} GROUP (both binaries) —
+    # the task-scoped RPC resolves a task's durable refs, so two tasks sharing a
+    # repo are two groups and their replies are UNIONED into the ONE
+    # %{repo_key => %{commits, refs}} entry the pure assembler consumes.
+
+    test "two agents in ONE repo with different task ids fetch as two groups", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1",
+          task_id: "task-1"
+        ),
+        summary_agent(
+          id: agent_id() + 1,
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c2",
+          task_id: "task-2"
+        )
+      ])
+
+      install_commit_graph_runner(fn "/repo/a" -> {:ok, %{commits: [], refs: %{}}} end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      # Same repo_key, different task_id → TWO calls, each carrying only ITS
+      # task's live tips. Groups are sorted by {repo_key, task_id}.
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]}, 1000
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+    end
+
+    test "two groups sharing a repo_key are unioned into ONE repo entry", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1",
+          task_id: "task-1"
+        ),
+        summary_agent(
+          id: agent_id() + 1,
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c2",
+          task_id: "task-2"
+        )
+      ])
+
+      # The runner is called ONCE PER GROUP in sorted {repo_key, task_id} order,
+      # so a queued responder can hand each task its own commit list (both tasks
+      # share the "shared" commit — git's own view of a forked repo).
+      payloads =
+        start_supervised!(
+          {Agent,
+           fn ->
+             [
+               {:ok,
+                %{
+                  commits: [
+                    commit("shared", ["b1"], "shared subject"),
+                    commit("c1", ["shared"])
+                  ],
+                  refs: %{"shared" => ["main"], "c1" => ["tag-1"]}
+                }},
+               {:ok,
+                %{
+                  commits: [
+                    commit("shared", ["b1"], "shared subject"),
+                    commit("c2", ["shared"])
+                  ],
+                  refs: %{"shared" => ["other"], "c2" => ["tag-2"]}
+                }}
+             ]
+           end}
+        )
+
+      install_commit_graph_runner(fn "/repo/a" ->
+        Agent.get_and_update(payloads, fn
+          [head | tail] -> {head, tail}
+          [] -> {{:error, :exhausted}, []}
+        end)
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]}, 1000
+
+      wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+
+      # ONE repo entry under the SHARED repo_key…
+      assert %{"/repo/a" => %{commits: commits, refs: refs}} = assigns(view)[:commit_graph_raw]
+
+      # …with both tasks' commits unioned and de-duplicated by :sha (the first
+      # occurrence wins — the payloads carry an identical "shared" commit)…
+      assert Enum.map(commits, & &1.sha) == ["shared", "c1", "c2"]
+
+      # …and the ref NAME lists unioned per sha.
+      assert refs == %{"shared" => ["main", "other"], "c1" => ["tag-1"], "c2" => ["tag-2"]}
+
+      # The unioned entry assembles into ONE repo graph holding both tasks' lanes.
+      assert [repo] = assigns(view)[:commit_graph]
+      assert repo.repo_key == "/repo/a"
+
+      assert Enum.map(repo.lanes, & &1.agent_id) |> Enum.sort() ==
+               Enum.sort([agent_id(), agent_id() + 1])
+    end
+
+    test "an all-ended group is still fetched, with no live tips", %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1",
+          task_id: "task-1"
+        ),
+        summary_agent(
+          id: agent_id() + 1,
+          repo_root: "/repo/b",
+          base_commit: "b2",
+          current_commit: "c2",
+          task_id: "task-2"
+        )
+      ])
+
+      install_commit_graph_runner(fn _repo_root -> {:ok, %{commits: [], refs: %{}}} end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+
+      # The /repo/a agent ENDS (the core recycles it) → retained, ended.
+      send(view.pid, {:agent_removed, agent_id(), node()})
+      flush_agent_events(view)
+
+      assert assigns(view)[:retained_agents][agent_id()].ended == true
+
+      # Re-enter the commits view: the now all-ended group is STILL fetched (the
+      # retained agent's task ref is what holds its commits), but it contributes
+      # NO live tips — only its lane.
+      view |> element("#left-view-tree") |> render_click()
+      view |> element("#left-view-commits") |> render_click()
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", [], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+    end
+
+    test "a payload that INCLUDES the base commit renders it as ONE normal commit node",
+         %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1"
+        )
+      ])
+
+      # A task-scoped fetch walks the task's durable ref ancestry, so the base
+      # commit the agent forked from can be IN the payload. It must render as a
+      # normal commit node — never a duplicated synthesized base node.
+      install_commit_graph_runner(fn "/repo/a" ->
+        {:ok,
+         %{
+           commits: [commit("c1", ["b1"], "tip subject"), commit("b1", [], "base subject")],
+           refs: %{}
+         }}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+
+      assert [repo] = assigns(view)[:commit_graph]
+
+      # ONE node for "b1" — and it is a NORMAL commit node carrying the fetched
+      # message (a synthesized base node has kind: :base and message: "").
+      assert [base_node] = Enum.filter(repo.nodes, &(&1.sha == "b1"))
+      assert base_node.kind == :commit
+      assert base_node.message == "base subject"
+
+      # The fork annotation still lands on it (it IS the agent's base_commit).
+      assert base_node.start_ids == [agent_id()]
+
+      # Two fetched commits → two nodes, no synthesized extra column.
+      assert repo.node_count == 2
+      assert repo.max_x == 1
+
+      # …and the DOM holds exactly one node element for "b1", with no base label
+      # (the short-sha label below the dot is reserved for kind: :base).
+      html = render(view)
+      dom = repo.repo_dom_id
+      assert length(Floki.find(Floki.parse_document!(html), "#commit-node-#{dom}-b1")) == 1
+      refute html =~ "commit-base-label-"
     end
   end
 
@@ -1723,7 +1951,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
-      assert_receive {:commit_graph_call, _node, "/repo/a", [{"b1", "c1"}], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
       wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
       # The stored socket state first (the rendered DOM is asserted below).
@@ -1827,6 +2055,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert lane.node_count == 2
       assert lane.start_sha == "b1"
       assert lane.end_sha == "c1"
+      # A LIVE agent's lane is never marked ended (only in-session retained ones).
+      assert lane.ended == false
 
       # ── Page-level MARKUP assertions ─────────────────────────────────────
       # The loaded graph renders at page level. Derive every id FROM THE LIVE
@@ -2048,6 +2278,150 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert new_socket.assigns.commit_graph_loaded == false
       assert new_socket.assigns.commit_graph_loading == false
       assert new_socket.assigns.commit_graph_error == nil
+      # Retained ended agents are per-node too (agent ids are per-node).
+      assert new_socket.assigns.retained_agents == %{}
+    end
+  end
+
+  describe "commit history view — retained ended agents" do
+    # The core DELETES an agent's ETS rows (and its evogit-agent-* branch) when it
+    # recycles it — the SAME {:agent_removed, id, node} broadcast fires in both
+    # cases, so the page cannot tell a deleted agent from a finished one. It
+    # therefore RETAINS the removed agent's last-known map (@retained_agents,
+    # `ended: true`), which feeds the commit-history view ONLY: the lane (drawn
+    # dim, `ended: true`) and the START/END annotation survive, while the agent
+    # TREE (@agents) drops the row. In-session only — nothing else remembers it.
+
+    test "a removed agent keeps its lane (ended) and its selection annotation", %{conn: conn} do
+      # `select: true` selects the agent BEFORE the commits switch (its card only
+      # exists in the tree view) so the graph's START/END annotation for the
+      # selection is observable afterwards.
+      view = mount_loaded_commit_graph(conn, select: true)
+      aid = agent_id()
+
+      assert assigns(view)[:selected_agent_id] == aid
+      assert [repo] = assigns(view)[:commit_graph]
+      dom = repo.repo_dom_id
+      assert has_element?(view, "#cg-selection-readout-#{dom}")
+
+      send(view.pid, {:agent_removed, aid, node()})
+      flush_agent_events(view)
+
+      # Retained, marked ended…
+      assert assigns(view)[:retained_agents][aid].ended == true
+
+      # The lane persists on the re-rendered GRAPH, marked ended…
+      assert [repo] = assigns(view)[:commit_graph]
+      assert [lane] = repo.lanes
+      assert lane.agent_id == aid
+      assert lane.ended == true
+
+      # …and the selection was NOT cleared, so its START/END annotation still
+      # renders on the retained lane (the detail panel itself degrades to its
+      # "not found" state, which is the natural view of an agent that is gone).
+      assert assigns(view)[:selected_agent_id] == aid
+
+      html = render(view)
+      assert has_element?(view, "#commit-agent-row-#{dom}-#{aid}")
+      assert has_element?(view, "#cg-selection-readout-#{dom}")
+      assert html =~ "cg-selection-start"
+      assert html =~ "cg-selection-end"
+
+      # The agent TREE, however, no longer lists it — the retained copy is
+      # commit-graph-only (the tree pane is only rendered in the tree view).
+      view |> element("#left-view-tree") |> render_click()
+      assert assigns(view)[:agents] == []
+      refute has_element?(view, "#agent-card-#{aid}")
+    end
+
+    test "a live agent supersedes its retained copy — exactly one lane", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+      aid = agent_id()
+
+      send(view.pid, {:agent_removed, aid, node()})
+      flush_agent_events(view)
+      assert assigns(view)[:retained_agents][aid].ended == true
+
+      # ── 1. re-registration (the incremental broadcast path) ──────────────
+      send(
+        view.pid,
+        {:agent_registered, aid,
+         summary_agent(id: aid, repo_root: "/repo/a", base_commit: "b1", current_commit: "c1"),
+         node()}
+      )
+
+      flush_agent_events(view)
+
+      # The retained copy is dropped (a live id always wins)…
+      assert assigns(view)[:retained_agents] == %{}
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [aid]
+
+      # …and the graph holds EXACTLY ONE lane for the id, live.
+      assert [repo] = assigns(view)[:commit_graph]
+      assert [lane] = repo.lanes
+      assert lane.agent_id == aid
+      assert lane.ended == false
+
+      # ── 2. a FULL REFRESH carrying the row (the authoritative path) ──────
+      send(view.pid, {:agent_removed, aid, node()})
+      flush_agent_events(view)
+      assert assigns(view)[:retained_agents][aid].ended == true
+
+      send(
+        view.pid,
+        {:agents_data_loaded, node(), 1,
+         {:ok,
+          %{
+            agents: [
+              full_agent(
+                id: aid,
+                repo_root: "/repo/a",
+                base_commit: "b1",
+                current_commit: "c1",
+                ended: false
+              )
+            ],
+            config_status: nil,
+            threshold_cache: nil
+          }}}
+      )
+
+      render(view)
+
+      assert assigns(view)[:retained_agents] == %{}
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [aid]
+      assert [repo] = assigns(view)[:commit_graph]
+      assert [lane] = repo.lanes
+      assert lane.agent_id == aid
+      assert lane.ended == false
+    end
+
+    test "a node switch resets the retained agents", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+      aid = agent_id()
+
+      send(view.pid, {:agent_removed, aid, node()})
+      flush_agent_events(view)
+      assert map_size(assigns(view)[:retained_agents]) == 1
+
+      # Mirror the commit-graph reset test's idiom: invoke handle_params/3
+      # directly on the live socket with `previous_node` forced to differ —
+      # :sys.replace_state on :current_node would NOT run the reset branch.
+      state = :sys.get_state(view.pid)
+      socket = state.socket
+      socket = %{socket | assigns: Map.put(socket.assigns, :previous_node, :some_other_node)}
+
+      {:noreply, new_socket} = EvoDashWeb.AgentsLive.handle_params(%{}, "/agents", socket)
+
+      # Retained agents are keyed by PER-NODE agent ids, so the switch drops them
+      # together with the rest of the per-node state…
+      assert new_socket.assigns.retained_agents == %{}
+      assert new_socket.assigns.commit_graph == []
+      assert new_socket.assigns.commit_graph_raw == %{}
+      assert new_socket.assigns.commit_graph_loaded == false
+      assert new_socket.assigns.selected_agent_id == nil
+      # …while the user's view preference survives.
+      assert new_socket.assigns.left_view == :commits
     end
   end
 
@@ -2119,14 +2493,18 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  # Installs the :agents_commit_graph_runner stub. Every call is recorded to the
-  # TEST process as {:commit_graph_call, node, repo_root, ranges, opts}; the
-  # result comes from responder.(repo_root), which may return {:ok, payload}.
+  # Installs the :agents_commit_graph_runner stub. The seam is ARITY 5 —
+  # runner.(node, task_id, repo_key, live_tips, limit: 100), ONE call per
+  # {repo_key, task_id} group (both binaries) — so the responder is keyed by the
+  # repo_key the group belongs to. Every call is recorded to the TEST process as
+  # the 6-tuple {:commit_graph_call, node, task_id, repo_root, live_tips, opts};
+  # the result comes from responder.(repo_root), which may return
+  # {:ok, %{commits: [...], refs: %{}}} or {:error, reason}.
   defp install_commit_graph_runner(responder) do
     test_pid = self()
 
-    stub = fn node, repo_root, ranges, opts ->
-      send(test_pid, {:commit_graph_call, node, repo_root, ranges, opts})
+    stub = fn node, task_id, repo_root, live_tips, opts ->
+      send(test_pid, {:commit_graph_call, node, task_id, repo_root, live_tips, opts})
       responder.(repo_root)
     end
 
@@ -2142,16 +2520,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   # An {:error, _} reply keeps @commit_graph empty (the commit pane's error
-  # state) AND halts the fetch loop after that repo — so every EARLIER repo's
+  # state) AND halts the fetch loop after that group — so every EARLIER group's
   # call is still recorded (see graph_partial_responder/1). Loaded-graph DOM
   # coverage lives in the page test above; the sibling component suite still
   # pins the DOM markers in isolation.
   defp graph_error_responder, do: fn _repo_root -> {:error, :stub} end
 
   # Returns {:ok, _} for `first_repo_root` — letting the (sorted) fetch loop
-  # continue to the NEXT repo_root — and {:error, _} for every other repo, which
-  # halts it. That keeps "one call per distinct repo_root" observable: the loop
-  # reaches every repo before the first error stops it.
+  # continue to the NEXT group — and {:error, _} for every other repo, which
+  # halts it. That keeps "one call per {repo_root, task_id} group" observable:
+  # the loop reaches every group before the first error stops it.
   defp graph_partial_responder(first_repo_root) do
     fn
       ^first_repo_root -> {:ok, %{commits: [], refs: %{}}}
@@ -2160,11 +2538,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   # Reaches a LOADED commit graph through the REAL async path: one eligible agent
-  # in /repo/a with a stub runner returning `single_commit_graph_payload/0`, then
-  # a switch to the commits view. Returns the view. Callers MAY render the loaded
-  # graph (the commits container carries no phx-update mode); the assigns-based
-  # stale / foreign-node / failed-refresh tests use this helper to inspect state.
-  defp mount_loaded_commit_graph(conn) do
+  # in /repo/a (task "task-1" — the summary_agent/1 default) with a stub runner
+  # returning `single_commit_graph_payload/0`, then a switch to the commits view.
+  # Returns the view. Callers MAY render the loaded graph (the commits container
+  # carries no phx-update mode); the assigns-based stale / foreign-node /
+  # failed-refresh tests use this helper to inspect state.
+  # `select: true` selects the agent BEFORE the switch (its card only exists in
+  # the tree view) so the graph's START/END annotation for the selection is
+  # observable afterwards.
+  defp mount_loaded_commit_graph(conn, opts \\ []) do
     install_agents([
       summary_agent(id: agent_id(), repo_root: "/repo/a", base_commit: "b1", current_commit: "c1")
     ])
@@ -2174,12 +2556,29 @@ defmodule EvoDashWeb.AgentsLiveTest do
     {:ok, view, _html} = live(conn, ~p"/agents")
     flush_agents_load(view)
 
+    if Keyword.get(opts, :select, false) do
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+    end
+
     render_click(view, "switch_left_view", %{"view" => "commits"})
 
-    assert_receive {:commit_graph_call, _node, "/repo/a", [{"b1", "c1"}], [limit: 100]}, 1000
+    assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
     wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
 
     view
+  end
+
+  # One fetched commit in the shape the payload uses (atom keys — the assembler
+  # and the de-dupe both read :sha / :parents).
+  defp commit(sha, parents, message \\ "") do
+    %{
+      sha: sha,
+      short_sha: sha,
+      message: message,
+      parents: parents,
+      author_name: "Ada",
+      date: nil
+    }
   end
 
   # The per-repo commit-graph payload for the single eligible /repo/a agent (base
@@ -2256,7 +2655,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   # A minimal RemoteAPI-shaped agent summary (the shape
-  # EvoDashWeb.AgentsLive.LoadData.build_agents consumes).
+  # EvoDashWeb.AgentsLive.LoadData.build_agents consumes). `task_id` defaults to a
+  # non-nil BINARY because the task-scoped commit-graph RPC is grouped by
+  # {repo_root, task_id} and SKIPS agents without one — callers override it to
+  # exercise the grouping.
   defp summary_agent(overrides) do
     Map.merge(
       %{
@@ -2280,7 +2682,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         worktree: nil,
         current_commit: "abc123",
         base_commit: "def456",
-        task_id: nil,
+        task_id: "task-1",
         task_number: nil,
         retries: 0
       },
@@ -2295,6 +2697,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
   # A fully-shaped agent map (all fields the tree/detail render + carry-over
   # path read), with `overrides` merged in so tests can set id/history/etc.
+  # `task_id` is a non-nil BINARY (the task-scoped commit-graph grouping skips
+  # agents without one).
   defp full_agent(overrides) do
     Map.merge(
       %{
@@ -2302,7 +2706,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         task_local_id: nil,
         repo_id: "primary",
         repo_root: nil,
-        task_id: nil,
+        task_id: "task-1",
         task_number: 99,
         status: :running,
         depth: 0,
