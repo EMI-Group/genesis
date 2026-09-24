@@ -43,6 +43,11 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
 
   @doc """
   Executes the skill_enable tool.
+
+  The CONTEXT.md read-modify-write (read the front matter, merge the skill in,
+  write it back) runs under `EvoGit.Agent.Tools.Shared.with_file_lock/2` keyed
+  on the target CONTEXT.md path, so parallel skill mutations of the same
+  CONTEXT.md are serialized instead of silently clobbering each other.
   """
   def execute(args, repo_path, repo_root, default_node_path) do
     with {:ok, skill_name} <- Shared.fetch_string_arg(args, "skill_name") do
@@ -56,21 +61,25 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
         "Error: Skill '#{skill_name}' does not exist in .agents/skills/. " <>
           "Use skill_add to create it first, or use skill_list to see available skills."
       else
-        case EvoGit.Skills.enable_skill(skill_name, node_path, repo_path) do
-          {:ok, :already_enabled_here} ->
-            "Skill '#{skill_name}' is already enabled at '#{node_path}'."
+        context_path = Path.join(EvoGit.Platform.safe_expand(node_path, repo_path), "CONTEXT.md")
 
-          {:ok, :already_enabled_above, higher_path} ->
-            "Skill '#{skill_name}' is already enabled at a higher level ('#{higher_path}'), " <>
-              "which covers '#{node_path}'. No changes needed."
+        Shared.with_file_lock(context_path, fn ->
+          case EvoGit.Skills.enable_skill(skill_name, node_path, repo_path) do
+            {:ok, :already_enabled_here} ->
+              "Skill '#{skill_name}' is already enabled at '#{node_path}'."
 
-          {:ok, :enabled, path} ->
-            "Skill '#{skill_name}' enabled at '#{path}'. " <>
-              "It will be available to agents assigned to this node and its children."
+            {:ok, :already_enabled_above, higher_path} ->
+              "Skill '#{skill_name}' is already enabled at a higher level ('#{higher_path}'), " <>
+                "which covers '#{node_path}'. No changes needed."
 
-          {:error, reason} ->
-            "Error enabling skill: #{reason}"
-        end
+            {:ok, :enabled, path} ->
+              "Skill '#{skill_name}' enabled at '#{path}'. " <>
+                "It will be available to agents assigned to this node and its children."
+
+            {:error, reason} ->
+              "Error enabling skill: #{reason}"
+          end
+        end)
       end
     else
       {:error, message} -> message
