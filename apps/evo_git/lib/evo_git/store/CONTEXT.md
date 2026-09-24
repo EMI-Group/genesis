@@ -81,7 +81,7 @@ Public API (all `GenServer.call`, 30s timeout; `store \\ __MODULE__`): `put_task
 | Module | Purpose |
 |---|---|
 | `EvoGit.Repo` | `use Ecto.Repo, otp_app: :evo_git, adapter: XqliteEcto3` — NOT in the supervision tree; instances are owned by stores. Runtime `init/2` resolves `database:` from start opts, falling back to `<data_dir>/tasks.sqlite`. |
-| `EvoGit.Store.Boot` (`./boot.ex`) | `start_dynamic/1` (mkdir_p + unnamed repo + migrations), `run_migrations/1` (keyword = caller's binding, pid = scoped binding; global lock inside), `stop/1`. |
+| `EvoGit.Store.Boot` (`./boot.ex`) | `start_dynamic/1` (mkdir_p + unnamed repo + migrations), `run_migrations/1` (keyword = caller's binding, pid = scoped binding; global lock inside), `stop/1`, `migration_source/0` (the memoized pre-loaded `[{version, module}]` migrator source). |
 | `EvoGit.Store.RepoScope` (`./repo_scope.ex`) | `with_repo(pid, fun)` — the scoped-addressing primitive for every read/write against an unnamed instance. Pure, no I/O. |
 
 ### `EvoGit.Store.Codec` (`./codec.ex`) — the oracle
