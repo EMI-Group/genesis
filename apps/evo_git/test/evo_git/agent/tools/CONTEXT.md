@@ -25,6 +25,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
 | `reflect_tools_test.exs` | the self-reflective task-control command handlers |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
+| `tool_dispatch_same_file_test.exs` | `EvoGit.Agent.ToolDispatch.batch_execute_tools/4` (same-file batch lock-in) |
 
 ## Async-Safety Rationale
 
