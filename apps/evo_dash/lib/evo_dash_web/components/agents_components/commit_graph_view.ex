@@ -33,10 +33,10 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   ## Gutter paint
 
   The gutter `<svg>` holds, in DOM order (paint order), every edge then every
-  node. An edge is a vertical cubic bezier whose control points sit at the
+  node. An edge is an ORTHOGONAL (right-angle) route whose corner sits at the
   vertical midpoint between the two rows, stroked with the CHILD owner's depth
   hue (`agents[].color`, looked up by `edge.owner_id`); a `:merge` edge is
-  dashed. A node is a circle filled with its OWNER agent's depth hue, EXCEPT a
+  dashed. A node is a SQUARE filled with its OWNER agent's depth hue, EXCEPT a
   commit that is an END commit for its owner (`owner_id ∈ node.end_ids`) which
   uses `EvoDashWeb.Helpers.agent_status_svg_color/1` (status colours are NEVER
   mapped locally); a `:base` node is drawn smaller + hollow and an unowned node
@@ -107,8 +107,8 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       @row_h      44   # fixed row height (px) — the gutter aligns to this
       @col_w      16   # gutter column width (px)
       @gutter_pad 12   # padding on each side of the gutter columns (px)
-      @node_r      6   # commit node radius (px)
-      @base_r      4   # synthesized base node radius (px)
+      @node_r      6   # commit node half-size (px) — square side is 2x this
+      @base_r      4   # synthesized base node half-size (px)
 
   Gutter width (`@gutter_pad * 2 + column_count * @col_w`) and total height
   (`node_count * @row_h`) are derived from the model; the gutter `<svg>` carries
@@ -334,11 +334,12 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   end
 
   # ---------------------------------------------------------------------------
-  # edge_path/1 — one child → parent connector. The curve is a VERTICAL cubic
-  # bezier (control points at the vertical midpoint between the two rows) so
-  # same-column edges read as straight lines and cross-column edges sweep
-  # gently; a `:merge` edge is DASHED so merges read distinctly. The stroke is
-  # the CHILD owner's depth hue (edges without an owning agent stay muted).
+  # edge_path/1 — one child → parent connector. The route is ORTHOGONAL
+  # (right-angle straight segments) with its corner at the vertical midpoint
+  # between the two rows, so same-column edges read as straight vertical lines
+  # and cross-column edges step across crisply; a `:merge` edge is DASHED so
+  # merges read distinctly. The stroke is the CHILD owner's depth hue (edges
+  # without an owning agent stay muted).
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
@@ -393,20 +394,26 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       data-cg-agent-id={v.owner}
     >
       <title>{node_title(@node)}</title>
-      <circle
+      <rect
         class="cg-node-dot"
-        cx={v.cx}
-        cy={v.cy}
-        r={v.r}
+        x={v.x}
+        y={v.y}
+        width={v.side}
+        height={v.side}
+        rx="0"
+        ry="0"
         stroke-width="1.5"
         style={"fill: #{v.fill}; fill-opacity: #{v.fill_opacity}; stroke: #{v.stroke}"}
       />
-      <circle
+      <rect
         :if={v.start? or v.end?}
         class="cg-node-ring"
-        cx={v.cx}
-        cy={v.cy}
-        r={v.ring_r}
+        x={v.ring_x}
+        y={v.ring_y}
+        width={v.ring_side}
+        height={v.ring_side}
+        rx="0"
+        ry="0"
         stroke-width="2"
         stroke-dasharray={if(v.end?, do: "3 2", else: nil)}
         style="fill: none; stroke: var(--color-primary)"
@@ -587,8 +594,12 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   # --- edges -----------------------------------------------------------------
 
-  # A vertical cubic bezier `M fx fy C fx my, tx my, tx ty` (control points at
-  # the vertical midpoint), or nil when the endpoints collapse onto each other.
+  # An ORTHOGONAL (right-angle) route of straight segments
+  # `M fx fy L fx my L tx my L tx ty` with the corner at the vertical midpoint
+  # between the two rows, or nil when the endpoints collapse onto each other.
+  # The full 4-point form is used uniformly: a same-column edge (`fx == tx`)
+  # renders as a straight vertical line because its horizontal segment is
+  # zero-length.
   defp edge_d(edge, positions, geom) do
     {fx, fy} = endpoint(edge, :from, positions, geom)
     {tx, ty} = endpoint(edge, :to, positions, geom)
@@ -597,7 +608,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       nil
     else
       my = (fy + ty) / 2
-      "M #{n(fx)} #{n(fy)} C #{n(fx)} #{n(my)}, #{n(tx)} #{n(my)}, #{n(tx)} #{n(ty)}"
+      "M #{n(fx)} #{n(fy)} L #{n(fx)} #{n(my)} L #{n(tx)} #{n(my)} L #{n(tx)} #{n(ty)}"
     end
   end
 
@@ -658,14 +669,19 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
     pos = Map.get(positions, Map.get(node, :sha), %{col: 0, row: 0})
     {fill, fill_opacity} = dot_paint(owner, agent, end_ids, base?)
+    cx = dot_x(pos.col, geom)
+    cy = dot_y(pos.row, geom)
     r = if(base?, do: @base_r, else: @node_r)
+    ring_r = r + 3
 
     %{
       owner: owner,
-      cx: n(dot_x(pos.col, geom)),
-      cy: n(dot_y(pos.row, geom)),
-      r: r,
-      ring_r: r + 3,
+      x: n(cx - r),
+      y: n(cy - r),
+      side: n(2 * r),
+      ring_x: n(cx - ring_r),
+      ring_y: n(cy - ring_r),
+      ring_side: n(2 * ring_r),
       fill: fill,
       fill_opacity: fill_opacity,
       stroke: if(base?, do: "var(--color-base-content)", else: fill),
