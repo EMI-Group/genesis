@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.3] - 2026-09-24
+
+### Added
+
+- Add task-scoped commit-graph API that resolves a task's durable refs and base commit so the dashboard's temporal view retains commits from recycled agents
+- Add short-sha labels on commit-graph base nodes
+
+### Changed
+
+- Rework the Agents commit-history view into a GitKraken-style graph: a vertical, one-row-per-commit DAG with a left gutter of orthogonal edges and square commit markers/selection rings, dimmed lanes and a "terminated" tooltip marker for ended agents, and simplified enter-only animation (no pan/zoom)
+
+### Fixed
+
+- Fix lost file updates when file-mutating tool calls (edits, create_files, make_dir, skill tools) target the same path in a single batch by serializing writes per file, while other tools remain concurrent
+- Eliminate repeated migration module recompilation warnings on store boot by pre-loading and memoizing the Ecto migration source
+
 ## [0.13.2] - 2026-09-22
 
 ### Added
