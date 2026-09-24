@@ -56,6 +56,7 @@ The resulting source is memoized in `:persistent_term` under `{EvoGit.Store.Boot
 `Boot.run_migrations/1` wraps the run (and the one-time compile it may trigger) in `:global.trans({{:evo_git_store_migrations, self()}, fun})` — a cluster-safe PRODUCTION lock (no test-side wrapper), since `Code.compile_file/1` of the same module is not concurrency-safe (a CompileError would otherwise surface) and boot is not exclusive (per-store dynamic instances can start in parallel).
 The lock id is ONE global constant (not per DB path) because the protected resource is the shared migration source modules; the `self()` LockRequesterId makes it actually exclude (a constant id would be treated as re-entry).
 The pdict save/restore stays OUTSIDE the lock (per-process state).
+
 ### `mix migrate.store`
 
 `Mix.Tasks.Migrate.Store` (`lib/mix/tasks/migrate.store.ex`) is a thin wrapper: boots a private unnamed dynamic repo on the target DB (default `<data_dir>/tasks.sqlite`), runs `Boot.run_migrations/1` (the exact call boot uses), reports applied versions, stops the instance. Never starts `:evo_git`. Normally a NO-OP — exists for manual verification / interrupted upgrades.
