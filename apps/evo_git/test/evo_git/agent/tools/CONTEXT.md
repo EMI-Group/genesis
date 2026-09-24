@@ -35,7 +35,9 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `web_search_test.exs` (mutates the `:web_search_http_runner` app-env seam and the shared `:req_llm` API-key store).
 - `async: false` — `reflect_tools_test.exs` (`without_model_profiles/1` rewrites the GLOBAL `EvoGit.AgentScheduler` `model_profiles` config via `AgentScheduler.update_config/1`, a BEAM-global read by every other agent/task module).
 - `async: false` — `complete_task_test.exs` (inserts/deletes rows in the shared `:evogit_sched_meta` / `:evogit_agent_state` tables and DELETES + recreates the global `:evogit_archive_records` table).
+- `async: false` — `tool_dispatch_same_file_test.exs` (the app-global `:evogit_agent_state` ETS table via `EvoGit.AgentScheduler.Store.put_agent_state/2` and the global `EvoGit.AgentScheduler` tool-slot pool every parallel call acquires).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
+  `file_edit_test.exs` and the concurrency blocks added to `shared_test.exs` use unique per-test temp files and per-path locks, so they never contend across modules.
 
 ## Notes for Agents
 
