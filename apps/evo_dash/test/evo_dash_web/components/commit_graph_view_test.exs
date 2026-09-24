@@ -18,11 +18,13 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     * `#cg-list-<repo_dom_id>` (the `relative` list wrapper) holding the
       absolute gutter `<svg.cg-gutter[viewBox]>` and the `.cg-rows` container
       left-padded by the gutter width;
-    * `path.cg-edge[data-commit-graph-anim="edge"]` child → parent vertical
-      beziers (a `:merge` edge dashed, a `:parent` edge solid, stroked with the
-      child owner's depth hue) with a stable id;
+    * `path.cg-edge[data-commit-graph-anim="edge"]` child → parent orthogonal
+      (right-angle) routes — `M fx fy L fx my L tx my L tx ty` (a `:merge` edge
+      dashed, a `:parent` edge solid, stroked with the child owner's depth hue)
+      with a stable id;
     * `g.cg-node[data-commit-graph-anim="node"]` with `data-cg-agent-id` /
-      `data-cg-sha`, an inner `<title>` tooltip and the gutter dot geometry;
+      `data-cg-sha`, an inner `<title>` tooltip and the square gutter dot
+      geometry (`rect.cg-node-dot`);
     * `div.cg-row[data-commit-graph-anim="row"]` with the stable id, the fixed
       row height, the `select_agent` contract (omitted for an unowned node), the
       short sha / message / `author · date` and the second-line TAGS;
@@ -265,7 +267,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   end
 
   describe "commit_graph_view/1 — edges" do
-    test "one path.cg-edge per model edge, with a stable id and a vertical bezier d" do
+    test "one path.cg-edge per model edge, with a stable id and an orthogonal d" do
       {repo, dom, tree} = happy()
 
       edges = Floki.find(tree, "path.cg-edge")
@@ -281,9 +283,9 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert ids == expected
       assert ids == Enum.uniq(ids)
 
-      # A vertical cubic bezier: M fx fy C fx my, tx my, tx ty.
+      # An orthogonal (right-angle) route: M fx fy L fx my L tx my L tx ty.
       for edge <- edges do
-        assert attr(edge, "d") |> hd() =~ ~r/^M \S+ \S+ C \S+ \S+, \S+ \S+, \S+ \S+$/
+        assert attr(edge, "d") |> hd() =~ ~r/^M \S+ \S+ L \S+ \S+ L \S+ \S+ L \S+ \S+$/
       end
     end
 
@@ -296,7 +298,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       selector = "path.cg-edge##{edge_selector(repo.repo_dom_id, edge)}"
 
       [el] = Floki.find(tree, selector)
-      assert attr(el, "d") == ["M 20 66 C 20 44, 20 44, 20 22"]
+      assert attr(el, "d") == ["M 20 66 L 20 44 L 20 44 L 20 22"]
     end
 
     test "a parent edge is solid; a merge edge is dashed" do
@@ -326,7 +328,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       [el] = Floki.find(tree, "#{edge_selector(dom, merge)}")
 
       # from column 1 (x = 36) → to column 0 (x = 20).
-      assert attr(el, "d") == ["M 36 198 C 36 176, 20 176, 20 154"]
+      assert attr(el, "d") == ["M 36 198 L 36 176 L 20 176 L 20 154"]
     end
 
     test "the stroke is the child owner's depth hue; an unowned edge is muted" do
@@ -377,7 +379,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       [el] = Floki.find(tree, "path.cg-edge")
 
       # dot_x(1) = 36, dot_y(3) = 154 → dot_x(0) = 20, dot_y(0) = 22.
-      assert attr(el, "d") == ["M 36 154 C 36 88, 20 88, 20 22"]
+      assert attr(el, "d") == ["M 36 154 L 36 88 L 20 88 L 20 22"]
     end
 
     test "an edge whose endpoints collapse is omitted" do
@@ -405,22 +407,24 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         assert Floki.find(tree, "#commit-node-#{dom}-#{node.sha}") != []
       end
 
-      # The row 1 / column 0 commit: dot at x = 20, y = 1*44+22 = 66, r = 6.
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
-      assert attr(dot, "cx") == ["20"]
-      assert attr(dot, "cy") == ["66"]
-      assert attr(dot, "r") == ["6"]
+      # The row 1 / column 0 commit: dot square centred at x = 20, y = 1*44+22 =
+      # 66, half-size 6 → x = 14, y = 60, side 12.
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} rect.cg-node-dot")
+      assert attr(dot, "x") == ["14"]
+      assert attr(dot, "y") == ["60"]
+      assert attr(dot, "width") == ["12"]
+      assert attr(dot, "height") == ["12"]
 
-      # The row 4 / column 1 commit: x = 12 + 16 + 8 = 36, y = 4*44+22 = 198.
-      [c3_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} circle.cg-node-dot")
-      assert attr(c3_dot, "cx") == ["36"]
-      assert attr(c3_dot, "cy") == ["198"]
+      # The row 4 / column 1 commit: x = 12 + 16 + 8 = 36 centred, y = 4*44+22 = 198.
+      [c3_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} rect.cg-node-dot")
+      assert attr(c3_dot, "x") == ["30"]
+      assert attr(c3_dot, "y") == ["192"]
     end
 
     test "an owned node is filled with its owner's depth hue" do
       {_repo, dom, tree} = happy()
 
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} rect.cg-node-dot")
 
       assert attr(dot, "style") == [
                "fill: #{@depth0_color}; fill-opacity: 1; stroke: #{@depth0_color}"
@@ -433,7 +437,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       # c2000000 is a1's end commit; a1 is :running → the shared status colour.
       assert Helpers.agent_status_svg_color(:running) == "var(--color-success)"
 
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} rect.cg-node-dot")
 
       assert attr(dot, "style") == [
                "fill: var(--color-success); fill-opacity: 1; stroke: var(--color-success)"
@@ -443,9 +447,14 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     test "a base node is hollow and smaller, with a 'base' tooltip prefix" do
       {_repo, dom, tree} = happy()
 
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_base} circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_base} rect.cg-node-dot")
 
-      assert attr(dot, "r") == ["4"]
+      # Centred on (20, 22) with the smaller base half-size 4 → x = 16, y = 18,
+      # side 8.
+      assert attr(dot, "x") == ["16"]
+      assert attr(dot, "y") == ["18"]
+      assert attr(dot, "width") == ["8"]
+      assert attr(dot, "height") == ["8"]
 
       assert attr(dot, "style") == [
                "fill: none; fill-opacity: 1; stroke: var(--color-base-content)"
@@ -463,7 +472,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         )
 
       tree = parse(render_repos([repo]))
-      [dot] = Floki.find(tree, "#commit-node-#{repo.repo_dom_id}-n0000001 circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{repo.repo_dom_id}-n0000001 rect.cg-node-dot")
 
       assert attr(dot, "style") == [
                "fill: var(--color-base-content); fill-opacity: 0.55; stroke: var(--color-base-content)"
@@ -650,17 +659,24 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     test "the selected agent's START dot wears a SOLID ring and its END dot a DASHED ring" do
       {_repo, dom, tree} = happy_selected("a2")
 
-      # c2000000 is a2's start → solid ring (no dasharray).
-      [start_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} circle.cg-node-ring")
+      # c2000000 is a2's start → solid ring (no dasharray). c2 sits at (20, 110);
+      # the ring half-side is 6 + 3 = 9 → x = 11, y = 101, side 18.
+      [start_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} rect.cg-node-ring")
+      assert attr(start_ring, "x") == ["11"]
+      assert attr(start_ring, "y") == ["101"]
+      assert attr(start_ring, "width") == ["18"]
+      assert attr(start_ring, "height") == ["18"]
       assert attr(start_ring, "stroke-dasharray") == []
       assert attr(start_ring, "style") == ["fill: none; stroke: var(--color-primary)"]
 
-      # c3000000 is a2's end → dashed ring.
-      [end_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} circle.cg-node-ring")
+      # c3000000 is a2's end → dashed ring. c3 sits at (36, 198) → x = 27, y = 189.
+      [end_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} rect.cg-node-ring")
+      assert attr(end_ring, "x") == ["27"]
+      assert attr(end_ring, "y") == ["189"]
       assert attr(end_ring, "stroke-dasharray") == ["3 2"]
 
       # No other node is ringed.
-      assert Floki.find(tree, "circle.cg-node-ring") |> length() == 2
+      assert Floki.find(tree, "rect.cg-node-ring") |> length() == 2
     end
 
     test "the selected agent's start/end rows are accented and carry a start/end marker" do
@@ -688,7 +704,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       {_repo, dom, tree} = happy_ended()
 
       # a1's owned node dots drop to half fill-opacity …
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} rect.cg-node-dot")
 
       assert attr(dot, "style") == [
                "fill: #{@depth0_color}; fill-opacity: 0.5; stroke: #{@depth0_color}"
@@ -703,7 +719,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert attr(row, "class") |> hd() =~ "opacity-50"
 
       # The live agent (a2) is untouched.
-      [live_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} circle.cg-node-dot")
+      [live_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} rect.cg-node-dot")
       assert attr(live_dot, "style") |> hd() =~ "fill-opacity: 1"
 
       [live_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c3}")
@@ -713,7 +729,7 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     test "an agent without the OPTIONAL ended flag renders identically to ended: false" do
       {_repo, dom, tree} = happy()
 
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} rect.cg-node-dot")
       assert attr(dot, "style") |> hd() =~ "fill-opacity: 1"
     end
   end
@@ -761,10 +777,13 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Floki.find(tree, "#commit-node-#{dom}-42") != []
       assert Floki.find(tree, "#commit-row-#{dom}-z0000001") != []
 
-      # Non-integer grid coordinates fold to column 0 / the rendered row index.
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-42 circle.cg-node-dot")
-      assert attr(dot, "cx") == ["20"]
-      assert attr(dot, "cy") == ["22"]
+      # Non-integer grid coordinates fold to column 0 / row 0 → dot centred at
+      # (20, 22), half-size 6 → x = 14, y = 16, side 12.
+      [dot] = Floki.find(tree, "#commit-node-#{dom}-42 rect.cg-node-dot")
+      assert attr(dot, "x") == ["14"]
+      assert attr(dot, "y") == ["16"]
+      assert attr(dot, "width") == ["12"]
+      assert attr(dot, "height") == ["12"]
     end
 
     test "an integer agent/owner id yields a DOM-safe id fragment" do
