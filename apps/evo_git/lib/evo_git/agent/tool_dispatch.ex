@@ -989,7 +989,27 @@ defmodule EvoGit.Agent.ToolDispatch do
       taskdir: EvoGit.TaskTmpdir.current()
     }
 
-    # Execute ALL standard tool calls in the batch CONCURRENTLY, bounded only
+    # Partition the batch: tool calls that read-modify-write files
+    # (`EvoGit.Agent.Tools.serial_tool?/1` — the single classification source of
+    # truth) must NOT overlap each other, because each reads the ORIGINAL bytes
+    # and the last write wins, silently discarding every other same-file edit in
+    # the batch. Run them SEQUENTIALLY in this (parent agent) process, one call
+    # at a time, in request order. Everything else stays concurrent below.
+    #
+    # The SERIAL phase runs FIRST, deliberately: a file mutation then always
+    # lands BEFORE any read or shell command in the same batch that could
+    # observe it, so `[write_file x.ex, run_bash "mix test"]` and
+    # `[edit_file x, read_file x]` behave as the model expects. The reverse
+    # order would let a same-batch read/exec observe stale bytes.
+    {serial_calls, parallel_calls} =
+      Enum.split_with(indexed_calls, fn {call, _index} ->
+        EvoGit.Agent.Tools.serial_tool?(ReqLLM.ToolCall.name(call))
+      end)
+
+    serial_outputs =
+      Enum.map(serial_calls, fn {call, index} -> run_tool_call(call, index, ctx) end)
+
+    # Execute the remaining standard tool calls CONCURRENTLY, bounded only
     # by the scheduler's tool-slot pool: each parallel task still acquires a
     # tool slot via `AgentScheduler.with_tool_slot/2` inside
     # `execute_tool_with_timeout/8` (respecting `max_tool_concurrency`).
@@ -1000,12 +1020,12 @@ defmodule EvoGit.Agent.ToolDispatch do
     # order. `timeout: :infinity` defers timeout enforcement to the per-tool
     # timeout logic inside `execute_tool_with_timeout/8` (an outer stream
     # timeout would wrongly kill legitimate long-running tools).
-    concurrency = max(1, length(indexed_calls))
+    concurrency = max(1, length(parallel_calls))
 
-    tool_outputs =
-      indexed_calls
+    parallel_outputs =
+      parallel_calls
       |> Task.async_stream(
-        fn {call, index} -> run_tool_in_parallel(call, index, ctx) end,
+        fn {call, index} -> run_tool_call(call, index, ctx) end,
         max_concurrency: concurrency,
         ordered: true,
         timeout: :infinity
@@ -1015,6 +1035,11 @@ defmodule EvoGit.Agent.ToolDispatch do
         {:exit, {%_{} = exception, stacktrace}} -> reraise(exception, stacktrace)
         {:exit, reason} -> exit(reason)
       end)
+
+    # Both phases ran in request-independent order, so re-sort by index before
+    # hint tracking: the LLM must receive results in request order.
+    tool_outputs =
+      (serial_outputs ++ parallel_outputs) |> Enum.sort_by(fn {index, _, _} -> index end)
 
     # Apply hint tracking in the PARENT process, in index order, so the
     # process-dictionary-backed delegation-hint maps and the once-per-run
@@ -1034,11 +1059,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     results
   end
 
-  # Runs a single tool call's execution inside the parallel stream, returning
-  # `{index, call, output}`. Only the tool-execution call happens here — hint
-  # tracking and the redundant-cd warning are applied later in the parent
-  # process, in index order (see `apply_tool_output_tracking/3`).
-  defp run_tool_in_parallel(call, index, ctx) do
+  # Runs a single tool call's execution, returning `{index, call, output}`. Used
+  # by BOTH batch phases: sequentially in the parent process for the serial
+  # (file-mutating) group and inside the `Task.async_stream` worker for the
+  # parallel group. Only the tool-execution call happens here — hint tracking
+  # and the redundant-cd warning are applied later in the parent process, in
+  # index order (see `apply_tool_output_tracking/3`).
+  defp run_tool_call(call, index, ctx) do
     name = ReqLLM.ToolCall.name(call)
     args = ReqLLM.ToolCall.args_map(call)
 

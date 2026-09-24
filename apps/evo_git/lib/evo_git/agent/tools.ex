@@ -231,6 +231,50 @@ defmodule EvoGit.Agent.Tools do
     tool_name in @write_tools or EvoGit.CustomTools.write_tool?(tool_name)
   end
 
+  # Tools that mutate the agent worktree through a NON-ATOMIC read-modify-write
+  # (read the original bytes, transform, write the whole file back). Two such
+  # calls targeting the SAME file must never overlap: each would read the
+  # ORIGINAL bytes and the last write would win, silently discarding the other
+  # while both still report success. Their execution is therefore SERIALIZED by
+  # the dispatcher (`ToolDispatch.batch_execute_tools/4` runs them one at a time
+  # in the parent agent process) — file I/O is not a performance bottleneck.
+  #
+  # DERIVED FROM `@write_tools` BY SUBTRACTION so the classification has a
+  # single source of truth and cannot drift: the serial set is exactly the
+  # write set MINUS the shell/exec/network tools, which are not read-modify-write
+  # file operations (they may write files, but they are opaque whole commands
+  # rather than read-modify-write cycles) and which agents legitimately run
+  # several of concurrently — serializing them would be an unrelated
+  # performance regression.
+  @non_serial_write_tools ["run_bash", "run_powershell", "run_git", "curl"]
+
+  @serial_tools @write_tools -- @non_serial_write_tools
+
+  @doc """
+  Returns `true` for tool names whose execution performs a non-atomic
+  read-modify-write on files in the agent worktree and therefore must not
+  overlap another such call in the same LLM tool-call batch.
+
+  This is the SINGLE classification source of truth for serial tool execution
+  (the dispatcher partitions a batch on it). The built-in set is the
+  `@write_tools` set minus the shell/exec/network tools (`run_bash`,
+  `run_powershell`, `run_git`, `curl`), derived by subtraction so it cannot
+  drift. A user-defined custom tool that declares itself a write tool
+  (`EvoGit.CustomTools.write_tool?/1`) is conservatively included: it is opaque
+  user code that may mutate files.
+
+  Read-only tools (`read_file`, `read_context`, `glob`, `list_dir`, `rg`,
+  `search_context`, `search_history`, `skill_list`, `skill_read`,
+  `skill_where`), the shell/exec/network tools (`run_bash`, `run_powershell`,
+  `run_git`, `curl`, `run_command`, `search_web`/`web_search`) and any unknown
+  name return `false`.
+  """
+  def serial_tool?(tool_name) when is_binary(tool_name) do
+    tool_name in @serial_tools or EvoGit.CustomTools.write_tool?(tool_name)
+  end
+
+  def serial_tool?(_tool_name), do: false
+
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
   # must never touch git or write files. Block write tools for them before
