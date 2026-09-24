@@ -2,11 +2,20 @@ defmodule EvoGit.Agent.Tools.SharedTest do
   @moduledoc """
   `async: true` — pure `EvoGit.Agent.Tools.Shared` functions plus process-local
   `:foreign_repos` state (set and cleared within each test); no BEAM-global
-  state, tmp dirs, or shared ETS.
+  state or shared ETS.
+
+  The `with_file_lock/2` / `perform_string_replace/5` concurrency tests use
+  unique per-test temp files (and thus a unique `:global` lock key, since the
+  lock key derives from `Path.expand/1` of the path), so they never contend
+  with any concurrently running module.
   """
 
   use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools.Shared
+
+  # Bounded wait for cross-process coordination messages — generous enough to
+  # absorb the async cohort's scheduling jitter, short enough to fail fast.
+  @recv_timeout 2_000
 
   describe "normalize_relpath/1" do
     test "normalizes bare path to ./ prefix" do
@@ -342,5 +351,172 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert Shared.get_optional_boolean(%{"search_notes" => "yes"}, "search_notes", false) ==
                false
     end
+  end
+
+  describe "perform_string_replace/5 — same-path parallel safety" do
+    test "N concurrent edits to the SAME file all land (no lost update)" do
+      # Regression test for the same-path parallel file-mutation race. Parallel
+      # tool calls run in SEPARATE processes; before the `with_file_lock/2` fix
+      # in `perform_string_replace/5`, each call did a non-atomic
+      # read-modify-write, so every concurrent call read the ORIGINAL bytes and
+      # the last writer won — silently dropping every edit but one.
+      n = 8
+      path = unique_path("shared_race") <> ".txt"
+      on_exit(fn -> File.rm_rf(path) end)
+
+      File.write!(path, Enum.map_join(1..n, "\n", fn i -> "TOKEN_#{i}_ORIGINAL" end))
+
+      results =
+        1..n
+        |> Task.async_stream(
+          fn i ->
+            Shared.perform_string_replace(
+              path,
+              path,
+              "TOKEN_#{i}_ORIGINAL",
+              "TOKEN_#{i}_EDITED",
+              false
+            )
+          end,
+          max_concurrency: n,
+          ordered: false,
+          timeout: 30_000
+        )
+        |> Enum.map(fn {:ok, result} -> result end)
+
+      # Every one of the N edits must report success...
+      success = "The file #{path} has been updated successfully."
+      assert Enum.all?(results, &(&1 == success))
+
+      # ...and every edit's bytes must survive to the final file.
+      final = File.read!(path)
+
+      for i <- 1..n do
+        assert final =~ "TOKEN_#{i}_EDITED"
+        refute final =~ "TOKEN_#{i}_ORIGINAL"
+      end
+    end
+  end
+
+  describe "with_file_lock/2" do
+    test "mutual exclusion across DISTINCT processes for the SAME path" do
+      path = unique_path("lock_exclusion")
+      test_pid = self()
+
+      # Each worker signals its intent, enters the critical section, reports its
+      # arrival, then blocks until the test releases it — so the holder is
+      # provably still inside while the peer attempts the same lock. `spawn_link`
+      # guarantees a flunk kills the workers (and `:global` releases a dead
+      # holder's lock), so neither a lock nor a process can leak.
+      worker = fn id ->
+        spawn_link(fn ->
+          send(test_pid, {:attempting, id})
+
+          Shared.with_file_lock(path, fn ->
+            send(test_pid, {:entered, id})
+
+            receive do
+              :release -> :ok
+            end
+
+            send(test_pid, {:exiting, id})
+          end)
+
+          send(test_pid, {:done, id})
+        end)
+      end
+
+      first = worker.(1)
+      assert_receive {:attempting, 1}, @recv_timeout
+      assert_receive {:entered, 1}, @recv_timeout
+
+      second = worker.(2)
+      assert_receive {:attempting, 2}, @recv_timeout
+
+      # Worker 1 holds the lock, so worker 2 must NOT be inside. This bounded
+      # negative window is the proof, not a sleep standing in for one.
+      refute_receive {:entered, 2}, 300
+
+      send(first, :release)
+      assert_receive {:entered, 2}, @recv_timeout
+      assert_receive {:exiting, 1}, @recv_timeout
+
+      send(second, :release)
+      assert_receive {:exiting, 2}, @recv_timeout
+      assert_receive {:done, 1}, @recv_timeout
+      assert_receive {:done, 2}, @recv_timeout
+    end
+
+    test "canonicalization — ./x and x resolve to ONE lock" do
+      name = "shared_canon_#{System.unique_integer([:positive])}.ex"
+      test_pid = self()
+
+      # Both spellings expand to the SAME absolute path, which is the lock key.
+      assert Path.expand("./" <> name) == Path.expand(name)
+
+      holder =
+        spawn_link(fn ->
+          Shared.with_file_lock("./" <> name, fn ->
+            send(test_pid, :canon_relative_entered)
+
+            receive do
+              :release -> :ok
+            end
+          end)
+        end)
+
+      assert_receive :canon_relative_entered, @recv_timeout
+
+      # A peer using the BARE spelling (no "./") must share the same lock — no
+      # real file is needed, the lock is keyed purely on the expanded path.
+      spawn_link(fn ->
+        Shared.with_file_lock(name, fn ->
+          send(test_pid, :canon_bare_entered)
+        end)
+
+        send(test_pid, :canon_bare_done)
+      end)
+
+      refute_receive :canon_bare_entered, 300
+
+      send(holder, :release)
+      assert_receive :canon_bare_entered, @recv_timeout
+      assert_receive :canon_bare_done, @recv_timeout
+    end
+
+    test "a raising fun still releases the lock (release-on-raise)" do
+      path = unique_path("lock_raise")
+
+      assert_raise RuntimeError, "boom", fn ->
+        Shared.with_file_lock(path, fn -> raise "boom" end)
+      end
+
+      # A DIFFERENT process must be able to take the same lock promptly, proving
+      # it was released even though the guarded fun raised. A same-process
+      # re-acquire would succeed regardless and so could not prove this.
+      task = Task.async(fn -> Shared.with_file_lock(path, fn -> :acquired end) end)
+
+      assert Task.await(task, @recv_timeout) == :acquired
+    end
+
+    test "same-process re-entry is granted immediately (never deadlocks)" do
+      path = unique_path("lock_reentry")
+
+      task =
+        Task.async(fn ->
+          Shared.with_file_lock(path, fn ->
+            Shared.with_file_lock(path, fn -> :inner end)
+          end)
+        end)
+
+      assert Task.await(task, @recv_timeout) == :inner
+    end
+  end
+
+  # Unique per-test path under the system temp dir. The lock key derives from
+  # `Path.expand/1`, so a unique path keeps these tests from ever contending
+  # with another concurrently running module's lock.
+  defp unique_path(prefix) do
+    Path.join(System.tmp_dir!(), "#{prefix}_#{System.unique_integer([:positive])}")
   end
 end
