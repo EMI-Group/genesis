@@ -13,7 +13,8 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 
 | File | Module under test |
 |------|-------------------|
-| `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
+| `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers + same-path parallel-mutation lock tests) |
+| `file_edit_test.exs` | `Tools` `"edit_file"`/`"write_file"` — same-path parallel-mutation regression (concurrent same-file edits; `write_file`+`edit_file` interleave) |
 | `file_read_test.exs` | `Tools` `"read_file"` |
 | `glob_test.exs` | `Tools` `"glob"` |
 | `ripgrep_test.exs` | `Tools` `"rg"` |
