@@ -54,16 +54,24 @@ defmodule EvoGit.Agent.Tools.FileWrite do
     end
   end
 
+  # Runs under `Shared.with_file_lock/2` so a `write_file` and an `edit_file`
+  # targeting the same path in one parallel tool batch are ORDERED instead of
+  # racing (both would otherwise interleave the underlying open/truncate/write).
   defp perform_write(file_path, display_path, content) do
-    case File.mkdir_p(Path.dirname(file_path)) do
-      :ok ->
-        case File.write(file_path, content) do
-          :ok -> "Successfully wrote to #{display_path}"
-          {:error, reason} -> "Error writing file #{display_path}: #{:file.format_error(reason)}"
-        end
+    Shared.with_file_lock(file_path, fn ->
+      case File.mkdir_p(Path.dirname(file_path)) do
+        :ok ->
+          case File.write(file_path, content) do
+            :ok ->
+              "Successfully wrote to #{display_path}"
 
-      {:error, reason} ->
-        "Error creating directory for #{display_path}: #{:file.format_error(reason)}"
-    end
+            {:error, reason} ->
+              "Error writing file #{display_path}: #{:file.format_error(reason)}"
+          end
+
+        {:error, reason} ->
+          "Error creating directory for #{display_path}: #{:file.format_error(reason)}"
+      end
+    end)
   end
 end

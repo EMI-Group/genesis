@@ -152,6 +152,11 @@ defmodule EvoGit.Agent.Tools.Context do
 
   @doc """
   Executes the edit_context tool.
+
+  The read-modify-write (plus the following git commit) runs under
+  `Shared.with_file_lock/2` keyed on the CONTEXT.md path, so parallel
+  `edit_context`/`write_context`/`edit_file` calls on the same CONTEXT.md are
+  serialized instead of silently overwriting each other.
   """
   def execute_edit(args, repo_path, repo_root) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
@@ -160,16 +165,18 @@ defmodule EvoGit.Agent.Tools.Context do
          {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
          {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
-      do_context_edit(
-        full_dir,
-        dir_path,
-        old_string,
-        new_string,
-        replace_all,
-        commit,
-        repo_path,
-        repo_root
-      )
+      Shared.with_file_lock(Path.join(full_dir, "CONTEXT.md"), fn ->
+        do_context_edit(
+          full_dir,
+          dir_path,
+          old_string,
+          new_string,
+          replace_all,
+          commit,
+          repo_path,
+          repo_root
+        )
+      end)
     end
   end
 
@@ -237,13 +244,20 @@ defmodule EvoGit.Agent.Tools.Context do
 
   @doc """
   Executes the write_context tool.
+
+  The write (plus the following git commit) runs under
+  `Shared.with_file_lock/2` keyed on the CONTEXT.md path, so parallel
+  `write_context`/`edit_context` calls on the same CONTEXT.md are serialized
+  instead of silently overwriting each other.
   """
   def execute_write(args, repo_path, repo_root) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content"),
          {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
-      do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
+      Shared.with_file_lock(Path.join(full_dir, "CONTEXT.md"), fn ->
+        do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
+      end)
     end
   end
 
