@@ -27,7 +27,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
 | `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent). Level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
-| *(utility)* `Shared` | Designated anti-duplication home for cross-tool helpers — arg parsing/validation, path/scope checking, string edits, plus the consolidated `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, `describe_error/2` | — | — |
+| *(utility)* `Shared` | Designated anti-duplication home for cross-tool helpers — arg parsing/validation, path/scope checking, string edits, same-path mutation serialization (`with_file_lock/2`), plus the consolidated `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, `describe_error/2` | — | — |
 
 ### Tool Schema Shape (ReqLLM.tool/2 conventions in this directory)
 
