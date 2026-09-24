@@ -2178,7 +2178,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Floki.attribute(node_b1, "data-cg-sha") == ["b1"]
       assert Floki.attribute(node_b1, "data-cg-agent-id") == [to_string(aid)]
 
-      # The child → parent link is a `path.cg-edge` vertical bezier. It is SOLID
+      # The child → parent link is a `path.cg-edge` orthogonal right-angle route.
+      # It is SOLID
       # here — the dashes are reserved for a `:merge` side parent, which this
       # single-parent payload has none of.
       assert [edge_node] = Floki.find(tree, "#commit-edge-#{dom}-c1-b1")
