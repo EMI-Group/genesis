@@ -458,67 +458,43 @@ defmodule EvoGit.Agent.Tools.Shared do
   end
 
   @doc """
-  Runs `fun` while holding an exclusive lock keyed by the EXPANDED ABSOLUTE path.
-
-  Serializes same-path read-modify-write across processes (parallel tool calls run
-  in separate processes, so a process-local mechanism is insufficient).
-
-  `Path.expand/1` normalizes the key so `./src/a.ex` and `src/a.ex` share ONE lock.
-  The `self()` LockRequesterId keeps every caller a DISTINCT owner so the lock
-  actually excludes — a constant requester id would be treated as same-owner
-  re-entry and re-granted. `:global.trans/2` returns `fun`'s value and releases
-  the lock even if `fun` raises, so no explicit try/after is needed. Same-process
-  re-entry (e.g. a tool that wraps another locked helper) is granted immediately,
-  never deadlocked. Precedent: `EvoGit.Store.Boot.migrate_synchronized!/0`.
-  """
-  def with_file_lock(path, fun) when is_binary(path) do
-    :global.trans({{:evogit_file_lock, Path.expand(path)}, self()}, fun)
-  end
-
-  @doc """
   Performs a string replacement edit on a file.
   Reads the file, finds the old_string (with quote normalization),
   validates uniqueness unless replace_all is true, applies the edit, and writes the result.
   Returns a result string (success message or error message).
-
-  The WHOLE read-modify-write runs under `with_file_lock/2`: parallel tool calls
-  (one process each) targeting the same file would otherwise all read the original
-  bytes and overwrite each other, silently dropping every edit but the last.
   """
   def perform_string_replace(file_path, display_path, old_string, new_string, replace_all) do
-    with_file_lock(file_path, fn ->
-      case File.read(file_path) do
-        {:ok, content} ->
-          actual_old = find_actual_string(content, old_string)
+    case File.read(file_path) do
+      {:ok, content} ->
+        actual_old = find_actual_string(content, old_string)
 
-          if is_nil(actual_old) do
-            "Error: old_string not found in file #{display_path}"
+        if is_nil(actual_old) do
+          "Error: old_string not found in file #{display_path}"
+        else
+          match_count = count_occurrences(content, actual_old)
+
+          if match_count > 1 and not replace_all do
+            "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
           else
-            match_count = count_occurrences(content, actual_old)
+            updated_content = apply_string_edit(content, actual_old, new_string, replace_all)
 
-            if match_count > 1 and not replace_all do
-              "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
-            else
-              updated_content = apply_string_edit(content, actual_old, new_string, replace_all)
+            case File.write(file_path, updated_content) do
+              :ok ->
+                if replace_all do
+                  "The file #{display_path} has been updated. All occurrences were successfully replaced."
+                else
+                  "The file #{display_path} has been updated successfully."
+                end
 
-              case File.write(file_path, updated_content) do
-                :ok ->
-                  if replace_all do
-                    "The file #{display_path} has been updated. All occurrences were successfully replaced."
-                  else
-                    "The file #{display_path} has been updated successfully."
-                  end
-
-                {:error, reason} ->
-                  "Error writing file #{display_path}: #{:file.format_error(reason)}"
-              end
+              {:error, reason} ->
+                "Error writing file #{display_path}: #{:file.format_error(reason)}"
             end
           end
+        end
 
-        {:error, reason} ->
-          "Error reading file #{display_path}: #{:file.format_error(reason)}"
-      end
-    end)
+      {:error, reason} ->
+        "Error reading file #{display_path}: #{:file.format_error(reason)}"
+    end
   end
 
   # --- Display Formatting ---

@@ -117,20 +117,14 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     end
   end
 
-  # Runs under `Shared.with_file_lock/2` so a `create_files` (which truncates the
-  # target to empty) and a concurrent `edit_file`/`write_file` on the SAME path in
-  # one parallel tool batch are ORDERED instead of racing — the empty overwrite
-  # would otherwise silently discard the other call's content (and vice versa).
   defp do_create_file(full_path, display_path, parents?) do
-    Shared.with_file_lock(full_path, fn ->
-      with :ok <- mkdir_if_needed(Path.dirname(full_path), parents?),
-           :ok <- File.write(full_path, "") do
-        :ok
-      else
-        {:error, reason} ->
-          {:error, display_path, :file.format_error(reason)}
-      end
-    end)
+    with :ok <- mkdir_if_needed(Path.dirname(full_path), parents?),
+         :ok <- File.write(full_path, "") do
+      :ok
+    else
+      {:error, reason} ->
+        {:error, display_path, :file.format_error(reason)}
+    end
   end
 
   defp mkdir_if_needed(path, parents), do: Shared.mkdir_if_needed(path, parents)

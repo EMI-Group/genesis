@@ -13,8 +13,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 
 | File | Module under test |
 |------|-------------------|
-| `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers + same-path parallel-mutation lock tests) |
-| `file_edit_test.exs` | `Tools` `"edit_file"`/`"write_file"` — same-path parallel-mutation regression (concurrent same-file edits; `write_file`+`edit_file` interleave) |
+| `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
 | `file_read_test.exs` | `Tools` `"read_file"` |
 | `glob_test.exs` | `Tools` `"glob"` |
 | `ripgrep_test.exs` | `Tools` `"rg"` |
@@ -26,7 +25,6 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
 | `reflect_tools_test.exs` | the self-reflective task-control command handlers |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
-| `tool_dispatch_same_file_test.exs` | `EvoGit.Agent.ToolDispatch.batch_execute_tools/4` (same-file batch lock-in) |
 
 ## Async-Safety Rationale
 
@@ -35,14 +33,9 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `web_search_test.exs` (mutates the `:web_search_http_runner` app-env seam and the shared `:req_llm` API-key store).
 - `async: false` — `reflect_tools_test.exs` (`without_model_profiles/1` rewrites the GLOBAL `EvoGit.AgentScheduler` `model_profiles` config via `AgentScheduler.update_config/1`, a BEAM-global read by every other agent/task module).
 - `async: false` — `complete_task_test.exs` (inserts/deletes rows in the shared `:evogit_sched_meta` / `:evogit_agent_state` tables and DELETES + recreates the global `:evogit_archive_records` table).
-- `async: false` — `tool_dispatch_same_file_test.exs` (the app-global `:evogit_agent_state` ETS table via `EvoGit.AgentScheduler.Store.put_agent_state/2` and the global `EvoGit.AgentScheduler` tool-slot pool every parallel call acquires).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
-  `file_edit_test.exs` and the concurrency blocks added to `shared_test.exs` use unique per-test temp files and per-path locks, so they never contend across modules.
 
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
 - `complete_task_test.exs` owns the global `:evogit_archive_records` table for its run (it deletes + recreates it), which is why it must stay `async: false`.
-- Same-path parallel-mutation regression coverage: `shared_test.exs`, `file_edit_test.exs`, and `tool_dispatch_same_file_test.exs` lock in `EvoGit.Agent.Tools.Shared.with_file_lock/2` — the `:global.trans` per-canonical-path (`Path.expand`) serialization of the whole read-modify-write.
-  Without it, concurrent same-file tool calls (one process each, driven by `ToolDispatch.batch_execute_tools/4`) read the original bytes and the later write silently discards earlier edits while every call still returns success.
-  New concurrency tests must key their locks on unique per-test paths (as these do) so they never block other modules.

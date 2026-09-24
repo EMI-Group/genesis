@@ -167,19 +167,13 @@ defmodule EvoGit.Agent.Tools.MakeDir do
 
   defp create_keep_file(_path, "none"), do: :ok
 
-  # Runs under `Shared.with_file_lock/2` so a `make_dir` keep-file (written empty)
-  # and a concurrent `edit_file`/`write_file` on the SAME path in one parallel tool
-  # batch are ORDERED instead of racing — the empty overwrite would otherwise
-  # silently discard the other call's content (and vice versa).
   defp create_keep_file(path, filename) do
     keep_path = Path.join(path, filename)
 
-    Shared.with_file_lock(keep_path, fn ->
-      case File.write(keep_path, "") do
-        :ok -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    end)
+    case File.write(keep_path, "") do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp do_commit(repo_path, paths, keep_file) do
