@@ -118,6 +118,76 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
+  describe "serial_tool?/1 classification" do
+    # The file-mutating read-modify-write subset the dispatcher serializes.
+    @serial_tool_names ~w(
+      create_files write_file edit_file make_dir write_context edit_context
+      skill_add skill_edit skill_remove skill_enable skill_disable
+    )
+
+    @read_only_tool_names ~w(
+      read_file read_context glob list_dir rg search_context search_history
+      skill_list skill_read skill_where
+    )
+
+    # Write tools that are NOT read-modify-write file operations: opaque whole
+    # commands / network calls that agents legitimately run concurrently.
+    @non_serial_write_tool_names ~w(
+      run_bash run_powershell run_git curl run_command search_web web_search
+    )
+
+    test "returns true for every file-mutating read-modify-write tool" do
+      with_isolated_config(fn ->
+        for tool <- @serial_tool_names do
+          assert Tools.serial_tool?(tool),
+                 "expected #{inspect(tool)} to be classified as a serial tool"
+        end
+      end)
+    end
+
+    test "returns false for the read-only tools" do
+      with_isolated_config(fn ->
+        for tool <- @read_only_tool_names do
+          refute Tools.serial_tool?(tool),
+                 "expected read-only #{inspect(tool)} to NOT be classified as serial"
+        end
+      end)
+    end
+
+    test "returns false for the shell/exec/network tools" do
+      with_isolated_config(fn ->
+        for tool <- @non_serial_write_tool_names do
+          refute Tools.serial_tool?(tool),
+                 "expected #{inspect(tool)} to NOT be classified as serial"
+        end
+      end)
+    end
+
+    test "returns false for an unknown tool name and for non-binary input" do
+      with_isolated_config(fn ->
+        refute Tools.serial_tool?("teleport_code")
+        refute Tools.serial_tool?(nil)
+        refute Tools.serial_tool?(:write_file)
+      end)
+    end
+
+    test "classifies a loaded custom tool from its read_only?/0 report" do
+      with_isolated_config(fn ->
+        writer = Module.concat([:"SerialToolWriterFixture#{System.unique_integer([:positive])}"])
+        reader = Module.concat([:"SerialToolReaderFixture#{System.unique_integer([:positive])}"])
+        write_isolated_custom_tool!(writer, "custom_serial_writer", false)
+        write_isolated_custom_tool!(reader, "custom_serial_reader", true)
+
+        # A custom tool that does NOT declare itself read-only is treated like a
+        # built-in file-mutating writer (opaque user code that may mutate files).
+        assert Tools.serial_tool?("custom_serial_writer")
+
+        # An explicitly read-only custom tool is not serialized.
+        refute Tools.serial_tool?("custom_serial_reader")
+      end)
+    end
+  end
+
   describe "execute/4 - read_file" do
     test "reads an existing file", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
@@ -1128,5 +1198,38 @@ defmodule EvoGit.Agent.ToolsTest do
 
       File.rm_rf!(tmp_xdg)
     end
+  end
+
+  # Writes a minimal custom-tool module into the isolated config dir's `tools/`
+  # subdirectory (see `with_isolated_config/1`) so `Tools.serial_tool?/1` can be
+  # classified through `EvoGit.CustomTools.write_tool?/1`. `read_only` selects
+  # whether the tool declares itself read-only.
+  defp write_isolated_custom_tool!(module, tool_name, read_only) do
+    dir = Path.join(EvoGit.Config.config_dir(), "tools")
+    File.mkdir_p!(dir)
+
+    source = """
+    defmodule #{inspect(module)} do
+      @behaviour EvoGit.CustomTools.Tool
+
+      @impl true
+      def schema do
+        ReqLLM.tool(
+          name: #{inspect(tool_name)},
+          description: "serial_tool?/1 classification fixture",
+          parameter_schema: %{"type" => "object", "properties" => %{}},
+          callback: fn _ -> {:ok, nil} end
+        )
+      end
+
+      @impl true
+      def execute(_args, _ctx), do: "ok"
+
+      @impl true
+      def read_only?, do: #{read_only}
+    end
+    """
+
+    File.write!(Path.join(dir, "#{tool_name}.exs"), source)
   end
 end
