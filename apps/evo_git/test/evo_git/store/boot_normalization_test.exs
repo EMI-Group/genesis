@@ -28,9 +28,10 @@ defmodule EvoGit.Store.BootNormalizationTest do
 
   Concurrent `Boot.start_dynamic/1` boots are safe — the migration run inside
   `EvoGit.Store.Boot` is serialized by a cluster-safe `:global.trans` lock
-  (`Ecto.Migrator` recompiles the `.exs` migrations on every pending run and
-  concurrent compiles of the same module race; see `EvoGit.Store.Boot`).
-
+  around the one-time migration-module compile plus each run, and the migrator
+  is always handed the PRE-LOADED `[{version, module}]` source
+  (`Boot.migration_source/0`) rather than the migrations directory (see
+  `EvoGit.Store.Boot`).
   ## Pinned rules (from the migration source)
 
     * timestamps — `strftime('%Y-%m-%dT%H:%M:%fZ', col)` where `col NOT GLOB
@@ -191,9 +192,9 @@ defmodule EvoGit.Store.BootNormalizationTest do
 
   # Boots the seeded database through the REAL production entry point. The
   # migration run is serialized by the production `:global` lock in
-  # `EvoGit.Store.Boot` (concurrent migration compiles race), and the repo is
-  # UNLINKED: on_exit/1 runs after the test process is gone, so the link's
-  # exit signal must not own the shutdown (alive-guarded stop).
+  # `EvoGit.Store.Boot` (it also guards the one-time migration-module compile),
+  # and the repo is UNLINKED: on_exit/1 runs after the test process is gone, so
+  # the link's exit signal must not own the shutdown (alive-guarded stop).
   defp boot!(path) do
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
