@@ -1921,7 +1921,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert base_node.start_ids == [agent_id()]
 
       # Two fetched commits → two rows, no synthesized extra node and no extra
-      # gutter column (both commits belong to the same depth-0 agent).
+      # lane (both commits belong to the same depth-0 agent's lane).
       assert repo.node_count == 2
       assert repo.row_count == 2
       assert repo.column_count == 1
@@ -2060,7 +2060,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert commit_node.start_ids == []
 
       # One child → parent edge: the tip points back at the fork point, one row
-      # ABOVE it — both in the depth-0 gutter column.
+      # ABOVE it — both in the agent's own lane (lane 0, the only agent).
       assert [edge] = repo.edges
 
       assert Map.take(edge, [
@@ -2084,8 +2084,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert edge.owner_id == agent_id()
 
-      # One AGENT entry per agent — metadata only (the vertical model has no
-      # per-agent row bands), carrying the depth hue and its start → end shas.
+      # One AGENT entry per agent — metadata only (rows are globally interleaved
+      # across agents; the agent's lane is the index, not a row band), carrying
+      # the depth hue and its start → end shas.
       assert [agent] = repo.agents
 
       assert Map.take(agent, [
@@ -2093,6 +2094,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
                :task_local_id,
                :status,
                :depth,
+               :lane,
                :color,
                :start_sha,
                :end_sha,
@@ -2103,6 +2105,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
                  task_local_id: nil,
                  status: :running,
                  depth: 0,
+                 lane: 0,
                  color: "#7c38dc",
                  start_sha: "b1",
                  end_sha: "c1",
@@ -2123,6 +2126,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ ~s(phx-hook="CommitGraph")
 
       assert has_element?(view, "##{dom}")
+      assert has_element?(view, "#cg-scroll-#{dom}")
+      assert has_element?(view, "#cg-lane-header-#{dom}")
       assert has_element?(view, "#cg-list-#{dom}")
       assert has_element?(view, "#cg-gutter-#{dom}")
       assert has_element?(view, "#commit-node-#{dom}-c1")
@@ -2130,6 +2135,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert has_element?(view, "#commit-edge-#{dom}-c1-b1")
       assert has_element?(view, "#commit-row-#{dom}-c1")
       assert has_element?(view, "#commit-row-#{dom}-b1")
+      # The single agent owns lane 0 (no unowned commit → no neutral lane
+      # shift): its sticky header chip is a BUTTON firing `select_agent`.
+      assert has_element?(view, "#cg-lane-#{dom}-0")
       # The fork point carries the agent's START chip, the tip its END chip.
       assert has_element?(view, "#commit-agent-tag-#{dom}-b1-start-#{akey}")
       assert has_element?(view, "#commit-agent-tag-#{dom}-c1-end-#{akey}")
@@ -2148,12 +2156,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "viewBox="
       assert [gutter_svg] = Floki.find(tree, "svg.cg-gutter")
       assert Floki.attribute(gutter_svg, "id") == ["cg-gutter-#{dom}"]
-      assert Floki.attribute(gutter_svg, "viewbox") == ["0 0 40 88"]
+      # 1 agent lane × @col_w 24 + @gutter_pad 12 on each side = 48 wide.
+      assert Floki.attribute(gutter_svg, "viewbox") == ["0 0 48 88"]
       assert Floki.find(tree, "g.cg-viewport") == []
 
       # The rows are left-padded by the gutter width so they never overlap it.
       assert [rows] = Floki.find(tree, "#cg-list-#{dom} .cg-rows")
-      assert Floki.attribute(rows, "style") == ["padding-left: 40px"]
+      assert Floki.attribute(rows, "style") == ["padding-left: 48px"]
 
       # The real commit is a `g.cg-node` gutter dot carrying the node animation
       # marker plus the sha/owner data attributes. The click contract lives on
@@ -2178,10 +2187,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Floki.attribute(node_b1, "data-cg-sha") == ["b1"]
       assert Floki.attribute(node_b1, "data-cg-agent-id") == [to_string(aid)]
 
-      # The child → parent link is a `path.cg-edge` orthogonal right-angle route.
-      # It is SOLID
-      # here — the dashes are reserved for a `:merge` side parent, which this
-      # single-parent payload has none of.
+      # The child → parent link is a `path.cg-edge` rounded route. Same lane → a
+      # straight vertical segment here. It is SOLID — the dashes are reserved
+      # for `:merge` side parents and the agent-level `:spawn` / `:merge_back`
+      # connectors, none of which this single-parent payload has.
       assert [edge_node] = Floki.find(tree, "#commit-edge-#{dom}-c1-b1")
       assert {"path", _, _} = edge_node
 
@@ -2237,6 +2246,15 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert {"span", _, _} = ref_chip
       assert Floki.attribute(ref_chip, "phx-click") == []
       assert text(tree, "#commit-ref-tag-#{dom}-c1-main") == "main"
+
+      # The agent's lane-0 header chip is a BUTTON (the neutral lane would be a
+      # non-clickable span) firing the `select_agent` contract, labelled with
+      # the raw agent id (this fixture agent has no task_local_id).
+      assert [lane_chip] = Floki.find(tree, "#cg-lane-#{dom}-0")
+      assert {"button", _, _} = lane_chip
+      assert Floki.attribute(lane_chip, "phx-click") == ["select_agent"]
+      assert Floki.attribute(lane_chip, "phx-value-id") == [to_string(aid)]
+      assert text(tree, "#cg-lane-#{dom}-0") == "T#{aid}"
 
       # The base row is a row too — but it shows the `base` label instead of a
       # commit message.

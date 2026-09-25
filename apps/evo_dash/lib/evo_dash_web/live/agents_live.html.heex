@@ -156,15 +156,15 @@
                 <span>{gettext("Waiting")}</span>
               </div>
             <% else %>
-              <%!-- zh_CN: 提交图例 —— 时间维度视图（以提交为中心的横向 DAG）的图例 --%>
+              <%!-- zh_CN: 提交图例 —— 时间维度视图（以提交为中心的纵向泳道图）的图例 --%>
               <span class="agents-legend-title">{gettext("Commit Graph Legend")}</span>
-              <%!-- zh_CN: 提交 —— 每个提交在图上画「一个节点」；被多个智能体共享的同一提交只是一个节点（不是每泳道一个点） --%>
+              <%!-- zh_CN: 提交 —— 每个提交画一个圆点；被多个智能体共享的同一提交只是图上「一个」圆点 --%>
               <div
                 id="agents-legend-commit"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "One node per commit. Commits shared by several agents remain a single node. Hover a node to see its message."
+                    "One circular dot per commit. Commits shared by several agents remain a single dot. Hover a row to see its message."
                   )
                 }
                 phx-hook="LegendTooltip"
@@ -172,13 +172,13 @@
                 <span class="w-2.5 h-2.5 rounded-full bg-base-content/40"></span>
                 <span>{gettext("Commit")}</span>
               </div>
-              <%!-- zh_CN: 智能体泳道 —— 每个智能体占一条水平泳道带；祖先关系自左向右延伸，泳道按递归深度着色（每层一个色相） --%>
+              <%!-- zh_CN: 智能体泳道 —— 每个智能体占「一条」纵向泳道（一列）；父智能体在左、子智能体在右，顶部标签标明每条泳道的主人，泳道颜色按递归深度取色 --%>
               <div
                 id="agents-legend-path"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "Each agent owns one horizontal lane band. Ancestry flows left to right, and the lane is tinted by the agent's recursion depth — one hue per depth."
+                    "Each agent owns exactly one vertical lane. Parent lanes sit left, subagent lanes right; the sticky header chips name each lane, and the lane is colored by the agent's recursion depth."
                   )
                 }
                 phx-hook="LegendTooltip"
@@ -189,13 +189,13 @@
                 <span class="w-4 h-0.5 rounded-full" style="background-color: #7c38dc"></span>
                 <span>{gettext("Agent lane")}</span>
               </div>
-              <%!-- zh_CN: 智能体状态 —— 智能体泳道末端的最新提交节点按该智能体的状态着色（与左侧智能体树同一色系：绿＝运行、琥珀＝等待、灰＝排队） --%>
+              <%!-- zh_CN: 智能体状态 —— 智能体泳道末端的最新提交圆点按该智能体的状态着色（与左侧智能体树同一色系：绿＝运行、琥珀＝等待、灰＝排队） --%>
               <div
                 id="agents-legend-ring"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "An agent's tip node is colored by its status — same palette as the agent tree."
+                    "An agent's tip dot is colored by its status — same palette as the agent tree."
                   )
                 }
                 phx-hook="LegendTooltip"
@@ -203,19 +203,47 @@
                 <span class="w-2.5 h-2.5 rounded-full bg-success"></span>
                 <span>{gettext("Agent status")}</span>
               </div>
-              <%!-- zh_CN: 合并边 —— 当某个提交有第二个父提交时（合并提交），用一条虚线把它跨泳道连到另一个智能体 --%>
+              <%!-- zh_CN: 派生边 —— 子智能体从父泳道的分叉点出发，虚线画到子泳道自己的首个提交 --%>
               <div
-                id="agents-legend-merge"
+                id="agents-legend-spawn"
                 class="flex items-center gap-2"
                 data-tip={
                   gettext(
-                    "A dashed edge marks a commit with a second parent, linking a merge across agent lanes."
+                    "A dashed branch-out from the fork commit on the parent's lane into the child's own lane, where the child's first commit sits."
                   )
                 }
                 phx-hook="LegendTooltip"
               >
                 <span class="w-4 h-0 border-t-2 border-dashed border-base-content/60"></span>
-                <span>{gettext("Merge edge")}</span>
+                <span>{gettext("Spawn edge")}</span>
+              </div>
+              <%!-- zh_CN: 合回边 —— 虚线从子泳道的最新提交回到父泳道：真实合并、快进（父分支被直接推进到子提交）与零提交的子智能体都画成这类边 --%>
+              <div
+                id="agents-legend-merge"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext(
+                    "A dashed return from the child's last commit into the parent's lane — drawn for real merges, fast-forwards (the parent silently advanced to the child's tip) and children that committed nothing."
+                  )
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-4 h-0 border-t-2 border-dashed border-base-content/60"></span>
+                <span>{gettext("Merge-back edge")}</span>
+              </div>
+              <%!-- zh_CN: 任务前泳道 —— 最左侧的中性泳道，放置任务开始前不属于任何智能体的提交 --%>
+              <div
+                id="agents-legend-pretask"
+                class="flex items-center gap-2"
+                data-tip={
+                  gettext(
+                    "The neutral leftmost lane holding commits no agent owns — they predate the task's agents."
+                  )
+                }
+                phx-hook="LegendTooltip"
+              >
+                <span class="w-2.5 h-2.5 rounded-full bg-base-content/30 border border-base-content/40"></span>
+                <span>{gettext("Pre-task lane")}</span>
               </div>
             <% end %>
           </div>
