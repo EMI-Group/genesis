@@ -17,8 +17,17 @@ defmodule EvoGit.Agent.TruncationFeedback do
 
   Also generates concise truncation warnings when tool output exceeds size
   limits.
-  """
 
+  ## Wrap boundary (BINARY-ONLY contract)
+
+  This module is BINARY-ONLY: `append_truncation_feedback/3` takes a string and
+  returns a string. It never receives or returns a
+  `%EvoGit.Agent.ToolOutput{}` — the wrap/unwrap between a binary and a
+  `%ToolOutput{}` happens ONLY inside `EvoGit.Agent.ToolDispatch` (see
+  `EvoGit.Agent.ToolOutput` → "Wrap boundary invariant"). `ToolDispatch` calls
+  it with `ToolOutput.text/1` and re-attaches the result with
+  `ToolOutput.with_text/2`, so media survives the truncation notice.
+  """
   # Provider phrases that indicate an out-of-credit / quota-exhaustion response.
   @insufficient_balance_phrases [
     "insufficient balance",

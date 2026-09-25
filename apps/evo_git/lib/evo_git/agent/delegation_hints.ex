@@ -7,8 +7,19 @@ defmodule EvoGit.Agent.DelegationHints do
   friendly nudge is appended to the tool output suggesting the agent spawn a
   subagent for that child directory instead of editing/reading files there
   directly.
-  """
 
+  ## Wrap boundary (BINARY-ONLY contract)
+
+  This module is BINARY-ONLY: `maybe_append_delegation_hint/4` and
+  `maybe_append_read_delegation_hint/5` take a string and return a string. They
+  never receive or return a `%EvoGit.Agent.ToolOutput{}` — the wrap/unwrap
+  between a binary and a `%ToolOutput{}` happens ONLY inside
+  `EvoGit.Agent.ToolDispatch` (see `EvoGit.Agent.ToolOutput` → "Wrap boundary
+  invariant"). `ToolDispatch.apply_tool_output_tracking/3` unwraps the text
+  component (`ToolOutput.text/1`) before calling these hint appenders and
+  re-attaches the extended text with `ToolOutput.with_text/2`, so any media a
+  tool attached survives the nudge.
+  """
   alias EvoGit.Platform
 
   # Write tools whose file paths should be tracked for delegation hints
