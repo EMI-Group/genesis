@@ -4,7 +4,8 @@ defmodule EvoGit.Attachments do
   @valid_types ~w(image audio)
 
   @moduledoc """
-  Multi-modal data input for a task's INITIAL objective.
+  Multimodal content parts for any message-construction site (initial
+  objective, injected user message, tool result).
 
   Attachments (images and audio) are carried in the task data plane as an
   `:attachments` opt — a list of maps with STRING keys:
@@ -34,14 +35,54 @@ defmodule EvoGit.Attachments do
   media_type)`; `"audio"` attachments ride as a `:file` part —
   `ContentPart.file(raw, name, media_type)` (per the req_llm survey: audio/*
   has no dedicated part type). The parts are appended to a leading
-  `ContentPart.text(...)` of the objective text, in input order, and ride on
-  the ROOT agent's first user message only (see
-  `EvoGit.Agent.ContextBuilder.build_initial_messages/4`).
+  `ContentPart.text(...)` of the message text, in input order.
+
+  This module is the general content-part materializer: the SAME entry points
+  serve the ROOT agent's first user message (`EvoGit.Agent.ContextBuilder`),
+  any later injected user message, and any tool result (via
+  `EvoGit.Agent.ToolOutput`).
+
+  ## Message normalization
+
+  `message/1` normalizes a legacy plain `String.t()` or a `%{text:,
+  attachments:}` map into the CANONICAL message map
+  `#{inspect(%{text: "...", attachments: nil})}`
+  (`attachments: nil` and `attachments: []` are equivalent — no media).
+  `validate_message!/1` validates such a map (raising a descriptive
+  `ArgumentError` on malformed input).
+
+  ## Pinned decisions
+
+  These are FROZEN contract decisions that later phases must not re-litigate:
+
+    * (a) Media stay base64 STRING maps — the wire/opt shape above never
+      carries raw binary. Nothing non-UTF-8 may cross a node/`:erpc` or
+      `EvoGit.Store.Codec` boundary, so the base64 form is the only
+      transportable representation and decoding happens exactly once, at
+      content-part materialization.
+    * (b) Materialization always produces a plain content-part LIST
+      (`[ReqLLM.Message.ContentPart.t()]`). It NEVER produces a
+      `ReqLLM.ToolResult` — that struct stamps extra metadata (tool_call_id /
+      name and its own serialization) and would break the byte-identity of the
+      existing all-text tool-result path.
+    * (c) The `:attachments` TASK-OPT root-only gate is unchanged: the opt
+      still rides the ROOT agent's FIRST user message only. The generalized
+      capability enters through tool results (`EvoGit.Agent.ToolOutput`) and
+      injected user messages instead.
+    * (d) The caps above apply PER TOOL OUTPUT as well as PER TASK OPT — a
+      tool result carrying media is validated by the same `validate/1` (see
+      `EvoGit.Agent.ToolOutput.new/2`, which enforces them at construction).
   """
 
   alias ReqLLM.Message.ContentPart
 
   @type t :: %{optional(String.t() | atom()) => String.t()}
+
+  @typedoc """
+  Canonical multimodal message: plain text plus an optional attachment list.
+  `attachments: nil` and `attachments: []` are equivalent (no media).
+  """
+  @type message :: %{text: String.t(), attachments: [t()] | nil}
 
   @doc "Maximum number of attachments allowed per task."
   def max_count, do: @max_count
@@ -85,7 +126,58 @@ defmodule EvoGit.Attachments do
   end
 
   @doc """
-  Materializes a combined user-message content-part list from the objective
+  Normalizes a legacy plain `String.t()` OR a `%{text:, attachments:}` map into
+  the CANONICAL message map `%{text: String.t(), attachments: [t()] | nil}`.
+
+    * a binary `bin` → `%{text: bin, attachments: nil}`
+    * a map → the same canonical shape (both atom- and string-keyed input keys
+      are accepted, mirroring the `fetch/2` idiom used by `validate/1`);
+      validated via `validate_message!/1`, so a malformed map raises a
+      descriptive `ArgumentError`
+
+  This is the ONE normalizer the pending-message queue calls.
+  """
+  @spec message(String.t() | map()) :: message()
+  def message(bin) when is_binary(bin), do: %{text: bin, attachments: nil}
+
+  def message(message) when is_map(message) do
+    normalized = %{text: fetch(message, :text), attachments: fetch(message, :attachments)}
+    :ok = validate_message!(normalized)
+    normalized
+  end
+
+  def message(other) do
+    raise ArgumentError,
+          "message: expected a string or a %{text: ..., attachments: ...} map, got: #{inspect(other)}"
+  end
+
+  @doc """
+  Validates a canonical `%{text:, attachments:}` message map: `text` must be a
+  `String.t()` and `attachments` must pass `validate/1` (both atom- and
+  string-keyed maps are accepted; `nil`/`[]` attachments are valid).
+
+  Raises a descriptive `ArgumentError` for any malformed payload (spec-error
+  style — NO try/rescue swallowing) and returns `:ok` otherwise.
+  """
+  @spec validate_message!(term()) :: :ok
+  def validate_message!(message) when is_map(message) do
+    text = fetch(message, :text)
+
+    unless is_binary(text) do
+      raise ArgumentError,
+            "message: text must be a string, got: #{inspect(text)}"
+    end
+
+    validate(fetch(message, :attachments))
+  end
+
+  def validate_message!(other) do
+    raise ArgumentError,
+          "message: expected a %{text: ..., attachments: ...} map, got: #{inspect(other)}"
+  end
+
+  @doc """
+  Materializes a combined user-message content-part list from the message
   `text` (a plain `String.t()`, preserved verbatim as the leading text part)
   and the validated `attachments` list. Returns
   `[ContentPart.text(text) | image/file parts…]` — raw bytes, base64-decoded
