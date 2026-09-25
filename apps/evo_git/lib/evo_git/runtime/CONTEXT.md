@@ -163,7 +163,7 @@ The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short intege
 
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
-`EvoGit.Runtime.Helpers.build_root_agent_spec/7` (`helpers.ex:484-493`) is the shared builder producing the root-agent `{agent_module, opts}` spec for evolution (simple AND custom modes) and genesis phase specs — resolving the default/custom root module and threading the custom-agent id + `model_id_locked` opts into the spec. New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
+`EvoGit.Runtime.Helpers.build_root_agent_spec/7` (`helpers.ex:558-597`) is the shared builder producing the root-agent `{agent_module, opts}` spec for evolution (simple AND custom modes) and genesis phase specs — resolving the default/custom root module and threading the custom-agent id + `model_id_locked` opts into the spec. New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
 
 ### Agent Hierarchy by Phase
 
