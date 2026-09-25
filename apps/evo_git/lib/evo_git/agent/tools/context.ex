@@ -156,7 +156,7 @@ defmodule EvoGit.Agent.Tools.Context do
          {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
          {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
-         {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
       do_context_edit(
         full_dir,
@@ -239,16 +239,11 @@ defmodule EvoGit.Agent.Tools.Context do
   def execute_write(args, repo_path, repo_root) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content"),
-         {:ok, commit} <- validate_commit(Map.get(args, "commit", true)),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
       do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
     end
   end
-
-  defp validate_commit(value) when is_boolean(value), do: {:ok, value}
-
-  defp validate_commit(value),
-    do: {:error, "Argument 'commit' must be a boolean, got: #{inspect(value)}"}
 
   defp do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root) do
     case File.mkdir_p(full_dir) do
