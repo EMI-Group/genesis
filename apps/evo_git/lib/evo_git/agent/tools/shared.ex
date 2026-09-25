@@ -10,11 +10,15 @@ defmodule EvoGit.Agent.Tools.Shared do
   # Never hardcode a username anywhere else.
   @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
 
-  # `git commit` exits 1 when nothing was staged. Both messages mean "there was
-  # nothing to commit" (a no-op, not a failure): the first when the worktree is
-  # entirely clean, the second when only UNSTAGED changes exist.
+  # `git commit` exits 1 when nothing was staged. Every wording below means
+  # "there was nothing to commit" (a no-op, not a failure) — git picks one of
+  # three depending on what else the worktree holds: fully clean, only UNTRACKED
+  # files present, or only UNSTAGED modifications. Matching is locale-stable:
+  # every sandbox backend injects `LC_ALL=C` (`EvoGit.GitEnv.git_env_list/1`)
+  # for git invocations.
   @nothing_to_commit_markers [
     "nothing to commit, working tree clean",
+    "nothing added to commit",
     "no changes added to commit"
   ]
 
@@ -467,8 +471,9 @@ defmodule EvoGit.Agent.Tools.Shared do
   `EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false`.
 
   Graceful no-ops (no error): an empty/blank file list (nothing to stage), and a
-  commit where nothing ended up staged (`git commit` exit 1 with
-  "nothing to commit, working tree clean" / "no changes added to commit").
+  commit where nothing ended up staged — `git commit` exit 1 carrying any of
+  `@nothing_to_commit_markers` ("nothing to commit, working tree clean" /
+  "nothing added to commit" / "no changes added to commit").
 
   Returns `{:ok, output}` with the concatenated `git add` + `git commit` output,
   or `{:error, message}` with a descriptive message.
