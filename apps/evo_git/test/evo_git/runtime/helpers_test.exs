@@ -725,6 +725,29 @@ defmodule EvoGit.Runtime.HelpersTest do
              ]
     end
 
+    test "provisions the persistent worktree of a writable TOML foreign repo", %{
+      tmp_dir: tmp_dir
+    } do
+      toml_root = make_git_repo!("writable_toml")
+
+      File.write!(
+        Path.join(tmp_dir, "genesis.toml"),
+        """
+        [foreign_repos.wtoml]
+        path = "#{toml_root}"
+        writable = true
+        """
+      )
+
+      assert [%ForeignRepo{id: "wtoml", writable: true} = repo] =
+               Helpers.load_foreign_repos(tmp_dir, [])
+
+      worktree = ForeignRepo.worktree_path(repo)
+      assert File.dir?(worktree)
+      assert File.regular?(Path.join(worktree, ".git"))
+      assert Git.rev_parse(worktree) == Git.rev_parse(toml_root)
+    end
+
     test "merges TOML and CLI repos when there is no id conflict", %{tmp_dir: tmp_dir} do
       toml1 = make_git_repo!("toml1")
       toml2 = make_git_repo!("toml2")

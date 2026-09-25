@@ -300,7 +300,14 @@ defmodule EvoGit.Runtime.Helpers do
   and a non-nil `base_sha` must resolve in that repository. A UNC / network-share
   root is rejected early via `validate_repo_path!/1` (worktree-unsupported
   diagnostic). On failure an `ArgumentError` is raised naming the repo id, the
-  path, and the problem. Returns the validated (normalized) list of
+  path, and the problem.
+
+  After validation the persistent worktrees of all WRITABLE non-primary repos
+  are provisioned/reset (`EvoGit.AgentScheduler.ForeignWorktree.ensure_all/1`,
+  best-effort — it never raises), so agents can read the foreign code through
+  `<root>/.genesis/foreign_repos/<id>` for the whole task.
+
+  Returns the validated (normalized) list of
   `%EvoGit.Core.ForeignRepo{}`.
   """
   def load_foreign_repos(repo_path, opts) do
@@ -308,6 +315,8 @@ defmodule EvoGit.Runtime.Helpers do
     cli_repos = Keyword.get(opts, :foreign_repos, [])
     repos = merge_foreign_repos(toml_repos, cli_repos)
     validate_foreign_repos!(repos)
+    EvoGit.AgentScheduler.ForeignWorktree.ensure_all(repos)
+    repos
   end
 
   defp validate_foreign_repos!(repos) do

@@ -50,6 +50,12 @@ defmodule EvoGit.Agent.Runner do
         do_run(agent_module, objective)
       after
         EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree()
+
+        # After the fallback committed, advance the agent's foreign repo's
+        # PERSISTENT worktree to the agent's final HEAD — so the worktree other
+        # agents read reflects the newest committed state (last-writer-wins).
+        # Best-effort and a no-op for primary-repo / repo-less agents.
+        EvoGit.AgentScheduler.ForeignWorktree.sync_from_agent()
       end
 
     # The `after` fallback above may have created the ONLY commit of this run,
