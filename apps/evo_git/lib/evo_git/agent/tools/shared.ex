@@ -454,7 +454,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   Validates the `commit` tool argument (boolean, default `true`).
 
   Shared by every file-mutating tool that commits its own write via
-  `commit_files/4`, mirroring the CONTEXT tools' validation.
+  `commit_files/4`, including the CONTEXT tools (`write_context` / `edit_context`).
   """
   def validate_commit(value) when is_boolean(value), do: {:ok, value}
 
