@@ -31,6 +31,12 @@ defmodule EvoGit.Agent.Tools.SkillDisable do
             "description" =>
               "The relative path to the directory where the skill should be disabled. " <>
                 "Defaults to the agent's current node if not specified."
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to create a git commit after disabling the skill. Defaults to true.",
+            "default" => true
           }
         },
         "required" => ["skill_name"]
@@ -42,13 +48,17 @@ defmodule EvoGit.Agent.Tools.SkillDisable do
   @doc """
   Executes the skill_disable tool.
   """
-  def execute(args, repo_path, _repo_root, default_node_path) do
-    with {:ok, skill_name} <- Shared.fetch_string_arg(args, "skill_name") do
+  def execute(args, repo_path, repo_root, default_node_path) do
+    with {:ok, skill_name} <- Shared.fetch_string_arg(args, "skill_name"),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)) do
       node_path = Map.get(args, "node_path") || default_node_path || "./"
 
       case EvoGit.Skills.disable_skill(skill_name, node_path, repo_path) do
         {:ok, :disabled, path} ->
-          "Skill '#{skill_name}' disabled at '#{path}'."
+          result = "Skill '#{skill_name}' disabled at '#{path}'."
+          files = [Path.join(path, "CONTEXT.md")]
+          message = "Disable skill #{skill_name} at #{node_path}"
+          Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
         {:ok, :not_enabled} ->
           "Skill '#{skill_name}' was not enabled at '#{node_path}'. " <>

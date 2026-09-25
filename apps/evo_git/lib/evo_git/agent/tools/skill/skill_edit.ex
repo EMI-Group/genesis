@@ -25,6 +25,12 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
           "content" => %{
             "type" => "string",
             "description" => "The new full skill content (markdown with YAML frontmatter)"
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to create a git commit after editing the skill file. Defaults to true.",
+            "default" => true
           }
         },
         "required" => ["name", "content"]
@@ -36,12 +42,26 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
   @doc """
   Executes the skill_edit tool.
   """
-  def execute(args, _repo_path, repo_root) do
+  def execute(args, repo_path, repo_root) do
     with {:ok, name} <- Shared.fetch_string_arg(args, "name"),
-         {:ok, content} <- Shared.fetch_string_arg(args, "content") do
-      case EvoGit.Skills.edit_skill(repo_root, name, content) do
-        {:ok, file_path} -> "Skill edited successfully: #{file_path}"
-        {:error, reason} -> "Error editing skill: #{reason}"
+         {:ok, content} <- Shared.fetch_string_arg(args, "content"),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)) do
+      case EvoGit.Skills.edit_skill(repo_path, name, content) do
+        {:ok, file_path} ->
+          result = "Skill edited successfully: #{file_path}"
+          files = [Path.relative_to(file_path, repo_path)]
+
+          Shared.maybe_commit_result(
+            result,
+            commit,
+            repo_path,
+            repo_root,
+            files,
+            "Edit skill #{name}"
+          )
+
+        {:error, reason} ->
+          "Error editing skill: #{reason}"
       end
     else
       {:error, message} -> message

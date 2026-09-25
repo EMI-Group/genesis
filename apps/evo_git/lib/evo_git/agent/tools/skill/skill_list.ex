@@ -39,12 +39,12 @@ defmodule EvoGit.Agent.Tools.SkillList do
   @doc """
   Executes the skill_list tool.
   """
-  def execute(args, repo_path, repo_root) do
+  def execute(args, repo_path, _repo_root) do
     node_path = Map.get(args, "node_path")
 
     if node_path && is_binary(node_path) do
       # Hierarchical listing: only skills enabled at this level
-      all_skills = EvoGit.Skills.load_skills(repo_root)
+      all_skills = EvoGit.Skills.load_skills(repo_path)
       skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
       filtered = EvoGit.Skills.filter_skills(all_skills, skill_names)
 
@@ -56,7 +56,7 @@ defmodule EvoGit.Agent.Tools.SkillList do
       end
     else
       # List all skills in .agents/skills/
-      EvoGit.Skills.list_skills(repo_root)
+      EvoGit.Skills.list_skills(repo_path)
     end
   end
 

@@ -223,11 +223,14 @@ defmodule EvoGit.Agent.Runner do
 
       # Load skill schemas hierarchically — only skills enabled in the
       # Context Tree (from root to this agent's node) are available.
+      # Skills are read from the agent's WORKTREE (`:repo_path`), not the real
+      # repo root, so a skill an agent adds/edits is visible to it immediately
+      # and gets committed on its `evogit-agent-*` branch.
       repo_root = Process.get(:genesis_repo_root)
 
       skill_schemas =
         if repo_root && is_binary(repo_root) do
-          all_skills = EvoGit.Skills.load_skills(repo_root)
+          all_skills = EvoGit.Skills.load_skills(repo_path)
           skill_names = EvoGit.Skills.hierarchical_skill_names(node_path, repo_path)
 
           all_skills
