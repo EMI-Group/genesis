@@ -85,6 +85,8 @@ defmodule EvoGit.Skills.ContextIntegration do
   Walks the hierarchy from the repository root down to `relative_path` and
   collects all skill names enabled at each level.
 
+  `repo_path` is a repo checkout root (worktree).
+
   Returns a deduplicated list of skill name strings inherited from root to node.
   """
   @spec hierarchical_skill_names(String.t(), String.t()) :: [String.t()]
@@ -113,8 +115,8 @@ defmodule EvoGit.Skills.ContextIntegration do
   end
 
   @doc """
-  Searches all CONTEXT.md files in the repository to find which nodes have a
-  given skill enabled.
+  Searches all CONTEXT.md files under `repo_root` — a repo checkout root
+  (worktree) — to find which nodes have a given skill enabled.
 
   Returns a list of relative node paths (e.g., `["./", "./lib", "./apps/evo_git"]`).
   """
@@ -142,6 +144,9 @@ defmodule EvoGit.Skills.ContextIntegration do
   @doc """
   Enables a skill at a specific node level by adding it to the CONTEXT.md
   YAML front matter's `skill` list.
+
+  `node_path` is a Context Tree node path relative to `repo_path`, which is a
+  repo checkout root (worktree).
 
   Checks if the skill is already enabled at this level or a higher level
   to avoid redundant entries.
@@ -194,6 +199,9 @@ defmodule EvoGit.Skills.ContextIntegration do
   Disables a skill at a specific node level by removing it from the CONTEXT.md
   YAML front matter's `skill` list.
 
+  `node_path` is a Context Tree node path relative to `repo_path`, which is a
+  repo checkout root (worktree).
+
   Returns:
   - `{:ok, :disabled, node_path}` — skill removed from this node
   - `{:ok, :not_enabled}` — skill was not enabled at this node
@@ -222,8 +230,9 @@ defmodule EvoGit.Skills.ContextIntegration do
   end
 
   @doc """
-  Removes all references to a skill name from all CONTEXT.md files in the
-  repository. Used when a skill file is being deleted.
+  Removes all references to a skill name from all CONTEXT.md files under
+  `repo_root` — a repo checkout root (worktree). Used when a skill file is
+  being deleted.
 
   Returns `{:ok, count}` where count is the number of files modified.
   """
@@ -256,20 +265,19 @@ defmodule EvoGit.Skills.ContextIntegration do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Finds all CONTEXT.md files in a repository, excluding build/dependency
-  directories. Returns a list of `{absolute_dir, content}` tuples.
+  Finds all CONTEXT.md files under `repo_root` — a repo checkout root
+  (worktree) — excluding build/dependency directories and nested worktrees.
+  Returns a list of `{absolute_dir, content}` tuples.
+
+  The nested-worktree exclusion is decided on each path RELATIVE to
+  `repo_root`, so a scan rooted at a worktree still sees that worktree's own
+  CONTEXT.md files while worktrees nested below it stay excluded.
   """
   def find_all_context_files(repo_root) do
     repo_root
     |> Path.join("**/CONTEXT.md")
     |> Path.wildcard()
-    |> Enum.reject(fn path ->
-      String.contains?(path, "/.genesis/") or
-        String.contains?(path, "/.git/") or
-        String.contains?(path, "/_build/") or
-        String.contains?(path, "/deps/") or
-        String.contains?(path, "/node_modules/")
-    end)
+    |> Enum.reject(&excluded_context_path?(&1, repo_root))
     |> Enum.map(fn path ->
       abs_dir = Path.dirname(path)
 
@@ -279,6 +287,21 @@ defmodule EvoGit.Skills.ContextIntegration do
       end
     end)
     |> Enum.reject(&is_nil/1)
+  end
+
+  # Excludes a CONTEXT.md path from a scan rooted at `root`. The `.genesis`
+  # (worktree parent) check uses the path RELATIVE to the scan root: when the
+  # root is a normal checkout, every worktree below it is nested and excluded,
+  # while a scan rooted AT a worktree no longer matches the root's own
+  # `.genesis/` prefix. The remaining exclusions are location-independent.
+  defp excluded_context_path?(context_path, root) do
+    relative = Path.relative_to(context_path, root)
+
+    String.contains?(relative, ".genesis/") or
+      String.contains?(context_path, "/.git/") or
+      String.contains?(context_path, "/_build/") or
+      String.contains?(context_path, "/deps/") or
+      String.contains?(context_path, "/node_modules/")
   end
 
   @doc """
