@@ -52,15 +52,15 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   @doc """
   Executes the create_files tool.
   """
-  def execute(args, repo_path, _repo_root, node_path \\ nil) do
+  def execute(args, repo_path, repo_root, node_path \\ nil) do
     with {:ok, paths} <- Shared.fetch_array_arg(args, "paths"),
          {:ok, commit?} <- Shared.fetch_optional_boolean_arg(args, "commit", true),
          {:ok, parents?} <- Shared.fetch_optional_boolean_arg(args, "parents", true) do
-      do_create_files(paths, commit?, parents?, repo_path, node_path)
+      do_create_files(paths, commit?, parents?, repo_path, repo_root, node_path)
     end
   end
 
-  defp do_create_files(paths, commit?, parents?, repo_path, node_path) do
+  defp do_create_files(paths, commit?, parents?, repo_path, repo_root, node_path) do
     results =
       Enum.map(paths, fn path ->
         expanded_path = Shared.expand_path(path, repo_path)
@@ -96,7 +96,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     # Auto-commit if requested and at least one file was created successfully
     final_message =
       if commit? and successes != [] do
-        case do_commit(repo_path, paths) do
+        case do_commit(repo_path, repo_root, paths) do
           {:ok, output} -> message <> "\n\nChanges committed.\n" <> output
           {:error, reason} -> message <> "\n\nWarning: Failed to commit: #{reason}"
         end
@@ -129,12 +129,12 @@ defmodule EvoGit.Agent.Tools.FileCreate do
 
   defp mkdir_if_needed(path, parents), do: Shared.mkdir_if_needed(path, parents)
 
-  defp do_commit(repo_path, paths) do
+  defp do_commit(repo_path, repo_root, paths) do
     files_to_add = paths
 
     commit_message =
       "Create file#{if(length(paths) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}"
 
-    Shared.do_git_commit(repo_path, files_to_add, commit_message)
+    Shared.commit_files(repo_path, repo_root, files_to_add, commit_message)
   end
 end
