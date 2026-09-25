@@ -70,6 +70,7 @@ Struct: `id` (string), `root` (absolute path), `description` (string | nil),
 | `absolute_path?/1` | Checks if a path string is absolute |
 
 `@derive {Jason.Encoder, only: [:id, :root, :description, :writable, :base_sha]}` — the Store/Codec JSON round trip preserves all five fields (encoded `null` for `nil` base_sha). TOML keys in `genesis.toml` `[foreign_repos.<id>]`: `path` (required), `description`, `writable` (default `false`), `base_sha` (default `nil`). CLI `-R` repos are always read-only (`writable: false`, `base_sha: nil`) — marking writable / pinning the starting commit is a `genesis.toml`-only mechanism.
+**Persistent worktree (writable repos)**: `worktree_path/1` derives `<root>/.genesis/foreign_repos/<id>` — the PERSISTENT worktree maintained for every WRITABLE non-primary repo so agents can READ its latest committed state by absolute path. It lives OUTSIDE `.genesis/workers/` (so the `WorktreeManager`'s primary-only init wipe and per-agent `destroy_worktree/3` never touch it) and the repo's MAIN working-copy HEAD is never moved. `resolve/2` recognizes BOTH the root and this worktree path as the same repo (the worktree prefix wins for a writable repo). Create/reset/sync lifecycle (kept after task end) is owned by `EvoGit.AgentScheduler.ForeignWorktree` — see `agent_scheduler/CONTEXT.md`.
 
 ## Constraints
 
