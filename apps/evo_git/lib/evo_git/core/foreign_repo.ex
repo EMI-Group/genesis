@@ -174,6 +174,24 @@ defmodule EvoGit.Core.ForeignRepo do
   def primary?(id), do: id == "primary"
 
   @doc """
+  Persistent worktree path for a foreign repo: `<root>/.genesis/foreign_repos/<id>`.
+
+  Writable foreign repos get a persistent checkout under this path (as opposed
+  to the ephemeral per-agent worktrees under `<root>/.genesis/workers/...`).
+  Pure path derivation — nothing is created or checked on disk.
+
+  ## Examples
+
+      iex> repo = ForeignRepo.new("original", "/Source/original-proj")
+      iex> ForeignRepo.worktree_path(repo)
+      "/Source/original-proj/.genesis/foreign_repos/original"
+  """
+  @spec worktree_path(t()) :: String.t()
+  def worktree_path(%__MODULE__{root: root, id: id}) do
+    Path.join([root, ".genesis", "foreign_repos", id])
+  end
+
+  @doc """
   Normalizes an absolute path to a relative path within this repo.
 
   Returns `{:ok, relative_path}` if the path is within this repo, or
@@ -210,16 +228,23 @@ defmodule EvoGit.Core.ForeignRepo do
 
   @doc """
   Given a list of ForeignRepo structs and an absolute path, determines which repo
-  the path belongs to and returns the repo id along with the relative path.
+  the path belongs to and returns the repo, the BASE directory the relative path
+  is taken from, and the relative path.
 
-  Returns `{:ok, repo_id, relative_path}` or `{:error, :not_in_any_repo}`.
+  Returns `{:ok, repo, base_dir, relative_path}` or `{:error, :not_in_any_repo}`.
+
+  For a `writable: true` repo, a path under its persistent worktree
+  (`worktree_path/1`) resolves to that WORKTREE as the base directory, and the
+  relative path is taken relative to the worktree (so a worktree path yields
+  `"./src/foo"`, never `"./.genesis/foreign_repos/<id>/src/foo"`). Every other
+  path falls back to the repo `root` as the base directory.
 
   The primary repo is checked last, so foreign repos take precedence if paths
   overlap (unlikely but possible).
   """
-  @spec resolve_path([t()], String.t()) ::
-          {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
-  def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
+  @spec resolve([t()], String.t()) ::
+          {:ok, t(), String.t(), String.t()} | {:error, :not_in_any_repo}
+  def resolve(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
     abs_path = Platform.safe_expand(abs_path)
 
     # Check foreign repos first, then primary (split_with avoids O(n log n) sort)
@@ -227,11 +252,68 @@ defmodule EvoGit.Core.ForeignRepo do
     sorted = foreign ++ primary
 
     Enum.find_value(sorted, {:error, :not_in_any_repo}, fn %__MODULE__{} = repo ->
-      case normalize_path(repo, abs_path) do
-        {:ok, rel_path} -> {:ok, repo.id, rel_path}
-        {:error, :not_in_repo} -> nil
+      case resolve_in_repo(repo, abs_path) do
+        {:ok, base_dir, rel_path} -> {:ok, repo, base_dir, rel_path}
+        :error -> nil
       end
     end)
+  end
+
+  # Resolves a single repo: a writable repo's persistent worktree takes
+  # precedence over its root (the worktree lives UNDER the root, so a root-first
+  # match would wrongly yield a `./.genesis/foreign_repos/<id>/...` rel path).
+  defp resolve_in_repo(%__MODULE__{writable: true} = repo, abs_path) do
+    worktree = worktree_path(repo)
+
+    case relative_within(abs_path, worktree) do
+      {:ok, rel_path} -> {:ok, worktree, rel_path}
+      :error -> resolve_in_repo_root(repo, abs_path)
+    end
+  end
+
+  defp resolve_in_repo(%__MODULE__{} = repo, abs_path), do: resolve_in_repo_root(repo, abs_path)
+
+  defp resolve_in_repo_root(%__MODULE__{} = repo, abs_path) do
+    case normalize_path(repo, abs_path) do
+      {:ok, rel_path} -> {:ok, repo.root, rel_path}
+      {:error, :not_in_repo} -> :error
+    end
+  end
+
+  # Prefix-aware check + relativization against an arbitrary base directory,
+  # returning the canonical "./foo/bar" form (base itself -> "./").
+  defp relative_within(abs_path, base) do
+    # Mirrors `normalize_path/2`'s comparison normalization: expand
+    # (UNC-preserving) then normalize separators to `/` so backslash-form UNC
+    # bases compare and relativize identically on every host.
+    base = base |> Platform.normalize_separators() |> Platform.trim_trailing_separators()
+    abs_path = abs_path |> Platform.safe_expand() |> Platform.normalize_separators()
+
+    if Platform.path_under?(abs_path, base) do
+      {:ok, normalize_relative(Path.relative_to(abs_path, base))}
+    else
+      :error
+    end
+  end
+
+  @doc """
+  Given a list of ForeignRepo structs and an absolute path, determines which repo
+  the path belongs to and returns the repo id along with the relative path.
+
+  Returns `{:ok, repo_id, relative_path}` or `{:error, :not_in_any_repo}`.
+
+  Delegates to `resolve/2` — so a path under a writable repo's persistent
+  worktree yields a rel path relative to that worktree (see `resolve/2`). The
+  primary repo is checked last, so foreign repos take precedence if paths
+  overlap (unlikely but possible).
+  """
+  @spec resolve_path([t()], String.t()) ::
+          {:ok, String.t(), String.t()} | {:error, :not_in_any_repo}
+  def resolve_path(repos, abs_path) when is_list(repos) and is_binary(abs_path) do
+    case resolve(repos, abs_path) do
+      {:ok, repo, _base_dir, rel_path} -> {:ok, repo.id, rel_path}
+      {:error, :not_in_any_repo} -> {:error, :not_in_any_repo}
+    end
   end
 
   @doc """

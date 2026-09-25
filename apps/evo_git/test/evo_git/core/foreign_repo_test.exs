@@ -371,6 +371,134 @@ defmodule EvoGit.Core.ForeignRepoTest do
     end
   end
 
+  describe "worktree_path/1" do
+    test "returns <root>/.genesis/foreign_repos/<id>" do
+      repo = ForeignRepo.new("original", "/Source/original-proj")
+
+      assert ForeignRepo.worktree_path(repo) ==
+               "/Source/original-proj/.genesis/foreign_repos/original"
+    end
+
+    test "uses the repo id as the final segment" do
+      repo = ForeignRepo.new("my_repo", "/Source/proj")
+      assert ForeignRepo.worktree_path(repo) == "/Source/proj/.genesis/foreign_repos/my_repo"
+    end
+
+    test "is independent of the writable flag" do
+      read_only = ForeignRepo.new("a", "/Source/proj")
+      writable = ForeignRepo.new("a", "/Source/proj", writable: true)
+      assert ForeignRepo.worktree_path(read_only) == ForeignRepo.worktree_path(writable)
+    end
+  end
+
+  describe "resolve/2" do
+    test "resolves a path under a writable repo's worktree relative to the WORKTREE" do
+      repo = ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      repos = [ForeignRepo.new("primary", "/Source/proj"), repo]
+      worktree = ForeignRepo.worktree_path(repo)
+
+      assert {:ok, ^repo, ^worktree, "./src/foo"} =
+               ForeignRepo.resolve(repos, worktree <> "/src/foo")
+    end
+
+    test "resolves the worktree root itself to ./" do
+      repo = ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      repos = [repo]
+      worktree = ForeignRepo.worktree_path(repo)
+
+      assert {:ok, ^repo, ^worktree, "./"} = ForeignRepo.resolve(repos, worktree)
+      assert {:ok, ^repo, ^worktree, "./"} = ForeignRepo.resolve(repos, worktree <> "/")
+    end
+
+    test "resolves a deeply nested worktree path" do
+      repo = ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      worktree = ForeignRepo.worktree_path(repo)
+
+      assert {:ok, ^repo, ^worktree, "./a/b/c.ex"} =
+               ForeignRepo.resolve([repo], worktree <> "/a/b/c.ex")
+    end
+
+    test "falls back to the repo root for a path under the root (not the worktree)" do
+      repo = ForeignRepo.new("original", "/Source/original-proj", writable: true)
+
+      assert {:ok, ^repo, "/Source/original-proj", "./src/foo"} =
+               ForeignRepo.resolve([repo], "/Source/original-proj/src/foo")
+
+      assert {:ok, ^repo, "/Source/original-proj", "./"} =
+               ForeignRepo.resolve([repo], "/Source/original-proj")
+    end
+
+    test "ignores the (nonexistent) worktree dir of a READ-ONLY repo" do
+      repo = ForeignRepo.new("original", "/Source/original-proj")
+      worktree = ForeignRepo.worktree_path(repo)
+
+      # The worktree interception is writable-only: a read-only repo's worktree
+      # path is just a normal path under the repo root.
+      assert {:ok, ^repo, "/Source/original-proj", "./.genesis/foreign_repos/original/src/foo"} =
+               ForeignRepo.resolve([repo], worktree <> "/src/foo")
+    end
+
+    test "returns the primary repo for a path under its root" do
+      repos = [
+        ForeignRepo.new("primary", "/Source/proj"),
+        ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      ]
+
+      assert {:ok, primary, "/Source/proj", "./lib/app.ex"} =
+               ForeignRepo.resolve(repos, "/Source/proj/lib/app.ex")
+
+      assert primary.id == "primary"
+    end
+
+    test "foreign repos take precedence over primary" do
+      repos = [
+        ForeignRepo.new("primary", "/Source/proj"),
+        ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      ]
+
+      assert {:ok, repo, base, "./src/main.py"} =
+               ForeignRepo.resolve(repos, "/Source/original-proj/src/main.py")
+
+      assert repo.id == "original"
+      assert base == "/Source/original-proj"
+    end
+
+    test "returns error for paths outside every repo" do
+      repos = [
+        ForeignRepo.new("primary", "/Source/proj"),
+        ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      ]
+
+      assert {:error, :not_in_any_repo} = ForeignRepo.resolve(repos, "/unknown/path")
+      assert {:error, :not_in_any_repo} = ForeignRepo.resolve([], "/Source/any/file.ex")
+    end
+  end
+
+  describe "resolve_path/2 delegate (resolve/2-backed)" do
+    test "yields a WORKTREE-relative path for a writable repo's worktree" do
+      repo = ForeignRepo.new("original", "/Source/original-proj", writable: true)
+      repos = [ForeignRepo.new("primary", "/Source/proj"), repo]
+      worktree = ForeignRepo.worktree_path(repo)
+
+      assert {:ok, "original", "./src/foo"} =
+               ForeignRepo.resolve_path(repos, worktree <> "/src/foo")
+
+      assert {:ok, "original", "./"} = ForeignRepo.resolve_path(repos, worktree)
+    end
+
+    test "still returns the root-relative path for paths under the root" do
+      repos = [ForeignRepo.new("original", "/Source/original-proj", writable: true)]
+
+      assert {:ok, "original", "./src/foo"} =
+               ForeignRepo.resolve_path(repos, "/Source/original-proj/src/foo")
+    end
+
+    test "still returns error for unrelated paths" do
+      repos = [ForeignRepo.new("original", "/Source/original-proj", writable: true)]
+      assert {:error, :not_in_any_repo} = ForeignRepo.resolve_path(repos, "/unknown/path")
+    end
+  end
+
   describe "Jason encode/decode round trip (Store codec path)" do
     test "preserves writable and base_sha" do
       repo = ForeignRepo.new("orig", "/tmp/orig", writable: true, base_sha: "abc123")
