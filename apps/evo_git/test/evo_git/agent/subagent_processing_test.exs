@@ -193,6 +193,59 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
   end
 
+  describe "resolve_subagent_path/4 — writable foreign repo persistent worktree" do
+    setup do
+      root = "/home/user/original-proj"
+      repo = ForeignRepo.new("original", root, writable: true)
+      worktree = ForeignRepo.worktree_path(repo)
+
+      foreign_repos = [ForeignRepo.new("primary", "/home/user/primary-repo"), repo]
+      repo_path = "/home/user/primary-repo"
+
+      %{foreign_repos: foreign_repos, repo_path: repo_path, root: root, worktree: worktree}
+    end
+
+    test "path under the persistent worktree resolves to the WORKTREE base with a worktree-relative node path",
+         %{foreign_repos: foreign_repos, repo_path: repo_path, worktree: worktree} do
+      assert {:ok, "original", ^worktree, "./src/foo"} =
+               SubagentProcessing.resolve_subagent_path(
+                 Path.join(worktree, "src/foo"),
+                 repo_path,
+                 foreign_repos
+               )
+    end
+
+    test "the worktree root itself resolves to \"./\"",
+         %{foreign_repos: foreign_repos, repo_path: repo_path, worktree: worktree} do
+      assert {:ok, "original", ^worktree, "./"} =
+               SubagentProcessing.resolve_subagent_path(worktree, repo_path, foreign_repos)
+    end
+
+    test "path under the repo ROOT (not the worktree) keeps the root base and root-relative node path",
+         %{foreign_repos: foreign_repos, repo_path: repo_path, root: root} do
+      assert {:ok, "original", ^root, "./src/foo"} =
+               SubagentProcessing.resolve_subagent_path(
+                 Path.join(root, "src/foo"),
+                 repo_path,
+                 foreign_repos
+               )
+    end
+
+    test "read-only foreign repo is not given a worktree base — the worktree-shaped path falls through to the root match" do
+      root = "/home/user/original-proj"
+      read_only = ForeignRepo.new("original", root)
+
+      foreign_repos = [ForeignRepo.new("primary", "/home/user/primary-repo"), read_only]
+
+      assert {:ok, "original", ^root, "./.genesis/foreign_repos/original/src/foo"} =
+               SubagentProcessing.resolve_subagent_path(
+                 "/home/user/original-proj/.genesis/foreign_repos/original/src/foo",
+                 "/home/user/primary-repo",
+                 foreign_repos
+               )
+    end
+  end
+
   describe "format_subagent_result/1" do
     test "foreign_repo_read_only error returns the custom message" do
       msg = "Custom message"
