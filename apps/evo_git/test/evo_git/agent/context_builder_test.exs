@@ -216,6 +216,58 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
   end
 
+  describe "build_foreign_repos_section/1" do
+    test "returns an empty string when there are no non-primary foreign repos" do
+      assert ContextBuilder.build_foreign_repos_section([]) == ""
+
+      assert ContextBuilder.build_foreign_repos_section([
+               ForeignRepo.new("primary", "/tmp/primary")
+             ]) == ""
+    end
+
+    test "writable repo row contains BOTH its root and its persistent worktree path" do
+      repo = ForeignRepo.new("orig", "/tmp/orig", writable: true, description: "The original")
+      section = ContextBuilder.build_foreign_repos_section([repo])
+
+      assert section =~
+               "| :orig | /tmp/orig (worktree: /tmp/orig/.genesis/foreign_repos/orig) | The original |"
+    end
+
+    test "read-only repo row contains only the root (no worktree string)" do
+      repo = ForeignRepo.new("ref", "/tmp/ref", description: "A reference")
+      section = ContextBuilder.build_foreign_repos_section([repo])
+
+      assert section =~ "| :ref | /tmp/ref | A reference |"
+      refute section =~ "worktree"
+    end
+
+    test "no writable repos → output is byte-identical to the legacy form (no 'worktree' substring)" do
+      repos = [
+        ForeignRepo.new("primary", "/tmp/primary"),
+        ForeignRepo.new("ref", "/tmp/ref", description: "A reference"),
+        ForeignRepo.new("no_desc", "/tmp/no_desc")
+      ]
+
+      expected =
+        "# Foreign Repositories\n\n" <>
+          "| ID | Path | Description |\n|------|------|-------------|\n" <>
+          "| :ref | /tmp/ref | A reference |\n| :no_desc | /tmp/no_desc | (no description) |\n\n" <>
+          "Use absolute paths (e.g., `/tmp/ref`) when delegating to foreign repositories."
+
+      assert ContextBuilder.build_foreign_repos_section(repos) == expected
+      refute ContextBuilder.build_foreign_repos_section(repos) =~ "worktree"
+    end
+
+    test "writable repo also appends the root-vs-worktree clarification sentence" do
+      repo = ForeignRepo.new("orig", "/tmp/orig", writable: true)
+      section = ContextBuilder.build_foreign_repos_section([repo])
+
+      assert section =~
+               "For a writable foreign repo, the repo root is where delegated write work happens; " <>
+                 "the worktree is a read-only checkout of the latest committed state."
+    end
+  end
+
   describe "build_authority_section/1" do
     test "repo_less: true always returns an empty string, even with a writable non-primary foreign repo" do
       foreign_repos = [ForeignRepo.new("ref", "/tmp/ref", writable: true)]

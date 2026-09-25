@@ -41,15 +41,35 @@ defmodule EvoGit.Agent.ContextBuilder do
         repos
         |> Enum.map(fn repo ->
           desc = repo.description || "(no description)"
-          "| :#{repo.id} | #{repo.root} | #{desc} |"
+          "| :#{repo.id} | #{path_cell(repo)} | #{desc} |"
         end)
         |> Enum.join("\n")
 
+      writable? = Enum.any?(repos, & &1.writable)
+
+      writable_note =
+        if writable? do
+          "\n\nFor a writable foreign repo, the repo root is where delegated write work happens; " <>
+            "the worktree is a read-only checkout of the latest committed state."
+        else
+          ""
+        end
+
       "# Foreign Repositories\n\n" <>
         "| ID | Path | Description |\n|------|------|-------------|\n#{rows}\n\n" <>
-        "Use absolute paths (e.g., `#{hd(repos).root}`) when delegating to foreign repositories."
+        "Use absolute paths (e.g., `#{hd(repos).root}`) when delegating to foreign repositories." <>
+        writable_note
     end
   end
+
+  # Renders a foreign repo's Path cell. Writable repos additionally expose their
+  # persistent worktree path (a read-only checkout of the latest committed
+  # state); read-only repos render the root only, exactly as before.
+  defp path_cell(%{writable: true} = repo) do
+    "#{repo.root} (worktree: #{ForeignRepo.worktree_path(repo)})"
+  end
+
+  defp path_cell(%{root: root}), do: root
 
   @doc """
   Builds the delegation-authority markdown section for the first user prompt.
