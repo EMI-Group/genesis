@@ -248,11 +248,14 @@ defmodule EvoGit.Agent.SubagentProcessing do
         ) :: {:ok, String.t(), String.t(), String.t()} | {:error, String.t()}
   def resolve_subagent_path(raw_path, repo_path, foreign_repos, parent_repo_id \\ "primary") do
     if ForeignRepo.absolute_path?(raw_path) do
-      # Absolute path — resolve to the correct foreign repo, falling back to primary
-      case ForeignRepo.resolve_path(foreign_repos, raw_path) do
-        {:ok, repo_id, rel_path} ->
-          repo = Enum.find(foreign_repos, &(&1.id == repo_id))
-          {:ok, repo_id, repo.root, rel_path}
+      # Absolute path — resolve to the correct foreign repo, falling back to primary.
+      # `resolve/2` returns the base directory the relative path is taken from: a
+      # writable foreign repo's persistent worktree when the path lies under it,
+      # else the repo root. Using it as the base keeps the node path relative to
+      # the worktree (`./src/foo` instead of `./.genesis/foreign_repos/<id>/src/foo`).
+      case ForeignRepo.resolve(foreign_repos, raw_path) do
+        {:ok, repo, base_dir, rel_path} ->
+          {:ok, repo.id, base_dir, rel_path}
 
         {:error, :not_in_any_repo} ->
           # Not in any registered foreign repo. Try the primary repo root directly,
