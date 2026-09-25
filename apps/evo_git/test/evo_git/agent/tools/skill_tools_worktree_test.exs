@@ -9,6 +9,12 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
   the main repo root (`repo_root`), and the five file-mutating tools commit their
   own write via `EvoGit.Agent.Tools.Shared.maybe_commit_result/6`.
 
+  It also pins two later lib fixes on this surface: `SkillWhere.execute/3`'s
+  NON-EMPTY branch (which used to raise `ArgumentError: construction of binary
+  failed` from a `binary <> list` precedence bug) and `SkillRemove`'s staging of
+  a CASE-DIFFERING filename (which used to build a git pathspec from the argument
+  alone — a non-matching pathspec → `git add` exit ≠ 0 → an error string and NO
+  commit, even though the file had already been deleted).
   `async: true` — each test builds its own temp git repository + linked worktree
   under a unique `System.tmp_dir!()` path and removes them in `on_exit`. No BEAM
   global, shared ETS table, or app-env key is mutated: the tools are pure
@@ -163,6 +169,46 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
       assert staged =~ ".agents/skills/#{@skill_name}.md"
       assert staged =~ "CONTEXT.md"
     end
+
+    test "removes a skill whose FILENAME case differs from the removal name, AND commits it",
+         %{
+           repo_root: repo_root,
+           repo_path: repo_path
+         } do
+      # `SkillAdd` derives the filename from the frontmatter `name` VERBATIM, and
+      # the name regex is case-insensitive, so this creates (and commits)
+      # `.agents/skills/Deploy.md` — not a lowercased file.
+      SkillAdd.execute(%{"content" => skill_content("Deploy")}, repo_path, repo_root)
+
+      skill_file = Path.join(repo_path, ".agents/skills/Deploy.md")
+      assert File.exists?(skill_file)
+      assert git!(repo_path, ["ls-files", ".agents/skills/Deploy.md"]) =~ "Deploy.md"
+
+      commits_before = commit_count(repo_path)
+
+      # The removal name differs ONLY in case from the on-disk filename. The old
+      # code staged a path built from the ARGUMENT (`deploy.md`), so `git add`
+      # hit a non-matching pathspec and returned an "Error: git add failed ..."
+      # string with NO commit — even though the file had already been deleted.
+      result = SkillRemove.execute(%{"name" => "deploy"}, repo_path, repo_root)
+
+      assert result =~ "removed successfully"
+      refute result =~ "Error"
+      refute result =~ "pathspec"
+      assert result =~ "Committed:"
+
+      # The case-insensitive deletion really happened...
+      refute File.exists?(skill_file)
+      # ...and it was committed (the deletion is what HEAD now carries).
+      assert commit_count(repo_path) == commits_before + 1
+
+      staged = git!(repo_path, ["show", "--name-only", "--pretty=format:", "HEAD"])
+      assert staged =~ ".agents/skills/Deploy.md"
+
+      # Consistent with the rest of the suite: the main repo root is untouched.
+      assert git!(repo_root, ["status", "--porcelain"]) == ""
+      refute File.exists?(Path.join(repo_root, ".agents"))
+    end
   end
 
   describe "worktree visibility" do
@@ -200,9 +246,16 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
       # ...while the main repo root sees nothing.
       assert EvoGit.Skills.where_enabled(@skill_name, repo_root) == []
 
-      # `SkillWhere.execute/3` only renders its plain message today: the
-      # non-empty branch concatenates a list with `<>` and raises ArgumentError
-      # (pre-existing lib bug, out of this change's scope).
+      # The TOOL must render the non-empty branch. Calling the tool (rather than
+      # only the scan behind it) is the point of this assertion: the branch used
+      # to raise `ArgumentError: construction of binary failed` from a
+      # `binary <> list` precedence bug, so any regression there must fail here.
+      rendered = SkillWhere.execute(%{"skill_name" => @skill_name}, repo_path, repo_root)
+
+      assert rendered =~ "is enabled at the following nodes"
+      assert rendered =~ "./sub"
+
+      # A skill that was never enabled still renders the plain message.
       assert SkillWhere.execute(%{"skill_name" => "never-enabled"}, repo_path, repo_root) =~
                "is not enabled at any node"
     end
