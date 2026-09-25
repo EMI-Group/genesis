@@ -5,8 +5,6 @@ defmodule EvoGit.Agent.Tools.Context do
 
   alias EvoGit.Agent.Tools.Shared
 
-  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
-
   @doc """
   Returns the tool schema for reading directory context.
   """
@@ -279,68 +277,18 @@ defmodule EvoGit.Agent.Tools.Context do
 
   # Optionally stages and commits the CONTEXT.md for the given directory.
   # Shared by write_context and edit_context. When `commit` is false (or the
-  # file was not modified), returns `result_msg` unchanged.
+  # file was not modified), returns `result_msg` unchanged. The actual staging +
+  # `git commit -F <tmpfile>` work (incl. the co-author trailer) lives in the
+  # single shared helper `Shared.commit_files/4`.
   defp maybe_commit_context(result_msg, _dir_path, false, _repo_path, _repo_root), do: result_msg
 
   defp maybe_commit_context(result_msg, dir_path, true, repo_path, repo_root) do
     relative_path = Path.join(dir_path, "CONTEXT.md")
+    message = "Update CONTEXT.md for #{dir_path}"
 
-    trailer =
-      if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
-        do: @co_author_trailer,
-        else: ""
-
-    case EvoGit.sandbox_run(repo_path, "git", ["add", relative_path], repo_root) do
-      {add_output, 0} ->
-        case commit_with_message_file(
-               repo_path,
-               repo_root,
-               "Update CONTEXT.md for #{dir_path}#{trailer}"
-             ) do
-          {commit_output, 0} ->
-            result_msg <>
-              "\n\nCommitted:\n#{add_output}#{commit_output}"
-
-          {commit_output, code} ->
-            "Error: git commit failed (exit #{code}):\n#{commit_output}"
-        end
-
-      {add_output, code} ->
-        "Error: git add failed (exit #{code}):\n#{add_output}"
-    end
-  end
-
-  # Runs `git commit` with the message read from a temporary file (`-F`) instead
-  # of passing it as a `-m <message>` argv element. Content-bearing git args must
-  # never be passed as argv elements: git-for-Windows re-tokenizes elements
-  # containing double quotes (the Co-Authored-By trailer contains `<>`), which
-  # produced "unknown switch `>'` / "too many arguments" failures under MSYS2.
-  # The temp file lives under `EvoGit.Sandbox.resolve_tmpdir/0` (the sandbox-
-  # readable temp dir), with backslashes normalized to forward slashes on
-  # Windows, and is removed in an `after` block (no rescued errors).
-  defp commit_with_message_file(repo_path, repo_root, message) do
-    temp_path =
-      Path.join(
-        EvoGit.Sandbox.resolve_tmpdir(),
-        "genesis_ctx_msg_#{System.unique_integer([:positive, :monotonic])}.txt"
-      )
-
-    try do
-      case File.write(temp_path, message) do
-        :ok ->
-          normalized =
-            if EvoGit.Platform.windows?(),
-              do: String.replace(temp_path, "\\", "/"),
-              else: temp_path
-
-          EvoGit.sandbox_run(repo_path, "git", ["commit", "-F", normalized], repo_root)
-
-        {:error, reason} ->
-          {"Error: could not write temporary commit message file: #{:file.format_error(reason)}",
-           1}
-      end
-    after
-      File.rm(temp_path)
+    case Shared.commit_files(repo_path, repo_root, [relative_path], message) do
+      {:ok, output} -> result_msg <> "\n\nCommitted:\n" <> output
+      {:error, reason} -> reason
     end
   end
 end

@@ -27,7 +27,7 @@ LLM tool definitions and implementations for EvoGit agents. Each tool module def
 | `curl` | HTTP requests via curl (disabled in schemas) | Read | No |
 | `complete_task` | Agent completion (injected separately, not in standard schemas) | Special | No |
 | `run_command` | Executes a command-string through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; exposed to the self-reflective agent). Level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
-| *(utility)* `Shared` | Designated anti-duplication home for cross-tool helpers — arg parsing/validation, path/scope checking, string edits, plus the consolidated `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, `describe_error/2` | — | — |
+| *(utility)* `Shared` | Designated anti-duplication home for cross-tool helpers — arg parsing/validation, path/scope checking, string edits, the single `commit_files/4` stage+commit helper, plus the consolidated `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, `describe_error/2` | — | — |
 
 ### Tool Schema Shape (ReqLLM.tool/2 conventions in this directory)
 
@@ -57,7 +57,7 @@ Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `Web
 
 ### Shared utility helpers (anti-duplication home)
 
-`EvoGit.Agent.Tools.Shared` (`tools/shared.ex`) is the **designated anti-duplication home** for helpers shared across tool modules. It owns the consolidated helpers `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, and `describe_error/2`, alongside its pre-existing arg-validation / file-scope / string-edit helpers (e.g. `fetch_string_arg/2`, `fetch_array_arg/2`, `validate_file_scope/3`, `do_git_commit/3`). New cross-tool helpers should be added there rather than re-created in individual tool modules.
+`EvoGit.Agent.Tools.Shared` (`tools/shared.ex`) is the **designated anti-duplication home** for helpers shared across tool modules. It owns the consolidated helpers `format_datetime/1`, `truncate/2`, `objective_snippet/2`, `tool_output_limit_description/0`, and `describe_error/2`, alongside its pre-existing arg-validation / file-scope / string-edit helpers (e.g. `fetch_string_arg/2`, `fetch_array_arg/2`, `validate_file_scope/3`, `commit_files/4`). New cross-tool helpers should be added there rather than re-created in individual tool modules.
 
 ## Known Issues / Notes for Agents
 
@@ -78,7 +78,7 @@ The spawned shell sees a backend-injected `TMPDIR = EvoGit.Sandbox.resolve_tmpdi
 
 ShellTool schema text (`shell_tool.ex:41`, `:101-106`, `:144`): `tmp_var/0` = `$TMPDIR` (POSIX) / `$env:TEMP` (PowerShell); the EXECUTION RULES line reads "Always use $TMPDIR for temporary files, never /tmp." on POSIX (the `, never /tmp.` suffix is dropped on Windows). No mention of scratch space or per-agent dirs.
 
-`EvoGit.Sandbox.resolve_tmpdir/0` is referenced in exactly ONE tool module: `context.ex:324` (`commit_with_message_file/3`, file `genesis_ctx_msg_<n>.txt`), removed by `File.rm/1` in a `try/after` (`context.ex:342-344`). `System.tmp_dir!/0` appears in NO tool module.
+`EvoGit.Sandbox.resolve_tmpdir/0` is referenced in exactly ONE tool module: `shared.ex` (`Shared.commit_files/4`, file `genesis_git_commit_msg_<n>.txt`), removed by `File.rm/1` in a `try/after`. `System.tmp_dir!/0` appears in NO tool module.
 
 ### Foreign-Repo Role Write Gating (dispatch + path level)
 
@@ -98,10 +98,16 @@ Consumer: `EvoGit.Agent.ToolDispatch.batch_execute_tools/4` splits the batch on 
 
 ### Commit Semantics — which write tools commit, and where written bytes can be missed
 
-**Only FOUR built-in paths stage+commit their own write**, all with EXPLICIT pathspecs (never `-A`), through `Shared.do_git_commit/3` (`shared.ex:440-458`: `Git.run(["add" | files])` then `Git.commit/2` — plain `commit -F`, NO `--allow-empty`; an empty file list short-circuits to `{:ok, "No files to commit"}` with NO commit):
-- `create_files` (`file_create.ex:132-138`) stages exactly the LLM-supplied relative paths — a NEW untracked ancestor directory (e.g. `./src/index.js` when `src/` does not exist in the index) or a path already tracked in a parent/spatial node is NOT staged → "nothing added to commit".
-- `make_dir` (`make_dir.ex:179-193`) stages ONLY the keep-files it just created; `keep_file: "none"` → `[]` → no commit at all.
-- `write_context`/`edit_context` (`context.ex:283-311` → `commit_with_message_file/3` `:321-339`) stage exactly their own CONTEXT.md and can be skipped entirely with `commit: false` (schema default true).
+**ONE shared stage+commit helper exists: `Shared.commit_files/4` (`shared.ex`, `(repo_path, repo_root, files, message) -> {:ok, output} | {:error, message}`).** Every tool that writes files itself and commits its own write goes through it — there is no per-tool commit mechanism left:
+- Stage ONLY the passed paths (`EvoGit.sandbox_run(repo_path, "git", ["add" | paths], repo_root)`) — NEVER `git add --all`.
+- Commit with `git commit -F <tmpfile>` over the SAME sandbox path; the co-author trailer is appended to `message` ONLY when `EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false` (never a hardcoded username), and `message` is passed via a temp file — never as a `-m <message>` argv element (MSYS2 re-tokenization; see "Windows MSYS2 argv quoting" below).
+- `{:ok, output}` carries the concatenated `git add` + `git commit` output; `{:error, message}` carries the descriptive failure (`"Error: git add failed (exit N):\n..."` / `"Error: git commit failed (exit N):\n..."`).
+- **Graceful no-ops (never errors)**: an empty/blank file list short-circuits to `{:ok, "No files to commit"}` with NO git call, and a commit that finds nothing staged returns `{:ok, output}` — so re-writing identical content is a no-op, not a failure. Recognition is git's own exit-1 message family (`@nothing_to_commit_markers` in `shared.ex`), covering all three wordings git picks by worktree state: "nothing to commit, working tree clean" (clean tree), "nothing added to commit" (only untracked files present), "no changes added to commit" (only unstaged modifications). Matching is locale-stable — every sandbox backend injects `LC_ALL=C` for git invocations.
+
+Four built-in paths commit their own write, all through that helper:
+- `create_files` (`file_create.ex`) stages exactly the LLM-supplied relative paths — a NEW untracked ancestor directory (e.g. `./src/index.js` when `src/` does not exist in the index) or a path already tracked in a parent/spatial node is NOT staged → "nothing added to commit".
+- `make_dir` (`make_dir.ex`) stages ONLY the keep-files it just created; `keep_file: "none"` → `[]` → no commit at all.
+- `write_context`/`edit_context` (`context.ex`, `maybe_commit_context/5`) stage exactly their own CONTEXT.md, append `"\n\nCommitted:\n" <> output` to their result on success (returning the helper's error message verbatim otherwise), and can be skipped entirely with `commit: false` (schema default true).
 - `write_file` (`file_write.ex:57-68`) and `edit_file` NEVER commit — their bytes reach the branch only when some later commit happens to cover them.
 
 The **auto-commit fallback** is the blanket safety net: `EvoGit.AgentScheduler.Dispatch.commit_pending_in_worktree/0` (`agent_scheduler/dispatch.ex:278-326`) runs `Git.run(["add", "--all"], wt)` + `Git.commit(wt, "Agent: auto-commit fallback")` (`:297-298`), short-circuiting on a CLEAN worktree (`{:ok, ""}` → `:ok`, `:318`) and swallowing git errors with a warning (`:321-324`).
@@ -131,17 +137,17 @@ User-defined custom tools — plain Elixir modules the user drops into `<config_
 - `@cd_regex` (shell_tool.ex:30) now matches relative `cd` targets too (`./x`, `../x`, `../../../`, plain `foo`) in addition to absolute `/x`; `cd_targets/2` `EvoGit.Platform.safe_expand`s each target against `repo_path` (the worktree cwd) so `cd ../../../` resolves to the repo root. Consumers `detect_cd_warnings/3` + `redundant_cd?/3` compare resolved targets; the cross-worktree warning excludes descendants of the agent's own worktree (a `cd src` inside the worktree is not an escape). Platform-agnostic: the block applies on all platforms; PowerShell `cd`/`Set-Location` syntax is out of scope (the regex targets bash-style command text).
 - **`repo_root` must be non-nil for shell tools**: `main_copy_mutation_error/3` calls `EvoGit.Platform.safe_expand(repo_root)`, which accepts binaries only — invoking a shell tool (`run_bash`/`run_powershell`, including the alias names `Bash`/`Shell`/…) through `Tools.execute/5`'s `repo_root \\ nil` default raises a `FunctionClauseError` (shell_tool.ex:257) before any command runs. The agent loop always supplies a non-nil `genesis_repo_root`; direct/unit-test callers must pass one (e.g. the temp dir as the 4th argument).
 
-### Windows MSYS2 argv quoting — git commit message files (`context.ex`)
-`write_context`/`edit_context` commits (`Context.do_context_edit/8` and `Context.do_context_write/6`) run `git commit -F <tempfile>` via the private `Context.commit_with_message_file/3` — **never** `git commit -m <message>` as argv. Content-bearing git args must not be passed as argv elements: git-for-Windows re-tokenizes elements containing double quotes (the `@co_author_trailer` contains `<>`), producing "unknown switch `>'` / "too many arguments" failures under MSYS2.
+### Windows MSYS2 argv quoting — git commit message files (`Shared.commit_files/4`)
+Every tools-node commit runs `git commit -F <tempfile>` inside `Shared.commit_files/4` (`shared.ex`) — **never** `git commit -m <message>` as argv. Content-bearing git args must not be passed as argv elements: git-for-Windows re-tokenizes elements containing double quotes (the `@co_author_trailer` contains `<>`), producing "unknown switch `>'` / "too many arguments" failures under MSYS2.
 
-- The temp message file is written under `EvoGit.Sandbox.resolve_tmpdir()` (NOT `System.tmp_dir!()` — the sandbox profile only grants write access to the resolved dir; `System.tmp_dir!()` may be `/var/folders/...` on macOS, outside the sandbox profile). These calls go through `EvoGit.sandbox_run/4` → sandbox, so the file MUST be sandbox-readable.
+- The temp message file is written under `EvoGit.Sandbox.resolve_tmpdir()` (NOT `System.tmp_dir!()` — the sandbox profile only grants write access to the resolved dir; `System.tmp_dir!()` may be `/var/folders/...` on macOS, outside the sandbox profile). The git calls go through `EvoGit.sandbox_run/4` → sandbox, so the file MUST be sandbox-readable.
 - On Windows the temp path is normalized `\` → `/` (`EvoGit.Platform.windows?()` gate; MSYS2 mangles backslashes). Only meaningful on Windows (no sandbox there).
-- `try/after` cleans up the temp file (`File.rm` in `after` — no `try/rescue`, no swallowed errors). File-write failure returns `{"Error: could not write temporary commit message file: ...", 1}`.
-- Both call sites use `case {output, code}` contracts ("Committed:" success, "Error: git commit failed (exit #{code})" failure).
-- Mirrors the adapter pattern (`EvoGit.Adapters.Git.commit/2` temp-file + `-F`; see `adapters/CONTEXT.md` "Windows argv quoting"). A **cross-node shared temp-file helper was deliberately NOT extracted**: the adapter's private `temp_file_path/1` uses `System.tmp_dir!()` (correct for its raw `System.cmd` path but WRONG for sandboxed reads). A future refactor could unify both under `resolve_tmpdir()`.
+- `try/after` cleans up the temp file (`File.rm` in `after` — no `try/rescue`, no swallowed errors). A file-write failure surfaces as the `"Error: could not write temporary commit message file: ..."` commit-step error.
+- Callers consume the `{:ok, output}` / `{:error, message}` contract; `write_context`/`edit_context` render success as `"\n\nCommitted:\n" <> output` and an error as the message itself.
+- Mirrors the adapter pattern (`EvoGit.Adapters.Git.commit/2` temp-file + `-F`; see `adapters/CONTEXT.md` "Windows argv quoting"). The two remain separate on purpose: the adapter's private `temp_file_path/1` uses `System.tmp_dir!()` (correct for its raw `System.cmd` path, WRONG for sandboxed reads), and the adapter is the sanctioned git entry point for non-tool call sites — the tools node routes its own commits through the sandbox-compatible helper.
 
 ### Audit: other git/CLI invocations in this node
-- `Shared.do_git_commit/3` (`shared.ex:431`) — SAFE: delegates to `EvoGit.Adapters.Git.run(["add" | files])` + `EvoGit.Adapters.Git.commit(repo_path, message)` (the `-F` temp-file form).
+- `Shared.commit_files/4` (`shared.ex`) — SAFE: `EvoGit.sandbox_run(repo_path, "git", ["add" | paths], repo_root)` + `git commit -F <tmpfile under resolve_tmpdir()>` (the sandbox-compatible `-F` temp-file form the CONTEXT tools have always used).
 - `SearchHistory.do_search` (`search_history.ex:101`) — SAFE: git args are `["log", format, commit_id, "--max-count=N", ...]` — refs/flags only; the `--format` string contains no double quotes; the user pattern is compiled/applied via Elixir `Regex` AFTER the log output is fetched, never passed to git.
 - `Git.execute` (`git.ex:67`, run_git tool) — **LATENT AUDIT ITEM**: tool DISABLED (schema commented out in `tools.ex`). When enabled, it passes LLM-derived `sanitized_args` verbatim to `EvoGit.sandbox_run(repo_path, "git", sanitized_args, repo_root)`. `Shared.fetch_array_arg/2` only validates shape (list of strings, JSON-string double-encode recovery) — it does NOT sanitize content, so an LLM-supplied `["commit", "-m", "..."]` with quotes would hit the same MSYS2 bug class. Arbitrary git args cannot be generically `-F`-mapped; a proper fix (if re-enabled) must intercept `-m`/`-F` arguments specifically.
 - `rg -n '"-m"'` confirms context.ex is the only module with `-m` argv instances in this node; no other content-bearing argv cases exist (`search_history`/`ripgrep`/`search_context` pass refs/flags/format strings only).

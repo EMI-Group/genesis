@@ -5,6 +5,23 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   @curly_quotes ~r/\x{2018}|\x{2019}|\x{201C}|\x{201D}/u
 
+  # Appended to every commit message this module writes, but ONLY when
+  # `[:git, :co_authored_by_enabled]` is not `false` (see `co_author_trailer/0`).
+  # Never hardcode a username anywhere else.
+  @co_author_trailer "\n\nCo-Authored-By: Genesis <noreply@evogit.ai>"
+
+  # `git commit` exits 1 when nothing was staged. Every wording below means
+  # "there was nothing to commit" (a no-op, not a failure) — git picks one of
+  # three depending on what else the worktree holds: fully clean, only UNTRACKED
+  # files present, or only UNSTAGED modifications. Matching is locale-stable:
+  # every sandbox backend injects `LC_ALL=C` (`EvoGit.GitEnv.git_env_list/1`)
+  # for git invocations.
+  @nothing_to_commit_markers [
+    "nothing to commit, working tree clean",
+    "nothing added to commit",
+    "no changes added to commit"
+  ]
+
   alias EvoGit.Platform
 
   @doc """
@@ -434,27 +451,109 @@ defmodule EvoGit.Agent.Tools.Shared do
   def mkdir_if_needed(path, false), do: File.mkdir(path)
 
   @doc """
-  Stages and commits the given files with a message.
-  Handles all git add/commit error cases uniformly.
+  Stages and commits EXACTLY the given file paths with `message`.
+
+  This is the SINGLE shared stage+commit helper for every tool that writes files
+  itself and then commits its own write (`write_context`/`edit_context` via
+  `EvoGit.Agent.Tools.Context`, and the file-creating tools `create_files` /
+  `make_dir`). Only the paths passed in are staged — NEVER `git add --all`.
+
+  Git runs through `EvoGit.sandbox_run/4` (the sandbox-compatible path), so the
+  temporary commit-message file written under `EvoGit.Sandbox.resolve_tmpdir/0`
+  is readable by the sandbox. The message is passed via `git commit -F <file>`,
+  never as a `-m <message>` argv element: git-for-Windows re-tokenizes argv
+  elements containing double quotes (the co-author trailer contains `<>`),
+  producing "unknown switch `>`" / "too many arguments" failures under MSYS2.
+  Backslashes in the temp path are normalized to `/` on Windows, and the file is
+  always removed in an `after` block (no rescued errors).
+
+  The co-author trailer is appended to `message` only when
+  `EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false`.
+
+  Graceful no-ops (no error): an empty/blank file list (nothing to stage), and a
+  commit where nothing ended up staged — `git commit` exit 1 carrying any of
+  `@nothing_to_commit_markers` ("nothing to commit, working tree clean" /
+  "nothing added to commit" / "no changes added to commit").
+
+  Returns `{:ok, output}` with the concatenated `git add` + `git commit` output,
+  or `{:error, message}` with a descriptive message.
   """
-  def do_git_commit(repo_path, files_to_add, commit_message) do
-    if files_to_add == [] do
+  def commit_files(repo_path, repo_root, files, message)
+      when is_binary(repo_path) and is_list(files) and is_binary(message) do
+    paths = Enum.filter(files, &(is_binary(&1) and &1 != ""))
+
+    if paths == [] do
       {:ok, "No files to commit"}
     else
-      case EvoGit.Adapters.Git.run(["add" | files_to_add], repo_path) do
-        {:ok, _output} ->
-          case EvoGit.Adapters.Git.commit(repo_path, commit_message) do
-            {:ok, _} -> {:ok, "Commit successful"}
-            {:error, _} = error -> error
-          end
+      case run_sandboxed_git(repo_path, repo_root, ["add" | paths]) do
+        {add_output, 0} ->
+          commit_staged(repo_path, repo_root, message, add_output)
 
-        {:error, {:conflict, output}} ->
-          {:error, "git add conflict: #{output}"}
-
-        {:error, {_, _}} = error ->
-          {:error, "git add failed: #{inspect(error)}"}
+        {add_output, code} ->
+          {:error, "Error: git add failed (exit #{code}):\n#{add_output}"}
       end
     end
+  end
+
+  defp run_sandboxed_git(repo_path, repo_root, args),
+    do: EvoGit.sandbox_run(repo_path, "git", args, repo_root)
+
+  # Commits whatever `git add` staged, with the message read from a temp file.
+  # A commit that turns out to have nothing staged is a graceful no-op.
+  defp commit_staged(repo_path, repo_root, message, add_output) do
+    case commit_with_message_file(repo_path, repo_root, message) do
+      {commit_output, 0} ->
+        {:ok, add_output <> commit_output}
+
+      {commit_output, code} ->
+        if nothing_to_commit?(code, commit_output) do
+          {:ok, add_output <> commit_output}
+        else
+          {:error, "Error: git commit failed (exit #{code}):\n#{commit_output}"}
+        end
+    end
+  end
+
+  defp nothing_to_commit?(1, output) when is_binary(output),
+    do: Enum.any?(@nothing_to_commit_markers, &String.contains?(output, &1))
+
+  defp nothing_to_commit?(_code, _output), do: false
+
+  defp commit_with_message_file(repo_path, repo_root, message) do
+    temp_path =
+      Path.join(
+        EvoGit.Sandbox.resolve_tmpdir(),
+        "genesis_git_commit_msg_#{System.unique_integer([:positive, :monotonic])}.txt"
+      )
+
+    try do
+      case File.write(temp_path, message <> co_author_trailer()) do
+        :ok ->
+          run_sandboxed_git(repo_path, repo_root, [
+            "commit",
+            "-F",
+            normalize_temp_path(temp_path)
+          ])
+
+        {:error, reason} ->
+          {"Error: could not write temporary commit message file: #{:file.format_error(reason)}",
+           1}
+      end
+    after
+      File.rm(temp_path)
+    end
+  end
+
+  defp co_author_trailer do
+    if EvoGit.Config.resolve([:git, :co_authored_by_enabled]) != false,
+      do: @co_author_trailer,
+      else: ""
+  end
+
+  # MSYS2 (git-for-Windows) mangles backslashes in argv elements; forward
+  # slashes in `C:/Users/...` paths are safe.
+  defp normalize_temp_path(path) do
+    if EvoGit.Platform.windows?(), do: String.replace(path, "\\", "/"), else: path
   end
 
   @doc """
