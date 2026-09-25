@@ -286,15 +286,21 @@ defmodule EvoGit.AgentScheduler do
   @doc """
   Sends a user message to a running agent.
 
-  The message is appended to the agent's `pending_user_messages` queue and will
-  be injected into the agent's LLM context at the top of its next turn (as a
-  user-role message). This serializes the append through the GenServer to avoid
-  concurrent-write races.
+  `message` is either a legacy plain `String.t()` or a
+  `%{text:, attachments:}` map (see `EvoGit.Attachments.message/1` — the map
+  may carry images/audio, atom- or string-keyed). The message is appended to
+  the agent's `pending_user_messages` queue and will be injected into the
+  agent's LLM context at the top of its next turn (as a user-role message),
+  materialized by `EvoGit.Agent.ContextBuilder.build_injected_message/2`. There
+  is NO root gate on injected messages — any agent at any depth may receive
+  media this way (the root-only gate covers the `:attachments` task opt only).
+  This serializes the append through the GenServer to avoid concurrent-write
+  races.
 
   Returns `:ok` on success, or `{:error, :not_found}` if the agent doesn't exist.
   """
-  @spec send_user_message(pos_integer(), String.t()) :: :ok | {:error, :not_found}
-  def send_user_message(agent_id, message) when is_binary(message) do
+  @spec send_user_message(pos_integer(), String.t() | map()) :: :ok | {:error, :not_found}
+  def send_user_message(agent_id, message) when is_binary(message) or is_map(message) do
     GenServer.call(__MODULE__, {:send_user_message, agent_id, message})
   end
 

@@ -360,4 +360,103 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       assert system_msg.content == [ReqLLM.Message.ContentPart.text(@system_prompt)]
     end
   end
+
+  describe "build_injected_message/2" do
+    test "legacy binary + nil turn -> byte-identical plain user(text)" do
+      assert ContextBuilder.build_injected_message("ping", nil) == ReqLLM.Context.user("ping")
+    end
+
+    test "legacy binary + turn -> plain user(text), turn-tagged" do
+      before = System.system_time(:second)
+      msg = ContextBuilder.build_injected_message("ping", 7)
+      after_ = System.system_time(:second)
+
+      assert msg.role == :user
+      assert msg.content == ReqLLM.Context.user("ping").content
+      assert msg.metadata[:turn] == 7
+      assert msg.metadata[:timestamp] in before..after_
+    end
+
+    test "atom-keyed map with an image + nil turn -> [text | image] content parts" do
+      attachments = [attachment("image", "a.png", "image/png", <<1, 2, 3>>)]
+
+      msg = ContextBuilder.build_injected_message(%{text: "look", attachments: attachments}, nil)
+
+      assert msg == ReqLLM.Context.user(EvoGit.Attachments.to_content_parts("look", attachments))
+
+      assert [text, image] = msg.content
+      assert text == ReqLLM.Message.ContentPart.text("look")
+      assert image == ReqLLM.Message.ContentPart.image(<<1, 2, 3>>, "image/png")
+    end
+
+    test "string-keyed map (Codec / task-data-plane shape) with audio -> file part" do
+      attachments = [attachment("audio", "b.mp3", "audio/mpeg", <<4, 5, 6>>)]
+
+      msg =
+        ContextBuilder.build_injected_message(
+          %{"text" => "listen", "attachments" => attachments},
+          nil
+        )
+
+      assert [text, file] = msg.content
+      assert text == ReqLLM.Message.ContentPart.text("listen")
+      assert file == ReqLLM.Message.ContentPart.file(<<4, 5, 6>>, "b.mp3", "audio/mpeg")
+    end
+
+    test "attachments: [] -> plain-text fast path" do
+      assert ContextBuilder.build_injected_message(%{text: "hi", attachments: []}, nil) ==
+               ReqLLM.Context.user("hi")
+    end
+
+    test "multiple attachments keep input order (text part first)" do
+      attachments = [
+        attachment("image", "a.png", "image/png", <<1>>),
+        attachment("audio", "b.mp3", "audio/mpeg", <<2>>),
+        attachment("image", "c.png", "image/png", <<3>>)
+      ]
+
+      msg = ContextBuilder.build_injected_message(%{text: "many", attachments: attachments}, nil)
+
+      assert [text, a, b, c] = msg.content
+      assert text == ReqLLM.Message.ContentPart.text("many")
+      assert a == ReqLLM.Message.ContentPart.image(<<1>>, "image/png")
+      assert b == ReqLLM.Message.ContentPart.file(<<2>>, "b.mp3", "audio/mpeg")
+      assert c == ReqLLM.Message.ContentPart.image(<<3>>, "image/png")
+    end
+
+    test "no root gate — the helper takes no parent/depth argument (arity is exactly 2)" do
+      assert function_exported?(ContextBuilder, :build_injected_message, 2)
+      refute function_exported?(ContextBuilder, :build_injected_message, 3)
+
+      # A media-carrying injected message materializes unconditionally — there is
+      # no root/non-root distinction on this path at all.
+      msg =
+        ContextBuilder.build_injected_message(
+          %{text: "x", attachments: [attachment("image", "a.png", "image/png", <<9>>)]},
+          nil
+        )
+
+      assert length(msg.content) == 2
+    end
+
+    test "malformed message map raises a descriptive ArgumentError" do
+      assert_raise ArgumentError, ~r/message: text must be a string/, fn ->
+        ContextBuilder.build_injected_message(%{attachments: []}, nil)
+      end
+    end
+
+    test "an invalid attachment payload raises (caps validated by EvoGit.Attachments)" do
+      bad = [attachment("video", "v.mp4", "video/mp4", <<1>>)]
+
+      assert_raise ArgumentError, ~r/unknown type/, fn ->
+        ContextBuilder.build_injected_message(%{text: "x", attachments: bad}, nil)
+      end
+    end
+
+    test "a non-message value raises" do
+      assert_raise ArgumentError, ~r/expected a string or a/, fn ->
+        ContextBuilder.build_injected_message(42, nil)
+      end
+    end
+  end
 end
