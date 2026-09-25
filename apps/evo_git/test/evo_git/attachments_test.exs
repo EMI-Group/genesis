@@ -148,6 +148,123 @@ defmodule EvoGit.AttachmentsTest do
     end
   end
 
+  describe "message/1" do
+    test "normalizes a legacy binary into the canonical map with nil attachments" do
+      assert Attachments.message("hello there") == %{text: "hello there", attachments: nil}
+    end
+
+    test "normalizes an empty binary (still a valid text component)" do
+      assert Attachments.message("") == %{text: "", attachments: nil}
+    end
+
+    test "normalizes an atom-keyed message map" do
+      assert Attachments.message(%{text: "look", attachments: [image_attachment()]}) ==
+               %{text: "look", attachments: [image_attachment()]}
+    end
+
+    test "normalizes a string-keyed message map (Codec/JSON round-trip shape)" do
+      assert Attachments.message(%{"text" => "look", "attachments" => [audio_attachment()]}) ==
+               %{text: "look", attachments: [audio_attachment()]}
+    end
+
+    test "normalizes a message map with no attachments key to nil attachments" do
+      assert Attachments.message(%{text: "plain"}) == %{text: "plain", attachments: nil}
+
+      assert Attachments.message(%{text: "plain", attachments: nil}) == %{
+               text: "plain",
+               attachments: nil
+             }
+
+      assert Attachments.message(%{text: "plain", attachments: []}) == %{
+               text: "plain",
+               attachments: []
+             }
+    end
+
+    test "is idempotent on an already-canonical map" do
+      canonical = Attachments.message(%{text: "x", attachments: [image_attachment()]})
+      assert Attachments.message(canonical) == canonical
+    end
+
+    test "raises for a map without a usable text value" do
+      assert_raise ArgumentError, ~r/message: text must be a string, got: nil/, fn ->
+        Attachments.message(%{attachments: nil})
+      end
+
+      assert_raise ArgumentError, ~r/message: text must be a string, got: nil/, fn ->
+        Attachments.message(%{"text" => nil})
+      end
+
+      assert_raise ArgumentError, ~r/message: text must be a string, got: 42/, fn ->
+        Attachments.message(%{text: 42})
+      end
+    end
+
+    test "raises for invalid attachments inside the map" do
+      assert_raise ArgumentError, ~r/unknown type "video"/, fn ->
+        Attachments.message(%{text: "x", attachments: [image_attachment(%{"type" => "video"})]})
+      end
+    end
+
+    test "raises for non-binary non-map input" do
+      assert_raise ArgumentError,
+                   ~r/message: expected a string or a %\{text: \.\.\., attachments: \.\.\.\} map/,
+                   fn -> Attachments.message(42) end
+
+      assert_raise ArgumentError, ~r/message: expected a string or/, fn ->
+        Attachments.message([image_attachment()])
+      end
+    end
+  end
+
+  describe "validate_message!/1" do
+    test "returns :ok for a valid atom-keyed message map" do
+      assert Attachments.validate_message!(%{text: "hi", attachments: nil}) == :ok
+      assert Attachments.validate_message!(%{text: "hi", attachments: []}) == :ok
+      assert Attachments.validate_message!(%{text: "hi"}) == :ok
+
+      assert Attachments.validate_message!(%{text: "hi", attachments: [image_attachment()]}) ==
+               :ok
+    end
+
+    test "returns :ok for a valid string-keyed message map" do
+      assert Attachments.validate_message!(%{"text" => "hi", "attachments" => nil}) == :ok
+
+      assert Attachments.validate_message!(%{
+               "text" => "hi",
+               "attachments" => [audio_attachment()]
+             }) ==
+               :ok
+    end
+
+    test "raises when text is missing or not a string" do
+      assert_raise ArgumentError, ~r/message: text must be a string, got: nil/, fn ->
+        Attachments.validate_message!(%{})
+      end
+
+      assert_raise ArgumentError, ~r/message: text must be a string, got: :atom/, fn ->
+        Attachments.validate_message!(%{text: :atom})
+      end
+    end
+
+    test "raises for invalid attachments (delegates to validate/1)" do
+      assert_raise ArgumentError, ~r/expected a list of attachment maps/, fn ->
+        Attachments.validate_message!(%{text: "hi", attachments: "nope"})
+      end
+
+      assert_raise ArgumentError, ~r/at most 4 allowed/, fn ->
+        too_many = Enum.map(1..5, fn i -> image_attachment(%{"name" => "img#{i}.png"}) end)
+        Attachments.validate_message!(%{text: "hi", attachments: too_many})
+      end
+    end
+
+    test "raises for a non-map argument" do
+      assert_raise ArgumentError,
+                   ~r/message: expected a %\{text: \.\.\., attachments: \.\.\.\} map/,
+                   fn -> Attachments.validate_message!("just a string") end
+    end
+  end
+
   describe "to_content_parts/2" do
     test "returns just the text part for nil or [] attachments" do
       assert Attachments.to_content_parts("objective", nil) == [ContentPart.text("objective")]

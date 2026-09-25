@@ -5,13 +5,29 @@ defmodule EvoGit.Agent.ToolDispatch do
   Handles the main agent turn cycle: LLM call with retry, tool-call processing
   (complete vs regular, subagent vs standard), batching, timeout management,
   output sanitization, and redundant-cd warnings.
-  """
 
+  ## Multimodal tool outputs (the wrap boundary)
+
+  This module is the ONE place a `%EvoGit.Agent.ToolOutput{}` (text + optional
+  images/audio) is wrapped, unwrapped and materialized. A tool may return a
+  `%ToolOutput{}`; `sanitize_tool_result/3` wraps the raw return, runs the
+  BINARY-ONLY sanitize/truncate-feedback pipeline on its text component and
+  re-attaches the sanitized text (`ToolOutput.with_text/2`) so the media
+  survive, collapsing an all-text output back to a plain binary. `assemble_tool_result/3`
+  materializes it into the tool-result message — media-carrying outputs become a
+  content-part LIST (`ToolOutput.to_content_parts/1`), while a plain binary is
+  passed through BYTE-IDENTICALLY to `ReqLLM.Context.tool_result/3`. The
+  delegation-hint and redundant-cd hint appenders unwrap to text before their
+  string concatenation and re-wrap afterwards. `EvoGit.Agent.OutputSanitizer`,
+  `EvoGit.Agent.TruncationFeedback` and `EvoGit.Agent.DelegationHints` never see
+  or return a `%ToolOutput{}`.
+  """
   require Logger
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Agent.OutputSanitizer
+  alias EvoGit.Agent.ToolOutput
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Usage
@@ -923,7 +939,7 @@ defmodule EvoGit.Agent.ToolDispatch do
 
     all_results =
       Enum.map(sorted_results, fn {_index, tool_call_id, name, output} ->
-        tool_result(tool_call_id, name, output)
+        assemble_tool_result(tool_call_id, name, output)
       end)
 
     all_results =
@@ -1059,12 +1075,14 @@ defmodule EvoGit.Agent.ToolDispatch do
     results
   end
 
-  # Runs a single tool call's execution, returning `{index, call, output}`. Used
-  # by BOTH batch phases: sequentially in the parent process for the serial
-  # (file-mutating) group and inside the `Task.async_stream` worker for the
-  # parallel group. Only the tool-execution call happens here — hint tracking
-  # and the redundant-cd warning are applied later in the parent process, in
-  # index order (see `apply_tool_output_tracking/3`).
+  # Runs a single tool call's execution, returning `{index, call, output}`,
+  # where `output` is `String.t() | %ToolOutput{} | nil` — a plain binary for an
+  # all-text result (the legacy shape) and a `%ToolOutput{}` only when the tool
+  # attached media. Used by BOTH batch phases: sequentially in the parent process
+  # for the serial (file-mutating) group and inside the `Task.async_stream`
+  # worker for the parallel group. Only the tool-execution call happens here —
+  # hint tracking and the redundant-cd warning are applied later in the parent
+  # process, in index order (see `apply_tool_output_tracking/3`).
   defp run_tool_call(call, index, ctx) do
     name = ReqLLM.ToolCall.name(call)
     args = ReqLLM.ToolCall.args_map(call)
@@ -1084,10 +1102,17 @@ defmodule EvoGit.Agent.ToolDispatch do
     {index, call, output}
   end
 
+  @doc false
   # Applies the redundant-cd warning and write/read delegation hints to one
   # tool output in the parent process, threading the hint maps through the
   # batch accumulator (index-ordered, deterministic).
-  defp apply_tool_output_tracking({index, call, output}, {acc_results, hints, read_hints}, ctx) do
+  #
+  # The wrap boundary lives here too: the redundant-cd warning preserves media,
+  # while the delegation-hint modules are BINARY-ONLY, so the text component is
+  # unwrapped, the hint appends run on it, and the (possibly extended) text is
+  # re-attached with the media preserved (`ToolOutput.with_text/2`). An all-text
+  # output never becomes a struct — `rewrap_output/2` returns the plain binary.
+  def apply_tool_output_tracking({index, call, output}, {acc_results, hints, read_hints}, ctx) do
     name = ReqLLM.ToolCall.name(call)
     args = ReqLLM.ToolCall.args_map(call)
     tool_call_id = call.id || name || "unknown"
@@ -1095,14 +1120,30 @@ defmodule EvoGit.Agent.ToolDispatch do
     output =
       maybe_append_redundant_cd_warning(output, name, args, ctx.repo_path, ctx.repo_root)
 
+    text = output_text(output)
+
     # Track delegation hints for write tools (skip during conflict resolution)
-    {output, hints} = track_write_delegation_hint(output, hints, name, args, ctx)
+    {text, hints} = track_write_delegation_hint(text, hints, name, args, ctx)
 
     # Track read delegation hints for read tools (skip during conflict resolution)
-    {output, read_hints} = track_read_delegation_hint(output, read_hints, name, args, ctx)
+    {text, read_hints} = track_read_delegation_hint(text, read_hints, name, args, ctx)
+
+    output = rewrap_output(output, text)
 
     {acc_results ++ [{index, tool_call_id, name, output}], hints, read_hints}
   end
+
+  # Returns the TEXT component of a tool output — the plain binary itself, or
+  # `ToolOutput.text/1` for a media-carrying `%ToolOutput{}`. The sanitize /
+  # truncation / hint pipeline is BINARY-ONLY and therefore always consumes this.
+  defp output_text(%ToolOutput{} = output), do: ToolOutput.text(output)
+  defp output_text(text), do: text
+
+  # Re-attaches `text` to the SAME media set as `output`: a `%ToolOutput{}`
+  # keeps its attachments (`ToolOutput.with_text/2`), while a plain binary (or
+  # the legacy non-binary pass-through) is returned as-is.
+  defp rewrap_output(%ToolOutput{} = output, text), do: ToolOutput.with_text(output, text)
+  defp rewrap_output(_output, text), do: text
 
   # Runs a single tool call inside a tool slot with an async task, bounded
   # timeout, and output sanitization/truncation feedback.
@@ -1180,14 +1221,11 @@ defmodule EvoGit.Agent.ToolDispatch do
           "Error: #{inspect(reason)}"
 
         {:ok, result} ->
-          {sanitized, truncation_info} =
-            OutputSanitizer.sanitize_and_truncate(result, name, args)
-
-          EvoGit.Agent.TruncationFeedback.append_truncation_feedback(
-            sanitized,
-            truncation_info,
-            name
-          )
+          # Wrap → sanitize → truncation-feedback → re-wrap, all in one place
+          # (the wrap boundary — see `sanitize_tool_result/3`). A plain binary
+          # return round-trips BYTE-IDENTICALLY; a media-carrying return keeps
+          # its attachments.
+          sanitize_tool_result(result, name, args)
 
         {:exit, reason} ->
           "Error: Tool execution crashed: #{inspect(reason)}"
@@ -1196,6 +1234,82 @@ defmodule EvoGit.Agent.ToolDispatch do
           "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
       end
     end)
+  end
+
+  # --- Multimodal tool output: wrap boundary ---
+
+  @doc false
+  # Finalizes a tool's raw return value for the tool-result message: wraps it
+  # (`ToolOutput.wrap/1`), runs the BINARY-ONLY sanitize → truncation-feedback
+  # pipeline on the TEXT component only, and re-attaches the sanitized text
+  # while PRESERVING any media (`ToolOutput.with_text/2`).
+  #
+  # An all-text return (the shape every built-in tool produces today) comes back
+  # as the plain sanitized BINARY — byte-identical to the legacy path, never
+  # promoted to a `%ToolOutput{}`. A return carrying media comes back as a
+  # `%ToolOutput{}` from which the media parts are materialized exactly once at
+  # the message-construction site (`assemble_tool_result/3`).
+  #
+  # `nil` (a tool that legitimately returns nothing) stays `nil`. Any other
+  # non-binary term is passed through verbatim to preserve the legacy
+  # pass-through sanitizer behavior — no built-in tool returns one (the
+  # `execute/5` contract is `String.t() | %ToolOutput.t() | {:error, reason}`,
+  # and the error path is stringified upstream).
+  def sanitize_tool_result(nil, _name, _args), do: nil
+
+  def sanitize_tool_result(result, name, args)
+      when is_binary(result) or is_struct(result, ToolOutput) do
+    output = ToolOutput.wrap(result)
+
+    sanitized =
+      output
+      |> ToolOutput.text()
+      |> sanitize_and_append_truncation_feedback(name, args)
+
+    output
+    |> ToolOutput.with_text(sanitized)
+    |> collapse_all_text_output()
+  end
+
+  def sanitize_tool_result(other, _name, _args), do: other
+
+  # Runs the BINARY-ONLY sanitize → truncation-feedback pipeline on the text
+  # component. Neither `OutputSanitizer` nor `TruncationFeedback` ever sees a
+  # `%ToolOutput{}`.
+  defp sanitize_and_append_truncation_feedback(text, name, args) do
+    {sanitized, truncation_info} = OutputSanitizer.sanitize_and_truncate(text, name, args)
+
+    EvoGit.Agent.TruncationFeedback.append_truncation_feedback(sanitized, truncation_info, name)
+  end
+
+  # A `%ToolOutput{}` carrying NO media collapses back to its plain text binary:
+  # the all-text path must stay BYTE-IDENTICAL to the legacy string pipeline and
+  # behave like a plain string for every downstream consumer. A media-carrying
+  # output stays a struct.
+  defp collapse_all_text_output(%ToolOutput{} = output) do
+    if ToolOutput.media?(output), do: output, else: ToolOutput.text(output)
+  end
+
+  @doc false
+  # Builds the `%ReqLLM.Message{}` for one tool result — the ONE
+  # message-construction site that materializes a `%ToolOutput{}` into LLM
+  # content parts (`ToolOutput.to_content_parts/1` → `[ContentPart.text(text) |
+  # media parts…]`). An all-text output (a plain binary — the only shape the
+  # legacy pipeline ever produced, plus subagent result strings) is passed
+  # through as the plain BINARY string, so the resulting message is
+  # BYTE-IDENTICAL to today's `ReqLLM.Context.tool_result(id, name, binary)`.
+  def assemble_tool_result(tool_call_id, name, output) do
+    case output do
+      %ToolOutput{} = out ->
+        if ToolOutput.media?(out) do
+          tool_result(tool_call_id, name, ToolOutput.to_content_parts(out))
+        else
+          tool_result(tool_call_id, name, ToolOutput.text(out))
+        end
+
+      binary ->
+        tool_result(tool_call_id, name, binary)
+    end
   end
 
   # True when the tool call is a `run_command` whose command path has security
@@ -1292,7 +1406,11 @@ defmodule EvoGit.Agent.ToolDispatch do
       if EvoGit.Agent.Tools.ShellTool.redundant_cd?(command, repo_path, repo_root) and
            not Process.get(:redundant_cd_warned, false) do
         Process.put(:redundant_cd_warned, true)
-        output <> "\n\n" <> EvoGit.Agent.Tools.ShellTool.redundant_cd_warning(repo_path)
+
+        append_output_text(
+          output,
+          "\n\n" <> EvoGit.Agent.Tools.ShellTool.redundant_cd_warning(repo_path)
+        )
       else
         output
       end
@@ -1300,6 +1418,16 @@ defmodule EvoGit.Agent.ToolDispatch do
       output
     end
   end
+
+  # Appends `suffix` to the TEXT component of a tool output while PRESERVING any
+  # media: a `%ToolOutput{}` is unwrapped (`ToolOutput.text/1`), the suffix is
+  # concatenated, and the result is re-attached (`ToolOutput.with_text/2`); a
+  # plain binary stays a plain binary (the byte-identity invariant).
+  defp append_output_text(%ToolOutput{} = output, suffix) do
+    ToolOutput.with_text(output, ToolOutput.text(output) <> suffix)
+  end
+
+  defp append_output_text(binary, suffix) when is_binary(binary), do: binary <> suffix
 
   # --- Shared Helpers ---
 

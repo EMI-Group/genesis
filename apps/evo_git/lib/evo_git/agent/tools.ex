@@ -165,7 +165,35 @@ defmodule EvoGit.Agent.Tools do
   - `node_path` - Optional path to the agent's assigned node for spatial
     contract validation. Used to ensure file operations stay within scope.
 
+  ## Return value
+
+  A tool MAY return any of:
+
+  - `String.t()` — the plain all-text result (the shape every built-in tool
+    produces today). `EvoGit.Agent.ToolDispatch` threads it through the
+    BINARY-ONLY sanitize / truncate / hint pipeline and materializes it as a
+    single `ContentPart.text/1` — byte-identical to the legacy path.
+  - `%EvoGit.Agent.ToolOutput{}` — text PLUS optional multimodal media (images /
+    audio as the string-keyed base64 maps of `EvoGit.Attachments`). The media
+    ride the tool-result message as real content parts
+    (`[ContentPart.text(text) | media parts…]`); the wrap boundary lives in
+    `EvoGit.Agent.ToolDispatch` (see `EvoGit.Agent.ToolOutput`).
+  - `{:error, reason}` — the dispatch/tool failed; the caller surfaces it as an
+    `"Error: …"` string.
+
+  The two write guards (`maybe_block_repo_less/5`,
+  `maybe_block_read_only_foreign_repo/5`) and every other guard path return a
+  plain `String.t()` `"Error: …"` message, never a `%ToolOutput{}`.
   """
+  @spec execute(
+          String.t(),
+          map() | String.t(),
+          String.t(),
+          String.t() | nil,
+          String.t() | nil
+        ) :: String.t() | EvoGit.Agent.ToolOutput.t() | {:error, term()}
+  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
+
   # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
 
@@ -182,8 +210,6 @@ defmodule EvoGit.Agent.Tools do
   )
 
   @unknown_tool_similarity_threshold 0.7
-
-  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
 
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     maybe_block_repo_less(normalize_tool_name(tool_name), args, repo_path, repo_root, node_path)

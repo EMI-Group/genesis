@@ -24,7 +24,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   - `task_local_id` — per-task agent number (starts at 1 for each task), used for display and workspace/branch naming
   - `foreign_repos` — list of foreign repos available to this agent (inherited from parent; root agents get this from CLI opts or genesis.toml)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
-  - `pending_user_messages` — list of user messages injected externally (via dashboard/RPC), drained at the top of each turn and appended to context as user-role messages
+  - `pending_user_messages` — list of injected user messages (via dashboard/RPC), drained at the top of each turn and appended to context as user-role messages. Each entry is EITHER a legacy plain `String.t()` (stored verbatim, byte-identical) OR a canonical multimodal message (`EvoGit.Attachments.message/1`): `%{text: String.t(), attachments: [map] | nil}`
   - `cancel_requested` — set to true by the scheduler when the task is being gracefully cancelled; the runner checks/clears it at the top of each turn
   - `usage` — cumulative token and cost usage for this agent (`nil` until the first LLM call completes)
   - `turn` — the current turn number for this agent (`nil` until the loop starts; mirrors `LoopState.turn`). Used by the dashboard to display the actual turn rather than a fabricated index.
@@ -34,6 +34,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
   """
 
   alias EvoGit.Agent.Usage
+  alias EvoGit.Attachments
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
@@ -87,7 +88,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           total_tokens: non_neg_integer(),
           foreign_repos: [ForeignRepo.t()],
           repo_notes: String.t() | nil,
-          pending_user_messages: [String.t()],
+          pending_user_messages: [String.t() | Attachments.message()],
           cancel_requested: boolean() | nil
         }
 end

@@ -17,8 +17,17 @@ defmodule EvoGit.Agent.OutputSanitizer do
       `%{reason: :invalid_utf8 | :size_exceeded, original_size: pos_integer, truncated_size: pos_integer}`
 
   Steps: ensure_utf8 → strip_ansi → strip_progress_bars → truncate
-  """
 
+  ## Wrap boundary (BINARY-ONLY contract)
+
+  This module is BINARY-ONLY: it takes a string and returns a string. It never
+  receives or returns a `%EvoGit.Agent.ToolOutput{}` — the wrap/unwrap between a
+  binary and a `%ToolOutput{}` happens ONLY inside `EvoGit.Agent.ToolDispatch`
+  (see `EvoGit.Agent.ToolOutput` → "Wrap boundary invariant"). `ToolDispatch`
+  therefore always calls `sanitize_and_truncate/3` with `ToolOutput.text/1` and
+  re-attaches the sanitized string with `ToolOutput.with_text/2`, so any media a
+  tool attached survives sanitization untouched.
+  """
   require Logger
 
   @high_output_tools MapSet.new([
