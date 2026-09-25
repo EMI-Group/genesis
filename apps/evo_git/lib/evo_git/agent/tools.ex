@@ -351,9 +351,32 @@ defmodule EvoGit.Agent.Tools do
         "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
         "that accept modifications; read-only foreign repos are for investigation only."
     else
-      execute_tool(tool_name, args, repo_path, repo_root, node_path)
+      case test_tool_override(tool_name) do
+        nil -> execute_tool(tool_name, args, repo_path, repo_root, node_path)
+        fun -> fun.(args, repo_path, repo_root, node_path)
+      end
     end
   end
+
+  # Test-only seam (app env `:evo_git, :tool_dispatch_test_tools`): maps a tool
+  # NAME to a `fun.(args, repo_path, repo_root, node_path)` whose return value is
+  # passed through verbatim — including a `%EvoGit.Agent.ToolOutput{}` carrying
+  # media. It is consulted AFTER the two write guards and BEFORE built-in
+  # dispatch, so an integration test can drive the REAL dispatch plumbing
+  # (serial/parallel batch phases, sanitize/truncate, hint tracking, message
+  # assembly) end-to-end. Overriding a built-in name is deliberate: the real
+  # name-driven behaviours (the serial/parallel partition, the delegation hints,
+  # the redundant-cd warning) are then exercised too. The registry is EMPTY in
+  # production (the app env is unset), so dispatch is byte-identical there — and
+  # a `nil`/non-map env value is treated as "no override" rather than crashing.
+  defp test_tool_override(tool_name) when is_binary(tool_name) do
+    case Application.get_env(:evo_git, :tool_dispatch_test_tools) do
+      tools when is_map(tools) -> Map.get(tools, tool_name)
+      _ -> nil
+    end
+  end
+
+  defp test_tool_override(_tool_name), do: nil
 
   # Tool execution dispatch
 
