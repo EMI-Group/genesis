@@ -906,9 +906,21 @@ button, a, input, textarea, select, summary,
 /* VERTICAL, GitLen/GitKraken-style commit graph for the /agents commit-history
    view, driven by the CommitGraph JS hook. The renderer owns geometry, sizing
    and stroke/fill colours (SVG colours arrive from the renderer, never from
-   here); this block owns the MOTION (enter animations) and the minimal gutter
-   surface styling. Vertical scrolling is native — there is NO pan/zoom
-   surface. Semantic theme tokens only — no colour literals. */
+   here); this block owns the MOTION (enter animations). Vertical scrolling is
+   native — there is NO pan/zoom surface. Semantic theme tokens only — no
+   colour literals.
+
+   Layout surfaces are styled with Tailwind utilities ON the elements (no rules
+   needed here):
+     * `.cg-scroll` — the `overflow-x: auto` wrapper; when many agent lanes
+       make the gutter wider than the panel, the gutter + rows + lane headers
+       scroll LEFT/RIGHT as ONE unit (vertical scrolling stays native).
+     * `.cg-lane-header` — the sticky (`position: sticky; top: 0; z-index`)
+       lane-label bar above the gutter SVG; its width is set inline by the
+       renderer (== the gutter width) so it scrolls in sync horizontally.
+     * `.cg-lane-chip` — one per lane, absolutely positioned + centered on its
+       lane's x inline by the renderer; a clickable <button> for agent lanes,
+       a plain <span> (`.cg-lane-chip-neutral`) for the neutral pre-task lane. */
 
 /* The gutter overlay's positioning (`absolute left-0 top-0`) and
    `pointer-events: none` come from Tailwind utilities on the element; this
