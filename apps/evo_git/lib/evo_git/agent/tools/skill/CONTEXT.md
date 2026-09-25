@@ -47,6 +47,10 @@ Commit messages: `Add skill <name>`, `Edit skill <name>`, `Remove skill <name>`,
 
 `tools.ex:42-58` `@write_tools` includes `skill_add skill_edit skill_remove skill_enable skill_disable` (NOT `skill_list`/`skill_read`/`skill_where`). `serial_tool?/1` (`tools.ex:249-276`) derives `@serial_tools = @write_tools -- ["run_bash","run_powershell","run_git","curl"]`, so all five skill writers are SERIAL (executed one-at-a-time in the parent agent process by `ToolDispatch.batch_execute_tools/4`) — which is also what makes their read-modify-write-then-commit sequences safe within a batch. Classification drives the repo-less / read-only-foreign-repo write gates (`tools.ex:224-232,284-330`) and serialization.
 
+## Known Issues
+
+- **`skill_where` and `skill_remove`'s CONTEXT.md cleanup enumerate nothing inside a real worktree.** `EvoGit.Skills.ContextIntegration.find_all_context_files/1` (`lib/evo_git/skills/context_integration.ex:262-282`) rejects every path containing `/.genesis/`, but a real agent worktree IS `<repo_root>/.genesis/workers/worker_T<n>_A<m>` — so its `Path.wildcard(<repo_path>/**/CONTEXT.md)` (and therefore `where_enabled/2` and `remove_skill_from_all_contexts/2`) returns `[]` at runtime: `skill_where` reports "not enabled at any node" and `skill_remove` deletes the skill file but cleans up no CONTEXT.md reference (its commit then stages only the skill file). The same helper omits `match_dot: true`, so CONTEXT.md files under hidden directories (e.g. `.github/`) are never found either. This exclusion lives in the backing layer under `lib/evo_git/skills/` — these tools deliberately reuse `where_enabled/2` rather than duplicate the scan.
+
 ## Constraints
 - Skill files live in `.agents/skills/` — hardcoded in `EvoGit.Skills.skills_dir/0` (`skills.ex:63`), not configurable by the tool layer.
 - Skill names: letters, numbers, hyphens, underscores, must start with a letter (`crud.ex:26-28`); filenames are `<name>.md` with an exact-then-case-insensitive lookup (`crud.ex:225-245`).
