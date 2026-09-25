@@ -270,16 +270,20 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   @doc """
   Sends a user message to a running agent via RPC.
 
-  Routes the append through `AgentScheduler.send_user_message/2` (GenServer call)
-  so appends are serialized. Returns `:ok` on success, `{:error, :not_found}` if
-  the agent doesn't exist, or `{:error, :scheduler_not_started}` if the scheduler
-  hasn't started yet.
+  Accepts EITHER a legacy plain `String.t()` OR a `%{text:, attachments:}`
+  map (multimodal injected user message). Routes the append through
+  `AgentScheduler.send_user_message/2` (GenServer call) so appends are
+  serialized and the message is canonicalized via `EvoGit.Attachments.message/1`
+  before it lands in the agent's pending queue. Returns `:ok` on success,
+  `{:error, :not_found}` if the agent doesn't exist, or
+  `{:error, :scheduler_not_started}` if the scheduler hasn't started yet.
 
   Designed to be called via `:erpc.call/5` from the local dashboard for a remote
   node.
   """
-  @spec send_agent_message(pos_integer(), String.t()) :: :ok | {:error, term()}
-  def send_agent_message(agent_id, message) when is_binary(message) do
+  @spec send_agent_message(pos_integer(), String.t() | EvoGit.Attachments.message()) ::
+          :ok | {:error, term()}
+  def send_agent_message(agent_id, message) when is_binary(message) or is_map(message) do
     case :ets.whereis(:evogit_agent_state) do
       :undefined -> {:error, :scheduler_not_started}
       _ -> EvoGit.AgentScheduler.send_user_message(agent_id, message)
