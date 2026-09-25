@@ -20,6 +20,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `search_context_test.exs` | `Tools` `"search_context"` |
 | `search_history_test.exs` | `Tools` `"search_history"` |
 | `make_dir_test.exs` | `EvoGit.Agent.Tools.MakeDir` |
+| `skill_tools_worktree_test.exs` | the 8 skill tools (`SkillAdd`/`SkillEdit`/`SkillRemove`/`SkillList`/`SkillRead`/`SkillWhere`/`SkillEnable`/`SkillDisable`) — worktree (`repo_path`) read/write routing + self-committing writes via `Shared.maybe_commit_result/6` |
 | `shell_tool_test.exs` | `EvoGit.Agent.Tools.ShellTool` |
 | `complete_task_test.exs` | `EvoGit.Agent.Tools.CompleteTask` (+ archive records) |
 | `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
