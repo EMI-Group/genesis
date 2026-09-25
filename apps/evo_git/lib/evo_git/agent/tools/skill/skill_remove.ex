@@ -78,12 +78,15 @@ defmodule EvoGit.Agent.Tools.SkillRemove do
     end
   end
 
-  # The skill file path (relative to the worktree), resolved via the parsed
-  # skill list so a case-insensitively matched filename is staged correctly.
+  # The skill file path (relative to the worktree), resolved via the same
+  # exact-then-case-insensitive filename lookup the deletion itself uses, so a
+  # case-differing filename is staged correctly.
   defp skill_file(repo_path, name) do
-    case EvoGit.Skills.find_skill(EvoGit.Skills.load_skills(repo_path), name) do
+    skills_path = Path.join(repo_path, EvoGit.Skills.skills_dir())
+
+    case EvoGit.Skills.CRUD.find_skill_file(skills_path, name) do
       nil -> Path.join(EvoGit.Skills.skills_dir(), "#{name}.md")
-      skill -> Path.relative_to(skill.file_path, repo_path)
+      file_path -> Path.relative_to(file_path, repo_path)
     end
   end
 
