@@ -451,6 +451,17 @@ defmodule EvoGit.Agent.Tools.Shared do
   def mkdir_if_needed(path, false), do: File.mkdir(path)
 
   @doc """
+  Validates the `commit` tool argument (boolean, default `true`).
+
+  Shared by every file-mutating tool that commits its own write via
+  `commit_files/4`, mirroring the CONTEXT tools' validation.
+  """
+  def validate_commit(value) when is_boolean(value), do: {:ok, value}
+
+  def validate_commit(value),
+    do: {:error, "Argument 'commit' must be a boolean, got: #{inspect(value)}"}
+
+  @doc """
   Stages and commits EXACTLY the given file paths with `message`.
 
   This is the SINGLE shared stage+commit helper for every tool that writes files
@@ -497,6 +508,26 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   defp run_sandboxed_git(repo_path, repo_root, args),
     do: EvoGit.sandbox_run(repo_path, "git", args, repo_root)
+
+  @doc """
+  Appends the outcome of `commit_files/4` to a tool's result string.
+
+  Shared "commit my own write" glue for the file-mutating skill tools,
+  mirroring the CONTEXT tools' commit step: when `commit?` is false the result
+  string is returned unchanged; otherwise the touched `files` (paths RELATIVE
+  to `repo_path`, the agent worktree) are staged and committed with `message`,
+  and the result becomes `result_msg <> "\\n\\nCommitted:\\n" <> output` — or the
+  descriptive commit error message on `{:error, reason}`.
+  """
+  def maybe_commit_result(result_msg, false, _repo_path, _repo_root, _files, _message),
+    do: result_msg
+
+  def maybe_commit_result(result_msg, true, repo_path, repo_root, files, message) do
+    case commit_files(repo_path, repo_root, files, message) do
+      {:ok, output} -> result_msg <> "\n\nCommitted:\n" <> output
+      {:error, reason} -> reason
+    end
+  end
 
   # Commits whatever `git add` staged, with the message read from a temp file.
   # A commit that turns out to have nothing staged is a graceful no-op.
