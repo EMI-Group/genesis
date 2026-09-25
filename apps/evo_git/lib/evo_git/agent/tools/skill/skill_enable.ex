@@ -33,6 +33,12 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
             "description" =>
               "The relative path to the directory where the skill should be enabled. " <>
                 "Defaults to the agent's current node if not specified."
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to create a git commit after enabling the skill. Defaults to true.",
+            "default" => true
           }
         },
         "required" => ["skill_name"]
@@ -45,11 +51,12 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
   Executes the skill_enable tool.
   """
   def execute(args, repo_path, repo_root, default_node_path) do
-    with {:ok, skill_name} <- Shared.fetch_string_arg(args, "skill_name") do
+    with {:ok, skill_name} <- Shared.fetch_string_arg(args, "skill_name"),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)) do
       node_path = Map.get(args, "node_path") || default_node_path || "./"
 
-      # Verify the skill file exists
-      skills_path = Path.join(repo_root, ".agents/skills")
+      # Verify the skill file exists in the agent's worktree
+      skills_path = Path.join(repo_path, ".agents/skills")
       skill_file = Path.join(skills_path, "#{skill_name}.md")
 
       unless File.exists?(skill_file) do
@@ -65,8 +72,13 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
               "which covers '#{node_path}'. No changes needed."
 
           {:ok, :enabled, path} ->
-            "Skill '#{skill_name}' enabled at '#{path}'. " <>
-              "It will be available to agents assigned to this node and its children."
+            result =
+              "Skill '#{skill_name}' enabled at '#{path}'. " <>
+                "It will be available to agents assigned to this node and its children."
+
+            files = [Path.join(path, "CONTEXT.md")]
+            message = "Enable skill #{skill_name} at #{node_path}"
+            Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
           {:error, reason} ->
             "Error enabling skill: #{reason}"

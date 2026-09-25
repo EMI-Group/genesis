@@ -33,6 +33,12 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
           "content" => %{
             "type" => "string",
             "description" => "The full skill content (markdown with YAML frontmatter)"
+          },
+          "commit" => %{
+            "type" => "boolean",
+            "description" =>
+              "Whether to create a git commit after creating the skill file. Defaults to true.",
+            "default" => true
           }
         },
         "required" => ["content"]
@@ -44,16 +50,23 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
   @doc """
   Executes the skill_add tool.
   """
-  def execute(args, _repo_path, repo_root) do
-    case Shared.fetch_string_arg(args, "content") do
-      {:ok, content} ->
-        case EvoGit.Skills.add_skill(repo_root, content, "", %{}) do
-          {:ok, file_path} -> "Skill created successfully: #{file_path}"
-          {:error, reason} -> "Error creating skill: #{reason}"
-        end
+  def execute(args, repo_path, repo_root) do
+    with {:ok, content} <- Shared.fetch_string_arg(args, "content"),
+         {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)) do
+      case EvoGit.Skills.add_skill(repo_path, content, "", %{}) do
+        {:ok, file_path} ->
+          result = "Skill created successfully: #{file_path}"
+          files = [Path.relative_to(file_path, repo_path)]
+          message = "Add skill #{skill_name(file_path)}"
+          Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
-      {:error, message} ->
-        message
+        {:error, reason} ->
+          "Error creating skill: #{reason}"
+      end
+    else
+      {:error, message} -> message
     end
   end
+
+  defp skill_name(file_path), do: Path.basename(file_path, ".md")
 end

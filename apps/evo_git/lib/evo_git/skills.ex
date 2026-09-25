@@ -226,6 +226,8 @@ defmodule EvoGit.Skills do
   @doc """
   Creates a new skill file in `.agents/skills/`.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Delegates to `EvoGit.Skills.CRUD.add_skill/4`.
   """
   @spec add_skill(String.t(), String.t(), String.t(), String.t()) ::
@@ -235,6 +237,8 @@ defmodule EvoGit.Skills do
   @doc """
   Updates an existing skill file by name.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Delegates to `EvoGit.Skills.CRUD.edit_skill/3`.
   """
   @spec edit_skill(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
@@ -242,6 +246,8 @@ defmodule EvoGit.Skills do
 
   @doc """
   Removes a skill file by name.
+
+  `repo_root` is a repo checkout root (worktree).
 
   Delegates to `EvoGit.Skills.CRUD.remove_skill/2`.
   """
@@ -251,6 +257,8 @@ defmodule EvoGit.Skills do
   @doc """
   Lists all available skills with their names and descriptions.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Delegates to `EvoGit.Skills.CRUD.list_skills/1`.
   """
   @spec list_skills(String.t()) :: String.t()
@@ -258,6 +266,8 @@ defmodule EvoGit.Skills do
 
   @doc """
   Reads a skill file's full content by name.
+
+  `repo_root` is a repo checkout root (worktree).
 
   Delegates to `EvoGit.Skills.CRUD.read_skill/2`.
   """
@@ -304,6 +314,8 @@ defmodule EvoGit.Skills do
   Walks the hierarchy from the repository root down to `relative_path` and
   collects all skill names enabled at each level.
 
+  `repo_path` is a repo checkout root (worktree).
+
   Delegates to `EvoGit.Skills.ContextIntegration.hierarchical_skill_names/2`.
   """
   @spec hierarchical_skill_names(String.t(), String.t()) :: [String.t()]
@@ -318,8 +330,8 @@ defmodule EvoGit.Skills do
   defdelegate filter_skills(skills, names), to: ContextIntegration
 
   @doc """
-  Searches all CONTEXT.md files in the repository to find which nodes have a
-  given skill enabled.
+  Searches all CONTEXT.md files under `repo_root` — a repo checkout root
+  (worktree) — to find which nodes have a given skill enabled.
 
   Delegates to `EvoGit.Skills.ContextIntegration.where_enabled/2`.
   """
@@ -329,6 +341,9 @@ defmodule EvoGit.Skills do
   @doc """
   Enables a skill at a specific node level by adding it to the CONTEXT.md
   YAML front matter's `skill` list.
+
+  `node_path` is a Context Tree node path relative to `repo_path`, which is a
+  repo checkout root (worktree).
 
   Delegates to `EvoGit.Skills.ContextIntegration.enable_skill/3`.
   """
@@ -343,6 +358,9 @@ defmodule EvoGit.Skills do
   Disables a skill at a specific node level by removing it from the CONTEXT.md
   YAML front matter's `skill` list.
 
+  `node_path` is a Context Tree node path relative to `repo_path`, which is a
+  repo checkout root (worktree).
+
   Delegates to `EvoGit.Skills.ContextIntegration.disable_skill/3`.
   """
   @spec disable_skill(String.t(), String.t(), String.t()) ::
@@ -350,8 +368,8 @@ defmodule EvoGit.Skills do
   defdelegate disable_skill(skill_name, node_path, repo_path), to: ContextIntegration
 
   @doc """
-  Removes all references to a skill name from all CONTEXT.md files in the
-  repository.
+  Removes all references to a skill name from all CONTEXT.md files under
+  `repo_root` — a repo checkout root (worktree).
 
   Delegates to `EvoGit.Skills.ContextIntegration.remove_skill_from_all_contexts/2`.
   """

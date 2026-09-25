@@ -43,6 +43,8 @@ defmodule EvoGit.Skills.CRUD do
   @doc """
   Creates a new skill file in `.agents/skills/`.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Returns `{:ok, file_path}` on success, `{:error, reason}` on failure.
   """
   @spec add_skill(String.t(), String.t(), String.t(), String.t()) ::
@@ -78,6 +80,8 @@ defmodule EvoGit.Skills.CRUD do
   @doc """
   Updates an existing skill file by name.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Returns `{:ok, file_path}` on success, `{:error, reason}` on failure.
   """
   @spec edit_skill(String.t(), String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
@@ -111,6 +115,8 @@ defmodule EvoGit.Skills.CRUD do
   @doc """
   Removes a skill file by name.
 
+  `repo_root` is a repo checkout root (worktree).
+
   Returns `:ok` on success, `{:error, reason}` on failure.
   """
   @spec remove_skill(String.t(), String.t()) :: :ok | {:error, String.t()}
@@ -131,6 +137,8 @@ defmodule EvoGit.Skills.CRUD do
 
   @doc """
   Lists all available skills with their names and descriptions.
+
+  `repo_root` is a repo checkout root (worktree).
 
   Returns a formatted string listing all skills.
   """
@@ -165,6 +173,8 @@ defmodule EvoGit.Skills.CRUD do
 
   @doc """
   Reads a skill file's full content by name.
+
+  `repo_root` is a repo checkout root (worktree).
 
   Returns the raw markdown content on success, or an error string.
   """

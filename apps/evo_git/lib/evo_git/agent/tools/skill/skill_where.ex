@@ -37,17 +37,21 @@ defmodule EvoGit.Agent.Tools.SkillWhere do
   @doc """
   Executes the skill_where tool.
   """
-  def execute(args, _repo_path, repo_root) do
+  def execute(args, repo_path, _repo_root) do
     case Shared.fetch_string_arg(args, "skill_name") do
       {:ok, skill_name} ->
-        nodes = EvoGit.Skills.where_enabled(skill_name, repo_root)
+        nodes = EvoGit.Skills.where_enabled(skill_name, repo_path)
 
         if Enum.empty?(nodes) do
           "Skill '#{skill_name}' is not enabled at any node."
         else
-          ("Skill '#{skill_name}' is enabled at the following nodes:\n" <>
-             Enum.map(nodes, fn p -> "  - #{p}" end))
-          |> Enum.join("\n")
+          Enum.join(
+            [
+              "Skill '#{skill_name}' is enabled at the following nodes:"
+              | Enum.map(nodes, &"  - #{&1}")
+            ],
+            "\n"
+          )
         end
 
       {:error, message} ->
