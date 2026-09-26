@@ -189,6 +189,17 @@ The per-turn LLM call receives the whole `%ReqLLM.Context{}` by value — `ToolD
 - **Message normalization seam**: `EvoGit.Attachments.message/1` normalizes a legacy `String.t()` OR a `%{text:, attachments:}` map (atom- OR string-keyed) into the canonical `%{text: String.t(), attachments: [t()] | nil}`; `EvoGit.Attachments.validate_message!/1` validates that canonical map (descriptive `ArgumentError`, spec-error style). This is the ONE normalizer the pending-injected-user-message queue uses.
 - **Pinned decisions**: (a) media stay base64 STRING maps — nothing non-UTF-8 may cross a node/Codec boundary; (b) materialization always produces a plain `[ReqLLM.Message.ContentPart.t()]` list, NEVER a `ReqLLM.ToolResult` (that struct stamps extra metadata and would break byte-identity); (c) the `:attachments` task-opt ROOT-only gate is UNCHANGED — the generalized capability enters via tool results and injected user messages, never by widening the task opt; (d) the `EvoGit.Attachments` caps apply PER TOOL OUTPUT as well as per task opt.
 
+## Known Issues (LLM-error exit shape)
+
+Where an LLM error can become an ABNORMAL agent-Task exit (raise) instead of a returned `{:error, reason}` value:
+
+- `ToolDispatch.do_turn/5` (`tool_dispatch.ex:186-198`) matches ONLY `{:ok, response}` and `{:error, :protocol_violation}` — any other error tuple propagated out of `prompt_until_tools_or_limit/6` raises a `CaseClauseError` out of the agent Task. Add a clause here before widening that function's return contract.
+- `Prompt_until_tools_or_limit/6` itself raises `"LLM request failed after N retries"` (`tool_dispatch.ex:258`) once `call_llm_with_retry/5` returns a terminal `{:error, reason}` — the exhaust-all-retries raise site.
+- `ContextCompression.compress_if_needed/2` (`context_compression.ex:80-83`) matches `{:ok, _} =` on the compression LLM call with NO retry and NO rescue — an LLM error there raises a `MatchError` with zero retries burned.
+- `AgentScheduler.with_llm_slot/2` (`agent_scheduler.ex:413-428`) raises only on a non-`:ok` slot reply; the only such reply is `{:error, :cancelled}` from a force-kill / graceful-cancel queue purge (`slots.ex:420,448,449`) — never from an LLM provider error. A 0-capacity model BLOCKS in the queue instead.
+- The `use EvoGit.Agent`-generated `run/2` (`agent.ex:94-96`) is a bare delegation to `Runner.run/3` (no try/Task/spawn). `Runner.run/3`'s `try/after` helpers and `refresh_commit_sha/1` (`runner.ex:113`, fallback `other -> other`) never raise and pass non-success shapes through unchanged; `Runner.loop/1` (`runner.ex:517-518`) returns `do_turn/5`'s value directly (no funneling of non-`:protocol_violation` errors into `trigger_recovery`).
+- Provider 4xx (e.g. HTTP 400) arrives as a RETURNED `{:error, %ReqLLM.Error.API.Request{retryable: false}}`: req_llm classifies 400 as `:no_retry` (zero inner retries) and `ReqLLM.StreamResponse.process_stream/2` rescues/catches any stream raise into `{:error, _}`. There is NO try/rescue anywhere in `call_llm_with_retry/5` / `do_call_llm_with_retry/6` / `prompt_until_tools_or_limit/6` — raises propagate immediately and are never converted into retries.
+
 ## Constraints
 
 - Every agent MUST `use EvoGit.Agent` and implement `system_prompt/0`.
