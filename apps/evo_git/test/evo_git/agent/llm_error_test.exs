@@ -2,20 +2,26 @@ defmodule EvoGit.Agent.LlmErrorTest do
   @moduledoc """
   `async: true` — PURE unit suite for `EvoGit.Agent.LlmError`: the fail-fast
   classification of NON-RETRYABLE LLM provider rejections (`non_retryable?/1`)
-  and the actionable one-line message built for them (`format_failure/1`).
+  and the actionable one-line message built for them (`format_failure/1,2`,
+  including the self-diagnosing parameter-name / model-spec tail), plus the
+  name-rendering helpers `parameter_names/1` and `format_parameter_names/1`.
 
   Nothing shared is touched: every input is a literal struct / map / tuple
   (no server, no scheduler, no ETS, no app env, no process dictionary), and the
   module under test is documented as total (never raises for any term), so the
   suite needs no globals and never has to serialise against another module.
 
-  The suite additionally PINS one reported production divergence — a phrase-less
-  HTTP 402 wrapped in `{:error, …}` / an `API.Stream` is classified
-  non-retryable instead of keeping the long model-exhaustion backoff. See the
-  `"known divergence (reported production bug)"` describe block: it asserts the
-  CURRENT behaviour, not the correct one.
-  """
+  The suite additionally PINS two reported production divergences, asserting the
+  CURRENT behaviour rather than the correct one:
 
+    * a phrase-less HTTP 402 wrapped in `{:error, …}` / an `API.Stream` is
+      classified non-retryable instead of keeping the long model-exhaustion
+      backoff (see the `"known divergence (reported production bug)"` block);
+    * `parameter_names/1` RAISES `Protocol.UndefinedError` for a struct input —
+      its `is_map/1` clause feeds structs into `Enum.reject/2` — contradicting
+      the module's documented totality (see the struct case in the
+      `"parameter_names/1"` block).
+  """
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.LlmError
@@ -438,6 +444,180 @@ defmodule EvoGit.Agent.LlmErrorTest do
 
       assert is_binary(message)
       assert message =~ "non-retryable"
+    end
+  end
+
+  describe "format_failure/2 — self-diagnosing tail" do
+    test "names the parameters sent and the model profile to check" do
+      message =
+        LlmError.format_failure(zai_rejection(),
+          params: [tools: [%{}], temperature: 0.7, max_tokens: 100],
+          model: "zai:glm-4.6"
+        )
+
+      # The tail is purely additive: the base diagnostic line is still there.
+      assert message =~ "HTTP 400"
+      assert message =~ "code 1210"
+      assert message =~ "Request parameters sent: [max_tokens, temperature, tools]."
+      assert message =~ "Check the model profile for model zai:glm-4.6"
+      refute String.contains?(message, "\n"), "expected a single-line message"
+    end
+
+    test "format_failure/1 is arity-equivalent to format_failure/2 with no context" do
+      assert LlmError.format_failure(zai_rejection()) ==
+               LlmError.format_failure(zai_rejection(), [])
+
+      assert LlmError.format_failure(nil) == LlmError.format_failure(nil, [])
+
+      assert LlmError.format_failure({:error, zai_rejection()}) ==
+               LlmError.format_failure({:error, zai_rejection()}, [])
+    end
+
+    test "the parameters sentence is omitted whenever no name remains" do
+      absent_contexts = [
+        [params: []],
+        [params: [tools: []]],
+        [params: [tools: nil]],
+        [],
+        nil,
+        [model: "x"]
+      ]
+
+      for context <- absent_contexts do
+        message = LlmError.format_failure(zai_rejection(), context)
+
+        refute message =~ "Request parameters sent:",
+               "expected no parameters sentence for context #{inspect(context)}"
+      end
+    end
+
+    test "the model sentence is omitted whenever no model identity is renderable" do
+      absent_contexts = [
+        [],
+        [model: nil],
+        [params: [temperature: 0.7]]
+      ]
+
+      for context <- absent_contexts do
+        message = LlmError.format_failure(zai_rejection(), context)
+
+        refute message =~ "Check the model profile",
+               "expected no model sentence for context #{inspect(context)}"
+      end
+    end
+
+    test "renders parameter NAMES and the model identity only — never a value or credential" do
+      message =
+        LlmError.format_failure(zai_rejection(),
+          params: [objective: "TOP-SECRET-OBJECTIVE", tools: [%{}]],
+          model: %{
+            id: "glm-4.6",
+            provider: "zai",
+            api_key: "sk-secret",
+            base_url: "http://127.0.0.1:1"
+          }
+        )
+
+      assert message =~ "objective"
+      assert message =~ "tools"
+      assert message =~ "glm-4.6 (provider zai)"
+
+      refute message =~ "TOP-SECRET-OBJECTIVE"
+      refute message =~ "sk-secret"
+      refute message =~ "127.0.0.1"
+    end
+
+    test "a model map carrying only :model renders that id" do
+      message =
+        LlmError.format_failure(zai_rejection(), model: %{model: "glm-4.6"})
+
+      assert message =~ "Check the model profile for model glm-4.6"
+    end
+
+    test "a model map carrying only :provider renders the provider marker" do
+      message = LlmError.format_failure(zai_rejection(), model: %{provider: "zai"})
+
+      assert message =~ "Check the model profile for model (provider zai)"
+    end
+  end
+
+  describe "parameter_names/1" do
+    test "atom keys are sorted and de-duplicated" do
+      assert LlmError.parameter_names(b: 1, a: 2, a: 3) == ["a", "b"]
+
+      assert LlmError.parameter_names(temperature: 0.7, max_tokens: 100) ==
+               ["max_tokens", "temperature"]
+    end
+
+    test "string keys are sorted and de-duplicated" do
+      assert LlmError.parameter_names([{"b", 1}, {"a", 2}, {"a", 3}]) == ["a", "b"]
+    end
+
+    test "a map's keys are sorted and de-duplicated" do
+      assert LlmError.parameter_names(%{b: 1, a: 2}) == ["a", "b"]
+      assert LlmError.parameter_names(%{"b" => 1, "a" => 2}) == ["a", "b"]
+    end
+
+    test "an empty or absent tools value contributes no name" do
+      assert LlmError.parameter_names(tools: []) == []
+      assert LlmError.parameter_names(tools: nil) == []
+      assert LlmError.parameter_names([{"tools", []}]) == []
+      assert LlmError.parameter_names(%{tools: []}) == []
+    end
+
+    test "a non-empty tools value is named" do
+      assert LlmError.parameter_names(tools: [%{}]) == ["tools"]
+      assert LlmError.parameter_names(tools: [%{"name" => "read_file"}]) == ["tools"]
+    end
+
+    test "non-keyword / non-map inputs yield [] (total, never raises)" do
+      for input <- [nil, :atom, "binary", 123, [1, 2, 3], {:a, 1}, %{}] do
+        assert LlmError.parameter_names(input) == [],
+               "expected [] for #{inspect(input)}"
+      end
+    end
+
+    test "a struct input currently RAISES — reported production divergence" do
+      # PRODUCTION DIVERGENCE — reported to the caller; NOT fixed here (this suite
+      # is test-only). `parameter_names/1`'s `is_map/1` clause feeds ANY map,
+      # including a struct, straight into `Enum.reject/2`; a struct that does not
+      # implement `Enumerable` (ReqLLM's error structs do not) raises
+      # `Protocol.UndefinedError` instead of returning `[]`, contradicting the
+      # module's documented "total: never raises for any input shape" contract.
+      # The `:__struct__` key rejection in that clause is therefore unreachable
+      # for a real struct — it can never be observed there.
+      assert_raise Protocol.UndefinedError, fn ->
+        LlmError.parameter_names(%ApiRequest{status: 400})
+      end
+    end
+
+    test "a hostile key is sanitized to a single line" do
+      assert LlmError.parameter_names([{:"bad\nkey", 1}]) == ["bad key"]
+      assert LlmError.parameter_names([{:"bad\tkey", 1}]) == ["bad key"]
+      assert LlmError.parameter_names([{:"  padded  ", 1}]) == ["padded"]
+    end
+
+    test "non-name keys (integers, nils) are dropped" do
+      assert LlmError.parameter_names([{1, :x}, {nil, :y}, {:real, 1}]) == ["real"]
+      assert LlmError.parameter_names([1, 2, 3, "loose"]) == ["loose"]
+    end
+
+    test "the name list is capped at the documented bound" do
+      names = LlmError.parameter_names(Enum.map(1..40, fn i -> {:"p#{i}", i} end))
+
+      assert length(names) == 33
+      assert List.last(names) == "... 8 more"
+    end
+  end
+
+  describe "format_parameter_names/1" do
+    test "renders an empty list as []" do
+      assert LlmError.format_parameter_names([]) == "[]"
+    end
+
+    test "renders a list as a comma-separated bracket group" do
+      assert LlmError.format_parameter_names(["a", "b"]) == "[a, b]"
+      assert LlmError.format_parameter_names(["max_tokens"]) == "[max_tokens]"
     end
   end
 end
