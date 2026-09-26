@@ -20,7 +20,7 @@ Support modules extracted from `EvoDashWeb.AgentsLive` to keep the main LiveView
 ## Constraints
 
 - Pure functions — no I/O, no socket, no process calls (`ToolCallDisplay`, `OptimisticMessages`, `HistoryGate`, `PendingEvents`; `ThresholdCache.read/3`/`put/4`/`threshold_from_config/1`/`default_threshold/0` are pure). Deliberate exceptions: `LoadData` and `ThresholdCache.fetch/3` perform I/O (NodeContext RPCs via the env-seam runners) — they are designed to run inside `EvoDash.TaskSupervisor` children, never in the LiveView process.
-- No `try/rescue` — defensive extraction + pattern matching/`case` only (project-wide anti-pattern policy). The node-boundary `try/rescue` wrappers live in `agents_live.ex`'s spawn functions (`start_async_load/1` / `spawn_agents_refresh/1` / `spawn_history_fetch/3` / `spawn_commit_graph_fetch/2`), each carrying a justification comment.
+- No `try/rescue` — defensive extraction + pattern matching/`case` only (project-wide anti-pattern policy). The node-boundary `try/rescue` wrappers live in `agents_live.ex`'s spawn functions (`start_async_load/1` / `spawn_agents_refresh/1` / `spawn_history_fetch/3` / `spawn_commit_graph_fetch/1`), each carrying a justification comment.
 - Reuses `EvoDashWeb.Helpers` defensive extraction (`tool_call_name/1`, `tool_call_arguments/1`, `tool_call_is_shell?/1`) — do not reimplement; `EvoDashWeb.Helpers.tool_call_display/1` is not used by the Agents page; it stays as a public, test-pinned helper (do not remove it).
 - New user-facing strings use `gettext` (backend `EvoDashWeb.Gettext`); `Path`/`Objective`/`Command` entries appear in the POT/PO at release-time extraction only — do not run `mix gettext.extract`/`merge`/`translate` during development.
 
