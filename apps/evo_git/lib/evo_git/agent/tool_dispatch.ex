@@ -490,7 +490,8 @@ defmodule EvoGit.Agent.ToolDispatch do
     end)
   end
 
-  # Per-attempt failure log suffix. A non-retryable provider rejection is  # TERMINAL (`handle_llm_failure/7` returns immediately, see
+  # Per-attempt failure log suffix. A non-retryable provider rejection is
+  # TERMINAL (`handle_llm_failure/7` returns immediately, see
   # `EvoGit.Agent.LlmError`), so the log must not claim it is "retrying"; every
   # other class keeps the original wording. Pure and total.
   defp retry_intent(reason) do
