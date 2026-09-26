@@ -28,7 +28,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
   @limit 100
 
   @typep refs :: %{optional(term()) => [term()]}
-  @typep raw_by_repo :: %{optional(term()) => %{commits: [map()], refs: refs()}}
+
+  # `truncated` is always present on the values this module PRODUCES (the
+  # merge writes an explicit boolean); an accumulated entry may still lack it
+  # (older payloads / the arity-4 merge), which reads as `false`.
+  @typep raw_by_repo :: %{
+           optional(term()) => %{commits: [map()], refs: refs(), truncated: boolean()}
+         }
 
   @typep group :: %{repo_key: term(), task_id: term(), live_tips: [term()]}
   @typep failure :: {:commit_graph_repo_failed, {term(), term()}, term()}
@@ -50,11 +56,17 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
   remaining groups still fold into the result, so a page with several
   repos/tasks renders the successful ones when a single git RPC fails.
 
+  The runner's per-group reply carries the core's `truncated` flag (true when
+  a tip range was cut at the limit); `merge_repo_graph/5` OR-unions it across
+  the groups sharing a repo_key.
+
   Returns `{:ok, merged_raw_by_repo}` when AT LEAST ONE group succeeded
-  (groups sharing a `repo_key` are unioned via `merge_repo_graph/4`), and
-  `{:error, failure}` only when EVERY group failed — the failure of the FIRST
-  failing group, which for a single-group page is exactly the former
-  halt-with-error semantics.
+  (groups sharing a `repo_key` are unioned via `merge_repo_graph/5`), and
+  `{:error, failure}` only when EVERY group failed — the failure of the LAST
+  failing group (the reduce PREPENDS failures, so the most recently processed
+  group's failure is the head), which for a single-group page is exactly the
+  former halt-with-error semantics. The reason is display-only (either
+  failure renders the same error strip), so which one surfaces is immaterial.
   """
   @spec fetch_result([group()], function(), term()) ::
           {:ok, raw_by_repo()} | {:error, failure() | :commit_graph_no_groups}
@@ -62,8 +74,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
     groups
     |> Enum.reduce({false, %{}, []}, fn group, {any_ok?, acc, failures} ->
       case fetch_group(group, runner, node) do
-        {:ok, repo_key, commits, refs} ->
-          {true, merge_repo_graph(acc, repo_key, commits, refs), failures}
+        {:ok, repo_key, commits, refs, truncated} ->
+          {true, merge_repo_graph(acc, repo_key, commits, refs, truncated), failures}
 
         {:error, failure} ->
           {any_ok?, acc, [failure | failures]}
@@ -78,21 +90,37 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
   non-map entries dropped) and ref name lists unioned per sha. Total — a
   malformed refs payload degrades to an empty map and non-map commit entries
   are dropped.
+
+  Backward-compatible arity: the caller has no `truncated` flag to contribute,
+  so the merged entry carries the accumulated flag alone — `false` for a
+  repo_key absent from `acc` (the flag key is always WRITTEN, never inferred).
   """
   @spec merge_repo_graph(raw_by_repo(), term(), [map()], refs()) :: raw_by_repo()
-  def merge_repo_graph(acc, repo_key, commits, refs) when is_map(acc) do
+  def merge_repo_graph(acc, repo_key, commits, refs),
+    do: merge_repo_graph(acc, repo_key, commits, refs, false)
+
+  @doc """
+  `merge_repo_graph/4` plus the incoming reply's `truncated` flag: groups
+  sharing a `repo_key` OR-union their flags (one cut range is enough to mark
+  the merged repo truncated). An absent accumulated flag reads as `false`, and
+  a non-boolean incoming value (garbage payload) folds to `false` — the key is
+  always an explicit boolean.
+  """
+  @spec merge_repo_graph(raw_by_repo(), term(), [map()], refs(), boolean()) :: raw_by_repo()
+  def merge_repo_graph(acc, repo_key, commits, refs, truncated) when is_map(acc) do
     existing = Map.get(acc, repo_key, %{commits: [], refs: %{}})
 
     merged = %{
       commits: dedupe_commits(List.wrap(existing.commits) ++ List.wrap(commits)),
-      refs: merge_refs(Map.get(existing, :refs), refs)
+      refs: merge_refs(Map.get(existing, :refs), refs),
+      truncated: truncated?(Map.get(existing, :truncated)) or truncated?(truncated)
     }
 
     Map.put(acc, repo_key, merged)
   end
 
-  def merge_repo_graph(_acc, repo_key, commits, refs),
-    do: merge_repo_graph(%{}, repo_key, commits, refs)
+  def merge_repo_graph(_acc, repo_key, commits, refs, truncated),
+    do: merge_repo_graph(%{}, repo_key, commits, refs, truncated)
 
   @doc """
   An order-insensitive commit-relevance fingerprint of the temporal view's
@@ -123,29 +151,38 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
 
   # ONE runner call for ONE group, normalizing the reply. Anything other than
   # {:ok, %{commits: list}} (an {:error, _}, a malformed ok-shape, or garbage)
-  # is a per-group failure carrying the raw reply.
+  # is a per-group failure carrying the raw reply. A success carries the
+  # payload's `truncated` flag (absent → false) alongside commits + refs.
   defp fetch_group(group, runner, node) do
     %{repo_key: repo_key, task_id: task_id, live_tips: live_tips} = group
 
     case runner.(node, task_id, repo_key, live_tips, limit: @limit) do
       {:ok, %{commits: commits} = payload} when is_list(commits) ->
-        {:ok, repo_key, commits, Map.get(payload, :refs, %{})}
+        {:ok, repo_key, commits, Map.get(payload, :refs, %{}),
+         truncated?(Map.get(payload, :truncated))}
 
       other ->
         {:error, {:commit_graph_repo_failed, {repo_key, task_id}, other}}
     end
   end
 
+  # Total boolean fold: only an explicit `true` is truncated; absent / nil /
+  # garbage all read as false.
+  defp truncated?(true), do: true
+  defp truncated?(_), do: false
+
   # ≥1 success wins (the failures were only dropped groups); an all-groups
-  # failure surfaces the FIRST group's failure (oldest-first list), preserving
-  # the single-group halt semantics.
+  # failure surfaces the LAST failing group's failure — the reduce PREPENDS
+  # each failure, so `failure_reason/1`'s head is the most recently processed
+  # group — preserving the single-group halt semantics. Which failure surfaces
+  # is display-only (both render the same error strip).
   defp finalize({true, acc, _failures}), do: {:ok, acc}
 
   defp finalize({false, _acc, failures}) do
     {:error, failure_reason(failures)}
   end
 
-  defp failure_reason([first | _]), do: first
+  defp failure_reason([last | _]), do: last
   # Unreachable in practice (any_ok? stays false only when ≥1 group failed);
   # kept so the function is total.
   defp failure_reason([]), do: :commit_graph_no_groups
