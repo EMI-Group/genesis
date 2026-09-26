@@ -38,12 +38,21 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   ## Lanes (one per agent)
 
-  Agents are ordered ascending `{depth, task_local_id, agent_id}`: `depth` is
-  normalized (nil/negative/non-integer → `0`, for both the sort and the
-  emitted value), `task_local_id` is the agent's slot id (it may be `nil` for
-  odd maps — Erlang term order places `nil` after every integer, which stays
-  deterministic) and the `agent_id` term is the FINAL tie-break, so the order
-  never flaps between refreshes.
+  Agents are ordered by a DFS / SUBTREE-CONTIGUOUS walk: starting from the
+  ROOTS (a nil `parent_id`, or one that matches no agent of the repo group —
+  the same resolution rule the agent-level edges use), each root's subtree is
+  visited pre-order, its children recursively in stable
+  `{task_local_id, agent_id}` order (`task_local_id` is the agent's slot id;
+  it may be `nil` for odd maps — Erlang term order places `nil` after every
+  integer, which stays deterministic — and the `agent_id` term is the FINAL
+  tie-break). Every parent's subtree therefore occupies CONSECUTIVE lanes:
+  children of different parents never interleave across the gutter, so the
+  agent-level `:spawn` / `:merge_back` connectors of one subtree do not weave
+  through unrelated lanes and cross other subtrees' edges. A malformed parent
+  CYCLE cannot loop the walk (a visited set stops re-entry) and its members
+  still get exactly one lane each — agents no root reaches are appended as
+  fallback roots in the same stable order. `depth` is no longer an ordering
+  key (it still drives the per-agent hue and the ownership tie-breaks).
 
   Every agent owns ONE lane: its index in that order, SHIFTED RIGHT BY 1 when
   the repo has at least one UNOWNED node. Lane 0 is then the NEUTRAL lane —
@@ -196,8 +205,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
                    parent_id:, color:, start_sha:, end_sha:, ended:}]
       }
 
-  `nodes` is sorted top → bottom (ascending `row`), `agents` by the agent
-  order `{depth, task_local_id, agent_id}`, and repos by
+  `nodes` is sorted top → bottom (ascending `row`), `agents` by the DFS
+  subtree-contiguous agent order (see "Lanes (one per agent)"), and repos by
   `{repo_name, repo_dom_id}` — all deterministic, so LiveView can patch the
   graph incrementally instead of re-rendering it on every refresh. The module
   emits no rendering concerns: no DOM ids beyond `repo_dom_id`, no colors
@@ -259,7 +268,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   @typedoc """
   One agent of the graph — metadata only (rows are interleaved globally, so
   there are no per-agent row bands). `depth` is normalized, `lane` the agent's
-  gutter lane (its agent-order index shifted right by 1 when unowned nodes
+  gutter lane (its DFS-order index shifted right by 1 when unowned nodes
   exist), `parent_id` the RAW parent agent id from the input map (nil for root
   agents), `color` the depth hue, `start_sha`/`end_sha` the agent's
   `:base_commit`/`:current_commit`, and `ended` is true for an in-session
@@ -521,14 +530,85 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
 
   # --- Agents ---------------------------------------------------------------
 
-  # Agents are folded in ascending {depth, task_local_id, id} order — the order
-  # the `agents` list, the lanes and every ownership decision use — so lanes,
-  # rows and colors stay deterministic across refreshes.
+  # Agents are folded in DFS / SUBTREE-CONTIGUOUS order — the order the
+  # `agents` list, the lanes and every ownership decision use — so a parent's
+  # subtree occupies consecutive lanes (its `:spawn` / `:merge_back` connectors
+  # never weave through unrelated subtrees) while everything stays
+  # deterministic across refreshes.
   defp ordered_agents(repo_agents) do
-    Enum.sort_by(List.wrap(repo_agents), fn agent ->
-      {normalize_depth(Map.get(agent, :depth)), Map.get(agent, :task_local_id),
-       Map.get(agent, :id)}
+    # Index-tag every agent: the visited set keys on the index, so even a
+    # duplicate identical agent map keeps its own lane.
+    agents = repo_agents |> List.wrap() |> Enum.with_index()
+
+    by_id =
+      Map.new(agents, fn {agent, index} ->
+        {Map.get(agent, :id), index}
+      end)
+
+    # parent id -> children, in stable {task_local_id, id} order per parent.
+    children =
+      agents
+      |> Enum.reject(fn {agent, _index} -> Map.get(agent, :parent_id) == nil end)
+      |> Enum.group_by(fn {agent, _index} -> Map.get(agent, :parent_id) end, fn {agent, index} ->
+        {agent, index}
+      end)
+      |> Map.new(fn {parent_id, kids} -> {parent_id, stable_sort(kids)} end)
+
+    # Roots: a nil parent, or one that matches no agent of THIS repo group
+    # (the same resolution rule the agent-level edges use — an unresolvable
+    # parent strands the child, so it anchors its own subtree).
+    roots =
+      agents
+      |> Enum.reject(fn {agent, _index} ->
+        parent_id = Map.get(agent, :parent_id)
+        parent_id != nil and Map.has_key?(by_id, parent_id)
+      end)
+      |> stable_sort()
+
+    {reversed, visited} = dfs_order(roots, children, [], MapSet.new())
+
+    # Cycle safety: an agent no root reached (its parent chain loops) is
+    # appended as a fallback root in the stable order, exactly one lane each.
+    stranded =
+      agents
+      |> Enum.reject(fn {_agent, index} -> index in visited end)
+      |> stable_sort()
+
+    # `reversed` accumulates pre-order backwards (O(1) prepends); ONE reverse
+    # at the top yields the pre-order DFS sequence.
+    ordered = Enum.reverse(reversed)
+
+    Enum.map(ordered ++ stranded, fn {agent, _index} -> agent end)
+  end
+
+  # Stable per-sibling order: {task_local_id, id} (nil sorts after every
+  # integer in Erlang term order — deterministic).
+  defp stable_sort(agents) do
+    Enum.sort_by(agents, fn {agent, _index} ->
+      {Map.get(agent, :task_local_id), Map.get(agent, :id)}
     end)
+  end
+
+  # Pre-order DFS: each root, then its subtree, before the next root. The
+  # `visited` index set stops a malformed parent cycle from re-entering a
+  # subtree. `acc` is the pre-order sequence accumulated BACKWARDS.
+  defp dfs_order([], _children, acc, visited), do: {acc, visited}
+
+  defp dfs_order([{agent, index} | rest], children, acc, visited) do
+    if index in visited do
+      dfs_order(rest, children, acc, visited)
+    else
+      acc = [{agent, index} | acc]
+      visited = MapSet.put(visited, index)
+
+      kids =
+        children
+        |> Map.get(Map.get(agent, :id), [])
+        |> Enum.reject(fn {_kid, kid_index} -> kid_index in visited end)
+
+      {acc, visited} = dfs_order(kids, children, acc, visited)
+      dfs_order(rest, children, acc, visited)
+    end
   end
 
   # Per-agent ownership scores, keyed by agent-order index: `{-depth, index}`
