@@ -18,6 +18,7 @@ Domain layer for the EvoDash Phoenix application. Contains the OTP `Application`
 - `./markdown_render.ex` → `EvoDash.MarkdownRender` — MDEx markdown → safe HTML
 - `./settings_utils.ex` → `EvoDash.SettingsUtils` — config form-value helpers
 - `./source_status.ex` → `EvoDash.SourceStatus` — shared guarded wrapper over the optionally-present `EvoGit.SelfReflectiveSource` core backend (status/clone/update/available? with a tri-state `{:unavailable, reason}` degradation)
+- `./connection_diagnostics.ex` → `EvoDash.ConnectionDiagnostics` — attaches a `:telemetry` handler that copies each HTTP connection's peer address onto that connection process's `Logger.metadata`
 
 ## API Surface
 
@@ -35,6 +36,8 @@ OTP Application callback module. Supervision tree (`:one_for_one`, `max_restarts
 8. `{EvoDash.DesktopLifetime, []}` — appended only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (only the Tauri sidecar sets both); the module's `init/1` self-disable is belt-and-suspenders.
 
 Before `Supervisor.start_link`, `start/2` creates the `:evo_dash_active_tasks` ETS table via the idempotent private `ensure_ets_table/2` helper — owned by the long-lived application process (NOT a supervised child) so it survives child restarts and lives for the whole `mix test` run; creation is a no-op when the table already exists (e.g. application restart after a soft crash). `EvoDash.ActiveTasks` is a pure ETS-helper module with no process, so it is deliberately absent from the children list.
+
+`start/2` also calls `_ = EvoDash.ConnectionDiagnostics.attach()` (idempotent, non-fatal) so the peer-address diagnostics handler is registered in desktop AND normal modes; it is NOT a supervised child (the children list is unchanged).
 
 `EvoGit.Store`, the task-registry `Registry`, and `EvoGit.TaskRegistry` are children of `EvoGit.Application`'s supervision tree, not of this supervisor.
 
@@ -88,7 +91,26 @@ Pure ETS-helper module (no process, no `use GenServer`) over a boot-created name
 
 ### `EvoDash.DesktopLifetime` (`desktop_lifetime.ex`)
 
-Desktop-mode Tauri-shell lifetime watcher (TCP pipe): the Rust shell binds a `TcpListener` on `127.0.0.1:0`, holds one connection per backend instance, and passes the port via `EVOGIT_LIFETIME_PORT`; the shell never writes on the pipe. When the shell dies the OS closes the socket, `:gen_tcp.recv/3` errors, and the watcher logs a warning and stops the VM (`System.stop(0)`), freeing the port. Gated in `EvoDash.Application.start/2` to BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT`; `init/1` self-disables when the port var is missing/empty/invalid. Lives in the frontend app by design so `genesis_remote` never ships it. Test seams: `:parent_stop_fun` (app env, read at `init/1`), `:connect_retries` / `:connect_retry_delay` (`start_link` opts, defaults 5/200ms).
+Desktop-mode Tauri-shell lifetime watcher (TCP pipe): the Rust shell binds a `TcpListener` on `127.0.0.1:0`, holds one connection per backend instance, and passes the port via `EVOGIT_LIFETIME_PORT`; the shell never writes on the pipe. When the shell dies the OS closes the socket, `:gen_tcp.recv/3` errors, and the watcher logs a warning and stops the VM (`System.stop(0)`), freeing the port. Gated in `EvoDash.Application.start/2` to BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT`; `init/1` self-disables when the port var is missing/empty/invalid. Lives in the frontend app by design so `genesis_remote` never ships it. Test seams: `:parent_stop_fun` (app env, read at `init/1`), `:connect_retries` / `:connect_retry_delay` and `:recv_retries` / `:recv_retry_delay` / `:recv_fun` (`start_link` opts ONLY — `EvoDash.Application` starts the child with `[]`, so the production budgets (5 × 200ms ≈ 1s connect; 3 × 200ms recv) are not tunable via config).
+
+**Failure modes / false-positive paths (verified against the code).** Only two paths invoke the stop fun.
+(1) Connect-retry exhaustion (`handle_continue(:connect, ...)`, logs the DISTINCT `Tauri shell is gone (lifetime connection could not be established)` warning — a shell that is alive but not accepting, e.g. a dead accept thread/listener, a stale/foreign `EVOGIT_LIFETIME_PORT`, or a firewall blocking loopback, is indistinguishable from a dead shell).
+(2) A GENUINE peer close in `wait_for_close/2` (`{:error, :closed}`) — the ONLY recv outcome that proves the shell is gone, logged as `Tauri shell is gone (lifetime connection closed) — shutting down`.
+ANY OTHER recv error (`:econnreset`, `:eacces`, `:timeout`, …) is AMBIGUOUS and is NOT treated as shell death: it logs a clearly distinguishable warning and retries `recv_retries` times (default 3, `recv_retry_delay` ms apart) before giving up — a transient socket hiccup must never tear down a live app.
+`classify_recv_result/1` is the public pure classifier (`:closed` | `:data` | `:ambiguous`); `{:ok, _data}` resets the retry counter to full.
+This still reacts to the SOCKET closing, not to the shell process dying: a Rust per-stream hold thread that ends early (an orderly FIN → `:closed`) or an accept-thread/listener failure still reads as "shell is gone" while the shell lives — but a transient non-close error no longer does.
+**The warning is NOT logged on the intended BEAM-initiated stop paths** (tray-quit confirm → `DesktopQuit.default_stop/0`, System-page Stop `system_live.ex:1078`, update apply → `UpdateStatus.stop_backend/0` via the shared `:desktop_quit_stop_fun` seam): `System.stop(0)` tears the VM down before its own socket can observe a peer close, so the warning appears only when the shell closes the pipe FIRST.
+**Known coupling — exit code 0 is ambiguous**: the stop is `System.stop(0)`, and the Tauri watchdog's `classify_exit/2` (`desktop/src-tauri/src/backend_watchdog.rs:156`) treats `Some(0)` as an INTENTIONAL shutdown, so a spurious lifetime close makes the shell `app.exit(0)` — the app vanishes silently instead of showing the error page and restarting the backend.
+
+### `EvoDash.ConnectionDiagnostics` (`connection_diagnostics.ex`)
+
+Attaches a `:telemetry` handler to `[:thousand_island, :connection, :start]` so each HTTP connection's peer address lands on the connection PROCESS's `Logger.metadata` — making Bandit's `Read timeout` ERROR lines (a client that opens a connection and sends nothing) attributable to `::1` vs `127.0.0.1`.
+`attach/0` is idempotent (`{:error, :already_exists}` is treated as `:ok`; handler id = the module name) and never raises — it returns `:ok | {:error, reason}`.
+It is called non-fatally from `EvoDash.Application.start/2` (`_ = attach()`) and is NOT a supervised child (the children list is unchanged).
+The public handler `handle_connection_start/4` reads `metadata[:remote_address]` (an `:inet.ip_address()` tuple) and `metadata[:remote_port]` and sets them on the connection's Logger metadata as `:remote_ip` (human-readable, via `:inet.ntoa/1`) and `:remote_port` — total, so a missing/invalid value only omits its own key.
+Because `:telemetry.execute/3` runs handlers INLINE in the calling (connection) process, the metadata rides every later log line of that connection; it deliberately does NOT suppress or downgrade Bandit's protocol-error logging.
+Homed here (rather than extending `EvoDashWeb.Telemetry`) because it is a small, self-contained runtime-diagnostics concern wired from `EvoDash.Application.start/2`, not a metrics poller.
+Note: the default logger formatter only prints metadata keys listed in `config/config.exs`'s `config :logger, :default_formatter, metadata:` — the `remote_ip` / `remote_port` keys must be added there to actually appear in log output.
 
 ### `EvoDash.AttachedFile` (`attached_file.ex`)
 

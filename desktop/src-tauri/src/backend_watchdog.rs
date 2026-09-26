@@ -44,7 +44,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
@@ -60,6 +60,15 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long the shutdown path waits for the child to exit on its own after a
 /// graceful stop before force-killing it as a fallback.
 const SHUTDOWN_CHILD_WAIT: Duration = Duration::from_secs(15);
+
+/// How many navigation attempts the recovery path (`show_backend`) makes to
+/// get the dashboard loaded again. Each attempt navigates and then waits up to
+/// [`DASHBOARD_NAVIGATE_ATTEMPT_WAIT`] for the webview to REPORT the page as
+/// loaded — a navigation that was merely accepted is not success (a wkwebview
+/// `navigate` returns Ok the moment it accepts the request).
+const DASHBOARD_NAVIGATE_ATTEMPTS: u32 = 6;
+/// How long each recovery navigation attempt waits for the page-load latch.
+const DASHBOARD_NAVIGATE_ATTEMPT_WAIT: Duration = Duration::from_secs(5);
 
 /// Maximum consecutive failures before entering the slow-retry regime.
 const MAX_CONSECUTIVE_FAILURES: u32 = 8;
@@ -287,6 +296,24 @@ pub fn error_page_data_url(backend_url: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Page-load predicate
+// ---------------------------------------------------------------------------
+
+/// True when `url` addresses the Phoenix backend itself — scheme `http`, the
+/// expected host literal, and the expected port (including the scheme's
+/// default port when the URL carries none).
+///
+/// Used as the page-load predicate: `PageLoadEvent::Finished` fires for ANY
+/// finished navigation (including the `data:` error page and any external
+/// navigation), so the dashboard-loaded latch may only be set for the URL the
+/// backend is actually served on.
+pub(crate) fn url_is_backend(url: &tauri::Url, host: &str, port: u16) -> bool {
+    url.scheme() == "http"
+        && url.host_str() == Some(host)
+        && url.port_or_known_default() == Some(port)
+}
+
+// ---------------------------------------------------------------------------
 // Backend manager (managed state + watchdog loop)
 // ---------------------------------------------------------------------------
 
@@ -314,6 +341,13 @@ pub struct BackendManager {
     child: Mutex<Option<Child>>,
     intentional_shutdown: AtomicBool,
     update_intent: AtomicBool,
+    /// Latched true by the webview's `on_page_load` hook once a navigation to
+    /// the BACKEND URL reported `PageLoadEvent::Finished`. `navigate` only
+    /// proves the request was ACCEPTED (a wkwebview `navigate` returns Ok as
+    /// soon as it accepted the load), so this latch is the shell's only real
+    /// "the dashboard loaded" signal — see
+    /// [`Self::dashboard_loaded_handle`].
+    dashboard_loaded: Arc<AtomicBool>,
     policy: Mutex<RestartPolicy>,
     launcher_path: PathBuf,
     env: Vec<(String, String)>,
@@ -332,12 +366,39 @@ impl BackendManager {
             child: Mutex::new(None),
             intentional_shutdown: AtomicBool::new(false),
             update_intent: AtomicBool::new(false),
+            dashboard_loaded: Arc::new(AtomicBool::new(false)),
             policy: Mutex::new(RestartPolicy::new()),
             launcher_path,
             env,
             port,
             backend_url,
         }
+    }
+
+    /// True once the webview has reported the BACKEND URL as finished loading
+    /// (the latch fed by [`Self::dashboard_loaded_handle`]).
+    pub fn dashboard_loaded(&self) -> bool {
+        self.dashboard_loaded.load(Ordering::SeqCst)
+    }
+
+    /// A cloneable handle to the dashboard-loaded latch, for the webview's
+    /// `on_page_load` hook (which must be `'static` and must not borrow the
+    /// manager). The hook sets it on `PageLoadEvent::Finished` — but ONLY for
+    /// a URL that [`url_is_backend`] accepts, since `Finished` also fires for
+    /// the `data:` error page and any external navigation.
+    pub fn dashboard_loaded_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.dashboard_loaded)
+    }
+
+    /// Clears the latch, so the NEXT navigation must prove itself. Called
+    /// before every deliberate navigation AWAY from the dashboard (the
+    /// healthy-boot gate in `run_gui`, [`Self::show_backend`], and
+    /// [`Self::show_error_page`]): the latch otherwise describes the PREVIOUS
+    /// page. It is therefore fresh enough to answer "is the dashboard the page
+    /// currently loaded?" — the question [`crate::quit_needs_confirmation`]
+    /// needs.
+    pub fn reset_dashboard_loaded(&self) {
+        self.dashboard_loaded.store(false, Ordering::SeqCst);
     }
 
     /// Spawns the backend and stores the child handle. Used for the initial
@@ -358,8 +419,8 @@ impl BackendManager {
     /// the app — never restarting the backend after a quit has begun.
     pub fn begin_quit(&self) {
         self.intentional_shutdown.store(true, Ordering::SeqCst);
-        println!(
-            "[desktop] quit confirmed — backend stopping gracefully; watchdog will not restart it"
+        crate::shell_log::log(
+            "quit confirmed — backend stopping gracefully; watchdog will not restart it",
         );
     }
 
@@ -370,7 +431,7 @@ impl BackendManager {
     pub fn kill_for_quit(&self) {
         self.intentional_shutdown.store(true, Ordering::SeqCst);
         self.kill_current_child();
-        println!("[desktop] genesis-backend sidecar terminated");
+        crate::shell_log::log("genesis-backend sidecar terminated");
     }
 
     /// Takes and kills the current child, if any. A no-op when there is none
@@ -452,8 +513,8 @@ impl BackendManager {
     /// instead of exiting the app.
     pub fn begin_update(&self) {
         self.update_intent.store(true, Ordering::SeqCst);
-        println!(
-            "[desktop] update confirmed — backend stopping gracefully; watchdog will install the staged update and relaunch"
+        crate::shell_log::log(
+            "update confirmed — backend stopping gracefully; watchdog will install the staged update and relaunch",
         );
     }
 
@@ -568,7 +629,7 @@ impl BackendManager {
     /// Spawned on a dedicated [`std::thread`] from the Tauri setup with an
     /// [`AppHandle`] clone for WebView navigation.
     pub fn run_watchdog(&self, app: AppHandle) {
-        println!("[desktop] backend watchdog started");
+        crate::shell_log::log("backend watchdog started");
         loop {
             // Covers every path that loops back here (e.g. `wait_until_ready`
             // timing out or `show_backend` bailing early): on shutdown, wait
@@ -597,8 +658,8 @@ impl BackendManager {
             // reaped here, so no extra wait is needed before the install.
             let kind = classify_exit(false, status);
             if kind == ExitKind::Intentional {
-                println!(
-                    "[desktop] backend exited cleanly (code 0) — treating as intentional shutdown"
+                crate::shell_log::log(
+                    "backend exited cleanly (code 0) — treating as intentional shutdown",
                 );
                 if should_install_update(true, self.update_requested()) {
                     self.install_and_relaunch(&app);
@@ -617,12 +678,12 @@ impl BackendManager {
                 policy.record_failure();
                 (policy.next_backoff(), policy.consecutive_failures())
             };
-            println!(
-                "[desktop] backend exited unexpectedly ({kind:?}); restarting in {delay:?} (consecutive failures: {failures})"
-            );
+            crate::shell_log::log(&format!(
+                "backend exited unexpectedly ({kind:?}); restarting in {delay:?} (consecutive failures: {failures})"
+            ));
             if self.lock_policy().in_slow_retry() {
-                println!(
-                    "[desktop] backend restart is in slow-retry mode — retrying every 30s until it recovers"
+                crate::shell_log::log(
+                    "backend restart is in slow-retry mode — retrying every 30s until it recovers",
                 );
             }
             self.show_error_page(&app);
@@ -654,7 +715,7 @@ impl BackendManager {
 
             if self.wait_until_ready(READY_TIMEOUT) {
                 self.lock_policy().record_success();
-                println!("[desktop] backend recovered — reloading dashboard");
+                crate::shell_log::log("backend recovered — reloading dashboard");
                 self.show_backend(&app);
             } else {
                 eprintln!(
@@ -765,22 +826,51 @@ impl BackendManager {
     /// Shows the backend-unavailable error page (single attempt; the next
     /// failure cycle re-attempts it once the window exists).
     fn show_error_page(&self, app: &AppHandle) {
+        // We are navigating AWAY from the dashboard, so clear the latch: it
+        // must consistently mean "the page CURRENTLY loaded is a finished load
+        // of the backend URL". A stale `true` here would let a quit during the
+        // recovery window emit `quit-requested` into the error page, which can
+        // never render the confirm dialog.
+        self.reset_dashboard_loaded();
         self.navigate(app, &error_page_data_url(&self.backend_url));
     }
 
-    /// Reloads the dashboard by navigating to the backend URL. Retries until
-    /// the window accepts the navigation (it is created only after Tauri's
-    /// setup completes, so an early recovery must wait for it), the backend
-    /// dies again, or a quit/update is requested.
+    /// Reloads the dashboard after a backend recovery — reset the latch,
+    /// navigate, then wait (bounded) for the webview to REPORT the page as
+    /// loaded, retrying up to [`DASHBOARD_NAVIGATE_ATTEMPTS`] times.
+    ///
+    /// A successful `navigate` call is not enough: it only proves the request
+    /// was accepted, and the window is created only after Tauri's setup
+    /// completes (so an early recovery must wait for it) — the shared gate
+    /// ([`crate::navigate_until_loaded`]) covers both, aborting on a
+    /// quit/update intent or a backend that died again.
+    ///
+    /// The reset happens here, but the backend may have become ready a moment
+    /// earlier while the error page was still the loaded page — during that
+    /// tiny window `dashboard_loaded()` is momentarily still `true` and
+    /// `probe_http` succeeds, so a quit arriving exactly then would take the
+    /// confirmation path against a page that cannot render the dialog. The
+    /// window is a few milliseconds wide (reset → navigate) and the outcome is
+    /// merely "one quit attempt is a no-op and the user quits again" — accepted
+    /// rather than adding a lock around the latch.
     fn show_backend(&self, app: &AppHandle) {
-        while !self.navigate(app, &self.backend_url) {
-            if self.shutdown_requested() || self.update_requested() {
-                return;
-            }
-            if !self.child_alive() {
-                return; // crashed again; the monitor will handle it
-            }
-            std::thread::sleep(READY_POLL_INTERVAL);
+        // The latch describes the PREVIOUS page (typically the error page, or a
+        // failed load) — the fresh navigation must prove itself.
+        self.reset_dashboard_loaded();
+        let outcome = crate::navigate_until_loaded(
+            || {
+                let _ = self.navigate(app, &self.backend_url);
+            },
+            || self.dashboard_loaded(),
+            || self.shutdown_requested() || self.update_requested() || !self.child_alive(),
+            DASHBOARD_NAVIGATE_ATTEMPTS,
+            DASHBOARD_NAVIGATE_ATTEMPT_WAIT,
+            READY_POLL_INTERVAL,
+        );
+        if outcome == crate::InitialNavigateOutcome::Failed {
+            crate::shell_log::log(
+                "webview never reported the dashboard as loaded after the backend recovered",
+            );
         }
     }
 
@@ -1228,7 +1318,7 @@ mod tests {
             PathBuf::from("/nonexistent"),
             vec![],
             9999,
-            "http://localhost:9999".to_string(),
+            "http://127.0.0.1:9999".to_string(),
         );
         let child = std::process::Command::new("sleep")
             .arg("30")
@@ -1262,7 +1352,7 @@ mod tests {
             PathBuf::from("/nonexistent"),
             vec![],
             9999,
-            "http://localhost:9999".to_string(),
+            "http://127.0.0.1:9999".to_string(),
         );
         let child = std::process::Command::new("sleep")
             .arg("30")
@@ -1320,12 +1410,92 @@ mod tests {
         assert!(tcp_accepting(port, Duration::from_secs(2)));
     }
 
+    /// A port with nothing listening must never be reported as accepting.
+    ///
+    /// The probe points at a port this test just freed, which on Linux can
+    /// transiently "succeed" with no listener at all: the outgoing
+    /// connection's ephemeral SOURCE port may be the very port that was
+    /// freed, so the kernel completes a TCP **self-connect** (the socket then
+    /// holds that port, which is why a re-bind of it fails too). That is a
+    /// kernel probe artifact, not a listener — retry with a fresh port
+    /// instead of reporting a false failure.
     #[test]
     fn tcp_accepting_false_for_closed_port() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener); // port is closed now
-        assert!(!tcp_accepting(port, Duration::from_millis(400)));
+        for _ in 0..10 {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local addr").port();
+            drop(listener); // port is closed now
+            if !tcp_accepting(port, Duration::from_millis(400)) {
+                return;
+            }
+        }
+        panic!("tcp_accepting reported a closed port as accepting on 10 consecutive fresh ports");
+    }
+
+    /// `url_is_backend` accepts only the backend's own URL — the page-load
+    /// predicate must not latch for the `data:` error page, an external page,
+    /// a different port, or an insecure host spelling (`localhost`, which also
+    /// resolves to `::1`).
+    #[test]
+    fn url_is_backend_matches_only_the_backend_url() {
+        let host = "127.0.0.1";
+        let parse = |s: &str| tauri::Url::parse(s).expect("test URL parses");
+
+        assert!(url_is_backend(&parse("http://127.0.0.1:1234/"), host, 1234));
+        // A deep path with a query string still addresses the backend.
+        assert!(url_is_backend(
+            &parse("http://127.0.0.1:1234/projects?tab=tasks#top"),
+            host,
+            1234
+        ));
+        // Wrong port.
+        assert!(!url_is_backend(
+            &parse("http://127.0.0.1:1234/"),
+            host,
+            1235
+        ));
+        // Host spelling: `localhost` must NOT match — the shell always uses the
+        // IPv4 loopback literal (the macOS `::1` trap).
+        assert!(!url_is_backend(
+            &parse("http://localhost:1234/"),
+            host,
+            1234
+        ));
+        // The `data:` error page fires `Finished` too — it must not latch.
+        assert!(!url_is_backend(&parse("data:text/html,hello"), host, 1234));
+        // Scheme must be plain http.
+        assert!(!url_is_backend(
+            &parse("https://127.0.0.1:1234/"),
+            host,
+            1234
+        ));
+    }
+
+    /// The dashboard-loaded latch starts clear, can be set through the
+    /// cloneable handle the webview hook holds, and is cleared by
+    /// `reset_dashboard_loaded` before a fresh navigation.
+    #[test]
+    fn dashboard_loaded_latch_sets_and_resets() {
+        let manager = BackendManager::new(
+            PathBuf::from("/nonexistent"),
+            vec![],
+            9999,
+            "http://127.0.0.1:9999".to_string(),
+        );
+        assert!(!manager.dashboard_loaded());
+
+        let handle = manager.dashboard_loaded_handle();
+        handle.store(true, Ordering::SeqCst);
+        assert!(
+            manager.dashboard_loaded(),
+            "the handle must share the latch"
+        );
+
+        manager.reset_dashboard_loaded();
+        assert!(
+            !manager.dashboard_loaded(),
+            "a reset must clear the latch for the next navigation"
+        );
     }
 
     #[test]
@@ -1343,7 +1513,7 @@ mod tests {
 
     #[test]
     fn error_page_data_url_is_parseable_and_embeds_backend_url() {
-        let url = error_page_data_url("http://localhost:9999");
+        let url = error_page_data_url("http://127.0.0.1:9999");
         assert!(url.starts_with("data:text/html;charset=utf-8,"));
         // No raw '#', space, quote or '<' may survive into the data URL.
         for ch in ['#', ' ', '"', '<'] {
@@ -1354,7 +1524,7 @@ mod tests {
         assert_eq!(parsed.scheme(), "data");
         // The decoded HTML must embed the backend URL and the retry button.
         let decoded = percent_decode(&url["data:text/html;charset=utf-8,".len()..]);
-        assert!(decoded.contains("http://localhost:9999"));
+        assert!(decoded.contains("http://127.0.0.1:9999"));
         assert!(decoded.contains("Retry now"));
         assert!(decoded.contains("restarted automatically"));
     }

@@ -240,14 +240,26 @@ if config_env() == :prod and
         {127, 0, 0, 1}
     end
 
+  # The endpoint URL host must name an address the backend actually listens on.
+  # The desktop socket binds IPv4 loopback only, while on macOS (and Windows)
+  # `localhost` also resolves to ::1 — so advertising the desktop server as
+  # `http://localhost:<port>` hands IPv6-preferring clients (and any future
+  # absolute-URL generation) an address nothing is listening on. Derive the host
+  # from the resolved bind address instead: `127.0.0.1` by default, or the
+  # operator's PHX_IP / config.toml [server] listen_ip value when set.
+  # `:inet.ntoa/1` is total — it cannot raise, and it also mirrors the loopback
+  # fallback taken above when the configured address was unparseable.
+  desktop_host = desktop_ip |> :inet.ntoa() |> to_string()
+
   if desktop_mode do
     # Desktop mode: local single-user server accessed via Tauri WebView.
     # check_origin is disabled because the WebView connects over plain HTTP
-    # to localhost, which would otherwise be rejected by Phoenix's origin check.
+    # to the loopback address, which would otherwise be rejected by Phoenix's
+    # origin check.
     # The bind address defaults to loopback (127.0.0.1) for security; set
     # PHX_IP to expose the server on other interfaces (e.g. for remote access).
     config :evo_dash, EvoDashWeb.Endpoint,
-      url: [host: "localhost", port: port, scheme: "http"],
+      url: [host: desktop_host, port: port, scheme: "http"],
       http: [
         ip: desktop_ip,
         port: port

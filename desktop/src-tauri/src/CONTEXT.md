@@ -8,9 +8,9 @@ Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Entry point — `run_gui` / `run_headless`, `resolve_backend_port` (dynamic port, `PORT` honored only when free), `headless_sidecar_env(port, lifetime_port)`, tray + single-instance + update commands (`begin_quit` / `check_update` / `download_update` / `begin_update`) |
-| `sidecar.rs` | `launcher_command` (Windows `CREATE_NO_WINDOW` — the ONLY GUI spawn path), `spawn`, `probe_http`, `wait_for_ready`, `sidecar_env(port, lifetime_port)`, `start_lifetime_listener` |
-| `backend_watchdog.rs` | `BackendManager` — monitors/restarts the backend child, error page, quit/update intent flags |
+| `main.rs` | Entry point — `run_gui` / `run_headless`, `resolve_backend_port` (dynamic port, `PORT` honored only when free), `headless_sidecar_env(port, lifetime_port)`, `request_quit` + its pure `quit_needs_confirmation(backend_healthy, dashboard_loaded)` routing predicate, tray + single-instance + update commands (`begin_quit` / `check_update` / `download_update` / `begin_update`) |
+| `sidecar.rs` | `launcher_command` (Windows `CREATE_NO_WINDOW` — the ONLY GUI spawn path), `spawn`, `probe_http`, `wait_for_ready`, `sidecar_env(port, lifetime_port)`, `start_lifetime_listener`, pure `classify_lifetime_read` → `LifetimeReadOutcome` (`Eof` only for `Ok(0)`; everything else `Hold`) |
+| `backend_watchdog.rs` | `BackendManager` — monitors/restarts the backend child, error page, quit/update intent flags, resettable `dashboard_loaded` latch (`reset_dashboard_loaded()` before the error page and the recovery re-navigation) |
 | `sidecar_path.rs` | `resolve_launcher` — shared candidate-dir launcher resolution (GUI + headless) |
 
 ## Lifetime Pipe (TCP hold)
@@ -21,7 +21,7 @@ Contract with the Elixir backend (fixed on the Elixir side — do not change):
 - The shell **never writes** on the lifetime connection — it is a pure hold.
 
 Rust side:
-- `sidecar::start_lifetime_listener() -> io::Result<u16>`: binds `127.0.0.1:0`, spawns a **detached accept thread** looping `listener.incoming()` forever, spawning a per-stream hold thread per accepted connection (blocking read loop until EOF/error, then the stream drops). Accept errors are logged and the loop continues — every watchdog respawn / backend reconnect gets its own held connection. Never writes.
+- `sidecar::start_lifetime_listener() -> io::Result<u16>`: binds `127.0.0.1:0`, spawns a **detached accept thread** looping `listener.incoming()` forever, spawning a per-stream hold thread per accepted connection. Each hold thread **ends ONLY on a genuine peer EOF** (`Ok(0)`) — classified by the pure `sidecar::classify_lifetime_read` (`Eof` for `Ok(0)`, `Hold` for any data or any read error). A transient read error is NOT treated as EOF: it is logged through `crate::shell_log::log` (rate-limited to at most once per `LIFETIME_ERROR_LOG_INTERVAL` = 5s) and the read is retried on the same stream after `LIFETIME_ERROR_RETRY_DELAY` = 100ms, so the thread neither hot-loops nor drops the hold (dropping it would let the backend self-stop, which the watchdog reads as an intentional shutdown). Accept errors are logged and the loop continues — every watchdog respawn / backend reconnect gets its own held connection. Never writes.
 - `sidecar_env(port, lifetime_port: Option<u16>)` / `headless_sidecar_env(port, lifetime_port: Option<u16>)` emit `EVOGIT_LIFETIME_PORT` **only when `Some`**. `None` = listener bind failure → the var is omitted so the backend's monitor stays off (emitting a bad port would make the backend treat a failed connect as shell-death and stop — wrong). Bind failure is non-fatal by design (defense-in-depth; the dynamic backend port already prevents the orphan crash).
 - `run_gui` (setup closure) and `run_headless` resolve the listener before building the env. The env is built **once** and reused by the watchdog for all respawns — the lifetime port stays constant for the shell's lifetime; the accept thread handles each respawn's new connection.
 

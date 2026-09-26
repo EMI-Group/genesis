@@ -33,6 +33,7 @@ NOTE: The domain-layer modules (`Store`, `TaskRegistry`, `TaskInfo`, `RecentProj
 - `desktop_lifetime_test.exs` — `EvoDash.DesktopLifetimeTest`
 - `node_context_test.exs` — `EvoDash.NodeContextTest` — NodeContext delegation shape incl. `cancel_task/2` / `force_kill_task/2` smoke tests (see task-cancellation notes).
 - `directory_picker_test.exs` — `EvoDash.DirectoryPickerTest` (async: true) — Real picker GenServer + `EvoDash.DirectoryPicker.Wx.Fake` (per-test `enabled: true` override + `:directory_picker_wx` env injection): `pick/2` and `pick/3` (file mode) — file pick delivers the file path via the fake's `new_file_dialog` + ref-typed `get_path`, `pick/2` ≡ `pick/3 :directory`, kind-agnostic busy serialization (`set_gate/1` dialog block), wx init-failure/server-death degradation to `:unavailable` with busy cleared, disabled-config rejection.
+- `connection_diagnostics_test.exs` — `EvoDash.ConnectionDiagnosticsTest` (async: true) — `EvoDash.ConnectionDiagnostics.attach/0` attaches the idempotent `[:thousand_island, :connection, :start]` telemetry handler, and `handle_connection_start/4` copies the peer address onto the emitting (connection) process's Logger metadata (`remote_ip` via `:inet.ntoa/1` + `remote_port`).
 - `markdown_render_test.exs` — `EvoDash.MarkdownRenderTest` — Markdown-to-HTML rendering edge cases (nil, empty, headings, code blocks, tables, bold).
 - `update_status_test.exs` — `EvoDash.UpdateStatusTest`
 

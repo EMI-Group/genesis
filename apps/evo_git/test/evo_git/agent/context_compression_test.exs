@@ -5,6 +5,11 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   in-memory `LoopState`/`ReqLLM.Response` values; the below-threshold gate
   performs only a read-only `EvoGit.Config.resolve/1` and never acquires an LLM
   slot. No shared/global state is mutated.
+
+  The real compression LLM call (threshold overflow -> slot -> HTTP request) is
+  NOT covered here — it needs a live endpoint and the global scheduler, so it
+  lives in the sibling `context_compression_fail_fast_test.exs`, which drives it
+  against `EvoGit.TestLlmServer` (a raw-TCP HTTP server).
   """
 
   use ExUnit.Case, async: true
@@ -177,19 +182,23 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Usage accumulation from compression LLM call
+  # Usage accumulation from the compression LLM call (composition only)
   #
-  # compress_if_needed/2 makes a real ReqLLM.stream_text call inside the slot
-  # callback, which cannot be executed without a live LLM endpoint. There is no
-  # mocking library (Mox/Meck) in this codebase, and ReqLLM's test fixture/VCR
-  # backend is not shipped in the installed package. The cache-hit path zeroes
-  # usage (ReqLLM.Cache.cache_hit_response), so it cannot represent a real call.
+  # The compression call ITSELF is exercised end-to-end by the sibling
+  # context_compression_fail_fast_test.exs, which drives a real HTTP request
+  # through EvoGit.TestLlmServer (a raw-TCP HTTP server in
+  # test/support/llm_server.ex — no mocks, no VCR): the HTTP 400 non-retryable
+  # terminal, the 500 / 402 / refused-transport MatchError regressions, the
+  # one-request + no-scheduler-backoff guarantees and slot release.
   #
-  # To verify the fix without fragile HTTP mocking, we exercise the EXACT
-  # composition that compress_if_needed/2 applies to the compression call's
-  # response — Usage.add(state.usage, Usage.from_response_usage(ReqLLM.Response.usage(response)))
-  # — using a real ReqLLM.Response struct built with a known, non-zero usage map.
-  # This is the same transformation tool_dispatch.ex uses for the main turn.
+  # The tests below are still worth keeping because they pin the EXACT
+  # usage-accumulation composition — Usage.add(state.usage,
+  # Usage.from_response_usage(ReqLLM.Response.usage(response))) — with no server
+  # and no timing. A live endpoint cannot return a controlled, non-zero usage
+  # map (the cache-hit path zeroes usage via
+  # ReqLLM.Cache.cache_hit_response), whereas a hand-built ReqLLM.Response with
+  # a known usage map drives the same transformation deterministically. This is
+  # the same composition tool_dispatch.ex applies to the main turn.
   # ---------------------------------------------------------------------------
 
   describe "compression usage accumulation (fix verification)" do
