@@ -40,7 +40,15 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       `:merge`/`:spawn`/`:merge_back` dashed `4 3` width 1.6; commit → parent
       ids `#commit-edge-<dom>-<from>-<to>` vs the agent-level scheme
       `#commit-edge-<dom>-<kind>-<owner>-<from>-<to>` with `l<col>r<row>` for a
-      VIRTUAL merge-back landing (`to_sha: nil`);
+      VIRTUAL merge-back landing (`to_sha: nil`). Routing is BATCH-AWARE
+      (`Geometry.edge_geo/3` fed the repo's full edge list): concurrent
+      cross-lane edges sharing an UNORDERED lane pair are STAGGERED off the
+      shared midpoint jog, while a LONE pair edge keeps the canonical midpoint
+      route pixel-for-pixel;
+    * the optional dimmed TRUNCATION strip `#cg-truncated-<dom>` (info icon +
+      "Older commits are not shown (limit 100)") at the BOTTOM of the scroll
+      wrapper, rendered ONLY when the repo model flags `truncated: true`
+      (absent / `false` / `nil` render nothing);
     * `g.cg-node[data-commit-graph-anim="node"]` with `data-cg-agent-id` /
       `data-cg-sha`, an inner `<title>` tooltip and the CIRCULAR dot geometry
       (`circle.cg-node-dot` r 6; a `:base`/`:noop` stub hollow r 4);
@@ -298,6 +306,39 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert attr(gutter, "width") == ["96"]
       assert attr(gutter, "height") == ["88"]
     end
+
+    test "a truncated repo renders the dimmed truncation strip below the rows" do
+      repo = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: true)
+      tree = parse(render_repos([repo]))
+      dom = repo.repo_dom_id
+
+      # The strip sits at the BOTTOM of the scroll wrapper, AFTER the list.
+      [strip] = Floki.find(tree, "#cg-truncated-#{dom}")
+
+      assert Floki.find(strip, "span.hero-information-circle") != []
+      assert text(Floki.find(strip, "span.min-w-0")) == "Older commits are not shown (limit 100)"
+
+      [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
+      assert Floki.find(scroll, "#cg-truncated-#{dom}") != []
+      children = element_children(scroll)
+      assert children |> List.last() |> attr("id") == ["cg-truncated-#{dom}"]
+    end
+
+    test "an untruncated repo renders NO truncation strip" do
+      # The key is optional and read TOTALLY: absent, false and nil all render
+      # nothing (only an explicit `truncated: true` draws the strip).
+      absent = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)])
+      falsy = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: false)
+      nilly = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: nil)
+
+      for repo <- [absent, falsy, nilly] do
+        tree = parse(render_repos([repo]))
+        assert Floki.find(tree, "#cg-truncated-#{repo.repo_dom_id}") == []
+        assert Floki.find(tree, "div[id^='cg-truncated-']") == []
+        # The rows still render — the strip is the only thing gated.
+        assert Floki.find(tree, ".cg-row") != []
+      end
+    end
   end
 
   describe "commit_graph_view/1 — lane header chips" do
@@ -518,8 +559,12 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       # the child tip c4 (72, 242 → start y 250).
       [el] = Floki.find(tree, "#commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6")
 
+      # This merge_back is the SECOND member of the lane pair {1, 2} (the c2 →
+      # c3 :spawn below is the first) so the batch-aware router STAGGERS its
+      # jog 8px (@jog_clear) above its own span midpoint 268 — never colliding
+      # with the spawn's canonical jog.
       assert attr(el, "d") == [
-               "M 72 250 L 72 261 Q 72 268 65 268 L 55 268 Q 48 268 48 275 L 48 286"
+               "M 72 250 L 72 253 Q 72 260 65 260 L 55 260 Q 48 260 48 267 L 48 286"
              ]
 
       assert attr(el, "id") == ["commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6"]
@@ -569,6 +614,87 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       # dot_x(1) = 48, dot_y(3) = 154 → dot_x(0) = 24, dot_y(0) = 22, rounded
       # at the y-midpoint 88.
       assert attr(el, "d") == ["M 48 154 L 48 95 Q 48 88 41 88 L 31 88 Q 24 88 24 81 L 24 22"]
+    end
+
+    test "a LONE cross-lane edge keeps the canonical midpoint route (no stagger)" do
+      repo =
+        repo_view(
+          edges: [
+            edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)
+          ],
+          nodes: [node_view(sha: "unrelated", column: 0, row: 0)]
+        )
+
+      tree = parse(render_repos([repo]))
+      [el] = Floki.find(tree, "path.cg-edge")
+
+      # The no-stagger guarantee: the batch-aware router only staggers a lane
+      # pair's SECOND (and later) members — the pair's FIRST edge, and
+      # therefore a lone edge between two lanes, routes at the exact vertical
+      # midpoint of its span (88 = (154 + 22) / 2), pixel-identical to the
+      # canonical `Geometry.edge_geo/2` route.
+      assert attr(el, "d") == ["M 48 154 L 48 95 Q 48 88 41 88 L 31 88 Q 24 88 24 81 L 24 22"]
+    end
+
+    test "concurrent edges sharing a lane pair are STAGGERED onto distinct routes" do
+      # Two agent-level connectors over the SAME unordered lane pair {0, 1}:
+      # a :spawn f → x (lane 1 → lane 0) and a :merge_back y → a virtual
+      # landing back on lane 1. Unstaggered they would jog at the same y; the
+      # batch-aware router keeps the group's first edge canonical and walks the
+      # second one's jog outward in @jog_clear (8px) steps.
+      repo =
+        repo_view(
+          nodes: [
+            node_view(sha: "f0000001", column: 1, row: 0, owner_id: "a1"),
+            node_view(sha: "x0000001", column: 0, row: 1, owner_id: nil),
+            node_view(sha: "y0000001", column: 0, row: 2, owner_id: nil),
+            node_view(sha: "t0000001", column: 1, row: 4, owner_id: "a1")
+          ],
+          edges: [
+            edge_view(
+              from_sha: "f0000001",
+              to_sha: "x0000001",
+              from_column: 1,
+              from_row: 0,
+              to_column: 0,
+              to_row: 1,
+              kind: :spawn,
+              owner_id: "a1"
+            ),
+            edge_view(
+              from_sha: "y0000001",
+              to_sha: nil,
+              from_column: 0,
+              from_row: 2,
+              to_column: 1,
+              to_row: 4,
+              kind: :merge_back,
+              owner_id: "a1"
+            )
+          ],
+          agents: [agent_map(agent_id: "a1", lane: 1)]
+        )
+
+      tree = parse(render_repos([repo]))
+      dom = repo.repo_dom_id
+
+      [spawn_el] = Floki.find(tree, "#commit-edge-#{dom}-spawn-a1-f0000001-x0000001")
+      [back_el] = Floki.find(tree, "#commit-edge-#{dom}-merge_back-a1-y0000001-l1r4")
+
+      spawn_d = attr(spawn_el, "d") |> hd()
+      back_d = attr(back_el, "d") |> hd()
+
+      # Two DIFFERENT, non-empty routes — the pair never collapses onto
+      # identical pixels.
+      assert is_binary(spawn_d) and spawn_d != ""
+      assert is_binary(back_d) and back_d != ""
+      assert spawn_d != back_d
+
+      # The jog ys are the 8px-staggered pair 48 vs 166 (the group's first
+      # member keeps its own midpoint; the second walks outward from its
+      # midpoint, clearing every interior row's dot band).
+      assert jog_y(spawn_d) == 48
+      assert jog_y(back_d) == 166
     end
 
     test "an edge whose endpoints collapse is omitted" do
@@ -1443,6 +1569,17 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   defp path_start(d) do
     [_, x, y] = Regex.run(~r/^M (\S+) (\S+)/, d)
     {String.to_integer(x), String.to_integer(y)}
+  end
+
+  # The jog y of a routed path — the horizontal segment's y, i.e. the y shared
+  # by its two `Q` control points (the y a STAGGERED edge moves off the span
+  # midpoint). Mirrors the helper in `commit_graph/geometry_test.exs`.
+  defp jog_y(d) do
+    [q1, q2] = Regex.scan(~r/Q \S+ (\S+) /, d, capture: :all_but_first)
+    [jog] = q1
+    assert q2 == [jog], "expected both Q corners on the same horizontal: #{d}"
+    {y, ""} = Float.parse(jog)
+    y
   end
 
   # Every element node among a parent's children (whitespace text nodes dropped).
