@@ -41,7 +41,8 @@ defmodule EvoDashWeb.AgentsLive do
   @commit_graph_min_interval_ms 1000
 
   @impl true
-  def mount(_params, _session, socket) do    if connected?(socket) do
+  def mount(_params, _session, socket) do
+    if connected?(socket) do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
     end
 
@@ -123,10 +124,10 @@ defmodule EvoDashWeb.AgentsLive do
         # an unchanged fingerprint lets a commit-irrelevant agent-update flush
         # skip BOTH the rebuild and the git-RPC refetch. Per-node like the
         # other commit-graph data.
-        commit_graph_fingerprint: nil,        # In-session RETENTION of ended agents: agent_id => the agent's last
+        commit_graph_fingerprint: nil,
+        # In-session RETENTION of ended agents: agent_id => the agent's last
         # known map with `ended: true`. The core DELETES an agent's ETS rows (and
-        # its evogit-agent-* branch) when it is recycled, so a finished agent
-        # would otherwise vanish from the commit-history view and take its lane
+        # its evogit-agent-* branch) when it is recycled, so a finished agent        # would otherwise vanish from the commit-history view and take its lane
         # (plus its START/END markers) with it. Retained agents feed the
         # commit-graph lanes ONLY — never the agent tree. Reset on a node switch
         # (agent ids are per-node). In-session only: the core persists no
@@ -193,7 +194,8 @@ defmodule EvoDashWeb.AgentsLive do
           commit_graph_fetched_at: nil,
           commit_graph_tick_scheduled: false,
           # Retained ended agents are per-node too (agent ids are per-node).
-          retained_agents: %{}        )
+          retained_agents: %{}
+        )
       else
         assign(socket, :previous_node, current_node)
       end
@@ -484,6 +486,7 @@ defmodule EvoDashWeb.AgentsLive do
       end
     end
   end
+
   @impl true
   # One-shot retry armed by schedule_commit_graph_tick/1 when a refresh request was
   # throttled: re-attempt with the throttle bypassed so a commit created inside
@@ -988,6 +991,7 @@ defmodule EvoDashWeb.AgentsLive do
 
     socket
   end
+
   # Shared application of a fresh agent list (from the async load or a refresh
   # task): recomputes all the tracking assigns, carries over already-fetched
   # histories when the history gate says they are still current, records the

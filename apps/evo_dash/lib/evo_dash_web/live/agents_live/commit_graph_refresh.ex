@@ -91,7 +91,8 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
     Map.put(acc, repo_key, merged)
   end
 
-  def merge_repo_graph(_acc, repo_key, commits, refs), do: merge_repo_graph(%{}, repo_key, commits, refs)
+  def merge_repo_graph(_acc, repo_key, commits, refs),
+    do: merge_repo_graph(%{}, repo_key, commits, refs)
 
   @doc """
   An order-insensitive commit-relevance fingerprint of the temporal view's
@@ -119,6 +120,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
     |> List.wrap()
     |> MapSet.new(&agent_entry/1)
   end
+
   # ONE runner call for ONE group, normalizing the reply. Anything other than
   # {:ok, %{commits: list}} (an {:error, _}, a malformed ok-shape, or garbage)
   # is a per-group failure carrying the raw reply.
@@ -175,5 +177,6 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphRefresh do
       Map.get(agent, :ended) == true
     }
   end
+
   defp agent_entry(_agent), do: nil
 end
