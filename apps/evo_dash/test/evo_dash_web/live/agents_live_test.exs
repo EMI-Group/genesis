@@ -1971,7 +1971,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_error] == nil
 
-      # The raw per-repo payload is stored verbatim under the repo_root key.
+      # The raw per-repo payload is stored verbatim under the repo_root key
+      # (the data layer OR-unions the core's per-repo truncation flags into
+      # an explicit `truncated` boolean on each merged repo map).
       assert assigns(view)[:commit_graph_raw] == %{
                "/repo/a" => %{
                  commits: [
@@ -1984,7 +1986,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
                      date: nil
                    }
                  ],
-                 refs: %{"c1" => ["main"]}
+                 refs: %{"c1" => ["main"]},
+                 truncated: false
                }
              }
 
