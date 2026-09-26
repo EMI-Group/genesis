@@ -15,7 +15,7 @@ A module is `async: true` ONLY if it mutates no BEAM-global state observable by 
 Every `async: false` module names its exact forcing global in its `@moduledoc`; when in doubt, keep `async: false`.
 
 Genuinely `async: true` (pure functions / per-test `:tmp_dir` / process-local state):
-`coder_test`, `coder_2_test`, `context_builder_test`, `context_compression_test`, `delegation_hints_test`, `output_sanitizer_test`, `result_test`, `turn_limit_test`, `turn_warning_test`, `truncation_feedback_test`, `usage_test`.
+`coder_test`, `coder_2_test`, `context_builder_test`, `context_compression_test`, `delegation_hints_test`, `llm_error_test`, `output_sanitizer_test`, `result_test`, `turn_limit_test`, `turn_warning_test`, `truncation_feedback_test`, `usage_test`.
 
 `async: false` and its forcing state:
 - `tools_test` — mutates BEAM-global `XDG_CONFIG_HOME` (via the private `with_isolated_config/1` helper) and the `:req_llm` app env.
