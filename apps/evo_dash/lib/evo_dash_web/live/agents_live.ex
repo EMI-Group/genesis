@@ -447,7 +447,7 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Async commit-graph result (spawned by spawn_commit_graph_fetch/2). Applies the
+  # Async commit-graph result (spawned by spawn_commit_graph_fetch/1). Applies the
   # fresh graph when it is the newest fetch for the node being viewed. An error
   # keeps the last good graph (the view never wedges on a spinner); a PARTIAL
   # success (≥1 group ok, others failed) is an {:ok, ...} carrying the successful
