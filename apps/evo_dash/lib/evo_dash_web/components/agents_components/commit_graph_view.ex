@@ -39,7 +39,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     2. the `relative` commit list: an absolutely-positioned `<svg.cg-gutter>`
        spanning the whole list height plus the `.cg-rows` container
        left-padded by the gutter width so the svg and the row content never
-       overlap.
+       overlap;
+    3. an optional dimmed TRUNCATION strip (`#cg-truncated-<repo_dom_id>`, an
+       information icon + "Older commits are not shown (limit 100)") at the
+       BOTTOM of the list, rendered only when the repo model flags
+       `truncated: true` (the builder cuts a tip range at the 100-commit
+       limit). The key is OPTIONAL and read TOTALLY — absent / false / nil
+       render nothing.
 
   Alignment (`Geometry`): lane `c`'s dot center sits at
   `x = 12 + c * 24 + 12`; row `r`'s at `y = r * 44 + 22`.
@@ -51,7 +57,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
     * EDGES: a same-lane edge is a straight vertical line; a cross-lane edge
       routes orthogonally with BOTH corners rounded by quadratic (`Q`)
-      quarter-turns (radius 7) — a sharp 90° corner is never emitted. `:parent`
+      quarter-turns (radius 7) — a sharp 90° corner is never emitted.
+      Routing is BATCH-AWARE (`Geometry.edge_geo/3`, fed the repo's FULL edge
+      list): concurrent cross-lane edges sharing the same unordered lane pair
+      are STAGGERED off the shared midpoint jog so the group never collapses
+      onto identical pixels — the pair's FIRST edge (in list order) stays
+      pixel-identical to the canonical route, so a lone edge renders exactly
+      as before. `:parent`
       edges are solid (width 2); `:merge`, `:spawn` and `:merge_back` edges
       are DASHED (`stroke-dasharray "4 3"`, width 1.6). The agent-level
       connectors `:spawn` / `:merge_back` join LANES: a spawn departs BELOW
@@ -117,6 +129,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       contract, the neutral lane a `span`).
     * `#cg-list-<repo_dom_id>` — the `relative` list wrapper (carries
       `data-cg-repo-id`).
+    * `#cg-truncated-<repo_dom_id>` — the optional dimmed truncation strip at
+      the bottom of a repo's list (inside the scroll wrapper, after the
+      rows); rendered ONLY when the model flags `truncated: true`.
     * `svg.cg-gutter#cg-gutter-<repo_dom_id>` — the absolute gutter overlay
       (`left: 0; top: 0`, `pointer-events: none`); its `<title>`-less children
       are `path.cg-edge` then `g.cg-node`.
@@ -176,7 +191,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   #   Commit history → "提交历史", Loading → "加载中",
   #   No commit history yet → "暂无提交历史", base → "基线",
   #   no-op → "空提交", Pre-task → "任务前",
-  #   start → "起始", end → "结束", terminated → "已终止"
+  #   start → "起始", end → "结束", terminated → "已终止",
+  #   Older commits are not shown (limit 100) →
+  #     "更早的提交未显示——超出条数上限"
 
   # ---------------------------------------------------------------------------
   # commit_graph_view/1
@@ -366,6 +383,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
               :for={edge <- edges}
               dom={dom}
               edge={edge}
+              edges={edges}
               positions={positions}
               agents_index={agents_index}
             />
@@ -389,6 +407,21 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
             />
           </div>
         </div>
+
+        <%!-- Truncation strip: the builder cuts a tip range at the 100-commit
+             limit; when the repo model flags `truncated: true` a dimmed note
+             marks the cut. Read TOTALLY — an absent / false / nil key renders
+             nothing. --%>
+        <%= if repo_truncated?(@repo) do %>
+          <div
+            id={"cg-truncated-" <> dom}
+            class="flex items-center gap-1.5 py-1.5 text-xs text-base-content/50"
+          >
+            <.icon name="hero-information-circle" class="size-3.5 shrink-0" />
+            <%!-- 更早的提交未显示——超出条数上限 --%>
+            <span class="min-w-0">{gettext("Older commits are not shown (limit 100)")}</span>
+          </div>
+        <% end %>
       <% end %>
     </div>
     """
@@ -502,17 +535,22 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # `<from_sha>-<to_sha>` id; the agent-level `:spawn` / `:merge_back`
   # connectors (both dashed) use their own id scheme because a merge-back's
   # `to_sha` may be nil (a VIRTUAL landing — the path simply ends at the
-  # edge's own `to_column`/`to_row` coordinates). Routing lives in `Geometry`.
+  # edge's own `to_column`/`to_row` coordinates). Routing lives in `Geometry`:
+  # the BATCH-AWARE `edge_geo/3` receives the repo's FULL edge list so
+  # concurrent cross-lane edges sharing an unordered lane pair are staggered
+  # off the shared midpoint jog (the pair's FIRST edge — and therefore a lone
+  # edge — stays pixel-identical to the canonical `edge_geo/2` route).
   # ---------------------------------------------------------------------------
 
   attr(:dom, :string, required: true)
   attr(:edge, :map, required: true)
+  attr(:edges, :list, default: [])
   attr(:positions, :map, required: true)
   attr(:agents_index, :map, default: %{})
 
   defp edge_path(assigns) do
     ~H"""
-    <% geo = Geometry.edge_geo(@edge, @positions) %>
+    <% geo = Geometry.edge_geo(@edge, @positions, @edges) %>
     <% dashed? = geo.kind != :parent %>
     <path
       :if={geo.d}
@@ -838,6 +876,13 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
   # non-`true` value) renders exactly like a live agent.
   defp agent_ended?(agent) when is_map(agent), do: Map.get(agent, :ended) == true
   defp agent_ended?(_agent), do: false
+
+  # A repo's commit list is TRUNCATED only when the model explicitly flags it
+  # (`truncated: true` — the builder cut a tip range at the 100-commit limit).
+  # OPTIONAL and read TOTALLY: absent / false / nil render no truncation strip.
+  # (The repo value is a map by construction — `repo_list/1` filters to maps and
+  # the `:repo` attr is typed `:map`.)
+  defp repo_truncated?(repo), do: Map.get(repo, :truncated) == true
 
   defp agent_label(index, id) do
     case agent_for(index, id) do
