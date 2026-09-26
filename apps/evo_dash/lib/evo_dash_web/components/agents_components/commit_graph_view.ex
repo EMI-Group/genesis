@@ -19,10 +19,14 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   One repository block per `repos` entry: a header (hero-server-stack icon in a
   `bg-primary` chip + the repo name) followed by the vertical commit list. The
-  list sits inside a horizontally-scrollable wrapper (`#cg-scroll-<dom>`,
-  `overflow-x: auto`) so that WIDE lane gutters scroll as one unit with the
-  rows and the lane headers; vertical scrolling stays native (the page
-  scrolls) — there is NO pan/zoom, no viewBox mutation.
+  list sits inside ONE scroll wrapper (`#cg-scroll-<dom>`; the `.cg-scroll`
+  rule in app.css owns `overflow: auto` on BOTH axes plus a bounded
+  `max-height`), so WIDE lane gutters scroll as one unit with the rows and the
+  lane headers, and the vertical list scrolls INSIDE the panel — the bounded
+  height makes `.cg-scroll` a real VERTICAL scroller, which is what the lane
+  header's `position: sticky` resolves against (before, it was inert: a set
+  overflow-x computes overflow-y to `auto`, and an auto-height box never
+  scrolls). There is NO pan/zoom, no viewBox mutation.
 
   Inside the wrapper (top → bottom):
 
@@ -30,7 +34,8 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
        lane, anchored at its lane's x — agent lanes get a clickable `T<n>` chip
        in the agent's depth hue with a status dot (dimmed when the agent
        ended), the neutral lane 0 (present only when unowned "pre-task" nodes
-       exist) a plain "Pre-task" span;
+       exist) a plain "Pre-task" span. It pins ABOVE the rows inside the
+       `.cg-scroll` vertical scroller;
     2. the `relative` commit list: an absolutely-positioned `<svg.cg-gutter>`
        spanning the whole list height plus the `.cg-rows` container
        left-padded by the gutter width so the svg and the row content never
@@ -78,12 +83,16 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     * REF tags: one mono chip per entry in `node.refs` (non-clickable).
 
   Clicking a ROW selects its owner (`phx-click="select_agent"` +
-  `phx-value-id={node.owner_id}`, both omitted when `owner_id` is nil). A
-  selected agent's START node wears a solid primary RING and its END node a
-  dashed primary ring (circular, `r = dot r + 3`), plus a primary-tinted row
-  accent and a `start`/`end` marker. A small `Selected <agent> · <start>→<end>`
-  readout renders above the list while the selection is one of THIS repo's
-  agents.
+  `phx-value-id={node.owner_id}`, both omitted when `owner_id` is nil); an
+  owned row is also KEYBOARD-REACHABLE (`role="button"`, `tabindex="0"` and
+  Enter / Space activation via the `CommitGraph` hook — the same
+  `select_agent` event, no new server event). A selected agent's START node
+  wears a solid primary RING and its END node a dashed primary ring (circular,
+  `r = dot r + 3`), plus a primary-tinted row accent and a `start`/`end`
+  marker. A small `Selected <agent> · <start>→<end>` readout renders above the
+  list while the selection is one of THIS repo's agents. The selected agent's
+  id rides `data-cg-selected-id` on the `#commit-graph` root so the hook can
+  scroll it into view when (and only when) the selection CHANGES.
 
   ## Frozen DOM contract
 
@@ -99,8 +108,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       here).
     * `#cg-selection-readout-<repo_dom_id>` — the optional selected-agent
       readout above the list.
-    * `#cg-scroll-<repo_dom_id>` (`cg-scroll`) — the horizontal-scroll wrapper
-      hosting lane headers + gutter + rows.
+    * `#cg-scroll-<repo_dom_id>` (`cg-scroll`) — the scroll wrapper (BOTH
+      axes; the `.cg-scroll` rule in app.css owns `overflow: auto` + the
+      bounded `max-height`) hosting lane headers + gutter + rows as ONE unit.
     * `#cg-lane-header-<repo_dom_id>` (`cg-lane-header`) — the sticky lane
       header bar; per-lane chips `#cg-lane-<repo_dom_id>-<lane_index>`
       (`cg-lane-chip`; agent lanes are `button`s with the `select_agent`
@@ -120,10 +130,16 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       landing).
     * `g.cg-node[data-commit-graph-anim="node"]` with the stable id
       `#commit-node-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`
-      and an inner `<title>` tooltip.
+      and an inner `<title>` tooltip. The node's circle (`circle.cg-node-dot`)
+      is the ONLY pointer-active part of the gutter (hover sync + its native
+      tooltip); everything else stays `pointer-events: none`.
     * `div.cg-row[data-commit-graph-anim="row"]` with the stable id
-      `#commit-row-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`
-      and the row `select_agent` contract.
+      `#commit-row-<repo_dom_id>-<sha>`, plus `data-cg-sha` / `data-cg-agent-id`,
+      the row `select_agent` contract, a native `title` (the same
+      message · sha · author · date · refs tooltip the gutter node carries —
+      the gutter `<title>` is unreachable under `pointer-events: none`) and,
+      for owned rows, `role="button"` + `tabindex="0"` (Enter / Space fire
+      `select_agent` via the hook).
     * agent tags `button.cg-agent-tag` with ids
       `#commit-agent-tag-<repo_dom_id>-<sha>-<start|end>-<agent_key>`; ref tags
       `span.cg-ref-tag` with ids
@@ -174,7 +190,11 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
 
   def commit_graph_view(assigns) do
     ~H"""
-    <div id="commit-graph" phx-hook="CommitGraph">
+    <%!-- `data-cg-selected-id` carries the selection VERBATIM: LiveView
+         stringifies it exactly like the rows' `data-cg-agent-id` (both are the
+         raw model term), so the JS hook can string-compare them to find the
+         selected agent's rows. --%>
+    <div id="commit-graph" phx-hook="CommitGraph" data-cg-selected-id={@selected_id}>
       <%!-- Node-scoped wrapper: a node switch changes this id, so LiveView
            replaces the previous node's graph subtree entirely. --%>
       <div id={"commit-graph-body-" <> @node_key} class="space-y-4">
@@ -316,7 +336,14 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       </div>
     <% end %>
 
-    <div id={"cg-scroll-" <> dom} class="cg-scroll overflow-x-auto">
+    <%!-- `.cg-scroll` (app.css) owns BOTH scroll axes + the bounded max-height:
+         gutter + rows + lane header scroll as ONE unit horizontally, and the
+         list scrolls vertically INSIDE the panel — which is what makes the
+         lane header's `sticky top-0` actually stick (a set overflow-x computes
+         overflow-y to `auto`, so this wrapper is the nearest scroll container
+         in both axes; bounding its height turns that into the real vertical
+         scroller instead of an inert never-scrolling one). --%>
+    <div id={"cg-scroll-" <> dom} class="cg-scroll">
       <%= if nodes == [] do %>
         <%!-- 空态：该仓库没有任何可展示的提交（例如智能体尚未在该仓库产生提交） --%>
         <p class="cg-empty-note text-xs text-base-content/60 py-3">
@@ -655,6 +682,9 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       data-commit-graph-anim="row"
       data-cg-sha={Map.get(@node, :sha)}
       data-cg-agent-id={v.owner}
+      title={node_title(@node)}
+      role={if v.owner != nil, do: "button"}
+      tabindex={if v.owner != nil, do: "0"}
       phx-click={if v.owner != nil, do: "select_agent"}
       phx-value-id={v.owner}
     >

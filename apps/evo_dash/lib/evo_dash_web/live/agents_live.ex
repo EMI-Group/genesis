@@ -26,6 +26,7 @@ defmodule EvoDashWeb.AgentsLive do
 
   alias EvoDashWeb.AgentsLive.{
     CommitGraph,
+    CommitGraphRefresh,
     HistoryGate,
     LoadData,
     OptimisticMessages,
@@ -34,13 +35,11 @@ defmodule EvoDashWeb.AgentsLive do
     ToolCallDisplay
   }
 
-  # Commit-graph RPC: max commits fetched per repo range (see spawn_commit_graph_fetch/2).
-  @commit_graph_limit 100
-
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
   # by the 300ms agent-event flush; this further throttles the (heavier) per-repo
   # git RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
   @commit_graph_min_interval_ms 1000
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -120,10 +119,15 @@ defmodule EvoDashWeb.AgentsLive do
         commit_graph_seq: 0,
         commit_graph_fetched_at: nil,
         commit_graph_tick_scheduled: false,
+        # Commit-relevance fingerprint of the LAST-BUILT commit-graph agent set
+        # (CommitGraphRefresh.fingerprint/1) — nil until the first build/fetch;
+        # an unchanged fingerprint lets a commit-irrelevant agent-update flush
+        # skip BOTH the rebuild and the git-RPC refetch. Per-node like the
+        # other commit-graph data.
+        commit_graph_fingerprint: nil,
         # In-session RETENTION of ended agents: agent_id => the agent's last
         # known map with `ended: true`. The core DELETES an agent's ETS rows (and
-        # its evogit-agent-* branch) when it is recycled, so a finished agent
-        # would otherwise vanish from the commit-history view and take its lane
+        # its evogit-agent-* branch) when it is recycled, so a finished agent        # would otherwise vanish from the commit-history view and take its lane
         # (plus its START/END markers) with it. Retained agents feed the
         # commit-graph lanes ONLY — never the agent tree. Reset on a node switch
         # (agent ids are per-node). In-session only: the core persists no
@@ -183,6 +187,10 @@ defmodule EvoDashWeb.AgentsLive do
           commit_graph_loaded: false,
           commit_graph_loading: false,
           commit_graph_error: nil,
+          # Fingerprint of the LAST-BUILT commit-graph agent set (see
+          # CommitGraphRefresh.fingerprint/1) — nil until a build/fetch runs,
+          # and reset together with the other per-node data.
+          commit_graph_fingerprint: nil,
           commit_graph_fetched_at: nil,
           commit_graph_tick_scheduled: false,
           # Retained ended agents are per-node too (agent ids are per-node).
@@ -439,9 +447,12 @@ defmodule EvoDashWeb.AgentsLive do
   end
 
   @impl true
-  # Async commit-graph result (spawned by spawn_commit_graph_fetch/2). Applies the
+  # Async commit-graph result (spawned by spawn_commit_graph_fetch/1). Applies the
   # fresh graph when it is the newest fetch for the node being viewed. An error
-  # keeps the last good graph (the view never wedges on a spinner).
+  # keeps the last good graph (the view never wedges on a spinner); a PARTIAL
+  # success (≥1 group ok, others failed) is an {:ok, ...} carrying the successful
+  # groups only — the failed groups' lanes still render from the agent set, their
+  # commits just stop at the last fetch.
   def handle_info({:commit_graph_loaded, node, seq, result}, socket) do
     if node != socket.assigns.current_node or
          seq < Map.get(socket.assigns, :commit_graph_seq, 0) do
@@ -451,16 +462,19 @@ defmodule EvoDashWeb.AgentsLive do
         {:ok, raw_by_repo} ->
           # Lanes come from the MERGED agent set (live + in-session retained) so
           # a recycled agent's lane/START-END markers survive; the agent tree
-          # (@agents) is untouched.
-          graph = CommitGraph.build(raw_by_repo, commit_graph_agents(socket))
+          # (@agents) is untouched. The fingerprint is re-stored for the agent
+          # set THIS build consumed, so the next fingerprint-gated flush
+          # compares against what was actually rendered.
+          agents = commit_graph_agents(socket)
 
           {:noreply,
            assign(socket,
-             commit_graph: graph,
+             commit_graph: CommitGraph.build(raw_by_repo, agents),
              commit_graph_raw: raw_by_repo,
              commit_graph_loaded: true,
              commit_graph_loading: false,
-             commit_graph_error: nil
+             commit_graph_error: nil,
+             commit_graph_fingerprint: CommitGraphRefresh.fingerprint(agents)
            )}
 
         {:error, reason} ->
@@ -767,46 +781,110 @@ defmodule EvoDashWeb.AgentsLive do
   # First keeps the rendered graph in sync with the CURRENT agent list (a
   # newly-spawned child's progress path/ring appears immediately), then
   # refetches — throttled to @commit_graph_min_interval_ms; a throttled request
-  # arms a one-shot tick. `force: true` bypasses the throttle (first
-  # activation, tick fire).
+  # arms a one-shot tick. `force: true` bypasses the throttle AND the
+  # fingerprint gate (first activation, the one-shot tick, a view re-switch).
+  #
+  # FINGERPRINT GATE (fingerprint-gated calls only, i.e. NOT force: true and
+  # the graph is already loaded): a commit-relevance fingerprint of the
+  # temporal view's agent set (CommitGraphRefresh.fingerprint/1 — the grouping
+  # key, task/task_local ids, depth, parent, the base/tip shas and the ended
+  # flag) is compared against the one stored by the last build. UNCHANGED →
+  # the flush was status/token/usage/message-count-only, commit-irrelevant:
+  # skip BOTH the rebuild and the refetch spawn (no git RPC). CHANGED →
+  # rebuild + refetch as before and store the new fingerprint. A fetch already
+  # in flight (@commit_graph_loading) is never skipped-changed: its result
+  # applies through {:commit_graph_loaded, ...}, which re-stores the
+  # fingerprint of the agent set it built from — so the in-flight fetch always
+  # converges and no fetch/result loop can form (a result yielding identical
+  # raw data stores the CURRENT fingerprint; the next flush then compares
+  # equal and skips).
   defp maybe_load_commit_graph(socket, opts) do
     if socket.assigns.left_view != :commits do
       socket
     else
-      socket = rebuild_commit_graph(socket)
-      groups = commit_graph_groups(commit_graph_agents(socket))
+      agents = commit_graph_agents(socket)
       force? = Keyword.get(opts, :force, false) or not socket.assigns.commit_graph_loaded
 
+      # Skip the fingerprint work entirely on the bypass paths.
       cond do
-        groups == [] ->
-          assign(socket, commit_graph: [], commit_graph_loaded: true, commit_graph_loading: false)
+        force? ->
+          refresh_commit_graph(socket, agents, force: true, gate: false)
 
-        force? or not commit_graph_throttled?(socket) ->
-          spawn_commit_graph_fetch(socket, groups)
+        # A fetch is already in flight: never gate (and never re-spawn) — its
+        # result applies the freshest data and re-stores the fingerprint.
+        socket.assigns.commit_graph_loading ->
+          refresh_commit_graph(socket, agents, force: false, gate: false)
 
         true ->
-          schedule_commit_graph_tick(socket)
+          refresh_commit_graph(socket, agents, force: false, gate: true)
       end
     end
   end
 
-  # Rebuilds @commit_graph from the last fetched raw data + the current agents, so
-  # the overlay (progress paths, ring positions) tracks agents without a git RPC.
-  # A no-op before the first successful fetch.
-  defp rebuild_commit_graph(socket) do
+  # Rebuild + (maybe) refetch. `gate: true` compares the agent set's
+  # commit-relevance fingerprint against the stored one and short-circuits on
+  # a match; `gate: false` always rebuilds. `force: true` additionally bypasses
+  # the fetch throttle (view switch / tick fire); `force: false` follows the
+  # throttle/tick rules.
+  defp refresh_commit_graph(socket, agents, force: force?, gate: gate?) do
+    if gate? do
+      fingerprint = CommitGraphRefresh.fingerprint(agents)
+
+      if MapSet.size(fingerprint) > 0 and fingerprint == socket.assigns.commit_graph_fingerprint do
+        # Commit-irrelevant change — the view model would be identical.
+        socket
+      else
+        socket
+        |> rebuild_commit_graph(agents, fingerprint)
+        |> fetch_commit_graph(agents, fingerprint, force?)
+      end
+    else
+      socket
+      |> rebuild_commit_graph(agents, nil)
+      |> fetch_commit_graph(agents, nil, force?)
+    end
+  end
+
+  # Rebuilds @commit_graph from the last fetched raw data + the given agents,
+  # so the overlay (progress paths, ring positions) tracks agents without a
+  # git RPC. A no-op before the first successful fetch. `fingerprint` (nil on
+  # the bypass paths) is stored so the NEXT fingerprint-gated call compares
+  # against what was actually built.
+  defp rebuild_commit_graph(socket, agents, fingerprint) do
     if socket.assigns.commit_graph_loaded do
-      assign(
-        socket,
-        :commit_graph,
-        CommitGraph.build(socket.assigns.commit_graph_raw, commit_graph_agents(socket))
+      assign(socket,
+        commit_graph: CommitGraph.build(socket.assigns.commit_graph_raw, agents),
+        commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
       )
     else
       socket
     end
   end
 
-  # The agent set the TEMPORAL view is built from: the LIVE agents (@agents)
-  # MERGED with the in-session RETAINED (ended) agents (@retained_agents),
+  # Spawns the refetch (or arms the one-shot tick when throttled) and stores
+  # `fingerprint` so the fetch's result path knows which agent set it captured.
+  # `force?` bypasses the throttle (view switch / tick fire).
+  defp fetch_commit_graph(socket, agents, fingerprint, force?) do
+    groups = commit_graph_groups(agents)
+
+    cond do
+      groups == [] ->
+        assign(socket,
+          commit_graph: [],
+          commit_graph_loaded: true,
+          commit_graph_loading: false,
+          commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
+        )
+
+      force? or not commit_graph_throttled?(socket) ->
+        spawn_commit_graph_fetch(socket, fingerprint)
+
+      true ->
+        schedule_commit_graph_tick(socket)
+    end
+  end
+
+  # The agent set the TEMPORAL view is built from: the LIVE agents (@agents)  # MERGED with the in-session RETAINED (ended) agents (@retained_agents),
   # de-duplicated by id with the LIVE copy winning. Retained agents contribute
   # lane metadata (and their START/END markers) but never tips, because their
   # commits already live in the task's durable ref ancestry. The agent TREE
@@ -871,19 +949,26 @@ defmodule EvoDashWeb.AgentsLive do
   # Spawns the async commit-graph fetch: ONE runner call per `{repo_key, task_id}`
   # group, passing that task's live tips + the limit. The seam
   # :agents_commit_graph_runner (default &EvoDash.NodeContext.list_task_commit_graph/5)
-  # is resolved AT SPAWN TIME so tests can stub it. Groups sharing a repo_key
-  # (two tasks in one repo) are UNIONED into ONE `%{repo_key => %{commits, refs}}`
-  # entry — the keying the pure assembler expects (it groups agents by
-  # `repo_root || repo_id`).
-  defp spawn_commit_graph_fetch(socket, groups) do
+  # is resolved AT SPAWN TIME so tests can stub it. The per-group replies are
+  # folded by CommitGraphRefresh.fetch_result/3 with PARTIAL-SUCCESS semantics:
+  # a failing group drops only ITS data (recorded as a
+  # {:commit_graph_repo_failed, {repo_key, task_id}, reply} failure) while the
+  # successful groups still fold into ONE %{repo_key => %{commits, refs}} map —
+  # the keying the pure assembler expects (it groups agents by
+  # `repo_root || repo_id`); {:error, _} surfaces ONLY when EVERY group fails.
+  # The `fingerprint` captured at spawn time rides along as the fetch's
+  # bookkeeping value (see fetch_commit_graph/3).
+  defp spawn_commit_graph_fetch(socket, fingerprint) do
     parent = self()
     node = socket.assigns.current_node
     seq = Map.get(socket.assigns, :commit_graph_seq, 0) + 1
+    groups = commit_graph_groups(commit_graph_agents(socket))
 
     socket =
       assign(socket,
         commit_graph_seq: seq,
         commit_graph_loading: true,
+        commit_graph_fingerprint: fingerprint,
         commit_graph_fetched_at: System.monotonic_time(:millisecond),
         commit_graph_tick_scheduled: false
       )
@@ -904,18 +989,7 @@ defmodule EvoDashWeb.AgentsLive do
               &EvoDash.NodeContext.list_task_commit_graph/5
             )
 
-          Enum.reduce_while(groups, {:ok, %{}}, fn group, {:ok, acc} ->
-            %{repo_key: repo_key, task_id: task_id, live_tips: live_tips} = group
-
-            case runner.(node, task_id, repo_key, live_tips, limit: @commit_graph_limit) do
-              {:ok, %{commits: commits} = payload} when is_list(commits) ->
-                refs = Map.get(payload, :refs, %{})
-                {:cont, {:ok, merge_repo_graph(acc, repo_key, commits, refs)}}
-
-              other ->
-                {:halt, {:error, {:commit_graph_repo_failed, {repo_key, task_id}, other}}}
-            end
-          end)
+          CommitGraphRefresh.fetch_result(groups, runner, node)
         rescue
           _ -> {:error, :commit_graph_fetch_failed}
         end
@@ -925,35 +999,6 @@ defmodule EvoDashWeb.AgentsLive do
 
     socket
   end
-
-  # Unions one group's reply into `acc` under its `repo_key`: commits de-duped by
-  # `:sha` (a sha shared by two tasks in the same repo appears once) and ref name
-  # lists unioned per sha. Total — a malformed refs payload degrades to an empty
-  # map and non-map commit entries are dropped.
-  defp merge_repo_graph(acc, repo_key, commits, refs) do
-    existing = Map.get(acc, repo_key, %{commits: [], refs: %{}})
-
-    merged = %{
-      commits: dedupe_commits(List.wrap(existing.commits) ++ List.wrap(commits)),
-      refs: merge_refs(Map.get(existing, :refs), refs)
-    }
-
-    Map.put(acc, repo_key, merged)
-  end
-
-  defp dedupe_commits(commits) do
-    commits |> Enum.filter(&is_map/1) |> Enum.uniq_by(&Map.get(&1, :sha))
-  end
-
-  defp merge_refs(left, right) when is_map(left) and is_map(right) do
-    Map.merge(left, right, fn _sha, names_a, names_b ->
-      (List.wrap(names_a) ++ List.wrap(names_b)) |> Enum.uniq()
-    end)
-  end
-
-  defp merge_refs(left, _right) when is_map(left), do: left
-  defp merge_refs(_left, right) when is_map(right), do: right
-  defp merge_refs(_left, _right), do: %{}
 
   # Shared application of a fresh agent list (from the async load or a refresh
   # task): recomputes all the tracking assigns, carries over already-fetched

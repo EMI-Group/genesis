@@ -906,27 +906,77 @@ button, a, input, textarea, select, summary,
 /* VERTICAL, GitLen/GitKraken-style commit graph for the /agents commit-history
    view, driven by the CommitGraph JS hook. The renderer owns geometry, sizing
    and stroke/fill colours (SVG colours arrive from the renderer, never from
-   here); this block owns the MOTION (enter animations). Vertical scrolling is
-   native — there is NO pan/zoom surface. Semantic theme tokens only — no
-   colour literals.
+   here); this block owns the MOTION (enter animations), the scroll container
+   and the row ↔ dot hover sync. There is NO pan/zoom surface. Semantic theme
+   tokens only — no colour literals.
 
-   Layout surfaces are styled with Tailwind utilities ON the elements (no rules
-   needed here):
-     * `.cg-scroll` — the `overflow-x: auto` wrapper; when many agent lanes
-       make the gutter wider than the panel, the gutter + rows + lane headers
-       scroll LEFT/RIGHT as ONE unit (vertical scrolling stays native).
+   Layout surfaces styled with Tailwind utilities ON the elements where
+   possible; the rules below own what a utility cannot express:
+     * `.cg-scroll` — the scroll wrapper, BOTH axes (rule below: `overflow:
+       auto` + a bounded `max-height`); gutter + rows + lane headers scroll
+       LEFT/RIGHT as ONE unit and the list scrolls vertically INSIDE the
+       panel.
      * `.cg-lane-header` — the sticky (`position: sticky; top: 0; z-index`)
        lane-label bar above the gutter SVG; its width is set inline by the
-       renderer (== the gutter width) so it scrolls in sync horizontally.
+       renderer (== the gutter width) so it scrolls in sync horizontally, and
+       it pins above the rows inside `.cg-scroll`'s vertical scroll.
      * `.cg-lane-chip` — one per lane, absolutely positioned + centered on its
        lane's x inline by the renderer; a clickable <button> for agent lanes,
        a plain <span> (`.cg-lane-chip-neutral`) for the neutral pre-task lane. */
+
+/* The ONE scroll container, both axes. A set `overflow-x` makes CSS compute
+   `overflow-y` to `auto` too, so this box was ALREADY the nearest scroll
+   container for the lane header's `position: sticky` — the stick was inert
+   only because an auto-height box never scrolls vertically. The bounded
+   `max-height` turns it into the REAL vertical scroller: the list scrolls
+   inside the panel and the lane header genuinely pins above the rows.
+   Mobile (<xl, the panel flows under the page scroller) gets the tighter
+   bound; xl+ (the fixed-viewport agents layout) allows the taller fill. */
+.cg-scroll {
+  overflow: auto;
+  max-height: min(26rem, 60vh);
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.7 0 0 / 0.3) transparent;
+}
+
+@media (min-width: 1280px) {
+  .cg-scroll {
+    max-height: min(38rem, 70vh);
+  }
+}
 
 /* The gutter overlay's positioning (`absolute left-0 top-0`) and
    `pointer-events: none` come from Tailwind utilities on the element; this
    rule only guarantees a block-level SVG with no transform interference. */
 .cg-gutter {
   display: block;
+}
+
+/* The gutter SVG is `pointer-events: none` (the click contract deliberately
+   lives on the rows), but the node DOTS re-enable pointer events — the
+   dot-side entry point of the row ↔ dot hover sync, which also makes the
+   node's native <title> tooltip reachable. Dots never overlap row content
+   (`.cg-rows` is left-padded by the gutter width), so row clicks stay
+   authoritative. The transition smooths the hover scale below. */
+.cg-node-dot {
+  pointer-events: auto;
+  transition: transform 120ms ease-out;
+}
+
+/* Row ↔ dot hover sync: the CommitGraph hook toggles `cg-hovered` on BOTH
+   sha-mates (the `.cg-row` div and the `g.cg-node` in the gutter). The row
+   side mirrors the owned rows' Tailwind `hover:bg-base-200/60` (it also
+   covers UNOWNED rows and the dot → row direction); the dot side scales up
+   around its own center — a colour-free highlight, so the renderer's depth
+   hues stay untouched (SVG has no CSS box, hence `transform-box`). */
+.cg-row.cg-hovered {
+  background-color: color-mix(in oklch, var(--color-base-200) 60%, transparent);
+}
+
+.cg-node.cg-hovered .cg-node-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: scale(1.3);
 }
 
 /* Enter animations. Each animated element gets exactly one class, keyed on its
@@ -977,7 +1027,9 @@ button, a, input, textarea, select, summary,
    edges fall back to fully opaque, and nodes fall back to their final
    (unscaled) state so a paused node can never render collapsed onto its
    origin. With no animation the `both` fill mode holds nothing, so the
-   elements simply keep their final (base) state. */
+   elements simply keep their final (base) state. The hover-sync dot scale is
+   neutralized too (a transform transition is motion) — the row tint stays,
+   colour-only feedback remains. */
 @media (prefers-reduced-motion: reduce) {
   .commit-row-enter,
   .commit-edge-enter {
@@ -988,6 +1040,11 @@ button, a, input, textarea, select, summary,
   .commit-node-enter {
     animation: none;
     transform: none;
+  }
+
+  .cg-node.cg-hovered .cg-node-dot {
+    transform: none;
+    transition: none;
   }
 }
 
