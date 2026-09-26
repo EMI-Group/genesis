@@ -23,6 +23,14 @@ const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// Per-request timeout for a single health probe.
 const POLL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 
+/// Delay before retrying a lifetime-pipe read after a non-EOF outcome, so a
+/// persistently-erroring read cannot busy-loop the hold thread.
+const LIFETIME_ERROR_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+/// Minimum interval between transient-error log lines from a lifetime-pipe
+/// hold thread (rate-limiting — no unbounded log spam).
+const LIFETIME_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(5);
+
 /// The OS-specific launcher script name inside the bundled release directory.
 ///
 /// On Unix this is the POSIX shell script `genesis_desktop`; on Windows it is
@@ -121,6 +129,42 @@ pub(crate) fn sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String,
     env
 }
 
+/// The classification of a single read on a lifetime-pipe connection.
+///
+/// Only a genuine peer EOF may end the hold: the Elixir backend
+/// (`EvoDash.DesktopLifetime`) treats ANY socket close as "the Tauri shell is
+/// gone" and self-stops with exit code 0 — which the shell's watchdog
+/// classifies as an INTENTIONAL shutdown (`classify_exit`: `Some(0)`), so a
+/// spurious drop of the hold stream silently exits the whole desktop app while
+/// the shell was healthy. Every non-EOF outcome therefore keeps holding.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LifetimeReadOutcome {
+    /// Keep holding the connection (data arrived, or a transient error).
+    Hold,
+    /// The peer closed the connection (genuine EOF) — end the hold.
+    Eof,
+}
+
+/// Classifies a single `read` result from a lifetime-pipe hold thread.
+///
+/// - `Ok(0)` → [`LifetimeReadOutcome::Eof`] — genuine peer EOF, the only
+///   outcome that ends the hold.
+/// - `Ok(n)` with `n > 0` → [`LifetimeReadOutcome::Hold`] — the shell never
+///   writes, but keep holding if the peer ever does.
+/// - `Err(_)` → [`LifetimeReadOutcome::Hold`] — a transient error
+///   (`Interrupted`, `WouldBlock`, `ConnectionReset`, `TimedOut`, …).
+///   Treating an error as EOF is the false-positive channel described on
+///   [`LifetimeReadOutcome`], so errors must never end the hold.
+///
+/// Pure so the classification is unit-testable (a raw socket read is not).
+pub(crate) fn classify_lifetime_read(result: &std::io::Result<usize>) -> LifetimeReadOutcome {
+    match result {
+        Ok(0) => LifetimeReadOutcome::Eof,
+        Ok(_) => LifetimeReadOutcome::Hold,
+        Err(_) => LifetimeReadOutcome::Hold,
+    }
+}
+
 /// Starts the TCP "lifetime pipe" listener used by the Elixir backend to
 /// detect shell death without polling.
 ///
@@ -129,11 +173,12 @@ pub(crate) fn sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String,
 /// `listener.incoming()` forever, spawning a per-stream hold thread per
 /// accepted connection (the backend connects once per spawn, so every
 /// watchdog respawn gets its own held connection). Each hold thread blocks on
-/// a read loop until the peer closes (EOF) or errors, then exits — dropping
-/// the stream ends the hold. The shell NEVER writes on the connection; it is
-/// a pure hold. The backend connects to `127.0.0.1:<port>` and blocks on
-/// recv; any close/error means the shell is dead and the backend stops
-/// itself.
+/// a read loop and ends ONLY on a genuine peer EOF ([`classify_lifetime_read`]);
+/// a transient read error is logged (rate-limited) and retried on the same
+/// stream after a short pause instead of dropping it. The shell NEVER writes on
+/// the connection; it is a pure hold. The backend connects to
+/// `127.0.0.1:<port>` and blocks on recv; a close means the shell is dead and
+/// the backend stops itself.
 ///
 /// Accept errors are logged and the loop continues. On bind failure the
 /// caller logs a warning and continues WITHOUT the lifetime pipe (non-fatal —
@@ -147,12 +192,42 @@ pub(crate) fn start_lifetime_listener() -> std::io::Result<u16> {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    // Per-stream hold thread: block reading until EOF or
-                    // error, then exit (dropping the stream ends the hold).
+                    // Per-stream hold thread: block reading until a genuine
+                    // peer EOF, then exit (dropping the stream ends the hold).
+                    // A transient read error must NOT drop the stream — the
+                    // backend would read the close as "shell dead" and
+                    // self-stop with code 0, which the watchdog classifies as
+                    // an intentional shutdown, silently quitting the app.
                     thread::spawn(move || {
                         let mut stream = stream;
                         let mut buf = [0u8; 1024];
-                        while stream.read(&mut buf).is_ok_and(|n| n > 0) {}
+                        let mut last_error_log: Option<Instant> = None;
+                        loop {
+                            let result = stream.read(&mut buf);
+                            match classify_lifetime_read(&result) {
+                                LifetimeReadOutcome::Eof => break,
+                                LifetimeReadOutcome::Hold => {
+                                    // Data (never happens — the shell never
+                                    // writes) keeps holding silently; a
+                                    // transient error is logged, rate-limited,
+                                    // then retried after a short pause so a
+                                    // persistently-erroring read can't
+                                    // busy-loop.
+                                    if let Err(err) = &result {
+                                        let due = last_error_log
+                                            .map(|t| t.elapsed() >= LIFETIME_ERROR_LOG_INTERVAL)
+                                            .unwrap_or(true);
+                                        if due {
+                                            crate::shell_log::log(&format!(
+                                                "lifetime pipe read error (transient — still holding): {err}"
+                                            ));
+                                            last_error_log = Some(Instant::now());
+                                        }
+                                        thread::sleep(LIFETIME_ERROR_RETRY_DELAY);
+                                    }
+                                }
+                            }
+                        }
                     });
                 }
                 Err(err) => eprintln!("[desktop] lifetime listener accept error: {err}"),
@@ -295,4 +370,56 @@ pub fn wait_for_ready(url: &str, timeout_secs: u64) {
     }
 
     eprintln!("[desktop] backend at {url} did not become ready within {timeout_secs}s");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A genuine peer EOF (`Ok(0)`) is the ONLY outcome that ends the hold.
+    #[test]
+    fn lifetime_read_eof_is_eof() {
+        assert_eq!(classify_lifetime_read(&Ok(0)), LifetimeReadOutcome::Eof);
+    }
+
+    /// Unexpected data (`Ok(n>0)`) keeps holding — the shell never writes, but
+    /// a read that returned bytes must not be misread as a disconnect.
+    #[test]
+    fn lifetime_read_data_is_hold() {
+        assert_eq!(classify_lifetime_read(&Ok(1)), LifetimeReadOutcome::Hold);
+        assert_eq!(classify_lifetime_read(&Ok(1024)), LifetimeReadOutcome::Hold);
+    }
+
+    /// Every read error is transient-for-holding-purposes: it must keep the
+    /// connection open, never be treated as EOF. Treating an error as EOF is
+    /// the false-positive channel that makes the backend self-stop and
+    /// silently quit the whole app.
+    #[test]
+    fn lifetime_read_errors_all_hold() {
+        for kind in [
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::Other,
+        ] {
+            let err: std::io::Result<usize> = Err(std::io::Error::new(kind, "transient"));
+            assert_eq!(
+                classify_lifetime_read(&err),
+                LifetimeReadOutcome::Hold,
+                "error kind {kind:?} must keep holding"
+            );
+        }
+    }
+
+    /// The log rate-limit window is short enough to be useful and long enough
+    /// not to spam (documents the constant's intent).
+    #[test]
+    fn lifetime_error_log_interval_is_bounded() {
+        assert!(LIFETIME_ERROR_LOG_INTERVAL >= Duration::from_secs(1));
+        assert!(LIFETIME_ERROR_LOG_INTERVAL <= Duration::from_secs(60));
+        assert!(LIFETIME_ERROR_RETRY_DELAY > Duration::ZERO);
+        assert!(LIFETIME_ERROR_RETRY_DELAY < LIFETIME_ERROR_LOG_INTERVAL);
+    }
 }
