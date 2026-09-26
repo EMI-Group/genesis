@@ -1,13 +1,39 @@
 defmodule EvoGit.Config.Schema.LLM do
   @moduledoc """
   LLM generation parameter extraction from config/model profiles.
+
+  Besides assembling the parameter keyword list, this module is the place where
+  parameters are made **provider/model-aware**:
+
+  - `provider_options_for_model/1` returns the OpenAI-only default
+    (`store: false`) for a genuine NATIVE OpenAI endpoint only.
+  - `profile_generation_params/1` — the single choke point for every parameter
+    consumer (scheduler state, dispatch, agent state, both the legacy-flat and
+    the explicit-profile path) — runs the assembled list through
+    `EvoGit.Config.Schema.LLMConstraints.filter/3`, which omits parameters the
+    target provider/model does not accept.
+
+  ## Model metadata seam (tests + catalog availability)
+
+  `model_metadata/1` resolves `%{limits: map(), capabilities: map()}` for a model
+  spec. It reads the app-env seam `:llm_model_metadata_fun` (a 1-arity fun over
+  the model spec) at CALL time; when unset it resolves the model through
+  ReqLLM's public model API (i.e. the model catalog ReqLLM ships with). The
+  lookup is non-raising and degrades to `nil` — the constraint table in
+  `LLMConstraints` stays effective without it. Tests inject stub metadata
+  through the seam, so no catalog is needed.
   """
+
+  require Logger
+  alias EvoGit.Config.Schema.LLMConstraints
+
+  # Normalizes the metadata-source result (app-env seam or catalog lookup) to the
+  # documented `%{limits:, capabilities:}` / `nil` contract.
+  defp normalize_metadata(metadata), do: LLMConstraints.normalize_metadata(metadata)
 
   @doc """
   Extracts LLM generation parameters, filtering out nil values.
-
   Returns a keyword list suitable for passing to `ReqLLM.stream_text/3`.
-
   Accepts either:
   - A **model profile map** (e.g. `%{id: "default", temperature: 0.7, ...}`) —
     extracts params directly from the profile.
@@ -147,10 +173,13 @@ defmodule EvoGit.Config.Schema.LLM do
   on WebSocket v2, not the default HTTP/SSE streaming transport. EvoGit manages its own
   full conversation history, so server-side response chaining/storage is never needed.
 
-  This is **OpenAI-specific** — the `store` option only exists for OpenAI's Responses API.
-  Applying it globally to all providers would break non-OpenAI providers. Use
-  `provider_options_for_model/1` at call sites instead, which returns this default only
-  when the model's provider is `:openai`.
+  This is **OpenAI-specific** — the `store` option only exists for OpenAI's *own*
+  Responses API. It is therefore applied ONLY to a genuine native OpenAI endpoint:
+  a model spec carrying a custom `:base_url` or `:extra` describes an
+  OpenAI-**compatible** third-party endpoint (e.g. the dashboard's
+  "OpenAI-Compatible API" catalog entry, which maps to provider `:openai` with a
+  custom `base_url`), and such endpoints do not implement `store`. Use
+  `provider_options_for_model/1` at call sites instead, which encodes that rule.
   """
   @spec default_provider_options() :: keyword()
   def default_provider_options, do: [store: false]
@@ -193,20 +222,41 @@ defmodule EvoGit.Config.Schema.LLM do
   @doc """
   Returns the appropriate `provider_options` keyword list for a given model spec.
 
-  Returns `[store: false]` (via `default_provider_options/0`) when the model's
-  provider is `:openai`, otherwise `[]`. This prevents applying OpenAI-specific
-  options (like `store`) to non-OpenAI providers.
+  Returns `[store: false]` (via `default_provider_options/0`) only for a NATIVE
+  OpenAI endpoint, and `[]` otherwise. "Native" means the spec's provider is
+  `:openai` AND the spec carries no custom endpoint override (`:base_url` or
+  `:extra`) — a custom endpoint is an OpenAI-compatible third-party service,
+  which does not implement the OpenAI-only options (a presence check is used,
+  so even an empty `extra` map counts as an override).
   """
   @spec provider_options_for_model(String.t() | map() | tuple() | nil) :: keyword()
   def provider_options_for_model(model) do
-    if provider_from_model(model) == :openai, do: default_provider_options(), else: []
+    if provider_from_model(model) == :openai and not custom_endpoint?(model) do
+      default_provider_options()
+    else
+      []
+    end
   end
+
+  defp custom_endpoint?(model) when is_map(model) do
+    Map.get(model, :base_url) != nil or Map.get(model, :extra) != nil
+  end
+
+  defp custom_endpoint?(_model), do: false
 
   @doc """
   Extracts generation params from a single profile map.
+
+  The assembled keyword list is passed through
+  `EvoGit.Config.Schema.LLMConstraints.filter/3` against the profile's model spec,
+  dropping parameters the target provider/model does not accept (see that module
+  for the constraint table and the degradation rules). An explicit
+  `provider_options` override from the profile always wins verbatim.
   """
   @spec profile_generation_params(map()) :: keyword()
   def profile_generation_params(profile) when is_map(profile) do
+    model = Map.get(profile, :model)
+
     []
     |> maybe_param(:temperature, Map.get(profile, :temperature))
     |> maybe_param(:max_tokens, Map.get(profile, :max_tokens))
@@ -219,16 +269,137 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_param(:frequency_penalty, Map.get(profile, :frequency_penalty))
     |> maybe_param(:presence_penalty, Map.get(profile, :presence_penalty))
     |> maybe_provider_options(profile)
+    |> LLMConstraints.filter(model, model_metadata(model))
   end
+
+  @doc false
+  @spec model_metadata(String.t() | map() | tuple() | nil) ::
+          %{limits: map(), capabilities: map()} | nil
+  def model_metadata(model) do
+    case Application.get_env(:evo_git, :llm_model_metadata_fun) do
+      fun when is_function(fun, 1) ->
+        normalize_metadata(safe_metadata(model, fn -> fun.(model) end))
+
+      _ ->
+        catalog_metadata(model)
+    end
+  end
+
+  defp safe_metadata(model, fun) do
+    fun.()
+  rescue
+    error ->
+      Logger.warning(
+        "LLM model metadata lookup failed for #{inspect(model)}: #{Exception.message(error)}"
+      )
+
+      nil
+  catch
+    kind, reason ->
+      Logger.warning(
+        "LLM model metadata lookup failed for #{inspect(model)}: #{inspect({kind, reason})}"
+      )
+
+      nil
+  end
+
+  # Model catalog lookup through ReqLLM's public model API (which resolves the
+  # model from the catalog ReqLLM ships with and returns the enriched model
+  # struct carrying `:limits` and `:capabilities`). Deliberately NEVER raises and
+  # never forces a catalog load: this runs on every agent spawn (and for every
+  # profile read), so a missing/unresolvable catalog simply degrades to "no
+  # metadata" — in which case the declarative constraints in `LLMConstraints`
+  # still apply and no parameter is dropped for lack of metadata.
+  defp catalog_metadata(model) do
+    with {provider, id} when is_atom(provider) and is_binary(id) <- catalog_key(model),
+         {:ok, result} <- catalog_lookup(provider, id) do
+      extract_metadata(result)
+    else
+      _ -> nil
+    end
+  end
+
+  defp catalog_lookup(provider, id) do
+    ReqLLM.model({provider, id, []})
+  rescue
+    error ->
+      {:error, {:lookup_raised, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {:lookup_failed, {kind, reason}}}
+  end
+
+  defp extract_metadata(result) when is_map(result) do
+    limits = Map.get(result, :limits)
+    capabilities = Map.get(result, :capabilities)
+
+    if is_map(limits) or is_map(capabilities) do
+      %{
+        limits: if(is_map(limits), do: limits, else: %{}),
+        capabilities: if(is_map(capabilities), do: capabilities, else: %{})
+      }
+    else
+      nil
+    end
+  end
+
+  defp extract_metadata(_result), do: nil
+
+  # The catalog resolves a model from a `{provider_atom, model_id}` pair; a map
+  # spec (and the 2-tuple form) has no such clause, so the key is normalized
+  # here. Returns nil when the spec carries no resolvable provider or id — no
+  # lookup is then possible and the metadata stays absent (rules stay inert).
+  # `String.to_existing_atom/1` (never `to_atom/1`) keeps a bad user-supplied
+  # provider string from growing the atom table.
+  defp catalog_key(nil), do: nil
+
+  defp catalog_key(model) when is_binary(model) do
+    case String.split(model, ":", parts: 2) do
+      [provider, id] when provider != "" and id != "" -> existing_atom_key(provider, id)
+      _ -> nil
+    end
+  end
+
+  defp catalog_key(%{} = model) do
+    with provider when not is_nil(provider) <- Map.get(model, :provider),
+         id when is_binary(id) and id != "" <- Map.get(model, :id) do
+      existing_atom_key(provider, id)
+    else
+      _ -> nil
+    end
+  end
+
+  defp catalog_key({provider, opts}) when is_list(opts) do
+    case Keyword.get(opts, :id) do
+      id when is_binary(id) and id != "" -> existing_atom_key(provider, id)
+      _ -> nil
+    end
+  end
+
+  defp catalog_key({provider, id}) when is_binary(id) and id != "",
+    do: existing_atom_key(provider, id)
+
+  defp catalog_key(_other), do: nil
+
+  defp existing_atom_key(provider, id) when is_atom(provider) and not is_nil(provider),
+    do: {provider, id}
+
+  defp existing_atom_key(provider, id) when is_binary(provider) do
+    {String.to_existing_atom(provider), id}
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp existing_atom_key(_provider, _id), do: nil
 
   # Resolves provider_options for a profile, preferring an explicit user override
   # over the provider-aware default.
   #
   # - Explicit `provider_options` map in config → converted to a keyword list (user override).
   # - Explicit `provider_options` keyword list in config → used as-is.
-  # - Otherwise → `provider_options_for_model/1` (store: false only for OpenAI).
+  # - Otherwise → `provider_options_for_model/1` (store: false only for a native
+  #   OpenAI endpoint).
   # When the resolved list is empty, the `:provider_options` key is omitted entirely
-  # (non-OpenAI profiles without an override must NOT get store: false).
+  # (a non-native-OpenAI profile without an override must NOT get store: false).
   defp maybe_provider_options(keyword_list, profile) do
     case resolve_provider_options(profile) do
       [] -> keyword_list
