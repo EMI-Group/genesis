@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.4] - 2026-09-26
+
+### Added
+
+- Tools can now return multimodal output (text plus images/audio) that flows through the tool-result pipeline, and injected user messages accept attachments (plain-string results are unchanged)
+- Persistent worktrees for writable foreign repositories, so agents can work in them without disturbing the repository's main HEAD or primary worktrees; foreign repository paths resolve relative to their worktree directory, and a writable foreign repo's persistent worktree path is shown in first-user context with cross-repo subagent paths resolved against it
+- Commit graph is redesigned with per-agent lanes ordered by a DFS subtree-contiguous walk, a neutral lane for unowned commits, depth-based hues, a sticky clickable lane header, a truncation indicator when history is cut at the 100-commit limit, and dashed spawn/merge-back edges
+
+### Changed
+
+- Commit-graph view improvements: overlapping cross-lane edges are staggered so concurrent branches no longer jog at the same midpoint, partial fetch failures no longer blank the whole graph (failed repos keep their agent-set lanes while other groups still load), throttled refetches skip irrelevant agent updates, and the view gains row tooltips, hover sync, scroll-to-selection and keyboard access
+- Skill tools read and write skills in the agent worktree and commit their changes (with an optional commit flag), fixing skill discovery/removal bugs and making agent-authored skills visible and reviewable on their branch
+- Unified commit handling behind a single sandbox-compatible helper that stages only the given paths and treats empty or nothing-staged commits as graceful no-ops
+
+### Fixed
+
+- Non-retryable LLM provider rejections now fail fast with an actionable error (including during context compression), and LLM parameters are filtered based on the provider and model
+- Desktop app no longer shows a black screen on macOS (using the IPv4-loopback URL and latch-gated boot navigation), remains quittable when the dashboard never loads, and preserves its lifetime across transient read errors; the desktop endpoint host now mirrors the IPv4 bind
+- Result.commit_sha now reports the post-fallback commit SHA for commits created by the after-block auto-commit fallback, keeping them reviewable
+
 ## [0.13.3] - 2026-09-24
 
 ### Added
