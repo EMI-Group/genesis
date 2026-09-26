@@ -28,6 +28,13 @@ defmodule EvoDash.Application do
       read_concurrency: true
     ])
 
+    # Connection-address diagnostics: attach (idempotent, non-fatal) a telemetry
+    # handler that copies each HTTP connection's peer address into that
+    # connection process's Logger metadata, so Bandit read-timeout lines become
+    # attributable to a client. NOT a supervised child — :telemetry owns the
+    # handler registration; the children list is unchanged.
+    _ = EvoDash.ConnectionDiagnostics.attach()
+
     children = [
       EvoDashWeb.Telemetry,
       {Phoenix.PubSub, name: EvoDash.PubSub},

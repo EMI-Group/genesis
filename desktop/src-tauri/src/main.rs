@@ -654,6 +654,33 @@ fn run_headless() {
 // GUI mode
 // ---------------------------------------------------------------------------
 
+/// The quit-routing decision: should the quit go through the dashboard's
+/// web-page confirmation dialog (`true`), or take the immediate
+/// `kill_for_quit()` + `exit(0)` path (`false`)?
+///
+/// Confirmation is only possible when the dashboard is **currently loaded** —
+/// its JavaScript is live and can render the modal. A healthy backend alone is
+/// NOT enough: a page that never loaded (or is showing the watchdog error page)
+/// cannot render the dialog, and because the quit flow deliberately has no
+/// timeout-based force-quit, `request_quit` would then wait forever and the app
+/// could only be quit via the OS/task manager. The immediate path is therefore
+/// taken whenever the [`BackendManager::dashboard_loaded`] latch is false —
+/// exactly like the backend-already-down fallback.
+///
+/// The latch is deliberately the RESETTABLE one (not a never-reset "ever
+/// loaded" flag): it means "the page CURRENTLY loaded is a finished load of the
+/// backend URL". A never-reset flag would wedge during backend recovery — after
+/// a crash the watchdog navigates away to the error page, then `show_backend`
+/// resets the latch and re-navigates while the backend is already healthy; in
+/// that window a never-reset flag would be `true` and `probe_http` would
+/// succeed, so the quit would emit `quit-requested` into an error page that
+/// cannot render a dialog.
+///
+/// Pure so the routing is unit-testable without a tauri app.
+pub(crate) fn quit_needs_confirmation(backend_healthy: bool, dashboard_loaded: bool) -> bool {
+    backend_healthy && dashboard_loaded
+}
+
 /// Routes a user-initiated quit through the web-page confirmation flow.
 ///
 /// Called from BOTH the tray menu's "Quit Genesis" item and the macOS Cmd+Q
@@ -661,17 +688,19 @@ fn run_headless() {
 /// identically, so the flow lives in exactly one place.
 ///
 /// It shows + focuses the main window first (so the user sees the dialog the
-/// dashboard renders), then probes the backend:
+/// dashboard renders), then probes the backend AND reads the `dashboard_loaded`
+/// latch to decide via [`quit_needs_confirmation`]:
 ///
-/// - **backend healthy** → emits the `quit-requested` event (synchronously,
-///   then re-emits on a bounded schedule) and returns. The dashboard renders
-///   its confirm modal; on confirmation its JS invokes the `begin_quit`
-///   command (flag only, no kill) and the backend stops itself gracefully.
-///   There is deliberately NO timeout-based force-quit here: Genesis runs long
-///   tasks and must never quit without user confirmation.
-/// - **backend already down** → the WebView shows the watchdog's error page,
-///   so no dashboard dialog could ever appear: flag an intentional shutdown
-///   BEFORE killing the child (so the watchdog never restarts it) and exit.
+/// - **backend healthy AND the dashboard loaded** → emits the `quit-requested`
+///   event (synchronously, then re-emits on a bounded schedule) and returns.
+///   The dashboard renders its confirm modal; on confirmation its JS invokes
+///   the `begin_quit` command (flag only, no kill) and the backend stops itself
+///   gracefully. There is deliberately NO timeout-based force-quit here: Genesis
+///   runs long tasks and must never quit without user confirmation.
+/// - **backend already down, OR the dashboard never loaded** → no page exists
+///   that could render the dialog (the WebView shows the watchdog's error page,
+///   a failed load, or is still blank): flag an intentional shutdown BEFORE
+///   killing the child (so the watchdog never restarts it) and exit.
 fn request_quit(app: &tauri::AppHandle) {
     // Show + focus the main window first, exactly like the "show" arm and the
     // single-instance callback, so the user sees the confirm dialog.
@@ -685,48 +714,70 @@ fn request_quit(app: &tauri::AppHandle) {
     // environment no longer reflects the actual port, so recomputing it here
     // would probe a stale URL.
     let manager = app.try_state::<BackendHandle>();
-    if let Some(manager) = manager.as_ref() {
-        if sidecar::probe_http(manager.backend_url()).is_some() {
-            shell_log::log("quit requested (backend healthy) — asking the dashboard to confirm");
+    let backend_healthy = manager
+        .as_ref()
+        .map(|manager| sidecar::probe_http(manager.backend_url()).is_some())
+        .unwrap_or(false);
+    // The latch is resettable and means "the page CURRENTLY loaded is a
+    // finished load of the backend URL" — i.e. the dashboard's JS is live and
+    // can render the confirm dialog. See `quit_needs_confirmation`.
+    let dashboard_loaded = manager
+        .as_ref()
+        .map(|manager| manager.dashboard_loaded())
+        .unwrap_or(false);
 
-            // Synchronous first emit — the dashboard may be fully connected
-            // right now, and waiting +500ms (the first re-emit) before the
-            // event reaches it is an unnecessary delay.
-            let _ = app.emit("quit-requested", ());
+    if quit_needs_confirmation(backend_healthy, dashboard_loaded) {
+        // `backend_healthy` is true only when the manager exists.
+        let manager = manager
+            .as_ref()
+            .expect("a healthy backend implies a managed BackendHandle");
+        shell_log::log(
+            "quit requested (backend healthy, dashboard loaded) — asking the dashboard to confirm",
+        );
 
-            // Re-emit on a bounded schedule — while the window was hidden to
-            // tray, phoenix suspends reconnects (pageHidden) and the
-            // dashboard's pushEvent drops the event when the channel can't
-            // push; a slow page load also needs time to mount. 6 emits total
-            // (~8s window); the dashboard handler is idempotent (assign set
-            // true; unchanged → no re-render) and the re-emits stop by
-            // themselves once the user confirms (backend stops, app exits).
-            // `manager.inner()` unwraps the tauri `State` (which borrows
-            // `app`) to the owned `Arc<BackendManager>` so the detached thread
-            // can own it ('static). Clone both BEFORE the re-emit closure
-            // moves them.
-            let app = app.clone();
-            let manager = manager.inner().clone();
-            std::thread::spawn(move || {
-                for delay_ms in QUIT_REEMIT_DELAYS_MS {
-                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                    if manager.shutdown_requested() || manager.update_requested() {
-                        break; // user confirmed — the app is going away
-                    }
-                    if app.emit("quit-requested", ()).is_err() {
-                        break; // app is shutting down
-                    }
+        // Synchronous first emit — the dashboard may be fully connected right
+        // now, and waiting +500ms (the first re-emit) before the event reaches
+        // it is an unnecessary delay.
+        let _ = app.emit("quit-requested", ());
+
+        // Re-emit on a bounded schedule — while the window was hidden to tray,
+        // phoenix suspends reconnects (pageHidden) and the dashboard's
+        // pushEvent drops the event when the channel can't push; a slow page
+        // load also needs time to mount. 6 emits total (~8s window); the
+        // dashboard handler is idempotent (assign set true; unchanged → no
+        // re-render) and the re-emits stop by themselves once the user confirms
+        // (backend stops, app exits). `manager.inner()` unwraps the tauri
+        // `State` (which borrows `app`) to the owned `Arc<BackendManager>` so
+        // the detached thread can own it ('static). Clone both BEFORE the
+        // re-emit closure moves them.
+        let app = app.clone();
+        let manager = manager.inner().clone();
+        std::thread::spawn(move || {
+            for delay_ms in QUIT_REEMIT_DELAYS_MS {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                if manager.shutdown_requested() || manager.update_requested() {
+                    break; // user confirmed — the app is going away
                 }
-            });
-            return;
-        }
+                if app.emit("quit-requested", ()).is_err() {
+                    break; // app is shutting down
+                }
+            }
+        });
+        return;
     }
 
-    // Backend down — the WebView shows the watchdog error page, so no
-    // dashboard dialog could appear. Keep the immediate path: flag an
-    // intentional shutdown BEFORE killing the child, so the watchdog never
-    // restarts the backend after a quit has begun.
-    shell_log::log("quit requested with the backend already down — exiting immediately");
+    // Immediate path — no confirmation is possible. Distinguish the two
+    // reasons in the log so a future incident is diagnosable: the backend is
+    // already down (the WebView shows the watchdog error page), or the backend
+    // is healthy but the dashboard never loaded (the latch is false, so its JS
+    // could not render the dialog). Either way: flag an intentional shutdown
+    // BEFORE killing the child, so the watchdog never restarts the backend
+    // after a quit has begun.
+    if backend_healthy {
+        shell_log::log("quit requested before the dashboard loaded — exiting immediately");
+    } else {
+        shell_log::log("quit requested with the backend already down — exiting immediately");
+    }
     if let Some(manager) = manager {
         manager.kill_for_quit();
     }
@@ -1417,6 +1468,31 @@ mod tests {
         assert!(parse_feed_info(r#"{"version":"latest"}"#).is_none());
         assert!(parse_feed_info(r#"{"version":"0.10.10.1"}"#).is_none());
         assert!(parse_feed_info(r#"{"version":""}"#).is_none());
+    }
+
+    /// The quit-routing truth table: the confirmation dialog is used ONLY when
+    /// the backend is healthy AND the dashboard is currently loaded. A healthy
+    /// backend with an unloaded dashboard (never loaded, or showing the error
+    /// page) must take the immediate path — otherwise no dialog can render and
+    /// the no-timeout policy would wedge the quit forever.
+    #[test]
+    fn quit_needs_confirmation_truth_table() {
+        assert!(
+            quit_needs_confirmation(true, true),
+            "healthy backend + loaded dashboard → confirm via the dialog"
+        );
+        assert!(
+            !quit_needs_confirmation(true, false),
+            "healthy backend but no loaded dashboard → immediate path"
+        );
+        assert!(
+            !quit_needs_confirmation(false, true),
+            "backend down (even with a stale latch) → immediate path"
+        );
+        assert!(
+            !quit_needs_confirmation(false, false),
+            "backend down and no dashboard → immediate path"
+        );
     }
 
     /// `is_version_shaped` truth table: `major.minor.patch` (with optional

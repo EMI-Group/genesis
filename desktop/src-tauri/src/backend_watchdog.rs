@@ -391,9 +391,12 @@ impl BackendManager {
     }
 
     /// Clears the latch, so the NEXT navigation must prove itself. Called
-    /// before every deliberate re-navigation (the healthy-boot gate in
-    /// `run_gui` and [`Self::show_backend`]): the latch otherwise describes
-    /// the PREVIOUS page (typically the error page or a failed load).
+    /// before every deliberate navigation AWAY from the dashboard (the
+    /// healthy-boot gate in `run_gui`, [`Self::show_backend`], and
+    /// [`Self::show_error_page`]): the latch otherwise describes the PREVIOUS
+    /// page. It is therefore fresh enough to answer "is the dashboard the page
+    /// currently loaded?" — the question [`crate::quit_needs_confirmation`]
+    /// needs.
     pub fn reset_dashboard_loaded(&self) {
         self.dashboard_loaded.store(false, Ordering::SeqCst);
     }
@@ -823,6 +826,12 @@ impl BackendManager {
     /// Shows the backend-unavailable error page (single attempt; the next
     /// failure cycle re-attempts it once the window exists).
     fn show_error_page(&self, app: &AppHandle) {
+        // We are navigating AWAY from the dashboard, so clear the latch: it
+        // must consistently mean "the page CURRENTLY loaded is a finished load
+        // of the backend URL". A stale `true` here would let a quit during the
+        // recovery window emit `quit-requested` into the error page, which can
+        // never render the confirm dialog.
+        self.reset_dashboard_loaded();
         self.navigate(app, &error_page_data_url(&self.backend_url));
     }
 
@@ -835,6 +844,15 @@ impl BackendManager {
     /// completes (so an early recovery must wait for it) — the shared gate
     /// ([`crate::navigate_until_loaded`]) covers both, aborting on a
     /// quit/update intent or a backend that died again.
+    ///
+    /// The reset happens here, but the backend may have become ready a moment
+    /// earlier while the error page was still the loaded page — during that
+    /// tiny window `dashboard_loaded()` is momentarily still `true` and
+    /// `probe_http` succeeds, so a quit arriving exactly then would take the
+    /// confirmation path against a page that cannot render the dialog. The
+    /// window is a few milliseconds wide (reset → navigate) and the outcome is
+    /// merely "one quit attempt is a no-op and the user quits again" — accepted
+    /// rather than adding a lock around the latch.
     fn show_backend(&self, app: &AppHandle) {
         // The latch describes the PREVIOUS page (typically the error page, or a
         // failed load) — the fresh navigation must prove itself.
@@ -1431,14 +1449,26 @@ mod tests {
             1234
         ));
         // Wrong port.
-        assert!(!url_is_backend(&parse("http://127.0.0.1:1234/"), host, 1235));
+        assert!(!url_is_backend(
+            &parse("http://127.0.0.1:1234/"),
+            host,
+            1235
+        ));
         // Host spelling: `localhost` must NOT match — the shell always uses the
         // IPv4 loopback literal (the macOS `::1` trap).
-        assert!(!url_is_backend(&parse("http://localhost:1234/"), host, 1234));
+        assert!(!url_is_backend(
+            &parse("http://localhost:1234/"),
+            host,
+            1234
+        ));
         // The `data:` error page fires `Finished` too — it must not latch.
         assert!(!url_is_backend(&parse("data:text/html,hello"), host, 1234));
         // Scheme must be plain http.
-        assert!(!url_is_backend(&parse("https://127.0.0.1:1234/"), host, 1234));
+        assert!(!url_is_backend(
+            &parse("https://127.0.0.1:1234/"),
+            host,
+            1234
+        ));
     }
 
     /// The dashboard-loaded latch starts clear, can be set through the
@@ -1456,7 +1486,10 @@ mod tests {
 
         let handle = manager.dashboard_loaded_handle();
         handle.store(true, Ordering::SeqCst);
-        assert!(manager.dashboard_loaded(), "the handle must share the latch");
+        assert!(
+            manager.dashboard_loaded(),
+            "the handle must share the latch"
+        );
 
         manager.reset_dashboard_loaded();
         assert!(

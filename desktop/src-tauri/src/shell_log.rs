@@ -52,9 +52,7 @@ pub fn data_dir() -> PathBuf {
             .join("Application Support")
             .join("genesis")
     } else if cfg!(target_os = "windows") {
-        env_path("APPDATA")
-            .unwrap_or_else(home_dir)
-            .join("genesis")
+        env_path("APPDATA").unwrap_or_else(home_dir).join("genesis")
     } else {
         env_path("XDG_DATA_HOME")
             .unwrap_or_else(|| home_dir().join(".local/share"))
@@ -130,9 +128,7 @@ fn append_line(msg: &str) {
     let timestamp = time::OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string());
-    let mut guard = file
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = file.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = writeln!(guard, "[{timestamp}] {msg}");
 }
 

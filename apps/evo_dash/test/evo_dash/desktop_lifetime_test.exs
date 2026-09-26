@@ -118,6 +118,124 @@ defmodule EvoDash.DesktopLifetimeTest do
     end
   end
 
+  describe "classify_recv_result/1" do
+    test "a genuine peer close is :closed" do
+      assert EvoDash.DesktopLifetime.classify_recv_result({:error, :closed}) == :closed
+    end
+
+    test "received data is :data" do
+      assert EvoDash.DesktopLifetime.classify_recv_result({:ok, "ping"}) == :data
+    end
+
+    test "every other recv error is :ambiguous" do
+      for reason <- [:econnreset, :econnaborted, :eacces, :timeout] do
+        assert EvoDash.DesktopLifetime.classify_recv_result({:error, reason}) == :ambiguous
+      end
+    end
+  end
+
+  describe "ambiguous recv errors" do
+    test "a transient ambiguous error alone does NOT stop; a later peer close does" do
+      test_pid = self()
+      {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
+      {:ok, port} = :inet.port(listener)
+      System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(port))
+      Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
+
+      recv_fun = fn _sock ->
+        send(test_pid, :recv_called)
+
+        receive do
+          :respond_ambiguous -> {:error, :econnreset}
+          :respond_closed -> {:error, :closed}
+        end
+      end
+
+      pid =
+        start_supervised!(
+          {EvoDash.DesktopLifetime,
+           [
+             connect_retries: 5,
+             connect_retry_delay: 10,
+             recv_retries: 5,
+             recv_retry_delay: 10,
+             recv_fun: recv_fun
+           ]}
+        )
+
+      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
+      assert is_port(shell_sock)
+
+      on_exit(fn ->
+        :gen_tcp.close(shell_sock)
+        :gen_tcp.close(listener)
+      end)
+
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 20
+
+      send(pid, :respond_ambiguous)
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 20
+
+      send(pid, :respond_ambiguous)
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 20
+
+      send(pid, :respond_closed)
+      assert_receive @stop_message, 2000
+
+      assert Process.alive?(pid)
+      refute_receive @stop_message, 100
+    end
+
+    test "an always-ambiguous error does not stop within the retry budget, then stops" do
+      test_pid = self()
+      {:ok, listener} = :gen_tcp.listen(0, [:binary, active: false])
+      {:ok, port} = :inet.port(listener)
+      System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(port))
+      Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
+
+      recv_fun = fn _sock ->
+        send(test_pid, :recv_called)
+        {:error, :eacces}
+      end
+
+      pid =
+        start_supervised!(
+          {EvoDash.DesktopLifetime,
+           [
+             connect_retries: 5,
+             connect_retry_delay: 10,
+             recv_retries: 3,
+             recv_retry_delay: 30,
+             recv_fun: recv_fun
+           ]}
+        )
+
+      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
+      assert is_port(shell_sock)
+
+      on_exit(fn ->
+        :gen_tcp.close(shell_sock)
+        :gen_tcp.close(listener)
+      end)
+
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 10
+
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 10
+
+      assert_receive :recv_called, 2000
+      refute_receive @stop_message, 10
+
+      assert_receive @stop_message, 2000
+      assert Process.alive?(pid)
+      refute_receive @stop_message, 100
+    end
+  end
+
   # --- Helpers ---
 
   defp unused_port do
