@@ -51,9 +51,13 @@ config :tailwind,
   ]
 
 # Configures Elixir's Logger
+# `:remote_ip`/`:remote_port` are tagged by the evo_dash telemetry hook so that
+# connection-scoped failures (e.g. Bandit "Read timeout") carry the peer address
+# — the key signal when a client reaches the server over IPv6 vs the IPv4-only
+# desktop loopback bind.
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
+  metadata: [:request_id, :remote_ip, :remote_port]
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
