@@ -24,10 +24,11 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     * `#commit-graph` + `phx-hook="CommitGraph"` → the node-scoped body
       `#commit-graph-body-<node_key>` → one section per repo whose id IS the
       model's `repo_dom_id` VERBATIM (no extra prefix) with a name header;
-    * `#cg-scroll-<dom>` — the `overflow-x` wrapper hosting (top → bottom) the
-      sticky lane-header bar and the `relative` list wrapper `#cg-list-<dom>`
-      holding the absolute gutter `<svg.cg-gutter[viewBox]>` and the `.cg-rows`
-      container left-padded by the gutter width;
+    * `#cg-scroll-<dom>` — the BOTH-axis scroll wrapper (`overflow: auto` +
+      a bounded `max-height` live in the `.cg-scroll` rule in app.css) hosting
+      (top → bottom) the sticky lane-header bar and the `relative` list wrapper
+      `#cg-list-<dom>` holding the absolute gutter `<svg.cg-gutter[viewBox]>`
+      and the `.cg-rows` container left-padded by the gutter width;
     * LANE HEADER chips: ONE per agent lane (`#cg-lane-<dom>-<lane>`,
       `button.cg-lane-chip`, `T<task_local_id>` in the agent's hue + status dot,
       the `select_agent` contract, dimmed when ended — including a lane with NO
@@ -197,15 +198,18 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     end
   end
 
-  describe "commit_graph_view/1 — horizontal scroll + gutter geometry" do
+  describe "commit_graph_view/1 — scroll + gutter geometry" do
     test "the scroll wrapper hosts the sticky lane header and the list, in order" do
       {_repo, dom, tree} = happy()
 
       [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
 
-      # overflow-x scrolling as ONE unit (gutter + rows + lane headers).
-      assert attr(scroll, "class") |> hd() =~ "cg-scroll"
-      assert attr(scroll, "class") |> hd() =~ "overflow-x-auto"
+      # ONE scroll unit on BOTH axes (gutter + rows + lane headers): the
+      # `.cg-scroll` rule in app.css owns `overflow: auto` + the bounded
+      # `max-height` that makes the lane header's sticky actually stick — NO
+      # Tailwind overflow utility rides the element (a lone overflow-x is the
+      # shape that made the stick inert).
+      assert attr(scroll, "class") == ["cg-scroll"]
 
       [lane_header, list] = element_children(scroll)
       assert attr(lane_header, "id") == ["cg-lane-header-#{dom}"]
@@ -745,6 +749,72 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert attr(row, "phx-click") == []
       assert attr(row, "phx-value-id") == []
       assert attr(row, "data-cg-agent-id") == []
+    end
+  end
+
+  describe "commit_graph_view/1 — row tooltips, keyboard access, selection data" do
+    test "every row carries the node tooltip as a native title" do
+      {_repo, dom, tree} = happy()
+
+      # The gutter svg is pointer-events: none, so its <title> was unreachable;
+      # the SAME node_title/1 content now rides the row div.
+      [row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
+
+      assert attr(row, "title") == [
+               "Merge pre-task history · c1000000 · Alice · 2024-01-01 10:00"
+             ]
+
+      [row4] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c4}")
+
+      assert attr(row4, "title") == [
+               "Refactor Z · c4000000 · Dave · 2024-01-03 10:00 · HEAD, genesis/agent_x"
+             ]
+
+      # A stub row keeps its 'base' prefix tooltip.
+      [base_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_b1}")
+      assert attr(base_row, "title") == ["base · b1000000"]
+
+      # Every row — owned or not — carries one.
+      rows = Floki.find(tree, ".cg-row")
+      assert length(rows) == length(Floki.find(tree, ".cg-row[title]"))
+    end
+
+    test "an owned row is keyboard-reachable; an unowned row is not" do
+      {_repo, dom, tree} = happy()
+
+      [owned] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
+      assert attr(owned, "role") == ["button"]
+      assert attr(owned, "tabindex") == ["0"]
+
+      # The neutral pre-task row has no click contract and no button role.
+      [unowned] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_p1}")
+      assert attr(unowned, "phx-click") == []
+      assert attr(unowned, "role") == []
+      assert attr(unowned, "tabindex") == []
+    end
+
+    test "the root carries the selection as data-cg-selected-id (stringified raw term)" do
+      repos = happy_repos()
+
+      tree = parse(render_repos(repos))
+      assert attr(hd(Floki.find(tree, "#commit-graph")), "data-cg-selected-id") == []
+
+      selected = parse(render_repos(repos, selected_id: "a2"))
+      assert attr(hd(Floki.find(selected, "#commit-graph")), "data-cg-selected-id") == ["a2"]
+
+      # An integer selection stringifies exactly like the rows' data-cg-agent-id.
+      int_repos = [
+        repo_view(
+          nodes: [node_view(sha: "n0000001", owner_id: 42)],
+          agents: [agent_map(agent_id: 42, task_local_id: 5)]
+        )
+      ]
+
+      int_tree = parse(render_repos(int_repos, selected_id: 42))
+
+      [row] = Floki.find(int_tree, ".cg-row")
+      assert attr(row, "data-cg-agent-id") == ["42"]
+      assert attr(hd(Floki.find(int_tree, "#commit-graph")), "data-cg-selected-id") == ["42"]
     end
   end
 
