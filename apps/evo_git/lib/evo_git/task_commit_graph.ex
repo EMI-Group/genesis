@@ -118,7 +118,9 @@ defmodule EvoGit.TaskCommitGraph do
 
   `opts` is passed through to `CommitGraph.for_task/4` (`:limit`);
   `:base_sha`/`:foreign_repos` are consumed here only. Always returns
-  `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}`.
+  `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}, truncated: boolean}}`
+  (`truncated: true` when any tip range was cut at `opts[:limit]` — the flag
+  from `CommitGraph.for_task/4`, carried verbatim).
   """
   def for_task(task_id, repo_path, live_tips, opts \\ []) do
     refs = resolve(task_id)

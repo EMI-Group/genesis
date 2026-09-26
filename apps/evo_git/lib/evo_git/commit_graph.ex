@@ -10,7 +10,10 @@ defmodule EvoGit.CommitGraph do
   `for_task/4` is the TASK-SCOPED variant: given one task-wide `base_sha` and a
   list of tip refs (durable task refs + live agent tips), it draws the whole
   task from its base commit through every tip — INCLUDING the base commit
-  itself (which `git log base..tip` deliberately excludes).
+  itself (which `git log base..tip` deliberately excludes) — and reports
+  whether any tip range was cut at the caller's `:limit` (`truncated: true`),
+  so a consumer can surface "commits were dropped" instead of silently
+  showing a shorter history.
 
   Every git operation goes through `EvoGit.Adapters.Git`. Both functions are
   TOTAL: unresolvable ranges, invalid refs, and non-git directories contribute
@@ -49,7 +52,7 @@ defmodule EvoGit.CommitGraph do
   @spec for_ranges(String.t(), [{String.t(), String.t()}], keyword()) :: {:ok, map()}
   def for_ranges(repo_path, ranges, opts) do
     limit = resolve_limit(opts)
-    commits = collect_commits(repo_path, ranges, limit)
+    {commits, _truncated} = collect_commits(repo_path, ranges, limit)
 
     {:ok, %{commits: commits, refs: refs_for(repo_path, commits)}}
   end
@@ -72,41 +75,63 @@ defmodule EvoGit.CommitGraph do
   graph boundary (the same convention as `for_ranges/3`, which can return merge
   parents lying outside a range).
 
+  Truncation detection is EXACT, not a `count == limit` guess: each range is
+  fetched with `-n limit + 1`, and the extra row is dropped after the check.
+  `truncated` is therefore exactly "some tip range held MORE commits than the
+  limit" — a range landing exactly on the limit (no older commits exist) is
+  NOT truncated.
+
   `opts` is a keyword list; it supports `:limit` (max commits kept per range).
 
-  Returns the SAME shape as `for_ranges/3`:
-  `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}` (commits newest-first
+  Returns `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}, truncated:
+  boolean}}` — the SAME shape as `for_ranges/3` plus the `:truncated` flag,
+  which is `true` when ANY tip range was cut at the limit (commits newest-first
   with the base appended last). `refs` is computed over the full union, so the
   base node also carries its branch/tag labels. A `nil`/blank `base_sha` — the
-  base is genuinely unknown — yields `{:ok, %{commits: [], refs: %{}}}`.
+  base is genuinely unknown — yields
+  `{:ok, %{commits: [], refs: %{}, truncated: false}}`.
   """
   @spec for_task(String.t(), String.t() | nil, [String.t() | nil], keyword()) :: {:ok, map()}
   def for_task(repo_path, base_sha, tips, opts \\ []) do
     base = normalize_ref(base_sha)
 
     if is_nil(base) do
-      {:ok, %{commits: [], refs: %{}}}
+      {:ok, %{commits: [], refs: %{}, truncated: false}}
     else
       limit = resolve_limit(opts)
       ranges = Enum.map(normalize_tips(tips), fn tip -> {base, tip} end)
 
+      {commits, truncated} = collect_commits(repo_path, ranges, limit)
+
       commits =
-        collect_commits(repo_path, ranges, limit)
+        commits
         |> Kernel.++(base_commit_for(repo_path, base))
         |> Enum.uniq_by(& &1.sha)
 
-      {:ok, %{commits: commits, refs: refs_for(repo_path, commits)}}
+      {:ok, %{commits: commits, refs: refs_for(repo_path, commits), truncated: truncated}}
     end
   end
 
   # Shared per-range collection + dedupe used by BOTH `for_ranges/3` and
   # `for_task/4`: normalize the ranges, run one `git log <base>..<tip>` each,
   # and keep the first occurrence of every full SHA (git log order).
+  #
+  # Returns `{commits, truncated}` where `truncated` is true when ANY range's
+  # log held MORE than `limit` commits — detected exactly by fetching
+  # `limit + 1` rows per range and dropping the extra row after the check, so a
+  # range landing exactly on the limit (nothing older exists) is NOT truncated.
+  # `for_ranges/3` discards the flag (its caller supplies raw ranges and has no
+  # truncation consumer); `for_task/4` surfaces it.
   defp collect_commits(repo_path, ranges, limit) do
-    ranges
-    |> normalize_ranges()
-    |> Enum.flat_map(&commits_for_range(repo_path, &1, limit))
-    |> Enum.uniq_by(& &1.sha)
+    results = Enum.map(normalize_ranges(ranges), &commits_for_range(repo_path, &1, limit))
+
+    commits =
+      results
+      |> Enum.flat_map(&elem(&1, 0))
+      |> Enum.uniq_by(& &1.sha)
+
+    truncated = Enum.any?(results, &elem(&1, 1))
+    {commits, truncated}
   end
 
   # Fetches the base commit itself as a single-node log (the same pretty format
@@ -169,13 +194,25 @@ defmodule EvoGit.CommitGraph do
   end
 
   # One `git log <base>..<tip>` per range. A bad ref (exit != 0) or a
-  # non-existent path normalizes to an empty commit list.
+  # non-existent path normalizes to an empty commit list. Fetches `limit + 1`
+  # rows and drops the extra row, so truncation is EXACT: `truncated` is true
+  # iff the range held more than `limit` commits.
   defp commits_for_range(repo_path, {base, tip}, limit) do
-    args = ["--format=#{@commit_format}", "-n", Integer.to_string(limit), "#{base}..#{tip}"]
+    args = [
+      "--format=#{@commit_format}",
+      "-n",
+      Integer.to_string(limit + 1),
+      "#{base}..#{tip}"
+    ]
 
     case Git.log(repo_path, args) do
-      {:ok, output} -> parse_log_output(output)
-      {:error, {_, _}} -> []
+      {:ok, output} ->
+        commits = parse_log_output(output)
+        truncated = length(commits) > limit
+        {Enum.take(commits, limit), truncated}
+
+      {:error, {_, _}} ->
+        {[], false}
     end
   end
 

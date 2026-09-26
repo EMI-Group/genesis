@@ -713,7 +713,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   `live_tips` a list of tip SHA/ref strings (nils allowed). Runs on the REMOTE
   node when called via `:erpc.call/5`.
 
-  Returns `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}}}`.
+  Returns `{:ok, %{commits: [commit], refs: %{sha => [ref_name]}, truncated:
+  boolean}}` — `truncated: true` when any tip range was cut at `opts[:limit]`.
   """
   @spec list_task_commit_graph(String.t(), String.t(), [String.t() | nil], keyword()) ::
           {:ok, map()}

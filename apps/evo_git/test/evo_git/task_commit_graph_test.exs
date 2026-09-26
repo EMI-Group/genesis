@@ -229,17 +229,55 @@ defmodule EvoGit.TaskCommitGraphTest do
       _c1 = commit!(repo, "f1.txt", "1\n", "one")
 
       assert TaskCommitGraph.for_task("no-such-task", repo, [], []) ==
-               {:ok, %{commits: [], refs: %{}}}
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
+    end
+
+    test "carries truncated through the whole resolve → range-fetch pipeline", %{repo: repo} do
+      shas = for i <- 1..5, do: commit!(repo, "f#{i}.txt", "#{i}\n", "commit #{i}")
+      [base | _] = shas
+      tip = List.last(shas)
+
+      # Exactly at the limit: the 4-commit range == limit 4 → not truncated.
+      assert {:ok, %{truncated: false}} =
+               TaskCommitGraph.for_task("no-such-task", repo, [tip], base_sha: base, limit: 4)
+
+      # Above the limit: 4-commit range > limit 2 → truncated.
+      assert {:ok, %{commits: commits, truncated: true}} =
+               TaskCommitGraph.for_task("no-such-task", repo, [tip], base_sha: base, limit: 2)
+
+      assert length(commits) == 3
     end
   end
 
   test "RemoteNode.list_task_commit_graph/5 unwraps the local call", %{repo: repo} do
-    _c1 = commit!(repo, "f1.txt", "1\n", "one")
-    _c2 = commit!(repo, "f2.txt", "2\n", "two (base)")
+    c1 = commit!(repo, "f1.txt", "1\n", "one")
+    c2 = commit!(repo, "f2.txt", "2\n", "two (base)")
     c3 = commit!(repo, "f3.txt", "3\n", "three")
 
     assert EvoGit.RemoteNode.list_task_commit_graph(node(), "no-such-task", repo, [c3], []) ==
              TaskCommitGraph.for_task("no-such-task", repo, [c3], [])
+
+    # The truncation flag survives the RPC plumbing verbatim (local path):
+    # base c2 → the c2..c3 range holds exactly 1 commit == limit 1 → not
+    # truncated; base c1 → the c1..c3 range holds 2 commits > limit 1 →
+    # truncated. Both asserted against the identical direct call.
+    assert EvoGit.RemoteNode.list_task_commit_graph(node(), "no-such-task", repo, [c3],
+             base_sha: c2,
+             limit: 1
+           ) ==
+             TaskCommitGraph.for_task("no-such-task", repo, [c3], base_sha: c2, limit: 1)
+
+    assert {:ok, %{truncated: false}} =
+             EvoGit.RemoteNode.list_task_commit_graph(node(), "no-such-task", repo, [c3],
+               base_sha: c2,
+               limit: 1
+             )
+
+    assert {:ok, %{truncated: true}} =
+             EvoGit.RemoteNode.list_task_commit_graph(node(), "no-such-task", repo, [c3],
+               base_sha: c1,
+               limit: 1
+             )
   end
 
   # Writes/overwrites a file, stages it, commits, and returns the full SHA.

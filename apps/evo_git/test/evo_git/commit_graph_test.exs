@@ -263,9 +263,14 @@ defmodule EvoGit.CommitGraphTest do
     test "a nil/blank base yields an empty graph", %{repo: repo} do
       c1 = commit!(repo, "f1.txt", "1\n", "one")
 
-      assert CommitGraph.for_task(repo, nil, [c1], []) == {:ok, %{commits: [], refs: %{}}}
-      assert CommitGraph.for_task(repo, "", [c1], []) == {:ok, %{commits: [], refs: %{}}}
-      assert CommitGraph.for_task(repo, "   ", [c1], []) == {:ok, %{commits: [], refs: %{}}}
+      assert CommitGraph.for_task(repo, nil, [c1], []) ==
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
+
+      assert CommitGraph.for_task(repo, "", [c1], []) ==
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
+
+      assert CommitGraph.for_task(repo, "   ", [c1], []) ==
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
     end
 
     test "no usable tips yields only the base node", %{repo: repo} do
@@ -277,7 +282,7 @@ defmodule EvoGit.CommitGraphTest do
       assert refs[c2] == ["main"]
 
       assert CommitGraph.for_task(repo, c2, [nil, "", 123, :nope], []) ==
-               {:ok, %{commits: [node], refs: refs}}
+               {:ok, %{commits: [node], refs: refs, truncated: false}}
     end
 
     test "caps range commits at opts[:limit] while always keeping the base", %{repo: repo} do
@@ -285,8 +290,49 @@ defmodule EvoGit.CommitGraphTest do
       [base | _] = shas
       tip = List.last(shas)
 
-      assert {:ok, %{commits: commits}} = CommitGraph.for_task(repo, base, [tip], limit: 2)
+      assert {:ok, %{commits: commits, truncated: truncated}} =
+               CommitGraph.for_task(repo, base, [tip], limit: 2)
+
       assert Enum.map(commits, & &1.sha) == [tip, Enum.at(shas, 3), base]
+      # The range (4 commits above the base) exceeded the limit of 2.
+      assert truncated == true
+    end
+
+    test "flags truncated only when a range held more than the limit", %{repo: repo} do
+      # 5 commits total: base + 4 above it.
+      shas = for i <- 1..5, do: commit!(repo, "f#{i}.txt", "#{i}\n", "commit #{i}")
+      [base | _] = shas
+      tip = List.last(shas)
+
+      # Exactly at the limit (4 range commits == limit 4): nothing was cut.
+      assert {:ok, %{commits: commits, truncated: false}} =
+               CommitGraph.for_task(repo, base, [tip], limit: 4)
+
+      assert length(commits) == 5
+
+      # Below the limit: complete graph, not truncated.
+      assert {:ok, %{truncated: truncated}} = CommitGraph.for_task(repo, base, [tip], limit: 100)
+      refute truncated
+
+      # Above the limit (limit 3 < 4 range commits): truncated, the extra row
+      # dropped — `commits` holds exactly the limit + the base node.
+      assert {:ok, %{commits: commits, truncated: true}} =
+               CommitGraph.for_task(repo, base, [tip], limit: 3)
+
+      assert Enum.map(commits, & &1.sha) == [tip, Enum.at(shas, 3), Enum.at(shas, 2), base]
+    end
+
+    test "truncated stays false for a small range and a base==tip range", %{repo: repo} do
+      base = commit!(repo, "f1.txt", "1\n", "one")
+      tip = commit!(repo, "f2.txt", "2\n", "two")
+
+      assert {:ok, %{truncated: truncated}} = CommitGraph.for_task(repo, base, [tip], limit: 1)
+      # The single-commit range is exactly at the limit — not truncated.
+      assert truncated == false
+
+      # An empty (base == tip) range is never truncated.
+      assert {:ok, %{truncated: empty_truncated}} = CommitGraph.for_task(repo, tip, [tip], [])
+      refute empty_truncated
     end
 
     test "degrades to empty for an unresolvable base or a non-git directory", %{repo: repo} do
@@ -295,7 +341,7 @@ defmodule EvoGit.CommitGraphTest do
 
       # Unresolvable base ref → no range commits, no base node.
       assert CommitGraph.for_task(repo, "no-such-ref", [c2], []) ==
-               {:ok, %{commits: [], refs: %{}}}
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
 
       # Unresolvable tips drop, but the base node still resolves.
       assert {:ok, %{commits: [node]}} = CommitGraph.for_task(repo, c1, ["nope-ref", 42], [])
@@ -311,7 +357,7 @@ defmodule EvoGit.CommitGraphTest do
       on_exit(fn -> File.rm_rf!(plain) end)
 
       assert CommitGraph.for_task(plain, "HEAD", ["HEAD"], []) ==
-               {:ok, %{commits: [], refs: %{}}}
+               {:ok, %{commits: [], refs: %{}, truncated: false}}
     end
   end
 

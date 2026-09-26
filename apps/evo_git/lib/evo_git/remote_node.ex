@@ -670,7 +670,9 @@ defmodule EvoGit.RemoteNode do
   `repo_path` is the absolute repository path, `live_tips` a list of live agent
   tip SHA/ref strings (nils allowed) and `opts` a keyword list (`:limit`,
   optional `:base_sha`/`:foreign_repos`). Returns
-  `{:ok, %{commits: [commit], refs: %{sha => [ref]}}}` or
+  `{:ok, %{commits: [commit], refs: %{sha => [ref]}, truncated: boolean}}`
+  (`truncated: true` when any tip range was cut at `opts[:limit]`, carried
+  verbatim through the local and `:erpc` paths) or
   `{:error, {kind, reason}}` on RPC failure.
   """
   @spec list_task_commit_graph(node(), String.t(), String.t(), [String.t() | nil], keyword()) ::
