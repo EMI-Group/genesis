@@ -18,6 +18,7 @@ defmodule EvoGit.AgentScheduler.Store do
   alias EvoGit.AgentScheduler.SchedMeta
   alias EvoGit.AgentScheduler.PubSub
   alias EvoGit.Agent.Usage
+  alias EvoGit.Attachments
   alias ReqLLM.Context
 
   @agent_table :evogit_agent_state
@@ -172,17 +173,33 @@ defmodule EvoGit.AgentScheduler.Store do
   @doc """
   Appends a user message to an agent's pending message queue.
 
+  Accepts BOTH shapes the queue must tolerate:
+
+    * a legacy plain `String.t()` — stored VERBATIM, so a legacy binary stays
+      byte-identical end-to-end (the pre-change behavior is unchanged);
+    * a `%{text:, attachments:}` map (atom- or string-keyed) — CANONICALIZED
+      through `EvoGit.Attachments.message/1` before storing, so the queue holds
+      the canonical `%{text: String.t(), attachments: [map] | nil}` form.
+
+  A malformed map (unknown attachment type, blank name/media_type, non-base64
+  or oversized `data`, non-string `text`) raises the descriptive
+  `ArgumentError` from `EvoGit.Attachments.message/1` (spec-error style — never
+  silently dropped), and nothing is queued.
+
   Called through the AgentScheduler GenServer (serialized), so concurrent
   appends are safe. The message will be drained and injected into the agent's
   context at the top of its next turn by `drain_pending_user_messages/1`.
   """
-  @spec append_pending_user_message(pos_integer(), String.t()) :: :ok | {:error, :not_found}
-  def append_pending_user_message(agent_id, message) when is_binary(message) do
+  @spec append_pending_user_message(pos_integer(), String.t() | Attachments.message()) ::
+          :ok | {:error, :not_found}
+  def append_pending_user_message(agent_id, message) when is_binary(message) or is_map(message) do
+    stored = canonical_pending_message(message)
+
     case get_agent_state(agent_id) do
       {:ok, agent_state} ->
         updated = %{
           agent_state
-          | pending_user_messages: agent_state.pending_user_messages ++ [message]
+          | pending_user_messages: agent_state.pending_user_messages ++ [stored]
         }
 
         put_agent_state(agent_id, updated)
@@ -199,11 +216,15 @@ defmodule EvoGit.AgentScheduler.Store do
   resets the `pending_user_messages` field to `[]`. Returns the drained list.
   Returns `[]` if the agent doesn't exist or has no pending messages.
 
+  Every returned entry has the same shape that was appended (see
+  `append_pending_user_message/2`): a legacy binary verbatim, or the canonical
+  multimodal message map `%{text: String.t(), attachments: [map] | nil}`.
+
   Called by the agent process at the top of its turn loop (before the LLM call).
   The re-read of the full struct ensures we get the latest context/turn/etc.
   from the agent's own writes, minimizing the race window.
   """
-  @spec drain_pending_user_messages(pos_integer()) :: [String.t()]
+  @spec drain_pending_user_messages(pos_integer()) :: [String.t() | Attachments.message()]
   def drain_pending_user_messages(agent_id) do
     case get_agent_state(agent_id) do
       {:ok, agent_state} ->
@@ -219,6 +240,19 @@ defmodule EvoGit.AgentScheduler.Store do
         []
     end
   end
+
+  # Shape tolerance for a pending user message (the write half of the queue's
+  # `String.t() | %{text:, attachments:}` contract):
+  #
+  #   * a legacy binary is stored VERBATIM — the pre-change behavior, so a
+  #     legacy message stays byte-identical end-to-end;
+  #   * a map is canonicalized (and validated — a malformed payload raises the
+  #     descriptive `ArgumentError`) through `EvoGit.Attachments.message/1`.
+  #
+  # Both the map/validate seam and this verbatim binary clause live here so the
+  # queue holds exactly what its callers appended, shape-for-shape.
+  defp canonical_pending_message(message) when is_binary(message), do: message
+  defp canonical_pending_message(message) when is_map(message), do: Attachments.message(message)
 
   @doc """
   Sets the `cancel_requested` flag to `true` on an agent's state.

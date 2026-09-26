@@ -309,6 +309,12 @@ defmodule EvoGit.RemoteNode do
   @doc """
   Sends a user message to a running agent on the given node.
 
+  `message` is either a legacy plain `String.t()` or a `%{text:, attachments:}`
+  map carrying images/audio (see `EvoGit.Attachments.message/1`) — it is passed
+  through verbatim to the agent's pending-message queue, which the runner's
+  drain materializes as a user message (media allowed for an agent at ANY
+  depth; there is no root gate on injected messages).
+
   On the local node, calls
   `EvoGit.AgentScheduler.RemoteAPI.send_agent_message/2` directly. On a remote
   node, routes the call through `:erpc` via `call_remote/4`.
@@ -316,7 +322,8 @@ defmodule EvoGit.RemoteNode do
   Returns `{:ok, result}` on success or `{:error, reason}` on failure (including
   RPC failures such as node down or timeout).
   """
-  @spec send_agent_message(node(), pos_integer(), String.t()) :: {:ok, term()} | {:error, term()}
+  @spec send_agent_message(node(), pos_integer(), String.t() | map()) ::
+          {:ok, term()} | {:error, term()}
   def send_agent_message(node, agent_id, message) do
     if node == node() do
       {:ok, EvoGit.AgentScheduler.RemoteAPI.send_agent_message(agent_id, message)}

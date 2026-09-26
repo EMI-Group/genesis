@@ -168,6 +168,11 @@ defmodule EvoGit.Agent.ContextBuilder do
   `ReqLLM.Context.user(combined_prompt)` is used, producing a byte-identical
   message shape. Subagents (non-nil `parent_id`) never inherit attachments;
   pass `nil` for `attachments` to force the plain-text path.
+
+  This root gate applies to the `:attachments` TASK OPT ONLY. Media reaching an
+  agent through any OTHER channel is not gated — in particular a mid-run
+  INJECTED user message may carry attachments for an agent at ANY depth (see
+  `build_injected_message/2`).
   """
   @spec build_initial_messages(String.t(), String.t(), integer() | nil, term()) ::
           [ReqLLM.Message.t()]
@@ -182,6 +187,48 @@ defmodule EvoGit.Agent.ContextBuilder do
       end
 
     [ReqLLM.Context.system(system_prompt), user_message]
+  end
+
+  @doc """
+  Materializes ONE injected (mid-run) user message into an LLM user message.
+
+  Injected messages travel through the pending-message queue
+  (`EvoGit.AgentScheduler.send_user_message/2` → the `pending_user_messages`
+  drain) either as a legacy plain `String.t()` or as a `%{text:,
+  attachments:}` map (`EvoGit.Attachments.message/1` normalizes both), so this
+  helper normalizes first and then materializes:
+
+    * a legacy binary, or a map whose attachments are `nil`/`[]` →
+      `ReqLLM.Context.user(text)` — the plain-text fast path;
+    * a map carrying attachments →
+      `ReqLLM.Context.user([ContentPart.text(text) | image/file parts])` via
+      `EvoGit.Attachments.to_content_parts/2`, parts in input order.
+
+  NO root gate: unlike the `:attachments` TASK OPT (root agent's first user
+  message only — see `build_initial_messages/4`), ANY agent at ANY depth may
+  receive an injected message carrying media.
+
+  `turn` — when an integer, the message is turn-tagged exactly as every other
+  injected message via `tag_message_turn/2` (that also stamps a creation-time
+  timestamp); `nil` skips tagging entirely, so the returned message is the raw
+  `ReqLLM.Context.user/1` result. Pure — never reads the process dictionary;
+  a malformed message map raises a descriptive `ArgumentError` (spec-error
+  style, see `EvoGit.Attachments.validate_message!/1`).
+  """
+  @spec build_injected_message(String.t() | map(), integer() | nil) :: ReqLLM.Message.t()
+  def build_injected_message(message, turn) do
+    %{text: text, attachments: attachments} = EvoGit.Attachments.message(message)
+
+    user_message =
+      case attachments do
+        [_ | _] -> ReqLLM.Context.user(EvoGit.Attachments.to_content_parts(text, attachments))
+        _ -> ReqLLM.Context.user(text)
+      end
+
+    case turn do
+      turn when is_integer(turn) -> tag_message_turn(user_message, turn)
+      _ -> user_message
+    end
   end
 
   # --- ETS Sync Helpers ---

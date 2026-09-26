@@ -435,7 +435,24 @@ defmodule EvoGit.Agent.Runner do
     end
   end
 
-  defp drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
+  # Drains the agent's pending user-message queue and appends each message to
+  # the context as a turn-tagged user-role message.
+  #
+  # Each drained message may be a legacy plain `String.t()` or a
+  # `%{text:, attachments:}` map (`Store.drain_pending_user_messages/1` yields
+  # whatever was queued) — materialization is delegated to the pure
+  # `EvoGit.Agent.ContextBuilder.build_injected_message/2`, which yields a plain
+  # `user(text)` for a legacy binary / no media and a
+  # `user([ContentPart.text(text) | media…])` content-part message when the
+  # message carries attachments. There is NO root gate on injected messages:
+  # any agent at any depth may receive media here (the root-only gate covers the
+  # `:attachments` TASK OPT only — the first user message).
+  #
+  # Public (@doc false) solely so it can be tested directly — same convention as
+  # `refresh_commit_sha/1` / `maybe_enter_cancel_grace/1`. Called only from
+  # `loop/1` in production.
+  @doc false
+  def drain_and_inject_user_messages(%LoopState{agent_id: agent_id, context: context} = state) do
     messages = EvoGit.AgentScheduler.Store.drain_pending_user_messages(agent_id)
 
     case messages do
@@ -445,7 +462,7 @@ defmodule EvoGit.Agent.Runner do
       _ ->
         new_context =
           Enum.reduce(messages, context, fn msg, ctx ->
-            tagged = EvoGit.Agent.ContextBuilder.tag_message_turn(user(msg), state.turn)
+            tagged = EvoGit.Agent.ContextBuilder.build_injected_message(msg, state.turn)
             ReqLLM.Context.append(ctx, tagged)
           end)
 

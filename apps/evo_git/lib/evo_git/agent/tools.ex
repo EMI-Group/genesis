@@ -165,7 +165,35 @@ defmodule EvoGit.Agent.Tools do
   - `node_path` - Optional path to the agent's assigned node for spatial
     contract validation. Used to ensure file operations stay within scope.
 
+  ## Return value
+
+  A tool MAY return any of:
+
+  - `String.t()` — the plain all-text result (the shape every built-in tool
+    produces today). `EvoGit.Agent.ToolDispatch` threads it through the
+    BINARY-ONLY sanitize / truncate / hint pipeline and materializes it as a
+    single `ContentPart.text/1` — byte-identical to the legacy path.
+  - `%EvoGit.Agent.ToolOutput{}` — text PLUS optional multimodal media (images /
+    audio as the string-keyed base64 maps of `EvoGit.Attachments`). The media
+    ride the tool-result message as real content parts
+    (`[ContentPart.text(text) | media parts…]`); the wrap boundary lives in
+    `EvoGit.Agent.ToolDispatch` (see `EvoGit.Agent.ToolOutput`).
+  - `{:error, reason}` — the dispatch/tool failed; the caller surfaces it as an
+    `"Error: …"` string.
+
+  The two write guards (`maybe_block_repo_less/5`,
+  `maybe_block_read_only_foreign_repo/5`) and every other guard path return a
+  plain `String.t()` `"Error: …"` message, never a `%ToolOutput{}`.
   """
+  @spec execute(
+          String.t(),
+          map() | String.t(),
+          String.t(),
+          String.t() | nil,
+          String.t() | nil
+        ) :: String.t() | EvoGit.Agent.ToolOutput.t() | {:error, term()}
+  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
+
   # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
 
@@ -182,8 +210,6 @@ defmodule EvoGit.Agent.Tools do
   )
 
   @unknown_tool_similarity_threshold 0.7
-
-  def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
 
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     maybe_block_repo_less(normalize_tool_name(tool_name), args, repo_path, repo_root, node_path)
@@ -325,9 +351,32 @@ defmodule EvoGit.Agent.Tools do
         "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
         "that accept modifications; read-only foreign repos are for investigation only."
     else
-      execute_tool(tool_name, args, repo_path, repo_root, node_path)
+      case test_tool_override(tool_name) do
+        nil -> execute_tool(tool_name, args, repo_path, repo_root, node_path)
+        fun -> fun.(args, repo_path, repo_root, node_path)
+      end
     end
   end
+
+  # Test-only seam (app env `:evo_git, :tool_dispatch_test_tools`): maps a tool
+  # NAME to a `fun.(args, repo_path, repo_root, node_path)` whose return value is
+  # passed through verbatim — including a `%EvoGit.Agent.ToolOutput{}` carrying
+  # media. It is consulted AFTER the two write guards and BEFORE built-in
+  # dispatch, so an integration test can drive the REAL dispatch plumbing
+  # (serial/parallel batch phases, sanitize/truncate, hint tracking, message
+  # assembly) end-to-end. Overriding a built-in name is deliberate: the real
+  # name-driven behaviours (the serial/parallel partition, the delegation hints,
+  # the redundant-cd warning) are then exercised too. The registry is EMPTY in
+  # production (the app env is unset), so dispatch is byte-identical there — and
+  # a `nil`/non-map env value is treated as "no override" rather than crashing.
+  defp test_tool_override(tool_name) when is_binary(tool_name) do
+    case Application.get_env(:evo_git, :tool_dispatch_test_tools) do
+      tools when is_map(tools) -> Map.get(tools, tool_name)
+      _ -> nil
+    end
+  end
+
+  defp test_tool_override(_tool_name), do: nil
 
   # Tool execution dispatch
 
