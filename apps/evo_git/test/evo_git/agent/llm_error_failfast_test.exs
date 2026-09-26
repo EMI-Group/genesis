@@ -156,8 +156,29 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
   end
 
   defp call_llm_with_retry(agent_id, max_retries) do
-    ToolDispatch.call_llm_with_retry(ReqLLM.Context.new(), [], [], agent_id, max_retries)
+    ToolDispatch.call_llm_with_retry(
+      ReqLLM.Context.new(),
+      test_tools(),
+      [],
+      agent_id,
+      max_retries
+    )
   end
+
+  # The tools list carried by `call_llm_with_retry/2`'s calls under test. A real
+  # agent run ALWAYS sends its tool schemas, and that matters for what is
+  # asserted here: `handle_llm_failure/7` builds its self-diagnosing tail from
+  # `Keyword.merge([tools: tools], llm_gen_opts)`, and
+  # `EvoGit.Agent.LlmError.parameter_names/1` EXCLUDES an EMPTY `:tools` list
+  # (ReqLLM sends no tools field then) — so a call made with `tools: []` omits
+  # the whole `"Request parameters sent: [...]"` sentence and would make that
+  # assertion vacuous.
+  #
+  # A REAL tool schema (not a placeholder map): ReqLLM's provider build phase
+  # runs `ReqLLM.Tool.to_schema/2` over every entry, so anything that is not a
+  # `%ReqLLM.Tool{}` fails with `:provider_build_failed` BEFORE reaching the
+  # transport, which would bypass the HTTP 400 under test entirely.
+  defp test_tools, do: [EvoGit.Agent.Tools.FileRead.schema()]
 
   defp prompt_until_tools_or_limit(agent_id, max_retries) do
     ToolDispatch.prompt_until_tools_or_limit(ReqLLM.Context.new(), [], [], agent_id, max_retries)
@@ -393,6 +414,12 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
           assert message =~ "code 1210"
           assert message =~ @zai_human_message
           assert message =~ "non-retryable"
+
+          # The self-diagnosing tail: the parameter NAMES Genesis actually sent
+          # for this call (non-empty — see @tools) plus the resolved model spec
+          # to check. A call with `tools: []` would omit this whole sentence.
+          assert message =~ "Request parameters sent: ["
+          assert message =~ "Check the model profile for model test-llm-server"
         end)
 
       # EXACTLY one HTTP request: no further attempt was made.
@@ -437,6 +464,71 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
       assert message =~ "non-retryable"
       assert EvoGit.TestLlmServer.request_count(server) == 1
       assert model_backoff_remaining() == nil
+    end
+  end
+
+  describe "request-parameter debug log" do
+    # `ToolDispatch.log_request_parameters/2` emits the per-attempt parameter
+    # NAMES as a LAZY 0-arity `Logger.debug` message BEFORE the slot is acquired,
+    # so an ordinary (retryable) failure stays diagnosable while the happy path
+    # pays nothing. This pins the LEVEL contract end to end: the line is visible
+    # at `:debug` and absent at `:info` (where the rejection itself is still
+    # reported by the `Logger.error` in the fail-fast branch).
+    #
+    # Both calls run and are awaited INSIDE their `capture_log/1` block so the
+    # debug emission (the very first thing an attempt does) cannot race the
+    # capture becoming active — unlike the rejection line, it is not delayed by
+    # a HTTP round trip.
+    test "the per-attempt parameter names appear at :debug and not at :info" do
+      previous_level = Logger.level()
+
+      # The GLOBAL level, not `capture_log/2`'s `:level` option: the option does
+      # NOT override `Logger.level/0`, so a debug message would still be dropped
+      # unless the global level is raised here.
+      Logger.configure(level: :debug)
+
+      on_exit(fn -> Logger.configure(level: previous_level) end)
+
+      debug_agent_id = 301
+      debug_server = EvoGit.TestLlmServer.start!(@zai_status, @zai_body)
+
+      register_agent(debug_agent_id, model_at(debug_server.url), 15)
+      on_exit(fn -> purge_llm_pool(debug_agent_id) end)
+
+      debug_log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          task =
+            start_agent_call(debug_agent_id, fn -> call_llm_with_retry(debug_agent_id, 15) end)
+
+          assert {:error, {:llm_request_rejected, _message}} = Task.await(task, 5_000)
+        end)
+
+      assert debug_log =~ "LLM request parameters sent: ["
+
+      # Back to the ordinary level: the same call must now be SILENT about the
+      # parameters while still reporting the rejection itself.
+      Logger.configure(level: :info)
+
+      info_agent_id = 302
+      info_server = EvoGit.TestLlmServer.start!(@zai_status, @zai_body)
+
+      register_agent(info_agent_id, model_at(info_server.url), 15)
+      on_exit(fn -> purge_llm_pool(info_agent_id) end)
+
+      info_log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          task = start_agent_call(info_agent_id, fn -> call_llm_with_retry(info_agent_id, 15) end)
+
+          assert {:error, {:llm_request_rejected, _message}} = Task.await(task, 5_000)
+        end)
+
+      refute info_log =~ "LLM request parameters sent"
+
+      # Each call still issued exactly one request, and the fail-fast rejection
+      # stayed visible at :info.
+      assert EvoGit.TestLlmServer.request_count(debug_server) == 1
+      assert EvoGit.TestLlmServer.request_count(info_server) == 1
+      assert info_log =~ "Provider rejected the LLM request"
     end
   end
 
