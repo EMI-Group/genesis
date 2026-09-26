@@ -10,17 +10,6 @@ defmodule EvoGit.Agent.LlmErrorTest do
   (no server, no scheduler, no ETS, no app env, no process dictionary), and the
   module under test is documented as total (never raises for any term), so the
   suite needs no globals and never has to serialise against another module.
-
-  The suite additionally PINS two reported production divergences, asserting the
-  CURRENT behaviour rather than the correct one:
-
-    * a phrase-less HTTP 402 wrapped in `{:error, …}` / an `API.Stream` is
-      classified non-retryable instead of keeping the long model-exhaustion
-      backoff (see the `"known divergence (reported production bug)"` block);
-    * `parameter_names/1` RAISES `Protocol.UndefinedError` for a struct input —
-      its `is_map/1` clause feeds structs into `Enum.reject/2` — contradicting
-      the module's documented totality (see the struct case in the
-      `"parameter_names/1"` block).
   """
   use ExUnit.Case, async: true
 
@@ -252,40 +241,44 @@ defmodule EvoGit.Agent.LlmErrorTest do
     end
   end
 
-  describe "known divergence (reported production bug)" do
-    # PRODUCTION DIVERGENCE — reported to the caller; NOT fixed here (this suite
-    # is test-only) and NOT weakened: the CURRENT value is pinned so the
-    # divergence stays visible.
-    #
-    # `non_retryable?/1` peels the wrapper layers to LOCATE the API request, but
-    # the model-exhaustion precedence check runs on the RAW reason:
-    # `TruncationFeedback.classify_model_exhaustion/1` only recognises a BARE
-    # `%ReqLLM.Error.API.Request{}` structurally and otherwise falls back to a
-    # substring search over `inspect/1`. A 402 wrapped in `{:error, …}` (or in an
-    # `API.Stream`) therefore loses its exhaustion class whenever the wrapper's
-    # `inspect/1` text carries no balance/quota phrase — and the status rule
-    # (`400..499` ⇒ non-retryable) then classifies it NON-RETRYABLE, so an
-    # out-of-credit provider fails the task fast instead of taking the long
-    # (~2.5 day) scheduler backoff. `ToolDispatch.handle_llm_failure/7` performs
-    # the same raw-reason check, so it takes the same branch.
-    #
-    # CORRECT behaviour is `false`. Minimal reproduction:
-    #
-    #     {:error, %ReqLLM.Error.API.Request{status: 402, reason: "Payment Required"}}
-    #     |> EvoGit.Agent.LlmError.non_retryable?()   #=> true (should be false)
-    #
-    # Compare "402 wrapped in an :error tuple keeps the long backoff" above: the
-    # real DeepSeek 402 carries "Insufficient Balance" and is therefore handled
-    # correctly — only a phrase-less 402 falls through.
-    test "a phrase-less wrapped 402 is currently classified non-retryable" do
+  describe "non_retryable?/1 — a phrase-less 402 stays retryable at any depth" do
+    # The model-exhaustion precedence is evaluated on the UNWRAPPED
+    # `%ReqLLM.Error.API.Request{}` (the one the unwrapper resolves), because
+    # `TruncationFeedback.structural_insufficient_balance?/1` only recognises a
+    # BARE API request (`status == 402`) and otherwise falls back to a substring
+    # search over `inspect/1`. A 402 whose text carries no balance/quota phrase
+    # therefore must NOT be downgraded to non-retryable by the 400..499 status
+    # rule just because it arrived inside a wrapper: an out-of-credit provider
+    # keeps its retry path however ReqLLM wrapped the failure, and
+    # `ToolDispatch.handle_llm_failure/7` never fails the task fast on it.
+    test "a phrase-less 402 is retryable bare and in every wrapper shape" do
       request = %ApiRequest{status: 402, reason: "Payment Required"}
 
-      # Bare: correctly retryable (structural 402 wins).
       refute LlmError.non_retryable?(request)
+      refute LlmError.non_retryable?({:error, request})
+      refute LlmError.non_retryable?({:exit, request})
+      refute LlmError.non_retryable?(%ApiStream{cause: request})
+      refute LlmError.non_retryable?(%{cause: request})
+      refute LlmError.non_retryable?({:error, %ApiStream{cause: %{cause: request}}})
+      refute LlmError.non_retryable?(nest(request, 4))
+    end
 
-      # Wrapped: the bug — the exhaustion class is lost with the wrapper.
-      assert LlmError.non_retryable?({:error, request})
-      assert LlmError.non_retryable?(%ApiStream{cause: request})
+    test "a phrase-less 402 with no extractable text is retryable too" do
+      refute LlmError.non_retryable?(%ApiRequest{status: 402})
+      refute LlmError.non_retryable?({:error, %ApiRequest{status: 402}})
+    end
+
+    test "the 402 precedence does not leak into other statuses" do
+      # The fix is scoped to the exhaustion precedence: a wrapped 400 (no
+      # exhaustion signal) is still NON-retryable, and the transient statuses
+      # are still retryable.
+      assert LlmError.non_retryable?({:error, %ApiRequest{status: 400, retryable: false}})
+      assert LlmError.non_retryable?(%ApiStream{cause: %ApiRequest{status: 422}})
+
+      for status <- [408, 409, 425, 429, 500, 503] do
+        refute LlmError.non_retryable?({:error, %ApiRequest{status: status, retryable: false}}),
+               "expected a wrapped HTTP #{status} to stay retryable"
+      end
     end
   end
 
@@ -577,18 +570,49 @@ defmodule EvoGit.Agent.LlmErrorTest do
       end
     end
 
-    test "a struct input currently RAISES — reported production divergence" do
-      # PRODUCTION DIVERGENCE — reported to the caller; NOT fixed here (this suite
-      # is test-only). `parameter_names/1`'s `is_map/1` clause feeds ANY map,
-      # including a struct, straight into `Enum.reject/2`; a struct that does not
-      # implement `Enumerable` (ReqLLM's error structs do not) raises
-      # `Protocol.UndefinedError` instead of returning `[]`, contradicting the
-      # module's documented "total: never raises for any input shape" contract.
-      # The `:__struct__` key rejection in that clause is therefore unreachable
-      # for a real struct — it can never be observed there.
-      assert_raise Protocol.UndefinedError, fn ->
-        LlmError.parameter_names(%ApiRequest{status: 400})
+    test "totality: struct, tuple, number, function, pid and ref inputs" do
+      # A struct is a map WITHOUT an `Enumerable` implementation, so it must
+      # never reach `Enum.*` (it would raise `Protocol.UndefinedError`); its
+      # fields are not the parameters handed to the provider, so it yields `[]`
+      # like every other non-keyword/non-map term.
+      inputs = [
+        %ApiRequest{status: 400},
+        %ApiStream{cause: nil},
+        %Finch.TransportError{reason: :timeout},
+        {:a, 1},
+        {:a, 1, 2},
+        {},
+        {1},
+        123,
+        1.5,
+        fn -> :ok end,
+        &LlmError.non_retryable?/1,
+        self(),
+        make_ref(),
+        nil,
+        true,
+        :atom,
+        "binary",
+        %{},
+        []
+      ]
+
+      for input <- inputs do
+        assert LlmError.parameter_names(input) == [],
+               "expected [] for #{inspect(input, limit: 5)}"
       end
+    end
+
+    test "a struct-like map still has its :__struct__ marker key rejected" do
+      # `:__struct__` carrying a non-atom is NOT a struct (`is_struct/1` is
+      # false), so it takes the plain-map path — where the marker key must be
+      # dropped while real parameter names survive.
+      assert LlmError.parameter_names(%{__struct__: 123, a: 1}) == ["a"]
+    end
+
+    test "deep proplist-ish shapes stay total" do
+      assert LlmError.parameter_names([{:a, [{:b, 1}]}, [{:c, 2}]]) == ["a"]
+      assert LlmError.parameter_names(cause: {:error, "boom"}, tools: []) == ["cause"]
     end
 
     test "a hostile key is sanitized to a single line" do

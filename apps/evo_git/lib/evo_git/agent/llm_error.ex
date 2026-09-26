@@ -43,7 +43,11 @@ defmodule EvoGit.Agent.LlmError do
   (`EvoGit.Agent.TruncationFeedback.classify_model_exhaustion/1` →
   `:insufficient_balance`, e.g. HTTP 402, or `:rate_limit`, e.g. HTTP 429)
   always keeps its long scheduler-side backoff path. `non_retryable?/1`
-  therefore returns `false` for every such reason, and
+  therefore returns `false` for every such reason — evaluated on the **unwrapped**
+  `API.Request` (see the unwrapper above; `TruncationFeedback`'s structural 402
+  check only matches a bare `API.Request`, so a wrapped 402 must be tested on the
+  request it wraps) and on the raw reason as well, so a wrapper carrying the
+  phrase cannot change the classification either.
   `ToolDispatch.handle_llm_failure/7` orders its model-exhaustion branch BEFORE
   the fail-fast branch — so the precedence holds whichever entry point is used.
 
@@ -93,8 +97,10 @@ defmodule EvoGit.Agent.LlmError do
   Unwraps `reason` (see the module doc) to find the
   `%ReqLLM.Error.API.Request{}` and applies the classification rule; returns
   `false` when no API request is found, when it carries no non-retryable
-  signal, or when the reason is a model-exhaustion signal (402 / 429 / a quota
-  phrase) — those keep the existing long backoff.
+  signal, or when the unwrapped request (or the raw reason) is a
+  model-exhaustion signal (402 / 429 / a quota phrase) — those keep the existing
+  long backoff. In particular an HTTP 402 is NEVER reported as non-retryable,
+  however it is wrapped.
 
   Total: never raises for any input shape.
   """
@@ -102,12 +108,25 @@ defmodule EvoGit.Agent.LlmError do
   def non_retryable?(reason) do
     case find_api_request(reason, 0) do
       {:ok, %ReqLLM.Error.API.Request{} = request} ->
-        TruncationFeedback.classify_model_exhaustion(reason) == nil and
-          classify(request) == :non_retryable
+        not model_exhaustion?(reason, request) and classify(request) == :non_retryable
 
       :not_found ->
         false
     end
+  end
+
+  # The model-exhaustion precedence (an HTTP 402 / 429 / a quota phrase) is
+  # decided on the UNWRAPPED `API.Request` — the one `find_api_request/2`
+  # resolved. `TruncationFeedback.structural_insufficient_balance?/1` only
+  # matches a BARE `API.Request` (it checks `status == 402`), so classifying the
+  # raw reason alone would let a 402 wrapped in an `API.Stream` / an
+  # `{:error, …}` tuple — whose text carries no balance/quota phrase — fall
+  # through to the `400..499` rule and be reported NON-RETRYABLE, losing the
+  # retry a billing error is supposed to get. The raw reason is consulted too,
+  # so a wrapper that DOES carry the phrase keeps its existing classification.
+  defp model_exhaustion?(reason, request) do
+    TruncationFeedback.classify_model_exhaustion(request) != nil or
+      TruncationFeedback.classify_model_exhaustion(reason) != nil
   end
 
   @doc """
@@ -196,9 +215,17 @@ defmodule EvoGit.Agent.LlmError do
   listing the name would misattribute a provider rejection to a parameter that
   never reached it.
 
-  Total: any non-keyword/non-map input yields `[]`.
+  Total: every input yields a list of names, never a raise. A struct yields
+  `[]`: it is a map, but it does NOT implement `Enumerable` (so `Enum` would
+  raise `Protocol.UndefinedError` on it) and its internal fields are never
+  request parameters. Any other non-keyword/non-map input (a number, a tuple, a
+  function, a pid, `nil`, ...) also yields `[]`.
   """
   @spec parameter_names(term()) :: [String.t()]
+  # A struct is a map without an `Enumerable` implementation: it must never reach
+  # `Enum.*`, and its fields are not the parameters handed to the LLM provider.
+  def parameter_names(%_{}), do: []
+
   def parameter_names(params) when is_map(params) do
     params
     |> Enum.reject(fn {key, value} -> key == :__struct__ or empty_tools?({key, value}) end)

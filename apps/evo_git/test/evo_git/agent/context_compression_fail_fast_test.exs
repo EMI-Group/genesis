@@ -52,10 +52,10 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
   @rejected_body ~s({"error":{"code":1210,"message":"Invalid API parameter, please check the documentation."}})
 
-  # The DeepSeek-style 402 body. The balance phrase is REQUIRED here: the
-  # model-exhaustion classification runs on the RAW reason via a substring
-  # fallback, so a phrase-less 402 would be classified non-retryable instead
-  # (a known, already-pinned divergence in `llm_error_test.exs`).
+  # The DeepSeek-style 402 body. The "Insufficient Balance" phrase is what the
+  # RAW-reason classification in `ToolDispatch.handle_llm_failure/7` matches
+  # (a substring fallback over `inspect/1`, since the reason arrives wrapped in
+  # an `API.Stream`), so this is the realistic out-of-credit shape.
   @exhausted_status 402
   @exhausted_body ~s({"error":{"message":"Insufficient Balance"}})
 
