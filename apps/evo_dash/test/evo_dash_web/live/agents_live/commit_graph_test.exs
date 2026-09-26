@@ -214,7 +214,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
       [repo] = CommitGraph.build(%{"primary" => raw(chain([@c1, @c2, @c3]))}, [a])
 
       assert keys(repo) ==
-               ~w(agents column_count edge_count edges node_count nodes repo_dom_id repo_key repo_name row_count)a
+               ~w(agents column_count edge_count edges node_count nodes repo_dom_id repo_key repo_name row_count truncated)a
 
       assert [node | _] = repo.nodes
 
@@ -260,6 +260,23 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
         refute Map.has_key?(edge, :from)
         refute Map.has_key?(edge, :to)
       end
+    end
+
+    test "the raw repo map's truncated flag surfaces on the repo_view (absent → false)" do
+      a = agent(1, nil, base_commit: @b0, current_commit: @c3)
+      b = agent(2, nil, repo_root: "/r/other", base_commit: @b0, current_commit: @c3)
+
+      raw_by_repo = %{
+        "primary" => %{commits: chain([@c1, @c2, @c3]), refs: %{}, truncated: true},
+        "/r/other" => %{commits: chain([@c1, @c2, @c3]), refs: %{}}
+      }
+
+      views = CommitGraph.build(raw_by_repo, [a, b])
+
+      # The flag rides along verbatim from the raw map…
+      assert repo_by_key(views, "primary").truncated == true
+      # …and an absent key (older payload / no cut range) reads as false.
+      assert repo_by_key(views, "/r/other").truncated == false
     end
   end
 
