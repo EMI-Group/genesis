@@ -10,7 +10,7 @@ None — leaf directory (Elixir config files only).
 
 | File | Purpose | Phase |
 |------|---------|-------|
-| `config.exs` | Base config — endpoint, asset builders (esbuild/tailwind), logger, JSON lib, `req_llm` HTTP timeouts, sandbox mode | Compile |
+| `config.exs` | Base config — endpoint, asset builders (esbuild/tailwind), logger, JSON lib, `req_llm` HTTP timeouts, sandbox mode. The `:logger, :default_formatter` metadata list carries `[:request_id, :remote_ip, :remote_port]` so connection-scoped log lines (e.g. Bandit `Read timeout`) are tagged with the peer address — the signal that distinguishes an IPv6-preferring client from the IPv4-only desktop loopback bind | Compile |
 | `dev.exs` | Dev overrides — port 4100, code reloader, asset watchers, debug errors | Compile |
 | `test.exs` | Test overrides — port 4002, server disabled, warning-level logger | Compile |
 | `prod.exs` | Production overrides — static cache manifest, info-level logger | Compile |
