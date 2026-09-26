@@ -52,7 +52,7 @@ This is the native application layer — it contains NO Elixir code. The actual 
 └─────────────────────┘
 ```
 
-Tauri launches the Phoenix app as a child process via the mix release launcher script (`bin/genesis_desktop start`). The WebView connects to Phoenix over HTTP to render the LiveView UI. Closing the window hides it to the system tray — the backend keeps running. The user fully exits via the tray's "Quit Genesis" menu item or macOS Cmd+Q (both route through the same web-page confirmation and never force-quit a healthy backend).
+Tauri launches the Phoenix app as a child process via the mix release launcher script (`bin/genesis_desktop start`). The WebView connects to Phoenix over HTTP to render the LiveView UI. Closing the window hides it to the system tray — the backend keeps running. The user fully exits via the tray's "Quit Genesis" menu item or macOS Cmd+Q (both route through the same decision: the web-page confirmation when the backend is healthy AND the dashboard is loaded, else an immediate `kill_for_quit()` + exit — never force-quitting a healthy, loaded backend).
 
 ## Sidecar Lifecycle
 
