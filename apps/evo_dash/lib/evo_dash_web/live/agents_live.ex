@@ -807,19 +807,26 @@ defmodule EvoDashWeb.AgentsLive do
 
       # Skip the fingerprint work entirely on the bypass paths.
       cond do
-        force? -> refresh_commit_graph(socket, agents, gate: false)
+        force? ->
+          refresh_commit_graph(socket, agents, force: true, gate: false)
+
         # A fetch is already in flight: never gate (and never re-spawn) — its
         # result applies the freshest data and re-stores the fingerprint.
-        socket.assigns.commit_graph_loading -> refresh_commit_graph(socket, agents, gate: false)
-        true -> refresh_commit_graph(socket, agents, gate: true)
+        socket.assigns.commit_graph_loading ->
+          refresh_commit_graph(socket, agents, force: false, gate: false)
+
+        true ->
+          refresh_commit_graph(socket, agents, force: false, gate: true)
       end
     end
   end
 
   # Rebuild + (maybe) refetch. `gate: true` compares the agent set's
   # commit-relevance fingerprint against the stored one and short-circuits on
-  # a match; `gate: false` always rebuilds and follows the throttle/tick rules.
-  defp refresh_commit_graph(socket, agents, gate: gate?) do
+  # a match; `gate: false` always rebuilds. `force: true` additionally bypasses
+  # the fetch throttle (view switch / tick fire); `force: false` follows the
+  # throttle/tick rules.
+  defp refresh_commit_graph(socket, agents, force: force?, gate: gate?) do
     if gate? do
       fingerprint = CommitGraphRefresh.fingerprint(agents)
 
@@ -829,12 +836,12 @@ defmodule EvoDashWeb.AgentsLive do
       else
         socket
         |> rebuild_commit_graph(agents, fingerprint)
-        |> fetch_commit_graph(agents, fingerprint)
+        |> fetch_commit_graph(agents, fingerprint, force?)
       end
     else
       socket
       |> rebuild_commit_graph(agents, nil)
-      |> fetch_commit_graph(agents, nil)
+      |> fetch_commit_graph(agents, nil, force?)
     end
   end
 
@@ -856,7 +863,8 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Spawns the refetch (or arms the one-shot tick when throttled) and stores
   # `fingerprint` so the fetch's result path knows which agent set it captured.
-  defp fetch_commit_graph(socket, agents, fingerprint) do
+  # `force?` bypasses the throttle (view switch / tick fire).
+  defp fetch_commit_graph(socket, agents, fingerprint, force?) do
     groups = commit_graph_groups(agents)
 
     cond do
@@ -868,7 +876,7 @@ defmodule EvoDashWeb.AgentsLive do
           commit_graph_fingerprint: fingerprint || CommitGraphRefresh.fingerprint(agents)
         )
 
-      not commit_graph_throttled?(socket) ->
+      force? or not commit_graph_throttled?(socket) ->
         spawn_commit_graph_fetch(socket, fingerprint)
 
       true ->
