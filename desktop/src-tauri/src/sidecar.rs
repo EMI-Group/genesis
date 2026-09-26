@@ -78,7 +78,8 @@ pub fn launcher_command(launcher: &std::path::Path) -> std::process::Command {
 /// server (no distributed Erlang, dynamic port resolved once at startup,
 /// server mode enabled).
 ///
-/// The bind address defaults to `127.0.0.1` (localhost only) for security.
+/// The bind address defaults to `127.0.0.1` (IPv4 loopback only) for
+/// security.
 /// Users can override it by setting the `EVOGIT_BIND` environment variable
 /// before launching the desktop app (e.g. `EVOGIT_BIND=0.0.0.0` for remote
 /// access). The value is passed to Phoenix as `PHX_IP`.
@@ -224,10 +225,10 @@ pub fn spawn(
         .stderr(std::process::Stdio::piped())
         .spawn()?;
 
-    println!(
-        "[desktop] spawned genesis-backend sidecar (pid {})",
+    crate::shell_log::log(&format!(
+        "spawned genesis-backend sidecar (pid {})",
         child.id()
-    );
+    ));
 
     // Drain stdout on a background thread.
     if let Some(stdout) = child.stdout.take() {

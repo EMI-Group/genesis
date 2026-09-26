@@ -1,6 +1,7 @@
 // Prevents an additional console window on Windows in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use serde_json::json;
@@ -12,21 +13,47 @@ use tauri::{
 use tauri_plugin_updater::UpdaterExt;
 
 mod backend_watchdog;
+mod shell_log;
 mod sidecar;
 mod sidecar_path;
 
 use backend_watchdog::BackendManager;
 
+/// The host the shell uses for every backend client URL (the WebView's
+/// navigation URL, the readiness probes, the watchdog's reload, and the error
+/// page's Retry target).
+///
+/// It is the IPv4 loopback LITERAL, matching what the Phoenix endpoint
+/// actually binds (`config/runtime.exs`, desktop mode: `ip: {127, 0, 0, 1}`).
+/// Spelling it `localhost` is a macOS trap: `localhost` also resolves to
+/// `::1`, and WKWebView/CFNetwork does not reliably fall back to IPv4 — the
+/// load then dies against a refused IPv6 connection while a browser (Happy
+/// Eyeballs) works fine. Keeping ONE helper means no call site can drift back.
+const BACKEND_HOST: &str = "127.0.0.1";
+
+/// The shell-side HTTP URL of the backend on `port` — the single source of
+/// every backend client URL (see [`BACKEND_HOST`]).
+pub(crate) fn backend_url(port: u16) -> String {
+    format!("http://{BACKEND_HOST}:{port}")
+}
+
 /// How long (in seconds) to wait for the backend to become ready.
 const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
 
-/// How many times the GUI setup retries navigating the webview to the
-/// dashboard after the initial readiness poll (step 8). The webview's first
-/// load races the backend boot, so the re-navigation must tolerate a webview
-/// that is still initializing; the budget is bounded (~20 × 250ms = ~5s).
-const INITIAL_NAVIGATE_ATTEMPTS: u32 = 20;
-/// Delay between the post-readiness navigation retries.
-const INITIAL_NAVIGATE_RETRY_MS: u64 = 250;
+/// How many times the GUI setup may navigate the webview to the dashboard
+/// after the initial readiness poll (step 8).
+///
+/// Each attempt navigates and then waits up to
+/// [`INITIAL_NAVIGATE_ATTEMPT_WAIT_MS`] for the webview to report the page as
+/// **loaded** (see `navigate_until_loaded`): a navigation that was merely
+/// accepted is not success, so the budget is measured in real page loads
+/// (~3 × 5s = 15s worst case), not in accept-retries.
+const INITIAL_NAVIGATE_ATTEMPTS: u32 = 3;
+/// How long each post-readiness navigation attempt waits for the webview to
+/// report the dashboard as loaded before the next attempt starts.
+const INITIAL_NAVIGATE_ATTEMPT_WAIT_MS: u64 = 5_000;
+/// Poll interval while waiting for the page-load latch inside an attempt.
+const INITIAL_NAVIGATE_POLL_MS: u64 = 100;
 
 /// Delays (ms) between the `quit-requested` re-emits after the synchronous
 /// first emit (see the tray "quit" arm). 5 re-emits + the sync emit = 6
@@ -455,8 +482,9 @@ fn resolve_backend_port_from(env_port: Option<&str>) -> u16 {
 ///
 /// The `PORT` environment variable is honored when it is set, parses as a
 /// port, and is currently free; otherwise a random free ephemeral port is
-/// picked at startup (never a fixed default). The WebView always connects via
-/// `localhost` since it runs on the same machine, using the same port.
+/// picked at startup (never a fixed default). Every client URL — the WebView's
+/// navigation target, the readiness probes and the watchdog's reload — is
+/// built by [`backend_url`] from the same resolved port.
 fn resolve_backend_port() -> u16 {
     resolve_backend_port_from(std::env::var("PORT").ok().as_deref())
 }
@@ -549,6 +577,8 @@ fn headless_sidecar_env(port: u16, lifetime_port: Option<u16>) -> Vec<(String, S
 /// SIGINT is received.  On signal the sidecar is killed gracefully before the
 /// process exits.
 fn run_headless() {
+    shell_log::init();
+
     #[cfg(unix)]
     signal_handler::setup();
 
@@ -584,27 +614,27 @@ fn run_headless() {
             std::process::exit(1);
         });
 
-    println!(
-        "[desktop] spawned genesis-backend sidecar (pid {})",
+    shell_log::log(&format!(
+        "spawned genesis-backend sidecar (pid {})",
         child.id()
-    );
+    ));
 
     // Wait for the backend to become ready (reuses the existing poll logic).
-    let url = format!("http://localhost:{port}");
+    let url = backend_url(port);
     sidecar::wait_for_ready(&url, BACKEND_READY_TIMEOUT_SECS);
 
-    println!("[desktop] running headless — press Ctrl+C to stop");
+    shell_log::log("running headless — press Ctrl+C to stop");
 
     // Block until the sidecar exits or a shutdown signal arrives.
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                println!("[desktop] sidecar exited with: {status:?}");
+                shell_log::log(&format!("sidecar exited with: {status:?}"));
                 std::process::exit(status.code().unwrap_or(0));
             }
             Ok(None) => {
                 if SHUTDOWN_FLAG.load(std::sync::atomic::Ordering::SeqCst) {
-                    println!("[desktop] received signal, shutting down sidecar...");
+                    shell_log::log("received signal, shutting down sidecar...");
                     let _ = child.kill();
                     let _ = child.wait();
                     std::process::exit(0);
@@ -624,15 +654,96 @@ fn run_headless() {
 // GUI mode
 // ---------------------------------------------------------------------------
 
+/// Routes a user-initiated quit through the web-page confirmation flow.
+///
+/// Called from BOTH the tray menu's "Quit Genesis" item and the macOS Cmd+Q
+/// path (the `RunEvent::ExitRequested` handler): the two must behave
+/// identically, so the flow lives in exactly one place.
+///
+/// It shows + focuses the main window first (so the user sees the dialog the
+/// dashboard renders), then probes the backend:
+///
+/// - **backend healthy** → emits the `quit-requested` event (synchronously,
+///   then re-emits on a bounded schedule) and returns. The dashboard renders
+///   its confirm modal; on confirmation its JS invokes the `begin_quit`
+///   command (flag only, no kill) and the backend stops itself gracefully.
+///   There is deliberately NO timeout-based force-quit here: Genesis runs long
+///   tasks and must never quit without user confirmation.
+/// - **backend already down** → the WebView shows the watchdog's error page,
+///   so no dashboard dialog could ever appear: flag an intentional shutdown
+///   BEFORE killing the child (so the watchdog never restarts it) and exit.
+fn request_quit(app: &tauri::AppHandle) {
+    // Show + focus the main window first, exactly like the "show" arm and the
+    // single-instance callback, so the user sees the confirm dialog.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    // The URL is read from the managed BackendHandle: with a dynamic port the
+    // environment no longer reflects the actual port, so recomputing it here
+    // would probe a stale URL.
+    let manager = app.try_state::<BackendHandle>();
+    if let Some(manager) = manager.as_ref() {
+        if sidecar::probe_http(manager.backend_url()).is_some() {
+            shell_log::log("quit requested (backend healthy) — asking the dashboard to confirm");
+
+            // Synchronous first emit — the dashboard may be fully connected
+            // right now, and waiting +500ms (the first re-emit) before the
+            // event reaches it is an unnecessary delay.
+            let _ = app.emit("quit-requested", ());
+
+            // Re-emit on a bounded schedule — while the window was hidden to
+            // tray, phoenix suspends reconnects (pageHidden) and the
+            // dashboard's pushEvent drops the event when the channel can't
+            // push; a slow page load also needs time to mount. 6 emits total
+            // (~8s window); the dashboard handler is idempotent (assign set
+            // true; unchanged → no re-render) and the re-emits stop by
+            // themselves once the user confirms (backend stops, app exits).
+            // `manager.inner()` unwraps the tauri `State` (which borrows
+            // `app`) to the owned `Arc<BackendManager>` so the detached thread
+            // can own it ('static). Clone both BEFORE the re-emit closure
+            // moves them.
+            let app = app.clone();
+            let manager = manager.inner().clone();
+            std::thread::spawn(move || {
+                for delay_ms in QUIT_REEMIT_DELAYS_MS {
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    if manager.shutdown_requested() || manager.update_requested() {
+                        break; // user confirmed — the app is going away
+                    }
+                    if app.emit("quit-requested", ()).is_err() {
+                        break; // app is shutting down
+                    }
+                }
+            });
+            return;
+        }
+    }
+
+    // Backend down — the WebView shows the watchdog error page, so no
+    // dashboard dialog could appear. Keep the immediate path: flag an
+    // intentional shutdown BEFORE killing the child, so the watchdog never
+    // restarts the backend after a quit has begun.
+    shell_log::log("quit requested with the backend already down — exiting immediately");
+    if let Some(manager) = manager {
+        manager.kill_for_quit();
+    }
+    app.exit(0);
+}
+
 fn run_gui() {
+    shell_log::init();
+
     // Resolve the backend port ONCE at the top of the GUI flow: the same port
     // drives the sidecar env, the watchdog, the initial readiness poll, and
     // the WebView URL (the config window entry was removed — the window is
     // now created in the setup closure with this dynamic URL).
     let port = resolve_backend_port();
-    let url = format!("http://localhost:{port}");
+    let url = backend_url(port);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // MUST be the first plugin: plugins run in registration order, and this
         // plugin's setup is what makes a second instance exit. Registering it
         // before our own `setup` closure guarantees the second instance exits
@@ -728,76 +839,9 @@ fn run_gui() {
                             let _ = window.set_focus();
                         }
                     }
-                    "quit" => {
-                        // Show + focus the main window first, exactly like the
-                        // "show" arm and the single-instance callback, so the
-                        // user sees the confirm dialog the dashboard renders.
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.unminimize();
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                        // Backend healthy → hand the quit decision to the web
-                        // page: emit `quit-requested`; the dashboard shows its
-                        // confirm modal and on confirmation its JS invokes the
-                        // `begin_quit` command (sets the
-                        // intentional-shutdown flag, no kill) and the backend
-                        // stops itself gracefully. The URL is read from the
-                        // managed BackendHandle: with a dynamic port the
-                        // environment no longer reflects the actual port, so
-                        // recomputing it here would probe a stale URL.
-                        let manager = app.try_state::<BackendHandle>();
-                        if let Some(manager) = manager.as_ref() {
-                            if sidecar::probe_http(manager.backend_url()).is_some() {
-                                // Synchronous first emit — the dashboard may be
-                                // fully connected right now, and waiting +500ms
-                                // (the first re-emit) before the event reaches
-                                // it is an unnecessary delay.
-                                let _ = app.emit("quit-requested", ());
-
-                                // Re-emit on a bounded schedule — while the
-                                // window was hidden to tray, phoenix suspends
-                                // reconnects (pageHidden) and the dashboard's
-                                // pushEvent drops the event when the channel
-                                // can't push; a slow page load also needs time
-                                // to mount. 6 emits total (~8s window); the
-                                // dashboard handler is idempotent (assign set
-                                // true; unchanged → no re-render) and the
-                                // re-emits stop by themselves once the user
-                                // confirms (backend stops, app exits).
-                                // `manager.inner()` unwraps the tauri `State`
-                                // (which borrows `app`) to the owned
-                                // `Arc<BackendManager>` so the detached
-                                // thread can own it ('static). Clone both
-                                // BEFORE the re-emit closure moves them.
-                                let app = app.clone();
-                                let manager = manager.inner().clone();
-                                std::thread::spawn(move || {
-                                    for delay_ms in QUIT_REEMIT_DELAYS_MS {
-                                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-                                        if manager.shutdown_requested()
-                                            || manager.update_requested()
-                                        {
-                                            break; // user confirmed — the app is going away
-                                        }
-                                        if app.emit("quit-requested", ()).is_err() {
-                                            break; // app is shutting down
-                                        }
-                                    }
-                                });
-                                return;
-                            }
-                        }
-                        // Backend down — the WebView shows the watchdog error
-                        // page, so no dashboard dialog could appear. Keep the
-                        // old immediate path: flag an intentional shutdown
-                        // BEFORE killing the child, so the watchdog never
-                        // restarts the backend after a quit has begun.
-                        if let Some(manager) = manager {
-                            manager.kill_for_quit();
-                        }
-                        app.exit(0);
-                    }
+                    // Both the tray item and the macOS Cmd+Q path route through
+                    // the SAME quit flow, so the two can never drift apart.
+                    "quit" => request_quit(app),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -829,7 +873,7 @@ fn run_gui() {
                 .build(app)?;
 
             // 5. Create the main window. The window used to be declarative in
-            //    tauri.conf.json with a hardcoded http://localhost:9999 URL;
+            //    tauri.conf.json with a hardcoded fixed-port loopback URL;
             //    with a dynamic port the URL must follow the resolved port, so
             //    the window is created here with `WebviewUrl::External` (the
             //    config window entry and `build.devUrl` were removed — a
@@ -843,6 +887,14 @@ fn run_gui() {
             //    typically fails; step 8 re-navigates to the dashboard once
             //    the readiness poll succeeds. The builder's result is bound so
             //    the post-readiness re-navigation targets this exact window.
+            //
+            //    The `on_page_load` hook (attached before `.build()`) feeds the
+            //    manager's dashboard-loaded latch: `navigate` only proves the
+            //    request was ACCEPTED (a wkwebview `navigate` returns Ok as soon
+            //    as it accepted the load — long before the page renders), so a
+            //    finished load of the BACKEND URL is the shell's only real
+            //    "the dashboard loaded" signal.
+            let dashboard_loaded: Arc<AtomicBool> = manager.dashboard_loaded_handle();
             let window = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -852,6 +904,16 @@ fn run_gui() {
             .inner_size(1280.0, 800.0)
             .resizable(true)
             .center()
+            .on_page_load(move |_window, payload| {
+                // `Finished` fires for ANY finished navigation (including the
+                // `data:` error page and external navigations), so the latch
+                // may only be set for the URL the backend is served on.
+                if payload.event() == tauri::webview::PageLoadEvent::Finished
+                    && backend_watchdog::url_is_backend(payload.url(), BACKEND_HOST, port)
+                {
+                    dashboard_loaded.store(true, Ordering::SeqCst);
+                }
+            })
             .build()?;
 
             // 6. Block until the Phoenix backend responds. The poll runs on a
@@ -881,28 +943,51 @@ fn run_gui() {
                 //    unexpected exit), so without this a healthy boot sat on
                 //    the failed-load page forever — and with it the
                 //    dashboard's `quit-requested` listener never loaded, which
-                //    wedged the tray Quit confirmation flow. Retry the
-                //    navigation on a bounded schedule: the webview may still
-                //    be initializing right after creation, so navigation can
-                //    fail transiently. Stop early on success or when a
-                //    quit/update intent is requested (the backend is going
-                //    away — don't navigate during shutdown). Never-ready
+                //    wedged the tray Quit confirmation flow.
+                //
+                //    The gate below is deterministic: it navigates and then
+                //    WAITS for the page-load latch (a navigation that is merely
+                //    accepted proves nothing — that was the v0.13.3 macOS
+                //    black-screen bug), retrying a bounded number of times and
+                //    stopping early on a quit/update intent (the backend is
+                //    going away — don't navigate during shutdown). Never-ready
                 //    boots are handled above by the watchdog's recovery path
-                //    (`show_backend`).
-                match navigate_after_ready(
-                    || backend_watchdog::navigate_webview(&window, &url),
+                //    (`show_backend`, which uses the same gate).
+                //
+                //    The latch is cleared FIRST: the step-5 initial load (which
+                //    races the boot and typically fails) can itself emit
+                //    `Finished` — on WebView2 even for a failed navigation — so
+                //    a spurious latch from it must not be mistaken for a loaded
+                //    dashboard. Clearing it makes Windows behave exactly as
+                //    before while macOS gets the real load signal.
+                manager.reset_dashboard_loaded();
+                match navigate_until_loaded(
+                    || {
+                        let _ = backend_watchdog::navigate_webview(&window, &url);
+                    },
+                    || manager.dashboard_loaded(),
                     || manager.shutdown_requested() || manager.update_requested(),
                     INITIAL_NAVIGATE_ATTEMPTS,
-                    std::time::Duration::from_millis(INITIAL_NAVIGATE_RETRY_MS),
+                    std::time::Duration::from_millis(INITIAL_NAVIGATE_ATTEMPT_WAIT_MS),
+                    std::time::Duration::from_millis(INITIAL_NAVIGATE_POLL_MS),
                 ) {
-                    InitialNavigateOutcome::Navigated => eprintln!(
-                        "[desktop] navigated webview to the dashboard after the readiness poll"
-                    ),
+                    InitialNavigateOutcome::Navigated => {
+                        shell_log::log("webview loaded the dashboard after the readiness poll")
+                    }
                     // Quit/update began — the shutdown machinery takes over.
                     InitialNavigateOutcome::Aborted => {}
-                    InitialNavigateOutcome::Failed => eprintln!(
-                        "[desktop] webview did not accept the navigation after {INITIAL_NAVIGATE_ATTEMPTS} attempts — the watchdog will retry on the next backend recovery"
-                    ),
+                    InitialNavigateOutcome::Failed => {
+                        shell_log::log(&format!(
+                            "webview did not load the dashboard after {INITIAL_NAVIGATE_ATTEMPTS} navigation attempts — showing the retry page"
+                        ));
+                        // Fall back to the existing error page, whose "Retry
+                        // now" button navigates back to the backend (the
+                        // watchdog's recovery path keeps retrying too).
+                        let _ = backend_watchdog::navigate_webview(
+                            &window,
+                            &backend_watchdog::error_page_data_url(manager.backend_url()),
+                        );
+                    }
                 }
             }
 
@@ -917,47 +1002,106 @@ fn run_gui() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |app_handle, event| match event {
+        // A user-initiated exit arrives with `code == None` (macOS Cmd+Q / the
+        // app menu's Quit); a programmatic `app.exit()` arrives with
+        // `code == Some(_)` — so a `Some` code is always one of OUR exit paths
+        // (confirmed quit, update install, watchdog shutdown) and must never be
+        // intercepted.
+        tauri::RunEvent::ExitRequested { code, api, .. } => {
+            let terminating = app_handle
+                .try_state::<BackendHandle>()
+                .map(|manager| manager.shutdown_requested() || manager.update_requested())
+                .unwrap_or(false);
+            if code.is_some() || terminating {
+                return;
+            }
+            shell_log::log(
+                "ExitRequested by the user (Cmd+Q) — routing through the quit confirmation",
+            );
+            // Route Cmd+Q through the SAME confirmation flow as the tray item:
+            // the user must never lose a running task to an accidental Cmd+Q.
+            // Caveat: preventing the exit also delays an OS logout/shutdown
+            // until the user confirms (accepted — the same never-quit-silently
+            // policy as the tray path, which has no force-quit backstop).
+            api.prevent_exit();
+            request_quit(app_handle);
+        }
+        tauri::RunEvent::Exit => shell_log::log("event loop exiting"),
+        _ => {}
+    });
 }
 
 // ---------------------------------------------------------------------------
 // Post-readiness navigation (healthy-boot webview fix)
 // ---------------------------------------------------------------------------
 
-/// Outcome of the bounded post-readiness navigation retry
-/// ([`navigate_after_ready`]).
+/// Outcome of the bounded post-readiness navigation gate
+/// ([`navigate_until_loaded`]).
 #[derive(Debug, PartialEq, Eq)]
-enum InitialNavigateOutcome {
-    /// The webview accepted the navigation to the dashboard.
+pub(crate) enum InitialNavigateOutcome {
+    /// The webview reported the dashboard as loaded.
     Navigated,
-    /// A quit/update intent was requested before the webview accepted it.
+    /// A quit/update intent was requested before the webview loaded it.
     Aborted,
-    /// The webview never accepted the navigation within the attempt budget.
+    /// The webview never loaded the dashboard within the attempt budget.
     Failed,
 }
 
-/// Bounded navigation retry used after the initial readiness poll (step 8 of
-/// the GUI setup): calls `navigate` up to `max_attempts` times with
-/// `retry_delay` between tries, stopping early once `navigate` succeeds or
-/// `abort` (a quit/update intent) becomes true. Pure with injected closures
-/// so the retry semantics are unit-testable without a tauri window.
-fn navigate_after_ready(
-    mut navigate: impl FnMut() -> bool,
+/// Bounded navigation gate used after the initial readiness poll (step 8 of the
+/// GUI setup) and by the watchdog's recovery path
+/// ([`backend_watchdog::BackendManager::show_backend`]).
+///
+/// Each attempt: bail out when `abort` (a quit/update intent) is requested,
+/// succeed when `loaded` already reports a loaded page, otherwise call
+/// `navigate` and poll `loaded` for up to `attempt_wait`. A **navigation alone
+/// is not success**: `WebviewWindow::navigate` returns as soon as the request
+/// was ACCEPTED (a wkwebview navigate returns Ok immediately — long before the
+/// page renders or fails), so the `loaded` latch, set from the webview's
+/// `PageLoadEvent::Finished` for the backend URL, is the only real signal.
+/// Never busy-loops — every wait is bounded by `attempt_wait`.
+///
+/// Pure with injected closures so the gate semantics are unit-testable without
+/// a tauri window.
+pub(crate) fn navigate_until_loaded(
+    mut navigate: impl FnMut(),
+    loaded: impl Fn() -> bool,
     mut abort: impl FnMut() -> bool,
     max_attempts: u32,
-    retry_delay: std::time::Duration,
+    attempt_wait: std::time::Duration,
+    poll_interval: std::time::Duration,
 ) -> InitialNavigateOutcome {
     for _ in 0..max_attempts {
         if abort() {
             return InitialNavigateOutcome::Aborted;
         }
-        if navigate() {
+        if loaded() {
             return InitialNavigateOutcome::Navigated;
         }
-        std::thread::sleep(retry_delay);
+        navigate();
+        let deadline = std::time::Instant::now() + attempt_wait;
+        loop {
+            if loaded() {
+                return InitialNavigateOutcome::Navigated;
+            }
+            if abort() {
+                return InitialNavigateOutcome::Aborted;
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            std::thread::sleep(poll_interval.min(deadline - now));
+        }
     }
-    InitialNavigateOutcome::Failed
+    if loaded() {
+        InitialNavigateOutcome::Navigated
+    } else {
+        InitialNavigateOutcome::Failed
+    }
 }
 
 fn main() {
@@ -1125,61 +1269,89 @@ mod tests {
         }
     }
 
-    /// `navigate_after_ready` stops at the first successful navigation.
+    /// The shell's backend URLs are always spelled with the IPv4 loopback
+    /// LITERAL — `localhost` is a macOS trap (it also resolves to `::1` and
+    /// WKWebView does not reliably fall back).
     #[test]
-    fn navigate_after_ready_stops_on_first_success() {
+    fn backend_url_is_the_ipv4_loopback_literal() {
+        assert_eq!(backend_url(1234), "http://127.0.0.1:1234");
+        assert!(!backend_url(1234).contains("localhost"));
+    }
+
+    /// `navigate_until_loaded` stops as soon as the latch reports a load —
+    /// without navigating again.
+    #[test]
+    fn navigate_until_loaded_stops_when_already_loaded() {
         let calls = std::cell::Cell::new(0u32);
-        let outcome = navigate_after_ready(
-            || {
-                calls.set(calls.get() + 1);
-                calls.get() == 2 // the webview accepts on the second attempt
-            },
+        let outcome = navigate_until_loaded(
+            || calls.set(calls.get() + 1),
+            || true, // the dashboard is already loaded
             || false,
             10,
             Duration::from_millis(1),
+            Duration::from_millis(1),
         );
         assert_eq!(outcome, InitialNavigateOutcome::Navigated);
-        assert_eq!(
-            calls.get(),
-            2,
-            "navigation must stop after the first success"
-        );
+        assert_eq!(calls.get(), 0, "must not navigate a loaded page again");
     }
 
-    /// `navigate_after_ready` gives up after the attempt budget when the
-    /// webview never accepts the navigation.
+    /// The gate aborts (without navigating) as soon as a quit/update intent is
+    /// requested.
     #[test]
-    fn navigate_after_ready_gives_up_after_max_attempts() {
+    fn navigate_until_loaded_aborts_on_intent() {
         let calls = std::cell::Cell::new(0u32);
-        let outcome = navigate_after_ready(
-            || {
-                calls.set(calls.get() + 1);
-                false
-            },
+        let outcome = navigate_until_loaded(
+            || calls.set(calls.get() + 1),
+            || false,
+            || calls.get() >= 1, // intent requested before the second attempt
+            10,
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+        );
+        assert_eq!(outcome, InitialNavigateOutcome::Aborted);
+        assert_eq!(calls.get(), 1, "must not navigate once the intent is set");
+    }
+
+    /// A navigation that is accepted but never LOADS exhausts the budget and
+    /// fails — the v0.13.3 macOS bug (a navigation that was merely accepted
+    /// must not be mistaken for a rendered dashboard).
+    #[test]
+    fn navigate_until_loaded_fails_after_the_attempt_budget() {
+        let calls = std::cell::Cell::new(0u32);
+        let outcome = navigate_until_loaded(
+            || calls.set(calls.get() + 1),
+            || false, // the page never loads
             || false,
             5,
+            Duration::from_millis(1),
             Duration::from_millis(1),
         );
         assert_eq!(outcome, InitialNavigateOutcome::Failed);
         assert_eq!(calls.get(), 5, "must not exceed the attempt budget");
     }
 
-    /// `navigate_after_ready` aborts (without further navigation) as soon as
-    /// a quit/update intent is requested.
+    /// A failed load followed by a successful one returns `Navigated` — the
+    /// gate retries instead of giving up after the first attempt.
     #[test]
-    fn navigate_after_ready_aborts_on_quit_or_update_intent() {
+    fn navigate_until_loaded_succeeds_after_a_retry() {
         let calls = std::cell::Cell::new(0u32);
-        let outcome = navigate_after_ready(
+        let loaded = std::cell::Cell::new(false);
+        let outcome = navigate_until_loaded(
             || {
                 calls.set(calls.get() + 1);
-                false
+                // The second navigation is the one that actually loads.
+                if calls.get() >= 2 {
+                    loaded.set(true);
+                }
             },
-            || calls.get() >= 1, // intent requested before the second attempt
+            || loaded.get(),
+            || false,
             10,
             Duration::from_millis(1),
+            Duration::from_millis(1),
         );
-        assert_eq!(outcome, InitialNavigateOutcome::Aborted);
-        assert_eq!(calls.get(), 1, "must not navigate once the intent is set");
+        assert_eq!(outcome, InitialNavigateOutcome::Navigated);
+        assert_eq!(calls.get(), 2, "the gate must retry after a failed load");
     }
 
     /// `parse_feed_info` extracts version/notes/pub_date from a valid feed.
