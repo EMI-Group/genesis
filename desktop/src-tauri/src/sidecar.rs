@@ -287,7 +287,7 @@ pub fn wait_for_ready(url: &str, timeout_secs: u64) {
     while Instant::now() < deadline {
         match probe_http(url) {
             Some(status) => {
-                println!("[desktop] backend is ready at {url} (HTTP {status})");
+                crate::shell_log::log(&format!("backend is ready at {url} (HTTP {status})"));
                 return;
             }
             None => thread::sleep(POLL_INTERVAL),

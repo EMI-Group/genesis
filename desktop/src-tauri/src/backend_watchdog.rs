@@ -1392,12 +1392,26 @@ mod tests {
         assert!(tcp_accepting(port, Duration::from_secs(2)));
     }
 
+    /// A port with nothing listening must never be reported as accepting.
+    ///
+    /// The probe points at a port this test just freed, which on Linux can
+    /// transiently "succeed" with no listener at all: the outgoing
+    /// connection's ephemeral SOURCE port may be the very port that was
+    /// freed, so the kernel completes a TCP **self-connect** (the socket then
+    /// holds that port, which is why a re-bind of it fails too). That is a
+    /// kernel probe artifact, not a listener — retry with a fresh port
+    /// instead of reporting a false failure.
     #[test]
     fn tcp_accepting_false_for_closed_port() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener); // port is closed now
-        assert!(!tcp_accepting(port, Duration::from_millis(400)));
+        for _ in 0..10 {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+            let port = listener.local_addr().expect("local addr").port();
+            drop(listener); // port is closed now
+            if !tcp_accepting(port, Duration::from_millis(400)) {
+                return;
+            }
+        }
+        panic!("tcp_accepting reported a closed port as accepting on 10 consecutive fresh ports");
     }
 
     /// `url_is_backend` accepts only the backend's own URL — the page-load
