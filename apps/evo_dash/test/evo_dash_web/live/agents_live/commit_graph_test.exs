@@ -13,12 +13,15 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   traces back to a rule documented on the module: node synthesis (fetched
   commits + one `kind: :base` node per uncovered agent `base_commit` + one
   `kind: :noop` stub per no-op child), the global row order
-  (`{layer, date_unix, sha}`), the per-agent lane assignment (agent-order
-  index, shifted right by one when unowned nodes exist), ownership and the
+  (`{layer, date_unix, sha}`), the per-agent lane assignment (the agent's
+  index in the DFS SUBTREE-CONTIGUOUS order — pre-order from the roots,
+  children visited recursively in stable `{task_local_id, agent_id}` order,
+  cycle-safe with fallback roots — shifted right by one when unowned nodes
+  exist), ownership and the
   first-parent progress path, the `:parent` / `:merge` / `:spawn` /
   `:merge_back` edges (incl. the drop rule and virtual landings), the
-  `start_ids` / `end_ids` annotations, the vertical `agents` list and the
-  depth → hue colors.
+  `start_ids` / `end_ids` annotations, the vertical `agents` list (that same
+  DFS order) and the depth → hue colors.
   """
 
   use ExUnit.Case, async: true
@@ -678,8 +681,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   end
 
   describe "build/2 — lanes (one per agent)" do
-    test "an agent's lane is its index in {depth, task_local_id, agent_id} order" do
-      # Three agents, each recursing one level deeper on the same chain.
+    test "an agent's lane is its index in the DFS subtree-contiguous order" do
+      # Three parentless nil-slot agents, so the DFS visits them in agent_id
+      # order (the final tie-break) — each recursing one level deeper on the
+      # same chain.
       agents = [
         agent(1, nil, depth: 0, base_commit: @c1, current_commit: @c2),
         agent(2, nil, depth: 1, base_commit: @c2, current_commit: @c3),
@@ -699,6 +704,53 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
              ]
 
       assert repo.column_count == 3
+    end
+
+    test "a parent's subtree occupies CONSECUTIVE lanes (two-subtree contiguity)" do
+      # Two independent subtrees: a (slot 1) -> a1 (slot 3), b (slot 2) ->
+      # b1 (slot 4). The DFS visits the roots in stable {task_local_id,
+      # agent_id} order — a, then b — and each root's children BEFORE the
+      # next root, so children of different parents never interleave across
+      # the gutter.
+      root_a = agent("a", nil, task_local_id: 1)
+      child_a1 = agent("a1", "a", task_local_id: 3)
+      root_b = agent("b", nil, task_local_id: 2)
+      child_b1 = agent("b1", "b", task_local_id: 4)
+
+      [repo] = CommitGraph.build(%{}, [root_b, child_b1, root_a, child_a1])
+
+      assert Enum.map(repo.agents, & &1.agent_id) == ["a", "a1", "b", "b1"]
+      assert Enum.map(repo.agents, & &1.lane) == [0, 1, 2, 3]
+
+      # Subtree a's lanes sit strictly left of subtree b's — the input order
+      # of the agent list is irrelevant.
+      subtree_a_lanes = for a <- repo.agents, a.agent_id in ["a", "a1"], do: a.lane
+      subtree_b_lanes = for a <- repo.agents, a.agent_id in ["b", "b1"], do: a.lane
+
+      assert Enum.max(subtree_a_lanes) < Enum.min(subtree_b_lanes)
+    end
+
+    test "a parent CYCLE cannot loop the walk; an unresolvable parent anchors a ROOT" do
+      # x and y point at each other, so neither is a root and no DFS start
+      # reaches them — both are appended as fallback roots in the stable
+      # {task_local_id, agent_id} order (nil slots, so the ids break the
+      # tie), exactly one lane each.
+      x = agent("x", "y")
+      y = agent("y", "x")
+
+      [repo] = CommitGraph.build(%{}, [y, x])
+
+      assert Enum.map(repo.agents, & &1.agent_id) == ["x", "y"]
+      assert Enum.map(repo.agents, & &1.lane) == [0, 1]
+
+      # A parent_id matching no agent of THIS repo group strands the child as
+      # its own ROOT (the DFS visits it before the fallback roots append).
+      z = agent("z", "ghost")
+
+      [three] = CommitGraph.build(%{}, [y, z, x])
+
+      assert Enum.map(three.agents, & &1.agent_id) == ["z", "x", "y"]
+      assert Enum.map(three.agents, & &1.lane) == [0, 1, 2]
     end
 
     test "the lane is the agent INDEX, not the depth — sibling depths never share a lane" do
@@ -1530,7 +1582,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
   end
 
   describe "build/2 — the agents list" do
-    test "agents are ordered by {depth, task_local_id, agent_id} ascending" do
+    test "agents are ordered by the DFS root order ({task_local_id, agent_id} ascending)" do
       agents = [
         agent(2, nil, depth: 1, task_local_id: 5),
         agent(1, nil, depth: 0, task_local_id: 9),
@@ -1540,9 +1592,11 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
 
       [repo] = CommitGraph.build(%{}, agents)
 
-      # depth 0 first (slot id 1 -> agents 3, 4; then slot id 9 -> agent 1), then depth 1.
-      assert Enum.map(repo.agents, & &1.agent_id) == [3, 4, 1, 2]
-      assert Enum.map(repo.agents, & &1.depth) == [0, 0, 0, 1]
+      # All four are parentless ROOTS, so the DFS visits them in stable
+      # {task_local_id, agent_id} order: slot 1 -> agents 3, 4; slot 5 ->
+      # agent 2; slot 9 -> agent 1. Depth is no longer an ordering key.
+      assert Enum.map(repo.agents, & &1.agent_id) == [3, 4, 2, 1]
+      assert Enum.map(repo.agents, & &1.depth) == [0, 0, 1, 0]
 
       # A nil slot id sorts after every integer (Erlang term order) — deterministic.
       [nil_slot] =
@@ -1706,8 +1760,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraphTest do
                  {edge.kind, to_string(edge.owner_id), edge.from_sha, edge.to_sha}
                end)
 
-      assert repo.agents ==
-               Enum.sort_by(repo.agents, &{&1.depth, &1.task_local_id, &1.agent_id})
+      # The agents list is the DFS subtree-contiguous order: the root, then its
+      # children in stable {task_local_id, agent_id} order (both nil-slot, so
+      # agent_id breaks the tie — "child-a" before "child-b").
+      assert Enum.map(repo.agents, & &1.agent_id) == ["root", "child-a", "child-b"]
 
       # The agent input order never changes the view model.
       assert CommitGraph.build(raw_by_repo, [child_b, root, child_a]) == [repo]
