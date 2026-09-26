@@ -390,6 +390,11 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "Error: An unexpected error occurred while running the subagent. Hint: please retry the spawn once, and if it persists report the issue to the user."
   end
 
+  def format_subagent_result({:error, {:llm_request_rejected, message}}) do
+    "Error: #{message} " <>
+      "Hint: this non-retryable provider/request error will repeat on every retry — fix the model profile/request parameters or report the problem to the user instead of re-spawning this subagent."
+  end
+
   def format_subagent_result({:error, reason}) do
     "Error: Subagent failed due to an unexpected error (#{inspect(reason)}). Please retry the spawn or report this issue to the user if it persists."
   end

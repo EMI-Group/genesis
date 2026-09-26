@@ -195,6 +195,16 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       {:error, :protocol_violation} ->
         handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
+
+      {:error, {:llm_request_rejected, _} = terminal} ->
+        # Non-retryable provider rejection (the fail-fast path of
+        # `handle_llm_failure/7`): the turn ends with a GRACEFUL terminal error
+        # that propagates out of `Runner.run/3` unchanged. Deliberately NOT
+        # routed through `handle_protocol_violation/3` — that would burn the
+        # grace budget / trigger recovery against a request that can never
+        # succeed, when the only real fix is a model-profile / request-parameter
+        # change. The task is persisted `:failed` with the actionable message.
+        {:error, terminal}
     end
   end
 
@@ -209,6 +219,11 @@ defmodule EvoGit.Agent.ToolDispatch do
   # `@max_no_tool_call_nudges` consecutive nudges with still no tool calls, the
   # turn ends gracefully via `{:error, :protocol_violation}`, feeding the
   # existing recovery path (no crash, no new try/rescue).
+  #
+  # A NON-RETRYABLE provider rejection (`EvoGit.Agent.LlmError`) is the one
+  # other graceful terminal arm: the retry loop already failed fast, so
+  # `{:error, {:llm_request_rejected, message}}` is passed through unchanged.
+  # Every other `{:error, reason}` still raises exactly as before.
   def prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries) do
     prompt_until_tools_or_limit(context, tools, llm_gen_opts, agent_id, max_retries, 0)
   end
@@ -251,6 +266,15 @@ defmodule EvoGit.Agent.ToolDispatch do
               )
             end
         end
+
+      {:error, {:llm_request_rejected, _message} = terminal} ->
+        # Non-retryable provider rejection: the loop already failed fast (no
+        # further attempts) and the message is actionable as-is. Pass it through
+        # as a GRACEFUL terminal error — no raise, so the runtime returns
+        # `{:error, ...}` to the task wrapper, which persists the task as
+        # `:failed` with this message instead of crash-retrying the agent
+        # through the same doomed retry cycle.
+        {:error, terminal}
 
       {:error, reason} ->
         # Genuine transient failure (network/rate-limit/stream) exhausted all
@@ -314,24 +338,42 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   # Classifies a failed attempt and decides what to do next: recurse
   # (model-exhaustion → immediate recursion, the scheduler realizes the wait;
-  # ordinary transient → short backoff sleep) or return the terminal error once
-  # attempts are exhausted.
+  # ordinary transient → short backoff sleep), FAIL FAST on a non-retryable
+  # provider rejection, or return the terminal error once attempts are
+  # exhausted.
+  #
+  # Branch order matters:
+  #
+  #   1. MODEL EXHAUSTION first — 402 (insufficient balance) / 429 (rate limit)
+  #      keep their existing long scheduler-side backoff untouched, for both the
+  #      in-flight retry and the exhausted case.
+  #   2. NON-RETRYABLE provider rejection (`EvoGit.Agent.LlmError`) — a
+  #      deterministic 4xx (e.g. HTTP 400 code 1210 "Invalid API parameter")
+  #      can never succeed on a retry, so the loop returns the terminal
+  #      `{:error, {:llm_request_rejected, message}}` IMMEDIATELY: no sleep, no
+  #      further attempt, no scheduler backoff. `prompt_until_tools_or_limit/6`
+  #      passes this value through instead of raising, so the runtime returns
+  #      `{:error, ...}` to the task wrapper, which persists the task as
+  #      `:failed` with the actionable message in its structured error record —
+  #      instead of a `RuntimeError` crash that the scheduler crash-retries
+  #      (each crash-retry re-running the whole retry cycle).
+  #   3. Attempts exhausted → the unchanged terminal `{:error, reason}` (still
+  #      raising downstream).
+  #   4. Ordinary transient error → the unchanged short backoff + recurse.
   defp handle_llm_failure(context, tools, llm_gen_opts, agent_id, max_retries, attempt, reason) do
     class = EvoGit.Agent.TruncationFeedback.classify_model_exhaustion(reason)
 
     cond do
-      attempt >= max_retries ->
+      class && attempt >= max_retries ->
         # Attempts exhausted. Keep the model-wide backoff fresh for the
         # crash-retry: `prompt_until_tools_or_limit/6` still raises as before,
         # but the crash-retry then lands after a long scheduler wait instead of
         # immediately re-hitting an exhausted model.
-        if class do
-          AgentScheduler.report_llm_error(
-            agent_id,
-            class,
-            EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(15)
-          )
-        end
+        AgentScheduler.report_llm_error(
+          agent_id,
+          class,
+          EvoGit.Agent.LlmRetryPolicy.model_exhaustion_delay(15)
+        )
 
         {:error, reason}
 
@@ -347,6 +389,17 @@ defmodule EvoGit.Agent.ToolDispatch do
         )
 
         do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
+
+      EvoGit.Agent.LlmError.non_retryable?(reason) ->
+        # Deterministic provider rejection: fail fast with an actionable message.
+        message = EvoGit.Agent.LlmError.format_failure(reason)
+
+        Logger.error("Agent #{agent_id}: #{message}")
+
+        {:error, {:llm_request_rejected, message}}
+
+      attempt >= max_retries ->
+        {:error, reason}
 
       true ->
         # Ordinary transient error: short exponential-backoff sleep, then recurse.
@@ -375,7 +428,7 @@ defmodule EvoGit.Agent.ToolDispatch do
       else
         {:error, reason} ->
           Logger.warning(
-            "Agent #{agent_id}: LLM request failed, retrying... Reason: #{inspect(reason)}"
+            "Agent #{agent_id}: LLM request failed#{retry_intent(reason)} Reason: #{inspect(reason)}"
           )
 
           if EvoGit.ReqLLMPool.excess_queuing_error?(reason) do
@@ -388,6 +441,18 @@ defmodule EvoGit.Agent.ToolDispatch do
           {:error, reason}
       end
     end)
+  end
+
+  # Per-attempt failure log suffix. A non-retryable provider rejection is
+  # TERMINAL (`handle_llm_failure/7` returns immediately, see
+  # `EvoGit.Agent.LlmError`), so the log must not claim it is "retrying"; every
+  # other class keeps the original wording. Pure and total.
+  defp retry_intent(reason) do
+    if EvoGit.Agent.LlmError.non_retryable?(reason) do
+      " (non-retryable — failing fast)."
+    else
+      ", retrying..."
+    end
   end
 
   # Short exponential-backoff delay (ms) before attempt `k` (k >= 1) for ORDINARY
