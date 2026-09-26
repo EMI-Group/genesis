@@ -478,13 +478,29 @@ defmodule EvoGit.Agent.Runner do
   defp loop(%LoopState{} = state) do
     context_before = state.context
 
-    state =
-      EvoGit.Agent.ContextCompression.compress_if_needed(state,
-        agent_id: state.agent_id,
-        llm_model: EvoGit.Agent.ToolDispatch.current_model(),
-        llm_generation_params: EvoGit.Agent.ToolDispatch.current_generation_params()
-      )
+    case EvoGit.Agent.ContextCompression.compress_if_needed(state,
+           agent_id: state.agent_id,
+           llm_model: EvoGit.Agent.ToolDispatch.current_model(),
+           llm_generation_params: EvoGit.Agent.ToolDispatch.current_generation_params()
+         ) do
+      %LoopState{} = state ->
+        continue_loop(state, context_before)
 
+      {:error, {:llm_request_rejected, _message} = terminal} ->
+        # The compression call hit a NON-RETRYABLE provider rejection (the
+        # fail-fast exception in `ContextCompression.compress_if_needed/2`).
+        # Propagate the terminal error out of `loop/1` UNCHANGED so it reaches
+        # `Runner.run/3`'s return value — `refresh_commit_sha/1` passes
+        # `{:error, _}` through untouched — and the task is persisted `:failed`
+        # with the actionable message instead of being crash-retried through the
+        # same doomed request.
+        {:error, terminal}
+    end
+  end
+
+  # The remainder of the turn, after compression returned a `%LoopState{}`
+  # (compressed or unchanged — byte-identical to the pre-existing flow).
+  defp continue_loop(%LoopState{} = state, context_before) do
     state = check_limit_warnings(state)
 
     # Sync context to ETS after any updates (compression, warnings). The
