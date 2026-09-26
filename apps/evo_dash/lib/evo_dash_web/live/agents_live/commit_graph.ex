@@ -11,10 +11,13 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   `PendingEvents`). It is fed:
 
     - `raw_by_repo` — the per-repo commit graph fetched by the node-aware
-      commit RPC (`%{repo_key => %{commits: [commit], refs: %{sha => [name]}}}`),
-      with `commits` in `git log` order; each commit is an atom-keyed map
-      (`:sha, :short_sha, :message, :author_name, :date, :parents`, where
-      `:parents` is the full SHA list, `[]` for a root); and
+      commit RPC (`%{repo_key => %{commits: [commit], refs: %{sha => [name]},
+      truncated: boolean}}`), with `commits` in `git log` order; each commit is
+      an atom-keyed map (`:sha, :short_sha, :message, :author_name, :date,
+      :parents`, where `:parents` is the full SHA list, `[]` for a root). The
+      optional `truncated` flag (true when the fetch cut a tip range at the
+      limit) is surfaced verbatim on the repo_view — absent/non-true reads as
+      `false`; and
     - `agents` — the page's already-loaded rich agent maps
       (`EvoDashWeb.AgentsLive.LoadData.build_agents/2`), carrying at least
       `:id`, `:task_local_id`, `:status`, `:depth`, `:repo_root`/`:repo_id`,
@@ -197,6 +200,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         repo_key: term(), repo_dom_id: String.t(), repo_name: String.t(),
         node_count: non_neg_integer(), edge_count: non_neg_integer(),
         row_count: non_neg_integer(), column_count: non_neg_integer(),
+        truncated: boolean(),
         nodes: [%{sha:, short_sha:, message:, author_name:, date:, refs:,
                   row:, column:, depth:, kind:, owner_id:, start_ids:, end_ids:}],
         edges: [%{from_sha:, to_sha:, from_column:, from_row:, to_column:,
@@ -299,6 +303,7 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
           edge_count: non_neg_integer(),
           row_count: non_neg_integer(),
           column_count: non_neg_integer(),
+          truncated: boolean(),
           nodes: [node_view()],
           edges: [edge_view()],
           agents: [agent_view()]
@@ -345,8 +350,10 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
   Builds the per-repo VERTICAL commit-graph view model.
 
   `raw_by_repo` maps a repo grouping key to the fetched commit graph
-  (`%{commits: [commit], refs: %{sha => [name]}}`); a key that is absent (or a
-  repo whose fetch failed) yields empty nodes, edges and agents.
+  (`%{commits: [commit], refs: %{sha => [name]}, truncated: boolean}`); a key
+  that is absent (or a repo whose fetch failed) yields empty nodes, edges and
+  agents. The optional `truncated` flag is surfaced verbatim on the repo_view
+  (absent/non-true → `false`).
 
   Agents are grouped by `grouping_key/1` — exactly like the tree — and the
   resulting `repo_view`s are sorted by `repo_name` ascending (ties broken by
@@ -372,15 +379,25 @@ defmodule EvoDashWeb.AgentsLive.CommitGraph do
         ordered -> graph_body(ordered, raw)
       end
 
+    # The fetch's truncation flag rides along verbatim (an absent/non-true
+    # value reads as false) — a repo with no agents keeps it too, so the flag
+    # survives even when the graph body is empty.
     Map.merge(
       %{
         repo_key: repo_key,
         repo_dom_id: repo_dom_id(repo_key),
-        repo_name: repo_display_name(repo_key)
+        repo_name: repo_display_name(repo_key),
+        truncated: truncated?(Map.get(raw, :truncated))
       },
       body
     )
   end
+
+  # Total boolean read: only an explicit `true` is truncated (the core sets
+  # the key on every reply; an absent flag from an older/odd payload or
+  # garbage folds to false).
+  defp truncated?(true), do: true
+  defp truncated?(_), do: false
 
   # No agents means no owners, and an owner is the only thing that can claim a
   # node — so a repo without agents has no graph at all.
