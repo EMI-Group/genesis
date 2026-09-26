@@ -2559,6 +2559,196 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "commit history view — partial success and the fingerprint gate" do
+    # Two behaviours landed with the CommitGraphRefresh extraction (the pure
+    # halves are unit-tested in agents_live/commit_graph_refresh_test.exs):
+    #
+    #   * PARTIAL SUCCESS — one failing group no longer blanks the view: the
+    #     fetch folds ONLY the successful groups into @commit_graph_raw and the
+    #     page renders them ({:error, _} is reserved for an ALL-groups failure).
+    #   * The FINGERPRINT GATE — a flush whose agent changes are
+    #     commit-irrelevant (status/tokens/usage/message-count only) skips BOTH
+    #     the view-model rebuild and the git-RPC refetch entirely; a
+    #     commit-relevant change (a moved tip, a registered agent) refetches.
+    #
+    # Both are driven through the real flush path (send + :flush_agent_events),
+    # with the runner-call recorder as the "did we hit the RPC" probe. The
+    # 1000ms refetch throttle is bypassed the way the retained-agent tests
+    # bypass coalescing: for the gate-SKIP case the throttle never matters (no
+    # spawn is attempted at all), and for the gate-PASS case the one-shot
+    # :commit_graph_tick (armed by the throttle) is fired directly.
+
+    test "a failing group drops only its own data — the good repo still renders",
+         %{conn: conn} do
+      install_agents([
+        summary_agent(
+          id: agent_id(),
+          repo_root: "/repo/a",
+          base_commit: "b1",
+          current_commit: "c1",
+          task_id: "task-1"
+        ),
+        summary_agent(
+          id: agent_id() + 1,
+          repo_root: "/repo/b",
+          base_commit: "b2",
+          current_commit: "c2",
+          task_id: "task-2"
+        )
+      ])
+
+      # /repo/a replies a real payload; /repo/b replies ok-shaped garbage (a
+      # non-list `commits` is a per-group failure — same drop semantics as an
+      # {:error, _} reply).
+      install_commit_graph_runner(fn
+        "/repo/a" -> {:ok, single_commit_graph_payload()}
+        "/repo/b" -> {:ok, %{commits: "garbage"}}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      render_click(view, "switch_left_view", %{"view" => "commits"})
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
+      assert_receive {:commit_graph_call, _node, "task-2", "/repo/b", ["c2"], [limit: 100]}, 1000
+      wait_until(fn -> assigns(view)[:commit_graph_loaded] end)
+
+      # PARTIAL SUCCESS: an {:ok, _} result (not an error) holding ONLY the
+      # good repo — the failed group's repo is absent from the raw map.
+      assert assigns(view)[:commit_graph_error] == nil
+      assert assigns(view)[:commit_graph_loading] == false
+
+      assert Map.keys(assigns(view)[:commit_graph_raw]) == ["/repo/a"]
+      assert assigns(view)[:commit_graph_raw]["/repo/a"].commits |> Enum.map(& &1.sha) == ["c1"]
+
+      # …and the page renders the good repo's graph with NO error strip (the
+      # error strip is reserved for an all-groups failure with nothing cached).
+      # The FAILED repo still gets a repo view — its lanes/START-END come from
+      # the agent set — but no fetched commits (they stop at the last fetch).
+      repos = assigns(view)[:commit_graph]
+      assert Enum.map(repos, & &1.repo_key) |> Enum.sort() == ["/repo/a", "/repo/b"]
+
+      repo_a = Enum.find(repos, &(&1.repo_key == "/repo/a"))
+      assert repo_a.nodes |> Enum.map(& &1.sha) |> Enum.sort() == ["b1", "c1"]
+      assert has_element?(view, "##{repo_a.repo_dom_id}")
+
+      repo_b = Enum.find(repos, &(&1.repo_key == "/repo/b"))
+      assert repo_b.nodes |> Enum.map(& &1.sha) == ["b2"]
+
+      refute has_element?(view, "#commit-graph-error")
+      refute has_element?(view, "#commit-graph-stale-warning")
+    end
+
+    test "a commit-irrelevant flush (status/tokens only) skips the refetch",
+         %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      # A status/token-only update — none of it is in the fingerprint.
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting, total_tokens: 999], node()})
+      flush_agent_events(view)
+
+      # The tree merged the update (the flush really ran)…
+      assert assigns(view)[:agents] |> Enum.map(& &1.status) == [:waiting]
+
+      # …but the fingerprint gate skipped BOTH the rebuild and the refetch: no
+      # new runner call is recorded (a non-gated path would have spawned one
+      # or at least armed the tick — see the next test).
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      assert assigns(view)[:commit_graph_loading] == false
+    end
+
+    test "a commit-relevant flush (a moved tip) refetches", %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      # A new tip on the agent — a fingerprint change (a moved current_commit
+      # means new commits may exist)…
+      send(view.pid, {:agent_updated, agent_id(), [current_commit: "new_sha"], node()})
+      flush_agent_events(view)
+
+      # …so the flush rebuilds and wants a refetch. The last fetch is inside
+      # the 1000ms throttle window, so the spawn is DEFERRED to the one-shot
+      # :commit_graph_tick — fire it directly (the same way the throttle would)
+      # and assert the refetch happens with the NEW tip as the live tip. (If
+      # the window already elapsed under load the spawn fired directly and no
+      # tick was armed — skip straight to the call assertion.)
+      if assigns(view)[:commit_graph_tick_scheduled] do
+        send(view.pid, :commit_graph_tick)
+        render(view)
+      end
+
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["new_sha"], [limit: 100]},
+                     1000
+
+      wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
+
+      # The refetched graph is applied (the stub still serves the same payload).
+      assert assigns(view)[:commit_graph_error] == nil
+    end
+
+    test "a newly registered agent joins the rebuilt graph with its own lane",
+         %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      child_id = agent_id() + 1
+
+      # The child spawns in the same repo, on the same task, at depth 1.
+      send(
+        view.pid,
+        {:agent_registered, child_id,
+         summary_agent(
+           id: child_id,
+           repo_root: "/repo/a",
+           base_commit: "c1",
+           current_commit: "c9",
+           depth: 1,
+           parent_id: agent_id()
+         ), node()}
+      )
+
+      flush_agent_events(view)
+
+      # The registered agent's lane appears in the rebuilt view model WITHOUT
+      # waiting for the refetch (the rebuild runs on the agent set alone)…
+      assert [repo] = assigns(view)[:commit_graph]
+
+      assert Enum.map(repo.agents, & &1.agent_id) |> Enum.sort() ==
+               Enum.sort([agent_id(), child_id])
+
+      assert repo.column_count == 2
+
+      # …and the now-changed fingerprint means the flush ALSO refetches. The
+      # throttle defers the spawn to the one-shot tick — fire it (if the 1000ms
+      # window already elapsed under load, the spawn fired directly instead).
+      if assigns(view)[:commit_graph_tick_scheduled] do
+        send(view.pid, :commit_graph_tick)
+        render(view)
+      end
+
+      # The group's live tips now carry BOTH agents' current commits.
+      assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", tips, [limit: 100]}, 1000
+      assert Enum.sort(tips) == Enum.sort(["c1", "c9"])
+    end
+
+    test "selecting a row records no new runner call (selection is renderer-side)",
+         %{conn: conn} do
+      view = mount_loaded_commit_graph(conn)
+
+      assert [repo] = assigns(view)[:commit_graph]
+      dom = repo.repo_dom_id
+
+      # Clicking a row selects the agent…
+      view |> element("#commit-row-#{dom}-c1") |> render_click()
+
+      assert assigns(view)[:selected_agent_id] == agent_id()
+      assert has_element?(view, "#cg-selection-readout-#{dom}")
+
+      # …and does NOT reload the graph — no rebuild, no refetch, no runner call.
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      assert assigns(view)[:commit_graph_loading] == false
+    end
+  end
+
   # ── Private helpers ─────────────────────────────────────────────
 
   # Reads the LiveView's CURRENT socket assigns directly (same pattern as
@@ -2659,17 +2849,20 @@ defmodule EvoDashWeb.AgentsLiveTest do
     on_exit(&clear_agents_env/0)
   end
 
-  # An {:error, _} reply keeps @commit_graph empty (the commit pane's error
-  # state) AND halts the fetch loop after that group — so every EARLIER group's
-  # call is still recorded (see graph_partial_responder/1). Loaded-graph DOM
-  # coverage lives in the page test above; the sibling component suite still
-  # pins the DOM markers in isolation.
+  # An {:error, _} reply from EVERY group yields {:error, first-ish failure}
+  # (an all-groups failure), keeping @commit_graph empty (the commit pane's
+  # error state). With partial-success folding a failing group no longer halts
+  # the loop — see graph_partial_responder/1. Loaded-graph DOM coverage lives
+  # in the page test above; the sibling component suite still pins the DOM
+  # markers in isolation.
   defp graph_error_responder, do: fn _repo_root -> {:error, :stub} end
 
   # Returns {:ok, _} for `first_repo_root` — letting the (sorted) fetch loop
-  # continue to the NEXT group — and {:error, _} for every other repo, which
-  # halts it. That keeps "one call per {repo_root, task_id} group" observable:
-  # the loop reaches every group before the first error stops it.
+  # continue to the NEXT group — and {:error, _} for every other repo. Since
+  # fetch_result/3 folds with PARTIAL-SUCCESS semantics (a failing group drops
+  # only its own data), the loop now reaches EVERY group and the successful
+  # ones still fold into raw_by_repo. That keeps "one call per
+  # {repo_root, task_id} group" observable.
   defp graph_partial_responder(first_repo_root) do
     fn
       ^first_repo_root -> {:ok, %{commits: [], refs: %{}}}
