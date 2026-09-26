@@ -169,7 +169,17 @@ defmodule EvoGit.Agent.ContextCompression do
     else
       {:error, reason} = failure ->
         if EvoGit.Agent.LlmError.non_retryable?(reason) do
-          {:error, {:llm_request_rejected, EvoGit.Agent.LlmError.format_failure(reason)}}
+          # The compression call sends NO tools, so the parameter names are the
+          # generation-param keys alone; the model spec is the one this call
+          # targeted. Both come from the caller's own arguments (no scheduler
+          # lookup, so this path cannot raise for a purged agent either).
+          message =
+            EvoGit.Agent.LlmError.format_failure(reason,
+              params: llm_gen_opts,
+              model: llm_model
+            )
+
+          {:error, {:llm_request_rejected, message}}
         else
           raise_match_error(failure)
         end

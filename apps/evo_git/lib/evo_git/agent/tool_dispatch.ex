@@ -69,6 +69,22 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_state.llm_generation_params
   end
 
+  # The resolved model spec for a DIAGNOSTIC annotation on the fail-fast error
+  # message (`handle_llm_failure/7`), as opposed to `current_model/0`'s raising
+  # lookup. Deliberately TOTAL: an annotation must never turn the graceful
+  # terminal `{:error, {:llm_request_rejected, message}}` into an agent crash
+  # (the agent state can legitimately be gone by then — a purge/cancel or a
+  # scheduler restart while the call was in flight), so a missing state simply
+  # omits the model from the message.
+  defp diagnostic_model_spec do
+    with agent_id when not is_nil(agent_id) <- AgentScheduler.current_agent_id(),
+         {:ok, agent_state} <- AgentScheduler.get_agent_state(agent_id) do
+      agent_state.llm_model
+    else
+      _other -> nil
+    end
+  end
+
   # Shared lookup for current_model/0 + current_generation_params/0. Raises a
   # descriptive ArgumentError instead of a context-free MatchError when the
   # calling process is not a scheduled agent (no :evogit_agent_id) or the
@@ -391,8 +407,16 @@ defmodule EvoGit.Agent.ToolDispatch do
         do_call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries, attempt + 1)
 
       EvoGit.Agent.LlmError.non_retryable?(reason) ->
-        # Deterministic provider rejection: fail fast with an actionable message.
-        message = EvoGit.Agent.LlmError.format_failure(reason)
+        # Deterministic provider rejection: fail fast with an actionable message
+        # that also names the request parameters Genesis SENT for this call and
+        # the resolved model spec to check (see `EvoGit.Agent.LlmError`'s
+        # `format_failure/2`). Parameter NAMES only — never a value, the
+        # objective, a tool result or a credential.
+        message =
+          EvoGit.Agent.LlmError.format_failure(reason,
+            params: request_parameters(tools, llm_gen_opts),
+            model: diagnostic_model_spec()
+          )
 
         Logger.error("Agent #{agent_id}: #{message}")
 
@@ -414,13 +438,16 @@ defmodule EvoGit.Agent.ToolDispatch do
   # `{:error, :cancelled}` from a force-kill purge in
   # `AgentScheduler.with_llm_slot/2` — propagates IMMEDIATELY (no rescue).
   defp run_llm_attempt(context, tools, llm_gen_opts, agent_id) do
+    request_params = request_parameters(tools, llm_gen_opts)
+    log_request_parameters(agent_id, request_params)
+
     AgentScheduler.with_llm_slot(agent_id, fn ->
       with llm_start <- System.monotonic_time(:millisecond),
            {:ok, stream_resp} <-
              ReqLLM.stream_text(
                current_model(),
                context,
-               Keyword.merge([tools: tools], llm_gen_opts)
+               request_params
              ),
            {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_resp),
            llm_end <- System.monotonic_time(:millisecond) do
@@ -443,8 +470,27 @@ defmodule EvoGit.Agent.ToolDispatch do
     end)
   end
 
-  # Per-attempt failure log suffix. A non-retryable provider rejection is
-  # TERMINAL (`handle_llm_failure/7` returns immediately, see
+  # The EXACT keyword list handed to `ReqLLM.stream_text/3` for one attempt —
+  # the single source of the request's parameter names for both the debug log
+  # and the fail-fast message's self-diagnosing tail.
+  defp request_parameters(tools, llm_gen_opts), do: Keyword.merge([tools: tools], llm_gen_opts)
+
+  # Emits the parameter NAMES of the request once per attempt at DEBUG level so
+  # even an ORDINARY (retryable) failure is diagnosable after the fact — e.g. a
+  # provider rejecting an unsupported generation parameter whose name never
+  # appears in the error body. Nothing here is logged at info/error on the happy
+  # path, and the lazy (0-arity) message means the names are rendered ONLY when
+  # the debug level is actually enabled, so the normal path pays nothing.
+  defp log_request_parameters(agent_id, request_params) do
+    Logger.debug(fn ->
+      names = EvoGit.Agent.LlmError.parameter_names(request_params)
+
+      "Agent #{agent_id}: LLM request parameters sent: " <>
+        EvoGit.Agent.LlmError.format_parameter_names(names)
+    end)
+  end
+
+  # Per-attempt failure log suffix. A non-retryable provider rejection is  # TERMINAL (`handle_llm_failure/7` returns immediately, see
   # `EvoGit.Agent.LlmError`), so the log must not claim it is "retrying"; every
   # other class keeps the original wording. Pure and total.
   defp retry_intent(reason) do

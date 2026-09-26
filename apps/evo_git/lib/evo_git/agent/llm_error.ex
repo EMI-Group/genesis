@@ -50,8 +50,26 @@ defmodule EvoGit.Agent.LlmError do
   Every function here is pure and TOTAL: it never raises for any input (nil,
   strings, maps, cycles, arbitrary terms) and never touches the network, the
   scheduler or the process dictionary.
-  """
 
+  ## Self-diagnosing failures (`format_failure/2`)
+
+  A provider code such as Z.AI's 1210 "Invalid API parameter" names the KIND of
+  problem but not the offending field, and the provider's own
+  `request_body`/headers are not echoed back — so after the fact nobody can tell
+  WHICH parameter Genesis sent was rejected. `format_failure/2` therefore appends
+  a self-diagnosing tail to the same actionable line:
+
+    * the **names** (keys only) of the request parameters handed to
+      `ReqLLM.stream_text/3` for that call, sorted + de-duplicated, and
+    * the **resolved model spec** to check the model profile for.
+
+  Only parameter NAMES and the model spec are rendered — never a value, a
+  message/objective/tool-result body, a header or a credential (a model spec
+  given as a map is reduced to its `:id`/`:model`/`:provider` identity fields, so
+  an `:api_key` inside it can never reach the message). `parameter_names/1` and
+  `format_parameter_names/1` expose the same rendering to the request path's
+  debug log. `format_failure/1` is the unchanged no-context form.
+  """
   alias EvoGit.Agent.TruncationFeedback
 
   # Maximum number of wrapper layers peeled while looking for the API request.
@@ -61,9 +79,14 @@ defmodule EvoGit.Agent.LlmError do
   # `ReqLLM.Streaming.Failure.classify/1`.
   @wrapper_tags [:error, :exit, :throw, :shutdown, :http_task_failed]
 
-  # The one-line remediation `format_failure/1` always appends.
+  # The one-line remediation `format_failure/1,2` always appends.
   @remediation "This error is non-retryable — the request will fail again until the model profile / request parameters (model id, temperature, tools) are fixed."
 
+  # Bounds keeping the self-diagnosing tail single-line and cheap even for a
+  # hostile/generated parameter list: the number of parameter names rendered and
+  # the length of one rendered name (the model spec uses the same length bound).
+  @max_parameter_names 32
+  @max_name_length 200
   @doc """
   Whether `reason` is a NON-RETRYABLE LLM provider rejection.
 
@@ -115,15 +138,180 @@ defmodule EvoGit.Agent.LlmError do
       request parameters (model id, temperature, tools) are fixed.
   """
   @spec format_failure(term()) :: String.t()
-  def format_failure(reason) do
-    case find_api_request(reason, 0) do
-      {:ok, %ReqLLM.Error.API.Request{} = request} ->
-        "Provider rejected the LLM request" <>
-          parenthetical(request) <> ": " <> message(request) <> " " <> @remediation
+  def format_failure(reason), do: format_failure(reason, [])
 
-      :not_found ->
-        "The LLM request was rejected with a non-retryable error (" <>
-          summarize(reason) <> "). " <> @remediation
+  @doc """
+  `format_failure/1` plus a self-diagnosing tail naming the request parameters
+  Genesis sent and the resolved model spec.
+
+  `request_context` is a keyword list (or map, atom- OR string-keyed) carrying:
+
+    * `:params` — the EXACT keyword list handed to `ReqLLM.stream_text/3` for
+      this call (e.g. `Keyword.merge([tools: tools], llm_gen_opts)`); only its
+      KEY names are rendered (see `parameter_names/1`);
+    * `:model` — the resolved model spec (`ToolDispatch.current_model/0`); a
+      binary spec is rendered verbatim, a map/struct is reduced to its
+      `:id`/`:model`/`:provider` identity fields only.
+
+  Each part is omitted when absent, so `format_failure(reason, [])` (and
+  `format_failure/1`, which delegates here) produce EXACTLY the previous
+  message — the tail is purely additive:
+
+      Provider rejected the LLM request (HTTP 400, code 1210, provider Z.AI): \
+      Invalid API parameter, please check the documentation. Request parameters \
+      sent: [max_tokens, temperature, tools]. Check the model profile for model \
+      zai:glm-4.6 and remove parameters the provider does not support. This \
+      error is non-retryable — ...
+
+  The result is always a single line: every rendered name is sanitized
+  (control/whitespace runs collapsed, length capped) and the name list is
+  capped. Nothing but parameter NAMES and the model spec is ever rendered —
+  values (which may carry objective/tool-result content or credentials) are
+  never inspected. Never raises.
+  """
+  @spec format_failure(term(), keyword() | map() | nil) :: String.t()
+  def format_failure(reason, request_context) do
+    base =
+      case find_api_request(reason, 0) do
+        {:ok, %ReqLLM.Error.API.Request{} = request} ->
+          "Provider rejected the LLM request" <>
+            parenthetical(request) <> ": " <> message(request)
+
+        :not_found ->
+          "The LLM request was rejected with a non-retryable error (" <>
+            summarize(reason) <> ")."
+      end
+
+    Enum.join([base | diagnostics(request_context)] ++ [@remediation], " ")
+  end
+
+  @doc """
+  The sorted, de-duplicated NAMES of the parameters in a request keyword list
+  (or map) — the "what did Genesis actually send?" diagnostic.
+
+  Names only: values are never read, rendered or inspected. Keys are rendered as
+  strings (atoms via `Atom.to_string/1`), sanitized to a single line, and capped
+  at #{@max_parameter_names} entries. A `:tools` entry whose value is an empty
+  list contributes NOTHING: ReqLLM sends no tools field for an empty list, so
+  listing the name would misattribute a provider rejection to a parameter that
+  never reached it.
+
+  Total: any non-keyword/non-map input yields `[]`.
+  """
+  @spec parameter_names(term()) :: [String.t()]
+  def parameter_names(params) when is_map(params) do
+    params
+    |> Enum.reject(fn {key, value} -> key == :__struct__ or empty_tools?({key, value}) end)
+    |> Enum.map(fn {key, _value} -> key end)
+    |> names()
+  end
+
+  def parameter_names(params) when is_list(params) do
+    params
+    |> Enum.reject(&empty_tools?/1)
+    |> Enum.map(fn
+      {key, _value} -> key
+      key -> key
+    end)
+    |> names()
+  end
+
+  def parameter_names(_params), do: []
+
+  @doc """
+  Renders a parameter-name list as `[a, b]` — the ONE formatting site shared by
+  the terminal message (`format_failure/2`) and the request-path debug log.
+  """
+  @spec format_parameter_names([String.t()]) :: String.t()
+  def format_parameter_names(names) when is_list(names),
+    do: "[" <> Enum.join(names, ", ") <> "]"
+
+  # An empty (or absent) tools list is not a parameter Genesis sends.
+  defp empty_tools?({key, value}) when key in [:tools, "tools"], do: value in [nil, []]
+  defp empty_tools?(_entry), do: false
+
+  defp names(keys) do
+    keys
+    |> Enum.map(&name/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> cap_names()
+  end
+
+  defp name(key) when is_atom(key) and not is_nil(key), do: scalar(Atom.to_string(key))
+  defp name(key) when is_binary(key), do: scalar(key)
+  defp name(_key), do: nil
+
+  defp cap_names(names) when length(names) <= @max_parameter_names, do: names
+
+  defp cap_names(names) do
+    {kept, rest} = Enum.split(names, @max_parameter_names)
+    kept ++ ["... #{length(rest)} more"]
+  end
+
+  # The self-diagnosing sentences, each omitted when its input is absent.
+  defp diagnostics(nil), do: []
+
+  defp diagnostics(request_context) do
+    [
+      parameter_sentence(parameter_names(fetch_key(request_context, :params))),
+      model_sentence(model_label(fetch_key(request_context, :model)))
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp parameter_sentence([]), do: nil
+
+  defp parameter_sentence(parameter_names) do
+    "Request parameters sent: " <> format_parameter_names(parameter_names) <> "."
+  end
+
+  defp model_sentence(nil), do: nil
+
+  defp model_sentence(model) do
+    "Check the model profile for model #{model} and remove parameters the " <>
+      "provider does not support."
+  end
+
+  # Renders a model spec defensively WITHOUT ever leaking a credential: a binary
+  # (the normal "provider:model" profile string) verbatim, any other scalar via
+  # `label/1`, and a map/struct reduced to its `:id` (or `:model`) plus an
+  # optional provider. Arbitrary keys — notably `:api_key`, `:headers`,
+  # `:base_url` — are never rendered.
+  defp model_label(model) when is_binary(model), do: scalar(model)
+  defp model_label(model) when is_atom(model) and not is_nil(model), do: scalar(model)
+
+  defp model_label(model) when is_map(model) do
+    id = scalar(fetch_key(model, :id)) || scalar(fetch_key(model, :model))
+    provider = scalar(fetch_key(model, :provider))
+
+    case {id, provider} do
+      {nil, nil} -> nil
+      {id, nil} -> id
+      {nil, provider} -> "(provider #{provider})"
+      {id, provider} -> "#{id} (provider #{provider})"
+    end
+  end
+
+  defp model_label(_model), do: nil
+
+  # A displayable SCALAR rendered as a single line. Anything else (maps, lists,
+  # structs) yields nil so a value can never be inspected into the message.
+  defp scalar(value) do
+    case label(value) do
+      nil -> nil
+      rendered -> sanitize(rendered)
+    end
+  end
+
+  # Collapses whitespace/control runs and caps the length — guarantees the
+  # "single line" property the whole message relies on, even for a hostile key.
+  # An empty result is nil (nothing to render).
+  defp sanitize(text) do
+    case text |> String.replace(~r/[[:cntrl:]\s]+/u, " ") |> String.trim() do
+      "" -> nil
+      clean -> String.slice(clean, 0, @max_name_length)
     end
   end
 
