@@ -22,8 +22,8 @@ defmodule EvoDash.ConnectionDiagnostics do
   Wired (non-fatally) from `EvoDash.Application.start/2` via `attach/0`, so it
   works in desktop AND normal modes. It is NOT a supervised child: there is
   nothing to supervise — `:telemetry` owns the handler registration. The
-  `config/config.exs` console-logger `metadata:` list must include the new keys
-  for them to actually appear in log output.
+  `config/config.exs` default-formatter `metadata:` list must include the new
+  keys for them to actually appear in log output.
   """
 
   require Logger
@@ -45,14 +45,19 @@ defmodule EvoDash.ConnectionDiagnostics do
       {:error, :already_exists} -> :ok
       {:error, reason} -> {:error, reason}
     end
-  rescue
-    # Expected error? No — `:telemetry.attach/4` does not raise for our fixed
-    # event/handler. But `attach/0` is called from `EvoDash.Application.start/2`,
-    # where a raise would break app boot; degrading to a logged `{:error, _}`
-    # (rather than swallowing the reason) is the cleanest non-fatal boundary.
-    e ->
-      Logger.warning("[desktop] connection diagnostics attach failed: #{inspect(e)}")
-      {:error, e}
+  catch
+    # Expected error? No — for our fixed event/handler this should not fail. But
+    # `:telemetry.attach/4` GenServer-calls the telemetry handler table, which
+    # EXITS when the :telemetry application is not started, and `attach/0` is
+    # called from `EvoDash.Application.start/2` where a crash would break app
+    # boot. Degrading to a logged `{:error, _}` (not swallowing the reason) is
+    # the cleanest non-fatal boundary. Catches :exit / :throw / exceptions.
+    kind, reason ->
+      Logger.warning(
+        "[desktop] connection diagnostics attach failed (#{inspect(kind)}): #{inspect(reason)}"
+      )
+
+      {:error, reason}
   end
 
   @doc """
