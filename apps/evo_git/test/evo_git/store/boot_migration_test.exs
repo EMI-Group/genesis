@@ -61,7 +61,8 @@ defmodule EvoGit.Store.BootMigrationTest do
 
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
-  @migration_versions [@baseline_version, @normalization_version]
+  @composite_index_version 20_260_815_000_003
+  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
 
   # The canonical 20 column names in physical order — matches the baseline
   # migration's @task_columns and TaskRowRaw.__schema__(:fields).
@@ -125,7 +126,9 @@ defmodule EvoGit.Store.BootMigrationTest do
     "idx_tasks_lease_expires_at",
     "idx_tasks_project_path",
     "idx_tasks_updated_at",
-    "idx_tasks_started_at"
+    "idx_tasks_started_at",
+    "idx_tasks_status_started_at",
+    "idx_tasks_project_path_started_at"
   ]
 
   @tasks_pk_autoindex "sqlite_autoindex_tasks_1"
@@ -434,7 +437,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped both migrations (the Ecto migrator saw version 0).
+      # The boot stamped all three migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched — the fresh-DB PRAGMA shape.
@@ -482,16 +485,16 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped both migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all three migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[2]]
+      assert schema_migrations_count(pid) == [[3]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
       # type — the ADOPTED tail order the post-invariant accepts.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
 
-      # ...and all 6 baseline indexes were created alongside.
+      # ...and all 8 idx_tasks_* indexes were created alongside.
       index_names =
         query_rows(
           pid,
@@ -536,7 +539,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       # physical tail order it arrived with is preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[2]]
+      assert schema_migrations_count(pid) == [[3]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -695,7 +698,8 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── Scenario 7: indexes on an adopted legacy DB ───────────────────────────
 
   describe "indexes on an adopted legacy DB" do
-    test "the 6 baseline idx_tasks_* indexes (plus the PK autoindex) exist", %{root: root} do
+    test "the 8 idx_tasks_* indexes (baseline + composites, plus the PK autoindex) exist",
+         %{root: root} do
       path = db_path(%{root: root}, "indexes")
       build_legacy_db!(path, @ddl_17_col, ~w(id status), ["r6b1-idx", "completed"])
 
