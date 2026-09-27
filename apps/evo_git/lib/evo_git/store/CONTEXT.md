@@ -35,7 +35,7 @@ EvoGit.Store (GenServer facade, store.ex)
 
 Baseline schema ADOPTION: works on a fresh DB (tables via `CREATE TABLE IF NOT EXISTS` — 20-column `tasks`, 3-column `projects`) AND adopts ANY pre-Ecto legacy DB (no `schema_migrations` table ⇒ migrator sees version 0 ⇒ this migration runs):
 
-- per-column NULLABLE `ALTER TABLE tasks ADD COLUMN` for the six columns a legacy table may lack (`lease_expires_at, model_id, project_path, branch_name, error, updated_at`), THEN the 6 indexes (`CREATE INDEX IF NOT EXISTS` — `idx_tasks_updated_at` references a column the ALTERs may have just added).
+- per-column NULLABLE `ALTER TABLE tasks ADD COLUMN` for the six columns a legacy table may lack (`lease_expires_at, model_id, project_path, branch_name, error, updated_at`), THEN the 6 baseline indexes (`CREATE INDEX IF NOT EXISTS` — `idx_tasks_updated_at` references a column the ALTERs may have just added).
 - Post-condition: `tasks` carries EXACTLY the 20 canonical columns (names/types/notnull/pk). Physical order is canonical (fresh creates, 15/17-col prefix adoptions) OR the ACCEPTED adopted tail `…, branch_name, updated_at, error` — SQLite ALTERs can only APPEND, and the real v0.9.0–v0.12.5 table already ended in `updated_at`, so the appended `error` lands after it. Column order is functionally irrelevant in SQLite (every query in this system is name-based).
 - Every statement runs via `repo().query!/3` (NOT `Ecto.Migration.execute/1` — string commands are queued until `flush/0`, so an in-body `PRAGMA table_info` probe would see the pre-migration state). `up/0` only — rolling back an adoption would drop user data.
 
