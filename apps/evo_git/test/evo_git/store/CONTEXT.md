@@ -33,12 +33,20 @@ The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
   xqlite BEFORE boot so the rewrite runs during it.
 - `./boot_migration_source_test.exs` → `EvoGit.Store.BootMigrationSourceTest` —
   regression coverage for the PRE-LOADED migrator source
-  (`EvoGit.Store.Boot.migration_source/0`): exactly the two shipped
+  (`EvoGit.Store.Boot.migration_source/0`): exactly the three shipped
   `{version, module}` pairs ascending with the modules loaded, never a
   directory/binary source, memoized in `:persistent_term`, and NO
   `redefining module` stderr text across repeated fresh-DB boots.
+- `./composite_index_test.exs` → `EvoGit.Store.CompositeIndexTest` —
+  `20260815000003_composite_indexes`: `EXPLAIN QUERY PLAN` on the GENERATED
+  SQL of `safe_select_paginated_tasks/2` (captured from the repo's
+  `[:evo_git, :repo, :query]` telemetry) must use the composite index and show
+  NO `USE TEMP B-TREE FOR ORDER BY` — plus a drop-the-index test proving the
+  plan assertions are non-vacuous, the DDL shape (`PRAGMA index_info` column
+  order), and a correctness matrix of every filter combination
+  (rows + `started_at DESC` order + `total_count` across pagination).
 - `./repo_test.exs` → `EvoGit.Store.RepoTest` — infra contracts: applied
-  versions, exact 20-column `tasks` / 3-column `projects` shape, 6 named
+  versions, exact 20-column `tasks` / 3-column `projects` shape, 8 named
   indexes + PK autoindexes, `Boot.run_migrations/1` idempotency, durability
   across `stop`/`start_dynamic`, two-instance coexistence, connection PRAGMAs.
 - `./repo_scope_test.exs` → `EvoGit.Store.RepoScopeTest` — `with_repo/2` happy
