@@ -23,6 +23,27 @@ defmodule EvoGit.Store.CompositeIndexTest do
       the expected ids in `started_at DESC` order with the expected
       `total_count`, pagination included: a new index must never change WHICH
       rows a query returns.
+
+  ## Why the two DDL-sequencing tests pin their store to ONE connection
+
+  Each test boots its OWN dynamic repo via `start_repo!/3`, which forwards
+  `opts` to `EvoGit.Store.Boot.start_dynamic/2` and therefore inherits the
+  production pool size (`EvoGit.Store.Boot.default_pool_size/0`) unless the
+  test says otherwise. That default is deliberately several connections, and
+  SQLite keeps its schema cache PER CONNECTION: a `DROP INDEX` / `CREATE INDEX`
+  issued on one pooled connection is not necessarily reflected in the cached
+  schema — or the query plan built from it — of the connection the NEXT
+  statement in the same test is handed. The plan-non-vacuity test and the
+  migrator-idempotency/post-condition test both interleave DDL with observations
+  of that DDL (a re-planned `EXPLAIN QUERY PLAN`, `PRAGMA index_info`, the real
+  migrator's own post-condition check), so they boot with the explicit
+  `pool_size: 1` option — the same reason and the same shape as
+  `test/evo_git/store_disk_full_test.exs` (whose `PRAGMA query_only` arm is
+  CONNECTION-scoped): with exactly one connection, every statement of the test —
+  the DDL and every observation that follows it — is served by the same,
+  coherently-cached connection. The plan/correctness assertions below keep the
+  production pool shape; the multi-connection schema consistency itself is
+  pinned by `test/evo_git/store/pool_size_test.exs`.
   """
 
   use ExUnit.Case, async: true
@@ -50,8 +71,11 @@ defmodule EvoGit.Store.CompositeIndexTest do
     {:ok, %{root: root}}
   end
 
-  defp start_repo!(%{root: root}, tag) do
-    {:ok, pid} = Boot.start_dynamic(Path.join(root, "evogit_composite_#{tag}.sqlite"))
+  # `opts` go straight to `Boot.start_dynamic/2`; the DDL-sequencing tests pass
+  # `pool_size: 1` (see the moduledoc section) so their DDL and the
+  # introspection/planning that observes it share ONE connection.
+  defp start_repo!(%{root: root}, tag, opts \\ []) do
+    {:ok, pid} = Boot.start_dynamic(Path.join(root, "evogit_composite_#{tag}.sqlite"), opts)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid
@@ -256,7 +280,9 @@ defmodule EvoGit.Store.CompositeIndexTest do
 
     test "the plan assertions are non-vacuous: without the composite the temp B-tree returns",
          %{root: root} do
-      pid = start_repo!(%{root: root}, "plan_dropped")
+      # ONE connection (see the moduledoc section): the DROP below must be
+      # visible to the connection that re-plans the same SQL.
+      pid = start_repo!(%{root: root}, "plan_dropped", pool_size: 1)
       seed_tasks!(pid)
 
       assert %{page: plan} = plan_texts(pid, filters: [status: "completed"])
@@ -307,7 +333,10 @@ defmodule EvoGit.Store.CompositeIndexTest do
 
     test "the migrator is idempotent, and the post-condition rejects a same-named index of another shape",
          %{root: root} do
-      pid = start_repo!(%{root: root}, "postcondition")
+      # ONE connection (see the moduledoc section): the migrated/planted index
+      # shape and the migrator's post-condition check must be observed by the
+      # connection that performed the DDL.
+      pid = start_repo!(%{root: root}, "postcondition", pool_size: 1)
 
       # Already current: a re-run migrates nothing and re-validates nothing.
       assert Boot.run_migrations(pid) == []
