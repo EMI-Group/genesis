@@ -60,6 +60,16 @@ through to the catch-all `handle_info(_msg, socket)` clause.
   `sync_apply_page/2` path (no loading state, no seq bump) — documented
   decision: immediate feedback.
 
+## Load-cost profile (which loads run INLINE in the LiveView)
+The main page fetch is async, but several loads run synchronously in the LiveView process:
+- `mount/3` (`tasks_live.ex:467`) calls `EvoDash.NodeContext.get_unique_paths(node)` SYNCHRONOUSLY.
+  At mount `@current_node` is still the LOCAL node (NodeAware.on_mount seeds it before `?node=` resolution), so this is always a LOCAL call whose result is immediately replaced by the async load's own `get_unique_paths` — a redundant blocking full-scan `SELECT DISTINCT project_path` (on the evo_git side it runs INLINE in the Store GenServer, not offloaded).
+  `mount/3` also calls `Helpers.config_status/0` → `EvoGit.Config.config_status/0` synchronously (local; persistent_term-cached file read).
+- `handle_params/3` (`:523`) calls `start_async_page_load/3` with NO `connected?/1` guard, so the page load is issued on BOTH the disconnected (HTTP) render and the connected mount — two async loads per navigation (each: page SELECT + COUNT(*) + a `get_unique_paths`).
+- The debounced PubSub reload `:node_aware_reload_tasks` (`:564-575`) runs `reload_current_page/1` → `sync_apply_page/2` (`:992-1018`) SYNCHRONOUSLY in the LiveView: `load_page/4` (SELECT + COUNT + per-row full decode of 25 heavy TaskInfo structs) + another `get_unique_paths` — a full page reload inline on every 300ms-debounced `{:task_updated,...}` burst.
+The rendered list is a plain assign (`@filtered_tasks`, `:600`/`:1012`) re-rendered with `Enum.with_index` + `for` (`:245`) — NOT a LiveView stream.
+Per-load SQL cost, the single `pool_size: 1` DBConnection, and the inline-Store `get_unique_paths` scan: `apps/evo_git/lib/evo_git/store/CONTEXT.md`.
+
 ## `:reflect` tasks hidden by default (reveal toggle)
 
 The Tasks page hides `:reflect` tasks (repo-less Home-chat / self-reflective
