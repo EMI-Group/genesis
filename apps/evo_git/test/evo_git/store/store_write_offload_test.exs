@@ -32,14 +32,39 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   crash-semantics test deliberately takes the store (and its writer) down, which
   is only sane in isolation.
 
+  ## Why the store under test is pinned to a single connection
+
+  BOTH connection-scoped mechanisms this file depends on are only meaningful
+  with a pool of exactly ONE connection, so `setup/1` restarts this test's
+  isolated store with the explicit `pool_size: 1` option:
+
+    * the IN-FLIGHT probe asserts `ready_conn_count == 0` on the store's pool
+      (the writer holds THE pooled connection). With the multi-connection
+      production default the writer holds at most one of them, so the metric
+      never reaches `0` while a write is in flight and the probe could never
+      discriminate "queued while a write is in flight" from "queued behind
+      nothing".
+    * the DISK-FULL arm is `PRAGMA query_only = ON` on the store's connection —
+      CONNECTION-scoped, so only an exactly-one-connection pool guarantees the
+      armed connection is the one the offloaded write is handed (the technique
+      and its rationale are documented in full in
+      `test/evo_git/store_disk_full_test.exs`, which pins its store the same
+      way).
+
+  Inheriting the pool size from the production default would make both
+  non-deterministic (a write handed a different connection simply succeeds), so
+  the shape is REQUESTED explicitly instead. That is the only change here: the
+  same writes, the same offload, the same classifier and the same assertions as
+  before.
+
   ## Why the in-flight probe is `__writer__/1` and not a DB-backed read
 
   `wait_for_inflight_write/2` waits on the store's pool metrics
-  (`ready_conn_count == 0` ⟺ the writer holds the pooled connection), and the
-  availability probe is the facade's inline `:__writer__` handler, which answers
-  straight from state without touching SQLite. A DB-backed read cannot serve as
-  a PROMPTNESS probe on a `pool_size: 1` store (today's shape, see
-  `EvoGit.Store.Boot.start_dynamic/1`): it must WAIT for the single pooled
+  (`ready_conn_count == 0` ⟺ the writer holds the pooled connection — see the
+  section above for why this store has exactly one), and the availability probe
+  is the facade's inline `:__writer__` handler, which answers straight from
+  state without touching SQLite. A DB-backed read cannot serve as a PROMPTNESS
+  probe on this one-connection store: it must WAIT for the single pooled
   connection the write holds — measured ~190 ms behind the 12 MB write below —
   which is a property of the single-connection POOL, not of the facade, so it
   cannot discriminate the facade's inbox behaviour. DB-backed reads are asserted
@@ -57,6 +82,36 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # developer machine: the row is JSON-encoded, inserted and WAL-committed), so
   # the in-flight assertions never race a sub-millisecond write.
   @slow_result_bytes 12_000_000
+
+  # Re-start this test's isolated store with an EXPLICIT single connection (see
+  # the moduledoc's "Why the store under test is pinned to a single connection"
+  # section). Both connection-scoped mechanisms this file relies on need a pool
+  # of exactly ONE connection:
+  #
+  #   * the in-flight probe watches for `ready_conn_count == 0`, which the
+  #     multi-connection production default can never reach (the writer holds
+  #     only one of them);
+  #   * the disk-full arm is `PRAGMA query_only`, which is CONNECTION-scoped, so
+  #     only a one-connection pool guarantees the armed connection is the one
+  #     the offloaded write is handed.
+  #
+  # `EvoGit.TaskRegistryCase` starts the store under the id `store` (its
+  # explicit `id:` override), so `stop_supervised!/1` + `start_supervised/1`
+  # replace it in place — same sqlite file, same registered name, same wiring
+  # for the already-started registry, which addresses the store BY NAME.
+  setup %{store: store, sqlite_path: sqlite_path} = context do
+    stop_supervised!(store)
+
+    {:ok, _pid} =
+      start_supervised(
+        Supervisor.child_spec(
+          {Store, data_dir: sqlite_path, name: store, pool_size: 1},
+          id: store
+        )
+      )
+
+    context
+  end
 
   # ── writer lifecycle ─────────────────────────────────────────────────
 
@@ -209,11 +264,11 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       assert_connection_ready!(repo)
 
       # DB-backed reads are served as well, right after the multi-megabyte
-      # write landed (they are NOT probed WHILE it is in flight: on a
-      # `pool_size: 1` store a read queued behind the write for longer than the
-      # pool's CoDel target is DROPPED rather than served — a property of the
-      # pool, and the reason a store serving concurrent readers wants more than
-      # one connection).
+      # write landed (they are NOT probed WHILE it is in flight: on this
+      # deliberately `pool_size: 1` store — see `setup/1` — a read queued behind
+      # the write for longer than the pool's CoDel target is DROPPED rather than
+      # served — a property of the pool, and the reason a store serving
+      # concurrent readers wants more than one connection).
       assert Store.count_tasks(store) == 2
       assert %TaskInfo{result: {:ok, %{result: _}}} = Store.get_task(store, "war_slow")
 
@@ -352,8 +407,10 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # Mirrors the technique documented in `test/evo_git/store_disk_full_test.exs`:
   # `PRAGMA query_only = ON` on the store's OWN connection makes every write
   # fail with SQLITE_READONLY (8), which `EvoGit.Store.Errors` classifies as
-  # disk-full. Re-armed before each write there because the transactional writes
-  # tear the armed connection down; this test arms exactly once.
+  # disk-full. The arm is deterministic here because `setup/1` pins this store's
+  # pool to a single connection (see the moduledoc). Re-armed before each write
+  # there because the transactional writes tear the armed connection down; this
+  # test arms exactly once.
   defp set_query_only(store, value) do
     repo_pid = Store.__repo_pid__(store)
 
