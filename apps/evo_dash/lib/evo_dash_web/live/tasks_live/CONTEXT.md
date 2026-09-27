@@ -37,7 +37,7 @@ which:
    message + `:tasks_reload_pending` flag) coalescing broadcast bursts into one
    reload.
 
-The `:node_aware_reload_tasks` handler (`:579-597`) then goes entirely through
+The `:node_aware_reload_tasks` handler (`:579-598`) then goes entirely through
 **off-process paths — it never touches the store**:
 
 - the page refresh is handed to `start_async_page_load(socket,
@@ -60,9 +60,9 @@ independent, see "Two independent load counters" below.
 
 ## Async page load (the only page-load path)
 
-- `start_async_page_load/3` (`:1059-1077`) bumps the monotonic `:page_load_seq`,
+- `start_async_page_load/3` (`:1059-1072`) bumps the monotonic `:page_load_seq`,
   optionally sets `:tasks_loading`, and hands the work to `spawn_page_load/1` →
-  `run_page_load/6` (`:1087-1116`), which runs the fetch in a supervised
+  `run_page_load/6` (`:1087-1117`), which runs the fetch in a supervised
   `EvoDash.TaskSupervisor` task. The LiveView process NEVER blocks on the store.
   The result arrives as `{:tasks_page_loaded, seq, node, result}` with
   `result = {:ok, %{tasks:, current_page:, total_count:, total_pages:, project_paths:}} | {:error, :load_failed}`
@@ -71,7 +71,7 @@ independent, see "Two independent load counters" below.
   placeholder (user-initiated loads only). A dropped result leaves
   `tasks_loading` true until the newest in-flight load applies (every spawned
   task sends exactly one result, so the loading state can never wedge).
-- **Kickoff is connected-mount-gated** (`handle_params/3`, `:522-537`):
+- **Kickoff is connected-mount-gated** (`handle_params/3`, `:526-538`):
   `handle_params/3` runs on BOTH the disconnected (static HTTP) render and the
   connected mount, and a disconnected render's async result is discarded, so
   the load is spawned ONLY when `connected?(socket)`. The else branch just
@@ -86,7 +86,7 @@ independent, see "Two independent load counters" below.
   reload spawns BOTH loads, so a shared counter would make each load's bump
   invalidate the other's in-flight result. Never merge them; never bump
   `:tasks_load_seq` from this file.
-- `spawn_page_load/1` (`:1080-1084`) wraps the spawn in the
+- `spawn_page_load/1` (`:1080-1083`) wraps the spawn in the
   `:tasks_page_load_hook` app-env seam (1-arity, default identity), resolved at
   spawn time like EvoDash's other runner seams (`:github_runner`,
   `:update_check_runner`). It exists so tests can count page-load spawns.
@@ -106,7 +106,7 @@ independent, see "Two independent load counters" below.
   `{:task_updated, ...}` burst never puts a query on the LiveView process.
 - The ONLY remaining synchronous store reads are the user-initiated mutating
   events (cancel / force-kill / delete / clear-history) via
-  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1045`) — low-volume
+  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1046`) — low-volume
   one-shot actions where the inline round-trip buys immediate feedback.
   `sync_apply_page/2` deliberately does not touch `:tasks_loading` or
   `:page_load_seq` (the async path owns those).
@@ -301,7 +301,7 @@ Every load goes `EvoDash.NodeContext.<f>` (local direct / remote `:erpc`) →
 → `EvoGit.Store`. In the core the Store is ONE GenServer over a SINGLE SQLite
 connection (`pool_size: 1`), so all of these reads serialize with each other and
 with heartbeat/lease/cleanup writes:
-- **`list_tasks_paginated/2`** — `load_page/4` (`tasks_live.ex:971-998`; opts
+- **`list_tasks_paginated/2`** — `load_page/4` (`tasks_live.ex:971-997`; opts
   `[limit: 25, offset: (page-1)*25, filters: build_filters_from_assigns/1]`) →
   `TaskRegistry.list_tasks_paginated/1` → `Store.safe_select_paginated_tasks/2`.
   Issues **TWO SQL statements** (page `SELECT` with `ORDER BY started_at DESC
@@ -309,7 +309,7 @@ with heartbeat/lease/cleanup writes:
   decodes a FULL `%TaskInfo{}` per row (incl. `result`/`usage`/`archive_metadata`
   JSON) for all 25 rows. A `search` filter is a leading-wildcard OR-`LIKE` over
   `id`/`opts`/`project_path`/`result` (full-table scan) executed in BOTH
-  statements. On a stale/clamped page (`:984-992`) the whole paginated call runs
+  statements. On a stale/clamped page (`:983-993`) the whole paginated call runs
   a SECOND time (`COUNT` re-run too).
 - **`get_unique_paths/1`** — called ONCE per page load inside the async task
   (`run_page_load/6:1094`) and synchronously in `sync_apply_page/2:1044`
@@ -333,12 +333,12 @@ statements inline.
 
 ## Synchronous vs async in the LiveView
 
-- **ASYNC (`EvoDash.TaskSupervisor`)**: `start_async_page_load/3` (`:1059-1077`)
+- **ASYNC (`EvoDash.TaskSupervisor`)**: `start_async_page_load/3` (`:1059-1072`)
   → `run_page_load/6` — the connected mount, `push_patch` pagination, every
   filter/search/toggle event, AND the debounced PubSub reload. Result arrives as
   `{:tasks_page_loaded, seq, node, result}`, stale-guarded by `:page_load_seq`.
 - **SYNCHRONOUS in the LiveView process**: `mount/3`'s `config_status/0`; and
-  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1045`), which runs the
+  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1046`), which runs the
   full paginated query + `get_unique_paths` inline. Used ONLY by the
   user-initiated mutating events (cancel / force-kill / delete / clear-history).
 
@@ -347,7 +347,7 @@ statements inline.
 Every node-matching `{:task_updated, _, _, _}` / `{:task_deleted, _, _}`
 triggers a page refresh: `NodeAware.handle_task_info/2` (`node_aware.ex:733-751`)
 node-filters then debounces 300ms (`debounce_task_reload/1`, coalescing bursts),
-and the `:node_aware_reload_tasks` handler (`tasks_live.ex:579-597`) dispatches
+and the `:node_aware_reload_tasks` handler (`tasks_live.ex:579-598`) dispatches
 the ASYNC page reload (`start_async_page_load/3`, `show_loading? false`) plus the
 async sidebar reload (`NodeAware.reload_tasks/1`), then clears the debounce flag.
 A source emitting events across ≥300ms windows produces one reload dispatch per
