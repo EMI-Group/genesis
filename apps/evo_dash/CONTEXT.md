@@ -23,6 +23,7 @@ Users open a Project (a Git repository path), and the dashboard auto-detects the
 - `./lib/evo_dash_web/live/agents_live/` → AgentsLive support modules (`LoadData`, `HistoryGate`, `ThresholdCache`, `ToolCallDisplay`) — `live/agents_live/CONTEXT.md`
 - `./lib/evo_dash_web/live_hooks/` → Five on-mount hooks: `set_locale.ex`, `node_aware.ex`, `desktop_quit.ex`, `update_status.ex`, `guide.ex` (registered in that order, Guide LAST) — `live_hooks/CONTEXT.md`
 - `./lib/evo_dash_web/components/` → Function components (`core_components.ex`, `project_components.ex`, `task_form_components.ex`, `task_card_components.ex`, `archive_components.ex`, `review_components.ex`, `agents_components.ex`, `settings_components.ex`, `remote_gate_components.ex`, `layouts.ex`, `review_components/`, `settings_components/` subdirs) — `components/CONTEXT.md`
+- Token/cost usage stat displays (labels "Input/Output/Total Tokens", "Cached Tokens", "Cache Creation", "Cache Hit Rate", "Input/Output/Total Cost", "Token & Cost Usage") — the complete 5-site inventory (task card, archive tree tiles ×2, review task summary, agents detail panel), the shared `Helpers.format_cost/1`/`format_cache_hit_rate/1` formatters, the `<.tip/>` info-notice convention, i18n rules and the covering tests → `./lib/evo_dash_web/components/` (`components/CONTEXT.md` → "Token & Cost Usage Display Sites")
 - `./lib/evo_dash_web/controllers/` → Classic HTTP controllers (`task_export_controller.ex`), error handlers
 - `./test/` → ExUnit test suite — `test/CONTEXT.md`
 
