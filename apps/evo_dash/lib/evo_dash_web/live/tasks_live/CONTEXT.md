@@ -69,6 +69,15 @@ The main page fetch is async, but several loads run synchronously in the LiveVie
 - The debounced PubSub reload `:node_aware_reload_tasks` (`:564-575`) runs `reload_current_page/1` → `sync_apply_page/2` (`:992-1018`) SYNCHRONOUSLY in the LiveView: `load_page/4` (SELECT + COUNT + per-row full decode of 25 heavy TaskInfo structs) + another `get_unique_paths` — a full page reload inline on every 300ms-debounced `{:task_updated,...}` burst.
 The rendered list is a plain assign (`@filtered_tasks`, `:600`/`:1012`) re-rendered with `Enum.with_index` + `for` (`:245`) — NOT a LiveView stream.
 Per-load SQL cost, the single `pool_size: 1` DBConnection, and the inline-Store `get_unique_paths` scan: `apps/evo_git/lib/evo_git/store/CONTEXT.md`.
+## Measured load profile (live DB: 854 rows, 29.7 MB, 752 `:completed`)
+Medians from an isolated read-only `mix run` harness (`Phoenix.LiveViewTest.live/2` in an ExUnit process) against a COPY of the live `tasks.sqlite`; the real async/TaskSupervisor path is exercised.
+- `live(conn, "/tasks")` (disconnected GET render + connected mount + first render in the loading state): **~8 ms** (the raw disconnected `GET /tasks` render alone is ~2.8 ms).
+- mount-return → 25-row list loaded (async page load): **~16 ms**. User-visible first paint ≈ **24 ms**.
+- Pure `render(view)` of the loaded page (24 cards render — one `:reflect` row is hidden): **~2 ms**; loaded HTML ≈ 194 KB / ≈ 1332 element-open tags.
+- One collapsed `TaskCardComponents.task_card` = **~0.03–0.07 ms** (25 cards ≈ 1.3 ms) — per-card render is NOT a bottleneck; cost/usage/cache/archive/diff are all gated behind the expanded state.
+- Default (unfiltered) page query `list_tasks_paginated` = **~1.6 ms**; `get_unique_paths/1` = 0.14 ms; `config_status/0` = 0.25 ms.
+- Sidebar `list_tasks_summary` (752 rows incl. `:completed`) = **~20–24 ms**, run ASYNC. It does NOT block the LiveView process, but it holds the single Store GenServer for its whole duration and `on_mount` spawns it BEFORE `handle_params` spawns the page load — so the page's DB query serializes behind it: the same query measures **~1.8 ms alone vs ~12 ms while the sidebar summary is in flight**.
+- A FILTERED page load is DB-bound, not render-bound: `status = "completed"` → **~140 ms** for `list_tasks_paginated` (~150–180 ms LiveView round trip), while `status = "failed"` → ~1.5 ms. Root cause lives in the core (evo_git) read path: the page SELECT lists ALL 20 columns, so `WHERE status = ? ORDER BY started_at DESC LIMIT 25` makes SQLite choose `idx_tasks_status` + **USE TEMP B-TREE FOR ORDER BY**, materializing all 752 matching rows (≈15 MB of blobs) before returning 25; the UNfiltered query uses `idx_tasks_started_at` and stops after 25 (0.5 ms). SQL-level proof on the same copy: that query selecting only `id,started_at` = 0.45 ms vs selecting all columns = 165 ms. `project_path`/deep-offset variants are ~4–5 ms (fewer matches).
 
 ## `:reflect` tasks hidden by default (reveal toggle)
 
