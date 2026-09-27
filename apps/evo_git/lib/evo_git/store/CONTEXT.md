@@ -48,6 +48,10 @@ Idempotent DATA rewrites (every guard leaves normalized rows alone):
 - **Opts**: legacy positional `[key, value]` pair arrays → JSON objects, rewritten in ELIXIR (Jason) so JSON booleans survive (never `json_group_object`, which collapses them to SQLite integers); malformed rows left untouched.
 - **Backfills**: `branch_name` ← `json_extract(result, '$.data.branch_name')` only where NULL AND the result tag is `ok`; `updated_at` ← `COALESCE(finished_at, started_at, now)` where NULL (runs AFTER timestamp normalization). Drops the DETS-era `tasks_quarantine`/`projects_quarantine` tables.
 
+### Migration 3 — `20260815000003_composite_indexes`
+
+Additive DDL only (no table rebuild, no data rewrite; `up/0` only). Creates the two composite `(equality column, started_at)` indexes that make the paginated read index-served: `idx_tasks_status_started_at` on `(status, started_at)` and `idx_tasks_project_path_started_at` on `(project_path, started_at)`. Post-condition: `PRAGMA index_info(<name>)` must report EXACTLY the declared columns in order (`IF NOT EXISTS` alone would silently keep a same-named index of a different shape). Deliberately NOT added: `(status, project_path, started_at)` (never chosen over the two, and it cannot serve a status-only query — incomparable middle column), `type`/`review_status`/`branch_name` (no paginated query leads with them), and no `ANALYZE` (the planner picks both composites with no statistics; `ANALYZE` would scan a large user DB inside the boot-time migration). Full rationale + measurements: the migration's moduledoc.
+
 ### Migration source & concurrent-boot serialization
 
 The migrator is fed a PRE-LOADED source — `Boot.migration_source/0` returns `[{version, module}]` ascending by version — never the migrations DIRECTORY.
