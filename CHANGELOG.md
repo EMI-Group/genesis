@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.5] - 2026-09-27
+
+### Added
+
+- Translations updated.
+
+### Changed
+
+- Improved task read performance with composite indexes, multi-connection reads, and a dedicated writer process so slow writes no longer block reads.
+- Task page loads faster with non-blocking, debounced task reloads.
+
+### Fixed
+
+- LLM usage costs are now recomputed from raw token counts and the pricing catalog, including peak/off-peak periods and cache discounts, instead of inflated reported costs. Dashboard token and cost displays now show a shared best-effort cost notice.
+
 ## [0.13.4] - 2026-09-26
 
 ### Added
