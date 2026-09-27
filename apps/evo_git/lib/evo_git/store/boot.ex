@@ -46,6 +46,40 @@ defmodule EvoGit.Store.Boot do
   # One BEAM-wide memo slot for the pre-loaded `[{version, module}]` source.
   @migration_source_key {__MODULE__, :migration_source}
 
+  # Connections opened by each per-store dynamic repo pool.
+  #
+  # >1 is SAFE here. The journal is WAL, so readers and the writer run
+  # concurrently instead of blocking each other; and this store has exactly ONE
+  # writer path — every write goes through the `EvoGit.Store` GenServer (no
+  # module outside `lib/evo_git/store/` calls `EvoGit.Repo.*`), which already
+  # serializes them — so extra connections cannot introduce write-write
+  # contention. The 30 s `busy_timeout` (repo.ex) covers any transient lock
+  # window (e.g. a checkpoint). What the extra connections buy is READ
+  # parallelism: with a single connection every offloaded read Task, inline
+  # handler, write and migration queued on the SAME connection, so all store
+  # SQL serialized at the connection level, not just at the GenServer. Measured
+  # head-of-line blocking with one connection: a plain page load 1.4 ms quiet
+  # vs 11.8 ms while a 20 ms sidebar summary was in flight; p99 207 ms with 10
+  # queued search loads.
+  #
+  # 4 is the chosen size: the Store GenServer can hold at most ONE connection
+  # for a write at a time (writes are serialized there), so 4 leaves 3 for
+  # concurrent reads — the measured head-of-line pair (a page load + the
+  # sidebar summary) plus the third read a dashboard page mount issues
+  # (paginated list + summary + changed-since), without queueing behind each
+  # other. Deliberately kept in the low single digits: every connection is a
+  # REAL SQLite handle with its own file descriptor and its own page-cache
+  # budget (`cache_size: -64_000`, i.e. 64 MiB, from the adapter defaults), and
+  # EVERY dynamic store opens this many — including the hundreds of per-test
+  # stores the suite boots.
+  #
+  # Overridable per store via `start_dynamic/2`'s `:pool_size` option (and
+  # `EvoGit.Store.start_link/1`'s, which forwards it). A single-connection
+  # store is one option away: the disk-full tests pass `pool_size: 1`, because
+  # `PRAGMA query_only` is CONNECTION-scoped and only an exactly-one-connection
+  # pool guarantees the armed connection is the one every write is handed.
+  @default_pool_size 4
+
   @doc """
   Runs all pending migrations (`:up`, `all: true` — no-op when current).
 
@@ -91,18 +125,70 @@ defmodule EvoGit.Store.Boot do
   The instance is unregistered (no name) — address it BY PID through
   `EvoGit.Repo.put_dynamic_repo/1`, and stop it with `stop/1`. The parent
   dir of `database` is created if missing.
+
+  ## Options
+
+    * `:pool_size` — connections the instance's DBConnection pool opens.
+      Defaults to `default_pool_size/0`. Values `> 1` let this store's reads
+      run CONCURRENTLY (see the `@default_pool_size` rationale): WAL separates
+      readers from the writer, and the single writer (the `EvoGit.Store`
+      GenServer) is already serialized. Pass `1` for a single-connection
+      store. Anything but a positive integer raises an `ArgumentError`.
+
+  Migrations run on a single-connection BOOT instance, which a `pool_size: 1`
+  store keeps and which is released (and reopened at the requested size) for
+  any larger pool — see `reopen_pool/3` for why the returned pool's
+  connections must be created AFTER the schema exists.
   """
-  @spec start_dynamic(Path.t()) :: {:ok, pid()}
-  def start_dynamic(database) do
+  @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()}
+  def start_dynamic(database, opts \\ []) do
     database = Path.expand(database)
     :ok = File.mkdir_p(Path.dirname(database))
+    pool_size = resolve_pool_size(opts)
 
-    with {:ok, pid} <- @repo.start_link(database: database, name: nil, pool_size: 1) do
-      run_migrations(pid)
-      {:ok, pid}
+    with {:ok, boot} <- @repo.start_link(database: database, name: nil, pool_size: 1) do
+      run_migrations(boot)
+
+      if pool_size == 1 do
+        {:ok, boot}
+      else
+        reopen_pool(database, boot, pool_size)
+      end
     end
   end
 
+  # Migrations are deliberately run on the single-connection BOOT instance
+  # above, which is then released before the returned pool opens — so every
+  # connection of the returned instance opens a database file that ALREADY
+  # carries the migrated schema. (A `pool_size: 1` store keeps the boot
+  # instance instead: one connection is exactly the shape it asked for, and it
+  # is the connection that ran the migrations — the boot it has always had.)
+  #
+  # Why that matters: SQLite loads a connection's schema LAZILY, and a
+  # connection that opened a still-schema-less file keeps that empty schema
+  # cached. The schema-introspection pragmas (`PRAGMA index_list/1` and its
+  # kin) are answered from that cache WITHOUT triggering the load, so such a
+  # connection reports an EMPTY index list until some other statement loads the
+  # schema (a plain query or `EXPLAIN QUERY PLAN` does — measured on a
+  # `default_pool_size/0` pool: the first `PRAGMA index_list(tasks)` of a
+  # pre-migration connection returns 0 rows, a later one returns all 7). With
+  # one connection this is invisible, because that connection executed the DDL
+  # itself; with several it is not — the pool would hand out an
+  # introspection-inconsistent connection alongside correct ones,
+  # non-deterministically. Reopening the pool is the supported way to get
+  # fresh connections: the boot instance has released the file (closing the
+  # last connection to a WAL database also checkpoints it), and the new pool's
+  # connections are all created against the migrated schema.
+  defp reopen_pool(database, boot, pool_size) do
+    :ok = stop(boot)
+    @repo.start_link(database: database, name: nil, pool_size: pool_size)
+  end
+  @doc """
+  The pool size a store uses when it does not pass `:pool_size` explicitly —
+  the `@default_pool_size` constant (#{@default_pool_size}).
+  """
+  @spec default_pool_size() :: pos_integer()
+  def default_pool_size, do: @default_pool_size
   @doc """
   Stops a dynamic repo instance cleanly.
 
@@ -134,6 +220,24 @@ defmodule EvoGit.Store.Boot do
   end
 
   ## Shared
+
+  # The `:pool_size` option is validated HERE, before the repo start: the
+  # DBConnection pool raises its own ArgumentError on a size < 1 from inside
+  # the pool supervisor's init/1, which surfaces as an opaque
+  # `{:error, {:shutdown, {:failed_to_start_child, ...}}}` (and a bogus
+  # non-integer would only blow up later, once a connection is attempted).
+  # A descriptive raise at the call site keeps a misconfigured store obvious.
+  defp resolve_pool_size(opts) do
+    case Keyword.get(opts, :pool_size) do
+      nil -> default_pool_size()
+      size when is_integer(size) and size > 0 -> size
+      other -> raise ArgumentError, invalid_pool_size_message(other, "EvoGit.Store.Boot.start_dynamic/2")
+    end
+  end
+
+  defp invalid_pool_size_message(value, where) do
+    "invalid :pool_size option for #{where}: expected a positive integer, got: #{inspect(value)}"
+  end
 
   # The migrator is fed the PRE-LOADED `[{version, module}]` source
   # (`migration_source/0`) instead of the migrations DIRECTORY. With a
