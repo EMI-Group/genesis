@@ -1946,7 +1946,7 @@ defmodule EvoGit.StoreTest do
     )
     """
 
-    @migration_versions [20_260_815_000_001, 20_260_815_000_002]
+    @migration_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
     test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
          %{root: root} do
@@ -2003,7 +2003,7 @@ defmodule EvoGit.StoreTest do
       :ok = XqliteNIF.close(pre)
 
       # Public GenServer entry: Store.start_link itself boots the dynamic
-      # repo, runs BOTH migrations, and comes up serving reads/writes.
+      # repo, runs ALL migrations, and comes up serving reads/writes.
       {:ok, pid} = Store.start_link(data_dir: sqlite_path, name: store)
 
       # The store is LINKED to this test process; a normal test exit would
@@ -2019,7 +2019,7 @@ defmodule EvoGit.StoreTest do
         end
       end)
 
-      # Both migration versions are stamped in schema_migrations, observed
+      # All three migration versions are stamped in schema_migrations, observed
       # through the same test seam the disk-full tests use (__repo_pid__ +
       # RepoScope/Repo against the store's OWN dynamic instance).
       repo_pid = Store.__repo_pid__(store)

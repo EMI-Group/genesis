@@ -14,15 +14,16 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
 
   Pinned contracts:
 
-    * the seam returns EXACTLY the two shipped migrations, ascending, with their
-      modules loaded (`Code.ensure_loaded?/1` + `__migration__/0` exported), the
-      versions agreeing with the REAL `priv/repo/migrations/*.exs` filenames
+    * the seam returns EXACTLY the three shipped migrations, ascending, with
+      their modules loaded (`Code.ensure_loaded?/1` + `__migration__/0`
+      exported), the versions agreeing with the REAL
+      `priv/repo/migrations/*.exs` filenames
     * it is a pre-loaded MODULE list, never the directory/binary source that
       would make Ecto compile the files itself
     * repeated calls reuse the memoized list and recompile nothing
-    * two consecutive fresh-database boots — the production path, both migration
-      versions pending each time — emit no `redefining module` text and still
-      stamp both versions
+    * two consecutive fresh-database boots — the production path, all three
+      migration versions pending each time — emit no `redefining module` text
+      and still stamp all three versions
 
   ## Warning capture is deterministic under `async: true`
 
@@ -47,9 +48,11 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   # them; `migration_file_versions/0` re-derives them from disk.
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
+  @composite_index_version 20_260_815_000_003
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
+  @composite_index_module EvoGit.Repo.Migrations.CompositeIndexes
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
   # pre-loaded source (documented in `EvoGit.Store.Boot` / the store CONTEXT.md)
@@ -77,12 +80,13 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   # ── migration_source/0 ────────────────────────────────────────────────────
 
   describe "migration_source/0" do
-    test "returns exactly the two shipped {version, module} pairs, ascending, modules loaded" do
+    test "returns exactly the three shipped {version, module} pairs, ascending, modules loaded" do
       source = Boot.migration_source()
 
       assert source == [
                {@baseline_version, @baseline_module},
-               {@normalization_version, @normalization_module}
+               {@normalization_version, @normalization_module},
+               {@composite_index_version, @composite_index_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -131,25 +135,27 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     test "two consecutive boots reuse the loaded source: no 'redefining module' text", %{
       root: root
     } do
-      # Both migration modules are already loaded here (the app-booted store
+      # All three migration modules are already loaded here (the app-booted store
       # migrated before the suite ran), so a regression to a directory source
       # would have to REDEFINE them — which is exactly what the capture looks
       # for.
       assert Boot.migration_source() == [
                {@baseline_version, @baseline_module},
-               {@normalization_version, @normalization_module}
+               {@normalization_version, @normalization_module},
+               {@composite_index_version, @composite_index_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
       assert Code.ensure_loaded?(@normalization_module)
+      assert Code.ensure_loaded?(@composite_index_module)
 
       output =
         capture_io(:stderr, fn ->
           assert booted_versions(db_path(root, "fresh_a")) ==
-                   [@baseline_version, @normalization_version]
+                   [@baseline_version, @normalization_version, @composite_index_version]
 
           assert booted_versions(db_path(root, "fresh_b")) ==
-                   [@baseline_version, @normalization_version]
+                   [@baseline_version, @normalization_version, @composite_index_version]
         end)
 
       refute output =~ "redefining module"
@@ -160,7 +166,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
 
   defp db_path(root, tag), do: Path.join(root, "evogit_bootsource_#{tag}.sqlite")
 
-  # Boots a dynamic repo on a FRESH database (both migration versions pending,
+  # Boots a dynamic repo on a FRESH database (all three migration versions pending,
   # so the compile path under test is genuinely exercised), returns the versions
   # it stamped, and stops it. Mirrors the sibling suites: the repo is UNLINKED
   # (the `on_exit` guard runs after the test process is gone, so

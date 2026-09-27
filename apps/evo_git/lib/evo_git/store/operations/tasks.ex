@@ -235,7 +235,17 @@ defmodule EvoGit.Store.Operations.Tasks do
   counted, exactly like the old raw SQL).
 
   Rows whose decode raises are SKIPPED with a `Logger.warning` (the old
-  skip-and-log safe-select boundary, `decode_skipping_bad/3`).
+  skip-and-log safe-select boundary, `decode_skipping_bad/3` — see
+  `decode_tasks_skipping_bad/1`).
+
+  The `ORDER BY started_at DESC` + `LIMIT`/`OFFSET` page is index-served for
+  every supported filter: `idx_tasks_started_at` when no filter column is
+  pinned, else the composite `(status, started_at)` /
+  `(project_path, started_at)` indexes from
+  `priv/repo/migrations/20260815000003_composite_indexes.exs` — the WHERE
+  clauses below are written to keep those leading equality columns exactly as
+  the indexes declare them (see that migration's moduledoc for the measured
+  plans and for the filters that deliberately have no index).
   """
   @spec safe_select_paginated_tasks(pid(), keyword()) :: {[TaskInfo.t()], non_neg_integer()}
   def safe_select_paginated_tasks(repo, opts) when is_list(opts) do

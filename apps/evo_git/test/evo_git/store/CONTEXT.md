@@ -33,12 +33,20 @@ The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
   xqlite BEFORE boot so the rewrite runs during it.
 - `./boot_migration_source_test.exs` → `EvoGit.Store.BootMigrationSourceTest` —
   regression coverage for the PRE-LOADED migrator source
-  (`EvoGit.Store.Boot.migration_source/0`): exactly the two shipped
+  (`EvoGit.Store.Boot.migration_source/0`): exactly the three shipped
   `{version, module}` pairs ascending with the modules loaded, never a
   directory/binary source, memoized in `:persistent_term`, and NO
   `redefining module` stderr text across repeated fresh-DB boots.
+- `./composite_index_test.exs` → `EvoGit.Store.CompositeIndexTest` —
+  `20260815000003_composite_indexes`: `EXPLAIN QUERY PLAN` on the GENERATED
+  SQL of `safe_select_paginated_tasks/2` (captured from the repo's
+  `[:evo_git, :repo, :query]` telemetry) must use the composite index and show
+  NO `USE TEMP B-TREE FOR ORDER BY` — plus a drop-the-index test proving the
+  plan assertions are non-vacuous, the DDL shape (`PRAGMA index_info` column
+  order), and a correctness matrix of every filter combination
+  (rows + `started_at DESC` order + `total_count` across pagination).
 - `./repo_test.exs` → `EvoGit.Store.RepoTest` — infra contracts: applied
-  versions, exact 20-column `tasks` / 3-column `projects` shape, 6 named
+  versions, exact 20-column `tasks` / 3-column `projects` shape, 8 named
   indexes + PK autoindexes, `Boot.run_migrations/1` idempotency, durability
   across `stop`/`start_dynamic`, two-instance coexistence, connection PRAGMAs.
 - `./repo_scope_test.exs` → `EvoGit.Store.RepoScopeTest` — `with_repo/2` happy
@@ -60,6 +68,7 @@ The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
 | `boot_migration_test.exs` | `EvoGit.Store.BootMigrationTest` | Legacy fixtures crafted RAW (never through the repo) exactly as a pre-Ecto release left them: historical DDL, no `schema_migrations`; adoption never rewrites healthy data (pre-boot raw SELECT == post-boot `TaskRowRaw` load). |
 | `boot_normalization_test.exs` | `EvoGit.Store.BootNormalizationTest` | Tables created with the CURRENT-shape DDL so baseline adoption is a pure no-op and every byte change is attributable to the data migration alone. |
 | `boot_migration_source_test.exs` | `EvoGit.Store.BootMigrationSourceTest` | `Boot.migration_source/0` shape + loading (`{integer, module}` pairs, versions cross-checked against the REAL `priv/repo/migrations/*.exs` filenames) and its `:persistent_term` memoization; the source is a module LIST, never the directory; two fresh-DB boots inside `ExUnit.CaptureIO.capture_io(:stderr, ...)` emit no `redefining module` text while still stamping both versions. |
+| `composite_index_test.exs` | `EvoGit.Store.CompositeIndexTest` | Plans are asserted against the ACTUAL executed SQL (telemetry capture, replayed through `EXPLAIN QUERY PLAN`); `PRAGMA index_info` pins the composite column ORDER; the correctness matrix seeds 12 rows over 3 paths / 5 statuses / 12 distinct `started_at` values. |
 | `repo_test.exs` | `EvoGit.Store.RepoTest` | `Repo.query!/3` introspection inside `RepoScope.with_repo/2`; `PRAGMA table_info` rows `[cid, name, type, notnull, dflt, pk]` with INTEGER 0/1 flags; journal_mode `wal`, synchronous `1`, busy_timeout `30000`. |
 | `repo_scope_test.exs` | `EvoGit.Store.RepoScopeTest` | Default binding of a fresh test process is the `EvoGit.Repo` module atom. |
 | `errors_test.exs` | `EvoGit.Store.ErrorsTest` | `{shape} -> true/false` tables for both families: codes 8/10/13, `:read_only_database`, message-text fallback (case-insensitive), negatives (`{:ok, _}`, code 19 / constraint shapes, NIF tuples under `disk_full_exception?/1`, non-exception values). |

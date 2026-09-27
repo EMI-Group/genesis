@@ -12,7 +12,10 @@ defmodule EvoGit.Store do
   ## Architecture
 
     * **Boot** — `init/1` starts the dynamic repo via
-      `EvoGit.Store.Boot.start_dynamic/1`, which runs the Ecto migrations in
+      `EvoGit.Store.Boot.start_dynamic/2` (this store's `:pool_size` opt,
+      defaulting to `EvoGit.Store.Boot.default_pool_size/0` — more than one
+      connection, so reads do not all serialize on a single one), which runs
+      the Ecto migrations in
       `priv/repo/migrations/` (baseline schema adoption + data normalization:
       column adds, fixed-precision timestamp rewrites, canonical
       `result`/`opts` rewrites) BEFORE any read or write. Migrating at boot is
@@ -125,12 +128,26 @@ defmodule EvoGit.Store do
 
     * `:data_dir` — (required) filesystem path for the SQLite database FILE.
     * `:name` — (optional) registration name, defaults to `__MODULE__`.
+    * `:pool_size` — (optional) pool size for this store's OWN dynamic repo,
+      forwarded to `EvoGit.Store.Boot.start_dynamic/2`. Defaults to
+      `EvoGit.Store.Boot.default_pool_size/0`, i.e. MORE than one connection:
+      this store's reads then run concurrently instead of all queueing on a
+      single connection (its writes stay serialized by this GenServer, so no
+      write-write contention is introduced). Pass `1` to force a
+      single-connection store — the disk-full tests do, because the
+      `PRAGMA query_only` arm they use is CONNECTION-scoped and therefore only
+      deterministic when the pool has exactly one connection.
   """
   def start_link(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
     name = Keyword.get(opts, :name, __MODULE__)
+    pool_size = Keyword.get(opts, :pool_size)
 
-    GenServer.start_link(__MODULE__, %{data_dir: data_dir, name: name}, name: name)
+    GenServer.start_link(
+      __MODULE__,
+      %{data_dir: data_dir, name: name, pool_size: pool_size},
+      name: name
+    )
   end
 
   ## Public API — Tasks
@@ -471,7 +488,7 @@ defmodule EvoGit.Store do
   def init(%{data_dir: data_dir} = init_arg) do
     File.mkdir_p!(Path.dirname(data_dir))
 
-    case EvoGit.Store.Boot.start_dynamic(data_dir) do
+    case EvoGit.Store.Boot.start_dynamic(data_dir, pool_size: Map.get(init_arg, :pool_size)) do
       {:ok, repo} ->
         name = Map.get(init_arg, :name)
 
