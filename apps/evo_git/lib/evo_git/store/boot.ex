@@ -183,12 +183,14 @@ defmodule EvoGit.Store.Boot do
     :ok = stop(boot)
     @repo.start_link(database: database, name: nil, pool_size: pool_size)
   end
+
   @doc """
   The pool size a store uses when it does not pass `:pool_size` explicitly —
   the `@default_pool_size` constant (#{@default_pool_size}).
   """
   @spec default_pool_size() :: pos_integer()
   def default_pool_size, do: @default_pool_size
+
   @doc """
   Stops a dynamic repo instance cleanly.
 
@@ -229,9 +231,14 @@ defmodule EvoGit.Store.Boot do
   # A descriptive raise at the call site keeps a misconfigured store obvious.
   defp resolve_pool_size(opts) do
     case Keyword.get(opts, :pool_size) do
-      nil -> default_pool_size()
-      size when is_integer(size) and size > 0 -> size
-      other -> raise ArgumentError, invalid_pool_size_message(other, "EvoGit.Store.Boot.start_dynamic/2")
+      nil ->
+        default_pool_size()
+
+      size when is_integer(size) and size > 0 ->
+        size
+
+      other ->
+        raise ArgumentError, invalid_pool_size_message(other, "EvoGit.Store.Boot.start_dynamic/2")
     end
   end
 

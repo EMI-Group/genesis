@@ -105,6 +105,7 @@ defmodule EvoGit.StoreDiskFullTest do
 
     context
   end
+
   describe "EvoGit.Store.Errors.disk_full_error?/1" do
     test "classifies disk-full-class xqlite error tuples" do
       # SQLITE_FULL (13) / SQLITE_IOERR (10) / SQLITE_READONLY (8) primary codes.

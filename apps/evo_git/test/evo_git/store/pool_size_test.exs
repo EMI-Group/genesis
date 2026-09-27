@@ -131,8 +131,46 @@ defmodule EvoGit.Store.PoolSizeTest do
     end
   end
 
-  # ── Helpers ──────────────────────────────────────────────────────────────
+  # ── Schema consistency across the pool ───────────────────────────────────
 
+  describe "schema consistency across the pool" do
+    # SQLite loads a connection's schema LAZILY, and a connection that opened a
+    # still-schema-less file keeps that empty schema cached; the
+    # schema-introspection pragmas are answered from the cache WITHOUT loading
+    # it, so such a connection reports an EMPTY index list until some other
+    # statement loads the schema. `Boot.start_dynamic/2` therefore migrates on a
+    # single-connection boot instance and REOPENS the pool for any larger size,
+    # so that every connection of the returned instance opens an
+    # already-migrated file. This asserts exactly that, on EVERY pooled
+    # connection (all held at once, so the pool cannot hand the same one out
+    # twice), against the ground truth in `sqlite_master`.
+    test "EVERY pooled connection reports the migrated index inventory on its first introspection" do
+      pid = start_repo!(:schema_consistency)
+      size = Boot.default_pool_size()
+
+      assert size > 1
+      assert {:ok, ^size} = await_pool_size(pid, size)
+
+      expected = RepoScope.with_repo(pid, fn -> index_names_by_table(pid) end)
+
+      results =
+        on_every_connection(pid, size, fn conn ->
+          Enum.sort(raw_rows!(conn, "PRAGMA index_list(tasks)") |> Enum.map(&Enum.at(&1, 1)))
+        end)
+
+      assert results == List.duplicate(expected["tasks"], size)
+
+      projects =
+        on_every_connection(pid, size, fn conn ->
+          Enum.sort(raw_rows!(conn, "PRAGMA index_list(projects)") |> Enum.map(&Enum.at(&1, 1)))
+        end)
+
+      assert projects == List.duplicate(expected["projects"], size)
+      assert expected["tasks"] != [] and expected["projects"] != []
+    end
+  end
+
+  # ── Helpers ──────────────────────────────────────────────────────────────
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
   # process, per call) and stops it on test exit. The repo is UNLINKED:
   # `Boot.start_dynamic/2` links it to this test process and the `on_exit/1`
@@ -204,5 +242,62 @@ defmodule EvoGit.Store.PoolSizeTest do
     ref = Process.monitor(holder)
     send(holder, :release)
     assert_receive {:DOWN, ^ref, :process, ^holder, _reason}, 5_000
+  end
+
+  # Runs `fun.(conn)` on EVERY pooled connection at once: the holders all
+  # acquire before any of them queries, and a held connection cannot be handed
+  # to a second caller, so `count` simultaneous holders are necessarily
+  # `count` DISTINCT connections. Returns the fun's results in completion
+  # order (callers sort when order matters).
+  defp on_every_connection(repo_pid, count, fun) do
+    parent = self()
+
+    holders =
+      for _ <- 1..count do
+        spawn_link(fn ->
+          XqliteEcto3.with_xqlite(repo_pid, fn conn ->
+            send(parent, {:held, self()})
+
+            receive do
+              :go -> :ok
+            end
+
+            send(parent, {:result, fun.(conn)})
+
+            receive do
+              :release -> :ok
+            end
+          end)
+        end)
+      end
+
+    for holder <- holders, do: assert_receive({:held, ^holder}, 5_000)
+    for holder <- holders, do: send(holder, :go)
+
+    results =
+      for _ <- 1..count do
+        assert_receive {:result, result}, 5_000
+        result
+      end
+
+    for holder <- holders, do: send(holder, :release)
+    results
+  end
+
+  defp raw_rows!(conn, sql) do
+    {:ok, %{rows: rows}} = Xqlite.query(conn, sql, [], [])
+    rows
+  end
+
+  # Ground truth (the FILE, not a pragma): index names per table, from
+  # `sqlite_master`.
+  defp index_names_by_table(repo_pid) do
+    rows =
+      RepoScope.with_repo(repo_pid, fn ->
+        Repo.query!("SELECT name, tbl_name FROM sqlite_master WHERE type = 'index'").rows
+      end)
+
+    Enum.group_by(rows, &Enum.at(&1, 1), &Enum.at(&1, 0))
+    |> Map.new(fn {t, names} -> {t, Enum.sort(names)} end)
   end
 end
