@@ -12,7 +12,10 @@ defmodule EvoGit.Store do
   ## Architecture
 
     * **Boot** — `init/1` starts the dynamic repo via
-      `EvoGit.Store.Boot.start_dynamic/1`, which runs the Ecto migrations in
+      `EvoGit.Store.Boot.start_dynamic/2` (this store's `:pool_size` opt,
+      defaulting to `EvoGit.Store.Boot.default_pool_size/0` — more than one
+      connection, so reads do not all serialize on a single one), which runs
+      the Ecto migrations in
       `priv/repo/migrations/` (baseline schema adoption + data normalization:
       column adds, fixed-precision timestamp rewrites, canonical
       `result`/`opts` rewrites) BEFORE any read or write. Migrating at boot is
@@ -27,7 +30,8 @@ defmodule EvoGit.Store do
       process. All serialization is delegated to `EvoGit.Store.Codec` (the
       single encode/decode oracle) through `EvoGit.Store.Types.*`.
     * **Facade** — this module keeps: the client API, the `handle_call`
-      dispatch (one line per handler), the heavy-read offload, and the
+      dispatch (one line per handler), the heavy-read offload, the write
+      offload to the dedicated `EvoGit.Store.Writer` process, and the
       disk-full write choke point. No SQL lives here.
 
   ## Crash philosophy
@@ -37,7 +41,7 @@ defmodule EvoGit.Store do
   a fresh repo instance. Data is safe in SQLite WAL mode
   (`journal_mode: :wal`, `synchronous: :normal`).
 
-  Three deliberate, documented boundaries:
+  Four deliberate, documented boundaries:
 
     * **Disk-full writes** — SQLite's disk-full error class (`SQLITE_FULL`
       13, `SQLITE_IOERR` 10, `SQLITE_READONLY` 8) is RAISED by the
@@ -48,6 +52,20 @@ defmodule EvoGit.Store do
       unlike a corrupt DB. All OTHER errors re-raise and crash as before.
       See `EvoGit.Store.Errors` for the classifier. (`put_project` is
       protected INSIDE `Operations.Projects` — not double-wrapped here.)
+    * **Write offload** — every write handler forwards its operation to the
+      store's dedicated `EvoGit.Store.Writer` process (`offload_write/3`) and
+      returns `{:noreply, state}` RIGHT AWAY; the writer runs the operation and
+      `GenServer.reply/2`s the original caller once it has committed. A slow
+      write (`put_task` of a multi-megabyte row is ~137 ms; cleanup bursts
+      issue hundreds of statements) therefore no longer stalls this GenServer's
+      mailbox — reads, counts and the 60 s lease heartbeat keep being served.
+      The writer is a single process, so writes stay strictly serialized in
+      arrival order, and the reply still arrives only after the commit. It is
+      LINKED to this process, so a failing statement kills the store with the
+      operation's own reason exactly like the old inline raise. The disk-full
+      choke point's closure is executed INSIDE the writer, so the adapter's
+      raise and its `{:error, :disk_full}` conversion happen where the write
+      runs. See `EvoGit.Store.Writer`.
     * **Heavy read offload** — the full-decode read handlers run the query
       AND the decode on a short-lived linked Task and reply via
       `GenServer.reply/2`. Every Operations function binds the dynamic repo
@@ -63,10 +81,12 @@ defmodule EvoGit.Store do
 
   The only justified try/rescue patterns that remain in THIS module:
 
-    * `terminate/2` — graceful repo shutdown during terminate. GenServer
-      terminate/2 must never raise; a crash here could prevent clean
+    * `terminate/2` — graceful writer drain + repo shutdown during terminate.
+      GenServer terminate/2 must never raise; a crash here could prevent clean
       supervision shutdown.
-    * `write_call/2` — the disk-full write choke point described above.
+    * `write_call/2` — the disk-full write choke point described above. Its
+      closure is executed by the writer process (see `offload_write/3`), which
+      is where the adapter raises it.
   """
 
   use GenServer
@@ -75,6 +95,7 @@ defmodule EvoGit.Store do
 
   alias EvoGit.Store.Operations
   alias EvoGit.Store.Errors
+  alias EvoGit.Store.Writer
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
@@ -83,8 +104,13 @@ defmodule EvoGit.Store do
   # SQLite I/O can be very slow when the database file lives on high-latency
   # storage (e.g. an NFS-mounted home directory on a remote server), so every
   # GenServer.call/3 to this store uses an explicit 30s timeout instead of the
-  # 5s default. Keep the value tunable in one place.
+  # 5s default. Keep the value tunable in one place. The write offload does not
+  # change it: a write's call still waits for that write's commit, it just no
+  # longer holds up any OTHER caller while it does.
   @call_timeout 30_000
+
+  # Bounded wait for the writer to drain in-flight writes at terminate/2.
+  @writer_stop_timeout 5_000
 
   ## Child spec & start
 
@@ -102,12 +128,26 @@ defmodule EvoGit.Store do
 
     * `:data_dir` — (required) filesystem path for the SQLite database FILE.
     * `:name` — (optional) registration name, defaults to `__MODULE__`.
+    * `:pool_size` — (optional) pool size for this store's OWN dynamic repo,
+      forwarded to `EvoGit.Store.Boot.start_dynamic/2`. Defaults to
+      `EvoGit.Store.Boot.default_pool_size/0`, i.e. MORE than one connection:
+      this store's reads then run concurrently instead of all queueing on a
+      single connection (its writes stay serialized by this GenServer, so no
+      write-write contention is introduced). Pass `1` to force a
+      single-connection store — the disk-full tests do, because the
+      `PRAGMA query_only` arm they use is CONNECTION-scoped and therefore only
+      deterministic when the pool has exactly one connection.
   """
   def start_link(opts) do
     data_dir = Keyword.fetch!(opts, :data_dir)
     name = Keyword.get(opts, :name, __MODULE__)
+    pool_size = Keyword.get(opts, :pool_size)
 
-    GenServer.start_link(__MODULE__, %{data_dir: data_dir, name: name}, name: name)
+    GenServer.start_link(
+      __MODULE__,
+      %{data_dir: data_dir, name: name, pool_size: pool_size},
+      name: name
+    )
   end
 
   ## Public API — Tasks
@@ -434,16 +474,33 @@ defmodule EvoGit.Store do
     GenServer.call(store, :__repo_pid__, @call_timeout)
   end
 
+  # Test seam: the dedicated writer process owned by this store. Used by the
+  # write-offload tests to assert the writer's lifecycle (e.g. that a store
+  # stop takes the writer down with it) instead of reaching into state.
+  @doc false
+  def __writer__(store \\ __MODULE__) do
+    GenServer.call(store, :__writer__, @call_timeout)
+  end
+
   ## GenServer callbacks
 
   @impl true
   def init(%{data_dir: data_dir} = init_arg) do
     File.mkdir_p!(Path.dirname(data_dir))
 
-    case EvoGit.Store.Boot.start_dynamic(data_dir) do
+    case EvoGit.Store.Boot.start_dynamic(data_dir, pool_size: Map.get(init_arg, :pool_size)) do
       {:ok, repo} ->
         name = Map.get(init_arg, :name)
-        {:ok, %{repo: repo, name: name, data_dir: data_dir}}
+
+        # The dedicated writer process owns every WRITE from here on: the
+        # write handlers forward to it instead of executing SQL in this
+        # GenServer (see the moduledoc's "Write offload" boundary and
+        # `EvoGit.Store.Writer`). Started LINKED to this process, and
+        # monitoring this process, so either side taking the other down is
+        # automatic.
+        {:ok, writer} = Writer.start_link(store: self())
+
+        {:ok, %{repo: repo, name: name, data_dir: data_dir, writer: writer}}
 
       {:error, reason} ->
         # Keep the historical stop reason tuple: supervisors and existing
@@ -453,13 +510,14 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def terminate(_reason, %{repo: repo} = _state) do
+  def terminate(_reason, %{repo: repo} = state) do
     # Justified try/rescue: (1) Do we expect an error here? Possibly — the
     # repo instance may already be stopping or in a bad state during
-    # shutdown. (2) Is try/rescue cleanest? Yes — GenServer terminate/2 must
-    # NEVER raise; a crash here could prevent clean supervision shutdown and
-    # leave the process in a half-dead state.
+    # shutdown, and the writer drain is bounded. (2) Is try/rescue cleanest?
+    # Yes — GenServer terminate/2 must NEVER raise; a crash here could prevent
+    # clean supervision shutdown and leave the process in a half-dead state.
     try do
+      drain_writer(state)
       EvoGit.Store.Boot.stop(repo)
     rescue
       _ -> :ok
@@ -472,9 +530,12 @@ defmodule EvoGit.Store do
 
   ## GenServer — Task handlers
 
+  # All write handlers below forward to the dedicated writer process and
+  # return {:noreply, state} immediately — this GenServer never executes a
+  # write (see offload_write/3 and `EvoGit.Store.Writer`).
   @impl true
-  def handle_call({:put_task, task}, _from, state) do
-    {:reply, write_call(state, fn -> Operations.Tasks.put_task(state.repo, task) end), state}
+  def handle_call({:put_task, task}, from, state) do
+    offload_write(from, state, fn -> Operations.Tasks.put_task(state.repo, task) end)
   end
 
   @impl true
@@ -483,18 +544,16 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call({:delete_task, task_id}, _from, state) do
-    {:reply, write_call(state, fn -> Operations.Tasks.delete_task(state.repo, task_id) end),
-     state}
+  def handle_call({:delete_task, task_id}, from, state) do
+    offload_write(from, state, fn -> Operations.Tasks.delete_task(state.repo, task_id) end)
   end
 
   # Batched deletes: the chunk loop (500 ids per WHERE id IN (...) statement,
   # one commit per chunk) lives in the Operation — partial-deletion-across-
   # chunks semantics on disk-full are preserved there.
   @impl true
-  def handle_call({:delete_tasks, task_ids}, _from, state) do
-    {:reply, write_call(state, fn -> Operations.Tasks.delete_tasks(state.repo, task_ids) end),
-     state}
+  def handle_call({:delete_tasks, task_ids}, from, state) do
+    offload_write(from, state, fn -> Operations.Tasks.delete_tasks(state.repo, task_ids) end)
   end
 
   # Offloaded: the query AND the decode run on a short-lived linked Task so
@@ -522,8 +581,8 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call(:clear_tasks, _from, state) do
-    {:reply, write_call(state, fn -> Operations.Tasks.clear_tasks(state.repo) end), state}
+  def handle_call(:clear_tasks, from, state) do
+    offload_write(from, state, fn -> Operations.Tasks.clear_tasks(state.repo) end)
   end
 
   @impl true
@@ -547,23 +606,23 @@ defmodule EvoGit.Store do
   end
 
   # Lightweight write — the lease heartbeat must NOT bump `updated_at` (the
-  # Operation owns that rule).
+  # Operation owns that rule). Offloaded like every other write, so the 60s
+  # heartbeat never stalls the facade (and vice versa: it waits behind the
+  # writes that arrived before it, exactly as it did inline).
   @impl true
-  def handle_call({:update_lease_expires_at, task_id, expires_at}, _from, state) do
-    {:reply,
-     write_call(state, fn ->
-       Operations.Tasks.update_lease_expires_at(state.repo, task_id, expires_at)
-     end), state}
+  def handle_call({:update_lease_expires_at, task_id, expires_at}, from, state) do
+    offload_write(from, state, fn ->
+      Operations.Tasks.update_lease_expires_at(state.repo, task_id, expires_at)
+    end)
   end
 
   # Targeted write — the Operation encodes each column through the Codec
   # (byte-identical SET clauses) and ALWAYS bumps `updated_at`.
   @impl true
-  def handle_call({:update_task_columns, task_id, columns}, _from, state) do
-    {:reply,
-     write_call(state, fn ->
-       Operations.Tasks.update_task_columns(state.repo, task_id, columns)
-     end), state}
+  def handle_call({:update_task_columns, task_id, columns}, from, state) do
+    offload_write(from, state, fn ->
+      Operations.Tasks.update_task_columns(state.repo, task_id, columns)
+    end)
   end
 
   @impl true
@@ -625,10 +684,13 @@ defmodule EvoGit.Store do
   ## GenServer — Project handlers
 
   # Operations.Projects owns its own disk-full rescue (returns
-  # {:error, :disk_full} directly) — NOT wrapped in write_call/2 here.
+  # {:error, :disk_full} directly) — NOT wrapped in write_call/2 here, exactly
+  # as in the old inline handler, so it goes to the writer unwrapped.
   @impl true
-  def handle_call({:put_project, project}, _from, state) do
-    {:reply, Operations.Projects.put_project(state.repo, project), state}
+  def handle_call({:put_project, project}, from, state) do
+    offload_raw_write(from, state, fn ->
+      Operations.Projects.put_project(state.repo, project)
+    end)
   end
 
   @impl true
@@ -637,9 +699,8 @@ defmodule EvoGit.Store do
   end
 
   @impl true
-  def handle_call({:delete_project, path}, _from, state) do
-    {:reply, write_call(state, fn -> Operations.Projects.delete_project(state.repo, path) end),
-     state}
+  def handle_call({:delete_project, path}, from, state) do
+    offload_write(from, state, fn -> Operations.Projects.delete_project(state.repo, path) end)
   end
 
   @impl true
@@ -680,6 +741,11 @@ defmodule EvoGit.Store do
     {:reply, state.repo, state}
   end
 
+  @impl true
+  def handle_call(:__writer__, _from, state) do
+    {:reply, state.writer, state}
+  end
+
   ## Private — Helpers
 
   # ── Offload helper ───────────────────────────────────────────────────
@@ -706,6 +772,39 @@ defmodule EvoGit.Store do
     {:noreply, state}
   end
 
+  # ── Write offload (dedicated writer process) ─────────────────────────
+  #
+  # Shared shape for EVERY offloaded write handler: hand the operation
+  # closure to the store's dedicated writer process and return
+  # {:noreply, state} immediately — this GenServer does NOT run the write, so
+  # its mailbox stays free for reads (counts, single-row reads, the lease
+  # heartbeat) while a slow write runs. The writer executes the closure and
+  # `GenServer.reply/2`s the ORIGINAL caller's `from` AFTER the operation has
+  # committed (read-after-write), and because BOTH the facade (one message per
+  # dequeued call, in mailbox order) and the writer (one write at a time) are
+  # FIFO, writes stay strictly serialized in arrival order. The closure closes
+  # over the CURRENT state (captured here), and every Operations function
+  # binds the dynamic repo through `RepoScope.with_repo/2` in the CALLING
+  # process — the writer's — so the write addresses this store's own instance.
+  # The caller's 30s @call_timeout still applies to ITS OWN write.
+  #
+  # A raise inside the closure is NOT rescued here: it crashes the writer and,
+  # through the link, this GenServer — see `EvoGit.Store.Writer`.
+  defp offload_write(from, state, fun) do
+    Writer.submit(state.writer, from, fn -> write_call(state, fun) end)
+
+    {:noreply, state}
+  end
+
+  # Offloaded write that carries its OWN disk-full protection
+  # (`Operations.Projects.put_project`) — deliberately NOT wrapped in
+  # `write_call/2`, exactly like the old inline handler.
+  defp offload_raw_write(from, state, fun) do
+    Writer.submit(state.writer, from, fun)
+
+    {:noreply, state}
+  end
+
   # ── Write boundary (disk-full choke point) ───────────────────────────
   #
   # Shared boundary for EVERY task/project write dispatched by this facade
@@ -714,11 +813,18 @@ defmodule EvoGit.Store do
   # Operations.Projects). The XqliteEcto3 adapter RAISES %XqliteEcto3.Error{}
   # on failure; disk-full-class errors (SQLITE_FULL 13, SQLITE_IOERR 10,
   # SQLITE_READONLY 8 — see EvoGit.Store.Errors) are converted to
-  # {:error, :disk_full} after logging an actionable warning: the GenServer
-  # survives, reads keep working, and subsequent writes can be retried (a
-  # full disk is transient). ANY OTHER error re-raises, crashing the GenServer
-  # exactly like the old raw-SQL `raise MatchError` boundary did — the error
-  # contract converts ONLY the disk-full class.
+  # {:error, :disk_full} after logging an actionable warning: the write can be
+  # retried (a full disk is transient) and the store survives, so reads keep
+  # working. ANY OTHER error re-raises, crashing the store exactly like the old
+  # raw-SQL `raise MatchError` boundary did — the error contract converts ONLY
+  # the disk-full class.
+  #
+  # Since the write offload, this runs INSIDE the writer process (the closure
+  # passed to `Writer.submit/3` is `fn -> write_call(state, fun) end`): the
+  # raise it catches is the one the adapter produces where the statement
+  # actually executes, and the reply it produces is the writer's reply to the
+  # original caller. The `reraise` still kills the writer (and the store with
+  # it) — no new rescue was introduced.
   defp write_call(state, fun) do
     fun.()
   rescue
@@ -730,6 +836,25 @@ defmodule EvoGit.Store do
         reraise exception, __STACKTRACE__
       end
   end
+
+  # ── Writer shutdown ─────────────────────────────────────────────────
+  #
+  # Ask the writer to finish what it is doing and stop, BEFORE the repo
+  # instance is closed underneath it (a bounded wait; terminate/2 swallows the
+  # failure). The writer is UNLINKED first so that a write failing during this
+  # drain cannot change THIS process's exit reason. If the drain times out the
+  # writer stays alive — the monitor it holds on this process still takes it
+  # down as soon as this process is gone.
+  defp drain_writer(%{writer: writer}) when is_pid(writer) do
+    if Process.alive?(writer) do
+      Process.unlink(writer)
+      GenServer.stop(writer, :normal, @writer_stop_timeout)
+    end
+
+    :ok
+  end
+
+  defp drain_writer(_state), do: :ok
 
   defp log_disk_full(data_dir, exception) do
     Logger.warning(

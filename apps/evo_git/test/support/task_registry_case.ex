@@ -46,7 +46,12 @@ defmodule EvoGit.TaskRegistryCase do
 
   setup do
     unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{unique}")
+    # The temp data dir additionally carries the OS pid + wall-clock ms: the
+    # per-BEAM unique counter alone restarts on a fresh node and would collide
+    # with a previous run's leftover dir (whose `tasks.sqlite` already holds
+    # rows), so the isolated store could silently reopen stale data.
+    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+    root = Path.join(System.tmp_dir!(), "evogit_test_tasks_#{stamp}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 

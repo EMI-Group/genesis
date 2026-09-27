@@ -43,7 +43,11 @@ defmodule EvoGit.StoreTest do
   # semantics are unchanged.
   setup_all do
     unique = System.unique_integer([:positive])
-    template = Path.join(System.tmp_dir!(), "evogit_store_template_#{unique}.sqlite")
+    # OS pid + wall-clock ms on top of the per-BEAM counter: the counter alone
+    # restarts on a fresh node and would collide with a previous run's leftover
+    # tmp file.
+    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+    template = Path.join(System.tmp_dir!(), "evogit_store_template_#{stamp}.sqlite")
     template_name = :"store_template_#{unique}"
 
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
@@ -53,14 +57,20 @@ defmodule EvoGit.StoreTest do
     # failure can never leave the production children down for the whole run.
     on_exit(fn ->
       File.rm(template)
+      File.rm(template <> "-wal")
+      File.rm(template <> "-shm")
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
-    # A real Store.init produces exactly the schema under test. init/2 and
-    # terminate/2 both run `PRAGMA wal_checkpoint(TRUNCATE)`, so stopping it
-    # leaves a single self-contained file (no -wal/-shm sidecars) that is safe
-    # to byte-copy.
+    # A real Store.init produces exactly the schema under test. Stopping the
+    # template store closes the last connection to its WAL-mode database, and
+    # SQLite's own implicit checkpointing on last-connection-close folds the
+    # WAL back into the main file and removes the `-wal`/`-shm` sidecars (its
+    # documented default behavior — the read-write connection PRAGMAs are
+    # `journal_mode: :wal` / `synchronous: :normal`, and NOTHING in the store
+    # runs an explicit `wal_checkpoint`). The result is a single self-contained
+    # file that is safe to byte-copy.
     {:ok, _} = Store.start_link(data_dir: template, name: template_name)
     :ok = GenServer.stop(template_name)
 
@@ -72,7 +82,8 @@ defmodule EvoGit.StoreTest do
   # setup_all), so the isolated store can claim the default `EvoGit.Store` name.
   setup %{template: template} do
     unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_store_#{unique}")
+    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+    root = Path.join(System.tmp_dir!(), "evogit_test_store_#{stamp}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
     File.cp!(template, sqlite_path)
@@ -1890,7 +1901,11 @@ defmodule EvoGit.StoreTest do
   describe "terminate" do
     test "closes the connection gracefully on stop" do
       unique = System.unique_integer([:positive])
-      sqlite_path = Path.join(System.tmp_dir!(), "evogit_term_#{unique}.sqlite")
+      # The tmp path additionally carries the OS pid + wall-clock ms: the
+      # per-BEAM unique counter alone restarts on a fresh node and would
+      # collide with a previous run's leftover file.
+      stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+      sqlite_path = Path.join(System.tmp_dir!(), "evogit_term_#{stamp}.sqlite")
       store = :"term_test_#{unique}"
 
       {:ok, _} = Store.start_link(data_dir: sqlite_path, name: store)
@@ -1901,7 +1916,11 @@ defmodule EvoGit.StoreTest do
       # The DB file should be accessible (not locked)
       {:ok, conn} = Xqlite.open(sqlite_path)
       :ok = XqliteNIF.close(conn)
+      # Remove the file AND its WAL sidecars (`File.rm/1` tolerates an absent
+      # path) so nothing is left behind in the tmpdir.
       File.rm(sqlite_path)
+      File.rm(sqlite_path <> "-wal")
+      File.rm(sqlite_path <> "-shm")
     end
   end
 
@@ -1946,7 +1965,7 @@ defmodule EvoGit.StoreTest do
     )
     """
 
-    @migration_versions [20_260_815_000_001, 20_260_815_000_002]
+    @migration_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
     test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
          %{root: root} do
@@ -2003,7 +2022,7 @@ defmodule EvoGit.StoreTest do
       :ok = XqliteNIF.close(pre)
 
       # Public GenServer entry: Store.start_link itself boots the dynamic
-      # repo, runs BOTH migrations, and comes up serving reads/writes.
+      # repo, runs ALL migrations, and comes up serving reads/writes.
       {:ok, pid} = Store.start_link(data_dir: sqlite_path, name: store)
 
       # The store is LINKED to this test process; a normal test exit would
@@ -2019,7 +2038,7 @@ defmodule EvoGit.StoreTest do
         end
       end)
 
-      # Both migration versions are stamped in schema_migrations, observed
+      # All three migration versions are stamped in schema_migrations, observed
       # through the same test seam the disk-full tests use (__repo_pid__ +
       # RepoScope/Repo against the store's OWN dynamic instance).
       repo_pid = Store.__repo_pid__(store)

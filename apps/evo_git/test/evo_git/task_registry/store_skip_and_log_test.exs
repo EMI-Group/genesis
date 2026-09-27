@@ -118,7 +118,7 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
   describe "safe_select_all_projects/1 skip-and-log semantics" do
     test "skips an undecodable project row, logs a warning, and leaves the row untouched" do
       unique = System.unique_integer([:positive])
-      sqlite_path = Path.join(System.tmp_dir!(), "evogit_skip_log_projects_#{unique}.sqlite")
+      sqlite_path = db_path("projects", unique)
       File.mkdir_p!(Path.dirname(sqlite_path))
 
       # Pre-create ONLY the projects table with INTEGER-affinity last_opened_at
@@ -261,10 +261,19 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
   # Starts a uniquely-named Store GenServer against a temp sqlite file.
   defp start_store(unique, label) do
     store = :"skip_log_#{label}_#{unique}"
-    sqlite_path = Path.join(System.tmp_dir!(), "evogit_skip_log_#{label}_#{unique}.sqlite")
+    sqlite_path = db_path(label, unique)
     File.mkdir_p!(Path.dirname(sqlite_path))
     {:ok, _} = EvoGit.Store.start_link(data_dir: sqlite_path, name: store)
     {store, sqlite_path}
+  end
+
+  # A private tmp SQLite path for one test. The name embeds the OS pid +
+  # wall-clock ms on top of the per-BEAM unique integer: `System.unique_integer/1`
+  # restarts in every BEAM, so without those a PREVIOUS test run's leftover file
+  # would be silently reopened — a fresh-looking DB already holding stale rows.
+  defp db_path(label, unique) do
+    id = "#{label}_#{:os.getpid()}_#{System.system_time(:millisecond)}_#{unique}"
+    Path.join(System.tmp_dir!(), "evogit_skip_log_#{id}.sqlite")
   end
 
   # Opens a one-off raw SQLite connection for garbage injection / inspection.
@@ -275,6 +284,8 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
   end
 
   # Cleanup in after: catch so teardown failures don't mask real test failures.
+  # The DB file AND its WAL sidecars are removed (`File.rm/1` is a no-op for an
+  # already-absent path), so nothing this test created is left in the tmpdir.
   defp cleanup_store(store, sqlite_path) do
     try do
       GenServer.stop(store)
@@ -283,5 +294,7 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
     end
 
     File.rm(sqlite_path)
+    File.rm(sqlite_path <> "-wal")
+    File.rm(sqlite_path <> "-shm")
   end
 end

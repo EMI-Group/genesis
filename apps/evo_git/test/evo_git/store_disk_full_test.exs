@@ -7,15 +7,33 @@ defmodule EvoGit.StoreDiskFullTest do
 
   Tests make every Store write fail deterministically by setting
   `PRAGMA query_only = ON` on the Store's OWN SQLite connection. The Store is
-  a thin facade over an UNNAMED dynamic `EvoGit.Repo` instance started with
-  `pool_size: 1` (see `EvoGit.Store.Boot.start_dynamic/1`), so the single
-  pooled connection this pragma flips IS the connection every store write
-  uses. SQLite then rejects every INSERT/UPDATE/DELETE (and `BEGIN`) with
-  `SQLITE_READONLY` (8) — one of the three disk-full-class codes the Store's
-  write boundary converts to `{:error, :disk_full}` (see
+  a thin facade over an UNNAMED dynamic `EvoGit.Repo` instance, started by
+  `EvoGit.Store.Boot.start_dynamic/2` with the pool size the facade was given.
+  The pragma is CONNECTION-scoped, so it can only mean "every store write
+  fails" when that pool holds exactly ONE connection: `setup/1` therefore
+  restarts this test's isolated Store with the explicit `pool_size: 1` option,
+  and the single pooled connection this pragma flips IS the connection every
+  store write uses. SQLite then rejects every INSERT/UPDATE/DELETE (and
+  `BEGIN`) with `SQLITE_READONLY` (8) — one of the three disk-full-class codes
+  the Store's write boundary converts to `{:error, :disk_full}` (see
   `EvoGit.Store.Errors`). Reads are unaffected, and `PRAGMA query_only = OFF`
   clears the condition so a retried write succeeds — exactly the "full disk
   is transient" recovery the boundary implements.
+
+  ## Why the store under test is pinned to a single connection
+
+  The PRODUCTION store pool is deliberately bigger than one
+  (`EvoGit.Store.Boot.default_pool_size/0` — this store's reads are served
+  concurrently instead of all queueing on one connection), which is exactly
+  what would make the arm above non-deterministic: a write handed a DIFFERENT
+  pooled connection would succeed, so a test could pass — or flake — without
+  ever exercising the disk-full path. Arming every connection is not an
+  option: the sanctioned handle is one `XqliteEcto3.with_xqlite/2` checkout,
+  one connection at a time, and which connection a later statement is handed
+  is the pool's choice. So the arm is kept meaningful by REQUESTING the
+  single-connection shape explicitly (`pool_size: 1`) rather than inheriting
+  it from the production default. That is the only change here: the same
+  writes, the same classifier and the same recovery are asserted as before.
 
   The connection is reached through the sanctioned test seam
   `EvoGit.Store.__repo_pid__/1` (the facade's `@doc false` accessor for its
@@ -65,6 +83,28 @@ defmodule EvoGit.StoreDiskFullTest do
 
   alias EvoGit.Store
   alias EvoGit.TaskInfo
+
+  # Re-start this test's isolated store with an EXPLICIT single connection (see
+  # the "Why the store under test is pinned to a single connection" section):
+  # `PRAGMA query_only` is connection-scoped, so only a one-connection pool
+  # guarantees the armed connection is the connection every write is handed.
+  # `EvoGit.TaskRegistryCase` starts the store under the id `store` (its
+  # explicit `id:` override), so `stop_supervised!/1` + `start_supervised/1`
+  # replace it in place — same sqlite file, same registered name, same wiring
+  # for the already-started registry, which addresses the store BY NAME.
+  setup %{store: store, sqlite_path: sqlite_path} = context do
+    stop_supervised!(store)
+
+    {:ok, _pid} =
+      start_supervised(
+        Supervisor.child_spec(
+          {Store, data_dir: sqlite_path, name: store, pool_size: 1},
+          id: store
+        )
+      )
+
+    context
+  end
 
   describe "EvoGit.Store.Errors.disk_full_error?/1" do
     test "classifies disk-full-class xqlite error tuples" do
@@ -264,8 +304,9 @@ defmodule EvoGit.StoreDiskFullTest do
   #
   # Seam: the facade's `__repo_pid__/1` test accessor returns the store's
   # UNNAMED dynamic `EvoGit.Repo` instance; `XqliteEcto3.with_xqlite/2` is the
-  # adapter's supported raw-connection checkout. The repo's `pool_size: 1`
-  # means the flipped connection is THE connection the store writes through.
+  # adapter's supported raw-connection checkout. This store's `pool_size: 1`
+  # (requested in `setup/1`) makes the flipped connection THE connection the
+  # store writes through.
   defp set_query_only(store, value) do
     repo_pid = Store.__repo_pid__(store)
 

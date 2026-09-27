@@ -38,7 +38,18 @@ defmodule EvoGit.Store.Operations.TasksTest do
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
-    on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: :ok = Boot.stop(pid)
+
+      # Remove the DB AND its WAL sidecars (`File.rm/1` is a no-op for a path
+      # that is already gone) so repeated runs leave nothing behind — a
+      # leftover `-wal` still holds the committed rows.
+      File.rm(path)
+      File.rm(path <> "-wal")
+      File.rm(path <> "-shm")
+    end)
+
     pid
   end
 

@@ -54,7 +54,11 @@ defmodule EvoGit.StoreSummaryTest do
   # file with the identical schema, so isolation semantics are unchanged.
   setup_all do
     unique = System.unique_integer([:positive])
-    template = Path.join(System.tmp_dir!(), "evogit_summary_template_#{unique}.sqlite")
+    # OS pid + wall-clock ms on top of the per-BEAM counter: the counter alone
+    # restarts on a fresh node and would collide with a previous run's leftover
+    # tmp file.
+    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+    template = Path.join(System.tmp_dir!(), "evogit_summary_template_#{stamp}.sqlite")
     template_name = :"summary_template_#{unique}"
 
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
@@ -64,13 +68,19 @@ defmodule EvoGit.StoreSummaryTest do
     # failure can never leave the production children down for the whole run.
     on_exit(fn ->
       File.rm(template)
+      File.rm(template <> "-wal")
+      File.rm(template <> "-shm")
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
-    # init/2 and terminate/2 both run `PRAGMA wal_checkpoint(TRUNCATE)`, so a
-    # stopped Store leaves a single self-contained file (no -wal/-shm) that is
-    # safe to byte-copy.
+    # Stopping the template store closes the last connection to its WAL-mode
+    # database, and SQLite's own implicit checkpointing on last-connection-close
+    # folds the WAL back into the main file and removes the `-wal`/`-shm`
+    # sidecars (its documented default behavior — the connection PRAGMAs are
+    # `journal_mode: :wal` / `synchronous: :normal`, and nothing in the store
+    # runs an explicit `wal_checkpoint`). What is left is a single
+    # self-contained file, which is what makes the byte-copy below valid.
     {:ok, _} = Store.start_link(data_dir: template, name: template_name)
     :ok = GenServer.stop(template_name)
 
@@ -81,7 +91,8 @@ defmodule EvoGit.StoreSummaryTest do
   # production children are already down).
   setup %{template: template} do
     unique = System.unique_integer([:positive])
-    root = Path.join(System.tmp_dir!(), "evogit_test_store_summary_#{unique}")
+    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+    root = Path.join(System.tmp_dir!(), "evogit_test_store_summary_#{stamp}")
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
     File.cp!(template, sqlite_path)
