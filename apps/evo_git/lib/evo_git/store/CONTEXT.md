@@ -16,7 +16,8 @@ EvoGit.Store (GenServer facade, store.ex)
                            └─ EvoGit.Store.Codec        — the single encode/decode oracle
 ```
 
-- **Facade (`store.ex`)** owns ONLY: the client API, the one-line-per-handler `handle_call` dispatch, the heavy-read offload (`offload/3`), the disk-full write choke point (`write_call/2`), the `__repo_pid__/1` test seam, and `init/1`/`terminate/2` (boot/stop the dynamic repo). No SQL lives here.
+- **Facade (`store.ex`)** owns ONLY: the client API, the one-line-per-handler `handle_call` dispatch, the heavy-read offload (`offload/3`), the WRITE offload (every write handler forwards its operation to the store's dedicated `EvoGit.Store.Writer` via `offload_write/3`/`offload_raw_write/3` and replies `{:noreply, state}` immediately — the writer runs the operation and `GenServer.reply/2`s the ORIGINAL caller after it commits), the disk-full write choke point (`write_call/2`), the `__repo_pid__/1` + `__writer__/1` test seams, and `init/1`/`terminate/2` (boot/stop the dynamic repo + start/drain the writer). No SQL lives here.
+- **Writer (`writer.ex`)** is the per-store dedicated writer process (`EvoGit.Store.Writer`, LINKED to the store) that makes the offload safe: writes stay strictly serialized in ARRIVAL order (facade FIFO forward → single writer), the reply still arrives only AFTER the commit (read-after-write), every Operation binds the dynamic repo itself in the writer's process (`RepoScope.with_repo/2`), and a failing statement kills the writer and — over the link — the store with the operation's own reason (no new rescue; the disk-full conversion stays `write_call/2`, whose closure now runs in the writer). Reads are unaffected, but they now contend with writes at the POOL rather than in the facade's inbox, so a store serving readers during long writes wants `pool_size > 1`.
 - **Operations** (`./operations/`) own every `EvoGit.Repo.*` + `Ecto.Query` call: `Tasks` (write/core/pagination/narrow reads), `Lightweight` (id/lease/cleanup projections), `Summaries` (16-key summary projections), `Projects` (project CRUD + its own disk-full rescue), `Safety` (safe selects + `size`). Every public function takes the repo PID first and runs its whole body inside `RepoScope.with_repo/2`, so calls target THAT store's instance regardless of the calling process (the offloaded read Tasks included).
 - **Wire format**: the typed schemas dump/load through `Types.*`, which delegate verbatim to `Codec` — stored bytes are byte-identical to what the Codec defines, never re-implemented.
 
@@ -195,7 +196,8 @@ Measured read-only against a COPY of the live `tasks.sqlite` (854 rows, 29.7 MB,
 
 ## Routing Table
 
-- `../store.ex` → `EvoGit.Store` — the GenServer facade (client API, dispatch, offload, disk-full choke point, `__repo_pid__` seam)
+- `../store.ex` → `EvoGit.Store` — the GenServer facade (client API, dispatch, read + write offload, disk-full choke point, `__repo_pid__`/`__writer__` seams)
+- `./writer.ex` → `EvoGit.Store.Writer` — the per-store dedicated writer process (arrival-order serialization, reply-after-commit, link-based crash propagation)
 - `../repo.ex` → `EvoGit.Repo` — the Ecto repo (XqliteEcto3; unnamed dynamic instances; runtime `database:` resolution)
 - `./codec.ex` → `EvoGit.Store.Codec` — the pure encode/decode oracle (no I/O)
 - `./operations/` → `Tasks`, `Lightweight`, `Summaries`, `Projects`, `Safety` — all repo access, repo-pid-first
