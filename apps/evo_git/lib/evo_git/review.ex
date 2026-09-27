@@ -325,14 +325,15 @@ defmodule EvoGit.Review do
   @doc """
   Resolves the default branch to merge agent branches into.
 
-  Checks `main`, `master`, `dev`, `prod` in order, then falls back to the
-  current branch (skipping detached HEAD), then the first local branch.
+  Checks the current branch (the branch HEAD is on, when it is a real local
+  branch — a detached HEAD is skipped), then `main`, `master`, `dev`, `prod` in
+  order, then falls back to the first local branch.
   Returns `{:ok, name}` or `{:error, :no_branch_found}`.
   """
   def default_merge_target(repo_path) do
-    case Enum.find(@merge_target_candidates, &Git.branch_exists?(repo_path, &1)) do
+    case Enum.find(merge_target_candidates(repo_path), &Git.branch_exists?(repo_path, &1)) do
       nil ->
-        case current_branch_or_first_local(repo_path) do
+        case first_local_branch(repo_path) do
           {:ok, name} -> {:ok, name}
           :none -> {:error, :no_branch_found}
         end
@@ -436,11 +437,21 @@ defmodule EvoGit.Review do
     end
   end
 
-  defp current_branch_or_first_local(repo_path) do
+  # The candidate list is the current branch (when HEAD is on a real local
+  # branch) followed by the well-known branch names, de-duplicated so a HEAD on
+  # `main` does not check `main` twice.
+  defp merge_target_candidates(repo_path) do
+    [current_local_branch(repo_path) | @merge_target_candidates]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  # The current branch is only a candidate when it is a real local branch: a
+  # detached HEAD (reported as `{:ok, "HEAD"}`) and nil/blank names are skipped.
+  defp current_local_branch(repo_path) do
     case Git.current_branch(repo_path) do
-      {:ok, "HEAD"} -> first_local_branch(repo_path)
-      {:ok, name} -> {:ok, name}
-      _ -> first_local_branch(repo_path)
+      {:ok, name} -> if name != "HEAD" and valid_branch_name?(name), do: name, else: nil
+      _ -> nil
     end
   end
 

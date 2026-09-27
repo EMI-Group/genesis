@@ -692,25 +692,50 @@ defmodule EvoGit.ReviewTest do
     assert_no_merge_check_artifacts(tmp_dir)
   end
 
+  test "default_merge_target/1 prefers the current branch over well-known candidates",
+       %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "develop")
+    System.cmd("git", ["branch", "main"], cd: tmp_dir)
+    System.cmd("git", ["branch", "master"], cd: tmp_dir)
+
+    assert {:ok, "develop"} = Review.default_merge_target(tmp_dir)
+  end
+
   test "default_merge_target/1 prefers dev over prod when main and master are absent",
        %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     rename_current_branch(tmp_dir, "feature/x")
+    # Detach HEAD so the existing `feature/x` branch is not a candidate and the
+    # well-known candidate order is exercised.
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
     System.cmd("git", ["branch", "dev"], cd: tmp_dir)
     System.cmd("git", ["branch", "prod"], cd: tmp_dir)
 
     assert {:ok, "dev"} = Review.default_merge_target(tmp_dir)
   end
 
-  test "default_merge_target/1 resolves master when it is the only candidate", %{tmp_dir: tmp_dir} do
+  test "default_merge_target/1 resolves master when it is the only well-known candidate",
+       %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     rename_current_branch(tmp_dir, "feature/x")
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
     System.cmd("git", ["branch", "master"], cd: tmp_dir)
 
     assert {:ok, "master"} = Review.default_merge_target(tmp_dir)
   end
 
-  test "default_merge_target/1 falls back to the current branch when no candidates exist",
+  test "default_merge_target/1 skips a detached HEAD and uses main", %{tmp_dir: tmp_dir} do
+    {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
+    rename_current_branch(tmp_dir, "feature/x")
+    System.cmd("git", ["branch", "main"], cd: tmp_dir)
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
+
+    assert {:ok, "HEAD"} = Git.current_branch(tmp_dir)
+    assert {:ok, "main"} = Review.default_merge_target(tmp_dir)
+  end
+
+  test "default_merge_target/1 resolves the current branch when no well-known candidates exist",
        %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     rename_current_branch(tmp_dir, "feature/x")
