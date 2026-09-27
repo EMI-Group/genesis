@@ -304,6 +304,35 @@ defmodule EvoGit.Store.CompositeIndexTest do
       assert index_columns(pid, @status_index) == ["status", "started_at"]
       assert index_columns(pid, @path_index) == ["project_path", "started_at"]
     end
+
+    test "the migrator is idempotent, and the post-condition rejects a same-named index of another shape",
+         %{root: root} do
+      pid = start_repo!(%{root: root}, "postcondition")
+
+      # Already current: a re-run migrates nothing and re-validates nothing.
+      assert Boot.run_migrations(pid) == []
+
+      # Re-arm migration 3 (the only way to drive it again through the REAL
+      # migrator/runner) and plant a same-named index over the WRONG columns —
+      # the silent trap `CREATE INDEX IF NOT EXISTS` alone would paper over.
+      query_rows(pid, "DELETE FROM schema_migrations WHERE version = 20260815000003")
+      query_rows(pid, "DROP INDEX #{@status_index}")
+      query_rows(pid, "CREATE INDEX #{@status_index} ON tasks(status, finished_at)")
+
+      assert_raise Ecto.MigrationError, ~r/composite index idx_tasks_status_started_at/, fn ->
+        Boot.run_migrations(pid)
+      end
+
+      # Restoring the declared shape lets the (still pending) migration through.
+      query_rows(pid, "DROP INDEX #{@status_index}")
+      query_rows(pid, "CREATE INDEX #{@status_index} ON tasks(status, started_at)")
+
+      assert Boot.run_migrations(pid) == [20_260_815_000_003]
+
+      assert index_columns(pid, @status_index) == ["status", "started_at"]
+      assert index_columns(pid, @path_index) == ["project_path", "started_at"]
+      assert Boot.run_migrations(pid) == []
+    end
   end
 
   # ── CORRECTNESS: rows + order + total_count per filter combination ───────
