@@ -298,6 +298,7 @@ defmodule EvoDashWeb.ReviewComponents do
               </p>
             </div>
           </div>
+          <.cost_estimate_notice />
         <% end %>
 
         <!-- Timestamps -->

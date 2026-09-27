@@ -554,6 +554,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                 </dd>
               </div>
             </dl>
+            <.cost_estimate_notice />
           </div>
         <% end %>
       </div>

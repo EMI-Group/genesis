@@ -323,6 +323,26 @@ defmodule EvoDashWeb.HelpersTest do
     end
   end
 
+  describe "cost_estimate_notice/1" do
+    import Phoenix.LiveViewTest
+
+    test "renders the shared best-effort cost caveat" do
+      html = render_component(&cost_estimate_notice/1, %{}) |> rendered_to_string()
+
+      assert html =~ "best-effort estimate"
+      assert html =~ "Token usage is usually accurate"
+    end
+
+    test "accepts an extra class" do
+      html =
+        render_component(&cost_estimate_notice/1, class: "mb-0")
+        |> rendered_to_string()
+
+      assert html =~ "mb-0"
+      assert html =~ "best-effort estimate"
+    end
+  end
+
   describe "truncate_string/2" do
     test "returns empty string for nil" do
       assert truncate_string(nil, 10) == ""

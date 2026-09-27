@@ -175,6 +175,7 @@ defmodule EvoDashWeb.ArchiveComponents do
               </div>
             </div>
           </div>
+          <.cost_estimate_notice />
         <% end %>
 
         <!-- Timestamps -->

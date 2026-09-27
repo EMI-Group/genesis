@@ -276,6 +276,8 @@ defmodule EvoDashWeb.ArchiveTreeTest do
       # Cost tile — the real total_cost flows through, formatted to 6 decimals.
       assert html =~ "0.003000"
       refute html =~ "0.000000"
+      # Best-effort cost caveat renders at the cost site.
+      assert html =~ "best-effort estimate"
     end
   end
 
@@ -293,6 +295,8 @@ defmodule EvoDashWeb.ArchiveTreeTest do
       assert html =~ "1,500"
       assert html =~ "0.003000"
       refute html =~ "0.000000"
+      # Best-effort cost caveat renders at the cost site.
+      assert html =~ "best-effort estimate"
     end
   end
 end

@@ -448,6 +448,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                         </div>
                       </div>
                     </div>
+                    <.cost_estimate_notice />
                   </div>
                 </div>
               <% end %>

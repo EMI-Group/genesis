@@ -818,6 +818,29 @@ defmodule EvoDashWeb.Helpers do
   defp tip_position_class(_), do: "tooltip-top"
 
   # ---------------------------------------------------------------------------
+  # Cost Estimate Notice
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Renders a small muted notice explaining that token usage is usually accurate
+  while the reported cost is a best-effort estimate.
+
+  Rendered next to every LLM token/cost display in the dashboard.
+  """
+  attr(:class, :string, default: "")
+
+  def cost_estimate_notice(assigns) do
+    ~H"""
+    <p class={["text-xs text-base-content/60 mt-2", @class]}>
+      <%!-- zh_CN: 词元用量通常准确，但费用为尽力估算，可能因峰谷定价、价格数据过期等原因而不准确 --%>
+      {gettext(
+        "Token usage is usually accurate, but cost is a best-effort estimate and may be inaccurate (e.g. peak-hour pricing, stale pricing data)."
+      )}
+    </p>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # Mode Description Helpers
   # ---------------------------------------------------------------------------
 

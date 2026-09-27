@@ -459,6 +459,38 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
   end
 
+  describe "task_card/1 — best-effort cost notice" do
+    test "renders the shared cost caveat inside the usage card when usage is present" do
+      usage = %{
+        input_tokens: 1000,
+        output_tokens: 500,
+        total_tokens: 1500,
+        input_cost: 0.001,
+        output_cost: 0.002,
+        total_cost: 0.003
+      }
+
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: failed_task(usage: usage),
+          show_details: true
+        )
+
+      assert html =~ "Token &amp; Cost Usage"
+      assert html =~ "best-effort estimate"
+    end
+
+    test "does not render the cost caveat when no usage is present" do
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: failed_task(),
+          show_details: true
+        )
+
+      refute html =~ "best-effort estimate"
+    end
+  end
+
   # Test-data builders — a minimal failed TaskInfo-shaped map (ATOM keys, the
   # post-Codec-decoded shape) and an error record map.
   defp failed_task(overrides \\ %{}) do

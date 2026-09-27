@@ -227,6 +227,8 @@ The ONLY exclusion is `:reflect` (repo-less) tasks — no code to review; their 
 
 Token counts are provider-reported (usually accurate) but cost is BEST-EFFORT (peak-hour pricing, stale pricing tables); a notice/caveat must reach ALL of the sites below, since there is NO shared stat-block component.
 
+**A SHARED best-effort cost notice is rendered at ALL cost display sites**: `EvoDashWeb.Helpers.cost_estimate_notice/1` (defined in `helpers.ex`, imported into every LiveView/component via `html_helpers/0`) renders a small muted `<p>` explaining that token usage is usually accurate while the reported cost is a best-effort estimate and may be inaccurate (peak-hour pricing, stale pricing data). Each of the 5 sites below renders `<.cost_estimate_notice />` right after its cost rows; the text lives in ONE place (do not duplicate it).
+
 | # | Rendered by | File:lines | Callers |
 |---|---|---|---|
 | 1 | `TaskCardComponents.task_card/1` — "Token & Cost Usage" card: header `:356`, token rows `:358-383`, cache rows `:384-429` (gated on `cached_tokens > 0 or cache_creation_tokens > 0`), cost rows `:430-451` | `task_card_components.ex:352-453` | TasksLive only (`live/tasks_live.ex:250`) |
