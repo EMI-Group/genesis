@@ -91,6 +91,32 @@ defmodule EvoDashWeb.TasksLiveTest do
     wait_loop.(wait_loop)
   end
 
+  # Installs a counting wrapper on the :tasks_page_load_hook seam so a test can
+  # observe EVERY page-load spawn (the spawn itself still runs). The hook fires
+  # in whichever process drives the LiveView — the test process for the
+  # disconnected HTTP render, the LiveView process for the connected pass — so
+  # the message lands in this test's mailbox either way.
+  defp install_page_load_hook do
+    test_pid = self()
+
+    Application.put_env(:evo_dash, :tasks_page_load_hook, fn fun ->
+      send(test_pid, :page_load_spawned)
+      fun.()
+    end)
+
+    on_exit(fn -> Application.delete_env(:evo_dash, :tasks_page_load_hook) end)
+  end
+
+  # The page reload is ASYNC, so its result arrives on a later
+  # {:tasks_page_loaded, ...} message: poll the task-list container (each
+  # render is a synchronous round-trip that drains the mailbox) until `needle`
+  # shows up. Scoped to #tasks-list on purpose — the sidebar lists completed
+  # tasks too, so it can show a row before the page reload lands.
+  defp wait_for_list(view, needle, timeout \\ 5000) do
+    wait_until(fn -> render_tasks_list(view) =~ needle end, timeout)
+    render_tasks_list(view)
+  end
+
   describe "task search" do
     test "renders the search input", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/tasks")
@@ -618,6 +644,79 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "page-load dispatch (connected-only, async)" do
+    test "a connected navigation spawns exactly one page load", %{conn: conn} do
+      install_page_load_hook()
+      insert_fixture!(opts: [prompt: "one load task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # handle_params/3 runs on BOTH the disconnected (static) render and the
+      # connected mount; only the connected pass may spawn a load. Exactly one
+      # spawn here means the discarded static-render load is gone.
+      assert_receive :page_load_spawned, 500
+      refute_receive :page_load_spawned, 300
+
+      # Corroborating evidence: the monotonic PAGE-LOAD spawn counter
+      # advanced once (:page_load_seq is the page load's own counter — the
+      # sidebar fetch has a separate :tasks_load_seq).
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+
+      html = flush_tasks_load(view)
+      assert html =~ "one load task"
+    end
+
+    test "the disconnected render kicks off no page load", %{conn: conn} do
+      install_page_load_hook()
+      insert_fixture!(opts: [prompt: "never loaded on dead render"])
+
+      # A plain HTTP GET runs the disconnected mount + handle_params only.
+      conn = get(conn, ~p"/tasks")
+
+      # The static HTML still paints the loading placeholder for the connected
+      # pass to replace...
+      assert html_response(conn, 200) =~ "Loading tasks..."
+      # ...but no load was spawned (its result would only be discarded).
+      refute_receive :page_load_spawned, 300
+    end
+
+    test "project filter dropdown populates from the async load", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "alpha task", path: "/tmp/proj/alpha"])
+      insert_fixture!(opts: [prompt: "beta task", path: "/tmp/proj/beta"])
+
+      {:ok, view, html} = live(conn, ~p"/tasks")
+
+      # project_paths is seeded EMPTY — mount/3 runs no blocking store query.
+      refute html =~ ~s{value="/tmp/proj/alpha"}
+      refute html =~ ~s{value="/tmp/proj/beta"}
+
+      # ...and is filled by the async load's get_unique_paths/1 result.
+      html = flush_tasks_load(view)
+      assert html =~ ~s{value="/tmp/proj/alpha"}
+      assert html =~ ~s{value="/tmp/proj/beta"}
+      assert has_element?(view, "#task-filters option[value='/tmp/proj/alpha']")
+      assert has_element?(view, "#task-filters option[value='/tmp/proj/beta']")
+    end
+
+    test "changing a filter still spawns exactly one page load", %{conn: conn} do
+      install_page_load_hook()
+      insert_fixture!(opts: [prompt: "filtered task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      assert_receive :page_load_spawned, 500
+
+      _html = render_hook(view, "search_tasks", %{"search_query" => "filtered"})
+
+      assert_receive :page_load_spawned, 500
+      refute_receive :page_load_spawned, 200
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 2
+
+      html = flush_tasks_load(view)
+      assert html =~ "filtered task"
+    end
+  end
+
   describe "async page load" do
     test "async page load populates the task list", %{conn: conn} do
       insert_fixture!(opts: [prompt: "async visible task"])
@@ -654,7 +753,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         result: nil
       }
 
-      # Old seq (0 < tasks_load_seq): dropped by the seq stale-guard.
+      # Old seq (0 < page_load_seq): dropped by the seq stale-guard.
       send(
         view.pid,
         {:tasks_page_loaded, 0, node(),
@@ -710,15 +809,63 @@ defmodule EvoDashWeb.TasksLiveTest do
         state.socket.assigns[:tasks_reload_pending] == true
       end)
 
-      # Phase 2: the debounce fires and the full reload re-renders the page.
+      # Phase 2: the debounce fires and kicks off the reload — now ASYNC, so
+      # the LiveView does not block on the store and the fresh page arrives on
+      # a later {:tasks_page_loaded, ...} message. Wait for that result.
       wait_until(fn ->
         state = :sys.get_state(view.pid)
         state.socket.assigns[:tasks_reload_pending] == false
       end)
 
-      html = render(view)
-      assert html =~ "event visible task"
-      assert html =~ "event-added task"
+      list = wait_for_list(view, "event-added task")
+      assert list =~ "event visible task"
+      assert list =~ "event-added task"
+    end
+
+    test "a debounced task event reloads through the async path (never blocking)", %{
+      conn: conn
+    } do
+      install_page_load_hook()
+      insert_fixture!(opts: [prompt: "async visible task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # Drain the connected mount's single spawn.
+      assert_receive :page_load_spawned, 500
+      refute_receive :page_load_spawned, 100
+
+      insert_fixture!(opts: [prompt: "async added task"])
+
+      seq_before = :sys.get_state(view.pid).socket.assigns.page_load_seq
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
+
+      # Phase 1: node filter matched → debounce scheduled.
+      wait_until(fn ->
+        :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] == true
+      end)
+
+      # Phase 2: the debounce fires and kicks off an ASYNC page load — the
+      # spawn hook fires and the monotonic PAGE-LOAD counter advances (the
+      # synchronous sync_apply_page/2 path never touches :page_load_seq, so
+      # this proves the reload left the LiveView process).
+      assert_receive :page_load_spawned, 2000
+
+      wait_until(fn ->
+        :sys.get_state(view.pid).socket.assigns.page_load_seq > seq_before
+      end)
+
+      # The debounce flag is cleared immediately (the load runs off-process)...
+      wait_until(fn ->
+        :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] == false
+      end)
+
+      # ...and the async result lands later and re-renders the list (scoped to
+      # #tasks-list, since the sidebar lists completed tasks too).
+      list = wait_for_list(view, "async added task")
+      assert list =~ "async visible task"
+      assert render(view) =~ "2 tasks found"
     end
 
     test "a foreign-node task_updated broadcast does not trigger a reload", %{conn: conn} do
@@ -779,15 +926,18 @@ defmodule EvoDashWeb.TasksLiveTest do
         state.socket.assigns[:tasks_reload_pending] == true
       end)
 
-      # Phase 2: the debounce fires and the full reload re-renders the page.
+      # Phase 2: the debounce fires and kicks off the reload ASYNC — wait until
+      # the reloaded page (which no longer holds the deleted row) lands.
       wait_until(fn ->
         state = :sys.get_state(view.pid)
         state.socket.assigns[:tasks_reload_pending] == false
       end)
 
-      html = render(view)
-      assert html =~ "delete visible task"
-      refute html =~ "delete me task"
+      wait_until(fn -> not (render_tasks_list(view) =~ "delete me task") end, 5000)
+
+      list = render_tasks_list(view)
+      assert list =~ "delete visible task"
+      refute list =~ "delete me task"
     end
   end
 

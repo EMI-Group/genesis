@@ -459,20 +459,19 @@ defmodule EvoDashWeb.TasksLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
     end
 
-    # Project paths are cheap-ish and needed for the filter dropdown regardless
-    # of pagination. Tasks are loaded in handle_params (server-side pagination).
-    # At mount time the node is local (set by the NodeAware on-mount hook before
-    # mount), so we read the node defensively.
-    node = socket.assigns[:current_node] || node()
-    project_paths = EvoDash.NodeContext.get_unique_paths(node)
-
     config_status = config_status()
 
     socket =
       socket
       |> assign(
         tasks: [],
-        project_paths: project_paths,
+        # Project paths (the project-filter dropdown's options) are fetched by
+        # the async page load (start_async_page_load/3 → get_unique_paths/1)
+        # and land with its {:tasks_page_loaded, ...} result. Seeding empty
+        # here keeps mount/3 free of a blocking store query — which would
+        # also always run against the LOCAL node, before handle_params/3
+        # resolves the ?node= context.
+        project_paths: [],
         status_filter: "all",
         project_filter: "all",
         search_query: "",
@@ -492,10 +491,14 @@ defmodule EvoDashWeb.TasksLive do
         page_size: @default_page_size,
         total_count: 0,
         total_pages: 1,
-        # Async page-load state: tasks_load_seq is the monotonic spawn counter
-        # for the in-flight page-load task (stale-guard), tasks_loading drives
-        # the loading placeholder.
-        tasks_load_seq: 0,
+        # Async page-load state: page_load_seq is the monotonic spawn counter
+        # for the in-flight page-load task (stale-guard) — deliberately its OWN
+        # key, never :tasks_load_seq, which EvoDashWeb.LiveHooks.NodeAware owns
+        # for the sidebar's "Active Tasks" fetch. The debounced reload spawns
+        # BOTH loads in the same handler, so a shared counter would make each
+        # load's bump invalidate the other's in-flight result.
+        # tasks_loading drives the loading placeholder.
+        page_load_seq: 0,
         tasks_loading: false
       )
 
@@ -520,7 +523,19 @@ defmodule EvoDashWeb.TasksLive do
       |> EvoDashWeb.LiveHooks.NodeAware.assign_node(params)
       |> assign(:current_path, ~p"/tasks")
 
-    socket = start_async_page_load(socket, requested_page, true)
+    socket =
+      if connected?(socket) do
+        # Kick off the page load ONLY on the connected pass: handle_params/3
+        # runs on BOTH the disconnected (static HTTP) render and the connected
+        # mount, and the disconnected render's async result is discarded —
+        # so spawning there would issue a full duplicate query (page SELECT +
+        # COUNT + 25-row %TaskInfo{} decode + get_unique_paths) per
+        # navigation. The else branch still paints the loading placeholder so
+        # the static HTML matches the connected render.
+        start_async_page_load(socket, requested_page, true)
+      else
+        assign(socket, :tasks_loading, true)
+      end
 
     socket =
       if previous_node_ctx != nil and previous_node_ctx != socket.assigns[:tasks_node_loaded] do
@@ -569,17 +584,28 @@ defmodule EvoDashWeb.TasksLive do
     # schedules this (trailing-edge 300ms debounce) after any node-matching
     # {:task_updated, ...} / {:task_deleted, ...} broadcast on the "tasks"
     # topic.
-    socket = reload_current_page(socket)
+    #
+    # The page reload goes through the ASYNC path so the LiveView process
+    # never blocks on the (single, serialized) store; show_loading? false
+    # keeps the stale rows visible until the fresh page arrives. Repeated
+    # broadcast bursts coalesce: each spawn bumps the monotonic
+    # :page_load_seq, so a superseded load's result is dropped by the
+    # stale-guard in the {:tasks_page_loaded, ...} handler below, and the
+    # newest in-flight load always clears :tasks_loading when it applies.
+    socket = start_async_page_load(socket, socket.assigns.current_page, false)
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
   @impl true
   def handle_info({:tasks_page_loaded, seq, node, result}, socket) do
-    if seq < socket.assigns.tasks_load_seq or node != socket.assigns.current_node do
-      # Stale page-load result — a newer load was started after this one was
-      # spawned (or the user switched nodes). Drop it: the newest in-flight
-      # load will apply its own result (and clear the loading state).
+    if seq < socket.assigns.page_load_seq or node != socket.assigns.current_node do
+      # Stale page-load result — a newer page load was started after this one
+      # was spawned (or the user switched nodes). Drop it: the newest
+      # in-flight load will apply its own result (and clear the loading
+      # state). :page_load_seq is bumped ONLY by start_async_page_load/3 —
+      # NodeAware's sidebar fetch keeps its own :tasks_load_seq counter, so
+      # the two loads a debounced reload spawns never invalidate each other.
       {:noreply, socket}
     else
       socket = assign(socket, :tasks_loading, false)
@@ -986,16 +1012,18 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   # Reloads the current page's tasks synchronously (no loading state, no seq
-  # bump). Used by mutating events (cancel/force-kill/delete/clear-history)
-  # and the :node_aware_reload_tasks PubSub debounce so the UI reflects
-  # changes immediately — the remote-poll path reloads async instead.
+  # bump). Used ONLY by the user-initiated mutating events (cancel /
+  # force-kill / delete / clear-history): a low-volume one-shot action where
+  # the inline store round-trip buys immediate feedback. The debounced PubSub
+  # reload deliberately does NOT use this — it goes through the async path
+  # (start_async_page_load/3) so task broadcasts never block the LiveView.
   defp reload_current_page(socket) do
     sync_apply_page(socket, socket.assigns.current_page)
   end
 
   # Synchronous fetch + apply of one page: the page of tasks, the pagination
   # counters, the project paths, and the filtered view. Deliberately does NOT
-  # touch :tasks_loading or :tasks_load_seq (the async page-load path owns
+  # touch :tasks_loading or :page_load_seq (the async page-load path owns
   # those).
   defp sync_apply_page(socket, page) do
     node = socket.assigns.current_node
@@ -1020,16 +1048,17 @@ defmodule EvoDashWeb.TasksLive do
   # Spawns one async page load in a supervised Task (same pattern as
   # review_live's start_async_load/2 and SettingsLive's LLM test) so the
   # LiveView never blocks on cross-node RPCs. The result arrives later as a
-  # `{:tasks_page_loaded, seq, node, result}` message; `tasks_load_seq` is
+  # `{:tasks_page_loaded, seq, node, result}` message; `page_load_seq` is
   # monotonic (incremented per spawn), so stale results from superseded loads
   # are dropped by the handle_info stale-guard.
   #
   # `show_loading?` controls the loading placeholder: user-initiated loads
-  # (handle_params, filters) show it; background refresh reloads do not (stale
-  # data stays until the fresh page arrives).
+  # (handle_params, filters) show it; background refresh reloads — including
+  # the debounced PubSub reload in handle_info(:node_aware_reload_tasks, ...)
+  # — do not (stale data stays until the fresh page arrives).
   defp start_async_page_load(socket, page, show_loading?) do
-    seq = socket.assigns.tasks_load_seq + 1
-    socket = assign(socket, :tasks_load_seq, seq)
+    seq = socket.assigns.page_load_seq + 1
+    socket = assign(socket, :page_load_seq, seq)
     socket = if show_loading?, do: assign(socket, :tasks_loading, true), else: socket
 
     parent = self()
@@ -1037,6 +1066,25 @@ defmodule EvoDashWeb.TasksLive do
     page_size = socket.assigns.page_size
     filters = build_filters_from_assigns(socket)
 
+    spawn_page_load(fn -> run_page_load(parent, seq, node, page, page_size, filters) end)
+
+    socket
+  end
+
+  # Runs `fun` (the page-load spawn), wrapped in the :tasks_page_load_hook
+  # app-env seam — a 1-arity function whose default simply runs the spawn.
+  # Tests inject a counting wrapper to prove that exactly ONE load is spawned
+  # per navigation and that the debounced reload takes the async route.
+  # Resolved at spawn time, mirroring EvoDash's other runner seams
+  # (:github_runner, :update_check_runner, ...).
+  defp spawn_page_load(fun) do
+    hook = Application.get_env(:evo_dash, :tasks_page_load_hook, fn inner -> inner.() end)
+    hook.(fun)
+  end
+
+  # The spawned body: fetch one page of tasks plus the distinct project paths,
+  # then report back to the LiveView process.
+  defp run_page_load(parent, seq, node, page, page_size, filters) do
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result =
         try do
@@ -1066,8 +1114,6 @@ defmodule EvoDashWeb.TasksLive do
 
       send(parent, {:tasks_page_loaded, seq, node, result})
     end)
-
-    socket
   end
 
   defp build_filters_from_assigns(socket) do
