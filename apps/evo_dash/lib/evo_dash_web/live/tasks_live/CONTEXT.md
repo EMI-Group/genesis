@@ -222,6 +222,70 @@ It is `nil` on every non-`:failed` row and rides on BOTH read paths: the full
   via `EvoGit.Store.put_task` (bypasses the async task spawn); deletions via
   `EvoGit.Store.delete_task/2`.
 
+## Load path & round-trip inventory (per page render)
+
+Every load goes `EvoDash.NodeContext.<f>` (local direct / remote `:erpc`) →
+`EvoGit.RemoteNode` → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry`
+→ `EvoGit.Store`. In the core the Store is ONE GenServer over a SINGLE SQLite
+connection (`pool_size: 1`), so all of these reads serialize with each other and
+with heartbeat/lease/cleanup writes:
+- **`list_tasks_paginated/2`** — `load_page/4` (`tasks_live.ex:945-972`; opts
+  `[limit: 25, offset: (page-1)*25, filters: build_filters_from_assigns/1]`) →
+  `TaskRegistry.list_tasks_paginated/1` → `Store.safe_select_paginated_tasks/2`.
+  Issues **TWO SQL statements** (page `SELECT` with `ORDER BY started_at DESC
+  LIMIT/OFFSET` **+ a separate `COUNT(*)` re-applying the same filters**) and
+  decodes a FULL `%TaskInfo{}` per row (incl. `result`/`usage`/`archive_metadata`
+  JSON) for all 25 rows. A `search` filter is a leading-wildcard OR-`LIKE` over
+  `id`/`opts`/`project_path`/`result` (full-table scan) executed in BOTH
+  statements. On a stale/clamped page (`:958-968`) the whole paginated call runs
+  a SECOND time (`COUNT` re-run too).
+- **`get_unique_paths/1`** — called at `mount/3:467`, `sync_apply_page/2:1016`,
+  and in the async task `:1046` → `TaskRegistry.get_unique_paths/0` →
+  `Store.select_task_paths/1` (`SELECT DISTINCT project_path`). Handled INLINE
+  in BOTH core GenServers (NOT offloaded like the paginated read), so it blocks
+  the registry + store while the paginated read may also be in flight.
+- **`config_status/0`** — `mount/3:469` → `EvoDashWeb.Helpers.config_status/0`
+  (`helpers.ex:672`) → `EvoGit.Config.config_status/0`: SYNCHRONOUS in mount,
+  re-reads config.toml + credentials.toml.
+- **Sidebar load** — `NodeAware.on_mount` spawns
+  `TaskRegistry.list_tasks_summary(@active_statuses)` async; `assign_node/2`
+  re-spawns it on a node-context change.
+
+Minimum cost per render: 3 SQL statements (page `SELECT` + `COUNT` + `DISTINCT
+paths`) across 2 core RPCs; 4 statements when `load_page/4` fetches twice.
+
+## Synchronous vs async in the LiveView
+
+- **ASYNC (`EvoDash.TaskSupervisor`)**: `start_async_page_load/3`
+  (`:1030-1071`) — the mount/handle_params/filter loads (incl. their
+  `get_unique_paths`); result arrives as
+  `{:tasks_page_loaded, seq, node, result}` and is stale-guarded by
+  `tasks_load_seq`.
+- **SYNCHRONOUS in the LiveView process**: `mount/3`'s `get_unique_paths/1` +
+  `config_status/0`; and `reload_current_page/1` → `sync_apply_page/2`
+  (`:992-1018`), which runs the FULL paginated query + `get_unique_paths`
+  inline. `sync_apply_page/2` is used by the debounced PubSub reload AND by every
+  mutating event (cancel/force-kill/delete/clear-history).
+
+## PubSub refetch behaviour
+
+Every node-matching `{:task_updated, _, _, _}` / `{:task_deleted, _, _}`
+triggers a FULL page re-fetch: `NodeAware.handle_task_info/2` (`node_aware.ex:733-751`)
+node-filters then debounces 300ms (`debounce_task_reload/1`, coalescing bursts),
+and the `:node_aware_reload_tasks` handler (`tasks_live.ex:564-575`) runs
+`reload_current_page/1` (synchronous full re-query) plus the async sidebar
+reload. A source emitting events across ≥300ms windows produces one full
+re-fetch per window.
+
+## No per-task N+1 I/O in the list path
+
+`EvoDashWeb.TaskCardComponents.task_card/1` (`task_card_components.ex:19`)
+performs NO git subprocess, `File.stat`/`exists?`, `System.cmd`, or
+`NodeContext` call — cards render the already-loaded `%TaskInfo{}` (verified: no
+`rev_parse|System.cmd|File.stat|NodeContext|Port.open` in that file). No
+per-visible-task follow-up RPC exists; the per-row cost is the core-side
+`Codec.decode_task/1` blob decode, not an extra round trip.
+
 ## Constraints
 
 - Do NOT reintroduce polling (`:remote_poll` / `Process.send_after` self-ticks)
