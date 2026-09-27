@@ -223,6 +223,37 @@ The ONLY exclusion is `:reflect` (repo-less) tasks — no code to review; their 
 3. **No heavy field (logs/usage/archive_metadata) is needed by any dashboard-rendered card** — the dashboard card surface is the sidebar only (no full-result modal exists on the dashboard), and it needs only contract fields. Nothing is fetched lazily.
 4. The structured failed-task record `error` (map with atom keys `kind`/`source`/`message`/`stacktrace`, decoded via the lenient Store `Codec.decode_error/1` on both the full `%TaskInfo{}` path and the summary projection; nil unless `status == :failed`) renders a compact error-tinted strip (truncated `error.message`) on the COLLAPSED failed card and a full-detail block at the top of the EXPANDED detail area (kind/source caption via `Helpers.task_error_kind_label/1`/`task_error_source_label/1`, full untruncated message, LAST ≤8 stacktrace frames in a `<pre>` block). All reads are guarded (`status == :failed` AND `is_map(error)`), atom/string-key tolerant, and total for nil/non-map/legacy shapes — legacy failed rows render byte-identically to pre-feature. The record is SEPARATE from the legacy `{:error, _}`/`{:exit, _}` result (both may coexist on one card; the collapsed line prefers the structured message, the expanded view shows both blocks).
 
+## Token & Cost Usage Display Sites (targets for any cost caveat/notice)
+
+Token counts are provider-reported (usually accurate) but cost is BEST-EFFORT (peak-hour pricing, stale pricing tables); a notice/caveat must reach ALL of the sites below, since there is NO shared stat-block component.
+
+| # | Rendered by | File:lines | Callers |
+|---|---|---|---|
+| 1 | `TaskCardComponents.task_card/1` — "Token & Cost Usage" card: header `:356`, token rows `:358-383`, cache rows `:384-429` (gated on `cached_tokens > 0 or cache_creation_tokens > 0`), cost rows `:430-451` | `task_card_components.ex:352-453` | TasksLive only (`live/tasks_live.ex:250`) |
+| 2 | `ArchiveComponents.archive_tree_node/1` — 4 tiles: Input/Output/Total Tokens + `Cost` (`total_cost` only) | `archive_components.ex:147-178` | `archive_details/1` (`:19-58`, called at `task_card_components.ex:529`) + `archive_tree/1` (`:50`) |
+| 3 | `ReviewComponents.Header.task_summary/1` — "Token & Cost Usage" definition list: token rows `:452-480`, cache rows `:482-526`, cost rows `:528-556` | `review_components/header.ex:445-558` | ReviewLive (`live/review_live.ex:129-137`); facade `defdelegate` at `review_components.ex:17` |
+| 4 | `ReviewComponents.archive_tree_node/1` — same 4 tiles as #2 but DIFFERENT markup (a byte-similar duplicate) | `review_components.ex:262-301` | `archive_review_section/1` (`:133`) — review page Archive tab |
+| 5 | `AgentsLive` agent-detail usage panel (collapsible) — toggle button `phx-click="toggle_usage"` `:459-469`, token rows `:474-501`, cache + `Context` rows `:502-548` (no `Cache Creation` tile here), cost rows `:549-576` | `live/agents_live.html.heex:459-578` | AgentsLive via the `@show_usage` assign (handler `live/agents_live.ex:557`) |
+
+- **Labels rendered**: "Token & Cost Usage" (#1, #3), "Token and Cost" (#5), "Input Tokens", "Output Tokens", "Total Tokens", "Cached Tokens", "Cache Creation" (#1, #3 only), "Cache Hit Rate", "Input Cost", "Output Cost", "Total Cost", and plain "Cost" (#2, #4 — `total_cost` only).
+- **Only the formatters are shared** — `Helpers.format_cost/1` (`helpers.ex:871-875`), `Helpers.format_cache_hit_rate/1` (`:880-893`), `Helpers.format_number/1` (`:860-866`); every stat block is re-implemented inline, so a single-place notice needs either a NEW shared sub-component or a 5-site edit.
+- **No other page renders cost/token stats**: ProjectsLive (`live/projects_live.ex`), HomeLive (`/help` assistant mini card), SettingsLive, SystemLive and `TaskExportController` (which only serializes the raw `usage` field) render none.
+- **`Cost` tiles use `text-primary-standalone` for the total** (#1 header icon `hero-currency-dollar`, total value) — keep that token if editing.
+
+### Existing info-notice / tooltip conventions to mirror
+- **`EvoDashWeb.Helpers.tip/1`** (`helpers.ex:786-818`) is the canonical inline info icon: `<.tip text={gettext("…")} position={:top} />` renders `<span class="tooltip tooltip-<position> cursor-help" data-tip={text}>` with a `hero-information-circle` icon (attrs `text` required, `icon`, `class`, `position` `:top|:bottom|:left|:right`). Live call sites to copy: `task_form_components.ex:669,687,704,778,799,818`; `project_components.ex:531,555,713,729,787,797`. Use this for a cost caveat next to a block header.
+- A plain `title=` attribute is the other, lighter convention (e.g. `review_components/header.ex:419`, `task_card_components.ex:95,102,136`).
+- The `LegendTooltip` JS hook (`assets/js/hooks/legend_tooltip.js`) exists only for long tips that would be CLIPPED by an overflow container (agents legend chips) — not needed for a stats block.
+
+### i18n
+- Every label goes through `gettext/1` on the DEFAULT domain (`EvoDashWeb.Gettext`; the only `dgettext` in the app is `core_components.ex:600` for domain "errors"). New strings must be gettext-wrapped; per the repo dev policy do NOT run `gettext.extract`/`merge`/`translate` — instead add a Chinese `%!-- zh_CN: … --%` comment when the meaning needs anchoring (the existing blocks already do this, e.g. `task_card_components.ex:356` "Token → 词元").
+
+### Tests covering these displays
+- `test/evo_dash_web/helpers_test.exs:296-322` — `format_number/1` + `format_cost/1` (no test for `format_cache_hit_rate/1`).
+- `test/evo_dash_web/components/archive_tree_test.exs:264-297` — the ONLY render-level assertions on usage tiles (`"1,000"`, `"500"`, `"1,500"`, `"0.003000"`, `refute "0.000000"`) for `ArchiveComponents.archive_tree/1` and `ReviewComponents.archive_review_section/1`.
+- `test/evo_dash_web/live/agents_live_test.exs:995` — clicks `button[phx-click='toggle_usage']` (asserts the compression `%`, not cost/token text).
+- Sites #1 and #3 have NO direct assertions (`task_card_components_test.exs` covers only cancel/review/error/archive; `review_components/header.ex` has no component test file).
+
 ## Notes for Agents — narrow-width (mobile) layout conventions
 - **Branch-name badges** (`task_card_components.ex`, 3 sites: the per-repo badge in `result_repos_badges/1` + the two `render_result/2` top-level branch badges): truncate on narrow widths via the shared private **`branch_badge_class/0`** (`min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none`) plus an inner `<span class="truncate min-w-0">` around the branch text — daisyUI `.badge` is `inline-flex` with no wrapping, so the ellipsis must live on a blockified inner span, and flex parents need `min-w-0` to shrink. Reuse the helper for any NEW branch-badge site (keep the class string a literal so the Tailwind v4 scanner picks it up); the full branch name always shows at `md`+ (`md:max-w-none`).
 - **Agent tree** (`agents_components.ex` `path_tree/1`): the per-level agents-row wrapper carries **`pl-7 xl:pl-0`** — below `xl` the row stacks (`flex-col`) and the 28px indent (= folder icon `size-5` 20px + `gap-2` 8px) puts the first agent box AND every wrapped line exactly at that level's directory-text left edge, clear of the children trunk (`absolute left-2.5`, spans the full content row). Do NOT remove the indent or the wrapped boxes overlap the trunk connector on mobile; `xl:pl-0` keeps the desktop two-column layout byte-identical.
