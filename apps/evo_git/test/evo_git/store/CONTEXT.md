@@ -55,6 +55,7 @@ The suites that terminate/restart the app-global `EvoGit.Store`/`EvoGit.TaskRegi
 ## Notes for Agents
 
 - Tmp DB filenames must be unique ACROSS BEAM restarts too — embed the wall-clock ms (`System.system_time(:millisecond)`) alongside `System.unique_integer` + `inspect(self())`; a counter+pid alone collides with a previous run's leftover file and silently reopens its stale rows.
+- Every per-test tmp DB must ALSO be deleted on exit: `File.rm` the DB plus its `-wal`/`-shm` sidecars (`{:error, :enoent}` for a missing path must not raise) — a merely unique name still leaves one file per test behind (136/270/408 leftovers after 3 consecutive store-suite runs before the cleanup landed).
 - `ExUnit.CaptureIO.capture_io(:stderr, fun)` is GROUP-LEADER scoped, so inside an `async: true` module it captures only THIS test process's stderr (and the processes it spawns) — compiler-warning assertions stay deterministic.
   `boot_migration_source_test.exs` pins the absence of `redefining module` text around fresh-DB boots that way; `Boot` compiles inside the calling process.
 - The dynamic repo is UNLINKED from the test process (`on_exit/1` runs after the process exits) and stopped through an alive-guard (`Boot.stop/1` on a dead pid RAISES "no process" — tests that stop their instance manually need `if Process.alive?(pid)` in cleanup).
