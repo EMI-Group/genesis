@@ -66,7 +66,7 @@ LiveView runs `mount/3` TWICE per full page load (dead HTTP render + WebSocket c
 3. **handle_params**: `assign_node/2`'s summary reload is dedup-guarded by `:tasks_node_loaded` (node_aware.ex:175-183 — prevents the mount double-fetch and the dead-render re-fetch); ProjectsLive's fallback branches run only the `list_task_ids` notified-set union; with a project → `activate_project` (File.dir? + detect_mode FS + **genesis.toml read** + `list_task_ids`). **The node-aware loads are NOT here anymore**: `AsyncLoad.maybe_spawn/2` (projects_live.ex:754, connected mounts) fires ONE supervised task running the custom-agents / model-profiles / recents / (remote) config+mode loads outside the LiveView process — the result arrives as `{:async_project_load, ...}` a frame later and never blocks this step (see "Async Node-Aware Loads").
 4. **`:load_config_status`** (deferred one frame): `EvoGit.Config.config_status()` — re-reads config.toml + credentials.toml (cached parse + stat) — blocks a frame in the LiveView process.
 
-⇒ **A single full page load fires `list_tasks_summary` exactly ONCE** (on the connected mount; the dead render skips it and `assign_node`'s dedup guard suppresses the handle_params re-fetch). Each call blocks the LiveView while the single-connection Store GenServer runs the query and the Task process decodes rows. SPA-style push_patch navigation re-runs only handle_params (dedup-guarded: NO summary, just task_ids + recents + genesis.toml read when a project is active, unless the node context changed).
+⇒ **A single full page load fires `list_tasks_summary` exactly ONCE** (on the connected mount; the dead render skips it and `assign_node`'s dedup guard suppresses the handle_params re-fetch). Each call blocks the LiveView while the store runs the query on its connection pool (reads share `EvoGit.Store.Boot.default_pool_size/0` = 4 connections, so they no longer serialize with one another; writes serialize through `EvoGit.Store.Writer`) and the Task process decodes rows. SPA-style push_patch navigation re-runs only handle_params (dedup-guarded: NO summary, just task_ids + recents + genesis.toml read when a project is active, unless the node context changed).
 
 ### Memory (~25MB/page)
 
@@ -75,7 +75,7 @@ Retained in the LiveView heap per tab (N tabs = N copies): `@running_tasks` + `@
 ### Wasteful patterns to fix (candidate list)
 
 1. **Summary query not project-scoped** — scans all projects' running/pending/finalizing/completed rows on every navigation.
-2. Store queries serialize on the single-connection Store GenServer with runtime writes.
+2. Store reads run on the connection pool (`EvoGit.Store.Boot.default_pool_size/0` = 4) instead of serializing with each other; writes serialize through `EvoGit.Store.Writer`.
 3. `:node_aware_reload_tasks` (300ms after EVERY task broadcast): `list_task_ids` + summary + genesis.toml re-read when project settings shown — the broadcast-driven hotspot (see evo_git/CONTEXT.md:80).
 
 ### Summary decode location

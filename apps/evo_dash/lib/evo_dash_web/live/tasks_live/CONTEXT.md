@@ -112,8 +112,9 @@ independent, see "Two independent load counters" below.
   `:page_load_seq` (the async path owns those).
 - The rendered list is a plain assign (`@filtered_tasks`) re-rendered with
   `Enum.with_index` + `for` (`:245`) — NOT a LiveView stream.
-- Per-load SQL cost, the single `pool_size: 1` DBConnection, and the inline-Store
-  `get_unique_paths` scan: `apps/evo_git/lib/evo_git/store/CONTEXT.md`.
+- Per-load SQL cost, the pool-backed reads (`EvoGit.Store.Boot.default_pool_size/0`
+  = 4 connections) with writes serialized through `EvoGit.Store.Writer`, and the
+  inline-Store `get_unique_paths` scan: `apps/evo_git/lib/evo_git/store/CONTEXT.md`.
 
 ## Measured load profile (isolated harness, copy of the live DB: 854 rows / 29.7 MB)
 
@@ -128,7 +129,8 @@ against a COPY of the live `tasks.sqlite`, exercising the real async /
 - Default (unfiltered) page query `list_tasks_paginated` ≈ **1.6 ms**;
   `get_unique_paths/1` ≈ 0.14 ms; `config_status/0` ≈ 0.25 ms.
 - Sidebar `list_tasks_summary` (752 rows incl. `:completed`) ≈ **20–24 ms**, run
-  async but holding the single Store GenServer for its whole duration; the page's
+  async but off the Store GenServer (offloaded; its read holds one pooled
+  connection for its whole duration); the page's
   DB query measures ~1.8 ms alone vs ~12 ms while the summary is in flight.
 - A **filtered** page load is DB-bound, not render-bound: `status = "completed"`
   → **~140–180 ms** LiveView round trip (vs `status = "failed"` ~1.5 ms). Root
@@ -172,8 +174,8 @@ adjusting your filters or search query." instead of the start-tasks hint
 All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (local
 direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`:
 
-- **`list_tasks_paginated/2`** — page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`build_filters_from_assigns`; `"all"`/`""` passthrough handled in `EvoGit.Store.Queries.build_where`). Returns FULL `%TaskInfo{}` structs + total_count.
-  - **Search surface**: the `search:` filter (the page's search box) is executed in `EvoGit.Store.Queries.build_where/1` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `error`, `usage`, `model_id`, `logs`, `archive_metadata` — `error` is the structured failure record map read for failed-task display (`nil` unless the task is `:failed`). NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: summary projection + `get_task` on expand — not implemented).
+- **`list_tasks_paginated/2`** — page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`build_filters_from_assigns`; `"all"`/`""` passthrough handled in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2`). Returns FULL `%TaskInfo{}` structs + total_count.
+  - **Search surface**: the `search:` filter (the page's search box) is executed in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `error`, `usage`, `model_id`, `logs`, `archive_metadata` — `error` is the structured failure record map read for failed-task display (`nil` unless the task is `:failed`). NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: summary projection + `get_task` on expand — not implemented).
 - **Multi-repo `repos` result key** — task results may carry a top-level `repos` map (STRING keys): `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}` — `"primary"` ALWAYS present (branch_name nil when the primary produced no changes), each writable foreign repo that produced commits present, read-only repos ABSENT. Top-level `commit_sha`/`branch_name` remain the PRIMARY repo's. Legacy tasks have NO `repos` key — rendered unchanged. TasksLive does not touch `repos` itself: it loads the full `result` via `list_tasks_paginated/2` (Codec round trip keeps the top-level `"repos"` key STRING-keyed — unknown result keys are never atomized) and `task_card_components.ex` renders it (`result_repos/1` + `result_repos_badges/1`).
 - **`get_unique_paths/1`** — fetched ONCE per page load, inside the async load task (`run_page_load/6`, `:1094`) — `mount/3` does NOT call it (see "Load-cost profile"). Result assigned as `@project_paths` → filter-dropdown options + active-filter badge. The synchronous `sync_apply_page/2` path (`:1044`, mutating events only) re-fetches it inline.
 - **`cancel_task/2` / `force_kill_task/2` / `delete_task/2` / `clear_finished_tasks/1`** — phx-event triggered; return `:ok | {:error, reason}` — only the status consumed (`:ok` → collapse card + sync reload; error → gettext flash with `inspect(reason)`); delete/clear ignore the return.
@@ -192,7 +194,7 @@ Two two-step server-side confirmation-modal flows (SystemLive warning-modal patt
 - **Graceful cancel** (card's inline Cancel button, visible `[:pending, :running]`): `open_cancel_modal` → assign `:confirm_cancel_task_id`; `confirm_cancel_task` → `EvoDash.NodeContext.cancel_task(current_node, task_id)` (GRACEFUL — agents save + exit, result preserved; `:pending` → immediate `:cancelled`); `:ok` → collapse expanded card + `reload_current_page/1`; error → flash `gettext("Failed to cancel task: %{reason}", reason: inspect(reason))`. Modal: title `gettext("Cancel Task?")`, confirm `gettext("Cancel Task")` (`btn-warning`), dismiss `gettext("Keep Running")`.
 - **Force kill** (card's three-dot dropdown, visible `[:running, :cancelling]`, "Danger zone" divider): `open_force_kill_modal` → assign `:confirm_force_kill_task_id`; `confirm_force_kill_task` → `EvoDash.NodeContext.force_kill_task(current_node, task_id)` (BRUTAL — kills all agents, result nil'd; escalation from `:cancelling`); same `:ok` collapse+reload / error-flash handling. Modal: title `gettext("Force Kill Task?")`, confirm `gettext("Force Kill")` (`btn-error`).
 - **Modal-state lifecycle**: both assigns seeded `nil` in `mount/3`, MUTUALLY EXCLUSIVE (opening one clears the other), cleared on node switch in `handle_params/3`. Nil-guarded confirms are no-ops.
-- **Status filter**: includes `gettext("Cancelling")` (`value="cancelling"`); pure SQL string comparison (`EvoGit.Store.Queries.build_where`), so `:cancelling` round-trips — no evo_dash-side atom whitelist.
+- **Status filter**: includes `gettext("Cancelling")` (`value="cancelling"`); pure SQL string comparison (`EvoGit.Store.Operations.Tasks.where_filters/2`), so `:cancelling` round-trips — no evo_dash-side atom whitelist.
 - **`:cancelled` reviewability**: gracefully-cancelled tasks ARE reviewable — the card Review button shows for every `:completed`/`:cancelled` task (repo-less `:reflect` excluded); a `:cancelled` task without a branch still opens the review page (no-changes).
 
 ## ModalHelpers
@@ -318,9 +320,10 @@ It is `nil` on every non-`:failed` row and rides on BOTH read paths: the full
 
 Every load goes `EvoDash.NodeContext.<f>` (local direct / remote `:erpc`) →
 `EvoGit.RemoteNode` → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry`
-→ `EvoGit.Store`. In the core the Store is ONE GenServer over a SINGLE SQLite
-connection (`pool_size: 1`), so all of these reads serialize with each other and
-with heartbeat/lease/cleanup writes:
+→ `EvoGit.Store`. In the core reads share a small connection pool
+(`EvoGit.Store.Boot.default_pool_size/0` = 4), so they run concurrently instead
+of serializing with one another, while all writes — heartbeat/lease/cleanup
+included — serialize through the dedicated `EvoGit.Store.Writer` process:
 - **`list_tasks_paginated/2`** — `load_page/4` (`tasks_live.ex:971-997`; opts
   `[limit: 25, offset: (page-1)*25, filters: build_filters_from_assigns/1]`) →
   `TaskRegistry.list_tasks_paginated/1` → `Store.safe_select_paginated_tasks/2`.
