@@ -208,6 +208,6 @@ Measured read-only against a COPY of the live `tasks.sqlite` (854 rows, 29.7 MB,
 - `./boot.ex` → `EvoGit.Store.Boot` — dynamic-repo boot + migration runner + `:global` lock
 - `./repo_scope.ex` → `EvoGit.Store.RepoScope` — `with_repo/2` scoped binding
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full classifiers (exception + NIF-tuple families)
-- `../../priv/repo/migrations/` → the two Ecto migrations (baseline adoption + data normalization)
-- `../../../test/evo_git/store/` → unit tests: `operations/` (one file per Operation), `types_test.exs` (Codec-oracle equivalence), `boot_migration_test.exs` (legacy-shape adoption), `boot_normalization_test.exs` (data rewrites), `repo_test.exs` (infra contracts), `repo_scope_test.exs`, `errors_test.exs`; stateful suites one level up: `store_test.exs`, `store_summary_test.exs`, `store_disk_full_test.exs`, `migrate_store_test.exs`
+- `../../priv/repo/migrations/` → the three Ecto migrations (baseline adoption + data normalization + composite indexes)
+- `../../../test/evo_git/store/` → unit tests: `operations/` (one file per Operation), `types_test.exs` (Codec-oracle equivalence), `boot_migration_test.exs` (legacy-shape adoption), `boot_normalization_test.exs` (data rewrites), `composite_index_test.exs` (paginated-read query plans + filters over composite-indexed data), `repo_test.exs` (infra contracts), `repo_scope_test.exs`, `errors_test.exs`; stateful suites one level up: `store_test.exs`, `store_summary_test.exs`, `store_disk_full_test.exs`, `migrate_store_test.exs`
 - `../task_registry/` → the consumer: lifecycle semantics, lease/heartbeat, disk-full caller degradation
