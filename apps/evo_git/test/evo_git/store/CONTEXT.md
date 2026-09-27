@@ -109,6 +109,18 @@ The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
   wall-clock ms (`System.system_time(:millisecond)`) alongside
   `System.unique_integer` + `inspect(self())`; a counter+pid alone collides
   with a previous run's leftover file and silently reopens its stale rows.
+
+## Known Issues
+- `operations/lightweight_test.exs` `start_repo!/0` is the one tmp-DB helper
+  still named `evogit_r3a_<unique_integer([:positive,:monotonic])>_<inspect(self())>.sqlite`
+  (NO wall-clock ms / OS pid) AND its `on_exit` only stops the repo — the file
+  is never deleted. Re-running the SAME file with the SAME seed in the SAME
+  `System.tmp_dir!()` re-opens the previous run's seeded DB (both the counter
+  and the deterministic test pids repeat across BEAMs), producing
+  `UNIQUE constraint failed: tasks.id` / stale-row assertion failures.
+  Every other helper in this directory is SAFE: it either embeds
+  `System.system_time(:millisecond)` (+ `:os.getpid()`/`System.pid()`) in the
+  name, or removes its DB (or whole root dir) in `on_exit`/`after`.
 - `ExUnit.CaptureIO.capture_io(:stderr, fun)` is GROUP-LEADER scoped, so inside
   an `async: true` module it captures only THIS test process's stderr (and the
   processes it spawns) — compiler-warning assertions stay deterministic.
