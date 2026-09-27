@@ -42,6 +42,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Usage
+  alias EvoGit.Agent.Cost
   alias EvoGit.AgentScheduler
 
   @doc """
@@ -103,6 +104,9 @@ defmodule EvoGit.Agent.ContextCompression do
             case compression_llm_call(llm_model, compression_context, llm_gen_opts) do
               {:ok, response} ->
                 text = ReqLLM.Response.text(response)
+                # Read the usage map ONCE — it feeds both the token counts
+                # (`Usage.from_response_usage/1`) and the self-computed cost.
+                usage_map = ReqLLM.Response.usage(response)
 
                 summary_msg =
                   ReqLLM.Context.user("Summary of previous events:\n" <> text)
@@ -111,15 +115,18 @@ defmodule EvoGit.Agent.ContextCompression do
                 new_context = ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
                 AgentScheduler.increment_compression_count(agent_id)
 
+                # Cost is recomputed by `EvoGit.Agent.Cost` (see the module doc
+                # there); when there is nothing to recompute from, ReqLLM's
+                # reported cost is kept verbatim.
+                compression_usage =
+                  Usage.from_response_usage(usage_map)
+                  |> Cost.apply_to_usage(usage_map, agent_id)
+
                 %{
                   state
                   | context: new_context,
                     total_tokens: 0,
-                    usage:
-                      Usage.add(
-                        state.usage,
-                        Usage.from_response_usage(ReqLLM.Response.usage(response))
-                      )
+                    usage: Usage.add(state.usage, compression_usage)
                 }
 
               {:error, {:llm_request_rejected, message}} = terminal ->
