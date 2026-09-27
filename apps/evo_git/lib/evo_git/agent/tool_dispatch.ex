@@ -31,6 +31,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   alias EvoGit.Agent.SubagentSchemas
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Usage
+  alias EvoGit.Agent.Cost
   alias EvoGit.AgentScheduler
 
   import ReqLLM.Context, only: [user: 1, tool_result: 3]
@@ -717,7 +718,14 @@ defmodule EvoGit.Agent.ToolDispatch do
         state.total_tokens
       end
 
-    turn_usage = Usage.from_response_usage(usage)
+    # Cost is recomputed by `EvoGit.Agent.Cost` from the raw token counts + the
+    # llm_db pricing catalog with an explicit peak/off-peak period (ReqLLM's
+    # reported cost double-charges multi-period models and applies no cache
+    # discount); when there is nothing to recompute from, ReqLLM's reported
+    # cost is kept verbatim.
+    turn_usage =
+      Usage.from_response_usage(usage)
+      |> Cost.apply_to_usage(usage, state.agent_id)
 
     %{state | total_tokens: current_tokens, usage: Usage.add(state.usage, turn_usage)}
   end
