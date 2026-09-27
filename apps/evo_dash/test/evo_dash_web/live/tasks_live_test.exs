@@ -868,6 +868,51 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert render(view) =~ "2 tasks found"
     end
 
+    test "a debounced reload never blocks the LiveView on the store", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "block probe visible"])
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      insert_fixture!(opts: [prompt: "block probe added"])
+      seq_before = :sys.get_state(view.pid).socket.assigns.page_load_seq
+
+      # Freeze the single, serialized task registry. EVERY synchronous read
+      # now blocks there (up to the registry's 30s call timeout), which is
+      # exactly what separates the async path from the old inline one: if the
+      # debounced reload ran `load_page/4` inside the LiveView, the handler
+      # below could never complete while the registry is frozen.
+      :ok = :sys.suspend(EvoGit.TaskRegistry)
+
+      on_exit(fn ->
+        # Safety net (LIFO: runs BEFORE the isolated Store/TaskRegistry
+        # teardown registered in setup/1) so a failed assertion can never
+        # leave the shared registry frozen for the next suite.
+        if Process.whereis(EvoGit.TaskRegistry), do: :sys.resume(EvoGit.TaskRegistry)
+      end)
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
+
+      # The debounce fires and its handler COMPLETES (debounce flag cleared,
+      # a page load handed to a supervised task) while the store is still
+      # frozen — impossible for a synchronous reload.
+      wait_until(fn ->
+        assigns = :sys.get_state(view.pid).socket.assigns
+
+        assigns[:tasks_reload_pending] == false and assigns.page_load_seq > seq_before
+      end)
+
+      # ...and the LiveView is still responsive (this render round-trips
+      # through it) with the reloaded rows NOT yet applied — the query really
+      # is off-process, not merely fast.
+      refute render_tasks_list(view) =~ "block probe added"
+
+      # Unfreeze: the off-process load completes and its result re-renders.
+      :ok = :sys.resume(EvoGit.TaskRegistry)
+
+      list = wait_for_list(view, "block probe added")
+      assert list =~ "block probe visible"
+    end
+
     test "a foreign-node task_updated broadcast does not trigger a reload", %{conn: conn} do
       insert_fixture!(opts: [prompt: "event visible task"])
 
