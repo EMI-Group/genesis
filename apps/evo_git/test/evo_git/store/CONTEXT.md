@@ -2,58 +2,24 @@
 
 ## Intent
 
-Unit tests for the Ecto persistence layer of the SQLite store — the pure
-Operation modules, the Ecto.Type wire formats, the boot/migration machinery, the
-dynamic-repo plumbing, and the error classifier. Every test drives REAL unnamed
-dynamic `EvoGit.Repo` instances (`EvoGit.Store.Boot.start_dynamic/1`) on unique
-tmp SQLite files (or, for the pure modules, no database at all), so the whole
-directory is `async: true`.
-
-The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
-`../store_summary_test.exs`, `../store_disk_full_test.exs`,
-`../migrate_store_test.exs`).
+Tests for the Ecto persistence layer of the SQLite store — the pure Operation modules, the Ecto.Type wire formats, the boot/migration machinery, the dynamic-repo plumbing, the DBConnection pool size, the facade's write offload, and the error classifier.
+All of them drive REAL unnamed dynamic `EvoGit.Repo` instances (`EvoGit.Store.Boot.start_dynamic/2`) on unique tmp SQLite files, except `types_test.exs`/`errors_test.exs`, which open no database at all.
+Thirteen of the fifteen modules here are `async: true`; `pool_size_test.exs` and `store_write_offload_test.exs` are deliberately `async: false` (see Constraints).
+The suites that terminate/restart the app-global `EvoGit.Store`/`EvoGit.TaskRegistry` singletons live one level up (`../store_test.exs`, `../store_summary_test.exs`, `../store_disk_full_test.exs`, `../migrate_store_test.exs`); `store_write_offload_test.exs` here is stateful too, but on an ISOLATED `EvoGit.TaskRegistryCase` store.
 
 ## Routing Table
 
-- `./operations/` → one file per Operation module (`tasks_test.exs`,
-  `lightweight_test.exs`, `summaries_test.exs`, `projects_test.exs`,
-  `safety_test.exs`) — real dynamic repos, rows seeded through the TYPED
-  schemas, return shapes pinned to the public-API contract.
-- `./types_test.exs` → `EvoGit.Store.TypesTest` — Codec-oracle equivalence for
-  every Ecto.Type (`dump/1` byte-identical to `Codec.encode_*/1`, `load/1`
-  equal to `Codec.decode_*/1` incl. raising paths).
-- `./boot_migration_test.exs` → `EvoGit.Store.BootMigrationTest` — SCHEMA
-  adoption coverage of `20260815000001_baseline_adoption` (fresh DB, current
-  20-col table, 15/17-col legacy prefixes, the real 19-column v0.9.0–v0.12.5
-  shape incl. the accepted `…,updated_at,error` adopted tail, and the
-  old-pipeline-repaired shape).
-- `./boot_normalization_test.exs` → `EvoGit.Store.BootNormalizationTest` —
-  DATA-normalization coverage of `20260815000002_data_normalization`
-  (timestamps, results, opts, backfills, quarantine drops), seeded RAW via
-  xqlite BEFORE boot so the rewrite runs during it.
-- `./boot_migration_source_test.exs` → `EvoGit.Store.BootMigrationSourceTest` —
-  regression coverage for the PRE-LOADED migrator source
-  (`EvoGit.Store.Boot.migration_source/0`): exactly the three shipped
-  `{version, module}` pairs ascending with the modules loaded, never a
-  directory/binary source, memoized in `:persistent_term`, and NO
-  `redefining module` stderr text across repeated fresh-DB boots.
-- `./composite_index_test.exs` → `EvoGit.Store.CompositeIndexTest` —
-  `20260815000003_composite_indexes`: `EXPLAIN QUERY PLAN` on the GENERATED
-  SQL of `safe_select_paginated_tasks/2` (captured from the repo's
-  `[:evo_git, :repo, :query]` telemetry) must use the composite index and show
-  NO `USE TEMP B-TREE FOR ORDER BY` — plus a drop-the-index test proving the
-  plan assertions are non-vacuous, the DDL shape (`PRAGMA index_info` column
-  order), and a correctness matrix of every filter combination
-  (rows + `started_at DESC` order + `total_count` across pagination).
-- `./repo_test.exs` → `EvoGit.Store.RepoTest` — infra contracts: applied
-  versions, exact 20-column `tasks` / 3-column `projects` shape, 8 named
-  indexes + PK autoindexes, `Boot.run_migrations/1` idempotency, durability
-  across `stop`/`start_dynamic`, two-instance coexistence, connection PRAGMAs.
-- `./repo_scope_test.exs` → `EvoGit.Store.RepoScopeTest` — `with_repo/2` happy
-  path, restore-on-raise/throw/exit, nesting, disjoint data across instances.
-- `./errors_test.exs` → `EvoGit.Store.ErrorsTest` — both classifier families
-  (`disk_full_error?/1` over xqlite NIF tuples, `disk_full_exception?/1` over
-  `%XqliteEcto3.Error{}` shapes) + non-error inputs.
+- `./operations/` → one file per Operation module (`tasks_test.exs`, `lightweight_test.exs`, `summaries_test.exs`, `projects_test.exs`, `safety_test.exs`) — real dynamic repos, rows seeded through the TYPED schemas, return shapes pinned to the public-API contract.
+- `./types_test.exs` → `EvoGit.Store.TypesTest` — Codec-oracle equivalence for every Ecto.Type (`dump/1` byte-identical to `Codec.encode_*/1`, `load/1` equal to `Codec.decode_*/1` incl. raising paths).
+- `./boot_migration_test.exs` → `EvoGit.Store.BootMigrationTest` — SCHEMA adoption coverage of `20260815000001_baseline_adoption` (fresh DB, current 20-col table, 15/17-col legacy prefixes, the real 19-column v0.9.0–v0.12.5 shape incl. the accepted `…,updated_at,error` adopted tail, and the old-pipeline-repaired shape).
+- `./boot_normalization_test.exs` → `EvoGit.Store.BootNormalizationTest` — DATA-normalization coverage of `20260815000002_data_normalization` (timestamps, results, opts, backfills, quarantine drops), seeded RAW via xqlite BEFORE boot so the rewrite runs during it.
+- `./boot_migration_source_test.exs` → `EvoGit.Store.BootMigrationSourceTest` — regression coverage for the PRE-LOADED migrator source (`EvoGit.Store.Boot.migration_source/0`): exactly the three shipped `{version, module}` pairs ascending with the modules loaded, never a directory/binary source, memoized in `:persistent_term`, and NO `redefining module` stderr text across repeated fresh-DB boots.
+- `./composite_index_test.exs` → `EvoGit.Store.CompositeIndexTest` — `20260815000003_composite_indexes`: `EXPLAIN QUERY PLAN` on the GENERATED SQL of `safe_select_paginated_tasks/2` (captured from the repo's `[:evo_git, :repo, :query]` telemetry) must use the composite index and show NO `USE TEMP B-TREE FOR ORDER BY` — plus a drop-the-index test proving the plan assertions are non-vacuous, the DDL shape (`PRAGMA index_info` column ORDER), the migration's post-condition, and a correctness matrix of every filter combination (rows + `started_at DESC` order + `total_count` across pagination).
+- `./repo_test.exs` → `EvoGit.Store.RepoTest` — infra contracts: applied versions, exact 20-column `tasks` / 3-column `projects` shape, 8 named `idx_tasks_*` indexes (the baseline 6 + the two composites) + PK autoindexes, `Boot.run_migrations/1` idempotency, durability across `stop`/`start_dynamic`, two-instance coexistence, connection PRAGMAs.
+- `./repo_scope_test.exs` → `EvoGit.Store.RepoScopeTest` — `with_repo/2` happy path, restore-on-raise/throw/exit, nesting, disjoint data across instances.
+- `./pool_size_test.exs` → `EvoGit.Store.PoolSizeTest` — the `:pool_size` knob of `EvoGit.Store.start_link/1` → `EvoGit.Store.Boot.start_dynamic/2`, and the read parallelism its `> 1` default buys.
+- `./store_write_offload_test.exs` → `EvoGit.Store.StoreWriteOffloadTest` — the facade's WRITE OFFLOAD to its own dedicated `EvoGit.Store.Writer` process, pinned against real SQLite (writer lifecycle, reply-after-commit, arrival order, facade availability during a slow write, and the untouched disk-full/crash contracts).
+- `./errors_test.exs` → `EvoGit.Store.ErrorsTest` — both classifier families (`disk_full_error?/1` over xqlite NIF tuples, `disk_full_exception?/1` over `%XqliteEcto3.Error{}` shapes) + non-error inputs.
 
 ## API Surface
 
@@ -67,64 +33,32 @@ The stateful Store/TaskRegistry suites live one level up (`../store_test.exs`,
 | `types_test.exs` | `EvoGit.Store.TypesTest` | Deterministic matrices + seeded `:rand` loops; closed atom sets mirror the Codec's `@known_atoms` union. |
 | `boot_migration_test.exs` | `EvoGit.Store.BootMigrationTest` | Legacy fixtures crafted RAW (never through the repo) exactly as a pre-Ecto release left them: historical DDL, no `schema_migrations`; adoption never rewrites healthy data (pre-boot raw SELECT == post-boot `TaskRowRaw` load). |
 | `boot_normalization_test.exs` | `EvoGit.Store.BootNormalizationTest` | Tables created with the CURRENT-shape DDL so baseline adoption is a pure no-op and every byte change is attributable to the data migration alone. |
-| `boot_migration_source_test.exs` | `EvoGit.Store.BootMigrationSourceTest` | `Boot.migration_source/0` shape + loading (`{integer, module}` pairs, versions cross-checked against the REAL `priv/repo/migrations/*.exs` filenames) and its `:persistent_term` memoization; the source is a module LIST, never the directory; two fresh-DB boots inside `ExUnit.CaptureIO.capture_io(:stderr, ...)` emit no `redefining module` text while still stamping both versions. |
-| `composite_index_test.exs` | `EvoGit.Store.CompositeIndexTest` | Plans are asserted against the ACTUAL executed SQL (telemetry capture, replayed through `EXPLAIN QUERY PLAN`); `PRAGMA index_info` pins the composite column ORDER; the correctness matrix seeds 12 rows over 3 paths / 5 statuses / 12 distinct `started_at` values. |
+| `boot_migration_source_test.exs` | `EvoGit.Store.BootMigrationSourceTest` | `Boot.migration_source/0` shape + loading (`{integer, module}` pairs, versions cross-checked against the REAL `priv/repo/migrations/*.exs` filenames) and its `:persistent_term` memoization; the source is a module LIST, never the directory; two fresh-DB boots inside `ExUnit.CaptureIO.capture_io(:stderr, ...)` emit no `redefining module` text while still stamping all three versions. |
+| `composite_index_test.exs` | `EvoGit.Store.CompositeIndexTest` | Plans are asserted against the ACTUAL executed SQL (telemetry capture, replayed through `EXPLAIN QUERY PLAN`); `PRAGMA index_info` pins the composite column ORDER (plain, non-unique, `origin: "c"`); the migration's post-condition is driven through the REAL migrator — re-arm version `20260815000003`, plant a same-named index over the WRONG columns, and `Boot.run_migrations/1` raises `Ecto.MigrationError` naming the composite (restoring the declared shape lets it through); the correctness matrix seeds 12 rows over 3 paths / 5 statuses / 12 distinct `started_at` values. |
 | `repo_test.exs` | `EvoGit.Store.RepoTest` | `Repo.query!/3` introspection inside `RepoScope.with_repo/2`; `PRAGMA table_info` rows `[cid, name, type, notnull, dflt, pk]` with INTEGER 0/1 flags; journal_mode `wal`, synchronous `1`, busy_timeout `30000`. |
 | `repo_scope_test.exs` | `EvoGit.Store.RepoScopeTest` | Default binding of a fresh test process is the `EvoGit.Repo` module atom. |
+| `pool_size_test.exs` | `EvoGit.Store.PoolSizeTest` | `Boot.default_pool_size/0` is `> 1` (4) and an explicit `:pool_size` is honored, `1` included; an invalid one raises `~r/invalid :pool_size option/` BEFORE the repo starts (no DB file exists afterwards); `EvoGit.Store.start_link/1` threads `:pool_size` to the store's own dynamic repo; the concurrency pair asserts BOTH directions through `DBConnection.get_connection_metrics/1` (Ecto's only pool-size API — the idle `ready_conn_count`) plus real checkouts (a connection held in a second process must not block another reader at the default, and at `pool_size: 1` the same query stays stuck); a schema-consistency test holds EVERY pooled connection at once and asserts each reports the migrated index inventory on its first `PRAGMA index_list` against `sqlite_master`, because `Boot.start_dynamic/2` migrates on a single-connection boot instance and reopens the pool. |
+| `store_write_offload_test.exs` | `EvoGit.Store.StoreWriteOffloadTest` | Exactly one writer process per store, LINKED to it and following it down on any exit reason (a `:normal` stop included); reply-after-commit proven from a DIFFERENT process reading through the store's dynamic repo; strict arrival-order serialization (a write issued while another is genuinely in flight lands after it, a delete queued behind an update wins); the facade keeps answering its INLINE handlers while a ~12 MB write is in flight, probed through the state-only `EvoGit.Store.__writer__/1` seam with the in-flight signal read from the store's pool metrics (`ready_conn_count == 0` — a DB-backed read cannot probe PROMPTNESS on a one-connection pool); disk-full class failures still return `{:error, :disk_full}` (logged, store and writer survive, write retryable) and any other failing statement still crashes the store with the operation's own reason. |
 | `errors_test.exs` | `EvoGit.Store.ErrorsTest` | `{shape} -> true/false` tables for both families: codes 8/10/13, `:read_only_database`, message-text fallback (case-insensitive), negatives (`{:ok, _}`, code 19 / constraint shapes, NIF tuples under `disk_full_exception?/1`, non-exception values). |
 
 ## Constraints
 
-- **All test modules here are `async: true` and MUST stay that way.** The only
-  BEAM-global state they share is PRODUCTION-owned inside `EvoGit.Store.Boot`:
-  the cluster-safe migration lock and the BEAM-wide `:persistent_term` memo of
-  the pre-loaded migration source — both exist precisely to make concurrent
-  boots safe, and the tests only READ them (assertions on the memo value, never
-  a write).
-  Verified by audit — no `Application.put_env`/`delete_env`, no
-  `System.put_env`/`delete_env`, no `:persistent_term` writes, no `:ets`, no
-  GenServer/app-singleton access, no sleeps. Do NOT flip to `async: false`.
-- **Concurrent-boot safety lives in PRODUCTION, not in tests**: `EvoGit.Store.Boot`
-  wraps the migration run in a cluster-safe
-  `:global.trans({{:evo_git_store_migrations, self()}, fun})` lock and hands
-  `Ecto.Migrator.run/4` the PRE-LOADED `[{version, module}]` source
-  (`Boot.migration_source/0`) instead of the migrations DIRECTORY, so the `.exs`
-  files are compiled at most ONCE per BEAM and no already-loaded module is ever
-  redefined. The lock id is a single GLOBAL constant (NOT per repo
-  path/instance) because the protected resource is the shared set of migration
-  SOURCE modules; the `self()` LockRequesterId is what makes it exclude — a
-  CONSTANT requester id is silently re-entrant (no exclusion). Tests call
-  `Boot.start_dynamic/1`/`Boot.run_migrations/1` directly (the REAL production
-  path) — no test-side lock wrapper is needed or allowed.
-- Assertions are intentionally **exact** (full return shapes, key sets, raw
-  bytes where the output is deterministic) — keep them; do not weaken to
-  `contains?`/smoke checks.
-- No mocking libraries: inputs are plain literals and
-  `%EvoGit.Agent.Usage{}`/`%TaskInfo{}`/datetime structs; legacy fixtures are
-  raw SQL through xqlite.
+- **Async policy**: every module here is `async: true` except `pool_size_test.exs` and `store_write_offload_test.exs`, which MUST stay `async: false` for the reasons in their own `@moduledoc`s — timing-sensitive concurrency/latency assertions that must not compete for CPU with sibling tests (and, in `pool_size_test`, tests that stop/start their own repos), plus a crash-semantics test that deliberately takes its store and its writer down.
+  Do NOT flip those two to `async: true`, and do NOT flip the `async: true` modules to `async: false` — the async cohort shares no test-mutated BEAM global.
+- **Concurrent-boot safety lives in PRODUCTION, not in tests**: `EvoGit.Store.Boot` wraps the migration run in a cluster-safe `:global.trans({{:evo_git_store_migrations, self()}, fun})` lock and hands `Ecto.Migrator.run/4` the PRE-LOADED `[{version, module}]` source (`Boot.migration_source/0`) instead of the migrations DIRECTORY, so the `.exs` files are compiled at most ONCE per BEAM and no already-loaded module is ever redefined.
+  The lock id is a single GLOBAL constant (NOT per repo path/instance) because the protected resource is the shared set of migration SOURCE modules; the `self()` LockRequesterId is what makes it exclude — a CONSTANT requester id is silently re-entrant (no exclusion).
+  Tests call `Boot.start_dynamic/2`/`Boot.run_migrations/1` directly (the REAL production path) — no test-side lock wrapper is needed or allowed.
+- **Pool size**: the store's production default is `EvoGit.Store.Boot.default_pool_size/0` (4), overridable per store with `:pool_size`; `mix migrate.store` deliberately pins `pool_size: 1`, and only such a deliberately-one-connection store supports the connection-scoped `PRAGMA query_only` disk-full arm — `../store_disk_full_test.exs` restarts its isolated store with an explicit `pool_size: 1` for exactly that reason.
+- Assertions are intentionally **exact** (full return shapes, key sets, raw bytes where the output is deterministic) — keep them; do not weaken to `contains?`/smoke checks.
+- No mocking libraries: inputs are plain literals and `%EvoGit.Agent.Usage{}`/`%TaskInfo{}`/datetime structs; legacy fixtures are raw SQL through xqlite.
 
 ## Notes for Agents
 
-- Tmp DB filenames must be unique ACROSS BEAM restarts too — embed the
-  wall-clock ms (`System.system_time(:millisecond)`) alongside
-  `System.unique_integer` + `inspect(self())`; a counter+pid alone collides
-  with a previous run's leftover file and silently reopens its stale rows.
-- `ExUnit.CaptureIO.capture_io(:stderr, fun)` is GROUP-LEADER scoped, so inside
-  an `async: true` module it captures only THIS test process's stderr (and the
-  processes it spawns) — compiler-warning assertions stay deterministic.
-  `boot_migration_source_test.exs` pins the absence of `redefining module` text
-  around fresh-DB boots that way; `Boot` compiles inside the calling process.
-- The dynamic repo is UNLINKED from the test process (`on_exit/1` runs after
-  the process exits) and stopped through an alive-guard (`Boot.stop/1` on a
-  dead pid RAISES "no process" — tests that stop their instance manually need
-  `if Process.alive?(pid)` in cleanup).
-- `types_test.exs`/`errors_test.exs` open NO database — pure function tests
-  (zero xqlite calls, no `setup` blocks); the boot/operations/repo suites open
-  real databases under `System.tmp_dir!/0`.
-- Normalization runs DURING boot, so pre-normalization data CANNOT be seeded
-  through a booted repo (a second boot finds no pending migrations and never
-  re-runs the rewrite) — `boot_normalization_test.exs` seeds RAW and only then
-  calls `Boot.start_dynamic/1`.
-- The parent `../CONTEXT.md` (and the one above it at `../..`) documents the
-  stateful Store/TaskRegistry suites and their async-safety /
-  shared-test-DB cautions — those do NOT apply here.
+- Tmp DB filenames must be unique ACROSS BEAM restarts too — embed the wall-clock ms (`System.system_time(:millisecond)`) alongside `System.unique_integer` + `inspect(self())`; a counter+pid alone collides with a previous run's leftover file and silently reopens its stale rows.
+- `ExUnit.CaptureIO.capture_io(:stderr, fun)` is GROUP-LEADER scoped, so inside an `async: true` module it captures only THIS test process's stderr (and the processes it spawns) — compiler-warning assertions stay deterministic.
+  `boot_migration_source_test.exs` pins the absence of `redefining module` text around fresh-DB boots that way; `Boot` compiles inside the calling process.
+- The dynamic repo is UNLINKED from the test process (`on_exit/1` runs after the process exits) and stopped through an alive-guard (`Boot.stop/1` on a dead pid RAISES "no process" — tests that stop their instance manually need `if Process.alive?(pid)` in cleanup).
+- `types_test.exs`/`errors_test.exs` open NO database — pure function tests (zero xqlite calls, no `setup` blocks); the boot/operations/repo/pool suites open real databases under `System.tmp_dir!/0`.
+- Normalization runs DURING boot, so pre-normalization data CANNOT be seeded through a booted repo (a second boot finds no pending migrations and never re-runs the rewrite) — `boot_normalization_test.exs` seeds RAW and only then calls `Boot.start_dynamic/2`.
+- Both `pool_size_test.exs` and `store_write_offload_test.exs` reach the store's raw connection through the `EvoGit.Store.__repo_pid__/1` accessor plus `XqliteEcto3.with_xqlite/2` (the adapter's supported checkout) — `store_write_offload_test.exs` reuses that seam for its `PRAGMA query_only` disk-full arm, exactly like `../store_disk_full_test.exs`.
+- The parent `../CONTEXT.md` (and the one above it at `../..`) documents the app-global store suites one level up, their shared-test-DB cautions, and the `EvoGit.TaskRegistryCase` isolated-store seam used by `store_write_offload_test.exs`.
