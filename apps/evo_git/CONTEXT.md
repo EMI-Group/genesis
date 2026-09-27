@@ -11,7 +11,7 @@ Genesis supports SSH remote development (VSCode Remote-SSH-style): a headless `:
 - `./test/` → ExUnit test suite using real git operations on temp directories
 - `./lib/evo_git/core/` → `ContextNode` (spatial) and `PhyloGraphNode` (temporal) data structures
 - `./lib/evo_git/adapters/` → `Git` CLI adapter, `GitHub` (gh) adapter, `CowWorktree` (CoW worktree creation), `GitEnv` (commit-identity env) — detail in `adapters/CONTEXT.md`
-- `./lib/evo_git/agent/` → Agent behaviour, Runner loop, tool library, context compression, subagent processing, usage tracking — detail in `agent/CONTEXT.md` (incl. Grace Period/Cancellation, Update-Timing Safety, Repo-Less Agents)
+- `./lib/evo_git/agent/` → Agent behaviour, Runner loop, tool library, context compression, subagent processing, usage tracking + self-computed LLM cost (`EvoGit.Agent.Cost` — recomputes `input_cost`/`output_cost`/`total_cost` from raw token counts + the llm_db catalog, ignoring ReqLLM's reported cost) — detail in `agent/CONTEXT.md` (incl. Grace Period/Cancellation, Update-Timing Safety, Repo-Less Agents)
 - `./lib/evo_git/agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner, Custom, SelfReflective) — detail in `agents/CONTEXT.md`
 - `./lib/evo_git/custom_agents/` → `EvoGit.CustomAgents` (agents.toml store) + `EvoGit.CustomAgents.ModelSelector` (per-agent model selection script) — detail in `custom_agents/CONTEXT.md`
 - `./lib/evo_git/custom_tools/` → `EvoGit.CustomTools` (user-defined custom tool loader/facade) + `EvoGit.CustomTools.Tool` behaviour — user tools loaded from `<config_dir>/tools/` (`.ex`/`.exs`/`.beam`) — detail in `custom_tools/CONTEXT.md`
