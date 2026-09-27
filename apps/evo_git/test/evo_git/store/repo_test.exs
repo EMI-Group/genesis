@@ -109,9 +109,15 @@ defmodule EvoGit.Store.RepoTest do
   # is used for cleanup because tests that stop their instance manually inside
   # the test body would otherwise hit "no process" on `Supervisor.stop/3`.
   defp start_repo!(tag) do
-    {:ok, pid} = Boot.start_dynamic(db_path(tag))
+    path = db_path(tag)
+    {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
-    on_exit(fn -> stop_quietly(pid) end)
+
+    on_exit(fn ->
+      stop_quietly(pid)
+      remove_db(path)
+    end)
+
     pid
   end
 
@@ -131,6 +137,15 @@ defmodule EvoGit.Store.RepoTest do
 
   defp stop_quietly(pid) do
     if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok
+  end
+
+  # Removes the tmp database AND its WAL sidecars (`File.rm/1` is a no-op for a
+  # path that is already gone) so a run leaves nothing behind in the tmpdir —
+  # a leftover `-wal` still holds the committed rows.
+  defp remove_db(path) do
+    File.rm(path)
+    File.rm(path <> "-wal")
+    File.rm(path <> "-shm")
   end
 
   defp query!(pid, sql), do: RepoScope.with_repo(pid, fn -> Repo.query!(sql) end)
@@ -323,7 +338,11 @@ defmodule EvoGit.Store.RepoTest do
 
       {:ok, pid} = Boot.start_dynamic(path)
       Process.unlink(pid)
-      on_exit(fn -> stop_quietly(pid) end)
+
+      on_exit(fn ->
+        stop_quietly(pid)
+        remove_db(path)
+      end)
 
       assert RepoScope.with_repo(pid, fn -> Repo.aggregate(ProjectRow, :count) end) == 0
       assert insert_project(pid, "/r6a/durable", "Durable") == {1, nil}

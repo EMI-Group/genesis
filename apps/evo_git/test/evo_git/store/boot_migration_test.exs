@@ -302,11 +302,15 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── setup ─────────────────────────────────────────────────────────────────
 
   setup do
-    root =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_r6b1_#{System.unique_integer([:positive])}_#{inspect(self())}"
-      )
+    # The root dir carries the OS pid + wall-clock ms on top of the per-BEAM
+    # unique integer + test pid: `System.unique_integer/1` restarts in every
+    # BEAM and test pids are deterministic across runs, so without those a
+    # PREVIOUS run's leftover dir would be reused — `build_legacy_db!/5` would
+    # then craft its fixture DDL into an already-populated database.
+    stamp =
+      "#{System.system_time(:millisecond)}_#{:os.getpid()}_#{System.unique_integer([:positive])}"
+
+    root = Path.join(System.tmp_dir!(), "evogit_r6b1_#{stamp}_#{inspect(self())}")
 
     on_exit(fn -> File.rm_rf(root) end)
     {:ok, %{root: root}}

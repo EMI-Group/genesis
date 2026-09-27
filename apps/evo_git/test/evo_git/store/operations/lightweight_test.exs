@@ -45,19 +45,40 @@ defmodule EvoGit.Store.Operations.LightweightTest do
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
-  # process — `async: true` safe), unlinked, stopped on exit.
+  # process — `async: true` safe), unlinked, stopped AND DELETED on exit.
   #
   # The production `EvoGit.Store.Boot` serializes concurrent migration runs
   # globally (`:global.trans`), so parallel boots are safe.
+  #
+  # The name embeds the OS pid + wall-clock ms on top of the per-BEAM unique
+  # integer + test pid: `System.unique_integer/1` restarts in every BEAM and
+  # test pids are deterministic across runs, so without those a PREVIOUS test
+  # run's leftover file would be silently adopted — a fresh-looking DB that
+  # already holds the seeded rows (`UNIQUE constraint failed: tasks.id`).
+  # The `on_exit` cleanup removes the file AND its WAL sidecars so the
+  # leftovers cannot accumulate in the first place (`File.rm/1` is a no-op
+  # for a path that is already gone — a missing file never raises).
   defp start_repo! do
-    unique = System.unique_integer([:positive, :monotonic])
+    unique =
+      "#{System.system_time(:millisecond)}_#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
 
-    path =
-      Path.join(System.tmp_dir!(), "evogit_r3a_#{unique}_#{inspect(self())}.sqlite")
+    path = Path.join(System.tmp_dir!(), "evogit_r3a_#{unique}.sqlite")
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
-    on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok end)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: :ok = Boot.stop(pid), else: :ok
+
+      # SQLite's implicit checkpoint on last-connection close usually removes
+      # the sidecars already; remove them explicitly so a leftover `-wal`
+      # (which still holds the committed rows) can never be picked up by a
+      # later run that reuses the path.
+      File.rm(path)
+      File.rm(path <> "-wal")
+      File.rm(path <> "-shm")
+    end)
+
     pid
   end
 

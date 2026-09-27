@@ -119,10 +119,17 @@ defmodule EvoGit.Store.BootNormalizationTest do
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   # Per-test unique tmp database (`async: true` safe).
+  #
+  # The name embeds the OS pid + wall-clock ms on top of the per-BEAM unique
+  # integer + test pid: `System.unique_integer/1` restarts in every BEAM and
+  # test pids are deterministic across runs, so without those a PREVIOUS run's
+  # leftover file would be reopened by `seed_db!/3` — its `CREATE TABLE` would
+  # then fail on the already-existing tables.
   defp db_path do
-    unique = System.unique_integer([:positive, :monotonic])
+    unique =
+      "#{System.system_time(:millisecond)}_#{:os.getpid()}_#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
 
-    Path.join(System.tmp_dir!(), "evogit_r6b2_#{unique}_#{inspect(self())}.sqlite")
+    Path.join(System.tmp_dir!(), "evogit_r6b2_#{unique}.sqlite")
   end
 
   # Seeds PRE-normalization data: raw xqlite connection, current-shape tables,

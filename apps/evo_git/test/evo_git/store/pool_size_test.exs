@@ -85,7 +85,16 @@ defmodule EvoGit.Store.PoolSizeTest do
 
       {:ok, store_pid} = Store.start_link(data_dir: path, name: store, pool_size: 1)
       Process.unlink(store_pid)
-      on_exit(fn -> if Process.alive?(store_pid), do: GenServer.stop(store_pid) end)
+
+      on_exit(fn ->
+        if Process.alive?(store_pid), do: GenServer.stop(store_pid)
+
+        # Remove the DB AND its WAL sidecars (`File.rm/1` is a no-op for an
+        # already-absent path) so nothing is left behind in the tmpdir.
+        File.rm(path)
+        File.rm(path <> "-wal")
+        File.rm(path <> "-shm")
+      end)
 
       assert Store.count_tasks(store) == 0
 
@@ -176,9 +185,21 @@ defmodule EvoGit.Store.PoolSizeTest do
   # `Boot.start_dynamic/2` links it to this test process and the `on_exit/1`
   # callback runs after that process is gone.
   defp start_repo!(tag, opts \\ []) do
-    {:ok, pid} = Boot.start_dynamic(db_path(tag), opts)
+    path = db_path(tag)
+    {:ok, pid} = Boot.start_dynamic(path, opts)
     Process.unlink(pid)
-    on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: :ok = Boot.stop(pid)
+
+      # Remove the DB AND its WAL sidecars (`File.rm/1` is a no-op for a path
+      # that is already gone) so repeated runs leave nothing behind — a
+      # leftover `-wal` still holds the committed rows.
+      File.rm(path)
+      File.rm(path <> "-wal")
+      File.rm(path <> "-shm")
+    end)
+
     pid
   end
 
