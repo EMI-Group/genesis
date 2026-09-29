@@ -4,6 +4,10 @@ defmodule EvoDashWeb.TestHelpers do
 
   Test support modules should not contain test logic — only setup, helpers,
   and shared configuration (see `test/support/CONTEXT.md`).
+
+  The `flush_loading/4` poll interval is a CALL-TIME app-env seam
+  (`:evo_dash, :flush_loading_poll_ms`, default 10 ms); the suite boots it at
+  1 ms in `test_helper.exs` so the poll loop stops dominating the wall clock.
   """
 
   @doc """
@@ -28,7 +32,8 @@ defmodule EvoDashWeb.TestHelpers do
         if System.monotonic_time(:millisecond) >= deadline do
           ExUnit.Assertions.flunk(flunk_message)
         else
-          Process.sleep(10)
+          # Call-time app-env seam (default 10 ms; the suite boots it at 1 ms).
+          Process.sleep(Application.get_env(:evo_dash, :flush_loading_poll_ms, 10))
           flush_loop.(flush_loop)
         end
       else
