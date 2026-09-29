@@ -140,10 +140,21 @@ defmodule EvoDashWeb.TasksLiveTest do
   # assertions away from the sidebar, which now also lists completed tasks.
   defp render_tasks_list(view), do: view |> element("#tasks-list") |> render()
 
-  # Polls `fun` every 10ms until it returns truthy (or the timeout elapses).
-  # Used to observe the PubSub-driven debounce phases (:tasks_reload_pending
-  # true → false) without fixed sleeps.
-  defp wait_until(fun, timeout \\ 2000) do
+  # Poll interval for wait_until/3. Every poll is a cheap synchronous
+  # round-trip (:sys.get_state / a render) and the fastest transition this file
+  # waits on is the debounce itself — 10ms in the suite
+  # (:node_aware_reload_debounce_ms in test_helper.exs), 300ms in production —
+  # so a 2ms cadence observes any of them within a couple of scheduling quanta
+  # while staying comfortably above 0 (never a hot spin; the previous cadence
+  # was a hardcoded 10ms). A call site can opt into a different cadence with
+  # wait_until/3's third argument.
+  @wait_poll_ms 2
+
+  # Polls `fun` every @wait_poll_ms until it returns truthy (or the TIMEOUT
+  # elapses — deliberately left generous, in seconds, so real breakage still
+  # fails loudly). Used to observe the PubSub-driven debounce phases
+  # (:tasks_reload_pending true → false) without fixed sleeps.
+  defp wait_until(fun, timeout \\ 2000, poll_ms \\ @wait_poll_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -153,7 +164,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("timed out waiting for async condition")
         else
-          Process.sleep(10)
+          Process.sleep(poll_ms)
           wait_loop.(wait_loop)
         end
       end
@@ -744,7 +755,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       # connected mount; only the connected pass may spawn a load. Exactly one
       # spawn here means the discarded static-render load is gone.
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 300
+      # The window only has to catch a SECOND spawn (any extra spawn would come
+      # from the same synchronous handle_params/3 sequence that already ran).
+      # The assertion right below is a deterministic backstop: :page_load_seq is
+      # bumped exclusively by start_async_page_load/3 — the very call site that
+      # fires the hook — so it fails loudly if any extra spawn happened. 50ms is
+      # therefore ample, where the old 300ms window was sized for the production
+      # 300ms debounce this test never arms.
+      refute_receive :page_load_spawned, 50
 
       # Corroborating evidence: the monotonic PAGE-LOAD spawn counter
       # advanced once (:page_load_seq is the page load's own counter — the
@@ -766,7 +784,18 @@ defmodule EvoDashWeb.TasksLiveTest do
       # pass to replace...
       assert html_response(conn, 200) =~ "Loading tasks..."
       # ...but no load was spawned (its result would only be discarded).
-      refute_receive :page_load_spawned, 300
+      #
+      # Proof the 10ms window below is sufficient: a plain get/2 drives the
+      # disconnected mount + handle_params/3 IN THIS TEST PROCESS (see the hook
+      # comment in install_page_load_hook/0), and handle_params/3 reaches the
+      # hook's only call site (spawn_page_load/1) ONLY on the connected pass
+      # (tasks_live.ex handle_params/3, `if connected?(socket)`). So a wrongly
+      # spawned load would `send(self(), :page_load_spawned)` into THIS mailbox
+      # during the synchronous get/2 above — the message would already be here
+      # when the refute runs, and the window exists only to catch a hypothetical
+      # straggler (there is no spawned Task that could produce one: the hook is
+      # invoked before any Task exists).
+      refute_receive :page_load_spawned, 10
     end
 
     test "project filter dropdown populates from the async load", %{conn: conn} do
@@ -798,7 +827,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       _html = render_hook(view, "search_tasks", %{"search_query" => "filtered"})
 
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 200
+      # Same reasoning as the "exactly one page load" test above: the refute's
+      # only failure mode is an EXTRA spawn, and the `:page_load_seq == 2`
+      # assertion immediately below is a deterministic backstop for exactly that
+      # (start_async_page_load/3 is the counter's only writer and the hook's
+      # only caller). 50ms of observation is ample.
+      refute_receive :page_load_spawned, 50
       assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 2
 
       html = flush_tasks_load(view)
@@ -920,9 +954,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      # Drain the connected mount's single spawn.
+      # Drain the connected mount's single spawn and pin it deterministically:
+      # :page_load_seq is bumped only by start_async_page_load/3 (the hook's only
+      # caller), so the `== 1` assertion below fails loudly on any extra mount
+      # spawn and makes the short refute window a formality. `seq_before` is
+      # read straight after, and the debounced reload must advance it.
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 100
+      refute_receive :page_load_spawned, 50
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
 
       insert_fixture!(opts: [prompt: "async added task"])
 
@@ -1019,6 +1058,11 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
+      # The connected mount spawned its single page load. :page_load_seq is
+      # bumped ONLY by start_async_page_load/3, so it is also the deterministic
+      # backstop for the no-reload assertion at the end of this test.
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+
       # A task seeded after the initial load would only render if a reload
       # wrongly fired.
       insert_fixture!(opts: [prompt: "foreign marker task"])
@@ -1031,21 +1075,37 @@ defmodule EvoDashWeb.TasksLiveTest do
         {:task_updated, "t1", :running, :remote@elsewhere}
       )
 
-      # Sample across the debounce window (10ms cadence): the
-      # reload-pending flag must never become true.
-      deadline = System.monotonic_time(:millisecond) + 400
+      # Sample across the debounce window: the reload-pending flag must never
+      # become true.
+      #
+      # The window is SHORT because the failure it guards against is fast and
+      # fully determined by the 10ms test-seam debounce
+      # (:node_aware_reload_debounce_ms): a node-matching event arms the
+      # debounce SYNCHRONOUSLY in the handler (NodeAware.debounce_task_reload/1
+      # sets :tasks_reload_pending before Process.send_after/3 returns), so the
+      # very first :sys.get_state round-trip below — which drains the view's
+      # mailbox, the broadcast having been delivered from THIS process — already
+      # observes a wrongly armed timer; the remaining samples then cover the
+      # timer firing (10ms) and a wrongly spawned reload bumping
+      # :page_load_seq. 50ms = 5 debounce periods, where the previous 400ms
+      # window sampled the same 10ms debounce 40x over.
+      deadline = System.monotonic_time(:millisecond) + 50
 
       check_no_reload = fn check_no_reload ->
         state = :sys.get_state(view.pid)
         assert state.socket.assigns[:tasks_reload_pending] == false
 
         if System.monotonic_time(:millisecond) < deadline do
-          Process.sleep(10)
+          Process.sleep(@wait_poll_ms)
           check_no_reload.(check_no_reload)
         end
       end
 
       check_no_reload.(check_no_reload)
+
+      # Deterministic backstop on the SAME side effect: a wrongly triggered
+      # reload would have bumped the monotonic page-load spawn counter.
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
 
       html = render(view)
       assert html =~ "event visible task"
