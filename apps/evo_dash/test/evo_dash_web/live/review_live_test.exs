@@ -4518,6 +4518,57 @@ defmodule EvoDashWeb.ReviewLiveTest do
     )
   end
 
+  # Deterministically drives a PENDING trailing-edge task reload to completion,
+  # making the multi-repo tests independent of the `:node_aware_reload_debounce_ms`
+  # window. A `{:task_updated, ...}` broadcast (e.g. the review page's own async
+  # load persisting SHAs via set_review_metadata/4, or a per-repo merge/reject
+  # settling) arms NodeAware's debounce (`:tasks_reload_pending`); its timer fires
+  # `:node_aware_reload_tasks` → NodeAware.reload_tasks/1 (sidebar refresh, which
+  # clears the flag) and, when the broadcast named the REVIEWED task,
+  # ReviewLive.start_async_load/2 (re-projects @review_repos and marks the page
+  # loading until its result lands). At the suite's 10 ms window that reload would
+  # otherwise land MID-TEST and revert transient action state (`branch_exists` is
+  # re-derived from real git state, which the stub runners never mutate) or strand
+  # the page in its loading state — at the old 300 ms window it never landed, so
+  # the tests passed by luck.
+  #
+  # A harmless no-op when nothing is pending. The TaskRegistry sync is the key to
+  # determinism: the arming broadcast is emitted from a TaskRegistry GenServer
+  # CAST (EvoGit.TaskRegistry.handle_cast({:set_review_metadata, ...}) /
+  # {:set_review_status, ...} both call Phoenix.PubSub.broadcast synchronously),
+  # so a broadcast can still be IN FLIGHT (cast queued, not yet handled) when the
+  # reload it will arm is "not pending" — a sync CALL queued after the cast is
+  # processed only once the cast ran, i.e. once the broadcast has been delivered
+  # to this LiveView's mailbox. assigns/1 then drains that mailbox (a
+  # :sys.get_state round-trip the LiveView processes in message order, so the
+  # queued broadcast is handled — arming the debounce — BEFORE the read observes
+  # the flag), and flush_loading/4 returns immediately when the loading marker is
+  # absent. The marker-based drain deliberately never waits on the reload's OTHER
+  # async children — a test may have a deliberately-blocking merge-check task in
+  # flight that must not be waited on. Waits carry a generous timeout so genuine
+  # breakage still fails loudly.
+  defp settle_debounced_task_reload(view, timeout \\ 5000) do
+    # Synchronize with the arming cast(s) so their broadcasts are already
+    # delivered before we read the debounce flag below.
+    _ = TaskRegistry.list_tasks()
+
+    # Reading assigns/1 drains any queued broadcast that arms the debounce.
+    if Map.get(assigns(view), :tasks_reload_pending, false) do
+      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end, timeout)
+    end
+
+    # Whatever the timing, the reload leaves the page loading until its async
+    # review-data result applies. Wait that marker out (no-op when not loading).
+    EvoDashWeb.TestHelpers.flush_loading(
+      view,
+      "Loading review data...",
+      "timed out settling the debounced review reload",
+      timeout
+    )
+
+    :ok
+  end
+
   # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
   # process has exited, then flushes their result messages into the view.
   # Task.Supervisor records the spawning process in the child's `$callers`
