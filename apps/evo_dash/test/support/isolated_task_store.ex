@@ -41,6 +41,20 @@ defmodule EvoDash.Test.IsolatedTaskStore do
 
   Tests that need transactional isolation on top of this can still
   `EvoGit.Store.put_task/2` against the isolated pair as usual.
+
+  ## Cost
+
+  Measured over the whole `evo_dash` suite (~204 `isolate!/1` calls, two
+  windows' worth of setup/teardown per `async: false` test): the isolated Store
+  boot dominates at ~16 ms/call (fresh sqlite plus the Ecto migrations that
+  `EvoGit.Store` always runs at boot); restarting the production pair is
+  ~4 ms/call (its schema is already migrated, so those migrations are a no-op);
+  everything else is sub-millisecond — terminating the production pair, the
+  temp-dir `mkdir_p!`/`rm_rf`, and `stop_isolated/1`, which takes its cheap
+  `:ok` branch because the isolated supervisor (linked to the test process) is
+  already dead by the time `on_exit` runs. There is no cheaper provably-safe
+  boot path: `EvoGit.Store.start_link/1` accepts only `data_dir`/`name`/
+  `pool_size` and always migrates.
   """
 
   @doc """
@@ -54,7 +68,12 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   """
   @spec isolate!(String.t()) :: :ok
   def isolate!(prefix) do
-    capture_teardown_noise(&terminate_production!/0)
+    # No log capture here: `isolate!/1` is called from a `setup` callback, and
+    # ExUnit's `capture_log: true` wraps setup AND the test body in
+    # `ExUnit.CaptureLog.with_log/2` (ExUnit.Runner `maybe_capture_log/3`), so
+    # anything `terminate_production!/0` logs is already captured by the test's
+    # own window. Only the `on_exit` teardown below runs outside it.
+    terminate_production!()
 
     root =
       Path.join(System.tmp_dir!(), "evogit_test_#{prefix}_#{System.unique_integer([:positive])}")
@@ -92,9 +111,14 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   # Task supervisor logs a `Task #PID<...> started from EvoGit.Store
   # terminating` crash report. That report is EXPECTED noise from tearing down
   # in-flight offloaded Store work — it is captured (and the captured string
-  # deliberately discarded) so it never reaches the console from a teardown gap
-  # that ExUnit does not capture. Nothing else about the teardown changes: the
-  # same actions run, in the same order, with the same results.
+  # deliberately discarded) so it never reaches the console from the `on_exit`
+  # teardown gap that ExUnit does not capture. Nothing else about the teardown
+  # changes: the same actions run, in the same order, with the same results.
+  #
+  # Used ONLY for the teardown. The setup-time `terminate_production!/0` needs
+  # no capture: `setup` runs inside the test's own `capture_log` window (see
+  # `isolate!/1`), so wrapping it here would only add the per-window capture
+  # cost (measured ~4-5 ms) for no benefit.
   defp capture_teardown_noise(fun) do
     _captured = ExUnit.CaptureLog.capture_log(fun)
     :ok

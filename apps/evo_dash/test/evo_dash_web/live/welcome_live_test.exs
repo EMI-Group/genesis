@@ -108,9 +108,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # credential so the child fails fast at ReqLLM request-BUILD time — no network
   # at all — and (b) wrap the trigger PLUS a bounded wait for the child's result
   # in ONE `ExUnit.CaptureLog.with_log/2` window, so whatever the child logs is
-  # captured rather than printed.
+  # captured rather than printed. The budget stays generous (seconds) so a real
+  # hang still fails loudly; only the POLL INTERVAL is small — a request-build
+  # failure resolves in well under a millisecond, so a 20 ms poll wasted a whole
+  # interval per call (measured ~20.8 ms to observe an already-finished failure).
   @llm_test_await_ms 5_000
-  @llm_test_poll_ms 20
+  @llm_test_poll_ms 2
 
   # Snapshots + deletes any ambient Anthropic credential so a spawned `test_llm`
   # child fails fast at request-build time. `ReqLLM.Keys` resolves a provider key
@@ -143,10 +146,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
   # Bounded wait for a full-page test: the child reports to the LiveView process,
   # which applies `{:llm_test_result, _}` by moving `llm_test_status` off
   # `:testing`. It is a POLL — every read is the synchronous `:sys.get_state/1`
-  # round-trip behind assigns/1 — and it NEVER fails the test: an unreachable
-  # provider must not turn "keep the capture window open until the child is done"
-  # into a failure, so it gives up after @llm_test_await_ms and lets the
-  # assertions run.
+  # round-trip behind assigns/1 — at `@llm_test_poll_ms`, and it NEVER fails the
+  # test: an unreachable provider must not turn "keep the capture window open
+  # until the child is done" into a failure, so it gives up after the budget and
+  # lets the assertions run.
   defp await_llm_test_result(view, remaining_ms \\ @llm_test_await_ms) do
     if remaining_ms > 0 and assigns(view).llm_test_status == :testing do
       Process.sleep(@llm_test_poll_ms)
@@ -158,18 +161,13 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
   # The same bounded, never-failing wait for the unit-style test, which calls
   # `WelcomeLive.handle_event/3` directly: the child's `parent` is then THIS
-  # process, so its result arrives as an ordinary mailbox message.
-  defp await_spawned_llm_test(remaining_ms \\ @llm_test_await_ms) do
+  # process, so its result arrives as an ordinary mailbox message and a plain
+  # `receive ... after` returns the instant it lands — one wait for the budget.
+  defp await_spawned_llm_test(timeout_ms \\ @llm_test_await_ms) do
     receive do
-      {:llm_test_result, _result} ->
-        :ok
+      {:llm_test_result, _result} -> :ok
     after
-      @llm_test_poll_ms ->
-        if remaining_ms > @llm_test_poll_ms do
-          await_spawned_llm_test(remaining_ms - @llm_test_poll_ms)
-        else
-          :ok
-        end
+      timeout_ms -> :ok
     end
   end
 
