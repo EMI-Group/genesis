@@ -773,16 +773,24 @@ defmodule EvoDashWeb.LiveHooks.NodeAware do
   Trailing-edge debounce for task reloads. When a reload is already scheduled
   (`:tasks_reload_pending` is truthy), intermediate broadcasts are dropped and
   the socket is returned unchanged. Otherwise schedules
-  `:node_aware_reload_tasks` after 300ms and sets `:tasks_reload_pending`.
-  LiveViews handle the `:node_aware_reload_tasks` message by calling
-  `reload_tasks/1`. Returns the socket.
+  `:node_aware_reload_tasks` after the debounce window and sets
+  `:tasks_reload_pending`. LiveViews handle the `:node_aware_reload_tasks`
+  message by calling `reload_tasks/1`. Returns the socket.
+
+  The debounce window is read AT CALL TIME from the
+  `:node_aware_reload_debounce_ms` app-env seam (test seam; default 300 ms is
+  the production behaviour), so tests can shrink it at boot via
+  `Application.put_env/3`.
   """
   def debounce_task_reload(socket) do
     if Map.get(socket.assigns, :tasks_reload_pending, false) do
       # A reload is already scheduled — drop this intermediate broadcast.
       socket
     else
-      Process.send_after(self(), :node_aware_reload_tasks, 300)
+      # Delay resolved AT CALL TIME from the `:node_aware_reload_debounce_ms`
+      # app-env seam (test seam; default 300 ms is the production behaviour).
+      debounce_ms = Application.get_env(:evo_dash, :node_aware_reload_debounce_ms, 300)
+      Process.send_after(self(), :node_aware_reload_tasks, debounce_ms)
       Phoenix.Component.assign(socket, :tasks_reload_pending, true)
     end
   end

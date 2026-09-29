@@ -6,6 +6,8 @@ defmodule EvoDash.DesktopLifetimeTest do
   # async: false). Tests inside this module always run serially.
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   @stop_message :lifetime_stopped
   # Small retry budget for the connect-failure tests.
   @small_opts [connect_retries: 2, connect_retry_delay: 10]
@@ -57,9 +59,20 @@ defmodule EvoDash.DesktopLifetimeTest do
       System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(unused_port()))
       Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
 
-      pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
+      # The watcher logs from its OWN process; capture the line here so it can
+      # never leak to the console in the between-test gap. The stop window is
+      # generous (bounded) so a busy CPU can still schedule the watcher's
+      # connect-retry loop.
+      {pid, log} =
+        with_log(fn ->
+          pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
+          assert_receive @stop_message, 5000
+          pid
+        end)
 
-      assert_receive @stop_message, 1000
+      assert log =~
+               "[desktop] Tauri shell is gone (lifetime connection could not be established)"
+
       # The process idles in the stopped state — no restart loop, no repeat stop.
       assert Process.alive?(pid)
       refute_receive @stop_message, 100
@@ -80,19 +93,29 @@ defmodule EvoDash.DesktopLifetimeTest do
 
       pid = start_supervised!(EvoDash.DesktopLifetime)
 
-      # The watcher must actually connect to the shell's listener.
-      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
-      assert is_port(shell_sock)
+      # Bounded, event-driven waits (never a fixed sleep): the accept window and
+      # the stop window are generous so a busy CPU can still schedule the
+      # watcher. The close + stop actions are wrapped in a log capture because
+      # the watcher logs from its OWN process — capturing here keeps that line
+      # off the console in the between-test gap.
+      log =
+        capture_log(fn ->
+          # The watcher must actually connect to the shell's listener.
+          {:ok, shell_sock} = :gen_tcp.accept(listener, 5000)
+          assert is_port(shell_sock)
 
-      # No stop while the pipe is open.
-      refute_receive @stop_message, 200
-      assert Process.alive?(pid)
+          # No stop while the pipe is open.
+          refute_receive @stop_message, 200
+          assert Process.alive?(pid)
 
-      # Shell dies → its end of the pipe closes → the watcher stops the VM.
-      :ok = :gen_tcp.close(shell_sock)
-      :ok = :gen_tcp.close(listener)
+          # Shell dies → its end of the pipe closes → the watcher stops the VM.
+          :ok = :gen_tcp.close(shell_sock)
+          :ok = :gen_tcp.close(listener)
 
-      assert_receive @stop_message, 1000
+          assert_receive @stop_message, 5000
+        end)
+
+      assert log =~ "[desktop] Tauri shell is gone (lifetime connection closed)"
       assert Process.alive?(pid)
     end
 
@@ -105,7 +128,7 @@ defmodule EvoDash.DesktopLifetimeTest do
 
       pid = start_supervised!(EvoDash.DesktopLifetime)
 
-      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
+      {:ok, shell_sock} = :gen_tcp.accept(listener, 5000)
       assert is_port(shell_sock)
 
       on_exit(fn ->
@@ -163,7 +186,7 @@ defmodule EvoDash.DesktopLifetimeTest do
            ]}
         )
 
-      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
+      {:ok, shell_sock} = :gen_tcp.accept(listener, 5000)
       assert is_port(shell_sock)
 
       on_exit(fn ->
@@ -182,9 +205,14 @@ defmodule EvoDash.DesktopLifetimeTest do
       assert_receive :recv_called, 2000
       refute_receive @stop_message, 20
 
-      send(pid, :respond_closed)
-      assert_receive @stop_message, 2000
+      # The watcher logs from its OWN process; capture the genuine-close line.
+      log =
+        capture_log(fn ->
+          send(pid, :respond_closed)
+          assert_receive @stop_message, 2000
+        end)
 
+      assert log =~ "[desktop] Tauri shell is gone (lifetime connection closed)"
       assert Process.alive?(pid)
       refute_receive @stop_message, 100
     end
@@ -196,9 +224,17 @@ defmodule EvoDash.DesktopLifetimeTest do
       System.put_env("EVOGIT_LIFETIME_PORT", Integer.to_string(port))
       Application.put_env(:evo_dash, :parent_stop_fun, fn -> send(test_pid, @stop_message) end)
 
+      # Blocking handshake (same pattern as the transient-error test above): the
+      # seam sends :recv_called and then WAITS for this process to respond, so
+      # the watcher is parked inside recv_fun between assertions and literally
+      # cannot call the stop fun early — no scheduling race against
+      # recv_retry_delay.
       recv_fun = fn _sock ->
         send(test_pid, :recv_called)
-        {:error, :eacces}
+
+        receive do
+          :respond_ambiguous -> {:error, :eacces}
+        end
       end
 
       pid =
@@ -213,7 +249,7 @@ defmodule EvoDash.DesktopLifetimeTest do
            ]}
         )
 
-      {:ok, shell_sock} = :gen_tcp.accept(listener, 2000)
+      {:ok, shell_sock} = :gen_tcp.accept(listener, 5000)
       assert is_port(shell_sock)
 
       on_exit(fn ->
@@ -221,16 +257,32 @@ defmodule EvoDash.DesktopLifetimeTest do
         :gen_tcp.close(listener)
       end)
 
-      assert_receive :recv_called, 2000
-      refute_receive @stop_message, 10
+      # Every recv blocks in the seam until this process responds, so these
+      # assertions are event-driven: the watcher is parked inside recv_fun and
+      # cannot fire the stop fun while a recv is outstanding.
+      log =
+        capture_log(fn ->
+          assert_receive :recv_called, 2000
+          refute_receive @stop_message, 10
 
-      assert_receive :recv_called, 2000
-      refute_receive @stop_message, 10
+          send(pid, :respond_ambiguous)
+          assert_receive :recv_called, 2000
+          refute_receive @stop_message, 10
 
-      assert_receive :recv_called, 2000
-      refute_receive @stop_message, 10
+          send(pid, :respond_ambiguous)
+          assert_receive :recv_called, 2000
+          refute_receive @stop_message, 10
 
-      assert_receive @stop_message, 2000
+          # The 4th recv call exhausts the 3-retry budget: answer it too and the
+          # watcher finally gives up (the budget semantics — 4 recvs, stop only
+          # once the budget is exhausted — are unchanged).
+          send(pid, :respond_ambiguous)
+          assert_receive :recv_called, 2000
+          send(pid, :respond_ambiguous)
+          assert_receive @stop_message, 2000
+        end)
+
+      assert log =~ "[desktop] lifetime recv kept failing"
       assert Process.alive?(pid)
       refute_receive @stop_message, 100
     end
