@@ -58,6 +58,15 @@ Every wait in these suites is deterministic — a synchronous `assigns/1` read, 
 - **`./welcome_live_test.exs` — LLM-test poll cadence.**
   The `test_llm` await helpers (`await_llm_test_result/1`, `await_spawned_llm_test/0`) poll every `@llm_test_poll_ms` (2 ms) under the `@llm_test_await_ms` (5 s) budget.
 
+## Notes for Agents — review git fixtures (module template + per-test copy)
+
+`review_live_test.exs` needs REAL git repos (a base commit, a primary branch renamed from the machine's `init.defaultBranch`, an optional secondary branch, and an agent `task-branch` with a change commit). Building one from scratch costs ~13 `git` subprocess spawns (~70-140 ms) — the suite's dominant per-test cost, and the multi-repo fixture builds TWO.
+
+- **Module template**: a module-level `setup_all` (in the helper section, just above `create_review_task_with_repo!/3`) pre-builds ONE repo for each required `{primary, secondary}` shape — `{"main", "dev"}`, `{"dev", nil}`, `{"main", nil}` — via the unchanged `build_repo_with_task_branch!/3`, stores `%{{primary, secondary} => %{dir:, change_sha:}}` in `:persistent_term` under `{__MODULE__, :review_templates}`, and `rm_rf_retry/1`s the templates + erases the key in its `on_exit`.
+- **Per-test copy**: `create_review_task_with_repo!/3` and `create_multi_repo_review_task!/2` call `copy_review_template!/3`, which `File.cp_r!/2`s the template into a unique `System.tmp_dir!()` dir and returns `{copy_dir, template_change_sha}`. Both keep their EXACT previous return tuples and task seeding, so no call site or assertion changed. The multi-repo fixture copies the SAME `{"main", "dev"}` template for both roles → `primary_sha == foreign_sha` in every multi-repo test (no test compares the two — both are only threaded from the fixture's return values).
+- **Isolation contract** (must hold for any future change): the copy is a plain recursive BYTE copy — never `cp -l`/hard links and never `git clone --shared` into the template's object store — so a test may freely mutate its copy (the single-repo "merges the task branch into the selected target branch" test does a REAL `git merge` + branch delete). The template is quiescent when copied (`build_repo_with_task_branch!/3` ends on a `git checkout`; no `index.lock`), so a copy is immediately usable by git. Cleanup is unchanged: the helper registers `on_exit` for its copy (multi-repo's describe setups still clean the primary copy).
+- **Unknown shape fails loudly**: `review_template!/2` raises if a new call site asks for a `{primary, secondary}` pair `setup_all` did not pre-build — it never silently falls back to a from-scratch build. Add the pair to the `setup_all` list when introducing one.
+
 ## Notes for Agents
 
 - **NO real LLM/exec in dashboard live tests** (suite policy): a test must never be able to reach `AgentScheduler.run_agent`/the network.

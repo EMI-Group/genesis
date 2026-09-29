@@ -4442,6 +4442,74 @@ defmodule EvoDashWeb.ReviewLiveTest do
     assert status == 0, "git #{Enum.join(args, " ")} failed: #{output}"
   end
 
+  # Builds the required git-repo SHAPES once per module.
+  #
+  # Every review fixture needs a real repo with a base commit, a primary branch
+  # (renamed from the machine's `init.defaultBranch`), an optional secondary
+  # branch, and an agent `task-branch` carrying a change commit — ~13 `git`
+  # subprocess spawns (~70-140 ms) per repo, the dominant per-test cost of this
+  # suite (the multi-repo fixture builds TWO of them).
+  #
+  # Build each shape ONCE here and let `copy_review_template!/3` hand every test
+  # an independent `File.cp_r/2` COPY (a plain recursive byte copy — deliberately
+  # NOT a hard link and NOT a `git clone --shared` into the template's object
+  # store). A copy is an ordinary work-tree repo the test may freely mutate
+  # (real merges, branch deletes, …) without the template or any sibling test
+  # ever seeing it. `build_repo_with_task_branch!` — which ends on a `git
+  # checkout` — leaves the template quiescent (no index.lock, no in-flight
+  # writer), so a copy is immediately usable by git.
+  setup_all do
+    templates =
+      for {primary, secondary} <- [{"main", "dev"}, {"dev", nil}, {"main", nil}], into: %{} do
+        dir =
+          Path.join(
+            System.tmp_dir!(),
+            "evogit_review_template_" <> to_string(System.unique_integer([:positive]))
+          )
+
+        {change_sha, _primary} = build_repo_with_task_branch!(dir, primary, secondary)
+        {{primary, secondary}, %{dir: dir, change_sha: change_sha}}
+      end
+
+    :persistent_term.put({__MODULE__, :review_templates}, templates)
+
+    on_exit(fn ->
+      :persistent_term.erase({__MODULE__, :review_templates})
+      Enum.each(templates, fn {_pair, %{dir: dir}} -> rm_rf_retry(dir) end)
+    end)
+
+    :ok
+  end
+
+  # Hands out a FRESH, independent copy of the pre-built template for the given
+  # (primary, secondary) branch shape. Returns {copy_dir, change_sha}; the SHA is
+  # the template's (the copy is byte-identical). The copy is never hard-linked,
+  # so it is always safe to mutate.
+  defp copy_review_template!(prefix, primary, secondary) do
+    %{dir: template_dir, change_sha: change_sha} = review_template!(primary, secondary)
+
+    copy_dir =
+      Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
+
+    File.cp_r!(template_dir, copy_dir)
+    {copy_dir, change_sha}
+  end
+
+  # Fails loudly (never silently falls back to a from-scratch build) when a new
+  # call site asks for a branch shape that `setup_all` did not pre-build.
+  defp review_template!(primary, secondary) do
+    templates = :persistent_term.get({__MODULE__, :review_templates})
+
+    case Map.fetch(templates, {primary, secondary}) do
+      {:ok, template} ->
+        template
+
+      :error ->
+        raise "no pre-built review repo template for #{inspect({primary, secondary})}; " <>
+                "available shapes: #{inspect(Map.keys(templates))}"
+    end
+  end
+
   # Creates a temp git repo with the given primary branch (plus an optional
   # secondary branch pointing at the base commit), an agent `task-branch` with
   # a change commit on top of the primary branch, and a completed review task
@@ -4449,13 +4517,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # affordances. Returns {repo_path, task_id, change_sha} and registers
   # on_exit cleanup.
   defp create_review_task_with_repo!(primary, secondary, archive_metadata \\ nil) do
-    tmp_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_review_merge_test_" <> to_string(System.unique_integer([:positive]))
-      )
+    {tmp_dir, change_sha} =
+      copy_review_template!("evogit_review_merge_test_", primary, secondary)
 
-    {change_sha, _primary} = build_repo_with_task_branch!(tmp_dir, primary, secondary)
     task_id = seed_review_task!(tmp_dir, change_sha, archive_metadata)
 
     on_exit(fn ->
@@ -4501,27 +4565,20 @@ defmodule EvoDashWeb.ReviewLiveTest do
     {String.trim(change_sha), primary}
   end
 
-  # Multi-repo variant of create_review_task_with_repo!: builds a PRIMARY temp
-  # repo AND a writable FOREIGN temp repo ("original"), each with its own
-  # task-branch + change commit, and seeds a completed review task whose opts
-  # carry the foreign_repos and whose result carries the per-repo `repos` map.
+  # Multi-repo variant of create_review_task_with_repo!: hands out a PRIMARY
+  # temp repo (a fresh copy of the template) AND a writable FOREIGN temp repo
+  # ("original", its own independent copy), each with its own task-branch +
+  # change commit, and seeds a completed review task whose opts carry the
+  # foreign_repos and whose result carries the per-repo `repos` map. A test may
+  # mutate either copy (real merges, branch deletes, …) without affecting the
+  # shared template or any other test.
   # Returns {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha}.
   defp create_multi_repo_review_task!(primary, secondary) do
-    primary_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_review_multi_primary_" <> to_string(System.unique_integer([:positive]))
-      )
+    {primary_dir, primary_sha} =
+      copy_review_template!("evogit_review_multi_primary_", primary, secondary)
 
-    {primary_sha, _} = build_repo_with_task_branch!(primary_dir, primary, secondary)
-
-    foreign_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_review_multi_foreign_" <> to_string(System.unique_integer([:positive]))
-      )
-
-    {foreign_sha, _} = build_repo_with_task_branch!(foreign_dir, primary, secondary)
+    {foreign_dir, foreign_sha} =
+      copy_review_template!("evogit_review_multi_foreign_", primary, secondary)
 
     task_id =
       seed_multi_repo_task!(
