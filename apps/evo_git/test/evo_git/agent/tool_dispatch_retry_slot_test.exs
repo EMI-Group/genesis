@@ -11,6 +11,10 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   `:llm_retry_backoff_base_ms` to `@retry_backoff_base_ms` and every wait below is
   a real scheduler condition (`AgentScheduler.get_llm_slot_status/0` / `paused?/0`)
   rather than a fixed sleep — see the synchronization notes above the constants.
+  Every wait DEADLINE is the generous `@load_robust_deadline_ms` (see its
+  comment): the awaited transitions are persistent scheduler states, so only
+  host-load scheduling latency can delay them — never a short-lived window —
+  and a deadline expiry still flunks.
   The remaining one-off cost is ReqLLM's `LLMDB.load/1` catalog decode, paid ONCE
   in `setup_all/1` (see `warm_pool/0`).
 
@@ -61,6 +65,21 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # (2.46ms) and within 25% of the old, deliberately conservative 30ms estimate.
   @retry_backoff_base_ms 25
 
+  # The generous WAIT budget used by EVERY wait below (slot-request and
+  # Task.await timeouts plus the slot-status poll deadline). Those waits are
+  # anchored on PERSISTENT scheduler state (`used`/`waiting` via
+  # `AgentScheduler.get_llm_slot_status/0`: a queued waiter stays queued until it
+  # is granted, a released slot stays released), so the awaited transition always
+  # arrives — only its ARRIVAL LATENCY is inflated by host load, which stretches
+  # the per-attempt work (connection-refused attempt, scheduler round trips, the
+  # 402 HTTP path) plus BEAM scheduling latency far past the idle
+  # low-millisecond figures (the module's whole sync phase is MEASURED 10-20x
+  # slower on an oversubscribed host, with individual waits observed in the
+  # multi-second range at ~54 runnable processes). The budget therefore only has
+  # to outlive scheduling latency; it never races a short-lived window, and a
+  # deadline expiry STILL flunks with the last observed status — no wait is
+  # weakened, only widened.
+  @load_robust_deadline_ms 30_000
   # The model pool every retry test drives: a SINGLE-slot pool, pinned by the
   # setup (`model_profiles: [%{id: "default", ..., concurrency: 1}]`).
   @model_id "default"
@@ -221,7 +240,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # tests.
   defp acquire_llm_slot(agent_id) do
     on_exit(fn -> AgentScheduler.release_llm_slot(agent_id) end)
-    assert :ok = AgentScheduler.request_llm_slot(agent_id, 5_000)
+    assert :ok = AgentScheduler.request_llm_slot(agent_id, @load_robust_deadline_ms)
   end
 
   # Waits until `expected` agents are QUEUED for `@model_id`'s slot — the
@@ -243,8 +262,9 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # queued until it is granted; a released slot stays released) — or a state the
   # caller has arranged to be unreachable until it holds — so neither poll can
   # race a short-lived window. The 1ms poll interval only bounds the detection
-  # latency (each status read is a µs-scale scheduler call).
-  defp await_llm_slot(field, expected, description, deadline_ms \\ 5_000) do
+  # latency (each status read is a µs-scale scheduler call), and the deadline is
+  # the load-robust budget above (`@load_robust_deadline_ms`).
+  defp await_llm_slot(field, expected, description, deadline_ms \\ @load_robust_deadline_ms) do
     await_llm_slot_until(
       field,
       expected,
@@ -457,8 +477,15 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # provably QUEUES behind the first attempt. Pre-queueing it removes the old
     # race in which this process had to acquire the free slot before the retrying
     # agent's remaining attempts completed (a load-starved test process could lose
-    # that race and then never observe a waiter at all).
-    probe = Task.async(fn -> AgentScheduler.request_llm_slot(@probe_agent_id, 5_000) end)
+    # that race and then never observe a waiter at all). The request's own timeout
+    # is the load-robust budget too: the request is REQUIRED to stay queued until
+    # the scheduler's release sweep grants it, so an expired request would return
+    # {:error, :timeout} and break the `assert :ok ==` below.
+    probe =
+      Task.async(fn ->
+        AgentScheduler.request_llm_slot(@probe_agent_id, @load_robust_deadline_ms)
+      end)
+
     assert await_llm_waiting(2, "the probe to queue behind the first attempt")
 
     # Releasing the owner hands the slot to the first attempt (the earlier queue
@@ -468,7 +495,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # across the whole retry sequence (old behavior) would never release the first
     # attempt, so the probe could not be granted here.
     AgentScheduler.release_llm_slot(@slot_owner_agent_id)
-    assert :ok == Task.await(probe, 5_000)
+    assert :ok == Task.await(probe, @load_robust_deadline_ms)
 
     # The retrying agent's NEXT attempt now queues behind the probe's
     # persistently-held slot: it re-requested the slot it released instead of
@@ -481,7 +508,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
     # All retries exhaust (connection refused is not a rate limit), returning
     # {:error, reason} — the caller (prompt_until_tools_or_limit/5) raises on this.
-    assert {:error, _reason} = Task.await(retrying, 15_000)
+    assert {:error, _reason} = Task.await(retrying, @load_robust_deadline_ms)
   end
 
   test "a paused scheduler blocks the retrying agent's next attempt at slot re-acquisition" do
@@ -531,7 +558,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # Resume: the blocked slot request is granted and the retry stream exhausts.
     AgentScheduler.resume()
     refute AgentScheduler.paused?()
-    assert {:error, _reason} = Task.await(retrying, 10_000)
+    assert {:error, _reason} = Task.await(retrying, @load_robust_deadline_ms)
   end
 
   test "0-capacity model blocks at slot acquisition until capacity is restored" do
@@ -572,7 +599,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
       # The retries exhaust (connection refused is not a rate limit) with
       # {:error, reason} — NOT a raise, and the reason carries no trace of the
       # old fail-fast "0 LLM slots" message.
-      assert {:error, reason} = Task.await(task, 15_000)
+      assert {:error, reason} = Task.await(task, @load_robust_deadline_ms)
       refute Exception.message(reason) =~ "0 LLM slots"
     after
       # Failure-proof cleanup: a failed assertion above can leave the task
@@ -618,8 +645,10 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
         # Attempt 1 fails with 402 → the loop reports the model-exhaustion
         # backoff (default 60s) and recurses IMMEDIATELY: attempt 2's slot
         # request lands in the model's backoff queue within milliseconds. An
-        # agent-side 60s sleep (the old behavior for an unclassified 402) could
-        # never satisfy this wait inside its 5s deadline.
+        # agent-side 60s sleep (the old behavior for an unclassified 402) would
+        # leave the request unqueued when the wait budget expires — the budget is
+        # the load-robust deadline above, still well below the ~54-60s backoff
+        # sleep it rules out.
         assert await_llm_waiting(1, "the 402 retry to queue behind the model-exhaustion backoff")
 
         # Confirms the recursion was near-instant (no sleep of the reported
@@ -648,8 +677,14 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
       # 3 connection-refused attempts with the 25ms seam → ~0.1s, never a
       # model-exhaustion wait.
-      assert {:error, _reason} = Task.await(task, 15_000)
-      assert System.monotonic_time(:millisecond) - started < 3_000
+      assert {:error, _reason} = Task.await(task, @load_robust_deadline_ms)
+      # Load-robust budget, and deliberately the TIGHTER gate (below the await
+      # deadline above, so it still fires first and stays non-vacuous): the
+      # structural claim is "no model-exhaustion (60s) wait happened", and this
+      # budget is still far below the ~54s minimum of that backoff. The idle
+      # figure is ~0.1s; an oversubscribed host MEASURED 3.3s for this test, so
+      # 15s covers load-induced scheduling latency without weakening the claim.
+      assert System.monotonic_time(:millisecond) - started < 15_000
 
       # No model-exhaustion class was reported: the model is NOT in backoff.
       assert model_backoff_remaining() == nil
@@ -668,7 +703,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
       # max_retries 0 → a SINGLE attempt, whose 402 is terminal.
       task = start_retrying_agent(agent_id, 0)
 
-      assert {:error, reason} = Task.await(task, 10_000)
+      assert {:error, reason} = Task.await(task, @load_robust_deadline_ms)
       # Terminal, promptly — no agent-side sleep of the (8h) reported backoff.
       assert System.monotonic_time(:millisecond) - started < 5_000
 
