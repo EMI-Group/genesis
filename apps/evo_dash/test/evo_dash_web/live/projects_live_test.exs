@@ -1958,11 +1958,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("#node-selector button", "Test Target")
       |> render_click()
 
-      # select_node never blocks the LiveView: the click returned promptly
-      # (despite the 300ms fake connect) and the parent navigated to the
-      # target's pending context via {:node_selected, _} → push_patch. One
-      # extra render flushes the {:node_selected, _} self-message so the
-      # push_patch lands before assert_patch polls.
+      # select_node never blocks the LiveView: the async connect is spawned on
+      # EvoDash.TaskSupervisor (proven by the caller-pid assertion below) while
+      # the parent navigated to the target's pending context via
+      # {:node_selected, _} → push_patch. One extra render flushes the
+      # {:node_selected, _} self-message so the push_patch lands before
+      # assert_patch polls.
       render(view)
       assert_patch(view, "/projects?node=" <> id)
       wait_assigns(view, &(&1[:current_node_id] == id))
@@ -5036,8 +5037,10 @@ end
 # Startup shapes (preserving the original 2-tuple for existing call sites):
 #   * `{target_id, status}` — `:connect` answers `{:ok, :connecting}`
 #   * `{target_id, status, opts}` — `opts` may set `:connect_result` (the
-#     `:connect` reply, default `{:ok, :connecting}`) and `:connect_delay_ms`
-#     (sleep before replying, to prove the caller runs off-process).
+#     `:connect` reply, default `{:ok, :connecting}`) and an optional
+#     `:connect_delay_ms` (sleep before replying). NOTE: the off-process property
+#     is proven by the recorded caller pid (see `:callers` below), NOT by any
+#     delay — the caller-pid assertion is delay-independent.
 #
 # Extra calls used by the event-driven async-connect tests:
 #   * `{:set_status, status}` — test-driven phase mutation (the broadcast →
