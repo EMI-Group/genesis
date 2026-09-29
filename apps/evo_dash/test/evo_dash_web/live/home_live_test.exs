@@ -403,12 +403,44 @@ defmodule EvoDashWeb.HomeLiveTest do
     # against it or the model-selector describes). Under the setup's fail-fast
     # scheduler config the reflect wrapper returns {:error, :llm_not_configured}
     # deterministically — the row + its opts land on the persisted TaskInfo, no
-    # agent is registered, and no LLM endpoint is ever contacted.
+    # agent is registered, and no LLM endpoint is ever contacted. The submit +
+    # terminal await run inside a CaptureLog.with_log/2 window so the wrapper's
+    # asynchronous error log is captured rather than printed between tests.
     test "starts a reflect task with the right opts and tracks it synchronously", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+      # The wrapper's `SelfReflective failed: ...` error log is emitted
+      # ASYNCHRONOUSLY at task end. Capture the submit AND the await of the
+      # row's terminal status inside ONE ExUnit.CaptureLog.with_log/2 window:
+      # the suite-level capture_log: true only swaps the Logger :default
+      # handler out while a capture is active, so a log landing in the
+      # between-test gap prints to the console (uncaptured noise under load).
+      # The window closes only once the row is terminal — i.e. after the error
+      # log was emitted — and with_log's internal Logger.flush drains it into
+      # the capture. The fn RETURNS html so the assertions below stay identical.
+      {html, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          html = render_submit(view, "send_message", %{"message" => "hello genesis"})
 
+          # run/2 logs BEFORE returning {:error, _} (which the executor maps to
+          # the persisted :failed status), so awaiting the persisted terminal
+          # status guarantees the log is inside the capture window. Uses the
+          # file's own wait_until/2 poll idiom — no fixed sleep.
+          wait_until(fn ->
+            EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+            |> Enum.find(&(&1.type == :reflect))
+            |> case do
+              nil -> false
+              task -> task.status in [:failed, :completed, :cancelled]
+            end
+          end)
+
+          html
+        end)
+
+      # Deterministic under the fail-fast pin — proof the capture window really
+      # held the wrapper's error log (it is never printed to the console).
+      assert log =~ "SelfReflective failed"
       # Optimistic UI: the user bubble appears immediately and the start flow
       # did not render the error bubble. (Regression: passing the bare
       # %EvoGit.TaskInfo{} struct — instead of {:ok, task} — to
