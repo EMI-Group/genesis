@@ -85,6 +85,28 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
 
   # --- Setup ---
 
+  setup_all do
+    # The LLM-backoff wakeup sweep arms its timer at `backoff + epsilon`, where
+    # the epsilon is read at CALL time from the app env key
+    # `:llm_backoff_sweep_epsilon_ms` (default 1000 ms). Shrink it for this
+    # module so the sweep tests do not each pay the full fixed 1000 ms; every
+    # assertion is unchanged. Restore the original in `on_exit` (delete it when
+    # it was originally unset). `async: false` keeps this BEAM-global override
+    # from racing other modules.
+    original = Application.get_env(:evo_git, :llm_backoff_sweep_epsilon_ms)
+
+    Application.put_env(:evo_git, :llm_backoff_sweep_epsilon_ms, 10)
+
+    on_exit(fn ->
+      case original do
+        nil -> Application.delete_env(:evo_git, :llm_backoff_sweep_epsilon_ms)
+        value -> Application.put_env(:evo_git, :llm_backoff_sweep_epsilon_ms, value)
+      end
+    end)
+
+    :ok
+  end
+
   setup do
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_agent_state)
@@ -446,9 +468,10 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert delta >= 300
       assert delta < 1_500
 
-      # The wakeup timer is due at supplied + epsilon (~1.3s), NOT 61s: it can
-      # only arrive inside this bound if the supplied duration was used.
-      assert_receive :retry_llm_waiting, 2_000
+      # The wakeup timer is due at supplied + epsilon (the sweep epsilon is
+      # overridden to 10ms in `setup_all`), NOT 61s: it can only arrive inside
+      # this bound if the supplied duration was used.
+      assert_receive :retry_llm_waiting, 1_000
     end
 
     test "a caller-supplied duration is clamped to the Process.send_after ceiling" do
@@ -475,7 +498,8 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
 
       # A backoff that is still in the future when the sweep runs (250ms of
       # headroom) → the queued waiter stays parked and the sweep must schedule
-      # ANOTHER pass (due at ~1.25s).
+      # ANOTHER pass (due at ~260ms — the 250ms headroom plus the 10ms sweep
+      # epsilon overridden in `setup_all`).
       until = System.monotonic_time(:millisecond) + 250
 
       state =
@@ -492,7 +516,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert :queue.len(State.waiting_for(new_state, @default_model)) == 1
 
       # ... and the sweep rescheduled another pass (the multi-hour-backoff guard).
-      assert_receive :retry_llm_waiting, 3_000
+      assert_receive :retry_llm_waiting, 1_000
     end
 
     test "the sweep does not reschedule once the backoff has expired (and grants the waiter)" do
