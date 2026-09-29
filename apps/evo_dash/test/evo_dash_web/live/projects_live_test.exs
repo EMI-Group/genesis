@@ -1868,10 +1868,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "error-phase remote context renders the error gate with actions", %{conn: conn} do
       id = save_target!()
 
-      start_supervised!(
-        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
-         {id, %{phase: :error, last_error: "boom", node: nil}}}
-      )
+      fake =
+        start_supervised!(
+          {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+           {id, %{phase: :error, last_error: "boom", node: nil}}}
+        )
 
       {:ok, view, html} = live(conn, "/projects?node=" <> id)
 
@@ -1890,8 +1891,33 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ "Recent Projects"
 
       # Retry calls the (fake) connection manager and deliberately ignores the
-      # result — no crash, error state stays rendered
-      html = render_click(view, "retry_remote_connection", %{})
+      # result — no crash, error state stays rendered.
+      #
+      # The click only SPAWNS the connect (NodeAware.initiate_remote_connect/2
+      # runs it on EvoDash.TaskSupervisor), so the action is wrapped in a
+      # capture window and the spawned connect is AWAITED INSIDE it: without the
+      # await the spawned task can outlive this test — and therefore the fake
+      # ConnectionManager — after which its connect falls through to the REAL
+      # EvoGit.RemoteConnection, which logs "No distribution cookie
+      # configured…" and opens a real `ssh` tunnel from a process the per-test
+      # capture window no longer covers (console noise in the between-test gap).
+      {html, log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          retry_html = render_click(view, "retry_remote_connection", %{})
+
+          # Event-driven await (no sleep): poll the fake until the spawned
+          # connect lands on it, proving the real core path was never entered.
+          wait_for_fake_callers(fake, fn callers ->
+            if callers == [], do: nil, else: :ok
+          end)
+
+          retry_html
+        end)
+
+      # The capture holds the real-connection warning: the fake answered, so the
+      # real `connect` (and its SSH machinery) never ran.
+      refute log =~ "No distribution cookie configured"
+
       assert html =~ "boom"
       assert html =~ ~s(phx-click="retry_remote_connection")
     end
@@ -2054,6 +2080,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       render_click(view, "switch_to_local", %{})
 
       # handle_node_selected push_patches to the current path WITHOUT ?node=
+      # One extra render flushes the {:node_selected, _} self-message so the
+      # push_patch lands before assert_patch polls.
+      render(view)
       assert_patch(view, "/projects")
 
       html = render(view)
