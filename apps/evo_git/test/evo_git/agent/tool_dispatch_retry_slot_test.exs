@@ -47,17 +47,19 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   # Base (ms) of the production exponential-backoff between retry attempts,
   # overridden per test through the call-time app-env seam
-  # `:llm_retry_backoff_base_ms` read by `ToolDispatch` at call time. 75ms is
+  # `:llm_retry_backoff_base_ms` read by `ToolDispatch` at call time. 25ms is
   # chosen so that (a) the retry sequences that used to cost ~3s / ~1s / ~7s
-  # collapse to ~0.22s / ~0.22s / ~0.53s, and (b) every backoff window stays far
-  # longer than a connection-refused attempt against a warmed Finch pool —
-  # MEASURED at 1.0-2.5ms (p99 1.81ms, max 2.46ms over 300 samples) — and far
+  # collapse to ~0.10s / ~0.05s / ~0.19s (the 2- and 3-retry figures are the
+  # MEASURED wall clock of this file's slowest tests, per-attempt overhead
+  # included), and (b) every backoff window stays far longer than a
+  # connection-refused attempt against a warmed Finch pool — MEASURED at
+  # 1.0-2.5ms (p99 1.81ms, max 2.46ms over 300 samples) — and far
   # longer than a scheduler round trip (<=0.03ms) — so the deterministic waits
   # below (anchored on slot/queue STATE, never on the clock) cannot race the
   # window. `randomize/1` shifts each delay by at most 10%, so the SMALLEST
-  # randomized window is 75 * 0.9 = 67.5ms — ~27x the measured worst-case
-  # attempt and still >2x the old, deliberately conservative 30ms estimate.
-  @retry_backoff_base_ms 75
+  # randomized window is 25 * 0.9 = 22.5ms — ~9x the measured worst-case attempt
+  # (2.46ms) and within 25% of the old, deliberately conservative 30ms estimate.
+  @retry_backoff_base_ms 25
 
   # The model pool every retry test drives: a SINGLE-slot pool, pinned by the
   # setup (`model_profiles: [%{id: "default", ..., concurrency: 1}]`).
@@ -332,12 +334,20 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   #
   # The API key is pinned only for the duration of the warm-up call (the
   # per-test `setup/1` below keeps pinning it the way it always has).
+  #
+  # The warm-up's expected failure is logged from the FINCH POOL process, not
+  # from the test process, so ExUnit's per-test `capture_log` cannot attribute
+  # it and it would leak to the console (3x "Retrying streaming request ..." +
+  # 1x "Finch streaming transport failed"). `ExUnit.CaptureLog.capture_log/1`
+  # captures by logger pid, so it swallows exactly those 4 expected lines here;
+  # the captured string is deliberately discarded (the warm-up's own result is
+  # what matters).
   setup_all do
     previous_api_key = Application.get_env(:req_llm, :openai_api_key)
     Application.put_env(:req_llm, :openai_api_key, "test-key")
 
     try do
-      warm_pool()
+      ExUnit.CaptureLog.capture_log(fn -> warm_pool() end)
     after
       if previous_api_key do
         Application.put_env(:req_llm, :openai_api_key, previous_api_key)
@@ -376,8 +386,10 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # Shrink the retry loop's exponential-backoff base through the call-time
     # app-env seam `:llm_retry_backoff_base_ms` (read by
     # `ToolDispatch.call_llm_with_retry/5` on every call) so each backoff sleep
-    # is ~75ms instead of ~1s — the retry sequences below shrink from
-    # ~3s / ~1s / ~7s to ~0.22s / ~0.22s / ~0.53s without touching lib. The value
+    # is ~25ms instead of ~1s — the retry sequences below shrink from
+    # ~3s / ~1s / ~7s to ~0.10s / ~0.05s / ~0.19s without touching lib. The waits
+    # themselves stay anchored on slot/queue STATE, never on the clock, so
+    # shrinking the windows changes only wall clock, never determinism. The value
     # is restored (or removed when it had none) in `on_exit`, keeping the seam out
     # of sibling tests.
     original_backoff_base = Application.get_env(:evo_git, :llm_retry_backoff_base_ms)
@@ -615,7 +627,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
         assert System.monotonic_time(:millisecond) - started < 5_000
 
         # The reported backoff IS the model-exhaustion schedule's first entry
-        # (~60s) — not the short transient schedule (~75ms via the seam).
+        # (~60s) — not the short transient schedule (~25ms via the seam).
         remaining = model_backoff_remaining()
         assert is_integer(remaining)
         assert remaining > 30_000
@@ -634,7 +646,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
       started = System.monotonic_time(:millisecond)
       task = start_retrying_agent(agent_id, 2)
 
-      # 3 connection-refused attempts with the 75ms seam → ~0.2s, never a
+      # 3 connection-refused attempts with the 25ms seam → ~0.1s, never a
       # model-exhaustion wait.
       assert {:error, _reason} = Task.await(task, 15_000)
       assert System.monotonic_time(:millisecond) - started < 3_000
