@@ -2,15 +2,15 @@
 
 ## Intent
 
-Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray, window, update commands, headless mode), `sidecar.rs` (backend sidecar lifecycle + env), `backend_watchdog.rs` (crash watchdog + update install), `sidecar_path.rs` (shared launcher-path resolution). No Elixir code lives here.
+Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray, window, update commands, headless mode), `sidecar.rs` (backend sidecar lifecycle + env), `backend_watchdog.rs` (crash watchdog, backend boot sequence, shell-rendered `data:` pages, update install), `sidecar_path.rs` (shared launcher-path resolution). No Elixir code lives here.
 
 ## API Surface
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Entry point — `run_gui` / `run_headless`, `resolve_backend_port` (dynamic port, `PORT` honored only when free), `headless_sidecar_env(port, lifetime_port)`, `request_quit` + its pure `quit_needs_confirmation(backend_healthy, dashboard_loaded)` routing predicate, tray + single-instance + update commands (`begin_quit` / `check_update` / `download_update` / `begin_update`) |
+| `main.rs` | Entry point — `run_gui` / `run_headless`, `resolve_backend_port` (dynamic port, `PORT` honored only when free; the resolved port is logged once), `headless_sidecar_env(port, lifetime_port)`, `request_quit` + its pure `quit_needs_confirmation(backend_healthy, dashboard_loaded)` routing predicate, tray + single-instance + update commands (`begin_quit` / `check_update` / `download_update` / `begin_update`). Owns the shared budgets `BACKEND_READY_TIMEOUT_SECS` (`pub(crate)`, 90s first-boot readiness — used by the GUI boot thread and `--headless`) and the pure boot-failure routing `boot_failed_fallback(backend_healthy)` → `BootFallback::{ShowStartupPage, HandOverToWatchdog}` plus the pure latch-gated gate `navigate_until_loaded` → `InitialNavigateOutcome`. The setup hook only builds the window + tray + manager and then SPAWNS `BackendManager::run_bootstrap` on its own thread — it never waits (`main.rs` setup returns immediately). |
 | `sidecar.rs` | `launcher_command` (Windows `CREATE_NO_WINDOW` — the ONLY GUI spawn path), `spawn`, `probe_http`, `wait_for_ready`, `sidecar_env(port, lifetime_port)`, `start_lifetime_listener`, pure `classify_lifetime_read` → `LifetimeReadOutcome` (`Eof` only for `Ok(0)`; everything else `Hold`) |
-| `backend_watchdog.rs` | `BackendManager` — monitors/restarts the backend child, error page, quit/update intent flags, resettable `dashboard_loaded` latch (`reset_dashboard_loaded()` before the error page and the recovery re-navigation) |
+| `backend_watchdog.rs` | `BackendManager` — the boot sequence (`run_bootstrap(app)`: readiness wait → final `probe_http` → kill child on failure so the watchdog self-heals → the shared `load_dashboard(app)` driver → `boot_failed_fallback` routing to `show_startup_page` or handing over to the watchdog), the ONE dashboard-load driver `load_dashboard` used by BOTH boot and recovery (`show_backend` is a thin wrapper over it), backend health (`backend_healthy()` = child alive AND `probe_http` OK), the shell-rendered pages (`error_page_data_url` / `startup_page_data_url`, sharing one CSS block via the `page_css!()` macro), child monitor/restart with backoff, quit/update intent flags, and the resettable `dashboard_loaded` latch (`reset_dashboard_loaded()` before every deliberate navigation away from the dashboard: boot/recovery via `load_dashboard`, the error page and the startup page). Shared navigation budget: `DASHBOARD_NAVIGATE_ATTEMPTS` (6) × `DASHBOARD_NAVIGATE_ATTEMPT_WAIT` (10s). |
 | `sidecar_path.rs` | `resolve_launcher` — shared candidate-dir launcher resolution (GUI + headless) |
 
 ## Lifetime Pipe (TCP hold)
@@ -33,6 +33,16 @@ Rust side:
 - Update commands' JSON contracts are pinned with the dashboard workstream — do not rename keys/statuses.
 
 ## Design Decisions
+
+### Backend boot runs OFF the Tauri setup hook, and a healthy backend is never shown the "unavailable" page
+
+The boot sequence (readiness wait → ready/dead decision → latch-gated navigation to the dashboard) lives in `BackendManager::run_bootstrap` (`backend_watchdog.rs`) and is spawned on a dedicated `std::thread` from the setup closure (`main.rs` step 6); setup returns immediately and never blocks.
+
+**Why off the setup hook:** `tauri::Builder::setup` runs on the main thread *before* `app.run` starts the event loop. Blocking it for the readiness + navigation budgets kept the webview's `PageLoadEvent::Finished` callbacks — the ONLY thing that sets the `dashboard_loaded` latch the gate waits on — from being delivered, so the gate could never succeed even with a perfectly healthy backend; the app then sat on the red error page with no automatic recovery (the watchdog is parked in `wait_for_exit` because the child never exited, so `show_backend` is unreachable). Running boot off the hook also keeps the tray / Cmd+Q responsive during the wait. A plain thread has no async-runtime context, so `run_bootstrap` may call reqwest's BLOCKING client (`sidecar::wait_for_ready` / `probe_http`) directly — that is why the old extra helper thread + `join()` is gone.
+
+**One load driver, one budget:** `load_dashboard(app)` is the single implementation of "reset the latch, then run the pure `navigate_until_loaded` gate"; both `run_bootstrap` and the recovery path (`show_backend`, a thin wrapper that only adds its failure log) call it. The budget is `DASHBOARD_NAVIGATE_ATTEMPTS` = 6 × `DASHBOARD_NAVIGATE_ATTEMPT_WAIT` = 10s (60s of gated load budget) and `BACKEND_READY_TIMEOUT_SECS` = 90s for the first boot only (the watchdog's per-RESTART `READY_TIMEOUT` stays 30s). These are deliberately patient: the first launch after a desktop auto-update rewrites the whole bundle, so that dashboard load is a genuinely cold start. Guard tests (`dashboard_navigation_budget_is_patient`, `first_boot_readiness_budget_is_generous`) pin the floors.
+
+**Boot-failure routing (`boot_failed_fallback`):** when the gate exhausts its budget, health decides, never how long the load took. Healthy → the NEUTRAL `startup_page_data_url` ("Genesis is starting up" + "Open the dashboard"), which must never claim the backend is unavailable or about to be restarted. Unhealthy → hand over to the watchdog (error page + backoff restart), unchanged. There is deliberately NO background retry loop / heartbeat after showing the startup page — the page's own button is a plain top-level navigation back to the backend. The error page keeps its exact wording ("Genesis backend unavailable" / "…will be restarted automatically" / "Retry now") and its red `#C8383C` accent; both pages share one CSS block via the `page_css!()` macro, since `concat!` cannot take a `const` and `format!` cannot take CSS braces.
 
 ### Windows NSIS auto-update install race — hard exit + tree kill (backend_watchdog.rs)
 

@@ -61,14 +61,27 @@ const READY_TIMEOUT: Duration = Duration::from_secs(30);
 /// graceful stop before force-killing it as a fallback.
 const SHUTDOWN_CHILD_WAIT: Duration = Duration::from_secs(15);
 
-/// How many navigation attempts the recovery path (`show_backend`) makes to
-/// get the dashboard loaded again. Each attempt navigates and then waits up to
+/// How many navigation attempts the shared dashboard-load driver
+/// ([`BackendManager::load_dashboard`]) makes to get the dashboard loaded —
+/// used by BOTH the boot path ([`BackendManager::run_bootstrap`]) and the
+/// crash-recovery path ([`BackendManager::show_backend`]).
+///
+/// Each attempt navigates and then waits up to
 /// [`DASHBOARD_NAVIGATE_ATTEMPT_WAIT`] for the webview to REPORT the page as
 /// loaded — a navigation that was merely accepted is not success (a wkwebview
 /// `navigate` returns Ok the moment it accepts the request).
 const DASHBOARD_NAVIGATE_ATTEMPTS: u32 = 6;
-/// How long each recovery navigation attempt waits for the page-load latch.
-const DASHBOARD_NAVIGATE_ATTEMPT_WAIT: Duration = Duration::from_secs(5);
+/// How long each dashboard navigation attempt waits for the page-load latch.
+///
+/// Deliberately patient (6 × 10s = 60s of gated load budget): the first launch
+/// after a desktop auto-update is a cold start — the whole bundle was just
+/// rewritten, so the page cache is cold and the OS may still be validating the
+/// freshly written binaries — and a cold dashboard load can easily exceed a few
+/// seconds. Giving up early is what dead-ended the app on the red error page
+/// right after an update; a mere slow load must never be treated as failure.
+/// Do not shrink this back toward 5s (see
+/// [`tests::dashboard_navigation_budget_is_patient`]).
+const DASHBOARD_NAVIGATE_ATTEMPT_WAIT: Duration = Duration::from_secs(10);
 
 /// Maximum consecutive failures before entering the slow-retry regime.
 const MAX_CONSECUTIVE_FAILURES: u32 = 8;
@@ -251,22 +264,58 @@ pub fn tcp_accepting(port: u16, timeout: Duration) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Error page (data: URL)
+// Shell-rendered `data:` pages (error page + startup page)
 // ---------------------------------------------------------------------------
 
-/// Head of the error page. `backend_url` is spliced between head and tail
-/// (the CSS braces make `format!` unusable).
-const ERROR_PAGE_HEAD: &str = r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Genesis — Backend Unavailable</title><style>
-html,body{height:100%;margin:0;background:#1e1e24;color:#e8e8ec;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center}
+/// The CSS shared by every shell-rendered `data:` page.
+///
+/// Defined ONCE so the error page and the startup page can never drift apart in
+/// styling; each page appends its own single-rule button accent so the red
+/// (`#C8383C`) stays reserved for genuine errors while the startup page uses a
+/// neutral tone.
+///
+/// A `macro_rules!` (not a `const`) because `concat!` only accepts literals —
+/// a `const` identifier is not a valid `concat!` argument. `concat!` is used
+/// rather than `format!` because the CSS is full of braces that `format!` would
+/// require doubling.
+macro_rules! page_css {
+    () => {
+        r#"html,body{height:100%;margin:0;background:#1e1e24;color:#e8e8ec;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;justify-content:center}
 .card{text-align:center;max-width:28rem;padding:2rem}
 h1{font-size:1.25rem;margin:0 0 .5rem;color:#fff}
 p{font-size:.9rem;line-height:1.5;color:#a9a9b3;margin:0 0 1.5rem}
-button{background:#C8383C;color:#fff;border:none;border-radius:6px;padding:.6rem 1.4rem;font-size:.9rem;cursor:pointer}
+button{color:#fff;border:none;border-radius:6px;padding:.6rem 1.4rem;font-size:.9rem;cursor:pointer}
 button:hover{filter:brightness(1.1)}
-</style></head><body><div class="card"><h1>Genesis backend unavailable</h1><p>The dashboard backend has stopped responding. It will be restarted automatically.</p><button type="button" onclick="window.location.href='"#;
+"#
+    };
+}
+
+/// Head of the error page. `backend_url` is spliced between head and tail
+/// (the CSS braces make `format!` unusable).
+///
+/// The wording is deliberately pessimistic AND accurate here: this page may
+/// only be shown for a backend the watchdog is restarting. A healthy backend is
+/// never described as unavailable — the boot path routes that case to
+/// [`startup_page_data_url`] instead.
+const ERROR_PAGE_HEAD: &str = concat!(
+    r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Genesis — Backend Unavailable</title><style>"#,
+    page_css!(),
+    r#"button{background:#C8383C}</style></head><body><div class="card"><h1>Genesis backend unavailable</h1><p>The dashboard backend has stopped responding. It will be restarted automatically.</p><button type="button" onclick="window.location.href='"#,
+);
 
 /// Tail of the error page; completes the retry button's `onclick` handler.
 const ERROR_PAGE_TAIL: &str = r#"'">Retry now</button></div></body></html>"#;
+
+/// Head of the startup page — the honest fallback when the backend IS healthy
+/// but the dashboard has not reported itself loaded yet.
+const STARTUP_PAGE_HEAD: &str = concat!(
+    r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Genesis — Starting up</title><style>"#,
+    page_css!(),
+    r#"button{background:#4b5563}</style></head><body><div class="card"><h1>Genesis is starting up</h1><p>The backend is running and the dashboard is taking longer than usual to load. Open it with the button below.</p><button type="button" onclick="window.location.href='"#,
+);
+
+/// Tail of the startup page; completes the open button's `onclick` handler.
+const STARTUP_PAGE_TAIL: &str = r#"'">Open the dashboard</button></div></body></html>"#;
 
 /// Percent-encodes a string for use inside a `data:` URL, keeping only RFC
 /// 3986 unreserved characters (`A-Z a-z 0-9 - . _ ~`) verbatim. Everything
@@ -292,6 +341,19 @@ pub fn percent_encode(input: &str) -> String {
 /// `backend_url` (no Tauri IPC, no CORS involved).
 pub fn error_page_data_url(backend_url: &str) -> String {
     let html = ERROR_PAGE_HEAD.to_owned() + backend_url + ERROR_PAGE_TAIL;
+    format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
+}
+
+/// Builds the `data:` URL for the startup page shown when the backend is
+/// healthy but the dashboard has not loaded within the boot budget.
+///
+/// It is deliberately NOT the error page: the backend is up and serving, so
+/// claiming it is "unavailable" or "will be restarted automatically" would be a
+/// lie. Same degrade-gracefully shape as [`error_page_data_url`] — static text
+/// without JavaScript, a top-level navigation with it — but the wording is
+/// neutral and the button says "Open the dashboard".
+pub fn startup_page_data_url(backend_url: &str) -> String {
+    let html = STARTUP_PAGE_HEAD.to_owned() + backend_url + STARTUP_PAGE_TAIL;
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
 }
 
@@ -718,9 +780,12 @@ impl BackendManager {
                 crate::shell_log::log("backend recovered — reloading dashboard");
                 self.show_backend(&app);
             } else {
-                eprintln!(
-                    "[desktop] backend did not become ready within {READY_TIMEOUT:?}; retrying"
-                );
+                // Route through the shell log (it also prints `[desktop] …` to
+                // the console) so a slow/failed respawn is diagnosable after
+                // the fact instead of vanishing on a GUI launch.
+                crate::shell_log::log(&format!(
+                    "backend did not become ready within {READY_TIMEOUT:?}; retrying"
+                ));
                 self.kill_current_child();
                 // Loop back to the failure path (record_failure, next delay).
             }
@@ -835,15 +900,105 @@ impl BackendManager {
         self.navigate(app, &error_page_data_url(&self.backend_url));
     }
 
-    /// Reloads the dashboard after a backend recovery — reset the latch,
-    /// navigate, then wait (bounded) for the webview to REPORT the page as
-    /// loaded, retrying up to [`DASHBOARD_NAVIGATE_ATTEMPTS`] times.
+    /// Shows the NEUTRAL startup page: the backend is healthy but the dashboard
+    /// has not reported itself loaded yet. Mirrors [`Self::show_error_page`]
+    /// (reset the latch, then navigate) but never claims the backend is down —
+    /// see [`startup_page_data_url`].
+    fn show_startup_page(&self, app: &AppHandle) {
+        // Navigation away from the dashboard — the latch must describe the page
+        // CURRENTLY loaded, so clear it (same reasoning as `show_error_page`).
+        self.reset_dashboard_loaded();
+        self.navigate(app, &startup_page_data_url(&self.backend_url));
+    }
+
+    /// True when the backend child is alive AND answers an HTTP request — the
+    /// distinction the boot-failure routing needs ("the app works, the page is
+    /// slow" vs "the backend is gone"). Deliberately stricter than the
+    /// tray-quit health check in `request_quit`, which only probes HTTP: that
+    /// predicate answers "can a page render a dialog?", this one answers "is
+    /// the app actually up?".
+    pub fn backend_healthy(&self) -> bool {
+        self.child_alive() && crate::sidecar::probe_http(&self.backend_url).is_some()
+    }
+
+    /// Waits for the backend to become ready and, once it serves, drives the
+    /// webview to the dashboard. THE BOOT SEQUENCE — run on a dedicated
+    /// [`std::thread`] spawned from the Tauri setup
+    /// (`crate::run_gui`), NEVER on the setup hook itself, so the event loop is
+    /// live throughout (the webview's `PageLoadEvent::Finished` callbacks, the
+    /// only signal that sets the dashboard-loaded latch, must be deliverable —
+    /// see [`Self::load_dashboard`]).
+    ///
+    /// Because this is a plain `std::thread`, `reqwest`'s BLOCKING client (used
+    /// by [`crate::sidecar::wait_for_ready`] / `probe_http`) may be called
+    /// directly: there is no async runtime context to panic in — the extra
+    /// helper thread + `join()` the setup hook used to need is unnecessary
+    /// here.
+    ///
+    /// Outcomes:
+    /// - the readiness wait expires with the backend still not answering → kill
+    ///   the child so the watchdog sees an unexpected exit and takes over with
+    ///   the error page + backoff restart (the self-healing path);
+    /// - the backend serves → navigate to the dashboard through the shared
+    ///   latch-gated driver ([`Self::load_dashboard`]);
+    /// - the gate fails → route through [`crate::boot_failed_fallback`]: a
+    ///   healthy backend gets the neutral startup page (NEVER the red
+    ///   "unavailable / will be restarted" page — that dead end was the
+    ///   reported bug) and an unhealthy one is handed to the watchdog.
+    pub fn run_bootstrap(&self, app: AppHandle) {
+        crate::shell_log::log("waiting for the backend to become ready");
+        crate::sidecar::wait_for_ready(&self.backend_url, crate::BACKEND_READY_TIMEOUT_SECS);
+
+        // The final probe is the single source of truth for ready-ness: it
+        // also covers a backend that became ready just as the poll timed out.
+        if crate::sidecar::probe_http(&self.backend_url).is_none() {
+            crate::shell_log::log(
+                "backend did not answer the readiness probe — handing over to the watchdog",
+            );
+            self.kill_current_child();
+            return;
+        }
+
+        // A quit/update may have raced the readiness wait — don't navigate
+        // during shutdown; the watchdog's shutdown path owns this case.
+        if self.shutdown_requested() || self.update_requested() {
+            return;
+        }
+
+        match self.load_dashboard(&app) {
+            crate::InitialNavigateOutcome::Navigated => {
+                crate::shell_log::log("webview loaded the dashboard after the readiness poll")
+            }
+            crate::InitialNavigateOutcome::Aborted => crate::shell_log::log(
+                "boot navigation aborted (quit/update intent or the backend exited) — the shutdown/watchdog path takes over",
+            ),
+            crate::InitialNavigateOutcome::Failed => {
+                match crate::boot_failed_fallback(self.backend_healthy()) {
+                    crate::BootFallback::ShowStartupPage => {
+                        crate::shell_log::log(&format!(
+                            "webview did not load the dashboard after {DASHBOARD_NAVIGATE_ATTEMPTS} navigation attempts but the backend is healthy — showing the neutral startup page"
+                        ));
+                        self.show_startup_page(&app);
+                    }
+                    crate::BootFallback::HandOverToWatchdog => crate::shell_log::log(
+                        "webview did not load the dashboard and the backend is not healthy — the watchdog owns recovery (error page + restart)",
+                    ),
+                }
+            }
+        }
+    }
+
+    /// The ONE dashboard-load driver, shared by the boot path
+    /// ([`Self::run_bootstrap`]) and the crash-recovery path
+    /// ([`Self::show_backend`]): reset the latch, then run the pure
+    /// [`crate::navigate_until_loaded`] gate with the shell's budgets.
     ///
     /// A successful `navigate` call is not enough: it only proves the request
     /// was accepted, and the window is created only after Tauri's setup
-    /// completes (so an early recovery must wait for it) — the shared gate
-    /// ([`crate::navigate_until_loaded`]) covers both, aborting on a
-    /// quit/update intent or a backend that died again.
+    /// completes (so an early attempt must be retried) — the gate waits for the
+    /// latch the webview sets on a finished load of the BACKEND URL, aborting
+    /// on a quit/update intent or a backend that died again. Each attempt is
+    /// logged (bounded: once per attempt, never per poll).
     ///
     /// The reset happens here, but the backend may have become ready a moment
     /// earlier while the error page was still the loaded page — during that
@@ -853,12 +1008,19 @@ impl BackendManager {
     /// window is a few milliseconds wide (reset → navigate) and the outcome is
     /// merely "one quit attempt is a no-op and the user quits again" — accepted
     /// rather than adding a lock around the latch.
-    fn show_backend(&self, app: &AppHandle) {
-        // The latch describes the PREVIOUS page (typically the error page, or a
-        // failed load) — the fresh navigation must prove itself.
+    pub(crate) fn load_dashboard(&self, app: &AppHandle) -> crate::InitialNavigateOutcome {
+        // The latch describes the PREVIOUS page (typically the error/startup
+        // page, or a failed load) — the fresh navigation must prove itself.
         self.reset_dashboard_loaded();
-        let outcome = crate::navigate_until_loaded(
+        // Bounded diagnostic counter: one line per attempt, never per poll.
+        let attempt = std::cell::Cell::new(0u32);
+        crate::navigate_until_loaded(
             || {
+                attempt.set(attempt.get() + 1);
+                crate::shell_log::log(&format!(
+                    "navigating the webview to the dashboard (attempt {}/{DASHBOARD_NAVIGATE_ATTEMPTS})",
+                    attempt.get()
+                ));
                 let _ = self.navigate(app, &self.backend_url);
             },
             || self.dashboard_loaded(),
@@ -866,8 +1028,14 @@ impl BackendManager {
             DASHBOARD_NAVIGATE_ATTEMPTS,
             DASHBOARD_NAVIGATE_ATTEMPT_WAIT,
             READY_POLL_INTERVAL,
-        );
-        if outcome == crate::InitialNavigateOutcome::Failed {
+        )
+    }
+
+    /// Reloads the dashboard after a backend recovery via the shared driver
+    /// ([`Self::load_dashboard`]), logging the failure case (the boot path
+    /// already logs its own outcomes).
+    fn show_backend(&self, app: &AppHandle) {
+        if self.load_dashboard(app) == crate::InitialNavigateOutcome::Failed {
             crate::shell_log::log(
                 "webview never reported the dashboard as loaded after the backend recovered",
             );
@@ -1527,6 +1695,57 @@ mod tests {
         assert!(decoded.contains("http://127.0.0.1:9999"));
         assert!(decoded.contains("Retry now"));
         assert!(decoded.contains("restarted automatically"));
+    }
+
+    /// The startup page is a valid `data:` URL that embeds the backend URL and
+    /// offers a manual "Open the dashboard" button — and, crucially, does NOT
+    /// reuse the error page's "unavailable / will be restarted automatically"
+    /// wording, because the backend in that state is healthy.
+    #[test]
+    fn startup_page_data_url_is_parseable_and_honest() {
+        let url = startup_page_data_url("http://127.0.0.1:9999");
+        assert!(url.starts_with("data:text/html;charset=utf-8,"));
+        // No raw '#', space, quote or '<' may survive into the data URL.
+        for ch in ['#', ' ', '"', '<'] {
+            assert!(!url.contains(ch), "data URL must not contain raw {ch:?}");
+        }
+        // Must parse as a URL (tauri::Url is the url crate's re-export).
+        let parsed = tauri::Url::parse(&url).expect("data URL parses");
+        assert_eq!(parsed.scheme(), "data");
+
+        let decoded = percent_decode(&url["data:text/html;charset=utf-8,".len()..]);
+        assert!(decoded.contains("http://127.0.0.1:9999"));
+        assert!(decoded.contains("Open the dashboard"));
+        assert!(decoded.contains("starting up"));
+        // The backend is HEALTHY in this state — the error wording would be a
+        // lie (and the exact misleading text of the reported bug).
+        assert!(
+            !decoded.contains("unavailable"),
+            "the startup page must not claim the (healthy) backend is unavailable"
+        );
+        assert!(
+            !decoded.contains("restarted automatically"),
+            "the startup page must not promise a restart that will not happen"
+        );
+        // The two pages are distinct documents.
+        assert_ne!(url, error_page_data_url("http://127.0.0.1:9999"));
+    }
+
+    /// The dashboard navigation budget must stay patient enough for a COLD
+    /// first load (the launch right after an auto-update rewrote the whole
+    /// bundle): at least 8s per attempt and at least 3 attempts. Shrinking
+    /// these back toward 5s is what dead-ended a healthy backend on the red
+    /// error page.
+    #[test]
+    fn dashboard_navigation_budget_is_patient() {
+        assert!(
+            DASHBOARD_NAVIGATE_ATTEMPT_WAIT >= Duration::from_secs(8),
+            "a cold dashboard load must be able to succeed (got {DASHBOARD_NAVIGATE_ATTEMPT_WAIT:?} per attempt)"
+        );
+        assert!(
+            DASHBOARD_NAVIGATE_ATTEMPTS >= 3,
+            "the gate must retry a failed load (got {DASHBOARD_NAVIGATE_ATTEMPTS} attempts)"
+        );
     }
 
     /// Minimal percent-decoder for the test above.

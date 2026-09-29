@@ -37,23 +37,18 @@ pub(crate) fn backend_url(port: u16) -> String {
     format!("http://{BACKEND_HOST}:{port}")
 }
 
-/// How long (in seconds) to wait for the backend to become ready.
-const BACKEND_READY_TIMEOUT_SECS: u64 = 30;
-
-/// How many times the GUI setup may navigate the webview to the dashboard
-/// after the initial readiness poll (step 8).
+/// How long (in seconds) to wait for the backend to become ready during the
+/// FIRST boot of the shell (the GUI's [`backend_watchdog::BackendManager::run_bootstrap`]
+/// readiness poll and `--headless` mode's startup wait).
 ///
-/// Each attempt navigates and then waits up to
-/// [`INITIAL_NAVIGATE_ATTEMPT_WAIT_MS`] for the webview to report the page as
-/// **loaded** (see `navigate_until_loaded`): a navigation that was merely
-/// accepted is not success, so the budget is measured in real page loads
-/// (~3 × 5s = 15s worst case), not in accept-retries.
-const INITIAL_NAVIGATE_ATTEMPTS: u32 = 3;
-/// How long each post-readiness navigation attempt waits for the webview to
-/// report the dashboard as loaded before the next attempt starts.
-const INITIAL_NAVIGATE_ATTEMPT_WAIT_MS: u64 = 5_000;
-/// Poll interval while waiting for the page-load latch inside an attempt.
-const INITIAL_NAVIGATE_POLL_MS: u64 = 100;
+/// This is the widest readiness budget in the shell, deliberately so: the very
+/// first launch after a desktop auto-update is a cold start (a freshly written
+/// bundle, a cold page cache, OS first-exec scanning) and the Elixir side binds
+/// its listener only after the whole `:evo_git` boot (including Ecto
+/// migrations) has completed. The watchdog's own per-RESTART readiness budget
+/// is separate and stays at 30s (`backend_watchdog::READY_TIMEOUT`) — a
+/// respawned backend has already paid the cold-start cost once.
+pub(crate) const BACKEND_READY_TIMEOUT_SECS: u64 = 90;
 
 /// Delays (ms) between the `quit-requested` re-emits after the synchronous
 /// first emit (see the tray "quit" arm). 5 re-emits + the sync emit = 6
@@ -793,6 +788,9 @@ fn run_gui() {
     // now created in the setup closure with this dynamic URL).
     let port = resolve_backend_port();
     let url = backend_url(port);
+    // Log the resolved port once: with a dynamic port, no other diagnostic
+    // line pins down which loopback port this session actually used.
+    shell_log::log(&format!("backend port resolved: {port}"));
 
     let app = tauri::Builder::default()
         // MUST be the first plugin: plugins run in registration order, and this
@@ -841,12 +839,8 @@ fn run_gui() {
             // 2. Create the backend manager and spawn the initial child. A
             //    spawn failure is NOT fatal: the watchdog treats the missing
             //    child as a failure and drives the error page + restart cycle.
-            let manager: BackendHandle = Arc::new(BackendManager::new(
-                launcher,
-                env,
-                port,
-                url.clone(),
-            ));
+            let manager: BackendHandle =
+                Arc::new(BackendManager::new(launcher, env, port, url.clone()));
             if let Err(err) = manager.spawn_child() {
                 eprintln!("[desktop] failed to spawn genesis-backend sidecar: {err}");
             }
@@ -931,13 +925,12 @@ fn run_gui() {
             //    duplicate "main" label would conflict with a config-built
             //    window). Properties mirror the removed config entry: title,
             //    1280x800, resizable, centered. The window is created BEFORE
-            //    the blocking readiness poll so the watchdog's `show_backend`
-            //    retry loop (which waits for the window) behaves as before.
-            //    The window's initial load races the backend boot — the
-            //    backend is not listening yet, so that first navigation
-            //    typically fails; step 8 re-navigates to the dashboard once
-            //    the readiness poll succeeds. The builder's result is bound so
-            //    the post-readiness re-navigation targets this exact window.
+            //    the readiness wait so the watchdog's `show_backend` retry loop
+            //    (which waits for the window) behaves as before. The window's
+            //    initial load races the backend boot — the backend is not
+            //    listening yet, so that first navigation typically fails; the
+            //    boot thread (step 6) re-navigates to the dashboard once the
+            //    readiness poll succeeds.
             //
             //    The `on_page_load` hook (attached before `.build()`) feeds the
             //    manager's dashboard-loaded latch: `navigate` only proves the
@@ -946,7 +939,7 @@ fn run_gui() {
             //    finished load of the BACKEND URL is the shell's only real
             //    "the dashboard loaded" signal.
             let dashboard_loaded: Arc<AtomicBool> = manager.dashboard_loaded_handle();
-            let window = tauri::WebviewWindowBuilder::new(
+            tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::External(url.parse()?),
@@ -962,85 +955,44 @@ fn run_gui() {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished
                     && backend_watchdog::url_is_backend(payload.url(), BACKEND_HOST, port)
                 {
-                    dashboard_loaded.store(true, Ordering::SeqCst);
+                    // `swap` (not `store`) so the shell log records at most
+                    // one line per successful load — the hook fires for
+                    // every finished navigation. This is the ONLY place the
+                    // real "the dashboard loaded" signal becomes visible in
+                    // the log, which is what makes a slow-load incident
+                    // diagnosable after the fact.
+                    if !dashboard_loaded.swap(true, Ordering::SeqCst) {
+                        shell_log::log(&format!(
+                            "webview loaded the dashboard ({})",
+                            payload.url()
+                        ));
+                    }
                 }
             })
             .build()?;
 
-            // 6. Block until the Phoenix backend responds. The poll runs on a
-            //    dedicated OS thread because reqwest's blocking client must not be
-            //    driven from inside an async runtime context (which is live here).
-            let poll_url = url.clone();
-            let poll = std::thread::spawn(move || {
-                sidecar::wait_for_ready(&poll_url, BACKEND_READY_TIMEOUT_SECS);
-            });
-            let _ = poll.join();
-
-            // 7. If the initial boot never became ready, kill the child: the
-            //    watchdog sees the unexpected exit and takes over with the
-            //    error page + restart cycle (the final probe avoids killing a
-            //    backend that became ready just as the poll timed out). The
-            //    final probe is the single source of truth for ready-ness.
-            if sidecar::probe_http(&url).is_none() {
-                eprintln!(
-                    "[desktop] initial backend boot did not become ready — handing over to the watchdog"
-                );
-                manager.kill_current_child();
-            } else {
-                // 8. Backend is ready — make sure the webview actually shows
-                //    the dashboard. Its initial load (step 5) raced the boot
-                //    and failed with connection refused; NOTHING re-navigates
-                //    on the healthy path (the watchdog only navigates after an
-                //    unexpected exit), so without this a healthy boot sat on
-                //    the failed-load page forever — and with it the
-                //    dashboard's `quit-requested` listener never loaded, which
-                //    wedged the tray Quit confirmation flow.
-                //
-                //    The gate below is deterministic: it navigates and then
-                //    WAITS for the page-load latch (a navigation that is merely
-                //    accepted proves nothing — that was the v0.13.3 macOS
-                //    black-screen bug), retrying a bounded number of times and
-                //    stopping early on a quit/update intent (the backend is
-                //    going away — don't navigate during shutdown). Never-ready
-                //    boots are handled above by the watchdog's recovery path
-                //    (`show_backend`, which uses the same gate).
-                //
-                //    The latch is cleared FIRST: the step-5 initial load (which
-                //    races the boot and typically fails) can itself emit
-                //    `Finished` — on WebView2 even for a failed navigation — so
-                //    a spurious latch from it must not be mistaken for a loaded
-                //    dashboard. Clearing it makes Windows behave exactly as
-                //    before while macOS gets the real load signal.
-                manager.reset_dashboard_loaded();
-                match navigate_until_loaded(
-                    || {
-                        let _ = backend_watchdog::navigate_webview(&window, &url);
-                    },
-                    || manager.dashboard_loaded(),
-                    || manager.shutdown_requested() || manager.update_requested(),
-                    INITIAL_NAVIGATE_ATTEMPTS,
-                    std::time::Duration::from_millis(INITIAL_NAVIGATE_ATTEMPT_WAIT_MS),
-                    std::time::Duration::from_millis(INITIAL_NAVIGATE_POLL_MS),
-                ) {
-                    InitialNavigateOutcome::Navigated => {
-                        shell_log::log("webview loaded the dashboard after the readiness poll")
-                    }
-                    // Quit/update began — the shutdown machinery takes over.
-                    InitialNavigateOutcome::Aborted => {}
-                    InitialNavigateOutcome::Failed => {
-                        shell_log::log(&format!(
-                            "webview did not load the dashboard after {INITIAL_NAVIGATE_ATTEMPTS} navigation attempts — showing the retry page"
-                        ));
-                        // Fall back to the existing error page, whose "Retry
-                        // now" button navigates back to the backend (the
-                        // watchdog's recovery path keeps retrying too).
-                        let _ = backend_watchdog::navigate_webview(
-                            &window,
-                            &backend_watchdog::error_page_data_url(manager.backend_url()),
-                        );
-                    }
-                }
-            }
+            // 6. Wait for the backend and, once it serves, drive the webview to
+            //    the dashboard — on a DEDICATED THREAD, never on the setup hook.
+            //
+            //    These steps (the readiness poll, the ready/dead decision, and
+            //    the latch-gated navigation) used to run right here, blocking
+            //    the main thread — and therefore Tauri's event loop — for up to
+            //    the readiness budget plus the navigation budget. That was not
+            //    merely slow: the webview's `PageLoadEvent::Finished`
+            //    callbacks, the ONLY thing that sets the dashboard-loaded latch
+            //    the gate waits on, may not be delivered while the event loop
+            //    is blocked, in which case the gate could never succeed and a
+            //    HEALTHY backend was dead-ended on the red error page. Running
+            //    the boot sequence on its own thread keeps the event loop live
+            //    (tray / Cmd+Q stay responsive, page-load callbacks are
+            //    certainly delivered) and makes setup return immediately.
+            //
+            //    `run_bootstrap` may call reqwest's BLOCKING client directly:
+            //    a plain `std::thread` has no async runtime context, which is
+            //    what previously forced the extra helper thread + `join()`.
+            let bootstrap_app = app.handle().clone();
+            let bootstrap_manager = manager.clone();
+            std::thread::spawn(move || bootstrap_manager.run_bootstrap(bootstrap_app));
 
             Ok(())
         })
@@ -1087,24 +1039,56 @@ fn run_gui() {
 }
 
 // ---------------------------------------------------------------------------
-// Post-readiness navigation (healthy-boot webview fix)
+// Dashboard boot: navigation gate + boot-failure routing
 // ---------------------------------------------------------------------------
 
-/// Outcome of the bounded post-readiness navigation gate
+/// Outcome of the bounded dashboard-navigation gate
 /// ([`navigate_until_loaded`]).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InitialNavigateOutcome {
     /// The webview reported the dashboard as loaded.
     Navigated,
-    /// A quit/update intent was requested before the webview loaded it.
+    /// A quit/update intent was requested (or the backend exited) before the
+    /// webview loaded it.
     Aborted,
     /// The webview never loaded the dashboard within the attempt budget.
     Failed,
 }
 
-/// Bounded navigation gate used after the initial readiness poll (step 8 of the
-/// GUI setup) and by the watchdog's recovery path
-/// ([`backend_watchdog::BackendManager::show_backend`]).
+/// What the boot path does when the navigation gate exhausts its budget — i.e.
+/// the webview never reported the dashboard as loaded.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum BootFallback {
+    /// The backend answers HTTP: the dashboard is merely slow to render, so
+    /// show the NEUTRAL startup page ("Genesis is starting up" + an "Open the
+    /// dashboard" button). The healthy backend must never be described as
+    /// unavailable or as about to be restarted — that misleading text (plus a
+    /// dead end with no automatic recovery) was the reported post-update bug.
+    ShowStartupPage,
+    /// The backend is not answering: recovery belongs to the watchdog, which
+    /// owns the error page and the backoff restart cycle. Handing over keeps
+    /// the two failure modes distinct instead of claiming a dead backend is
+    /// fine (or a fine backend is dead).
+    HandOverToWatchdog,
+}
+
+/// The pure boot-failure routing decision (see [`BootFallback`]).
+///
+/// Invariant: a boot-failure fallback is chosen SOLELY by backend health, never
+/// by how long the load took. A healthy backend is the user's working app and
+/// gets the startup page; an unhealthy one belongs to the watchdog. Pure so the
+/// routing is unit-testable without a tauri app.
+pub(crate) fn boot_failed_fallback(backend_healthy: bool) -> BootFallback {
+    if backend_healthy {
+        BootFallback::ShowStartupPage
+    } else {
+        BootFallback::HandOverToWatchdog
+    }
+}
+
+/// Bounded navigation gate used by the boot sequence
+/// ([`backend_watchdog::BackendManager::run_bootstrap`]) and by the watchdog's
+/// recovery path ([`backend_watchdog::BackendManager::show_backend`]).
 ///
 /// Each attempt: bail out when `abort` (a quit/update intent) is requested,
 /// succeed when `loaded` already reports a loaded page, otherwise call
@@ -1403,6 +1387,36 @@ mod tests {
         );
         assert_eq!(outcome, InitialNavigateOutcome::Navigated);
         assert_eq!(calls.get(), 2, "the gate must retry after a failed load");
+    }
+
+    /// The boot-failure routing truth table: a HEALTHY backend is never told it
+    /// is unavailable — it gets the neutral startup page; only an unhealthy
+    /// backend is handed to the watchdog (error page + restart cycle). This is
+    /// the regression guard for the reported post-update dead end.
+    #[test]
+    fn boot_failed_fallback_truth_table() {
+        assert_eq!(
+            boot_failed_fallback(true),
+            BootFallback::ShowStartupPage,
+            "a healthy backend must never be shown the unavailable page"
+        );
+        assert_eq!(
+            boot_failed_fallback(false),
+            BootFallback::HandOverToWatchdog,
+            "an unhealthy backend belongs to the watchdog's restart cycle"
+        );
+    }
+
+    /// The first-boot readiness budget must stay wide: the first launch after
+    /// an auto-update is a cold start (fresh bundle, cold cache) and the Elixir
+    /// listener binds only after the whole `:evo_git` boot. Shrinking this back
+    /// toward 30s reintroduces the post-update dead end.
+    #[test]
+    fn first_boot_readiness_budget_is_generous() {
+        assert!(
+            BACKEND_READY_TIMEOUT_SECS >= 60,
+            "the first-boot readiness budget must stay generous (got {BACKEND_READY_TIMEOUT_SECS}s)"
+        );
     }
 
     /// `parse_feed_info` extracts version/notes/pub_date from a valid feed.
