@@ -49,6 +49,13 @@ defmodule EvoDashWeb.TasksLiveTest do
   # against a tree read mid-diff. Await the cleared :tasks_loading assign on the
   # socket (a synchronous :sys.get_state round-trip, the file's wait_until idiom)
   # and re-render so every call site reads a fully-applied page-load result.
+  # It additionally DRAINS every async store read this view provoked before returning
+  # (drain_async_loads/2): the page load AND NodeAware's sidebar fetch both run
+  # in EvoDash.TaskSupervisor children, and each of them drives an offloaded
+  # `EvoGit.Store` read. A read still in flight when this suite's per-test
+  # isolated Store is stopped (its `on_exit`) crashes on the store's vanished
+  # Ecto query-cache ETS table and leaks an `[error]` crash report into the
+  # between-test gap — outside ExUnit's capture_log window.
   defp flush_tasks_load(view, timeout \\ 5000) do
     EvoDashWeb.TestHelpers.flush_loading(
       view,
@@ -62,7 +69,71 @@ defmodule EvoDashWeb.TasksLiveTest do
       timeout
     )
 
+    drain_async_loads(view, timeout)
+
     render(view)
+  end
+
+  # Leaves no async load in flight: waits out an ARMED NodeAware debounce (a
+  # `{:task_updated, ...}` broadcast both a test and the cancel/force-kill
+  # handlers provoke arms the 300ms trailing-edge timer) and then waits for every
+  # EvoDash.TaskSupervisor child this view spawned to exit.
+  #
+  # The leading render/1 is a synchronous round-trip, so any broadcast already
+  # sitting in the view's mailbox has been processed by the time it returns and
+  # an armed debounce is observable via `:tasks_reload_pending`. No fixed sleeps.
+  defp drain_async_loads(view, timeout) do
+    render(view)
+
+    wait_until(
+      fn -> not :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] end,
+      timeout
+    )
+
+    await_view_async_loads(view, timeout)
+  end
+
+  # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
+  # process has exited. Task.Supervisor records the spawning process in the
+  # child's `$callers` process-dictionary entry, so matching it against the view
+  # pid targets exactly this view's tasks — a leftover task from another test is
+  # never waited on. A task's result is sent (and its offloaded store read has
+  # therefore already replied) BEFORE the process exits, so by the time its
+  # monitor fires nothing is in flight anymore.
+  defp await_view_async_loads(view, timeout) do
+    view.pid
+    |> view_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      receive do
+        # A task that already exited delivers its :DOWN immediately anyway
+        # (reason :noproc); either way its store read is done.
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        timeout -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  defp view_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.flat_map(fn
+      pid when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
   end
 
   # Renders only the task-list container (#tasks-list), scoping list-content
@@ -119,9 +190,14 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   describe "task search" do
     test "renders the search input", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, html} = live(conn, ~p"/tasks")
 
       assert html =~ "Search by task ID, prompt, objective, or response"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down (see
+      # flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "search_tasks handler filters tasks by prompt text", %{conn: conn} do
@@ -473,6 +549,11 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render(view)
       assert is_binary(html)
       assert html =~ "All Statuses"
+
+      # The broadcast armed NodeAware's 300ms debounce; drain it (plus the
+      # mount's async page load) so nothing is left in flight when this suite's
+      # isolated Store is torn down (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "handle_info catch-all does not crash on unknown messages", %{conn: conn} do
@@ -485,6 +566,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render(view)
       assert is_binary(html)
       assert html =~ "All Statuses"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
   end
 
@@ -636,11 +721,15 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "task list UI renders (no remote-only info message)", %{conn: conn} do
       insert_fixture!(opts: [prompt: "visible task"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, html} = live(conn, ~p"/tasks")
 
       # The old info message should NOT appear — the full UI always renders.
       refute html =~ "Task history is only available when viewing the local node"
       assert html =~ "Search by task ID, prompt, objective, or response"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
   end
 
@@ -886,8 +975,19 @@ defmodule EvoDashWeb.TasksLiveTest do
       on_exit(fn ->
         # Safety net (LIFO: runs BEFORE the isolated Store/TaskRegistry
         # teardown registered in setup/1) so a failed assertion can never
-        # leave the shared registry frozen for the next suite.
-        if Process.whereis(EvoGit.TaskRegistry), do: :sys.resume(EvoGit.TaskRegistry)
+        # leave the shared registry frozen for the next suite. The resume is
+        # wrapped: the isolated registry is linked to the test process and can
+        # die between this whereis/1 check and :sys.resume/1's own name lookup,
+        # which then exits with :noproc (a load-dependent flake — see the test
+        # policy's teardown-only rescue allowance).
+        if Process.whereis(EvoGit.TaskRegistry) do
+          try do
+            :sys.resume(EvoGit.TaskRegistry)
+          catch
+            # Expected teardown race — the registry is already gone.
+            :exit, _ -> :ok
+          end
+        end
       end)
 
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
@@ -1119,6 +1219,10 @@ defmodule EvoDashWeb.TasksLiveTest do
                "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
 
       assert html =~ "Keep Running"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "close_cancel_modal closes the modal without changing the store", %{conn: conn} do
@@ -1133,6 +1237,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Cancel Task?"
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+
+      # Drain the mount's async page load (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a pending task marks it cancelled immediately", %{conn: conn} do
@@ -1144,6 +1251,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "confirm_cancel_task", %{})
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+
+      # Drains the mount page load AND the debounce armed by the cancellation's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a running task transitions it to :cancelling", %{conn: conn} do
@@ -1155,6 +1266,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "confirm_cancel_task", %{})
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelling
+
+      # Drains the mount page load AND the debounce armed by the cancellation's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a completed task flashes an error", %{conn: conn} do
@@ -1166,6 +1281,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render_click(view, "confirm_cancel_task", %{})
 
       assert html =~ "Failed to cancel task"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task without opening the modal is a no-op", %{conn: conn} do
@@ -1229,6 +1348,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Force Kill Task?"
       assert html =~ "ALL progress will be completely lost. This cannot be undone."
       assert html =~ "Force Kill"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "close_force_kill_modal closes the modal without changing the store", %{conn: conn} do
@@ -1243,6 +1366,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Force Kill Task?"
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+
+      # Drain the mount's async page load (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task on a store-only running task flashes an error", %{conn: conn} do
@@ -1258,6 +1384,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # locally until that change lands; it must NOT be weakened to the old
       # shared msgid ("Failed to cancel task: ...").
       assert html =~ "Failed to force kill task"
+
+      # Drains the mount page load AND any debounce armed by the handler's
+      # broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task on an owned running task force-kills the wrapper", %{conn: conn} do
@@ -1286,6 +1416,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # may fail until then — do NOT revert it.
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :failed
       refute Process.alive?(wrapper)
+
+      # Drains the mount page load AND the debounce armed by the force-kill's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task without opening the modal is a no-op", %{conn: conn} do
