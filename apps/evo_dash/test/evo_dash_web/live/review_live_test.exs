@@ -675,7 +675,22 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "file_a.txt"
       assert html =~ "file_b.txt"
 
-      render_click(view, "auto_resolve")
+      # Wrap the trigger AND the await of the spawned merge-resolution task's
+      # terminal status in a capture_log/2 window: the task's wrapper fails fast
+      # on the fixture's nonexistent repo path, and EvoGit.TaskRegistry logs the
+      # wrapper crash / FAILED_TRANSITION ASYNCHRONOUSLY. Awaiting the terminal
+      # status BEFORE the capture is turned off guarantees that log lands inside
+      # the window instead of leaking into the between-test gap (ExUnit's
+      # capture_log: true only keeps the Logger :default handler swapped out
+      # while a capture is actually active).
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          render_click(view, "auto_resolve")
+          await_merge_task_terminal(task_id)
+        end)
+
+      # Proof the capture actually held the TaskRegistry log line.
+      assert log =~ "TaskRegistry"
 
       assert_redirect(view, "/projects")
 
@@ -2341,7 +2356,22 @@ defmodule EvoDashWeb.ReviewLiveTest do
       html = render(view)
       assert html =~ "Auto-resolve conflict"
       assert html =~ "file_a.txt"
-      render_click(view, "auto_resolve")
+      # Wrap the trigger AND the await of the spawned merge-resolution task's
+      # terminal status in a capture_log/2 window: the task's wrapper fails fast
+      # on the fixture's nonexistent repo path, and EvoGit.TaskRegistry logs the
+      # wrapper crash / FAILED_TRANSITION ASYNCHRONOUSLY. Awaiting the terminal
+      # status BEFORE the capture is turned off guarantees that log lands inside
+      # the window instead of leaking into the between-test gap (ExUnit's
+      # capture_log: true only keeps the Logger :default handler swapped out
+      # while a capture is actually active).
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          render_click(view, "auto_resolve")
+          await_merge_task_terminal(task_id)
+        end)
+
+      # Proof the capture actually held the TaskRegistry log line.
+      assert log =~ "TaskRegistry"
 
       assert_redirect(view, "/projects")
 
@@ -4607,6 +4637,32 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     wait_loop.(wait_loop)
+  end
+
+  # Awaits the merge-resolution task started by the auto-resolve action (the new
+  # task whose opts carry `merge_from == original_task_id`) reaching a TERMINAL
+  # status (:failed | :completed | :cancelled), then returns :ok.
+  #
+  # MUST be called INSIDE an ExUnit.CaptureLog.capture_log/2 window: the spawned
+  # task's wrapper fails fast on the fixture's nonexistent repo path
+  # (File.mkdir_p! in EvoGit.Runtime.ensure_repo), and EvoGit.TaskRegistry logs
+  # the wrapper crash / FAILED_TRANSITION ASYNCHRONOUSLY — awaiting the terminal
+  # status here guarantees that log is emitted BEFORE the capture is turned off,
+  # so it never leaks into the between-test gap (ExUnit's capture_log: true only
+  # keeps the Logger :default handler swapped out while a capture is active).
+  defp await_merge_task_terminal(original_task_id) do
+    wait_until(fn ->
+      case Enum.find(
+             TaskRegistry.list_tasks(),
+             &(merge_opt(&1.opts, :merge_from) == original_task_id)
+           ) do
+        nil ->
+          false
+
+        task ->
+          TaskRegistry.get_task(task.id).status in [:failed, :completed, :cancelled]
+      end
+    end)
   end
 
   # The <option value> preselected inside a SINGLE repo card's own merge form
