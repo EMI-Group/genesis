@@ -40,7 +40,7 @@ EvoGit.Store (GenServer facade, store.ex)
 That blocks `EvoGit.Application.start/2`, and therefore (via the OTP application-dependency order — `evo_dash`'s `.app` lists `evo_git` as a start-time dep) also blocks `EvoDashWeb.Endpoint`'s Bandit listener bind: nothing in evo_dash can serve HTTP until evo_git's supervision tree is fully started.
 Cost is a NO-OP on a current DB; the one-time cost is a NEWLY-SHIPPED migration version or a legacy pre-Ecto adoption (baseline `PRAGMA table_info` probes + `ALTER TABLE` + the data-normalization `UPDATE` scans) — bounded by DB size, with no explicit time cap.
 A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000` (`../repo.ex`) — the only multi-second bound on the boot path; there are NO `Process.sleep`/`:timer.sleep` calls anywhere on the store/application boot path.
-The Python-visible symptom of a slow boot: the Tauri shell's initial WebView navigation gate (15 s) can expire before the endpoint answers, showing the "Genesis backend unavailable" retry page while the backend is still (or just finished) booting — a manual Retry navigates to the by-then-serving endpoint.
+The user-visible symptom of a slow boot: the Tauri shell's initial WebView navigation gate (15 s) can expire before the endpoint answers, showing the "Genesis backend unavailable" retry page while the backend is still (or just finished) booting — a manual Retry navigates to the by-then-serving endpoint.
 
 ### Migration 1 — `20260815000001_baseline_adoption`
 
