@@ -4,6 +4,26 @@ defmodule EvoDash.DirectoryPickerTest do
   # within this file. No async: true module ever calls DirectoryPicker.pick
   # (the only other caller, projects_live_test.exs, is async: false), so the
   # :directory_picker / :directory_picker_wx app-env overrides below are safe.
+  #
+  # TIMING — every `refute_receive {:directory_picker_result, …}, 0` below is a
+  # plain `receive … after 0` mailbox scan: it still flunks on a stray message,
+  # it just never sleeps (ExUnit passes a `0` timeout through verbatim). Two
+  # invariants make the zero window sound; each use site names its invariant:
+  #
+  #   (A) AFTER an `await_pick_idle()` fence — `run_pick/4` sends the caller's
+  #       result BEFORE `send(gen_server, {:pick_done, …})`, and a local
+  #       `send/2` enqueues synchronously, so once `:sys.get_state/1` observes
+  #       the picker idle the pick Task has already terminated and its single
+  #       result message is already in this test's mailbox. Nothing else can
+  #       ever arrive.
+  #
+  #   (B) AFTER a pick that returned `{:error, :unavailable}` — `pick/3` only
+  #       reaches the GenServer's Task-spawning clause when the pick is
+  #       ACCEPTED (`:ok`): the config-disabled / unavailable branches never
+  #       reach the GenServer at all, and the `busy: true` clause replies
+  #       `{:error, :unavailable}` WITHOUT spawning. `run_pick/4` is the sole
+  #       sender of a result message and only ever runs inside a spawned Task,
+  #       so a rejected `picker_id` can never produce one — ever.
   use ExUnit.Case, async: true
 
   alias EvoDash.DirectoryPicker
@@ -85,7 +105,9 @@ defmodule EvoDash.DirectoryPickerTest do
       # Exactly one result message, degraded to :unavailable.
       await_pick_idle()
       assert_receive {:directory_picker_result, "picker-2", :unavailable}, 1000
-      refute_receive {:directory_picker_result, "picker-2", _}, 50
+      # Zero window (invariant A): the await fence above proves the pick Task is
+      # done, so its one result message is already in this mailbox.
+      refute_receive {:directory_picker_result, "picker-2", _}, 0
 
       # Busy cleared: a subsequent pick works again.
       FakeWx.set_mode(:normal)
@@ -103,7 +125,9 @@ defmodule EvoDash.DirectoryPickerTest do
       assert DirectoryPicker.pick(self(), "picker-1") == :ok
       await_pick_idle()
       assert_receive {:directory_picker_result, "picker-1", :unavailable}, 1000
-      refute_receive {:directory_picker_result, "picker-1", _}, 50
+      # Zero window (invariant A): the await fence above proves the pick Task is
+      # done, so its one result message is already in this mailbox.
+      refute_receive {:directory_picker_result, "picker-1", _}, 0
 
       # The picker is NOT stuck busy: once wx recovers, picks work again.
       FakeWx.set_mode(:normal)
@@ -121,8 +145,10 @@ defmodule EvoDash.DirectoryPickerTest do
       assert_receive {:dialog_open, task_pid}, 5_000
 
       # Second pick while busy → synchronous unavailable, no result message.
+      # Zero window (invariant B): the rejected pick never reached the
+      # GenServer's Task-spawning clause, so no result can ever be sent.
       assert DirectoryPicker.pick(self(), "picker-2") == {:error, :unavailable}
-      refute_receive {:directory_picker_result, "picker-2", _}, 50
+      refute_receive {:directory_picker_result, "picker-2", _}, 0
 
       # Release the dialog; the first pick completes and busy clears.
       send(task_pid, :release_dialog)
@@ -137,7 +163,9 @@ defmodule EvoDash.DirectoryPickerTest do
     test "returns {:error, :unavailable} when disabled by config" do
       Application.put_env(:evo_dash, :directory_picker, enabled: false)
       assert DirectoryPicker.pick(self(), "picker-1") == {:error, :unavailable}
-      refute_receive {:directory_picker_result, _, _}, 50
+      # Zero window (invariant B): a config-disabled pick never reaches the
+      # GenServer at all, so no Task — and hence no result message — exists.
+      refute_receive {:directory_picker_result, _, _}, 0
     end
   end
 
@@ -168,12 +196,15 @@ defmodule EvoDash.DirectoryPickerTest do
       assert_receive {:dialog_open, task_pid}, 5_000
 
       # Second file pick while busy → synchronous unavailable, no result message.
+      # Zero window (invariant B): the rejected pick never reached the
+      # GenServer's Task-spawning clause, so no result can ever be sent.
       assert DirectoryPicker.pick(self(), "file-2", :file) == {:error, :unavailable}
-      refute_receive {:directory_picker_result, "file-2", _}, 50
+      refute_receive {:directory_picker_result, "file-2", _}, 0
 
       # The busy flag is kind-agnostic: a :directory pick is rejected the same way.
       assert DirectoryPicker.pick(self(), "dir-1", :directory) == {:error, :unavailable}
-      refute_receive {:directory_picker_result, "dir-1", _}, 50
+      # Zero window (invariant B) — same synchronous rejection as above.
+      refute_receive {:directory_picker_result, "dir-1", _}, 0
 
       # Release the dialog; the first pick completes and busy clears.
       send(task_pid, :release_dialog)
@@ -194,7 +225,9 @@ defmodule EvoDash.DirectoryPickerTest do
       assert DirectoryPicker.pick(self(), "file-1", :file) == :ok
       await_pick_idle()
       assert_receive {:directory_picker_result, "file-1", :unavailable}, 1000
-      refute_receive {:directory_picker_result, "file-1", _}, 50
+      # Zero window (invariant A): the await fence above proves the pick Task is
+      # done, so its one result message is already in this mailbox.
+      refute_receive {:directory_picker_result, "file-1", _}, 0
 
       # The picker is NOT stuck busy: once wx recovers, picks work again.
       FakeWx.set_mode(:normal)
@@ -206,7 +239,9 @@ defmodule EvoDash.DirectoryPickerTest do
     test "returns {:error, :unavailable} when disabled by config (file mode)" do
       Application.put_env(:evo_dash, :directory_picker, enabled: false)
       assert DirectoryPicker.pick(self(), "file-1", :file) == {:error, :unavailable}
-      refute_receive {:directory_picker_result, _, _}, 50
+      # Zero window (invariant B): a config-disabled pick never reaches the
+      # GenServer at all, so no Task — and hence no result message — exists.
+      refute_receive {:directory_picker_result, _, _}, 0
     end
   end
 
@@ -224,6 +259,9 @@ defmodule EvoDash.DirectoryPickerTest do
   # timeout), which reproducibly flaked under CPU load: the pick Task's
   # completion is scheduler-bound, so a fixed wall-clock window is not a state
   # race the result can be "waited out" of.
+  #
+  # This same ordering is what makes the post-fence `refute_receive …, 0`
+  # windows sound — see invariant (A) at the top of the module.
   defp await_pick_idle(timeout \\ 10_000) do
     do_await_pick_idle(System.monotonic_time(:millisecond) + timeout)
   end
