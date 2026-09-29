@@ -1069,7 +1069,10 @@ pub(crate) enum BootFallback {
     /// The backend is not answering: recovery belongs to the watchdog, which
     /// owns the error page and the backoff restart cycle. Handing over keeps
     /// the two failure modes distinct instead of claiming a dead backend is
-    /// fine (or a fine backend is dead).
+    /// fine (or a fine backend is dead). The boot path hands over by KILLING
+    /// the child (`kill_current_child`, never `kill_for_quit`): the watchdog's
+    /// recovery is exit-driven, so a live-but-unresponsive backend must be
+    /// killed to make the unexpected exit happen.
     HandOverToWatchdog,
 }
 

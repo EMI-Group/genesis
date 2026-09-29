@@ -943,8 +943,11 @@ impl BackendManager {
     ///   latch-gated driver ([`Self::load_dashboard`]);
     /// - the gate fails → route through [`crate::boot_failed_fallback`]: a
     ///   healthy backend gets the neutral startup page (NEVER the red
-    ///   "unavailable / will be restarted" page — that dead end was the
-    ///   reported bug) and an unhealthy one is handed to the watchdog.
+    ///   "unavailable / will be restarted" page — that misleading text is the
+    ///   dead end the routing exists to avoid) and an unhealthy one is handed
+    ///   to the watchdog by KILLING the child — the watchdog reacts only to a
+    ///   child exit, so handing over without the kill would leave a
+    ///   live-but-unresponsive backend parked forever with nothing recovering.
     pub fn run_bootstrap(&self, app: AppHandle) {
         crate::shell_log::log("waiting for the backend to become ready");
         crate::sidecar::wait_for_ready(&self.backend_url, crate::BACKEND_READY_TIMEOUT_SECS);
@@ -980,9 +983,19 @@ impl BackendManager {
                         ));
                         self.show_startup_page(&app);
                     }
-                    crate::BootFallback::HandOverToWatchdog => crate::shell_log::log(
-                        "webview did not load the dashboard and the backend is not healthy — the watchdog owns recovery (error page + restart)",
-                    ),
+                    crate::BootFallback::HandOverToWatchdog => {
+                        crate::shell_log::log(
+                            "backend is alive but not answering HTTP after the gated dashboard load — killing it so the watchdog takes over with the error page and restart",
+                        );
+                        // Deliberately NOT `kill_for_quit()`: that sets
+                        // `intentional_shutdown`, which `classify_exit` reads as
+                        // a deliberate stop and would EXIT the app instead of
+                        // restarting the backend. The watchdog reacts only to a
+                        // child EXIT, so killing the live-but-unresponsive child
+                        // is what hands recovery over to it (error page +
+                        // backoff restart + `show_backend` reload).
+                        self.kill_current_child();
+                    }
                 }
             }
         }
