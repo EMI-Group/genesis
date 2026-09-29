@@ -36,10 +36,11 @@ defmodule EvoDashWeb.AgentsLive do
   }
 
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
-  # by the 300ms agent-event flush; this further throttles the (heavier) per-repo
-  # git RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
-  @commit_graph_min_interval_ms 1000
-
+  # by the agent-event flush; this further throttles the (heavier) per-repo git
+  # RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
+  # The window is read AT CALL TIME via commit_graph_min_interval_ms/0 (the
+  # :agents_live_commit_graph_tick_ms test seam, production default 1000ms) so the
+  # throttle check and the armed tick delay can never diverge.
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -780,7 +781,7 @@ defmodule EvoDashWeb.AgentsLive do
   #
   # First keeps the rendered graph in sync with the CURRENT agent list (a
   # newly-spawned child's progress path/ring appears immediately), then
-  # refetches — throttled to @commit_graph_min_interval_ms; a throttled request
+  # refetches — throttled to commit_graph_min_interval_ms/0; a throttled request
   # arms a one-shot tick. `force: true` bypasses the throttle AND the
   # fingerprint gate (first activation, the one-shot tick, a view re-switch).
   #
@@ -927,11 +928,19 @@ defmodule EvoDashWeb.AgentsLive do
     |> Enum.sort_by(fn %{repo_key: repo_key, task_id: task_id} -> {repo_key, task_id} end)
   end
 
+  # The commit-graph minimum interval, resolved AT CALL TIME so both the throttle
+  # check and the armed one-shot tick delay read the same value. The app-env seam
+  # :agents_live_commit_graph_tick_ms lets tests shrink the window; production
+  # behaviour is unchanged (default 1000ms) when it is unset.
+  defp commit_graph_min_interval_ms do
+    Application.get_env(:evo_dash, :agents_live_commit_graph_tick_ms, 1000)
+  end
+
   # True when the last fetch is inside the minimum interval.
   defp commit_graph_throttled?(socket) do
     case socket.assigns.commit_graph_fetched_at do
       nil -> false
-      at -> System.monotonic_time(:millisecond) - at < @commit_graph_min_interval_ms
+      at -> System.monotonic_time(:millisecond) - at < commit_graph_min_interval_ms()
     end
   end
 
@@ -941,7 +950,7 @@ defmodule EvoDashWeb.AgentsLive do
     if socket.assigns.commit_graph_tick_scheduled do
       socket
     else
-      Process.send_after(self(), :commit_graph_tick, @commit_graph_min_interval_ms)
+      Process.send_after(self(), :commit_graph_tick, commit_graph_min_interval_ms())
       assign(socket, :commit_graph_tick_scheduled, true)
     end
   end
@@ -1209,10 +1218,18 @@ defmodule EvoDashWeb.AgentsLive do
 
   # Schedules the trailing-edge flush timer ONLY when one is not already
   # pending — the first event of a window arms it, every subsequent event just
-  # appends to the existing buffer.
+  # appends to the existing buffer. The window is read AT CALL TIME through the
+  # :agents_live_flush_ms app-env seam (production default =
+  # PendingEvents.flush_ms() = 300ms); the pure PendingEvents module stays
+  # constant-only.
   defp maybe_schedule_agent_flush(socket) do
     if PendingEvents.should_schedule?(socket.assigns.agent_flush_scheduled) do
-      Process.send_after(self(), :flush_agent_events, PendingEvents.flush_ms())
+      Process.send_after(
+        self(),
+        :flush_agent_events,
+        Application.get_env(:evo_dash, :agents_live_flush_ms, PendingEvents.flush_ms())
+      )
+
       assign(socket, :agent_flush_scheduled, true)
     else
       socket
