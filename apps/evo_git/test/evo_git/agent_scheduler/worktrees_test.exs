@@ -269,7 +269,15 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
   # --- Async-cleanup poll helper ---
 
-  defp wait_until(fun, timeout \\ 5000) do
+  # Deadline default. Deliberately GENEROUS (30s): every call site that relies
+  # on this default waits on REAL work — `git worktree add`/prune/branch-delete
+  # subprocesses and monitor-driven :DOWN reclaim — and under host CPU
+  # oversubscription those subprocess + monitor round trips slow down 10-25x, so
+  # a slow-but-CORRECT event blew the old 5s bound and flunked with a bogus
+  # "wait_until timed out". The asserted condition is unchanged and exact; only
+  # the bound is generous. Waits that do NOT gate git/monitor work (pure
+  # in-BEAM reads) pass their own modest explicit deadline instead.
+  defp wait_until(fun, timeout \\ 30_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline)
   end
@@ -491,6 +499,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         Process.exit(self(), :kill)
       end)
 
+      # Generous deadline (the 30s helper default — see wait_until/2): this
+      # waits on the real git worktree create of proc A.
       wait_until(fn -> File.dir?(wt_path) end)
 
       # IMMEDIATELY re-create for the SAME agent_id — the old agent's :DOWN
@@ -512,7 +522,11 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
           Process.sleep(:infinity)
         end)
 
-      assert_receive {:recreated, {:ok, ^wt_path}}, 10_000
+      # Generous budget (matching the create awaits above): the re-create can be
+      # DEFERRED (pending_requests) until the first create's real git work
+      # finishes plus its monitor-driven destroy runs, so it may legitimately
+      # take far longer than one create.
+      assert_receive {:recreated, {:ok, ^wt_path}}, 30_000
 
       # Exactly one valid worktree exists.
       assert File.dir?(wt_path)
@@ -524,6 +538,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       # the registration does not leak into later tests.
       Process.exit(proc_b, :kill)
 
+      # Generous deadline (the 30s helper default — see wait_until/2): the
+      # monitor-driven reclaim runs real git (rm_rf + prune + branch delete).
       wait_until(fn ->
         not File.dir?(wt_path) and not Git.branch_exists?(tmp_dir, branch)
       end)
@@ -579,7 +595,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
         # The dir exists once the create task has finished the git part and is
         # blocked inside the gate-script poll — i.e. the create is still in
-        # flight (creating: true in the manager).
+        # flight (creating: true in the manager). Generous deadline (the 30s
+        # helper default — see wait_until/2): it waits on real git work.
         wait_until(fn -> File.dir?(wt_path) end)
 
         # Kill the agent mid-create — cleanup is deferred until the create
@@ -598,7 +615,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         # is still :creating and the re-create sits in pending_requests. Poll
         # (bounded) until the manager has processed the second request — the
         # un-created gate guarantees the first create cannot have finished, so
-        # this cannot race.
+        # this cannot race. Generous deadline (the 30s helper default — see
+        # wait_until/2): the deferral is only observable once the first create's
+        # real git part has reached the gate script.
         wait_until(fn ->
           state = :sys.get_state(WorktreeManager)
 
