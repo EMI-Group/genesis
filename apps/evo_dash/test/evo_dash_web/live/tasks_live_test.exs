@@ -76,7 +76,7 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   # Leaves no async load in flight: waits out an ARMED NodeAware debounce (a
   # `{:task_updated, ...}` broadcast both a test and the cancel/force-kill
-  # handlers provoke arms the 300ms trailing-edge timer) and then waits for every
+  # handlers provoke arms the trailing-edge timer) and then waits for every
   # EvoDash.TaskSupervisor child this view spawned to exit.
   #
   # The leading render/1 is a synchronous round-trip, so any broadcast already
@@ -528,7 +528,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     # The EvoGit runtime broadcasts {:task_updated, task_id, status, node} on
     # the "tasks" PubSub topic (node-identity contract). TasksLive forwards the
     # message to NodeAware.handle_task_info/2, which applies the node filter
-    # (only the viewed node's events trigger UI updates) and schedules a 300ms
+    # (only the viewed node's events trigger UI updates) and schedules a
     # debounced reload. These tests verify the handle_info clauses handle these
     # messages gracefully.
 
@@ -550,7 +550,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert is_binary(html)
       assert html =~ "All Statuses"
 
-      # The broadcast armed NodeAware's 300ms debounce; drain it (plus the
+      # The broadcast armed NodeAware's debounce; drain it (plus the
       # mount's async page load) so nothing is left in flight when this suite's
       # isolated Store is torn down (see flush_tasks_load/2).
       flush_tasks_load(view)
@@ -889,7 +889,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "event-added task"])
 
       # New-shape event from the local node: NodeAware's node filter matches,
-      # so the 300ms debounced reload is scheduled.
+      # so the debounced reload is scheduled.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
 
       # Phase 1: the event is processed and the debounce is scheduled.
@@ -1031,7 +1031,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         {:task_updated, "t1", :running, :remote@elsewhere}
       )
 
-      # Sample across the 300ms debounce window (10ms cadence): the
+      # Sample across the debounce window (10ms cadence): the
       # reload-pending flag must never become true.
       deadline = System.monotonic_time(:millisecond) + 400
 
