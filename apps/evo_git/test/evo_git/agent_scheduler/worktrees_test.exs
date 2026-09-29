@@ -494,14 +494,34 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
 
       # Proc A creates the worktree, then crashes. The create reply goes to
       # proc A itself (it passes self() as the monitored agent pid).
+      #
+      # Proc A reports the create RESULT to this test BEFORE crashing, and the
+      # gap below syncs on that message — NOT on observing the directory. Once
+      # the create returns the manager monitors proc A, and its monitor-driven
+      # destroy (rm_rf + prune + branch delete) can delete the freshly created
+      # worktree before this test process gets its first poll — the same hazard
+      # the exit-gated tests above guard against. Polling for a TRANSIENT
+      # directory is a race no budget can fix; the completion message is a
+      # deterministic signal that proc A's real git create work has finished.
       spawn(fn ->
-        WorktreeManager.create_worktree_for_agent(agent_id, tmp_dir, wt_path, spec, meta, self())
+        result =
+          WorktreeManager.create_worktree_for_agent(
+            agent_id,
+            tmp_dir,
+            wt_path,
+            spec,
+            meta,
+            self()
+          )
+
+        send(parent, {:a_created, result})
         Process.exit(self(), :kill)
       end)
 
-      # Generous deadline (the 30s helper default — see wait_until/2): this
-      # waits on the real git worktree create of proc A.
-      wait_until(fn -> File.dir?(wt_path) end)
+      # Generous budget (matching the create awaits above — see wait_until/2):
+      # this gates proc A's REAL git worktree create work (lazy repo init +
+      # leftover destroy + CoW or `git worktree add` + clean/checkout).
+      assert_receive {:a_created, {:ok, ^wt_path}}, 30_000
 
       # IMMEDIATELY re-create for the SAME agent_id — the old agent's :DOWN
       # has likely not been processed yet (retry-after-crash race). Must
