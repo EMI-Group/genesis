@@ -1064,10 +1064,11 @@ impl BackendManager {
 /// hot-looping); false while the window does not exist yet (early startup),
 /// so callers can retry.
 ///
-/// `pub(crate)`: the single navigation implementation, shared by the
-/// watchdog ([`BackendManager::navigate`], error-page and recovery paths)
-/// and `run_gui`'s setup closure in `main.rs`, which re-navigates the
-/// webview to the dashboard after the initial readiness poll (step 8).
+/// `pub(crate)`: the single navigation implementation, used by
+/// [`BackendManager::navigate`] (the error and startup pages) and by the
+/// shared [`BackendManager::load_dashboard`] driver, which serves BOTH the
+/// boot path ([`BackendManager::run_bootstrap`]) and the crash-recovery path
+/// ([`BackendManager::show_backend`]).
 pub(crate) fn navigate_webview(window: &tauri::WebviewWindow, url: &str) -> bool {
     match tauri::Url::parse(url) {
         Ok(parsed) => match window.navigate(parsed) {

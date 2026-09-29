@@ -929,8 +929,9 @@ fn run_gui() {
             //    (which waits for the window) behaves as before. The window's
             //    initial load races the backend boot — the backend is not
             //    listening yet, so that first navigation typically fails; the
-            //    boot thread (step 6) re-navigates to the dashboard once the
-            //    readiness poll succeeds.
+            //    boot thread runs `BackendManager::run_bootstrap`, which drives
+            //    the webview to the dashboard through the shared
+            //    `load_dashboard` gate once the backend serves.
             //
             //    The `on_page_load` hook (attached before `.build()`) feeds the
             //    manager's dashboard-loaded latch: `navigate` only proves the

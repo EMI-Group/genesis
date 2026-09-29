@@ -369,7 +369,9 @@ pub fn wait_for_ready(url: &str, timeout_secs: u64) {
         }
     }
 
-    eprintln!("[desktop] backend at {url} did not become ready within {timeout_secs}s");
+    crate::shell_log::log(&format!(
+        "backend at {url} did not become ready within {timeout_secs}s"
+    ));
 }
 
 #[cfg(test)]
