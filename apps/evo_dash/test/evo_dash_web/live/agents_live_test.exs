@@ -66,9 +66,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
     test "starts in the async loading state with generation 1", %{conn: conn} do
       # Block the async load task so the initial render's loading state is
       # deterministic — the load runs in a TaskSupervisor child and could
-      # otherwise finish before the assertion.
+      # otherwise finish before the assertion. The load runs in BOTH the dead
+      # render and the connected mount, so the release latch is SHARED (a
+      # per-pid barrier would free only one caller and leave the connected
+      # mount's load wedged).
+      latch = :atomics.new(1, [])
+
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
-        Process.sleep(200)
+        await_latch(latch)
         {:ok, %{}}
       end)
 
@@ -79,6 +84,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:load_generation] == 1
       assert assigns(view)[:agents_loading] == true
 
+      # Release the blocked load(s) and flush — all INSIDE the test window.
+      :atomics.put(latch, 1, 1)
       html = flush_agents_load(view)
       refute html =~ "Loading agents…"
     end
@@ -598,12 +605,19 @@ defmodule EvoDashWeb.AgentsLiveTest do
       send(view.pid, {:agent_updated, agent_id(), [status: :waiting], foreign})
       send(view.pid, {:agent_removed, agent_id(), foreign})
 
-      # All four events must be dropped — no refresh spawned (refresh_seq
-      # stays 0) and the tree is unchanged.
-      Process.sleep(100)
-      assert assigns(view)[:refresh_seq] == 0
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
-      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).status == :running
+      # All four events must be dropped. The LiveView processes its mailbox in
+      # FIFO order, so the synchronous `assigns/1` read (:sys.get_state) has
+      # already handled them — and a DROPPED event leaves BOTH the coalescing
+      # buffer and its flush timer untouched, which is a complete deterministic
+      # proof (nothing asynchronous can follow a dropped event), so no timing
+      # window is needed.
+      state = assigns(view)
+      assert state.pending_agent_events == []
+      assert state.agent_flush_scheduled == false
+      assert state.pending_agents_refresh == false
+      assert state.refresh_seq == 0
+      assert state.agents |> Enum.map(& &1.id) == [agent_id()]
+      assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
     end
   end
 
@@ -843,11 +857,17 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       flush_agent_events(view)
 
-      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
+      # The flush handler spawns AT MOST ONE refresh and bumps the monotonic
+      # :refresh_seq SYNCHRONOUSLY at the spawn, so right after the synchronous
+      # flush round-trip the count is already final: exactly one (a second
+      # spawn would have made it 2).
+      assert assigns(view)[:refresh_seq] == 1
 
-      # Give a hypothetical SECOND refresh a window to appear, then assert the
-      # burst produced exactly one (refresh_seq is monotonic, never reset).
-      Process.sleep(150)
+      # The single refresh's authoritative list read lands asynchronously; wait
+      # for it, then assert it happened EXACTLY once — :refresh_seq (asserted
+      # above and re-asserted below) is the deterministic proof that no second
+      # spawn exists, so the counter cannot exceed before + 1.
+      wait_until(fn -> Agent.get(calls, & &1) >= before + 1 end)
       assert assigns(view)[:refresh_seq] == 1
       assert Agent.get(calls, & &1) == before + 1
     end
@@ -882,10 +902,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       flush_agent_events(view)
 
-      wait_until(fn -> Agent.get(counter, & &1) == before + 1 end)
-
-      # No extra fetch may follow (a second flush/spawn would show up here).
-      Process.sleep(150)
+      # The flush drains the WHOLE burst and calls refetch_selected_history/1 AT
+      # MOST ONCE — its only call site — so exactly one history fetch is spawned
+      # (that call also sets :history_loading_agent_id synchronously at spawn).
+      # Wait for that single fetch's runner call to land, then prove no second
+      # one can follow: the buffer is drained and no flush timer is armed, and
+      # refetch_selected_history/1 has no other caller, so a second fetch is
+      # structurally impossible (no timing window needed).
+      wait_until(fn -> Agent.get(counter, & &1) >= before + 1 end)
+      assert assigns(view)[:pending_agent_events] == []
+      refute assigns(view)[:agent_flush_scheduled]
       assert Agent.get(counter, & &1) == before + 1
     end
 
@@ -922,8 +948,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       agent = assigns(view)[:agents] |> Enum.find(&(&1.id == agent_id()))
       assert agent.total_tokens == 123
 
-      # …but no history fetch was spawned by the burst.
-      Process.sleep(150)
+      # …but no history fetch was spawned by the burst. The two synchronous
+      # checks below are EXHAUSTIVE: refetch_selected_history/1 sets
+      # :history_loading_agent_id synchronously at spawn, so a spawned-but-
+      # unfinished fetch shows up there immediately; a spawned-and-FINISHED one
+      # clears that flag but bumps the agent counter — so no timing window is
+      # needed, every failure mode is caught.
+      assert assigns(view)[:history_loading_agent_id] == nil
       assert Agent.get(counter, & &1) == before
     end
 
@@ -944,8 +975,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:pending_agent_events] != []
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
-      # Let the REAL trailing-edge timer fire (no manual flush here).
-      Process.sleep(400)
+      # Let the REAL trailing-edge timer fire (no manual flush here): poll the
+      # observable buffer until the timer's flush has drained and applied it.
+      # The timer is armed by the event above, so the arrival of an empty buffer
+      # is the deterministic proof that the timer (not a manual flush) applied it.
+      wait_until(fn -> assigns(view)[:pending_agent_events] == [] end)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
                Enum.sort([agent_id(), 2])
@@ -1599,7 +1633,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       render_click(view, "switch_left_view", %{"view" => "bogus"})
 
       assert assigns(view)[:left_view] == :tree
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      # An unknown view value is a no-op: nothing spawns a fetch (which would set
+      # :commit_graph_loading synchronously) and nothing arms a throttled one-shot
+      # tick (which would set :commit_graph_tick_scheduled) — both failure modes
+      # are synchronous assigns, so asserting them here is an immediate
+      # deterministic proof that no runner call can follow.
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
     end
 
     test "viewing the tree never invokes the commit runner", %{conn: conn} do
@@ -1617,8 +1657,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      # The default tree view must never trigger a git RPC.
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      # The default tree view must never trigger a git RPC. Both failure modes of
+      # a git RPC are synchronous assigns (a spawned fetch sets
+      # :commit_graph_loading; an armed throttled tick sets
+      # :commit_graph_tick_scheduled), so asserting both FALSE right after the
+      # synchronous load flush is a complete deterministic proof.
+      assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
     end
 
     test "switching to commits fetches once per {repo_root, task_id} group with its live tips and the limit",
@@ -1664,7 +1709,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert tips_a == ["c1", "c1b"]
       assert tips_b == ["c2"]
 
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      # Every runner call of ONE fetch precedes its async result, so once the
+      # loading flag clears the whole fetch is done: an extra call could only
+      # come from a SECOND fetch, and no second fetch is in flight (loading
+      # false) or armed as a throttled one-shot (tick false). Deterministic —
+      # no window needed.
+      wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
     test "agents lacking commit metadata are skipped by the fetch", %{conn: conn} do
@@ -1700,10 +1752,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       render_click(view, "switch_left_view", %{"view" => "commits"})
 
       # Only the fully-eligible agent's group is fetched — exactly one call, and
-      # never for a nil/blank repo_root, commit or task_id.
+      # never for a nil/blank repo_root, commit or task_id. Once the fetch's
+      # loading flag clears the whole fetch is done, so an extra call could only
+      # come from a second fetch — assert none is in flight or armed.
       assert_receive {:commit_graph_call, _node, "task-1", repo_root, _tips, _opts}, 1000
       assert repo_root == "/repo/a"
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
   end
 
@@ -1742,7 +1798,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # task's live tips. Groups are sorted by {repo_key, task_id}.
       assert_receive {:commit_graph_call, _node, "task-1", "/repo/a", ["c1"], [limit: 100]}, 1000
       assert_receive {:commit_graph_call, _node, "task-2", "/repo/a", ["c2"], [limit: 100]}, 1000
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+
+      # Both group calls precede the fetch's async result, so once its loading
+      # flag clears the fetch is done: an extra call could only come from a
+      # SECOND fetch — assert none is in flight or armed as a tick.
+      wait_until(fn -> assigns(view)[:commit_graph_loading] == false end)
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
     test "two groups sharing a repo_key are unioned into ONE repo entry", %{conn: conn} do
@@ -2654,11 +2716,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # The tree merged the update (the flush really ran)…
       assert assigns(view)[:agents] |> Enum.map(& &1.status) == [:waiting]
 
-      # …but the fingerprint gate skipped BOTH the rebuild and the refetch: no
-      # new runner call is recorded (a non-gated path would have spawned one
-      # or at least armed the tick — see the next test).
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      # …but the fingerprint gate skipped BOTH the rebuild and the refetch: a
+      # non-gated path would have spawned a fetch (setting :commit_graph_loading
+      # synchronously) or armed the throttled one-shot tick (setting
+      # :commit_graph_tick_scheduled) — both failure modes are synchronous
+      # assigns, so asserting both FALSE right after the flush is the
+      # deterministic proof that no runner call can follow (no window needed).
       assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
     end
 
     test "a commit-relevant flush (a moved tip) refetches", %{conn: conn} do
@@ -2747,8 +2812,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert has_element?(view, "#cg-selection-readout-#{dom}")
 
       # …and does NOT reload the graph — no rebuild, no refetch, no runner call.
-      refute_receive {:commit_graph_call, _, _, _, _, _}, 200
+      # Selection is renderer-side: neither failure mode of a git RPC happens
+      # (no fetch spawn → :commit_graph_loading stays false; no throttled one-shot
+      # → :commit_graph_tick_scheduled stays false). Both are synchronous assigns,
+      # so asserting them right after the synchronous click is the deterministic
+      # proof (no window needed).
       assert assigns(view)[:commit_graph_loading] == false
+      assert assigns(view)[:commit_graph_tick_scheduled] == false
     end
   end
 
@@ -2781,6 +2851,35 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp flush_agent_events(view) do
     send(view.pid, :flush_agent_events)
     render(view)
+  end
+
+  # Blocks the caller until the TEST flips `latch` (an :atomics flag) — the
+  # deterministic "the async load is still in flight" barrier used by the
+  # initial-load test. It polls a SHARED atomic (not a message) because the page
+  # load runs in BOTH the dead render and the connected mount, so several
+  # callers block at once and a per-pid release would free only one.
+  # Never raises: it returns after a generous 5s budget (mirrors
+  # blocking_history_runner/1's `after` fallback) so a test bug can never wedge
+  # a TaskSupervisor child at teardown — and a raise here would in any case be
+  # swallowed by the load task's node-boundary rescue, silently degrading the
+  # test instead of failing it.
+  defp await_latch(latch, timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_latch_loop(latch, deadline)
+  end
+
+  defp await_latch_loop(latch, deadline) do
+    cond do
+      :atomics.get(latch, 1) == 1 ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :ok
+
+      true ->
+        Process.sleep(1)
+        await_latch_loop(latch, deadline)
+    end
   end
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
