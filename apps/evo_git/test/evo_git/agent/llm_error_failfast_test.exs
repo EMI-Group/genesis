@@ -86,12 +86,11 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
 
   # Base (ms) of the production SHORT exponential-backoff between ordinary
   # transient retry attempts — shrunk through the call-time app-env seam
-  # `:llm_retry_backoff_base_ms` (same 75ms value the sibling
-  # `tool_dispatch_retry_slot_test.exs` uses) so the 500 retry test costs
-  # ~0.25s instead of ~3s. It is also a safety net: if the 400 path ever
-  # regressed into the ordinary retry branch, the test would still finish
-  # quickly enough to observe the failure instead of timing out.
-  @retry_backoff_base_ms 75
+  # `:llm_retry_backoff_base_ms` so the 500 retry test costs ~0.08s instead of
+  # ~3s. It is also a safety net: if the 400 path ever regressed into the
+  # ordinary retry branch, the test would still finish quickly enough to
+  # observe the failure instead of timing out.
+  @retry_backoff_base_ms 25
 
   # Model-exhaustion schedule seams (base / cap). With 5_000 / 30_000 the
   # 15-entry schedule is [5_000, 10_000, 30_000, 30_000, ...] (2 doubling
@@ -331,7 +330,13 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
     Application.put_env(:req_llm, :openai_api_key, "test-key")
 
     try do
-      warm_reqllm()
+      # The warm-up's expected transport noise (the 3 `Retrying streaming
+      # request …` warnings + the final `Finch streaming transport failed`
+      # error) is emitted by the Finch pool PROCESS, so the per-test
+      # `capture_log: true` cannot reach it and it would leak to the console.
+      # `capture_log/1` here swallows those lines; the captured string is
+      # deliberately discarded — only the warm-up side effects matter.
+      _ = ExUnit.CaptureLog.capture_log(fn -> warm_reqllm() end)
     after
       restore_env(:req_llm, :openai_api_key, previous_api_key)
     end
@@ -606,7 +611,7 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
 
       # max_retries 2 → 3 attempts. The 500 is neither a model-exhaustion signal
       # nor a non-retryable rejection, so the ordinary short-backoff loop runs
-      # (~75ms + ~150ms with the shrunk seam) and the exhausted branch returns
+      # (~25ms + ~50ms with the shrunk seam) and the exhausted branch returns
       # the raw reason.
       task = start_agent_call(agent_id, fn -> call_llm_with_retry(agent_id, 2) end)
 
