@@ -1185,7 +1185,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       send(view.pid, {:task_updated, "some_other_task_id", :finalizing, node()})
 
       # `assigns/1` is a `:sys.get_state` round-trip, so the broadcast sent
-      # above has already been processed: the 300ms trailing-edge debounce is
+      # above has already been processed: the trailing-edge debounce is
       # scheduled (pending true). Poll for it to fire and the sidebar reload to
       # run — otherwise the unchanged generation assertion below would be
       # vacuous.
@@ -1223,7 +1223,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       gen_before = assigns(view)[:load_generation]
 
       # The reviewed task's own broadcast (from the viewed node) warrants a
-      # page reload. The generation is bumped only once the 300ms debounce has
+      # page reload. The generation is bumped only once the debounce has
       # fired and start_async_load ran, so polling for it is the event-driven
       # wait (no fixed pre-sleep).
       send(view.pid, {:task_updated, task_id, :finalizing, node()})
@@ -1278,7 +1278,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # set, only the sidebar refresh runs (matching node).
       send(view.pid, {:task_deleted, task_id, node()})
 
-      # The broadcast has been processed (assigns/1 syncs): the 300ms
+      # The broadcast has been processed (assigns/1 syncs): the
       # trailing-edge debounce is scheduled. Poll for the sidebar reload to
       # run — otherwise the unchanged generation assertion below would be
       # vacuous.

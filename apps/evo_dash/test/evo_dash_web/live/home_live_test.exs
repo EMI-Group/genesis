@@ -237,7 +237,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   # Polls `fun` every 10ms until it returns truthy (or the timeout elapses) —
   # the tasks_live_test.exs pattern for observing async results (the real
-  # supervised fetches, the 300ms PubSub debounce) without fixed sleeps.
+  # supervised fetches, the PubSub debounce) without fixed sleeps.
   defp wait_until(fun, timeout \\ 2000) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
@@ -2119,8 +2119,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # :running summary map (the shape an applied fetch result writes — the
       # 16-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). The hub
       # seed is SYNCHRONOUS (node_aware.ex on_mount), so the VERY FIRST render
-      # already carries the sidebar — no task_updated broadcast, no 300ms
-      # debounce sleep: the exact no-blink contract. (The connected-mount
+      # already carries the sidebar — no task_updated broadcast, no debounce
+      # sleep: the exact no-blink contract. (The connected-mount
       # staleness-catch-up fetch still fires afterwards and is stale-guarded;
       # it lands after this html assertion and does not affect the first
       # paint.)
@@ -2174,7 +2174,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "reflect_side", :running, node()})
 
       # The broadcast has been processed (assigns/1 is a :sys.get_state
-      # round-trip), so the 300ms trailing-edge debounce is scheduled. Poll
+      # round-trip), so the trailing-edge debounce is scheduled. Poll
       # until it has fired and the sidebar reload ran — no fixed sleep.
       assert assigns(view)[:tasks_reload_pending] == true
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
@@ -2211,7 +2211,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "reflect_a", :completed, node()})
       send(view.pid, {:task_updated, "reflect_b", :completed, node()})
 
-      # The broadcasts have been processed (assigns/1 syncs), so the 300ms
+      # The broadcasts have been processed (assigns/1 syncs), so the
       # trailing-edge debounce is scheduled. Poll until it fired and the
       # sidebar reload ran (exercise partition_active_tasks/1 with the
       # nil-timestamp rows) — no fixed sleep.
