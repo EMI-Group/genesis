@@ -325,7 +325,9 @@ defmodule EvoGit.Sandbox.HelpersTest do
         # release file here instead; the loop is bounded (600 × 50ms ≈ 30s worst
         # case) so it always exits 0 on its own even if this test never runs.
         trigger = Path.join(tmp_dir, "release")
-        script = "echo $$; for ((i=0; i<600; i++)); do [ -e '#{trigger}' ] && break; sleep 0.05; done"
+
+        script =
+          "echo $$; for ((i=0; i<600; i++)); do [ -e '#{trigger}' ] && break; sleep 0.05; done"
 
         port =
           Port.open(
