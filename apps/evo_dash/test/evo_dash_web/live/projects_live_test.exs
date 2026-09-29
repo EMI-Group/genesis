@@ -1926,14 +1926,22 @@ defmodule EvoDashWeb.ProjectsLiveTest do
          %{conn: conn} do
       id = save_target!()
 
-      # A 300ms connect answer means any SYNCHRONOUS connect in the LiveView
-      # process would stall the click for that long — an off-process connect
-      # (EvoDash.TaskSupervisor) returns immediately.
+      # A synchronous connect would run in the PARENT LiveView process
+      # (LiveComponent events run in the parent), stalling the click. The
+      # off-process property is asserted below via the recorded connect caller
+      # pid: the fake records `elem(from, 0)` on every `:connect` call, and the
+      # caller must be neither the LiveView process nor the test process —
+      # which is exactly what a `EvoDash.TaskSupervisor` spawn produces. No
+      # `:connect_delay_ms` is passed: the fake records the caller only in its
+      # serialized `handle_call(:connect)` reply, so a delayed reply would just
+      # make the test's `:callers` read block for the whole delay (300ms of
+      # wall clock) without adding assertion power — the pid assertion is
+      # delay-independent.
       fake =
         start_supervised!(
           {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
            {id, %{phase: :disconnected, node: nil, last_error: nil},
-            [connect_result: {:ok, :connecting}, connect_delay_ms: 300]}}
+            [connect_result: {:ok, :connecting}]}}
         )
 
       {:ok, view, _html} = live(conn, ~p"/projects")
