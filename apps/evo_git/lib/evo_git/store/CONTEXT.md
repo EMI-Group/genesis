@@ -34,6 +34,14 @@ EvoGit.Store (GenServer facade, store.ex)
 
 `init/1` → `Boot.start_dynamic(data_dir, pool_size: <opt>)` runs the Ecto migrations in `../../priv/repo/migrations/` BEFORE any read/write (`Ecto.Migrator.run(repo, Boot.migration_source(), :up, all: true)` — a no-op on a current DB), so an existing user DB upgrades automatically on first start; a manual `mix migrate.store` is never required to boot. Boot failure → `{:stop, {:failed_to_open_sqlite, reason}}` (historical stop tuple) — that tuple covers ONLY the repo-OPEN path (`start_dynamic/2`'s `{:error, reason}` from `EvoGit.Repo.start_link/1`); a MIGRATION raise (e.g. the baseline post-condition rejecting a non-canonical `tasks` shape) propagates out of `init/1` and crashes the Store child (supervisor restart, then app-boot failure) instead of stopping with that tuple. `terminate/2` → `Boot.stop(repo)` inside the module's one justified try/rescue (GenServer terminate must never raise).
 
+### Boot blocking profile (startup latency)
+
+`Boot.start_dynamic/2` and the migration run are SYNCHRONOUS inside `EvoGit.Store.init/1` (single-connection boot repo → `Ecto.Migrator.run(repo, migration_source(), :up, all: true)` under the `:global` lock → `Boot.stop(boot)` → reopen the pool at `pool_size: 4` → `Store.Writer.start_link`) — there is NO `handle_continue`/Task/async deferral, so the supervisor's child start BLOCKS until it returns.
+That blocks `EvoGit.Application.start/2`, and therefore (via the OTP application-dependency order — `evo_dash`'s `.app` lists `evo_git` as a start-time dep) also blocks `EvoDashWeb.Endpoint`'s Bandit listener bind: nothing in evo_dash can serve HTTP until evo_git's supervision tree is fully started.
+Cost is a NO-OP on a current DB; the one-time cost is a NEWLY-SHIPPED migration version or a legacy pre-Ecto adoption (baseline `PRAGMA table_info` probes + `ALTER TABLE` + the data-normalization `UPDATE` scans) — bounded by DB size, with no explicit time cap.
+A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000` (`../repo.ex`) — the only multi-second bound on the boot path; there are NO `Process.sleep`/`:timer.sleep` calls anywhere on the store/application boot path.
+The Python-visible symptom of a slow boot: the Tauri shell's initial WebView navigation gate (15 s) can expire before the endpoint answers, showing the "Genesis backend unavailable" retry page while the backend is still (or just finished) booting — a manual Retry navigates to the by-then-serving endpoint.
+
 ### Migration 1 — `20260815000001_baseline_adoption`
 
 Baseline schema ADOPTION: works on a fresh DB (tables via `CREATE TABLE IF NOT EXISTS` — 20-column `tasks`, 3-column `projects`) AND adopts ANY pre-Ecto legacy DB (no `schema_migrations` table ⇒ migrator sees version 0 ⇒ this migration runs):
