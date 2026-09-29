@@ -67,6 +67,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   defp put_meta(agent_id, depth) do
     meta = %SchedMeta{id: agent_id, depth: depth, spec: agent_spec()}
     :ets.insert(:evogit_sched_meta, {agent_id, meta})
+    on_exit(fn -> delete_ets_row(:evogit_sched_meta, agent_id) end)
     :ok
   end
 
@@ -80,6 +81,14 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
     }
 
     :ets.insert(:evogit_agent_state, {agent_id, state})
+    on_exit(fn -> delete_ets_row(:evogit_agent_state, agent_id) end)
+    :ok
+  end
+
+  # Targeted teardown of one row THIS module inserted (see `setup/1`):
+  # `:ets.delete/2` is idempotent and the `whereis` guard keeps it crash-free.
+  defp delete_ets_row(table, key) do
+    if :ets.whereis(table) != :undefined, do: :ets.delete(table, key)
     :ok
   end
 
@@ -108,11 +117,15 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   end
 
   setup do
+    # `:evogit_sched_meta` / `:evogit_agent_state` are VM-GLOBAL named tables normally
+    # owned by the running `EvoGit.AgentScheduler`; this start-of-test wipe is the
+    # module's defensive precondition. Teardown is deliberately TARGETED (an `on_exit`
+    # per row, registered in `put_meta/2` / `put_agent_state/2`) rather than a wholesale
+    # `:ets.delete_all_objects/1`, which could nuke rows another module owns.
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_agent_state)
     :ets.delete_all_objects(:evogit_sched_meta)
     :ets.delete_all_objects(:evogit_agent_state)
-    on_exit(fn -> :ets.delete_all_objects(:evogit_sched_meta) end)
     :ok
   end
 
