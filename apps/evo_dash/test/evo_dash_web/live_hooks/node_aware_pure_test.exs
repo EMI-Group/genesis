@@ -308,18 +308,22 @@ defmodule EvoDashWeb.NodeAwarePureTest do
   describe "handle_task_info/2 — node-filtered debounce" do
     # The node-identity PubSub contract: `{:task_updated, task_id, status,
     # node}` / `{:task_deleted, task_id, node}` where node is the BEAM node
-    # atom of the publishing node. A matching-node event schedules the 300ms
-    # trailing-edge debounce (`:node_aware_reload_tasks`); a foreign-node event
-    # is dropped BEFORE the debounce — socket returned unchanged, no message.
+    # atom of the publishing node. A matching-node event schedules the
+    # trailing-edge debounce (`Process.send_after(self(),
+    # :node_aware_reload_tasks, <window>)`); a foreign-node event is dropped
+    # BEFORE the debounce — socket returned unchanged, no message.
     # Every scheduling test drains the message with `assert_receive` so a late
     # delivery can never leak into a later test's `refute_receive`.
     #
-    # The receive budget (2000ms) is generously ABOVE the real 300ms
-    # production debounce (`Process.send_after(self(), :node_aware_reload_tasks,
-    # 300)`): the requirement is unchanged (the debounce message MUST arrive),
-    # but the margin absorbs timer/scheduler latency on a loaded machine — a
-    # 500ms budget is only 200ms above the timer and reproducibly flaked under
-    # CPU load ("message delivered too close to the timeout value").
+    # The window is the CALL-TIME app-env seam
+    # `:node_aware_reload_debounce_ms` (production default 300ms; the suite
+    # pins it to 10ms in `test/test_helper.exs`), so no test here depends on a
+    # specific window — only on the debounce message arriving, or not.
+    # The receive budget (2000ms) is generously ABOVE any such window: the
+    # requirement is that the debounce message MUST arrive, and the margin
+    # absorbs timer/scheduler latency on a loaded machine — a 500ms budget
+    # reproducibly flaked under CPU load ("message delivered too close to the
+    # timeout value").
     test "{:task_updated, _, _, node()} with matching node schedules the debounce" do
       sock = socket(%{current_node: node(), tasks_reload_pending: false})
 

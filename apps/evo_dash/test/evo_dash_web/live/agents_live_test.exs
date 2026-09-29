@@ -692,7 +692,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   describe "agent event coalescing" do
     # The production fix buffers the high-frequency "agents" PubSub events and
     # applies them in ONE trailing-edge flush (EvoDashWeb.AgentsLive.PendingEvents,
-    # 300ms window) instead of merging + re-rendering the whole tree per event.
+    # coalescing window) instead of merging + re-rendering the whole tree per event.
     # These tests pin the buffer contract: coalescing, the single-timer rule,
     # node filtering BEFORE buffering, arrival-order drain, at-most-one
     # fallback refresh, at-most-one selected-agent history refetch, and the
@@ -944,7 +944,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:pending_agent_events] != []
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
-      # Let the REAL 300ms trailing-edge timer fire (no manual flush here).
+      # Let the REAL trailing-edge timer fire (no manual flush here).
       Process.sleep(400)
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
@@ -1240,7 +1240,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # {:agents_updated, node} bulk signal ~200ms later
       # (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted into a LATER
       # test's socket, the bulk signal would set that test's
-      # :pending_agents_refresh, arm a 300ms flush, and its authoritative
+      # :pending_agents_refresh, arm a coalescing flush, and its authoritative
       # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
       # merge — the historical cross-test flake on this file.
       #
@@ -1407,7 +1407,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
     # :live_view`). AgentsLive forwards the node-identity task broadcasts to
     # NodeAware.handle_task_info/2 — node-filtered (only the viewed node's
-    # events schedule a reload) and debounced (300ms trailing edge via
+    # events schedule a reload) and debounced (trailing-edge debounce via
     # :node_aware_reload_tasks) — plus the :node_aware_reload_tasks
     # self-message. These tests guard the handle_info clauses against the
     # FunctionClauseError crash class that previously slipped through
@@ -1429,7 +1429,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:task_updated, "test-finalizing", :finalizing, node()}
       )
 
-      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      # Phase 1: the event is processed and the debounce is scheduled.
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
 
       # Phase 2: the debounce fires and reload_tasks clears the flag.
@@ -1450,7 +1450,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, "test-deleted", node()})
 
-      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      # Phase 1: the event is processed and the debounce is scheduled.
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
 
       # Phase 2: the debounce fires and reload_tasks clears the flag.
@@ -1476,7 +1476,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:task_updated, "test-finalizing", :finalizing, :remote@elsewhere}
       )
 
-      # Sample across the 300ms debounce window (10ms cadence): the
+      # Sample across the debounce window (10ms cadence): the
       # reload-pending flag must never become true.
       deadline = System.monotonic_time(:millisecond) + 400
 
@@ -1510,7 +1510,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:task_updated, "test-review", nil, node()}
       )
 
-      # Phase 1: the event is processed and the 300ms debounce is scheduled.
+      # Phase 1: the event is processed and the debounce is scheduled.
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
 
       # Phase 2: the debounce fires and reload_tasks clears the flag.
@@ -2774,7 +2774,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
         timeout
       )
 
-  # Triggers the AgentsLive coalescing flush directly (bypassing the 300ms
+  # Triggers the AgentsLive coalescing flush directly (bypassing the
   # trailing-edge timer). The LiveView processes its mailbox in FIFO order,
   # so any agent events sent before this message have been buffered and are
   # applied by the time this flush is handled.
