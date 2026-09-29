@@ -185,6 +185,11 @@ ExUnit drains ALL `async: true` modules before running any `async: false` one (`
 Enablers that would unlock the config-isolated majority are production changes: an injectable config dir (`EvoGit.Platform.config_dir/1`) and a `server \\ __MODULE__` first arg on `EvoGit.TaskRegistry`'s client functions plus a store/registry seam in `EvoDash.NodeContext`. A purely process-dictionary override would NOT suffice — LiveView processes do not inherit the test process's process dictionary, so the config dir / store name must be resolvable per node/session.
 Per-file evidence lives in the child CONTEXT.md files — `evo_dash/CONTEXT.md`, `evo_dash_web/live/CONTEXT.md`, `evo_dash_web/live_hooks/CONTEXT.md`, `evo_dash_web/controllers/CONTEXT.md`.
 
+## Notes for Agents — uncaptured console noise & load-sensitive runs
+
+`capture_log: true` is in effect only while ≥1 test is running (ExUnit swaps the `:default` Logger handler out; `ExUnit.CaptureServer.log_capture_on/3`), so a Logger line emitted in the between-test gap by a global/async process prints to the console. Observed sources: `EvoGit.TaskRegistry` wrapper-crash warnings (review_live_test's real `/nonexistent/repo/path` auto-resolve task → `File.mkdir_p!` EROFS), `EvoGit.Runtime.SelfReflective` `[error] SelfReflective failed: {:error, :llm_not_configured}` (home_live_test), offloaded `EvoGit.Store` Task crashes racing `IsolatedTaskStore` teardown (tasks_live_test, load-dependent), and real-provider `[warning] Streaming provider/API request failed … 403` (settings/welcome `test_llm`).
+A full `mix test` under concurrent CPU load also surfaces load-sensitive failures that pass standalone at every seed (`desktop_lifetime_test.exs`, `tasks_live_test.exs:871`, `projects_live_test.exs:2042`). Sources/detail: `evo_dash_web/live/CONTEXT.md` + `evo_dash/CONTEXT.md`.
+
 ## Constraints
 - Follow standard Phoenix test conventions: mirror the `lib/` directory structure under `test/`.
 - All connection-based tests must `use EvoDashWeb.ConnCase`.
