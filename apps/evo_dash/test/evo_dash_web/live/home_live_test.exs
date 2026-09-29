@@ -22,6 +22,13 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   alias EvoGit.TaskInfo
 
+  # Poll interval for the file's wait_until/2 helper. Tightened from 10ms to
+  # 2ms: the pollers observe async work that typically settles within a few
+  # ms, so the old interval was pure overshoot latency (the residual wait of a
+  # fixed-interval poll averages interval/2). Still non-zero so the loop never
+  # spins hot.
+  @poll_interval_ms 2
+
   setup do
     # Isolated Store + TaskRegistry (pattern from tasks_live_test). The helper
     # owns teardown: it stops the isolated pair FIRST, then restores and
@@ -235,9 +242,10 @@ defmodule EvoDashWeb.HomeLiveTest do
     |> Floki.find(selector) != []
   end
 
-  # Polls `fun` every 10ms until it returns truthy (or the timeout elapses) —
-  # the tasks_live_test.exs pattern for observing async results (the real
-  # supervised fetches, the PubSub debounce) without fixed sleeps.
+  # Polls `fun` until it returns truthy (or the timeout elapses) — the
+  # tasks_live_test.exs pattern for observing async results (the real
+  # supervised fetches, the PubSub debounce) without fixed sleeps. The poll
+  # interval is @poll_interval_ms (a few ms — see the attribute).
   defp wait_until(fun, timeout \\ 2000) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
@@ -248,7 +256,7 @@ defmodule EvoDashWeb.HomeLiveTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("timed out waiting for async condition")
         else
-          Process.sleep(10)
+          Process.sleep(@poll_interval_ms)
           wait_loop.(wait_loop)
         end
       end
@@ -2611,17 +2619,17 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
 
-      # The post-clone re-check now reports the source as downloaded. A short
-      # artificial delay simulates an in-flight clone; the busy state asserted
-      # below comes from render_click/1's synchronous render (source_busy is
-      # assigned in the event handler), so it only needs to outlive that call.
+      # The post-clone re-check now reports the source as downloaded. The
+      # "Cloning…" busy state asserted below is assigned SYNCHRONOUSLY by the
+      # `download_source` event handler, and `render_click/1`'s reply carries
+      # the render taken immediately after that handler returns (the LiveView
+      # process cannot process the clone-result message before then) — so the
+      # busy markup is deterministic and the stub needs no artificial delay.
+      # The post-clone settle is waited for with the bounded `wait_until/1`
+      # poll below.
       Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(50)
-        {:ok, %{}}
-      end)
-
+      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:ok, %{}} end)
       html = render_click(view, "download_source")
       assert html =~ "Cloning…"
       assert disabled?(html, "#genesis-source-download")
@@ -2640,11 +2648,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "a failing download flashes the error and keeps the gate", %{conn: conn} do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(50)
-        {:error, :boom}
-      end)
-
+      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:error, :boom} end)
       {:ok, view, _html} = live(conn, "/help")
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
@@ -2780,7 +2784,19 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       # No check is spawned for a remote node → the runner is never called and
       # source_available stays "unknown".
-      refute_receive :availability_runner_called, 200
+      #
+      # The 50ms window (down from 200ms) is sufficient because the failure mode
+      # is impossible BY CONSTRUCTION and, when it could occur, is immediate:
+      # `maybe_check_source/1` is the ONLY caller of the spawn helper and gates
+      # it on `SourceGate.visible?(current_node)` (node in [nil, node()]), and
+      # this test views a remote node — so a regression would call the runner
+      # during the CONNECTED MOUNT (handle_params), i.e. before/while `live/3`
+      # returns. The runner then sends its flag synchronously on the very next
+      # TaskSupervisor scheduler slot, far inside a 50ms budget. The
+      # `assert assigns(view).source_available == nil` line below is the
+      # durable assertion on the same failure mode (a spawned check with this
+      # node would make the gate known-unavailable → false).
+      refute_receive :availability_runner_called, 50
       assert assigns(view).source_available == nil
 
       # No gate, no blocked note, composer NOT blocked.
