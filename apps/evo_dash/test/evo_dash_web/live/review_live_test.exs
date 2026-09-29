@@ -375,6 +375,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # The merge form only renders after the async load populates
       # merge_targets / default_merge_target.
       html = flush_review_load(view)
+      # Drain the mount-time reload the load's own set_review_metadata broadcast
+      # armed (its timer fires at the suite's 10 ms debounce window): without it
+      # the reload can land right after the flush and leave the page loading.
+      settle_debounced_task_reload(view)
 
       # The "Merge into" selector appears next to the Merge button when the
       # repo has local branches.
@@ -399,6 +403,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       flush_review_load(view)
+      # Drain the mount-time reload armed by the load's set_review_metadata
+      # broadcast BEFORE driving the merge: a reload landing between the click
+      # and the assertions would render the loading page (and re-derive the
+      # repo state) mid-test.
+      settle_debounced_task_reload(view)
 
       # Dispatch the PRIMARY repo card's merge form: `repo_id` names the ONE
       # repo the submit acts on (the redesign replaced the shared merge box
@@ -449,6 +458,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       html = flush_review_load(view)
+      # Drain the mount-time reload the load's set_review_metadata broadcast
+      # armed (10 ms debounce window) so the page is settled for the
+      # DOM assertions below.
+      settle_debounced_task_reload(view)
 
       select_html = target_branch_select(html)
       assert select_html != "", "expected a target-branch <select> to be rendered"
@@ -497,6 +510,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # completes (MergeCheck.maybe_start runs from the load's handle_info,
       # never from handle_params) — flush the load first.
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the :checking state read below is the settled one, never
+      # a reload's transient loading state.
+      settle_debounced_task_reload(view)
 
       assert %{state: :checking, target: "main", files: []} = assigns(view)[:merge_status]
     end
@@ -505,6 +522,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so no reload can land around the injected result below and
+      # render the loading page for the DOM assertions.
+      settle_debounced_task_reload(view)
 
       send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
       html = render(view)
@@ -524,6 +545,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) before injecting the conflict result — a reload landing
+      # afterwards would re-project the repos and render the loading page.
+      settle_debounced_task_reload(view)
 
       send(
         view.pid,
@@ -546,6 +571,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the :checking state stays the settled one while the stale
+      # injections below are asserted.
+      settle_debounced_task_reload(view)
 
       # Wrong target — the running check targets "main".
       send(
@@ -1060,6 +1089,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # Flush the async load: the review content replaces the spinner.
       html = flush_review_load(view)
+      # Drain the mount-time reload armed by the load's own set_review_metadata
+      # broadcast: its timer fires at the suite's 10 ms debounce window, so
+      # without this it can land right after the flush and the commits-tab click
+      # below would render the loading page instead of the commit list.
+      settle_debounced_task_reload(view)
 
       # Title (objective fallback), branch badge, and commit-sha badge.
       assert html =~ "Test objective"
@@ -2496,6 +2530,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload the load's set_review_metadata broadcast
+      # armed (10 ms debounce window) so the resume click starts from the
+      # settled, non-loading page.
+      settle_debounced_task_reload(view)
 
       render_click(view, "resume")
 
@@ -2526,6 +2564,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) before the repo switch + resume click, so neither acts on a
+      # page whose reload lands mid-sequence.
+      settle_debounced_task_reload(view)
 
       # Switch to the foreign repo via the selector — resume must NOT pick up
       # the foreign repo's path/commit (PRIMARY-scoped by design).
@@ -2724,6 +2766,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     test "Continue task button fires resume", %{conn: conn, task_id: task_id} do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
+      # Drain the mount-time reload armed by the load's set_review_metadata
+      # broadcast (10 ms debounce window) so no reload lands mid-test and
+      # renders the loading page for the element assertions below.
+      settle_debounced_task_reload(view)
 
       # The secondary Continue button (task-actions row) fires resume —
       # presence + event attr only (the navigation itself is covered by the
@@ -2739,6 +2785,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
          } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the overflow menu below is read from the settled page.
+      settle_debounced_task_reload(view)
 
       menu = overflow_menu(html)
 
@@ -2790,6 +2839,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       html = flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the overflow menu below is read from the settled page.
+      settle_debounced_task_reload(view)
 
       menu = overflow_menu(html)
 
@@ -3233,6 +3285,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the whitelist-miss assertions below read the settled page
+      # and its settled @review_repos projection.
+      settle_debounced_task_reload(view)
 
       html = render_click(view, "merge", %{"repo_id" => "ghost", "target_branch" => "dev"})
 
@@ -3257,6 +3313,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) so the whitelist-miss assertions below read the settled page.
+      settle_debounced_task_reload(view)
 
       render_click(view, "reject", %{"repo_id" => "ghost"})
 
@@ -3360,6 +3419,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) before the two merge clicks so each reads its repo's own
+      # target from a settled page.
+      settle_debounced_task_reload(view)
 
       # Blank target → the repo's default ("main" here).
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => ""})
@@ -3492,6 +3555,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      # Drain the mount-time reload (armed by the load's set_review_metadata
+      # broadcast) before the change + merge clicks: a reload landing
+      # mid-sequence would re-derive the per-repo selects and render the
+      # loading page, breaking both the reads and the runner assertions.
+      settle_debounced_task_reload(view)
 
       # Move the FOREIGN repo's select to "dev" through its own per-repo form...
       render_change(view, "merge_target_change", %{
