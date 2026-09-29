@@ -1636,10 +1636,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # An unknown view value is a no-op: nothing spawns a fetch (which would set
       # :commit_graph_loading synchronously) and nothing arms a throttled one-shot
       # tick (which would set :commit_graph_tick_scheduled) — both failure modes
-      # are synchronous assigns, so asserting them here is an immediate
-      # deterministic proof that no runner call can follow.
+      # are synchronous assigns. The 0-timeout refute is the other, equally
+      # deterministic half: it proves no runner call has ALREADY been delivered.
+      # Neither check uses a wall clock. (No legit call exists here — the view
+      # never switched — so the mailbox is clean and the refute cannot false-fail.)
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
     test "viewing the tree never invokes the commit runner", %{conn: conn} do
@@ -1660,10 +1663,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # The default tree view must never trigger a git RPC. Both failure modes of
       # a git RPC are synchronous assigns (a spawned fetch sets
       # :commit_graph_loading; an armed throttled tick sets
-      # :commit_graph_tick_scheduled), so asserting both FALSE right after the
-      # synchronous load flush is a complete deterministic proof.
+      # :commit_graph_tick_scheduled), and the 0-timeout refute adds the
+      # "already delivered" half: the injected runner is a fast stub and
+      # flush_agents_load/1 renders (draining the mailbox) for up to 5s, so a
+      # fetch spawned by a bug would very likely have completed already — its
+      # {:commit_graph_call, …} would then sit in the mailbox with BOTH assigns
+      # back to false. The three checks together are exhaustive (in flight /
+      # finished) and completely wall-clock free.
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
     test "switching to commits fetches once per {repo_root, task_id} group with its live tips and the limit",
@@ -2720,10 +2729,16 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # non-gated path would have spawned a fetch (setting :commit_graph_loading
       # synchronously) or armed the throttled one-shot tick (setting
       # :commit_graph_tick_scheduled) — both failure modes are synchronous
-      # assigns, so asserting both FALSE right after the flush is the
-      # deterministic proof that no runner call can follow (no window needed).
+      # assigns. A zero-timeout refute adds the "already delivered" half (the
+      # stub is fast, so a bug's fetch would typically have completed before this
+      # read, leaving both assigns false with the call sitting in the mailbox).
+      # The mailbox is clean of commit_graph calls here: mount_loaded_commit_graph/2
+      # asserts (and thereby drains) its OWN single legit call before returning —
+      # verified against every caller, all of which either never touch the mailbox
+      # or assert their own fresh call only AFTER a mutation.
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
 
     test "a commit-relevant flush (a moved tip) refetches", %{conn: conn} do
@@ -2814,11 +2829,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # …and does NOT reload the graph — no rebuild, no refetch, no runner call.
       # Selection is renderer-side: neither failure mode of a git RPC happens
       # (no fetch spawn → :commit_graph_loading stays false; no throttled one-shot
-      # → :commit_graph_tick_scheduled stays false). Both are synchronous assigns,
-      # so asserting them right after the synchronous click is the deterministic
-      # proof (no window needed).
+      # → :commit_graph_tick_scheduled stays false), and the 0-timeout refute
+      # covers the complementary "already delivered" mode. The mailbox is clean of
+      # commit_graph calls because mount_loaded_commit_graph/2's own assert_receive
+      # drained its single legit call before returning.
       assert assigns(view)[:commit_graph_loading] == false
       assert assigns(view)[:commit_graph_tick_scheduled] == false
+      refute_receive {:commit_graph_call, _, _, _, _, _}, 0
     end
   end
 
