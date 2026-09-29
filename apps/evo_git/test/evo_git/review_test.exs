@@ -708,7 +708,7 @@ defmodule EvoGit.ReviewTest do
     rename_current_branch(tmp_dir, "feature/x")
     # Detach HEAD so the existing `feature/x` branch is not a candidate and the
     # well-known candidate order is exercised.
-    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir, stderr_to_stdout: true)
     System.cmd("git", ["branch", "dev"], cd: tmp_dir)
     System.cmd("git", ["branch", "prod"], cd: tmp_dir)
 
@@ -719,7 +719,7 @@ defmodule EvoGit.ReviewTest do
        %{tmp_dir: tmp_dir} do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     rename_current_branch(tmp_dir, "feature/x")
-    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir, stderr_to_stdout: true)
     System.cmd("git", ["branch", "master"], cd: tmp_dir)
 
     assert {:ok, "master"} = Review.default_merge_target(tmp_dir)
@@ -729,7 +729,7 @@ defmodule EvoGit.ReviewTest do
     {:ok, _base_sha} = commit_file(tmp_dir, "file.txt", "x\n", "Initial commit")
     rename_current_branch(tmp_dir, "feature/x")
     System.cmd("git", ["branch", "main"], cd: tmp_dir)
-    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir)
+    System.cmd("git", ["checkout", "--detach"], cd: tmp_dir, stderr_to_stdout: true)
 
     assert {:ok, "HEAD"} = Git.current_branch(tmp_dir)
     assert {:ok, "main"} = Review.default_merge_target(tmp_dir)

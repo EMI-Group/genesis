@@ -236,30 +236,52 @@ defmodule EvoGit.CommandShellTest do
     test "genesis tasks carry the positional text under :prompt in the enqueued opts",
          %{tmp_dir: tmp_dir} do
       without_model_profiles(fn ->
-        assert {:ok, output} =
-                 CommandShell.execute(
-                   ~s(StartTask.start_task genesis "Create a project" path=#{tmp_dir}),
-                   approval: :auto
-                 )
+        # Subscribe BEFORE starting the task so its terminal "tasks" broadcast
+        # cannot be missed (see the sibling StartTask tests).
+        subscribe_tasks()
 
-        assert output =~ "started (type: genesis)"
-        assert output =~ "Objective: Create a project"
+        # This test starts a genesis task with NO `mode`, so the executor's
+        # RuntimeOpts falls back to the genesis default "simple" and the spawned
+        # wrapper crashes with `invalid genesis mode: "simple"`. That crash is
+        # INCIDENTAL to what the test checks (the `:prompt`/`:objective`/`:path`
+        # data-plane routing of the enqueued task, not the failure) — it is the
+        # genuine documented consequence of a shell-start genesis task without an
+        # explicit mode. The registry's down-handler logs a FAILED_TRANSITION
+        # warning while it persists the resulting `:failed` status; capture it so
+        # it never leaks to the test console.
+        #
+        # The terminal-status await sits INSIDE the capture window on purpose:
+        # the registry emits the warning BEFORE broadcasting the terminal
+        # `:failed` update, so receiving that broadcast proves the crash has
+        # already been handled — the log cannot land after the capture closes.
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:ok, output} =
+                   CommandShell.execute(
+                     ~s(StartTask.start_task genesis "Create a project" path=#{tmp_dir}),
+                     approval: :auto
+                   )
 
-        [task_id] = Regex.run(~r/^Task (\S+) started/, output, capture: :all_but_first)
-        assert task_id != ""
+          assert output =~ "started (type: genesis)"
+          assert output =~ "Objective: Create a project"
 
-        task = TaskRegistry.get_task(task_id)
-        assert task != nil
-        assert task.type == :genesis
+          [task_id] = Regex.run(~r/^Task (\S+) started/, output, capture: :all_but_first)
+          assert task_id != ""
 
-        # The data-plane fix: TaskExecutor.execute_task(:genesis, ...) reads
-        # opts[:prompt] and hands it to Runtime.Genesis.run — the enqueued task
-        # must carry the text under :prompt or the genesis prompt would enqueue
-        # silently empty. The text is kept under :objective too (the shell's
-        # ListTasks/GetTask displays read that key).
-        assert Keyword.get(task.opts, :prompt) == "Create a project"
-        assert Keyword.get(task.opts, :objective) == "Create a project"
-        assert Keyword.get(task.opts, :path) == tmp_dir
+          assert :ok = await_terminal_status(task_id)
+
+          task = TaskRegistry.get_task(task_id)
+          assert task != nil
+          assert task.type == :genesis
+
+          # The data-plane fix: TaskExecutor.execute_task(:genesis, ...) reads
+          # opts[:prompt] and hands it to Runtime.Genesis.run — the enqueued task
+          # must carry the text under :prompt or the genesis prompt would enqueue
+          # silently empty. The text is kept under :objective too (the shell's
+          # ListTasks/GetTask displays read that key).
+          assert Keyword.get(task.opts, :prompt) == "Create a project"
+          assert Keyword.get(task.opts, :objective) == "Create a project"
+          assert Keyword.get(task.opts, :path) == tmp_dir
+        end)
       end)
     end
   end
