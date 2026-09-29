@@ -1,19 +1,16 @@
 defmodule EvoDash.Test.IsolatedTaskStoreTest do
   # `async: false` — `isolate!/1` terminates the PROCESS-GLOBAL `EvoGit.Store` /
-  # `EvoGit.TaskRegistry` children of `EvoGit.Supervisor`, so no other suite may
-  # run concurrently (the same reason `node_context_test.exs` is a sync module).
+  # `EvoGit.TaskRegistry` singletons, so no other suite may run concurrently (the
+  # same reason `node_context_test.exs` is a sync module).
   use ExUnit.Case, async: false
 
   alias EvoDash.Test.IsolatedTaskStore
   alias EvoGit.TaskInfo
 
-  # The isolated temp dir is `<tmp>/evogit_test_<prefix>_<unique int>` (the
-  # helper's own naming), so this prefix alone identifies this module's dirs.
+  # `@prefix` mirrors the helper's `<tmp>/evogit_test_<prefix>_<unique int>` temp
+  # dirs; `@template_*` mirror its private facts about the run-scoped, fully
+  # migrated sqlite file every `isolate!/1` copies its private database FROM.
   @prefix "isolated_task_store_test"
-
-  # Mirrors the helper's private `@template_basename`/`@template_sidecars`: the
-  # run-scoped, fully migrated sqlite file every `isolate!/1` copies its private
-  # database FROM (built lazily by the first `isolate!/1` of a run).
   @template_basename "isolated_store_template.sqlite"
   @template_sidecars ["-wal", "-shm", "-journal"]
 
@@ -23,15 +20,14 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
 
   setup do
     # Registered BEFORE any `isolate!/1` call below, and ExUnit runs `on_exit`
-    # callbacks in REVERSE registration order — so this callback observes the
-    # state AFTER the helper's own teardown has run, which is the only
-    # deterministic way to check a post-teardown invariant from the test that
-    # caused it.
+    # callbacks in REVERSE registration order — so this observes the state AFTER
+    # the helper's own teardown, the only deterministic way to check a
+    # post-teardown invariant from the test that caused it.
     on_exit(fn ->
-      # Teardown restored the production singletons (and verified them) …
+      # The production singletons are back (and verified) …
       :ok = IsolatedTaskStore.assert_production!()
 
-      # … and removed its own temp dir: no isolated database outlives its test.
+      # … and the isolated temp dir is gone: no isolated database outlives it.
       assert isolated_root_dirs() == [],
              "isolate!/1 left its temp dir behind: #{inspect(isolated_root_dirs())}"
     end)
@@ -48,33 +44,27 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     root = Path.dirname(db)
 
     # A private file in a private, per-call temp dir — never the shared template
-    # and never inside the template's own (per-run) directory.
+    # (nor the template's own per-run directory).
     assert File.exists?(db)
     assert Path.basename(db) == "tasks.sqlite"
     assert Path.basename(root) =~ ~r/^evogit_test_#{@prefix}_\d+$/
     refute db == template_path()
     refute Path.dirname(db) == Path.dirname(template_path())
 
-    # … and no two `isolate!/1` calls ever get the same database file (the
-    # witness is module-wide, so it holds whichever test ran first; a single-test
-    # run just makes it vacuously true instead of failing).
+    # No two `isolate!/1` calls ever get the same file (module-wide witness: a
+    # single-test run makes it vacuously true instead of failing).
     record_isolated_path!(db)
 
-    # Fully migrated: the isolated store carries the run's whole schema, so the
-    # boot migrator has nothing left to run — the property the template exists to
-    # provide (a template that lost the schema would show up right here).
+    # Fully migrated — the property the template exists to provide — and LIVE.
     assert applied_migration_versions() == expected_migration_versions()
-
-    # … and it is a LIVE store: the migrated table answers.
     assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
 
-    # The setup hook's post-teardown dir check is not vacuous: this exact prefix
-    # DOES match the isolated dir while the test runs.
+    # The post-teardown dir check is not vacuous: this prefix DOES match the
+    # isolated dir while the test runs.
     assert [^root] = isolated_root_dirs()
 
-    # Whatever this call did, it did it to its OWN database: the shared template
-    # is byte-identical. (Either test may run first, so both branches of
-    # `assert_template_not_mutated/2` are exercised across the module.)
+    # Either test may run first, so both branches of the assertion below are
+    # exercised across the module: this call left the shared template untouched.
     assert_template_not_mutated(before, template_snapshot())
   end
 
@@ -100,14 +90,11 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     assert File.read!(db) <> File.read!(db <> "-wal") =~ id
   end
 
-  # ── Observing the isolated instance ────────────────────────────────────────
-
   # The sqlite FILE the isolated `EvoGit.Store` (which holds the singleton name
-  # while a test isolates) is opened on.
+  # while a test isolates) is opened on; the temp dirs this module's own
+  # `isolate!/1` calls created (asserted EMPTY by the post-teardown hook).
   defp isolated_sqlite_path, do: :sys.get_state(EvoGit.Store).data_dir
 
-  # The temp dirs this module's own `isolate!/1` calls created — asserted EMPTY
-  # by the post-teardown hook above.
   defp isolated_root_dirs do
     Path.wildcard(Path.join(System.tmp_dir!(), "evogit_test_#{@prefix}_*"))
   end
@@ -116,17 +103,15 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     id = "isolated_task_store_test_#{System.unique_integer([:positive])}"
 
     :ok =
-      EvoGit.Store.put_task(EvoGit.Store, %TaskInfo{
-        id: id,
-        type: :genesis,
-        status: :pending,
-        opts: [path: "/tmp/isolated_task_store_test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil
-      })
+      EvoGit.Store.put_task(
+        EvoGit.Store,
+        struct!(TaskInfo,
+          id: id,
+          type: :genesis,
+          opts: [path: "/tmp/isolated_task_store_test"],
+          started_at: DateTime.utc_now()
+        )
+      )
 
     id
   end
@@ -138,8 +123,6 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
 
     :persistent_term.put(@observed_key, [path | seen])
   end
-
-  # ── Observing the shared template ──────────────────────────────────────────
 
   defp template_path do
     Path.join(Application.fetch_env!(:evo_git, :data_dir), @template_basename)
@@ -175,13 +158,11 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     assert after_snapshot == before, "isolate!/1 mutated the shared migrated template"
   end
 
-  # ── Reading the isolated database through the store's own connection ───────
-
+  # `EvoGit.Repo` resolves its target through a PROCESS-LOCAL binding that is
+  # unset in a test process, so a bare `EvoGit.Repo.query!/1` would address the
+  # PRODUCTION database. The store's documented test seam + `RepoScope.with_repo/2`
+  # bind these queries to the ISOLATED instance.
   defp applied_migration_versions do
-    # `EvoGit.Repo` resolves its target through a PROCESS-LOCAL binding that is
-    # unset in a test process, so a bare `EvoGit.Repo.query!/1` would address the
-    # PRODUCTION database. The store's documented test seam +
-    # `RepoScope.with_repo/2` bind these queries to the isolated instance.
     repo = EvoGit.Store.__repo_pid__(EvoGit.Store)
 
     EvoGit.Store.RepoScope.with_repo(repo, fn ->
