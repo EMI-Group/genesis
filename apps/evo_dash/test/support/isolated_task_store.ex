@@ -32,7 +32,12 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     * the restart results are **checked** — a failed restore raises (loud)
       rather than silently leaving the globals unrestored;
     * the restored identity is **verified** (production data dir / `task_store`)
-      so a restore that "succeeded" onto the wrong instance cannot pass.
+      so a restore that "succeeded" onto the wrong instance cannot pass;
+    * the stop/restore sequence runs inside `ExUnit.CaptureLog.capture_log/2`,
+      because `on_exit/1` executes *outside* ExUnit's per-test log capture and
+      killing a Store with in-flight offloaded Tasks makes those Tasks crash on
+      the vanished ETS query cache — a crash report that is expected here and
+      must not print to the console.
 
   Tests that need transactional isolation on top of this can still
   `EvoGit.Store.put_task/2` against the isolated pair as usual.
@@ -49,7 +54,7 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   """
   @spec isolate!(String.t()) :: :ok
   def isolate!(prefix) do
-    terminate_production!()
+    capture_teardown_noise(&terminate_production!/0)
 
     root =
       Path.join(System.tmp_dir!(), "evogit_test_#{prefix}_#{System.unique_integer([:positive])}")
@@ -68,12 +73,30 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       )
 
     ExUnit.Callbacks.on_exit(fn ->
-      # Order matters: release the singleton names FIRST, then restore.
-      stop_isolated(sup)
-      File.rm_rf(root)
-      restore_production!()
+      # The whole stop/restore sequence runs inside a log capture: `on_exit`
+      # callbacks execute OUTSIDE ExUnit's per-test log capture, so anything
+      # the teardown logs would otherwise print straight to the console.
+      capture_teardown_noise(fn ->
+        # Order matters: release the singleton names FIRST, then restore.
+        stop_isolated(sup)
+        File.rm_rf(root)
+        restore_production!()
+      end)
     end)
 
+    :ok
+  end
+
+  # Killing a `EvoGit.Store` while offloaded read/write Tasks are still in
+  # flight makes those Tasks crash on the vanished ETS query cache, and the
+  # Task supervisor logs a `Task #PID<...> started from EvoGit.Store
+  # terminating` crash report. That report is EXPECTED noise from tearing down
+  # in-flight offloaded Store work — it is captured (and the captured string
+  # deliberately discarded) so it never reaches the console from a teardown gap
+  # that ExUnit does not capture. Nothing else about the teardown changes: the
+  # same actions run, in the same order, with the same results.
+  defp capture_teardown_noise(fun) do
+    _captured = ExUnit.CaptureLog.capture_log(fun)
     :ok
   end
 
