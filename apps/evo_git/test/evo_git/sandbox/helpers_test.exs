@@ -316,20 +316,40 @@ defmodule EvoGit.Sandbox.HelpersTest do
         bash = System.find_executable("bash")
         tmp_dir = port_tmp_dir!()
 
+        # The child is held alive until this test releases it, deliberately.
+        # A bare `bash -c "echo $$"` exits in microseconds: under CPU load the
+        # test process can be descheduled after `Port.open/2`, the port
+        # auto-closes before `wait_for_os_pid/2`'s first poll, and the helper
+        # then (correctly) returns `:undefined` — failing the integer assertion
+        # below through no fault of the helper. The child therefore polls for a
+        # release file here instead; the loop is bounded (600 × 50ms ≈ 30s worst
+        # case) so it always exits 0 on its own even if this test never runs.
+        trigger = Path.join(tmp_dir, "release")
+        script = "echo $$; for ((i=0; i<600; i++)); do [ -e '#{trigger}' ] && break; sleep 0.05; done"
+
         port =
           Port.open(
             {:spawn_executable, bash},
             [:binary, :exit_status, :hide, :stderr_to_stdout] ++
-              [{:args, ["-c", "echo $$"]}, {:cd, tmp_dir}]
+              [{:args, ["-c", script]}, {:cd, tmp_dir}]
           )
 
-        on_exit(fn -> if Port.info(port), do: Port.close(port) end)
+        # Release the child even when an assertion fails, so a red test cannot
+        # leak a shell; then close the port if it is still open.
+        on_exit(fn ->
+          _ = File.touch(trigger)
+          if Port.info(port), do: Port.close(port)
+        end)
 
         os_pid = Helpers.wait_for_os_pid(port)
+
+        assert is_integer(os_pid)
+
+        # Release the child (it exits 0 within ~50ms) and drain its output.
+        _ = File.touch(trigger)
         {output, exit_code} = collect_port_output(port)
 
         assert exit_code == 0
-        assert is_integer(os_pid)
         # The os_pid of a `spawn_executable` port IS the spawned process (bash),
         # so it must equal the `$$` bash prints for itself.
         assert os_pid == output |> String.trim() |> String.to_integer()
