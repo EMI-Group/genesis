@@ -46,24 +46,17 @@ Application.put_env(:evo_dash, :directory_picker, enabled: false)
 # Tests that specifically need nix enable it explicitly.
 Application.put_env(:evo_git, :nix_enabled, false)
 
-# Test-only perf tuning. These keys are all CALL-TIME seams — production code
-# reads them at the call site via `Application.get_env(:evo_dash, key, <prod
+# Test-only perf tuning. These five keys are all CALL-TIME seams — production
+# code reads them at the call site via `Application.get_env(:evo_dash, key, <prod
 # default>)`, so leaving them unset keeps the production timings intact; setting
 # them here only shrinks the real-timer waits the suite otherwise burns on
 # `Process.sleep`. Each value stays comfortably above 0 so no wait degenerates
 # into a busy spin.
-#
-# NOTE: `:node_aware_reload_debounce_ms` is deliberately NOT set here. The
-# review-page suites (`test/evo_dash_web/live/review_live_test.exs`) implicitly
-# depend on the FULL 300 ms window: several tests perform a second mutation
-# click after a `refute_receive _, 100` gap, so a shrunken debounce makes the
-# review page's own debounced reload fire mid-sequence and reset the per-repo
-# resolutions those assertions read. The seam exists and is safe to set once
-# that dependency is removed from the sibling tests.
 Application.put_env(:evo_dash, :agents_live_flush_ms, 10)
 Application.put_env(:evo_dash, :agents_live_commit_graph_tick_ms, 10)
 Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 10)
 Application.put_env(:evo_dash, :flush_loading_poll_ms, 1)
+Application.put_env(:evo_dash, :node_aware_reload_debounce_ms, 10)
 
 ExUnit.start(capture_log: true)
 
