@@ -32,24 +32,21 @@ defmodule EvoDash.DesktopLifetimeTest do
     test "missing env var: no socket, no stop, process stays alive" do
       pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
-      refute_receive @stop_message, 200
-      assert Process.alive?(pid)
+      assert_disabled(pid)
     end
 
     test "empty env var is treated as disabled" do
       System.put_env("EVOGIT_LIFETIME_PORT", "")
       pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
-      refute_receive @stop_message, 200
-      assert Process.alive?(pid)
+      assert_disabled(pid)
     end
 
     test "invalid port value is treated as disabled (no crash, no stop)" do
       System.put_env("EVOGIT_LIFETIME_PORT", "not-a-port")
       pid = start_supervised!({EvoDash.DesktopLifetime, @small_opts})
 
-      refute_receive @stop_message, 200
-      assert Process.alive?(pid)
+      assert_disabled(pid)
     end
   end
 
@@ -75,7 +72,7 @@ defmodule EvoDash.DesktopLifetimeTest do
 
       # The process idles in the stopped state — no restart loop, no repeat stop.
       assert Process.alive?(pid)
-      refute_receive @stop_message, 100
+      assert_no_further_stop(pid)
     end
   end
 
@@ -104,8 +101,11 @@ defmodule EvoDash.DesktopLifetimeTest do
           {:ok, shell_sock} = :gen_tcp.accept(listener, 5000)
           assert is_port(shell_sock)
 
-          # No stop while the pipe is open.
-          refute_receive @stop_message, 200
+          # No stop while the pipe is open — observed deterministically: wait
+          # until the watcher is parked INSIDE the blocking recv (see
+          # await_recv_blocked/2), then scan the mailbox.
+          await_recv_blocked(pid)
+          refute_receive @stop_message, 0
           assert Process.alive?(pid)
 
           # Shell dies → its end of the pipe closes → the watcher stops the VM.
@@ -136,7 +136,11 @@ defmodule EvoDash.DesktopLifetimeTest do
         :gen_tcp.close(listener)
       end)
 
-      refute_receive @stop_message, 200
+      # No stop while the pipe is open: the watcher is parked inside the
+      # blocking recv on the held-open socket (a deterministic observation, see
+      # await_recv_blocked/2), so the following refute is a plain mailbox scan.
+      await_recv_blocked(pid)
+      refute_receive @stop_message, 0
       assert Process.alive?(pid)
     end
   end
@@ -194,16 +198,20 @@ defmodule EvoDash.DesktopLifetimeTest do
         :gen_tcp.close(listener)
       end)
 
+      # Every recv blocks in the seam until this process responds: each
+      # `assert_receive :recv_called` below is a deterministic fence (the
+      # watcher is parked inside the seam and reaches the stop fun only once a
+      # recv has RETURNED), so the refutes are plain mailbox scans.
       assert_receive :recv_called, 2000
-      refute_receive @stop_message, 20
+      refute_receive @stop_message, 0
 
       send(pid, :respond_ambiguous)
       assert_receive :recv_called, 2000
-      refute_receive @stop_message, 20
+      refute_receive @stop_message, 0
 
       send(pid, :respond_ambiguous)
       assert_receive :recv_called, 2000
-      refute_receive @stop_message, 20
+      refute_receive @stop_message, 0
 
       # The watcher logs from its OWN process; capture the genuine-close line.
       log =
@@ -214,7 +222,7 @@ defmodule EvoDash.DesktopLifetimeTest do
 
       assert log =~ "[desktop] Tauri shell is gone (lifetime connection closed)"
       assert Process.alive?(pid)
-      refute_receive @stop_message, 100
+      assert_no_further_stop(pid)
     end
 
     test "an always-ambiguous error does not stop within the retry budget, then stops" do
@@ -258,20 +266,22 @@ defmodule EvoDash.DesktopLifetimeTest do
       end)
 
       # Every recv blocks in the seam until this process responds, so these
-      # assertions are event-driven: the watcher is parked inside recv_fun and
-      # cannot fire the stop fun while a recv is outstanding.
+      # assertions are event-driven: each `assert_receive :recv_called` proves
+      # the watcher is parked inside recv_fun, and it can only reach the stop fun
+      # once a recv has RETURNED. The refutes are therefore plain mailbox scans
+      # (no wall-clock window).
       log =
         capture_log(fn ->
           assert_receive :recv_called, 2000
-          refute_receive @stop_message, 10
+          refute_receive @stop_message, 0
 
           send(pid, :respond_ambiguous)
           assert_receive :recv_called, 2000
-          refute_receive @stop_message, 10
+          refute_receive @stop_message, 0
 
           send(pid, :respond_ambiguous)
           assert_receive :recv_called, 2000
-          refute_receive @stop_message, 10
+          refute_receive @stop_message, 0
 
           # The 4th recv call exhausts the 3-retry budget: answer it too and the
           # watcher finally gives up (the budget semantics — 4 recvs, stop only
@@ -284,11 +294,84 @@ defmodule EvoDash.DesktopLifetimeTest do
 
       assert log =~ "[desktop] lifetime recv kept failing"
       assert Process.alive?(pid)
-      refute_receive @stop_message, 100
+      assert_no_further_stop(pid)
     end
   end
 
   # --- Helpers ---
+
+  # Deterministic "the disabled branch was taken" fence: `:sys.get_state/1` is a
+  # FIFO round-trip through the watcher's mailbox, and `init/1`'s disabled branch
+  # returns `enabled: false` with NO `{:continue, :connect}` scheduled — so no
+  # code path can ever reach the stop fun. The trailing refute is then a plain
+  # mailbox scan (0ms, no sleep).
+  defp assert_disabled(pid) do
+    assert Process.alive?(pid)
+
+    state = :sys.get_state(pid)
+    assert state.enabled == false
+    assert state.stopped == false
+
+    refute_receive @stop_message, 0
+  end
+
+  # Deterministic "no repeat stop" fence: the watcher only ever sets
+  # `stopped: true` AFTER the stop fun has returned, and it is already past the
+  # single `handle_continue/2` (or the single `wait_for_close/3` outcome) that
+  # can invoke the stop fun — so the FIFO `:sys.get_state/1` round-trip proves a
+  # second stop is impossible. The refute is a plain mailbox scan.
+  defp assert_no_further_stop(pid) do
+    state = :sys.get_state(pid)
+    assert state.stopped == true
+
+    refute_receive @stop_message, 0
+  end
+
+  # Deterministic "the watcher is blocked in the lifetime recv" observation —
+  # the fence behind `refute_receive @stop_message, 0` in the real-socket tests.
+  # Every stop call lives in code that runs only AFTER a recv returns, so while
+  # a recv is outstanding (socket open, no data, no close → blocks forever) the
+  # stop fun cannot be invoked.
+  #
+  # A blocked network read is observable as status `:waiting` with the
+  # `:prim_inet`/`:inet`/`:gen_tcp` frame on top (verified on this OTP:
+  # `{:current_function, {:prim_inet, :recv0, 3}}`); the watcher's own module is
+  # accepted too, covering a build that reports the `default_recv/1` wrapper
+  # frame instead. Bounded 1ms poll with a `flunk` on exhaustion (never a fixed
+  # sleep, and never a silently-shrunk assertion if the observation regresses).
+  defp await_recv_blocked(pid, timeout \\ 5_000) do
+    poll_recv_blocked(pid, System.monotonic_time(:millisecond) + timeout)
+  end
+
+  defp poll_recv_blocked(pid, deadline) do
+    cond do
+      recv_blocked?(pid) ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk(
+          "watcher #{inspect(pid)} was never parked inside recv/3 within the budget; " <>
+            "process info = #{inspect(Process.info(pid, [:current_function, :status]))}"
+        )
+
+      true ->
+        Process.sleep(1)
+        poll_recv_blocked(pid, deadline)
+    end
+  end
+
+  defp recv_blocked?(pid) do
+    info = Process.info(pid, [:current_function, :status]) || []
+
+    case Keyword.get(info, :current_function) do
+      {mod, _fun, _arity} ->
+        Keyword.get(info, :status) == :waiting and
+          mod in [:prim_inet, :inet, :gen_tcp, EvoDash.DesktopLifetime]
+
+      _ ->
+        false
+    end
+  end
 
   defp unused_port do
     {:ok, sock} = :gen_tcp.listen(0, [:binary, active: false])
