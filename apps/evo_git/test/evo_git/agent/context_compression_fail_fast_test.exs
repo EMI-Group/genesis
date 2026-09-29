@@ -178,7 +178,14 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   end
 
   setup_all do
-    warm_up()
+    # The warm-up's refused connection is retried by ReqLLM's Finch pool, which
+    # logs 3 `[warning] Retrying streaming request…` lines + 1
+    # `[error] Finch streaming transport failed` FROM THE POOL PROCESS — those
+    # lines bypass ExUnit's per-test `capture_log` and leak to the console.
+    # Capturing around the warm-up silences that known noise; what the warm-up
+    # does is unchanged.
+    capture_log(fn -> warm_up() end)
+    :ok
   end
 
   setup do
