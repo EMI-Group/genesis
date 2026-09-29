@@ -16,6 +16,11 @@ Unit/integration tests for the `:evo_dash` domain modules (`./apps/evo_dash/lib/
 - `markdown_render_test.exs` → `EvoDash.MarkdownRenderTest` — markdown edge cases (nil, empty, headings, code blocks, tables, bold)
 - `update_status_test.exs` → `EvoDash.UpdateStatusTest`
 
+## Known Issues — load/timing-sensitive flaky tests
+
+- `desktop_lifetime_test.exs` is load-sensitive and flaky under a busy CPU: in a full-suite run with concurrent background load (reproduced with `for i in $(seq 1 40); do (while :; do :; done) & done` then `mix test --seed 42`), `"ambiguous recv errors … an always-ambiguous error does not stop within the retry budget, then stops"` (:192) fails at `assert_receive :recv_called` (:227) and `"lifetime pipe … watcher connects to the shell listener and stops when the shell's end closes"` (:70) fails at `assert_receive @stop_message` (:95), both with `Assertion failed, no matching message after 2000/1000ms — The process mailbox is empty.`
+  The tests pair very tight windows (`refute_receive …, 10` around `recv_retry_delay: 30`, and 1000ms asserts) with the assumption that the BEAM schedules both the watcher and the test promptly; under sustained load the watcher's 30ms retry sleeps and the test's mailbox drain exceed those budgets. Passes standalone at every seed (0/1/7/42/12345/99999) and in unloaded full runs.
+
 ## Known Issues / Test Gaps (multi-repo relevant)
 
 - **No `NodeContext.start_task/3` test in this suite** (only a comment at node_context_test.exs:33 mentions `start_task/2`). `start_task/3` (node_context.ex:605) passes `opts` verbatim to `EvoGit.RemoteNode.start_task/3` — `:path`, `:foreign_repos`, `:mode`, `:agent`, `:model_id` threading has NO domain-layer regression coverage here (only LiveView-level coverage in projects_live_test/home_live_test).
