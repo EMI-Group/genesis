@@ -11,10 +11,10 @@ None — leaf directory (two workflow files: `ci.yml`, `build-desktop.yml`).
 ## API Surface
 
 ### `ci.yml` — Continuous Integration
-Triggered on PRs and pushes to `main`. Three parallel jobs on `ubuntu-latest`:
-- **test** — Runs `mix test` for both apps. Uses the Erlang/OTP + Elixir setup action (versions from the `OTP_VERSION`/`ELIXIR_VERSION` env vars), caches `deps/` and `_build/`, and fetches deps before testing.
-- **format** — Runs `mix format --check-formatted` to enforce code style.
-- **compile** — Runs `mix compile --warnings-as-errors` to catch warnings.
+Triggered on PRs and pushes to `main`. Three jobs on `ubuntu-latest`:
+- **test** (`Tests (<app>)`) — a **matrix job** over the two umbrella apps (`matrix.app = [evo_git, evo_dash]`, `fail-fast: false`), so each app's suite runs as its own parallel runner job instead of sequentially inside one umbrella `mix test`. Each matrix job: Erlang/OTP + Elixir setup (versions from the `OTP_VERSION`/`ELIXIR_VERSION` env vars) → restore the shared `deps/` cache (`mix-deps-…`) and `_build/` cache (`mix-build-test-…`, the same keys the job used before the matrix; both matrix jobs restore the same cache and the first to finish saves it) → `mix deps.get` + `mix compile` at the umbrella root → the app's suite via the step's `working-directory: apps/${{ matrix.app }}` + `run: mix test`. Running the suite from inside the app directory is REQUIRED — `mix test apps/evo_dash` from the umbrella root does not run that app's suite. A failing app suite fails its matrix job, hence the workflow.
+- **format-check** (`Format check`) — `mix format --check-formatted` to enforce code style (runs `mix deps.compile` first because the `evo_dash` formatter loads dep plugins).
+- **compile-warnings** (`Compile warnings`) — `MIX_ENV=test mix compile --warnings-as-errors` to catch warnings.
 
 No Rust/C toolchain is required — NIF dependencies use precompiled binaries.
 
