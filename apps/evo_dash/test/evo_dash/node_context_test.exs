@@ -1,6 +1,8 @@
 defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias EvoGit.TaskInfo
 
   setup do
@@ -341,7 +343,15 @@ defmodule EvoDash.NodeContextTest do
       # wrapper must pass the error tuple through — deliberately NOT swallowed
       # into `%{ok: [], errors: []}`, which would hide a real backend/RPC
       # problem.
-      result = EvoDash.NodeContext.custom_tools_status(:"nonexistent-node@nowhere")
+      # Wrapped in CaptureLog: on a distributed local BEAM the real
+      # distribution/net-kernel code path can emit Logger lines (e.g. "No
+      # distribution cookie configured") from global processes; ExUnit's
+      # window-based `capture_log: true` misses those emitted at the test
+      # boundary, so capture them here to keep the console clean.
+      {result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.custom_tools_status(:"nonexistent-node@nowhere")
+        end)
 
       assert match?({:error, _}, result)
       refute result == %{ok: [], errors: []}
@@ -399,7 +409,12 @@ defmodule EvoDash.NodeContextTest do
       #     which the case unwraps to {:error, :nodedown}.
       # Either way the function is total: it returns an error tuple, never
       # raises from a LiveView call path.
-      result = EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
+      # Wrapped in CaptureLog: same between-test console-noise rationale as the
+      # unreachable-remote custom_tools_status case above.
+      {result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
+        end)
 
       if node() == :nonode@nohost do
         assert result == {:error, {:error, {:erpc, :noconnection}}}
