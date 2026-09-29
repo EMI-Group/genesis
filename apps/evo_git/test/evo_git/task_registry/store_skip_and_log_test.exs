@@ -108,7 +108,17 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
         {entries, log} = with_log(fn -> EvoGit.Store.safe_select_all_tasks(store) end)
 
         assert Enum.map(entries, & &1.id) == ["clean_good_#{unique}"]
-        refute log =~ "skipping undecodable row"
+
+        # The refute is SCOPED to this store's only row id on purpose:
+        # `with_log/2` captures GLOBALLY (its logger handler is level-filtered
+        # only — no process/test scoping), so a concurrent `async: true` module
+        # (store/operations/safety_test.exs) logging its own
+        # `... in tasks (id: "bad")` skip under load would falsify an unscoped
+        # refute. This store holds exactly one row — `clean_good_<unique>`,
+        # which decodes fine — so the only skip it could ever emit names that
+        # id (shape pinned by the positive test above).
+        refute log =~
+                 "skipping undecodable row in tasks (id: #{inspect("clean_good_#{unique}")})"
       after
         cleanup_store(store, sqlite_path)
       end
