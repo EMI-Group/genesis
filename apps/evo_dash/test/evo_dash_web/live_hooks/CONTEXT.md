@@ -12,8 +12,8 @@ Two styles: **pure unit/socket tests** (no LiveView boot) and **full LiveView in
 
 | File | Hook(s) | Style |
 |------|---------|-------|
-| `node_aware_test.exs` (1316 ln, 43 tests) | NodeAware | DIRECT `NodeAware.on_mount/4` calls (dead + connected boot-shaped sockets) + tests needing the isolated Store/TaskRegistry, per-test `XDG_CONFIG_HOME`, or fake ConnectionManagers. **No real LiveViews.** `async: false`. |
-| `node_aware_pure_test.exs` (428 ln, 26 tests) | NodeAware | Pure socket/function tests: `handle_connection_status/2`, `partition_active_tasks/1`, `handle_task_info/2` debounce, `event_from_current_node?/2`. Hand-built minimal `%Phoenix.LiveView.Socket{}` (`socket/1`) + `patch_to/1`. `async: true`. |
+| `node_aware_test.exs` (1328 ln, 43 tests) | NodeAware | DIRECT `NodeAware.on_mount/4` calls (dead + connected boot-shaped sockets) + tests needing the isolated Store/TaskRegistry, per-test `XDG_CONFIG_HOME`, or fake ConnectionManagers. **No real LiveViews.** `async: false`. |
+| `node_aware_pure_test.exs` (466 ln, 26 tests) | NodeAware | Pure socket/function tests: `handle_connection_status/2`, `partition_active_tasks/1`, `handle_task_info/2` debounce, `event_from_current_node?/2`. Hand-built minimal `%Phoenix.LiveView.Socket{}` (`socket/1`) + `patch_to/1`. `async: true`. |
 | `guide_test.exs` (198 ln, 9 tests) | Guide | 9 real `/tasks` mounts against an isolated Store/TaskRegistry. `async: false`. |
 | `guide_pure_test.exs` (70 ln, 7 tests) | Guide | Pure `normalize_guide/2` + `relevant?/2`. `async: true`. |
 | `desktop_quit_test.exs` (144 ln, 7 tests) | DesktopQuit | 6 real `/system` + 1 real `/welcome` mounts. `async: true`. |
@@ -49,3 +49,14 @@ Two styles: **pure unit/socket tests** (no LiveView boot) and **full LiveView in
 - **`appearance_test.exs` → `MUST-STAY-SYNC`**: `System.put_env("XDG_CONFIG_HOME", ...)` mutates a process-global env var (no per-test or per-process seam exists — an app-env override would itself be global), and it writes the `AccentCache` hub.
 - **`update_status_test.exs` → `MUST-STAY-SYNC`**: shares `:desktop_quit_stop_fun` + the `EvoDash.UpdateStatus` hub with the `async: true` `desktop_quit_test.exs`.
 - **Cross-suite hazard for ANY async fake-manager suite**: `EvoGit.RemoteConnection.Registry` is `keys: :unique` and fakes call non-bang `Registry.register/3` whose error tuple is ignored — two suites using the SAME target id concurrently would silently route lookups to the first-registered manager (assertion failures, not a crash). Keep new async fake ids unique.
+
+## Notes for Agents — deterministic negative waits (do not re-grow these windows)
+
+The negative "nothing was fetched / nothing was scheduled" assertions in `node_aware_test.exs` and `node_aware_pure_test.exs` are backed by an observable side effect, so their `refute_receive` windows are a small belt-and-braces margin (50 ms), never the evidence.
+
+- **Sidebar-fetch backstop — `:tasks_load_seq`**: `NodeAware.request_tasks_load/1` (the single spawner behind `on_mount/4`'s connected-LOCAL fetch, `assign_node/2`'s context-change reload and `reload_tasks/1`) bumps the socket's `:tasks_load_seq` assign BEFORE spawning on `EvoDash.TaskSupervisor`, and `on_mount/4` seeds it to 0 — so `assigns[:tasks_load_seq] == 0` DETERMINISTICALLY proves no fetch was spawned (no `{:node_aware_active_tasks, ...}` message can ever arrive), and an unchanged seq proves the `:tasks_node_loaded` dedup guard suppressed a re-spawn.
+- Every `refute_receive {:node_aware_active_tasks, _, _, _, _}, 50` in node_aware_test.exs sits next to its `tasks_load_seq` assertion; the two `initiate_remote_connect/2` "NO `{:remote_connect_result, ...}` self-message" tests first await `not Process.alive?(caller)` for the spawned connect Task (its `{:error, reason}` arm is its LAST expression, so a dead Task proves any send is already in the mailbox) before their 50 ms refute.
+- **Deliberately kept full window**: the `nil target_id → no spawn` `initiate_remote_connect/2` test keeps `refute_receive {:remote_connect_result, _, _}, 150` — it has no deterministic backstop (its `GenServer.call(manager, :calls) == []` corroboration is itself timing-dependent).
+- **Debounce backstop**: the `handle_task_info/2` drop/coalescing negatives use 50 ms windows (~5× the 10 ms `:node_aware_reload_debounce_ms` test seam), each proven by the unchanged-socket / `tasks_reload_pending == false` / already-consumed-`assert_receive` assertions — any path reaching `debounce_task_reload/1` would have returned a CHANGED socket with `tasks_reload_pending: true`.
+- `await_until/2`'s `Process.sleep(10)` is a bounded poll (10 ms ticks, 2000 ms deadline) — not a fixed wait. The `Process.sleep(state.delay_ms)` in the `ConnectionManager` fake is deliberate test choreography.
+- Current cost of the two suites: ~2.1 s for 69 tests, 0 stray console log lines across repeated runs.
