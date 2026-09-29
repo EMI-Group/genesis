@@ -162,6 +162,10 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # Registers a fake agent in the scheduler ETS with the connection-refused model.
   # Only the agent-state table is needed (ToolDispatch.current_model/0 reads
   # llm_model; slot resolution reads model_id) — no sched-meta entry is required.
+  # Writing the row ALSO pins the id's LLM model pool to `@model_id`
+  # (`Slots.resolve_model_id/2` reads `model_id` from this table), which is what
+  # makes the slot hand-offs in this file immune to a stale row for the same id
+  # left behind by another module — see the note above `acquire_llm_slot/1`.
   defp register_agent(agent_id), do: register_agent(agent_id, refused_model())
 
   # Same, with an explicit model spec (used by the model-exhaustion 402 tests).
@@ -233,12 +237,28 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
 
   # --- Deterministic slot/retry waits (no fixed sleeps) -------------------
 
+  # Every id this file drives through the slot pool is REGISTERED first, even
+  # where only a slot request is needed.
+  #
+  # `AgentScheduler.Slots.resolve_model_id/2` takes an agent's model pool from the
+  # app-global `:evogit_agent_state` ETS table and falls back to the scheduler's
+  # DEFAULT model id only for an id with NO row at all. That table is VM-global
+  # and shared with the whole suite, and sibling modules leave rows behind for
+  # SMALL LITERAL ids — notably `agent_scheduler/slots_test.exs`, whose `on_exit`
+  # clears only `:evogit_sched_meta` after inserting id 2 (and id 99) on a second
+  # model ("fast"). A leftover row would route the request into that other pool,
+  # where the EMPTY queue grants it IMMEDIATELY instead of queueing behind the
+  # first attempt: the `@model_id` `waiting` count asserted below could then never
+  # reach its expected value and the wait would burn its whole (load-robust)
+  # budget. Registering the row makes the POOL — not just the queue STATE —
+  # deterministic; `register_agent/2`'s `on_exit` removes it again.
+  #
   # Grants `@model_id`'s only LLM slot to `agent_id` FROM THE TEST PROCESS — a
-  # real scheduler grant (no ETS agent row is needed: an unknown id resolves to
-  # the default model). Registered as an `on_exit` release so a failed assertion
+  # real scheduler grant. Registered as an `on_exit` release so a failed assertion
   # can never leak a holder that would wedge the single-slot pool for sibling
   # tests.
   defp acquire_llm_slot(agent_id) do
+    register_agent(agent_id)
     on_exit(fn -> AgentScheduler.release_llm_slot(agent_id) end)
     assert :ok = AgentScheduler.request_llm_slot(agent_id, @load_robust_deadline_ms)
   end
@@ -462,6 +482,14 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # EARLIER queue entry — the first attempt — on a full tie. The probe is then
     # granted only by that attempt's OWN release.
     Store.delete_sched_meta(@probe_agent_id)
+
+    # ...and pin the probe's MODEL POOL explicitly (see the note above
+    # `acquire_llm_slot/1`): the probe has no sched-meta row, so without a row of
+    # its own its pool would come from the default fallback — which a stale row
+    # for this small literal id left in the app-global agent-state table by
+    # another module would silently shadow, routing the request into a pool that
+    # grants it immediately instead of queueing behind the first attempt.
+    register_agent(@probe_agent_id)
 
     # The test process takes the model's only slot first, which forces the
     # retrying agent's first attempt to QUEUE at slot acquisition (see the
