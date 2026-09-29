@@ -91,6 +91,88 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     {needle, matched, unmatched}
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # `test_llm` connection-test helpers — see "LLM connection test" below.
+  #
+  # `WelcomeLive`'s `test_llm` handler spawns a DETACHED `EvoDash.TaskSupervisor`
+  # child running a REAL `EvoGit.SystemCheck.llm_test/1` → ReqLLM streaming
+  # request. That child logs from its own process ("Provider failed to build
+  # streaming request …" when no credential is resolvable, "Streaming
+  # provider/API request failed: status=403 …" when one is), and under load
+  # `Task.Supervisor.start_child/2` can hand it to a scheduler only AFTER the
+  # test body has finished. ExUnit's `capture_log: true` keeps the `:default`
+  # Logger handler swapped out only WHILE a test is running, so a line emitted in
+  # the gap between two tests (or after the last one) prints to the console.
+  #
+  # The three connection-test tests therefore (a) drop any ambient Anthropic
+  # credential so the child fails fast at ReqLLM request-BUILD time — no network
+  # at all — and (b) wrap the trigger PLUS a bounded wait for the child's result
+  # in ONE `ExUnit.CaptureLog.with_log/2` window, so whatever the child logs is
+  # captured rather than printed.
+  @llm_test_await_ms 5_000
+  @llm_test_poll_ms 20
+
+  # Snapshots + deletes any ambient Anthropic credential so a spawned `test_llm`
+  # child fails fast at request-build time. `ReqLLM.Keys` resolves a provider key
+  # as `:api_key` option → `:req_llm` app env → the `ANTHROPIC_API_KEY` env var,
+  # so both ambient sources are cleared; the app-env one is written process-wide
+  # by the other tests in this file (and by `EvoGit.Config.credentials/0` loading
+  # a real credentials.toml). Restored in `on_exit`.
+  defp scrub_anthropic_credential! do
+    previous_app_key = Application.get_env(:req_llm, :anthropic_api_key)
+    previous_env_key = System.get_env("ANTHROPIC_API_KEY")
+
+    Application.delete_env(:req_llm, :anthropic_api_key)
+    System.delete_env("ANTHROPIC_API_KEY")
+
+    on_exit(fn ->
+      if previous_app_key do
+        Application.put_env(:req_llm, :anthropic_api_key, previous_app_key)
+      else
+        Application.delete_env(:req_llm, :anthropic_api_key)
+      end
+
+      if previous_env_key do
+        System.put_env("ANTHROPIC_API_KEY", previous_env_key)
+      else
+        System.delete_env("ANTHROPIC_API_KEY")
+      end
+    end)
+  end
+
+  # Bounded wait for a full-page test: the child reports to the LiveView process,
+  # which applies `{:llm_test_result, _}` by moving `llm_test_status` off
+  # `:testing`. It is a POLL — every read is the synchronous `:sys.get_state/1`
+  # round-trip behind assigns/1 — and it NEVER fails the test: an unreachable
+  # provider must not turn "keep the capture window open until the child is done"
+  # into a failure, so it gives up after @llm_test_await_ms and lets the
+  # assertions run.
+  defp await_llm_test_result(view, remaining_ms \\ @llm_test_await_ms) do
+    if remaining_ms > 0 and assigns(view).llm_test_status == :testing do
+      Process.sleep(@llm_test_poll_ms)
+      await_llm_test_result(view, remaining_ms - @llm_test_poll_ms)
+    else
+      :ok
+    end
+  end
+
+  # The same bounded, never-failing wait for the unit-style test, which calls
+  # `WelcomeLive.handle_event/3` directly: the child's `parent` is then THIS
+  # process, so its result arrives as an ordinary mailbox message.
+  defp await_spawned_llm_test(remaining_ms \\ @llm_test_await_ms) do
+    receive do
+      {:llm_test_result, _result} ->
+        :ok
+    after
+      @llm_test_poll_ms ->
+        if remaining_ms > @llm_test_poll_ms do
+          await_spawned_llm_test(remaining_ms - @llm_test_poll_ms)
+        else
+          :ok
+        end
+    end
+  end
+
   describe "welcome page rendering" do
     test "renders welcome message and version display", %{conn: conn} do
       {:ok, _view, html} = live(conn, ~p"/welcome")
@@ -761,6 +843,11 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
 
     test "testing state renders the spinner", %{conn: conn} do
+      # Nothing is typed into the API-key field here, and none may be ambient
+      # either: drop any so the detached child fails fast at request-build time
+      # instead of issuing a real provider request.
+      scrub_anthropic_credential!()
+
       {:ok, view, _html} = live(conn, ~p"/welcome")
 
       render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
@@ -768,8 +855,17 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
       # The event render (status :testing) is produced before the spawned task's
       # result message is processed (FIFO mailbox), so the returned HTML is
-      # deterministic — the spinner, not a raced error state.
-      html = render_click(view, "test_llm", %{})
+      # deterministic — the spinner, not a raced error state. The trigger and the
+      # bounded wait for the child stay inside ONE capture window, so whatever
+      # the child logs cannot escape into the console after this test's own
+      # capture closed.
+      {html, _log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          html = render_click(view, "test_llm", %{})
+          await_llm_test_result(view)
+          html
+        end)
+
       assert html =~ "Testing LLM connection..."
       assert html =~ "loading loading-spinner"
     end
@@ -848,7 +944,10 @@ defmodule EvoDashWeb.WelcomeLiveTest do
 
     test "test_llm handler starts the test (unit-style)", %{conn: _conn} do
       alias EvoDashWeb.WelcomeLive
-      # No typed key — the spawned task fails fast without a real network call.
+      # No typed key — and no ambient one either, so the spawned task fails fast
+      # at request-build time without a real network call.
+      scrub_anthropic_credential!()
+
       socket = %Phoenix.LiveView.Socket{
         assigns: %{
           __changed__: nil,
@@ -867,7 +966,16 @@ defmodule EvoDashWeb.WelcomeLiveTest do
         }
       }
 
-      assert {:noreply, result_socket} = WelcomeLive.handle_event("test_llm", %{}, socket)
+      # The spawned child reports to THIS process (the handler's `parent`), so the
+      # bounded wait is a plain mailbox receive — kept inside the capture window
+      # that swallows the child's own ReqLLM log line.
+      {result_socket, _log} =
+        ExUnit.CaptureLog.with_log(fn ->
+          assert {:noreply, result_socket} = WelcomeLive.handle_event("test_llm", %{}, socket)
+          await_spawned_llm_test()
+          result_socket
+        end)
+
       assert result_socket.assigns.llm_test_status == :testing
     end
 
@@ -894,11 +1002,21 @@ defmodule EvoDashWeb.WelcomeLiveTest do
       render_click(view, "select_welcome_provider", %{"provider_id" => "anthropic"})
       render_click(view, "select_welcome_model", %{"model_string" => model_string(:anthropic)})
       render_change(view, "api_key_changed", %{"api_key" => "sk-ant-typed"})
-      render_click(view, "test_llm", %{})
 
-      assert Map.get(EvoGit.Config.credentials(), "anthropic_api_key") == "sk-ant-typed"
-      assert assigns(view).api_key_input == ""
-      assert assigns(view).llm_test_status == :testing
+      # The typed key IS this test's subject, so the child really does issue a
+      # provider request with it. Holding the capture window open until the child
+      # reported back (bounded, never-failing) means its ReqLLM failure log — a
+      # bogus key ⇒ an HTTP 403 from the provider — is captured here instead of
+      # printing after this test's capture closed.
+      ExUnit.CaptureLog.with_log(fn ->
+        render_click(view, "test_llm", %{})
+
+        assert Map.get(EvoGit.Config.credentials(), "anthropic_api_key") == "sk-ant-typed"
+        assert assigns(view).api_key_input == ""
+        assert assigns(view).llm_test_status == :testing
+
+        await_llm_test_result(view)
+      end)
     end
   end
 
