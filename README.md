@@ -15,15 +15,13 @@
 
 ---
 
-<h2 align="center">Let the software world keep evolving.</h2>
+<h2 align="center">Let software worlds evolve</h2>
 
 <p align="center">
   One objective in. A persistent software world unfolds.
 </p>
 
 From an implementation-empty repository, Genesis built a **248,989-line C compiler** in a **123.4-hour** run. Different foundation models then independently continued development from the same accepted software world.
-
-> As far as we can determine, Genesis is the first publicly known autonomous system to submit a result for the [Terminal-Bench Challenges](https://github.com/BillHuang2001/tbench-wasm) — specifically the WASM Render challenge. The run cost just **$36**—far below Terminal-Bench's stated expectation of ~$1K+ per challenge.
 
 **EvoX Genesis is an AI system for long-horizon autonomous software evolution.**
 
@@ -32,6 +30,18 @@ Its key idea is not to keep one agent—or one coding session—alive. Genesis m
 > **You specify what the software should become. Genesis unfolds how to build it.**
 
 > **Agents come and go. The software world keeps evolving.**
+
+---
+
+<p align="center">
+  <a href="https://genesis.evox.group/#film">
+    <img src="docs/images/promo-poster.jpg" alt="Genesis promo film" width="720">
+  </a>
+</p>
+
+<p align="center">
+  ▶ <a href="https://genesis.evox.group/#film"><strong>Watch the Genesis promo film</strong></a> — built with Genesis — at <a href="https://genesis.evox.group">genesis.evox.group</a>
+</p>
 
 ---
 
@@ -45,62 +55,22 @@ Its key idea is not to keep one agent—or one coding session—alive. Genesis m
 
 ## Built with Genesis
 
-Three regimes. One developmental principle.
+Three developmental regimes. One principle: agents come and go, the software world persists.
 
-### 🧱 Formation
+| Regime | From → To | Headline result |
+| ------ | --------- | --------------- |
+| 🧱 **Formation** | Implementation-empty repository → Rust-based C compiler | **248,989 lines** built in **123.4 h** · **220/220** c-testsuite |
+| 🔄 **Continuation** | The same accepted compiler world, a new foundation model | **GLM 5.2** and **DeepSeek V4 Flash** each continued development independently |
+| 🔬 **Redevelopment** | 13 MESA Fortran modules → Rust crates | **139,414 → 89,946 lines** · **1,052 tests, 0 failures** |
 
-#### C compiler from an implementation-empty repository
+The demo repositories: [genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc) (formation and continuation) · [genesis-demo-mesa-rs](https://github.com/EMI-Group/genesis-demo-mesa-rs) (redevelopment).
 
-Genesis used **DeepSeek V4 Flash** to develop a Rust-based C compiler from a repository containing no compiler implementation code.
+> As far as we can determine, Genesis is the first publicly known autonomous system to submit a result for the [Terminal-Bench Challenges](https://github.com/BillHuang2001/tbench-wasm) — the WASM Render challenge — for just **US$36**, far below the ~US$1K+ per-challenge expectation.
 
-**Repository:** [github.com/EMI-Group/genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc)  
-**Scope:** implementation-empty repository → **248,989-line C compiler**  
-**Run:** **123.4 h · 1,019 archived agent episodes · US$44.38** (≈US$98 at DeepSeek's current pricing)
-**Validation:** **220/220** c-testsuite · **32/36** LLVM · **93/93** executed Csmith · **2,904** Rust tests · **106/106** internal cases  
-**Development:** observed recursive depth **5** · **327** first-parent commits
-
-<p align="center">
-  <img src="docs/images/experiments/formation.jpg" alt="Formation experiment: compiler development trajectory, validation results, agent activity and time allocation">
-</p>
-
----
-
-### 🔄 Continuation
-
-#### The model changed. Development continued.
-
-Genesis continued the same accepted compiler world independently with **GLM 5.2** and **DeepSeek V4 Flash**.
-
-**Repository:** [github.com/EMI-Group/genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc)  
-**Scope:** one accepted compiler world → two independent continuation trajectories  
-**Run:** GLM 5.2: **21.99 h · 98 agents** · DeepSeek V4 Flash: **17.10 h · 178 agents**  
-**Validation:** GLM 5.2: **1,445/1,448** · DeepSeek V4 Flash: **1,820/1,820** retained LLVM SingleSource cases  
-**Development:** both retained **220/220** c-testsuite and **4/4** LZ4 · observed recursive depths **4** and **8**
-
-<p align="center">
-  <img src="docs/images/experiments/continuation.jpg" alt="Continuation experiment: independent GLM 5.2 and DeepSeek V4 Flash development trajectories">
-</p>
-
----
-
-### 🔬 Redevelopment
-
-#### MESA → Rust, with numerical behaviour preserved
-
-Genesis redeveloped a selected chain of **13 MESA Fortran modules** into corresponding Rust crates.
-
-**Repository:** [github.com/EMI-Group/genesis-demo-mesa-rs](https://github.com/EMI-Group/genesis-demo-mesa-rs)  
-**Scope:** **139,414 Fortran lines → 89,946-line Rust workspace**  
-**Run:** **33.22 h · 272 agents · US$10.64**  
-**Validation:** **1,052 tests · 0 failures** · **2 bit-exact** workloads · remaining relative checksum differences ≤ **3.1 × 10⁻⁹**  
-**Development:** observed recursive depth **4** · median runtime speedups **1.55×–6.87×**
-
-<p align="center">
-  <img src="docs/images/experiments/redevelopment.jpg" alt="Redevelopment experiment: MESA-to-Rust progress, cache behavior, module coverage and runtime validation">
-</p>
+📄 **[Full experimental results and figures →](docs/experiments.md)** · Paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450)
 
 <sub>
-Reported dollar amounts are foundation-model token charges only. Compiler formation, continuation and MESA redevelopment are observed system-level results, not normalized model-comparison benchmarks. The MESA result covers the audited 13-module scope, not the full application.
+Reported dollar amounts are foundation-model token charges only, and these are observed system-level results rather than normalized model-comparison benchmarks.
 </sub>
 
 ---
