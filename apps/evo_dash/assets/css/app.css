@@ -411,6 +411,32 @@ html { scroll-behavior: smooth; }
   height: 100%;
 }
 
+/* Brand logo theme sweep (CoreComponents `brand_logo/1`): the 18 X-mark bars
+   are inlined server-side with the exact path data of
+   priv/static/images/logo.svg, but their colors live here so a theme switch
+   recolors them through CSS. Each bar carries a precomputed inline
+   transition-delay (23ms steps, ordered by bar center top-left →
+   bottom-right — the same sweep as the Genesis evidence pages' brand mark),
+   so flipping html[data-theme] plays the per-bar sweep with zero JS. The
+   diagonal bar keeps brand red in both themes — the :not() guard is needed
+   because [data-theme=dark] .brand-logo-seg would otherwise outrank
+   .brand-logo-seg-red. */
+.brand-logo-seg {
+  fill: #373435;
+  transition: fill 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.brand-logo-seg-red {
+  fill: #c8383c;
+}
+[data-theme="dark"] .brand-logo-seg:not(.brand-logo-seg-red) {
+  fill: #d7d6d8;
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-logo-seg {
+    transition: none;
+  }
+}
+
 /* Smooth transitions for interactive elements only */
 button, a, input, textarea, select, summary,
 .badge, .btn, .glass-card {

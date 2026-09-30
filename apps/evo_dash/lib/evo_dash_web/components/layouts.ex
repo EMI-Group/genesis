@@ -122,17 +122,7 @@ defmodule EvoDashWeb.Layouts do
             class="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0"
           >
             <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-            <img
-              src={~p"/images/logo.svg"}
-              class="h-6 w-auto block dark:hidden shrink-0"
-              alt={gettext("EvoX Genesis")}
-            />
-            <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-            <img
-              src={~p"/images/logo-alt.svg"}
-              class="h-6 w-auto hidden dark:block shrink-0"
-              alt={gettext("EvoX Genesis")}
-            />
+            <.brand_logo class="h-6 w-auto shrink-0" alt={gettext("EvoX Genesis")} />
             <span class="text-lg font-extrabold tracking-tight text-base-content truncate sidebar-label">
               <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
               {gettext("EvoX Genesis")}

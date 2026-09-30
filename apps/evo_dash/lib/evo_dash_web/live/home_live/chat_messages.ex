@@ -39,17 +39,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
     ~H"""
     <div class="h-full min-h-0 flex flex-col items-center justify-center gap-3 text-center px-6 pb-10">
       <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-      <img
-        src={~p"/images/logo.svg"}
-        class="h-14 w-auto dark:hidden"
-        alt={gettext("EvoX Genesis")}
-      />
-      <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
-      <img
-        src={~p"/images/logo-alt.svg"}
-        class="h-14 w-auto hidden dark:block"
-        alt={gettext("EvoX Genesis")}
-      />
+      <.brand_logo class="h-14 w-auto" alt={gettext("EvoX Genesis")} />
       <p class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/60">
         <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
       </p>
