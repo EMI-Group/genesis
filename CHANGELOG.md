@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.6] - 2026-09-30
+
+### Added
+
+- Add auto-commit fallback for agents
+
+### Changed
+
+- Slot-model routing is now deterministic, preventing stale agent-state rows from misrouting slot requests
+- LLM backoff and task-reload debounce timings are now configurable via app-env
+- The current branch is now preselected as the default merge target
+
+### Fixed
+
+- Gated boot-load failures now terminate an unresponsive backend so the watchdog can show an error page and restart instead of leaving the app stuck on a failed load
+- Desktop readiness-timeout failures are now recorded in the shell log
+- Desktop auto-update first launch no longer dead-ends on the "Genesis backend unavailable" error page; the boot/readiness sequence runs off the main thread and a neutral startup page is shown for healthy backends
+
 ## [0.13.5] - 2026-09-27
 
 ### Added
