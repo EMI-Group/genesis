@@ -22,6 +22,13 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   alias EvoGit.TaskInfo
 
+  # Poll interval for the file's wait_until/2 helper. Tightened from 10ms to
+  # 2ms: the pollers observe async work that typically settles within a few
+  # ms, so the old interval was pure overshoot latency (the residual wait of a
+  # fixed-interval poll averages interval/2). Still non-zero so the loop never
+  # spins hot.
+  @poll_interval_ms 2
+
   setup do
     # Isolated Store + TaskRegistry (pattern from tasks_live_test). The helper
     # owns teardown: it stops the isolated pair FIRST, then restores and
@@ -235,9 +242,10 @@ defmodule EvoDashWeb.HomeLiveTest do
     |> Floki.find(selector) != []
   end
 
-  # Polls `fun` every 10ms until it returns truthy (or the timeout elapses) —
-  # the tasks_live_test.exs pattern for observing async results (the real
-  # supervised fetches, the 300ms PubSub debounce) without fixed sleeps.
+  # Polls `fun` until it returns truthy (or the timeout elapses) — the
+  # tasks_live_test.exs pattern for observing async results (the real
+  # supervised fetches, the PubSub debounce) without fixed sleeps. The poll
+  # interval is @poll_interval_ms (a few ms — see the attribute).
   defp wait_until(fun, timeout \\ 2000) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
@@ -248,13 +256,61 @@ defmodule EvoDashWeb.HomeLiveTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("timed out waiting for async condition")
         else
-          Process.sleep(10)
+          Process.sleep(@poll_interval_ms)
           wait_loop.(wait_loop)
         end
       end
     end
 
     wait_loop.(wait_loop)
+  end
+
+  # Runs a REAL chat send (a typed `render_submit(view, "send_message", ...)`
+  # or a suggestion-chip `render_click`) plus an await of the started reflect
+  # task's terminal status inside ONE ExUnit.CaptureLog.with_log/2 window, and
+  # returns {html, log} — the canonical-send test's shape, shared by EVERY
+  # real-send test in this file.
+  #
+  # WHY the window: the suite-level `capture_log: true` only keeps the Logger
+  # :default handler swapped out WHILE a capture is active, so a log emitted
+  # after a test's capture closed prints to the console as uncaptured noise
+  # (observed in the between-test gap: `[warning] TaskRegistry:
+  # FAILED_TRANSITION task_id=<id> source=result_handler prev_status=:running
+  # result={:error, :llm_not_configured}`). with_log/1's internal Logger.flush/0
+  # drains pending entries before the window closes.
+  #
+  # ORDERING — awaiting the persisted terminal status is a DETERMINISTIC
+  # guarantee that the FAILED_TRANSITION log is inside the window: the
+  # registry's `{ref, result}` handler calls
+  # `Diagnostics.log_failed_transition(task_id, :result_handler, ...)` BEFORE it
+  # casts the terminal status (apps/evo_git/lib/evo_git/task_registry.ex: ~:1477
+  # vs the ~:1489 `update_task_status_with_caller/4`), and that cast writes the
+  # row synchronously in `handle_update_status/6` (its ~:909 log precedes the
+  # ~:956 `EvoGit.Store.update_task_columns/3`). The await therefore returns
+  # only after the log was emitted.
+  #
+  # TOTAL await: `TaskRegistry.start_task/2` is a GenServer.call, so a real
+  # LOCAL send has already persisted its row (non-terminal) by the time
+  # `send_fun` returns — the poll then waits it to terminal. A send that starts
+  # NO task at all (a gate-blocked composer, or a remote fail-fast send that
+  # persists no local row) leaves no non-terminal :reflect row, so the poll is
+  # immediately satisfied.
+  defp send_and_await_terminal(send_fun) when is_function(send_fun, 0) do
+    ExUnit.CaptureLog.with_log(fn ->
+      html = send_fun.()
+      await_reflect_terminal()
+      html
+    end)
+  end
+
+  # Polls until every :reflect row in the store is terminal (an empty set counts
+  # as settled). The file's own wait_until/2 poll idiom — no fixed sleep.
+  defp await_reflect_terminal do
+    wait_until(fn ->
+      EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
+      |> Enum.filter(&(&1.type == :reflect))
+      |> Enum.all?(&(&1.status in [:failed, :completed, :cancelled]))
+    end)
   end
 
   # Polls until the async Genesis-source availability check has landed on the
@@ -403,12 +459,25 @@ defmodule EvoDashWeb.HomeLiveTest do
     # against it or the model-selector describes). Under the setup's fail-fast
     # scheduler config the reflect wrapper returns {:error, :llm_not_configured}
     # deterministically — the row + its opts land on the persisted TaskInfo, no
-    # agent is registered, and no LLM endpoint is ever contacted.
+    # agent is registered, and no LLM endpoint is ever contacted. The submit +
+    # terminal await run inside a CaptureLog.with_log/2 window so the wrapper's
+    # asynchronous error log is captured rather than printed between tests.
     test "starts a reflect task with the right opts and tracks it synchronously", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
-      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+      # The wrapper's `SelfReflective failed: ...` error log is emitted
+      # ASYNCHRONOUSLY at task end, so the submit + the await of the row's
+      # terminal status run inside ONE ExUnit.CaptureLog.with_log/2 window (see
+      # send_and_await_terminal/1, which documents the ordering guarantee and
+      # why an un-windowed send prints uncaptured noise between tests).
+      {html, log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "hello genesis"})
+        end)
 
+      # Deterministic under the fail-fast pin — proof the capture window really
+      # held the wrapper's error log (it is never printed to the console).
+      assert log =~ "SelfReflective failed"
       # Optimistic UI: the user bubble appears immediately and the start flow
       # did not render the error bubble. (Regression: passing the bare
       # %EvoGit.TaskInfo{} struct — instead of {:ok, task} — to
@@ -467,7 +536,17 @@ defmodule EvoDashWeb.HomeLiveTest do
         }
       end)
 
-      render_submit(view, "send_message", %{"message" => "what is genesis?"})
+      {_html, log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "what is genesis?"})
+        end)
+
+      # Deterministic proof that the capture window really held the registry's
+      # asynchronous FAILED_TRANSITION warning: the persisted row only reaches
+      # its terminal status AFTER that log is emitted (see
+      # send_and_await_terminal/1), so a log landing between tests would make
+      # this assert flunk instead of leaking to the console.
+      assert log =~ "FAILED_TRANSITION"
 
       # The persisted row's objective must carry the preamble.
       [task] =
@@ -1736,7 +1815,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       render_change(view, "select_chat_model", %{"model_id" => "profile-a"})
       assert assigns(view)[:selected_model_id] == "profile-a"
 
-      html = render_submit(view, "send_message", %{"message" => "hello"})
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "hello"})
+        end)
+
       assert html =~ "hello"
 
       tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
@@ -1765,7 +1848,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       # opts (mode + objective).
       {:ok, view, _html} = live(conn, "/help")
 
-      html = render_submit(view, "send_message", %{"message" => "auto please"})
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "auto please"})
+        end)
+
       assert html =~ "auto please"
 
       tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
@@ -1817,10 +1904,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       # handle_event("send_message", %{"message" => text}) clause → send_chat/2
       # → ModelSelect.task_opts/2, so the pinned id must thread EXACTLY like
       # the typed-submit test above.
-      html =
-        view
-        |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
-        |> render_click()
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          view
+          |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
+          |> render_click()
+        end)
 
       assert html =~ "Explain the Genesis architecture"
 
@@ -1846,10 +1935,12 @@ defmodule EvoDashWeb.HomeLiveTest do
       # plain reflect opts (mode + objective).
       {:ok, view, _html} = live(conn, "/help")
 
-      html =
-        view
-        |> element(~s(button[phx-value-message="What can you help me with?"]))
-        |> render_click()
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          view
+          |> element(~s(button[phx-value-message="What can you help me with?"]))
+          |> render_click()
+        end)
 
       assert html =~ "What can you help me with?"
 
@@ -1896,7 +1987,9 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view)[:selected_model_id] == "profile-a"
 
       # The next (typed) send threads the surviving pin into the reflect task.
-      render_submit(view, "send_message", %{"message" => "after new chat"})
+      send_and_await_terminal(fn ->
+        render_submit(view, "send_message", %{"message" => "after new chat"})
+      end)
 
       tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
       reflect = Enum.filter(tasks, &(&1.type == :reflect))
@@ -2034,8 +2127,8 @@ defmodule EvoDashWeb.HomeLiveTest do
       # :running summary map (the shape an applied fetch result writes — the
       # 16-key EvoGit.TaskRegistry.list_tasks_summary/1 projection). The hub
       # seed is SYNCHRONOUS (node_aware.ex on_mount), so the VERY FIRST render
-      # already carries the sidebar — no task_updated broadcast, no 300ms
-      # debounce sleep: the exact no-blink contract. (The connected-mount
+      # already carries the sidebar — no task_updated broadcast, no debounce
+      # sleep: the exact no-blink contract. (The connected-mount
       # staleness-catch-up fetch still fires afterwards and is stale-guarded;
       # it lands after this html assertion and does not affect the first
       # paint.)
@@ -2089,7 +2182,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "reflect_side", :running, node()})
 
       # The broadcast has been processed (assigns/1 is a :sys.get_state
-      # round-trip), so the 300ms trailing-edge debounce is scheduled. Poll
+      # round-trip), so the trailing-edge debounce is scheduled. Poll
       # until it has fired and the sidebar reload ran — no fixed sleep.
       assert assigns(view)[:tasks_reload_pending] == true
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
@@ -2126,7 +2219,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:task_updated, "reflect_a", :completed, node()})
       send(view.pid, {:task_updated, "reflect_b", :completed, node()})
 
-      # The broadcasts have been processed (assigns/1 syncs), so the 300ms
+      # The broadcasts have been processed (assigns/1 syncs), so the
       # trailing-edge debounce is scheduled. Poll until it fired and the
       # sidebar reload ran (exercise partition_active_tasks/1 with the
       # nil-timestamp rows) — no fixed sleep.
@@ -2483,8 +2576,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert disabled?(html, ~s(button[type="submit"]))
 
       # A submit is a defensive no-op: no optimistic bubble, no :reflect task,
-      # error flash pointing at the Download button.
-      html = render_submit(view, "send_message", %{"message" => "hello genesis"})
+      # error flash pointing at the Download button. (Wrapped in the send
+      # helper for uniformity — it starts no task, so the terminal await is
+      # immediately satisfied and no async registry log can escape.)
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "hello genesis"})
+        end)
+
       assert html =~ "Download the Genesis source before sending a message."
       refute html =~ "hello genesis"
       assert assigns(view).chat_task_id == nil
@@ -2520,17 +2619,17 @@ defmodule EvoDashWeb.HomeLiveTest do
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
 
-      # The post-clone re-check now reports the source as downloaded. A short
-      # artificial delay simulates an in-flight clone; the busy state asserted
-      # below comes from render_click/1's synchronous render (source_busy is
-      # assigned in the event handler), so it only needs to outlive that call.
+      # The post-clone re-check now reports the source as downloaded. The
+      # "Cloning…" busy state asserted below is assigned SYNCHRONOUSLY by the
+      # `download_source` event handler, and `render_click/1`'s reply carries
+      # the render taken immediately after that handler returns (the LiveView
+      # process cannot process the clone-result message before then) — so the
+      # busy markup is deterministic and the stub needs no artificial delay.
+      # The post-clone settle is waited for with the bounded `wait_until/1`
+      # poll below.
       Application.put_env(:evo_dash, :source_availability_runner, fn -> true end)
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(50)
-        {:ok, %{}}
-      end)
-
+      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:ok, %{}} end)
       html = render_click(view, "download_source")
       assert html =~ "Cloning…"
       assert disabled?(html, "#genesis-source-download")
@@ -2549,11 +2648,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "a failing download flashes the error and keeps the gate", %{conn: conn} do
       Application.put_env(:evo_dash, :source_availability_runner, fn -> false end)
 
-      Application.put_env(:evo_dash, :source_clone_runner, fn ->
-        Process.sleep(50)
-        {:error, :boom}
-      end)
-
+      Application.put_env(:evo_dash, :source_clone_runner, fn -> {:error, :boom} end)
       {:ok, view, _html} = live(conn, "/help")
       html = await_source_available(view, false)
       assert present?(html, "#genesis-source-gate")
@@ -2599,7 +2694,12 @@ defmodule EvoDashWeb.HomeLiveTest do
 
     test "send routes through NodeContext to the remote and fails fast", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help?node=test-remote")
-      html = render_submit(view, "send_message", %{"message" => "hi remote"})
+
+      {html, _log} =
+        send_and_await_terminal(fn ->
+          render_submit(view, "send_message", %{"message" => "hi remote"})
+        end)
+
       # The synchronous :erpc to the nonexistent remote BEAM node fails fast →
       # error bubble + back to :idle; NO row is created in the LOCAL store.
       assert html =~ "Failed to start the task"
@@ -2684,7 +2784,19 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view).current_node == :"genesis_remote@127.0.0.1"
       # No check is spawned for a remote node → the runner is never called and
       # source_available stays "unknown".
-      refute_receive :availability_runner_called, 200
+      #
+      # The 50ms window (down from 200ms) is sufficient because the failure mode
+      # is impossible BY CONSTRUCTION and, when it could occur, is immediate:
+      # `maybe_check_source/1` is the ONLY caller of the spawn helper and gates
+      # it on `SourceGate.visible?(current_node)` (node in [nil, node()]), and
+      # this test views a remote node — so a regression would call the runner
+      # during the CONNECTED MOUNT (handle_params), i.e. before/while `live/3`
+      # returns. The runner then sends its flag synchronously on the very next
+      # TaskSupervisor scheduler slot, far inside a 50ms budget. The
+      # `assert assigns(view).source_available == nil` line below is the
+      # durable assertion on the same failure mode (a spawned check with this
+      # node would make the gate known-unavailable → false).
+      refute_receive :availability_runner_called, 50
       assert assigns(view).source_available == nil
 
       # No gate, no blocked note, composer NOT blocked.

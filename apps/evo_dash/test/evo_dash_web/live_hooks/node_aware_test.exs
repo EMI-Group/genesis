@@ -580,9 +580,14 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert Enum.any?(running, &(&1.id == "running-1"))
 
       # A second assign_node with the SAME context must NOT re-spawn (the
-      # :tasks_node_loaded dedup guard skips it — no new message arrives).
-      NodeAware.assign_node(result, %{})
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # :tasks_node_loaded dedup guard skips it — the seq stays 1, so no new
+      # fetch was spawned and no message can arrive).
+      second = NodeAware.assign_node(result, %{})
+      assert second.assigns[:tasks_load_seq] == 1
+
+      # Belt-and-braces only: the seq backstop above deterministically proves
+      # no spawn, so no message can ever be in flight.
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
   end
 
@@ -701,8 +706,10 @@ defmodule EvoDashWeb.NodeAwareTest do
       # either list is non-empty — both non-empty here means the gate is open.
       assert socket.assigns.running_tasks != [] or socket.assigns.pending_tasks != []
 
-      # Nothing is spawned on the dead render — no fetch message ever arrives.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Nothing is spawned on the dead render — the seq backstop proves it
+      # deterministically (no fetch was spawned, so no message can arrive).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "a malformed hub snapshot is SANITIZED on the mount seed (non-maps dropped)" do
@@ -720,8 +727,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.running_tasks == [valid_map]
       assert socket.assigns.pending_tasks == []
 
-      # Dead render → still no mount fetch.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Dead render → still no mount fetch (the seq backstop proves it).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "a stored {[], []} snapshot for a PENDING context seeds [] and still renders (no crash, no leak)" do
@@ -746,8 +754,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == []
       assert EvoDash.ActiveTasks.get("target-empty", node()) == {:ok, {[], []}}
 
-      # Pending context → no mount fetch.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Pending context → no mount fetch (the seq backstop proves it).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "warm REMOTE hub + remote mount seeds the REMOTE snapshot, never the local one" do
@@ -781,8 +790,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       refute Enum.any?(socket.assigns.running_tasks, &(&1.id == "local-running"))
 
       # Remote context → no mount fetch (assign_node/2's context-change reload
-      # is the single source of remote fetches).
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # is the single source of remote fetches; the seq backstop proves it).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "a PENDING remote mount seeds [] — the local snapshot never leaks into the pending key" do
@@ -804,7 +814,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       # The hub is cold for the pending key → seeds [] — local tasks stay hidden.
       assert socket.assigns.running_tasks == []
       assert socket.assigns.pending_tasks == []
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "an unknown node param (local fallback) with a cold hub seeds [] on the dead render" do
@@ -817,7 +828,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.current_node_id == nil
       assert socket.assigns.running_tasks == []
       assert socket.assigns.pending_tasks == []
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Dead render → no mount fetch (the seq backstop proves it).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
   end
 
@@ -922,7 +935,7 @@ defmodule EvoDashWeb.NodeAwareTest do
         []
       )
 
-      assert {:cont, _socket} =
+      assert {:cont, socket} =
                NodeAware.on_mount(
                  :default,
                  %{"node" => "target-warm"},
@@ -930,8 +943,10 @@ defmodule EvoDashWeb.NodeAwareTest do
                  connected_mount_socket()
                )
 
-      # Remote context → no mount fetch, warm or cold.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Remote context → no mount fetch, warm or cold (the seq backstop proves
+      # it deterministically).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
     test "warm PENDING hub on a connected PENDING mount does NOT fetch (assign_node owns pending fetches)" do
@@ -956,8 +971,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       # never the local key).
       assert socket.assigns.running_tasks == [%{id: "pending-seed", status: :running}]
 
-      # Pending context → no mount fetch.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 150
+      # Pending context → no mount fetch (the seq backstop proves it).
+      assert socket.assigns[:tasks_load_seq] == 0
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
   end
 
@@ -1157,9 +1173,16 @@ defmodule EvoDashWeb.NodeAwareTest do
       # Wait for the connect to be recorded — the spawned Task reached the fake.
       await_until(fn -> GenServer.call(manager, :calls) != [] end)
 
+      # Deterministic backstop: capture the spawned Task and wait for it to exit.
+      # Its {:error, reason} arm is its LAST expression, so once the Task is
+      # dead, any self-message it would have sent is already in the mailbox —
+      # the refute below can then never race a late send.
+      assert [caller] = GenServer.call(manager, :callers)
+      await_until(fn -> not Process.alive?(caller) end)
+
       # {:ok, :connecting} is a terminal-enough reply for the helper: only the
       # {:error, reason} arm sends the view a message, so none may arrive.
-      refute_receive {:remote_connect_result, ^id, _}, 100
+      refute_receive {:remote_connect_result, ^id, _}, 50
     end
 
     test "{:ok, :connected} connect result → NO {:remote_connect_result, ...} self-message" do
@@ -1177,9 +1200,15 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       await_until(fn -> GenServer.call(manager, :calls) != [] end)
 
+      # Deterministic backstop: the spawned Task has fully exited (its
+      # {:error, reason} arm is its LAST expression), so any self-message it
+      # would have sent is already in the mailbox before the refute runs.
+      assert [caller] = GenServer.call(manager, :callers)
+      await_until(fn -> not Process.alive?(caller) end)
+
       # Same contract as {:ok, :connecting} — an already-connected idempotent
       # no-op still sends no self-message.
-      refute_receive {:remote_connect_result, ^id, _}, 100
+      refute_receive {:remote_connect_result, ^id, _}, 50
     end
 
     test "{:error, reason} connect result → the {:remote_connect_result, ...} self-message is delivered" do
@@ -1215,6 +1244,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       # The nil clause returns the socket and spawns nothing — give any buggy
       # spawn time to land, then assert no self-message arrived and no :connect
       # call reached the registered fake.
+      # No deterministic backstop exists here: the :calls GenServer.call below
+      # can be answered before a buggy spawned Task would reach the manager, so
+      # the full 150 ms window is deliberately kept.
       refute_receive {:remote_connect_result, _, _}, 150
       assert GenServer.call(manager, :calls) == []
     end

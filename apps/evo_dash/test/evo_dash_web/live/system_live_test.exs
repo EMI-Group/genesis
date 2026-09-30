@@ -1500,10 +1500,21 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       await_hub_phase(:up_to_date)
 
-      # The delayed result gives the :checking phase a deterministic observation
-      # window.
+      test_pid = self()
+
+      # The runner HOLDS the :checking phase open until the test releases it,
+      # instead of sleeping a fixed 300ms window: :checking is then observed
+      # directly (see the `await_update_phase(view, :checking)` below) rather
+      # than raced against a wall clock. The `after` bound is generous (5s) so a
+      # lost handshake can never hang the run.
       Application.put_env(:evo_dash, :update_check_runner, fn pid ->
-        Process.sleep(300)
+        send(test_pid, {:update_check_runner_started, self()})
+
+        receive do
+          :release_update_check -> :ok
+        after
+          5_000 -> :ok
+        end
 
         send(
           pid,
@@ -1516,17 +1527,44 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
+      # TaskSupervisor children already alive before the click (mount-time self
+      # check / chart seed), subtracted below so only the click's own tasks are
+      # drained.
+      pre_click_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor)
+
       view |> element("#update-check-now") |> render_click()
 
+      # The click spawns exactly two TaskSupervisor children when a runner seam
+      # is injected: the runner (now blocked on the release) and the parallel
+      # never-wedge timeout watchdog. Both are spawned synchronously by the
+      # handler, so asserting them here guarantees the drain below can never
+      # silently become a no-op.
+      click_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor) -- pre_click_tasks
+      assert length(click_tasks) >= 2
+
+      assert_receive {:update_check_runner_started, runner_pid}, 1_000
       await_update_phase(view, :checking)
+      send(runner_pid, :release_update_check)
+
       await_update_phase(view, :up_to_date)
 
       html = render(view)
       assert html =~ "is up to date"
 
-      # Let the parallel timeout watchdog fire (no-op on :up_to_date) before
-      # the test ends so no stray task mutates the shared hub later.
-      Process.sleep(100)
+      # The never-wedge watchdog is still sleeping out `:update_check_timeout`.
+      # TERMINATE it instead of waiting it out: the check already resolved to
+      # :up_to_date, so all of its remaining work is a guaranteed no-op — and
+      # terminating it removes the stray-task hazard deterministically, whereas
+      # the previous trailing `Process.sleep(100)` only *probably* covered it
+      # (the watchdog fires ~400ms after the click, i.e. right around when that
+      # sleep ended).
+      for pid <- click_tasks do
+        Task.Supervisor.terminate_child(EvoDash.TaskSupervisor, pid)
+      end
+
+      # `terminate_child/2` is synchronous — nothing from the click may survive
+      # into a later test (a surviving watchdog could mutate the shared hub).
+      refute Enum.any?(click_tasks, &Process.alive?/1)
     end
 
     test "a check that never resolves times out and shows the error state", %{conn: conn} do
@@ -1976,11 +2014,15 @@ defmodule EvoDashWeb.SystemLiveTest do
     # `{:unavailable, :module_missing}` when the `EvoGit.SelfReflectiveSource`
     # backend module is absent (it is, in this worktree) and must never be hit.
     # Clone/update flows use the same seam pattern (`:source_clone_runner` /
-    # `:source_update_runner`). The 300ms runner sleeps give the transient
-    # busy states a deterministic observation window (same idiom as the update
-    # card's "Check now flow" test). Async results are flushed by polling the
-    # socket assigns (`await_view_assign/3`); `render_async/2` does not await
-    # TaskSupervisor children.
+    # `:source_update_runner`). Those operations need NO artificial delay: their
+    # busy state (`source_busy`) is assigned SYNCHRONOUSLY by the event handler,
+    # so the `render_click/2` return value already carries "Cloning…"/"Updating…"
+    # and the disabled button regardless of how fast the runner returns; the
+    # completion is then flushed by polling the socket assigns
+    # (`await_view_assign/3`). A runner that must stay in flight for a
+    # deterministic window (the loading spinner) signals its start and blocks
+    # until the test releases it. `render_async/2` does not await TaskSupervisor
+    # children, so polling the assigns is required either way.
 
     test "card renders on a local node as a peer card of the self-check grid", %{conn: conn} do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
@@ -2137,11 +2179,11 @@ defmodule EvoDashWeb.SystemLiveTest do
       cloned = source_status(%{commit: "cafebabe"})
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
-      # A short artificial delay simulates an in-flight clone; the busy state
-      # asserted below comes from render_click/1's synchronous render (source_busy
-      # is assigned in the event handler), so it only needs to outlive that call.
+      # No artificial delay: the busy state asserted below comes from
+      # render_click/1's synchronous render (`source_busy` is assigned by the
+      # event handler before the runner task is even spawned), so an instantly
+      # returning runner cannot clear it early.
       Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        Process.sleep(50)
         {:ok, cloned}
       end)
 
@@ -2171,8 +2213,10 @@ defmodule EvoDashWeb.SystemLiveTest do
     } do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
+      # No artificial delay (see the clone-success test above): the busy state
+      # comes from the synchronous render, the failure is awaited via the
+      # `source_busy`/flash assigns afterwards.
       Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        Process.sleep(50)
         {:error, "clone failed"}
       end)
 
@@ -2197,8 +2241,10 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> original end)
 
+      # No artificial delay (see the clone-success test above): the busy state
+      # comes from the synchronous render, the fresh status is awaited via the
+      # `source_busy`/`source_status` assigns afterwards.
       Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        Process.sleep(50)
         {:ok, updated}
       end)
 
@@ -2224,8 +2270,10 @@ defmodule EvoDashWeb.SystemLiveTest do
       status = source_status()
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
 
+      # No artificial delay (see the clone-success test above): the busy state
+      # comes from the synchronous render, the failure flash is awaited via the
+      # `source_busy` assign afterwards.
       Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        Process.sleep(50)
         {:error, "update failed"}
       end)
 
@@ -2265,8 +2313,15 @@ defmodule EvoDashWeb.SystemLiveTest do
       render_click(view, "clone_source")
       render_click(view, "update_source")
 
-      refute_receive :clone_runner_called, 200
-      refute_receive :update_runner_called, 200
+      # Bounded observation windows (down from 200ms each) — the guard-break
+      # failure mode is covered DETERMINISTICALLY by the two assertions below:
+      # the click handlers are synchronous, so a spawn would leave
+      # `source_busy` == :clone/:update (assigned by the handler, cleared only
+      # together with a non-nil `source_status` in
+      # `apply_source_mutation_result/3`). "source_busy == nil AND
+      # source_status == nil" therefore cannot both hold once a runner ran.
+      refute_receive :clone_runner_called, 50
+      refute_receive :update_runner_called, 50
 
       assert assigns(view)[:source_busy] == nil
       assert assigns(view)[:source_status] == nil

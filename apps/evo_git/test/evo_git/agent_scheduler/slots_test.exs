@@ -67,6 +67,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
   defp put_meta(agent_id, depth) do
     meta = %SchedMeta{id: agent_id, depth: depth, spec: agent_spec()}
     :ets.insert(:evogit_sched_meta, {agent_id, meta})
+    on_exit(fn -> delete_ets_row(:evogit_sched_meta, agent_id) end)
     :ok
   end
 
@@ -80,17 +81,51 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
     }
 
     :ets.insert(:evogit_agent_state, {agent_id, state})
+    on_exit(fn -> delete_ets_row(:evogit_agent_state, agent_id) end)
+    :ok
+  end
+
+  # Targeted teardown of one row THIS module inserted (see `setup/1`):
+  # `:ets.delete/2` is idempotent and the `whereis` guard keeps it crash-free.
+  defp delete_ets_row(table, key) do
+    if :ets.whereis(table) != :undefined, do: :ets.delete(table, key)
     :ok
   end
 
   # --- Setup ---
 
+  setup_all do
+    # The LLM-backoff wakeup sweep arms its timer at `backoff + epsilon`, where
+    # the epsilon is read at CALL time from the app env key
+    # `:llm_backoff_sweep_epsilon_ms` (default 1000 ms). Shrink it for this
+    # module so the sweep tests do not each pay the full fixed 1000 ms; every
+    # assertion is unchanged. Restore the original in `on_exit` (delete it when
+    # it was originally unset). `async: false` keeps this BEAM-global override
+    # from racing other modules.
+    original = Application.get_env(:evo_git, :llm_backoff_sweep_epsilon_ms)
+
+    Application.put_env(:evo_git, :llm_backoff_sweep_epsilon_ms, 10)
+
+    on_exit(fn ->
+      case original do
+        nil -> Application.delete_env(:evo_git, :llm_backoff_sweep_epsilon_ms)
+        value -> Application.put_env(:evo_git, :llm_backoff_sweep_epsilon_ms, value)
+      end
+    end)
+
+    :ok
+  end
+
   setup do
+    # `:evogit_sched_meta` / `:evogit_agent_state` are VM-GLOBAL named tables normally
+    # owned by the running `EvoGit.AgentScheduler`; this start-of-test wipe is the
+    # module's defensive precondition. Teardown is deliberately TARGETED (an `on_exit`
+    # per row, registered in `put_meta/2` / `put_agent_state/2`) rather than a wholesale
+    # `:ets.delete_all_objects/1`, which could nuke rows another module owns.
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_agent_state)
     :ets.delete_all_objects(:evogit_sched_meta)
     :ets.delete_all_objects(:evogit_agent_state)
-    on_exit(fn -> :ets.delete_all_objects(:evogit_sched_meta) end)
     :ok
   end
 
@@ -446,9 +481,10 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert delta >= 300
       assert delta < 1_500
 
-      # The wakeup timer is due at supplied + epsilon (~1.3s), NOT 61s: it can
-      # only arrive inside this bound if the supplied duration was used.
-      assert_receive :retry_llm_waiting, 2_000
+      # The wakeup timer is due at supplied + epsilon (the sweep epsilon is
+      # overridden to 10ms in `setup_all`), NOT 61s: it can only arrive inside
+      # this bound if the supplied duration was used.
+      assert_receive :retry_llm_waiting, 1_000
     end
 
     test "a caller-supplied duration is clamped to the Process.send_after ceiling" do
@@ -475,7 +511,8 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
 
       # A backoff that is still in the future when the sweep runs (250ms of
       # headroom) → the queued waiter stays parked and the sweep must schedule
-      # ANOTHER pass (due at ~1.25s).
+      # ANOTHER pass (due at ~260ms — the 250ms headroom plus the 10ms sweep
+      # epsilon overridden in `setup_all`).
       until = System.monotonic_time(:millisecond) + 250
 
       state =
@@ -492,7 +529,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert :queue.len(State.waiting_for(new_state, @default_model)) == 1
 
       # ... and the sweep rescheduled another pass (the multi-hour-backoff guard).
-      assert_receive :retry_llm_waiting, 3_000
+      assert_receive :retry_llm_waiting, 1_000
     end
 
     test "the sweep does not reschedule once the backoff has expired (and grants the waiter)" do

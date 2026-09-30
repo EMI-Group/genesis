@@ -308,18 +308,22 @@ defmodule EvoDashWeb.NodeAwarePureTest do
   describe "handle_task_info/2 — node-filtered debounce" do
     # The node-identity PubSub contract: `{:task_updated, task_id, status,
     # node}` / `{:task_deleted, task_id, node}` where node is the BEAM node
-    # atom of the publishing node. A matching-node event schedules the 300ms
-    # trailing-edge debounce (`:node_aware_reload_tasks`); a foreign-node event
-    # is dropped BEFORE the debounce — socket returned unchanged, no message.
+    # atom of the publishing node. A matching-node event schedules the
+    # trailing-edge debounce (`Process.send_after(self(),
+    # :node_aware_reload_tasks, <window>)`); a foreign-node event is dropped
+    # BEFORE the debounce — socket returned unchanged, no message.
     # Every scheduling test drains the message with `assert_receive` so a late
     # delivery can never leak into a later test's `refute_receive`.
     #
-    # The receive budget (2000ms) is generously ABOVE the real 300ms
-    # production debounce (`Process.send_after(self(), :node_aware_reload_tasks,
-    # 300)`): the requirement is unchanged (the debounce message MUST arrive),
-    # but the margin absorbs timer/scheduler latency on a loaded machine — a
-    # 500ms budget is only 200ms above the timer and reproducibly flaked under
-    # CPU load ("message delivered too close to the timeout value").
+    # The window is the CALL-TIME app-env seam
+    # `:node_aware_reload_debounce_ms` (production default 300ms; the suite
+    # pins it to 10ms in `test/test_helper.exs`), so no test here depends on a
+    # specific window — only on the debounce message arriving, or not.
+    # The receive budget (2000ms) is generously ABOVE any such window: the
+    # requirement is that the debounce message MUST arrive, and the margin
+    # absorbs timer/scheduler latency on a loaded machine — a 500ms budget
+    # reproducibly flaked under CPU load ("message delivered too close to the
+    # timeout value").
     test "{:task_updated, _, _, node()} with matching node schedules the debounce" do
       sock = socket(%{current_node: node(), tasks_reload_pending: false})
 
@@ -338,7 +342,14 @@ defmodule EvoDashWeb.NodeAwarePureTest do
 
       assert result == sock
       assert result.assigns[:tasks_reload_pending] == false
-      refute_receive :node_aware_reload_tasks, 150
+
+      # Deterministic backstop: the drop path returns the socket UNCHANGED and
+      # never reaches `debounce_task_reload/1` (anything that scheduled would
+      # have set `tasks_reload_pending: true` and returned a CHANGED socket).
+      # So the window is only a margin over the 10ms test seam
+      # `:node_aware_reload_debounce_ms` (production default 300ms) — no need
+      # for an oversized fixed wait.
+      refute_receive :node_aware_reload_tasks, 50
     end
 
     test "{:task_deleted, _, node()} with matching node schedules the debounce" do
@@ -359,7 +370,14 @@ defmodule EvoDashWeb.NodeAwarePureTest do
 
       assert result == sock
       assert result.assigns[:tasks_reload_pending] == false
-      refute_receive :node_aware_reload_tasks, 150
+
+      # Deterministic backstop: the drop path returns the socket UNCHANGED and
+      # never reaches `debounce_task_reload/1` (anything that scheduled would
+      # have set `tasks_reload_pending: true` and returned a CHANGED socket).
+      # So the window is only a margin over the 10ms test seam
+      # `:node_aware_reload_debounce_ms` (production default 300ms) — no need
+      # for an oversized fixed wait.
+      refute_receive :node_aware_reload_tasks, 50
     end
 
     test "remote viewing: event from the viewed remote node schedules; a local event is dropped" do
@@ -381,7 +399,14 @@ defmodule EvoDashWeb.NodeAwarePureTest do
 
       assert result2 == sock2
       assert result2.assigns[:tasks_reload_pending] == false
-      refute_receive :node_aware_reload_tasks, 150
+
+      # Deterministic backstop: the drop path returns the socket UNCHANGED and
+      # never reaches `debounce_task_reload/1` (anything that scheduled would
+      # have set `tasks_reload_pending: true` and returned a CHANGED socket).
+      # So the window is only a margin over the 10ms test seam
+      # `:node_aware_reload_debounce_ms` (production default 300ms) — no need
+      # for an oversized fixed wait.
+      refute_receive :node_aware_reload_tasks, 50
     end
 
     test "review-only mutation (status nil) with matching node schedules the debounce" do
@@ -410,7 +435,14 @@ defmodule EvoDashWeb.NodeAwarePureTest do
 
       # Exactly ONE :node_aware_reload_tasks message was scheduled.
       assert_receive :node_aware_reload_tasks, 2_000
-      refute_receive :node_aware_reload_tasks, 150
+
+      # Deterministic backstop: `result2 == result` (asserted above) with
+      # `tasks_reload_pending` still true proves the coalescing drop branch ran
+      # and scheduled nothing; the ONE legitimate message was already consumed
+      # by the `assert_receive` above. So the window is only a margin over the
+      # 10ms test seam `:node_aware_reload_debounce_ms` (production default
+      # 300ms) — no need for an oversized fixed wait.
+      refute_receive :node_aware_reload_tasks, 50
     end
   end
 

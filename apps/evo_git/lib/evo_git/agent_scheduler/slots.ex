@@ -51,7 +51,14 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   @default_backoff_ms 60_000
   @max_timer_ms 4_000_000_000
-  @sweep_epsilon_ms 1_000
+
+  # Default epsilon appended to each backoff wakeup timer so the sweep lands
+  # just AFTER the backoff expires. This is only the FALLBACK value: both timer
+  # sites read the epsilon at CALL time via the app env key
+  # `:llm_backoff_sweep_epsilon_ms` (see `handle_report_llm_error/4` +
+  # `schedule_next_backoff_sweep/1`), so tests can shrink it while production
+  # behaviour is unchanged when the key is unset.
+  @default_sweep_epsilon_ms 1_000
 
   @type slot_result ::
           {:reply, :ok, State.t(), [{pos_integer(), atom()}]}
@@ -195,6 +202,10 @@ defmodule EvoGit.AgentScheduler.Slots do
 
   Returns `{:reply, :ok, state, status_updates}`.
 
+  The wakeup sweep timer is armed at `backoff + epsilon`, where the epsilon is
+  read at CALL time from the app env key `:llm_backoff_sweep_epsilon_ms`
+  (default `@default_sweep_epsilon_ms`, 1 s).
+
   This is the key win of per-model pools: an exhaustion on one provider
   no longer blocks agents using a different model.
   """
@@ -220,7 +231,11 @@ defmodule EvoGit.AgentScheduler.Slots do
       |> State.update_waiting(model_id, waiting)
       |> State.update_backoff(model_id, backoff_until)
 
-    Process.send_after(self(), :retry_llm_waiting, ms + @sweep_epsilon_ms)
+    Process.send_after(
+      self(),
+      :retry_llm_waiting,
+      ms + Application.get_env(:evo_git, :llm_backoff_sweep_epsilon_ms, @default_sweep_epsilon_ms)
+    )
 
     {:reply, :ok, state, []}
   end
@@ -260,7 +275,12 @@ defmodule EvoGit.AgentScheduler.Slots do
       end)
 
     if max_remaining > 0 do
-      Process.send_after(self(), :retry_llm_waiting, max_remaining + @sweep_epsilon_ms)
+      Process.send_after(
+        self(),
+        :retry_llm_waiting,
+        max_remaining +
+          Application.get_env(:evo_git, :llm_backoff_sweep_epsilon_ms, @default_sweep_epsilon_ms)
+      )
     end
 
     :ok

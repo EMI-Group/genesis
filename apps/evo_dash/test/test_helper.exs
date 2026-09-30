@@ -46,6 +46,18 @@ Application.put_env(:evo_dash, :directory_picker, enabled: false)
 # Tests that specifically need nix enable it explicitly.
 Application.put_env(:evo_git, :nix_enabled, false)
 
+# Test-only perf tuning. These five keys are all CALL-TIME seams — production
+# code reads them at the call site via `Application.get_env(:evo_dash, key, <prod
+# default>)`, so leaving them unset keeps the production timings intact; setting
+# them here only shrinks the real-timer waits the suite otherwise burns on
+# `Process.sleep`. Each value stays comfortably above 0 so no wait degenerates
+# into a busy spin.
+Application.put_env(:evo_dash, :agents_live_flush_ms, 10)
+Application.put_env(:evo_dash, :agents_live_commit_graph_tick_ms, 10)
+Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 10)
+Application.put_env(:evo_dash, :flush_loading_poll_ms, 1)
+Application.put_env(:evo_dash, :node_aware_reload_debounce_ms, 10)
+
 ExUnit.start(capture_log: true)
 
 ExUnit.after_suite(fn _ ->

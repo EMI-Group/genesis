@@ -13,7 +13,15 @@ File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 # Tests that specifically need nix enable it explicitly (e.g. sandbox/bwrap_test.exs).
 Application.put_env(:evo_git, :nix_enabled, false)
 
-ExUnit.start(capture_log: true)
+# Load-robust default per-test timeout. The suite drives real git/subprocess work
+# from up to ~28 concurrent tests, and every `System.cmd/3` / `System.find_executable/1`
+# PATH lookup is a round trip to the BEAM's SINGLE `:file` server. Under heavy host CPU
+# load that server can back up for a minute or more, which aborted otherwise-PASSING
+# tests at the default 60s as an `ExUnit.TimeoutError` (observed on git-heavy modules
+# only under load, always blocked in `:os.find_executable1` -> `:file.call/2`).
+# 180s gives that real I/O room to drain; no assertion is weakened — the test body still
+# runs unchanged and a genuine failure still fails (just later).
+ExUnit.start(capture_log: true, timeout: 180_000)
 
 ExUnit.after_suite(fn _ ->
   # Remove ONLY this run's unique data dir (from the app env). Never remove the

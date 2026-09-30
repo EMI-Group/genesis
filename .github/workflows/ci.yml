@@ -19,7 +19,9 @@ permissions:
 # ── Architecture ────────────────────────────────────────────────────────────
 #
 # A lightweight CI gate that runs on every pull request and push to main.
-# Three parallel jobs: tests, formatting, and compile warnings.
+# Three jobs: tests, formatting, and compile warnings. The `test` job is a
+# matrix over the two umbrella apps so their suites run in parallel on
+# separate runners (the umbrella `mix test` would run them sequentially).
 #
 # The NIF dependencies (xqlite, html5ever, lazy_html) use precompiled
 # binaries (rustler_precompiled / cc_precompiler), so no Rust or C/C++
@@ -27,8 +29,12 @@ permissions:
 
 jobs:
   test:
-    name: Tests
+    name: Tests (${{ matrix.app }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [evo_git, evo_dash]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -62,6 +68,9 @@ jobs:
         run: mix compile
 
       - name: Run tests
+        # `mix test` must run from inside the app directory — running it from
+        # the umbrella root with an app path argument silently runs no tests.
+        working-directory: apps/${{ matrix.app }}
         run: mix test
 
   format-check:

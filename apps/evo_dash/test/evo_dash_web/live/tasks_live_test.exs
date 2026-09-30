@@ -49,6 +49,13 @@ defmodule EvoDashWeb.TasksLiveTest do
   # against a tree read mid-diff. Await the cleared :tasks_loading assign on the
   # socket (a synchronous :sys.get_state round-trip, the file's wait_until idiom)
   # and re-render so every call site reads a fully-applied page-load result.
+  # It additionally DRAINS every async store read this view provoked before returning
+  # (drain_async_loads/2): the page load AND NodeAware's sidebar fetch both run
+  # in EvoDash.TaskSupervisor children, and each of them drives an offloaded
+  # `EvoGit.Store` read. A read still in flight when this suite's per-test
+  # isolated Store is stopped (its `on_exit`) crashes on the store's vanished
+  # Ecto query-cache ETS table and leaks an `[error]` crash report into the
+  # between-test gap — outside ExUnit's capture_log window.
   defp flush_tasks_load(view, timeout \\ 5000) do
     EvoDashWeb.TestHelpers.flush_loading(
       view,
@@ -62,17 +69,92 @@ defmodule EvoDashWeb.TasksLiveTest do
       timeout
     )
 
+    drain_async_loads(view, timeout)
+
     render(view)
+  end
+
+  # Leaves no async load in flight: waits out an ARMED NodeAware debounce (a
+  # `{:task_updated, ...}` broadcast both a test and the cancel/force-kill
+  # handlers provoke arms the trailing-edge timer) and then waits for every
+  # EvoDash.TaskSupervisor child this view spawned to exit.
+  #
+  # The leading render/1 is a synchronous round-trip, so any broadcast already
+  # sitting in the view's mailbox has been processed by the time it returns and
+  # an armed debounce is observable via `:tasks_reload_pending`. No fixed sleeps.
+  defp drain_async_loads(view, timeout) do
+    render(view)
+
+    wait_until(
+      fn -> not :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] end,
+      timeout
+    )
+
+    await_view_async_loads(view, timeout)
+  end
+
+  # Waits until every EvoDash.TaskSupervisor child started by THIS LiveView
+  # process has exited. Task.Supervisor records the spawning process in the
+  # child's `$callers` process-dictionary entry, so matching it against the view
+  # pid targets exactly this view's tasks — a leftover task from another test is
+  # never waited on. A task's result is sent (and its offloaded store read has
+  # therefore already replied) BEFORE the process exits, so by the time its
+  # monitor fires nothing is in flight anymore.
+  defp await_view_async_loads(view, timeout) do
+    view.pid
+    |> view_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      receive do
+        # A task that already exited delivers its :DOWN immediately anyway
+        # (reason :noproc); either way its store read is done.
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        timeout -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  defp view_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.flat_map(fn
+      pid when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
   end
 
   # Renders only the task-list container (#tasks-list), scoping list-content
   # assertions away from the sidebar, which now also lists completed tasks.
   defp render_tasks_list(view), do: view |> element("#tasks-list") |> render()
 
-  # Polls `fun` every 10ms until it returns truthy (or the timeout elapses).
-  # Used to observe the PubSub-driven debounce phases (:tasks_reload_pending
-  # true → false) without fixed sleeps.
-  defp wait_until(fun, timeout \\ 2000) do
+  # Poll interval for wait_until/3. Every poll is a cheap synchronous
+  # round-trip (:sys.get_state / a render) and the fastest transition this file
+  # waits on is the debounce itself — 10ms in the suite
+  # (:node_aware_reload_debounce_ms in test_helper.exs), 300ms in production —
+  # so a 2ms cadence observes any of them within a couple of scheduling quanta
+  # while staying comfortably above 0 (never a hot spin; the previous cadence
+  # was a hardcoded 10ms). A call site can opt into a different cadence with
+  # wait_until/3's third argument.
+  @wait_poll_ms 2
+
+  # Polls `fun` every @wait_poll_ms until it returns truthy (or the TIMEOUT
+  # elapses — deliberately left generous, in seconds, so real breakage still
+  # fails loudly). Used to observe the PubSub-driven debounce phases
+  # (:tasks_reload_pending true → false) without fixed sleeps.
+  defp wait_until(fun, timeout \\ 2000, poll_ms \\ @wait_poll_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     wait_loop = fn wait_loop ->
@@ -82,7 +164,7 @@ defmodule EvoDashWeb.TasksLiveTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("timed out waiting for async condition")
         else
-          Process.sleep(10)
+          Process.sleep(poll_ms)
           wait_loop.(wait_loop)
         end
       end
@@ -119,9 +201,14 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   describe "task search" do
     test "renders the search input", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, html} = live(conn, ~p"/tasks")
 
       assert html =~ "Search by task ID, prompt, objective, or response"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down (see
+      # flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "search_tasks handler filters tasks by prompt text", %{conn: conn} do
@@ -452,7 +539,7 @@ defmodule EvoDashWeb.TasksLiveTest do
     # The EvoGit runtime broadcasts {:task_updated, task_id, status, node} on
     # the "tasks" PubSub topic (node-identity contract). TasksLive forwards the
     # message to NodeAware.handle_task_info/2, which applies the node filter
-    # (only the viewed node's events trigger UI updates) and schedules a 300ms
+    # (only the viewed node's events trigger UI updates) and schedules a
     # debounced reload. These tests verify the handle_info clauses handle these
     # messages gracefully.
 
@@ -473,6 +560,11 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render(view)
       assert is_binary(html)
       assert html =~ "All Statuses"
+
+      # The broadcast armed NodeAware's debounce; drain it (plus the
+      # mount's async page load) so nothing is left in flight when this suite's
+      # isolated Store is torn down (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "handle_info catch-all does not crash on unknown messages", %{conn: conn} do
@@ -485,6 +577,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render(view)
       assert is_binary(html)
       assert html =~ "All Statuses"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
   end
 
@@ -636,11 +732,15 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "task list UI renders (no remote-only info message)", %{conn: conn} do
       insert_fixture!(opts: [prompt: "visible task"])
 
-      {:ok, _view, html} = live(conn, ~p"/tasks")
+      {:ok, view, html} = live(conn, ~p"/tasks")
 
       # The old info message should NOT appear — the full UI always renders.
       refute html =~ "Task history is only available when viewing the local node"
       assert html =~ "Search by task ID, prompt, objective, or response"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
   end
 
@@ -655,7 +755,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       # connected mount; only the connected pass may spawn a load. Exactly one
       # spawn here means the discarded static-render load is gone.
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 300
+      # The window only has to catch a SECOND spawn (any extra spawn would come
+      # from the same synchronous handle_params/3 sequence that already ran).
+      # The assertion right below is a deterministic backstop: :page_load_seq is
+      # bumped exclusively by start_async_page_load/3 — the very call site that
+      # fires the hook — so it fails loudly if any extra spawn happened. 50ms is
+      # therefore ample, where the old 300ms window was sized for the production
+      # 300ms debounce this test never arms.
+      refute_receive :page_load_spawned, 50
 
       # Corroborating evidence: the monotonic PAGE-LOAD spawn counter
       # advanced once (:page_load_seq is the page load's own counter — the
@@ -677,7 +784,18 @@ defmodule EvoDashWeb.TasksLiveTest do
       # pass to replace...
       assert html_response(conn, 200) =~ "Loading tasks..."
       # ...but no load was spawned (its result would only be discarded).
-      refute_receive :page_load_spawned, 300
+      #
+      # Proof the 10ms window below is sufficient: a plain get/2 drives the
+      # disconnected mount + handle_params/3 IN THIS TEST PROCESS (see the hook
+      # comment in install_page_load_hook/0), and handle_params/3 reaches the
+      # hook's only call site (spawn_page_load/1) ONLY on the connected pass
+      # (tasks_live.ex handle_params/3, `if connected?(socket)`). So a wrongly
+      # spawned load would `send(self(), :page_load_spawned)` into THIS mailbox
+      # during the synchronous get/2 above — the message would already be here
+      # when the refute runs, and the window exists only to catch a hypothetical
+      # straggler (there is no spawned Task that could produce one: the hook is
+      # invoked before any Task exists).
+      refute_receive :page_load_spawned, 10
     end
 
     test "project filter dropdown populates from the async load", %{conn: conn} do
@@ -709,7 +827,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       _html = render_hook(view, "search_tasks", %{"search_query" => "filtered"})
 
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 200
+      # Same reasoning as the "exactly one page load" test above: the refute's
+      # only failure mode is an EXTRA spawn, and the `:page_load_seq == 2`
+      # assertion immediately below is a deterministic backstop for exactly that
+      # (start_async_page_load/3 is the counter's only writer and the hook's
+      # only caller). 50ms of observation is ample.
+      refute_receive :page_load_spawned, 50
       assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 2
 
       html = flush_tasks_load(view)
@@ -800,7 +923,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       insert_fixture!(opts: [prompt: "event-added task"])
 
       # New-shape event from the local node: NodeAware's node filter matches,
-      # so the 300ms debounced reload is scheduled.
+      # so the debounced reload is scheduled.
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
 
       # Phase 1: the event is processed and the debounce is scheduled.
@@ -831,9 +954,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      # Drain the connected mount's single spawn.
+      # Drain the connected mount's single spawn and pin it deterministically:
+      # :page_load_seq is bumped only by start_async_page_load/3 (the hook's only
+      # caller), so the `== 1` assertion below fails loudly on any extra mount
+      # spawn and makes the short refute window a formality. `seq_before` is
+      # read straight after, and the debounced reload must advance it.
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 100
+      refute_receive :page_load_spawned, 50
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
 
       insert_fixture!(opts: [prompt: "async added task"])
 
@@ -886,8 +1014,19 @@ defmodule EvoDashWeb.TasksLiveTest do
       on_exit(fn ->
         # Safety net (LIFO: runs BEFORE the isolated Store/TaskRegistry
         # teardown registered in setup/1) so a failed assertion can never
-        # leave the shared registry frozen for the next suite.
-        if Process.whereis(EvoGit.TaskRegistry), do: :sys.resume(EvoGit.TaskRegistry)
+        # leave the shared registry frozen for the next suite. The resume is
+        # wrapped: the isolated registry is linked to the test process and can
+        # die between this whereis/1 check and :sys.resume/1's own name lookup,
+        # which then exits with :noproc (a load-dependent flake — see the test
+        # policy's teardown-only rescue allowance).
+        if Process.whereis(EvoGit.TaskRegistry) do
+          try do
+            :sys.resume(EvoGit.TaskRegistry)
+          catch
+            # Expected teardown race — the registry is already gone.
+            :exit, _ -> :ok
+          end
+        end
       end)
 
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
@@ -919,6 +1058,11 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
+      # The connected mount spawned its single page load. :page_load_seq is
+      # bumped ONLY by start_async_page_load/3, so it is also the deterministic
+      # backstop for the no-reload assertion at the end of this test.
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+
       # A task seeded after the initial load would only render if a reload
       # wrongly fired.
       insert_fixture!(opts: [prompt: "foreign marker task"])
@@ -931,21 +1075,37 @@ defmodule EvoDashWeb.TasksLiveTest do
         {:task_updated, "t1", :running, :remote@elsewhere}
       )
 
-      # Sample across the 300ms debounce window (10ms cadence): the
-      # reload-pending flag must never become true.
-      deadline = System.monotonic_time(:millisecond) + 400
+      # Sample across the debounce window: the reload-pending flag must never
+      # become true.
+      #
+      # The window is SHORT because the failure it guards against is fast and
+      # fully determined by the 10ms test-seam debounce
+      # (:node_aware_reload_debounce_ms): a node-matching event arms the
+      # debounce SYNCHRONOUSLY in the handler (NodeAware.debounce_task_reload/1
+      # sets :tasks_reload_pending before Process.send_after/3 returns), so the
+      # very first :sys.get_state round-trip below — which drains the view's
+      # mailbox, the broadcast having been delivered from THIS process — already
+      # observes a wrongly armed timer; the remaining samples then cover the
+      # timer firing (10ms) and a wrongly spawned reload bumping
+      # :page_load_seq. 50ms = 5 debounce periods, where the previous 400ms
+      # window sampled the same 10ms debounce 40x over.
+      deadline = System.monotonic_time(:millisecond) + 50
 
       check_no_reload = fn check_no_reload ->
         state = :sys.get_state(view.pid)
         assert state.socket.assigns[:tasks_reload_pending] == false
 
         if System.monotonic_time(:millisecond) < deadline do
-          Process.sleep(10)
+          Process.sleep(@wait_poll_ms)
           check_no_reload.(check_no_reload)
         end
       end
 
       check_no_reload.(check_no_reload)
+
+      # Deterministic backstop on the SAME side effect: a wrongly triggered
+      # reload would have bumped the monotonic page-load spawn counter.
+      assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
 
       html = render(view)
       assert html =~ "event visible task"
@@ -1119,6 +1279,10 @@ defmodule EvoDashWeb.TasksLiveTest do
                "All agents of this task will be informed to immediately save their changes and exit. Intermediate results will be saved."
 
       assert html =~ "Keep Running"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "close_cancel_modal closes the modal without changing the store", %{conn: conn} do
@@ -1133,6 +1297,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Cancel Task?"
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+
+      # Drain the mount's async page load (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a pending task marks it cancelled immediately", %{conn: conn} do
@@ -1144,6 +1311,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "confirm_cancel_task", %{})
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelled
+
+      # Drains the mount page load AND the debounce armed by the cancellation's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a running task transitions it to :cancelling", %{conn: conn} do
@@ -1155,6 +1326,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_click(view, "confirm_cancel_task", %{})
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :cancelling
+
+      # Drains the mount page load AND the debounce armed by the cancellation's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task on a completed task flashes an error", %{conn: conn} do
@@ -1166,6 +1341,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render_click(view, "confirm_cancel_task", %{})
 
       assert html =~ "Failed to cancel task"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "confirm_cancel_task without opening the modal is a no-op", %{conn: conn} do
@@ -1229,6 +1408,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Force Kill Task?"
       assert html =~ "ALL progress will be completely lost. This cannot be undone."
       assert html =~ "Force Kill"
+
+      # Drain the mount's async page load so no offloaded store read is in
+      # flight when this suite's isolated Store is torn down.
+      flush_tasks_load(view)
     end
 
     test "close_force_kill_modal closes the modal without changing the store", %{conn: conn} do
@@ -1243,6 +1426,9 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ "Force Kill Task?"
 
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :running
+
+      # Drain the mount's async page load (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task on a store-only running task flashes an error", %{conn: conn} do
@@ -1258,6 +1444,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # locally until that change lands; it must NOT be weakened to the old
       # shared msgid ("Failed to cancel task: ...").
       assert html =~ "Failed to force kill task"
+
+      # Drains the mount page load AND any debounce armed by the handler's
+      # broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task on an owned running task force-kills the wrapper", %{conn: conn} do
@@ -1286,6 +1476,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # may fail until then — do NOT revert it.
       assert EvoGit.Store.get_task(EvoGit.Store, id).status == :failed
       refute Process.alive?(wrapper)
+
+      # Drains the mount page load AND the debounce armed by the force-kill's
+      # own {:task_updated, ...} broadcast (see flush_tasks_load/2).
+      flush_tasks_load(view)
     end
 
     test "confirm_force_kill_task without opening the modal is a no-op", %{conn: conn} do
