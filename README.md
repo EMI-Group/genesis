@@ -33,11 +33,7 @@ Its key idea is not to keep one agent—or one coding session—alive. Genesis m
 
 ---
 
-<p align="center">
-  <a href="https://genesis.evox.group/#film">
-    <img src="docs/images/promo-poster.jpg" alt="Genesis promo film" width="720">
-  </a>
-</p>
+https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
 
 <p align="center">
   ▶ <a href="https://genesis.evox.group/#film"><strong>Watch the Genesis promo film</strong></a> — built with Genesis — at <a href="https://genesis.evox.group">genesis.evox.group</a>
