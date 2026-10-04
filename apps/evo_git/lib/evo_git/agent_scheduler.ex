@@ -12,9 +12,10 @@ defmodule EvoGit.AgentScheduler do
 
   The scheduler NEVER touches worktree I/O. Worktree lifecycle is owned by
   `EvoGit.AgentScheduler.WorktreeManager`: the agent Runner requests a fresh
-  worktree (1-hour call timeout; WorktreeManager offloads the I/O to a spawned
-  task), WorktreeManager monitors the agent process and destroys the worktree
-  on exit.
+  worktree (the call waits indefinitely — no call timeout, so a slow create is
+  never aborted, while a genuine failure inside the create pipeline still
+  errors promptly; WorktreeManager offloads the I/O to a spawned task),
+  WorktreeManager monitors the agent process and destroys the worktree on exit.
 
   ## ETS Tables
 
