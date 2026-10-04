@@ -334,13 +334,15 @@ defmodule EvoGit.Agent.Runner do
     else
       Process.put(:repo_path, worktree_path)
 
-      # Request a FRESH worktree from WorktreeManager (1h call timeout —
-      # creation I/O runs offloaded in WorktreeManager, which monitors THIS
-      # process: if we die for any reason, the worktree is reclaimed). If this
-      # fails, the task crashes (caught by the :DOWN handler / crash recovery)
-      # rather than the GenServer — which is the desired behaviour: setup
-      # failure triggers scheduler crash-retry, and the retry's Runner requests
-      # another fresh worktree.
+      # Request a FRESH worktree from WorktreeManager (indefinite wait — the
+      # create call never times out, so a slow copy is waited for; a genuine
+      # failure inside the create pipeline replies {:error, reason} promptly
+      # instead. Creation I/O runs offloaded in WorktreeManager, which monitors
+      # THIS process: if we die for any reason, the worktree is reclaimed). If
+      # this fails, the task crashes (caught by the :DOWN handler / crash
+      # recovery) rather than the GenServer — which is the desired behaviour:
+      # setup failure triggers scheduler crash-retry, and the retry's Runner
+      # requests another fresh worktree.
       case EvoGit.AgentScheduler.WorktreeManager.create_worktree_for_agent(
              agent_id,
              repo_root,
