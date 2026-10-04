@@ -27,6 +27,8 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   # global app env.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   @moduletag :tmp_dir
 
   alias EvoGit.Adapters.Git
@@ -45,8 +47,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
   defmodule DummyAgent do
   end
 
-  # A create call can block for up to the manager's 1h call timeout. Caller
-  # processes stay alive until told to stop so the manager's monitor-driven
+  # The create call waits INDEFINITELY (the manager's `@worktree_call_timeout`
+  # is `:infinity`), so a caller process stays blocked until the create
+  # pipeline replies. This bound is only a safety net for the test harness:
+  # callers stay alive until told to stop so the manager's monitor-driven
   # cleanup cannot race the assertions.
   @caller_stop_timeout 60_000
 
@@ -300,6 +304,153 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
       # Admitted without queueing: the create pipeline completed and flipped the
       # entry to :live.
       wait_until(fn -> agent_status(agent_id) == :live end)
+
+      stop_callers([{agent_id, caller}])
+      await_manager_idle([agent_id])
+    end
+  end
+
+  describe "create pipeline always replies exactly once" do
+    test "(e) a RAISING create fun errors the still-blocked caller promptly", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # `run_create/6` catches the raise and replies `{:error, ...}` to the
+      # caller blocked on the `:infinity` call, so the caller must never wedge.
+      # The bounded collect is a HANG DETECTOR: a caller left blocked flunks
+      # instead of hanging until the ExUnit timeout.
+      install_create_fun(fn _agent_id, _repo_root, _wt_path, _spec, _meta ->
+        raise "boom-in-create"
+      end)
+
+      agent_id = unique_agent_id()
+      {spec, meta, wt_path} = register_agent(agent_id, tmp_dir, base_sha, 1)
+      caller = spawn_caller(agent_id, tmp_dir, wt_path, spec, meta)
+
+      # The manager logs the failure at ERROR level — capture it so the suite
+      # output stays quiet (see the node CONTEXT.md "Console Output" rules).
+      log =
+        capture_log(fn ->
+          assert [{^agent_id, {:error, {:worktree_create_failed, msg}}}] =
+                   collect_results([agent_id], 5_000)
+
+          assert msg =~ "raised"
+          assert msg =~ "boom-in-create"
+        end)
+
+      assert log =~ "boom-in-create"
+
+      # The permit was released even though the create raised (the `after` block
+      # in `run_create/6` casts `{:create_finished, ...}` on every path), so the
+      # admission pipeline is idle again while the caller is still alive.
+      wait_until(fn -> :sys.get_state(WorktreeManager).creating_count == 0 end)
+
+      # The queue is NOT wedged: a subsequent create with a plain fun is
+      # admitted and completes normally.
+      install_create_fun(fn _agent_id, _repo_root, wt_path, _spec, _meta ->
+        {:ok, wt_path}
+      end)
+
+      next_id = unique_agent_id()
+      {next_spec, next_meta, next_wt} = register_agent(next_id, tmp_dir, base_sha, 2)
+      next_caller = spawn_caller(next_id, tmp_dir, next_wt, next_spec, next_meta)
+
+      assert [{^next_id, {:ok, ^next_wt}}] = collect_results([next_id], 10_000)
+
+      stop_callers([{agent_id, caller}, {next_id, next_caller}])
+      await_manager_idle([agent_id, next_id])
+    end
+
+    test "(f) a create fun RETURNING an error hands that error back verbatim", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      install_create_fun(fn _agent_id, _repo_root, _wt_path, _spec, _meta ->
+        {:error, :injected_create_failure}
+      end)
+
+      agent_id = unique_agent_id()
+      {spec, meta, wt_path} = register_agent(agent_id, tmp_dir, base_sha, 1)
+      caller = spawn_caller(agent_id, tmp_dir, wt_path, spec, meta)
+
+      # No wrapping, no rewriting: the create fun's own result reaches the
+      # caller.
+      assert [{^agent_id, {:error, :injected_create_failure}}] =
+               collect_results([agent_id], 5_000)
+
+      wait_until(fn -> :sys.get_state(WorktreeManager).creating_count == 0 end)
+
+      stop_callers([{agent_id, caller}])
+      await_manager_idle([agent_id])
+    end
+
+    test "(g) a slow-but-succeeding create is NOT aborted", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      parent = self()
+
+      # Event-driven hold (no fixed sleep): report entry, then block until the
+      # test releases THIS create.
+      install_create_fun(fn agent_id, _repo_root, wt_path, _spec, _meta ->
+        send(parent, {:create_entered, agent_id, self()})
+
+        receive do
+          :release -> :ok
+        after
+          @release_timeout -> :ok
+        end
+
+        {:ok, wt_path}
+      end)
+
+      agent_id = unique_agent_id()
+      {spec, meta, wt_path} = register_agent(agent_id, tmp_dir, base_sha, 1)
+      caller = spawn_caller(agent_id, tmp_dir, wt_path, spec, meta)
+
+      assert_receive {:create_entered, ^agent_id, create_task}, @create_entry_timeout
+      assert agent_status(agent_id) == :creating
+
+      # Held mid-create: no reply yet AND the caller is still alive inside the
+      # `:infinity` call — a finite production timeout would have cut it off.
+      refute_receive {:create_result, ^agent_id, _}, 300
+      assert Process.alive?(caller)
+
+      send(create_task, :release)
+
+      assert [{^agent_id, {:ok, ^wt_path}}] = collect_results([agent_id], 10_000)
+
+      stop_callers([{agent_id, caller}])
+      await_manager_idle([agent_id])
+    end
+
+    test "(h) a create task dying without reporting still replies and frees the permit", %{
+      tmp_dir: tmp_dir,
+      base_sha: base_sha
+    } do
+      # Untrappable kill: `Task.start/1` does NOT link the caller, so ONLY the
+      # create task dies — `run_create/6`'s try/rescue/catch cannot fire, and
+      # the manager's `handle_create_task_down/4` safety net must reply the
+      # still-blocked caller AND release the permit.
+      install_create_fun(fn _agent_id, _repo_root, _wt_path, _spec, _meta ->
+        Process.exit(self(), :kill)
+      end)
+
+      agent_id = unique_agent_id()
+      {spec, meta, wt_path} = register_agent(agent_id, tmp_dir, base_sha, 1)
+      caller = spawn_caller(agent_id, tmp_dir, wt_path, spec, meta)
+
+      log =
+        capture_log(fn ->
+          assert [{^agent_id, {:error, {:worktree_create_failed, msg}}}] =
+                   collect_results([agent_id], 5_000)
+
+          assert msg =~ "died"
+        end)
+
+      assert log =~ "died without reporting"
+
+      wait_until(fn -> :sys.get_state(WorktreeManager).creating_count == 0 end)
 
       stop_callers([{agent_id, caller}])
       await_manager_idle([agent_id])

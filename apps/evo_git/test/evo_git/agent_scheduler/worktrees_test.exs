@@ -392,9 +392,12 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
         end)
 
       # Creation is real git I/O (lazy repo init + leftover destroy + CoW or
-      # `git worktree add` + clean/checkout) and production allows up to 1h
-      # for it (`@worktree_call_timeout`) — under load on slow machines 5s
-      # (the helper default) is not enough and the test flakes.
+      # `git worktree add` + clean/checkout). The production create call waits
+      # INDEFINITELY (`@worktree_call_timeout` is `:infinity`), and a genuine
+      # failure errors the caller promptly instead of hanging — so this 30s
+      # bound is ONLY a wait budget absorbing real git I/O latency under load
+      # (it is NOT the production call timeout; the helper's 5s default is not
+      # enough on a slow machine).
       wait_until(fn -> File.dir?(wt_path) end, 30_000)
       assert Git.branch_exists?(tmp_dir, branch)
 
