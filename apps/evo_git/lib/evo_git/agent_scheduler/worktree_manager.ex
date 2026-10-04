@@ -8,9 +8,18 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   - Lazy per-repo initialization of the `.genesis/workers` directory (once per
     repo, on first request for that repo).
   - Fresh worktree creation on request from the agent Runner. The Runner's
-    `GenServer.call` uses a 1-hour timeout (`@worktree_call_timeout`); the
-    actual I/O is offloaded to a spawned task so this GenServer's message loop
-    stays responsive for `:DOWN`/cleanup messages while creation is in flight.
+    `GenServer.call` waits INDEFINITELY (`@worktree_call_timeout` is
+    `:infinity`): a legitimately slow copy (Windows has no CoW and pays a full
+    `Copy-Item -Recurse` of a large `node_modules` per worktree) must never be
+    aborted by a timeout, because a timed-out call raises only in the CALLER
+    while the create keeps running — the caller then crash-retries the SAME
+    copy (a positive-feedback spiral). The actual I/O is offloaded to a spawned
+    task so this GenServer's message loop stays responsive for `:DOWN`/cleanup
+    messages while creation is in flight. Because the caller waits forever,
+    that task ALWAYS replies to it exactly once — its result, or
+    `{:error, reason}` when the create pipeline raises/throws/exits or dies
+    abnormally — so an indefinite wait can never leave a caller blocked on a
+    create that is already dead.
   - Bounded admission for create pipelines: requests are queued FIFO and at
     most `max_concurrent_creation/0` (app env
     `:max_concurrent_worktree_creation`, default 4) create tasks run at once.
@@ -63,9 +72,15 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.AgentScheduler.Worktrees
 
-  # The Runner's request can take a long time on slow filesystems (NFS,
-  # Windows). 1 hour far exceeds any legitimate worktree creation.
-  @worktree_call_timeout 3_600_000
+  # The Runner's create request must NEVER be aborted by a timeout, so the
+  # caller waits forever and the create pipeline is responsible for always
+  # replying exactly once (see `run_create/6`): a success, or `{:error, reason}`
+  # for a genuine failure — which the Runner raises on, so its normal
+  # crash-retry logic engages immediately instead of after a wasted hour.
+  # A finite timeout would be actively harmful here: it raises in the CALLER
+  # only, while the offloaded create keeps grinding and the crash-retry re-runs
+  # the same (slow) copy.
+  @worktree_call_timeout :infinity
 
   # --- Client API ---
 
@@ -87,9 +102,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   Creates (or recreates) a fresh worktree for an agent and prepares it.
 
   Called by the agent's Runner from inside the agent (Task) process. The call
-  has a 1-hour timeout; the WorktreeManager offloads the I/O to a spawned
-  task and monitors the caller process — if the caller dies for any reason,
-  the worktree is reclaimed.
+  waits indefinitely (creation must never be aborted by a timeout); the
+  WorktreeManager offloads the I/O to a spawned task and monitors the caller
+  process — if the caller dies for any reason, the worktree is reclaimed. The
+  offloaded task always replies exactly once, so the caller cannot be left
+  blocked on a create that already failed or died.
 
   Returns `{:ok, worktree_path}` on success or `{:error, reason}`.
   """
@@ -127,6 +144,12 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
       pending_requests: %{},
       # number of create pipelines currently running (permits in use)
       creating_count: 0,
+      # monitor ref => {agent_id, from} for the offloaded create TASKS. Kept
+      # separately from `monitors` (which maps agent-process monitors) so an
+      # abnormal task death that bypasses the task's own try/rescue/catch still
+      # replies to the caller and releases its permit (see
+      # `handle_create_task_down/4`).
+      create_monitors: %{},
       # FIFO admission queue of {agent_id, repo_root, worktree_path, spec,
       # meta, agent_pid, from} — bounded by max_concurrent_creation/0
       admission_queue: :queue.new()
@@ -243,7 +266,58 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    # Two DISJOINT monitor sets produce :DOWN here: the offloaded CREATE TASKS
+    # (`create_monitors`) and the monitored AGENT processes (`monitors`).
+    case Map.pop(state.create_monitors, ref) do
+      {{agent_id, from}, create_monitors} ->
+        handle_create_task_down(
+          %{state | create_monitors: create_monitors},
+          agent_id,
+          from,
+          reason
+        )
+
+      {nil, _} ->
+        handle_agent_process_down(ref, state)
+    end
+  end
+
+  # The offloaded create TASK's process exited. `run_create/6`'s try/rescue/catch
+  # already replied on every trappable path AND fired the permit-release cast, so
+  # an entry still in `:creating` means the task died WITHOUT reporting (an
+  # untrappable kill, or an exit signal from a process it was linked to). Since
+  # the caller's `GenServer.call` now waits `:infinity`, that caller must be
+  # replied an error here — and the permit released through the SAME
+  # `{:create_finished, ...}` path so the admission queue keeps draining.
+  # (`:live`/absent means the task's reply + cast were processed BEFORE this
+  # DOWN: signals from one process are ordered, so the DOWN always arrives last.)
+  defp handle_create_task_down(state, agent_id, from, reason) do
+    case Map.get(state.agents, agent_id) do
+      %{status: :creating} ->
+        Logger.error(
+          "WorktreeManager: create task for agent #{agent_id} died without reporting " <>
+            "(#{inspect(reason)}) — replying an error and releasing its permit"
+        )
+
+        GenServer.reply(
+          from,
+          {:error, {:worktree_create_failed, "worktree create task died: #{inspect(reason)}"}}
+        )
+
+        GenServer.cast(__MODULE__, {:create_finished, agent_id})
+
+        {:noreply, state}
+
+      _ ->
+        # The create task reported back normally before exiting.
+        {:noreply, state}
+    end
+  end
+
+  # A monitored AGENT process exited (`:normal` completion or crash — cleanup is
+  # identical for both).
+  defp handle_agent_process_down(ref, state) do
     case Map.get(state.monitors, ref) do
       nil ->
         # Stale DOWN (monitor already demonitored/flushed)
@@ -486,10 +560,11 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
   # Starts the offloaded create task for an admitted request. The agent's entry
   # is flipped :queued -> :creating (SAME monitor_ref — never re-monitored) and
-  # the running-create count is incremented; the permit is released by the
-  # {:create_finished, ...} cast the task fires via try/after (so the permit is
-  # freed even when the create fun raises). Defensively skips a request whose
-  # agent is no longer registered/queued, replying so the caller never blocks.
+  # the running-create count is incremented; the task is monitored and the permit
+  # is released by the {:create_finished, ...} cast the task fires via try/after
+  # (so the permit is freed even when the create fun raises/throws/exits).
+  # Defensively skips a request whose agent is no longer registered/queued,
+  # replying so the caller never blocks.
   defp start_create(state, {agent_id, repo_root, worktree_path, spec, meta, _agent_pid, from}) do
     case Map.get(state.agents, agent_id) do
       %{status: :queued} = agent_info ->
@@ -499,17 +574,21 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
             creating_count: state.creating_count + 1
         }
 
-        Task.start(fn ->
-          try do
-            result = create_fun().(agent_id, repo_root, worktree_path, spec, meta)
+        {:ok, task_pid} =
+          Task.start(fn ->
+            run_create(agent_id, repo_root, worktree_path, spec, meta, from)
+          end)
 
-            GenServer.reply(from, result)
-          after
-            GenServer.cast(__MODULE__, {:create_finished, agent_id})
-          end
-        end)
+        # Monitor the offloaded create task: an abnormal death that bypasses
+        # `run_create/6`'s own try/rescue/catch (an untrappable kill, an exit
+        # signal from a process it is linked to) still produces a reply and
+        # releases the permit — the caller's `GenServer.call` waits `:infinity`,
+        # so it must never be left blocked with a dead create behind it. The
+        # entry is dropped by the task's `:DOWN` (every task dies eventually),
+        # so the map cannot leak.
+        ref = Process.monitor(task_pid)
 
-        state
+        %{state | create_monitors: Map.put(state.create_monitors, ref, {agent_id, from})}
 
       _ ->
         # The agent is no longer queued (it died and was reaped, or the
@@ -524,6 +603,51 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
 
         admit_next(state)
     end
+  end
+
+  # Runs ONE admitted create pipeline inside the offloaded task and replies to
+  # the blocked caller EXACTLY once. The caller's `GenServer.call` waits
+  # `:infinity`, so a raise/throw/exit escaping the create fun must never skip
+  # the reply (that would wedge the caller forever) — it is caught here and
+  # reported as `{:error, reason}`, which the Runner raises on so its normal
+  # crash-retry logic engages right away. Errors are NOT swallowed: the reason
+  # is logged AND handed to the caller.
+  # `Worktrees.prepare_new_worktree/5` never raises itself, but it calls
+  # `Worktrees.run_init_script/3` inside its `with` body with no try/rescue, so
+  # an init-script raise reaches this boundary.
+  # The `after` block keeps the permit-release semantics intact: the
+  # `{:create_finished, agent_id}` cast fires on EVERY path (success, raise,
+  # throw, exit), so the admission queue always drains.
+  defp run_create(agent_id, repo_root, worktree_path, spec, meta, from) do
+    try do
+      GenServer.reply(from, create_fun().(agent_id, repo_root, worktree_path, spec, meta))
+    rescue
+      error ->
+        report_create_failure(
+          from,
+          agent_id,
+          "raised: " <> Exception.format(:error, error, __STACKTRACE__)
+        )
+    catch
+      :throw, value ->
+        report_create_failure(from, agent_id, "threw: #{inspect(value)}")
+
+      :exit, value ->
+        report_create_failure(from, agent_id, "exited: #{inspect(value)}")
+    after
+      GenServer.cast(__MODULE__, {:create_finished, agent_id})
+    end
+  end
+
+  # Logs a create-pipeline failure that was caught rather than reported by the
+  # create fun itself, and replies it to the blocked caller.
+  defp report_create_failure(from, agent_id, description) do
+    Logger.error("WorktreeManager: create pipeline for agent #{agent_id} #{description}")
+
+    GenServer.reply(
+      from,
+      {:error, {:worktree_create_failed, "worktree create #{description}"}}
+    )
   end
 
   # Max number of create pipelines running at once. This work is I/O-bound
