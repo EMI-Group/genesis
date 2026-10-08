@@ -173,7 +173,7 @@ Rationale: after a model-exhaustion error (e.g. DeepSeek HTTP 402 insufficient b
 
 ## First Message Construction (objective → LLM) — single choke point
 
-The objective (`AgentState.objective`, a plain `String.t()`) enters the conversation ONLY inside the first **user** message, built in `Runner.do_run/2` (`runner.ex:125-266`). Exact construction: `combined_prompt` is assembled at `runner.ex:198-204`; the two initial messages are produced by the pure `ContextBuilder.build_initial_messages/4` at `runner.ex:212-218` (helper in `context_builder.ex`, directly unit-tested — see `agent/context_builder_test.exs`):
+The objective (`AgentState.objective`, a plain `String.t()`) enters the conversation ONLY inside the first **user** message, built in `Runner.do_run/2` (`runner.ex:131-276`). Exact construction: `combined_prompt` is assembled at `runner.ex:204-210`; the two initial messages are produced by the pure `ContextBuilder.build_initial_messages/4` at `runner.ex:218-224` (helper in `context_builder.ex`, directly unit-tested — see `agent/context_builder_test.exs`):
 
 - `objective_body = if blank?(objective), do: "", else: to_string(objective)` (`runner.ex:195-196`)
 - `combined_prompt` = `ContextBuilder.context_block(context_body)` (context tree + delegation-authority section + foreign-repos section + repo-notes section) joined with `ContextBuilder.objective_block(objective_body)` via `"\n\n---\n\n"` (`runner.ex:198-204`; wrappers at `context_builder.ex` — `context_block/1`/`objective_block/1` emit `<context>...</context>` / `<objective>...</objective>`)
