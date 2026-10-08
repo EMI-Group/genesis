@@ -33,6 +33,9 @@ All agents `use EvoGit.Agent` and implement overridable callbacks.
 - Fragments carry **NO trailing newline**; callers add `"\n"` explicitly (or mid-line `" "` joiners) so mid-line composition stays exact.
 - Near-duplicates are **deliberate separate functions** (or stay inline in the owning module) — never normalized/merged.
 
+All 30 fragments are **unconditional single-clause arity-0 functions returning a fixed String** — none takes arguments, none returns `""`, none has a variant/no-op clause.
+The only prompt-builder that returns `""` in a no-op case is `EvoGit.Agent.ContextBuilder.build_authority_section/1` (`../agent/context_builder.ex:89` — `%{repo_less: true}` → `""`; `:91` the general clause; omitted for tasks with no non-primary foreign repos) — that lives in `../agent/`, NOT here.
+
 **Function inventory (30 functions, grouped by theme; verbatim first lines live in `prompt_fragments.ex`):**
 
 | Theme | Functions (users) |
