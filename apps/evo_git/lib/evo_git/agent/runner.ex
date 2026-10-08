@@ -193,8 +193,25 @@ defmodule EvoGit.Agent.Runner do
       repo_notes_section =
         EvoGit.Agent.ContextBuilder.build_repo_notes_section(agent_state.repo_notes)
 
+      # Quality-level guidance: a SPEED ↔ QUALITY block for the ROOT agent
+      # ONLY. Root signal = `agent_state.parent_id == nil` (exactly equivalent
+      # to SchedMeta depth 0); subagents and repo-less agents get "" — dropped
+      # by the blank-filter below, so their prompts stay byte-identical.
+      quality_guidance_section =
+        EvoGit.Agent.ContextBuilder.build_quality_guidance_section(%{
+          parent_id: agent_state.parent_id,
+          repo_less: Process.get(:repo_less) == true,
+          quality_level: Process.get(:quality_level)
+        })
+
       context_body =
-        [context_tree, authority_section, foreign_repos_section, repo_notes_section]
+        [
+          context_tree,
+          authority_section,
+          foreign_repos_section,
+          repo_notes_section,
+          quality_guidance_section
+        ]
         |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
         |> Enum.join("\n\n")
 
@@ -308,6 +325,12 @@ defmodule EvoGit.Agent.Runner do
     # materializes them into the ROOT agent's first user message (root-only
     # gate); subagent specs never carry the key, so this is nil for them.
     Process.put(:attachments, Keyword.get(spec.opts, :attachments))
+
+    # Quality-level (`:quality_level`) — a SPEED ↔ QUALITY trade-off surfaced
+    # from the spec opts exactly like :attachments. Only the ROOT agent's
+    # prompt gains the guidance block (the do_run/2 root gate); subagent specs
+    # never carry the key, so their prompts stay unchanged.
+    Process.put(:quality_level, Keyword.get(spec.opts, :quality_level))
 
     repo_less = Keyword.get(ctx, :repo_less)
 

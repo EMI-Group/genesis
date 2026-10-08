@@ -597,7 +597,8 @@ defmodule EvoGit.Runtime.Helpers do
         archive: Keyword.get(opts, :archive, false),
         task_id: Keyword.get(opts, :task_id),
         model_id: Keyword.get(opts, :model_id),
-        model_id_locked: model_id_locked?(opts)
+        model_id_locked: model_id_locked?(opts),
+        quality_level: Keyword.get(opts, :quality_level)
       ]
       |> maybe_put_attachments(attachments)
       |> Kernel.++(agent_opts)

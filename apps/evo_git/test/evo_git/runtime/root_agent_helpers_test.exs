@@ -34,6 +34,9 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
   defmodule DefaultRoot do
   end
 
+  defp context_node, do: %EvoGit.Core.ContextNode{path: ".", repo: "/tmp/repo"}
+  defp phylo_node, do: %EvoGit.Core.PhyloGraphNode{repo: "/tmp/repo"}
+
   describe "resolve_root_agent/2" do
     test "returns the default module with [] opts when :agent is absent" do
       assert Helpers.resolve_root_agent([], DefaultRoot) == {DefaultRoot, []}
@@ -83,6 +86,39 @@ defmodule EvoGit.Runtime.RootAgentHelpersTest do
 
     test "returns false for [model_id_locked: false, model_id: nil]" do
       refute Helpers.model_id_locked?(model_id_locked: false, model_id: nil)
+    end
+  end
+
+  describe "build_root_agent_spec/7 — :quality_level threading" do
+    test "threads :quality_level from the runtime opts into spec.opts" do
+      spec =
+        Helpers.build_root_agent_spec(
+          context_node(),
+          phylo_node(),
+          DefaultRoot,
+          "do the thing",
+          [quality_level: "fast"],
+          [],
+          nil
+        )
+
+      assert spec.agent_module == DefaultRoot
+      assert Keyword.get(spec.opts, :quality_level) == "fast"
+    end
+
+    test "an absent :quality_level yields nil in spec.opts" do
+      spec =
+        Helpers.build_root_agent_spec(
+          context_node(),
+          phylo_node(),
+          DefaultRoot,
+          "do the thing",
+          [],
+          [],
+          nil
+        )
+
+      assert Keyword.get(spec.opts, :quality_level) == nil
     end
   end
 end

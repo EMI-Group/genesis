@@ -338,6 +338,77 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
   end
 
+  describe "build_quality_guidance_section/1" do
+    test "root agent (nil parent_id) + \"fast\" returns the FAST block" do
+      section =
+        ContextBuilder.build_quality_guidance_section(%{
+          parent_id: nil,
+          repo_less: false,
+          quality_level: "fast"
+        })
+
+      assert section != ""
+      assert section =~ "FAST"
+      refute section =~ "HIGH QUALITY"
+    end
+
+    test "root agent (nil parent_id) + \"high_quality\" returns the HIGH QUALITY block" do
+      section =
+        ContextBuilder.build_quality_guidance_section(%{
+          parent_id: nil,
+          repo_less: false,
+          quality_level: "high_quality"
+        })
+
+      assert section != ""
+      assert section =~ "HIGH QUALITY"
+      refute section =~ "FAST"
+    end
+
+    test "\"balanced\", nil and an absent key return \"\"" do
+      for level <- ["balanced", nil] do
+        assert ContextBuilder.build_quality_guidance_section(%{
+                 parent_id: nil,
+                 repo_less: false,
+                 quality_level: level
+               }) == ""
+      end
+
+      # Absent key (robust to a partial map).
+      assert ContextBuilder.build_quality_guidance_section(%{parent_id: nil, repo_less: false}) ==
+               ""
+    end
+
+    test "an unknown value returns \"\" (never raises)" do
+      assert ContextBuilder.build_quality_guidance_section(%{
+               parent_id: nil,
+               repo_less: false,
+               quality_level: "bogus"
+             }) == ""
+    end
+
+    test "a nested agent (integer parent_id) is unaffected, even with \"fast\"" do
+      assert ContextBuilder.build_quality_guidance_section(%{
+               parent_id: 7,
+               repo_less: false,
+               quality_level: "fast"
+             }) == ""
+    end
+
+    test "a repo-less agent is unaffected, even with \"fast\"" do
+      assert ContextBuilder.build_quality_guidance_section(%{
+               parent_id: nil,
+               repo_less: true,
+               quality_level: "fast"
+             }) == ""
+    end
+
+    test "a partial map (only repo_less: false) never raises" do
+      assert ContextBuilder.build_quality_guidance_section(%{repo_less: false}) == ""
+      assert ContextBuilder.build_quality_guidance_section(%{}) == ""
+    end
+  end
+
   describe "build_initial_messages/4" do
     # Mirrors the native-struct content-part test idiom at
     # test/evo_git/agent_scheduler/remote_api_test.exs:427-447.
