@@ -685,6 +685,129 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
     end
   end
 
+  # Speed ↔ quality segmented control — the bottom-LEFT 3-step `join` group in
+  # .input-controls, sitting between the attach "+" dropdown and the mode
+  # select (which carries the row's ml-auto). Three type="button" steps (NEVER
+  # submit — they live inside <form id="task-form">), each firing
+  # phx-click="select_quality_level" with its phx-value-level. ONLY the step
+  # whose level equals the component attr @quality_level (default "balanced")
+  # carries btn-active + btn-primary and aria-pressed="true"; the other two are
+  # btn-ghost with aria-pressed="false".
+  describe "speed ↔ quality segmented control" do
+    test "control group is a join group between the attach dropdown and the mode select" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "")
+
+      doc = parse(html)
+      [control] = Floki.find(doc, "div#quality-level-control")
+      control_class = control |> Floki.attribute("class") |> List.first() |> to_string()
+
+      assert control_class =~ "join"
+      assert control_class =~ "shrink-0"
+      assert control |> Floki.attribute("role") |> List.first() == "group"
+
+      # Placement contract: a DIRECT child of .input-controls, AFTER the
+      # attach-kind dropdown and BEFORE the mode select (so it stays
+      # bottom-LEFT, left of the mode select's ml-auto).
+      [controls] = Floki.find(doc, ".input-controls")
+
+      found =
+        Floki.find(
+          controls,
+          "details#objective-file-attach, div#quality-level-control, select[name=mode]"
+        )
+
+      assert [
+               {"details", attach_attrs, _},
+               {"div", quality_attrs, _},
+               {"select", mode_attrs, _}
+             ] = found
+
+      assert {"id", "objective-file-attach"} in attach_attrs
+      assert {"id", "quality-level-control"} in quality_attrs
+      assert {"name", "mode"} in mode_attrs
+    end
+
+    test "renders exactly three steps with the contract ids, levels and labels" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "")
+
+      doc = parse(html)
+      steps = Floki.find(doc, "div#quality-level-control button")
+      assert length(steps) == 3
+
+      assert [
+               {"button", fast_attrs, _},
+               {"button", balanced_attrs, _},
+               {"button", high_attrs, _}
+             ] = steps
+
+      # Each step pairs its id with the select_quality_level event + level.
+      assert {"id", "quality-level-fast"} in fast_attrs
+      assert {"phx-click", "select_quality_level"} in fast_attrs
+      assert {"phx-value-level", "fast"} in fast_attrs
+
+      assert {"id", "quality-level-balanced"} in balanced_attrs
+      assert {"phx-click", "select_quality_level"} in balanced_attrs
+      assert {"phx-value-level", "balanced"} in balanced_attrs
+
+      assert {"id", "quality-level-high_quality"} in high_attrs
+      assert {"phx-click", "select_quality_level"} in high_attrs
+      assert {"phx-value-level", "high_quality"} in high_attrs
+
+      # Labels render inside each step (the leading hero-* icon carries no text).
+      assert quality_text(html, "fast") == "Fast"
+      assert quality_text(html, "balanced") == "Balanced"
+      assert quality_text(html, "high_quality") == "High quality"
+    end
+
+    test "default (balanced) highlights the balanced step only" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "")
+
+      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_attr(html, "balanced", "aria-pressed") == "true"
+
+      assert quality_class(html, "fast") == "btn btn-xs join-item btn-ghost"
+      assert quality_attr(html, "fast", "aria-pressed") == "false"
+
+      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-ghost"
+      assert quality_attr(html, "high_quality", "aria-pressed") == "false"
+    end
+
+    test "quality_level: fast moves the active highlight to the fast step" do
+      html =
+        render_component(&TaskFormComponents.task_form/1, prompt: "", quality_level: "fast")
+
+      assert quality_class(html, "fast") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_attr(html, "fast", "aria-pressed") == "true"
+
+      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-ghost"
+      assert quality_attr(html, "balanced", "aria-pressed") == "false"
+
+      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-ghost"
+    end
+
+    test "quality_level: high_quality moves the active highlight to the high-quality step" do
+      html =
+        render_component(&TaskFormComponents.task_form/1,
+          prompt: "",
+          quality_level: "high_quality"
+        )
+
+      assert quality_class(html, "high_quality") == "btn btn-xs join-item btn-active btn-primary"
+      assert quality_attr(html, "high_quality", "aria-pressed") == "true"
+
+      assert quality_class(html, "fast") == "btn btn-xs join-item btn-ghost"
+      assert quality_class(html, "balanced") == "btn btn-xs join-item btn-ghost"
+    end
+
+    test "every step is type=button (never submits the enclosing task form)" do
+      html = render_component(&TaskFormComponents.task_form/1, prompt: "")
+
+      for level <- ["fast", "balanced", "high_quality"] do
+        assert quality_attr(html, level, "type") == "button"
+      end
+    end
+  end
+
   # --- helpers ---
 
   defp button_class(html) do
@@ -710,6 +833,27 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
   defp mode_class(html) do
     [sel] = Floki.find(parse(html), "select[name=mode]")
     sel |> Floki.attribute("class") |> List.first() |> to_string()
+  end
+
+  # --- speed ↔ quality helpers ---
+
+  # The step button for one segment of the speed ↔ quality control (ids are
+  # quality-level-fast / -balanced / -high_quality).
+  defp quality_step(html, level) do
+    [btn] = Floki.find(parse(html), "button#quality-level-#{level}")
+    btn
+  end
+
+  defp quality_class(html, level) do
+    quality_step(html, level) |> Floki.attribute("class") |> List.first() |> to_string()
+  end
+
+  defp quality_attr(html, level, attr) do
+    quality_step(html, level) |> Floki.attribute(attr) |> List.first() |> to_string()
+  end
+
+  defp quality_text(html, level) do
+    quality_step(html, level) |> Floki.text() |> String.trim()
   end
 
   # Floki 0.38's find/2 + attribute/2 require a parsed tree, not a raw binary.

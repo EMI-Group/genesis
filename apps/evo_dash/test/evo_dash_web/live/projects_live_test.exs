@@ -237,6 +237,29 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   defp has_opt?(task, key), do: Map.has_key?(Map.new(task.opts || []), key)
 
+  # The speed ↔ quality opt is threaded as :quality_level with a STRING value
+  # ("fast"/"high_quality"). The persisted row round-trips through
+  # EvoGit.Store.Codec, which atomizes ONLY its known-opt-key whitelist (see
+  # `opt(task, "agent")` above for the same shape): a key outside the whitelist
+  # decodes as a STRING key. Read BOTH forms so this assertion holds whether or
+  # not the key is (ever) whitelisted — no dependency on the core opt whitelist.
+  defp quality_level_opt(task) do
+    opts = Map.new(task.opts || [])
+    Map.get(opts, :quality_level) || Map.get(opts, "quality_level")
+  end
+
+  defp has_quality_level_opt?(task) do
+    opts = Map.new(task.opts || [])
+    Map.has_key?(opts, :quality_level) or Map.has_key?(opts, "quality_level")
+  end
+
+  # The active segment of the speed ↔ quality control is the button whose class
+  # carries btn-active (component-side contract in task_form_components_test).
+  defp quality_step_active?(html, level) do
+    [btn] = html |> Floki.parse_document!() |> Floki.find("button#quality-level-#{level}")
+    btn |> Floki.attribute("class") |> List.first() |> to_string() =~ "btn-active"
+  end
+
   # Saves a unique remote connection target under the test's isolated
   # XDG_CONFIG_HOME (set_onboarding_completed isolates it per test) and
   # registers cleanup. Returns the target id. Each test uses a unique id so the
@@ -5022,6 +5045,195 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # The modal stays open so the user can retry.
       assert html =~ "github-issues-modal"
       assert assigns(view)[:github_modal_open] == true
+    end
+  end
+
+  # Speed ↔ quality segmented control — the 3-step control on the task form's
+  # bottom toolbar (#quality-level-control, component-side markup contract is
+  # covered in task_form_components_test.exs). Projectslive owns the assign
+  # (@quality_level, default "balanced"), the whitelisted select_quality_level
+  # event, and the submit threading: do_task_submit/4 adds the :quality_level
+  # task opt ONLY for "fast"/"high_quality" — "balanced" (the default) adds NO
+  # key, so the untouched case keeps the task opts byte-identical to before.
+  describe "speed ↔ quality control" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "select_quality_level updates the assign and moves the active step", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      html =
+        view
+        |> element("form[phx-submit='open_project']")
+        |> render_submit(%{path: tmp_dir})
+
+      # Default state: the middle (balanced) step is the active one.
+      assert assigns(view)[:quality_level] == "balanced"
+      assert quality_step_active?(html, "balanced")
+      refute quality_step_active?(html, "fast")
+      refute quality_step_active?(html, "high_quality")
+
+      # Clicking the fast step (via its element → phx-value-level="fast") moves
+      # the selection and the highlight.
+      html = view |> element("#quality-level-fast") |> render_click()
+
+      assert assigns(view)[:quality_level] == "fast"
+      assert quality_step_active?(html, "fast")
+      refute quality_step_active?(html, "balanced")
+
+      # …and the high-quality step likewise.
+      html = view |> element("#quality-level-high_quality") |> render_click()
+
+      assert assigns(view)[:quality_level] == "high_quality"
+      assert quality_step_active?(html, "high_quality")
+      refute quality_step_active?(html, "fast")
+
+      # …and back to balanced.
+      html = view |> element("#quality-level-balanced") |> render_click()
+
+      assert assigns(view)[:quality_level] == "balanced"
+      assert quality_step_active?(html, "balanced")
+      refute quality_step_active?(html, "high_quality")
+    end
+
+    test "an unknown level is ignored and the selection is unchanged", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_click(view, "select_quality_level", %{"level" => "fast"})
+      assert assigns(view)[:quality_level] == "fast"
+
+      # Not a whitelisted level → the catch-all clause returns the socket
+      # unchanged (the current selection stays "fast").
+      render_click(view, "select_quality_level", %{"level" => "bogus"})
+      assert assigns(view)[:quality_level] == "fast"
+
+      # A missing level param is likewise a no-op.
+      render_click(view, "select_quality_level", %{})
+      assert assigns(view)[:quality_level] == "fast"
+    end
+
+    test "selecting fast threads :quality_level \"fast\" into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_click(view, "select_quality_level", %{"level" => "fast"})
+      assert assigns(view)[:quality_level] == "fast"
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1): the invalid node_path kills it at validation,
+      # before any agent dispatch (see "task_submit clears the prompt").
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      assert quality_level_opt(task) == "fast"
+    end
+
+    test "selecting high_quality threads :quality_level \"high_quality\" into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      render_click(view, "select_quality_level", %{"level" => "high_quality"})
+      assert assigns(view)[:quality_level] == "high_quality"
+
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      assert quality_level_opt(task) == "high_quality"
+    end
+
+    test "the default balanced selection adds NO :quality_level opt", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_click(view, "open_project_palette", %{})
+      render_click(view, "palette_mode", %{"mode" => "open_path"})
+
+      view
+      |> element("form[phx-submit='open_project']")
+      |> render_submit(%{path: tmp_dir})
+
+      # Never touched → the assign keeps its "balanced" default.
+      assert assigns(view)[:quality_level] == "balanced"
+
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # "balanced" is identical to absent for the core, so the key is omitted.
+      refute has_quality_level_opt?(task)
     end
   end
 end
