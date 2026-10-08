@@ -230,6 +230,43 @@ defmodule EvoGit.TaskRegistry.RuntimeOptsTest do
       end
     end
 
+    test "threads :quality_level \"fast\" through to runtime_opts" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", quality_level: "fast"],
+          "task-q-1",
+          :evolve
+        )
+
+      assert Keyword.get(runtime_opts, :quality_level) == "fast"
+    end
+
+    test "threads :quality_level \"high_quality\" through to runtime_opts" do
+      {_first, runtime_opts} =
+        RuntimeOpts.build_common_runtime_opts(
+          [path: "/tmp/repo", mode: "new", quality_level: "high_quality"],
+          "task-q-2",
+          :genesis
+        )
+
+      assert Keyword.get(runtime_opts, :quality_level) == "high_quality"
+    end
+
+    test "omits :quality_level for the default (absent, \"balanced\", nil, unknown)" do
+      for opts <- [
+            [path: "/tmp/repo"],
+            [path: "/tmp/repo", quality_level: "balanced"],
+            [path: "/tmp/repo", quality_level: nil],
+            [path: "/tmp/repo", quality_level: ""],
+            [path: "/tmp/repo", quality_level: "turbo"]
+          ] do
+        {_first, runtime_opts} =
+          RuntimeOpts.build_common_runtime_opts(opts, "task-q-3", :evolve)
+
+        refute Keyword.has_key?(runtime_opts, :quality_level)
+      end
+    end
+
     test "genesis mode \"new\" maps to :new" do
       {_first, runtime_opts} =
         RuntimeOpts.build_common_runtime_opts(
