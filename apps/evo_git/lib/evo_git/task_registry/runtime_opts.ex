@@ -60,6 +60,11 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
     attachments = Keyword.get(opts, :attachments)
     EvoGit.Attachments.validate(attachments)
 
+    # Per-task quality level (SPEED ↔ QUALITY trade-off): normalised leniently
+    # here (unknown value → warn + "balanced"). The key is omitted for the
+    # default so every downstream path is unchanged when unset.
+    quality_level = EvoGit.QualityLevel.normalize(Keyword.get(opts, :quality_level))
+
     runtime_opts =
       runtime_opts
       |> put_if(:node_path, node_path)
@@ -71,6 +76,7 @@ defmodule EvoGit.TaskRegistry.RuntimeOpts do
       |> put_if_true(:model_id_locked, model_id_locked)
       |> put_if(:build_system, build_system)
       |> put_if(:attachments, attachments, fn value -> value not in [nil, []] end)
+      |> put_if(:quality_level, quality_level, fn value -> value != "balanced" end)
 
     {nil, runtime_opts}
   end

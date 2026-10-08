@@ -164,6 +164,7 @@ The scheduler: 1) assigns a unique `task_id` (GUID), `task_number` (short intege
 ### Root-Agent Spec Builder (`Helpers.build_root_agent_spec/7`)
 
 `EvoGit.Runtime.Helpers.build_root_agent_spec/7` (`helpers.ex:558-597`) is the shared builder producing the root-agent `{agent_module, opts}` spec for evolution (simple AND custom modes) and genesis phase specs — resolving the default/custom root module and threading the custom-agent id + `model_id_locked` opts into the spec. New code constructing a root-agent spec should reuse it instead of hand-assembling specs at call sites.
+It also threads the per-task `:quality_level` opt into `spec.opts` (`quality_level: Keyword.get(opts, :quality_level)` — absent → `nil`), so the root agent's prompt picks up the FAST/HIGH-QUALITY guidance block; subagent spec builders never carry the key, so subagent prompts stay unaffected.
 
 ### Agent Hierarchy by Phase
 

@@ -65,7 +65,12 @@ defmodule EvoGit.Store.Operations.TasksTest do
       id: id,
       type: :evolve,
       status: :completed,
-      opts: [path: "/tmp/r2a-proj", mode: "simple", objective: "fix the bug"],
+      opts: [
+        path: "/tmp/r2a-proj",
+        mode: "simple",
+        objective: "fix the bug",
+        quality_level: "fast"
+      ],
       started_at: ~U[2026-06-26 07:19:44.123456Z],
       finished_at: ~U[2026-06-26 08:00:00.999999Z],
       logs: ["line 1", "line 2"],
@@ -135,6 +140,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert fetched.opts[:path] == "/tmp/r2a-proj"
       assert fetched.opts[:mode] == "simple"
       assert fetched.opts[:objective] == "fix the bug"
+      assert fetched.opts[:quality_level] == "fast"
 
       assert fetched.logs == ["line 1", "line 2"]
 

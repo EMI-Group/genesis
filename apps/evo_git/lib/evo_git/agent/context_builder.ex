@@ -106,6 +106,32 @@ defmodule EvoGit.Agent.ContextBuilder do
   end
 
   @doc """
+  Builds the quality-level guidance markdown section for the first user prompt.
+
+  Returns the ROOT agent's `:quality_level` guidance block (FAST speed block /
+  HIGH QUALITY block) via `EvoGit.QualityLevel.guidance/1`, or `""` when no
+  extra guidance applies. Purely a root-agent concern:
+
+    * `""` when the agent is repo-less (`repo_less: true`) — the chat persona
+      must never receive a task-mode statement;
+    * `""` for any NESTED agent (`parent_id` not nil) — subagents are unaffected;
+    * otherwise `EvoGit.QualityLevel.guidance(quality_level)`, which itself
+      returns `""` for `"balanced"`/absent/anything unknown.
+
+  Input: a plain map with keys `:parent_id`, `:repo_less`, `:quality_level` —
+  pure function, never reads the process dictionary, robust to missing keys
+  (`Map.get/3`). Mirrors `build_authority_section/1`'s empty-string convention
+  so the runner's existing blank-filter drops the section.
+  """
+  def build_quality_guidance_section(%{} = state) do
+    cond do
+      Map.get(state, :repo_less) == true -> ""
+      not is_nil(Map.get(state, :parent_id)) -> ""
+      true -> EvoGit.QualityLevel.guidance(Map.get(state, :quality_level))
+    end
+  end
+
+  @doc """
   Builds the git-submodules note section for the first user prompt.
 
   `repo_notes` is the ALREADY-RENDERED markdown block (produced by

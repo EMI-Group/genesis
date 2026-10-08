@@ -324,6 +324,7 @@ defmodule EvoGit.Store.TypesTest do
         [path: "/tmp/repo", mode: "evolve", objective: "fix the bug", prompt: "hello"],
         [objective: "multi\nline\nobjective", archive: true, task_id: "task_T1_A2"],
         [foreign_repos: [%{"id" => "r1", "path" => "/x"}], starting_commit: "abc123"],
+        [quality_level: "fast"],
         [attachments: [%{"type" => "image", "data" => "aGVsbG8="}]]
       ]
 
@@ -343,8 +344,8 @@ defmodule EvoGit.Store.TypesTest do
         "{}",
         ~s({"path": "/tmp/repo"}),
         ~s({"path": "/tmp/repo", "mode": "new", "objective": "fix it"}),
-        # Every one of the 14 @known_opt_keys atomizes.
-        ~s({"path":null,"mode":null,"prompt":null,"objective":null,"foreign_repos":null,"node_path":null,"starting_commit":null,"archive":null,"task_id":null,"repo_path":null,"concurrency":null,"tool_concurrency":null,"resume_from":null,"attachments":null}),
+        # Every one of the 15 @known_opt_keys atomizes.
+        ~s({"path":null,"mode":null,"prompt":null,"objective":null,"foreign_repos":null,"node_path":null,"starting_commit":null,"archive":null,"task_id":null,"repo_path":null,"concurrency":null,"tool_concurrency":null,"resume_from":null,"attachments":null,"quality_level":null}),
         # Unknown keys stay strings.
         ~s({"unknown_key": 1, "path": "/x"}),
         # Nested objects stay string-keyed maps.
@@ -375,6 +376,21 @@ defmodule EvoGit.Store.TypesTest do
       assert Keyword.equal?(loaded, opts)
       # ...and re-dumping is stable (byte-identical to the first dump).
       assert Types.OptsJson.dump(loaded) == {:ok, dumped}
+    end
+
+    test "quality_level opt round-trips with an ATOM key (:quality_level)" do
+      opts = [path: "/tmp/repo", mode: "simple", quality_level: "fast"]
+
+      dumped = Codec.encode_opts(opts)
+      decoded = Codec.decode_opts(dumped)
+
+      assert decoded[:quality_level] == "fast"
+      refute Enum.any?(decoded, fn {k, _v} -> k == "quality_level" end)
+
+      # Same through the Ecto type wrapper used by the schema.
+      {:ok, loaded} = Types.OptsJson.load(dumped)
+      assert loaded[:quality_level] == "fast"
+      assert Keyword.equal?(loaded, opts)
     end
 
     test "encode fallback: non-Jason values collapse to the 4 essential keys, never raise" do
@@ -1095,8 +1111,19 @@ defmodule EvoGit.Store.TypesTest do
     end
   end
 
-  @random_opt_keys ~w(path mode prompt objective archive task_id repo_path concurrency tool_concurrency starting_commit node_path)a
-  @random_opt_values ["", "/tmp/x", "new", "simple", true, false, 0, 42, ~s(with "quotes")]
+  @random_opt_keys ~w(path mode prompt objective archive task_id repo_path concurrency tool_concurrency starting_commit node_path quality_level)a
+  @random_opt_values [
+    "",
+    "/tmp/x",
+    "new",
+    "simple",
+    "fast",
+    true,
+    false,
+    0,
+    42,
+    ~s(with "quotes")
+  ]
 
   defp random_opts do
     count = :rand.uniform(5)
