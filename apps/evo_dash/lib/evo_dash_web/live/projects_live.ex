@@ -46,6 +46,10 @@ defmodule EvoDashWeb.ProjectsLive do
   @max_attachments 4
   @max_attachment_bytes 15 * 1024 * 1024
 
+  # Speed ↔ quality segmented control values (STRING, mirrors :mode). The
+  # default "balanced" is the untouched/absent case — see do_task_submit/4.
+  @quality_levels ~w(fast balanced high_quality)
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -190,6 +194,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     selected_model_id={@selected_model_id}
                     custom_agents={@custom_agents}
                     selected_agent_id={@selected_agent_id}
+                    quality_level={@quality_level}
                     show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
@@ -345,6 +350,7 @@ defmodule EvoDashWeb.ProjectsLive do
                     selected_model_id={@selected_model_id}
                     custom_agents={@custom_agents}
                     selected_agent_id={@selected_agent_id}
+                    quality_level={@quality_level}
                     show_auto_model_option={@model_selection_enabled}
                     build_systems={@build_systems}
                     selected_build_system={@task_build_system}
@@ -527,6 +533,7 @@ defmodule EvoDashWeb.ProjectsLive do
           selected_model_id: selected_model_id,
           custom_agents: custom_agents,
           selected_agent_id: nil,
+          quality_level: "balanced",
           model_selection_enabled: model_selection_enabled,
           build_systems: build_systems,
           tauri_detected: false,
@@ -1013,6 +1020,21 @@ defmodule EvoDashWeb.ProjectsLive do
      |> StatePersistence.maybe_persist_state()}
   end
 
+  # Speed ↔ quality segmented control. `level` is a STRING from the client
+  # (phx-value-level) validated against a whitelist — never String.to_atom
+  # (untrusted input, atom-table exhaustion). An unknown value is ignored so
+  # the current selection stays.
+  @impl true
+  def handle_event("select_quality_level", %{"level" => level}, socket)
+      when level in @quality_levels do
+    {:noreply,
+     socket
+     |> assign(:quality_level, level)
+     |> StatePersistence.maybe_persist_state()}
+  end
+
+  def handle_event("select_quality_level", _params, socket), do: {:noreply, socket}
+
   # --- GitHub Issues Events ---
   #
   # Thin wrappers around EvoDashWeb.ProjectsLive.GitHub (all GitHub data
@@ -1103,6 +1125,7 @@ defmodule EvoDashWeb.ProjectsLive do
         |> StatePersistence.maybe_restore_show_advanced(params["show_advanced"])
         |> StatePersistence.maybe_restore_assign(:selected_model_id, params["selected_model_id"])
         |> StatePersistence.maybe_restore_assign(:selected_agent_id, params["selected_agent_id"])
+        |> StatePersistence.maybe_restore_quality_level(params["quality_level"])
 
       # Always restore task_mode from sessionStorage — the user's explicit choice
       # takes precedence over auto-detection when returning to a project.
@@ -2623,6 +2646,21 @@ defmodule EvoDashWeb.ProjectsLive do
     opts =
       if is_binary(selected_agent_id) and selected_agent_id != "" do
         Keyword.put(opts, :agent, selected_agent_id)
+      else
+        opts
+      end
+
+    # Thread the speed ↔ quality selection into opts as :quality_level (STRING
+    # "fast" | "balanced" | "high_quality"). "balanced" is the default — the
+    # key is OMITTED for it so the untouched case keeps opts byte-identical to
+    # before (the core treats absent and "balanced" identically). The SAME
+    # opts go to the remote (NodeContext.start_task) and local
+    # (TaskRegistry.start_task) branches below.
+    quality_level = socket.assigns[:quality_level]
+
+    opts =
+      if quality_level in ["fast", "high_quality"] do
+        Keyword.put(opts, :quality_level, quality_level)
       else
         opts
       end

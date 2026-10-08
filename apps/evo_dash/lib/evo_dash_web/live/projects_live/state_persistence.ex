@@ -11,6 +11,8 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
+  # Speed ↔ quality segmented control values (STRING, mirrors :mode).
+  @quality_levels ~w(fast balanced high_quality)
   @doc """
   Pushes current form state to the browser for localStorage persistence.
   """
@@ -20,6 +22,7 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
       task_mode: socket.assigns.task_mode,
       selected_model_id: socket.assigns.selected_model_id,
       selected_agent_id: socket.assigns.selected_agent_id,
+      quality_level: socket.assigns[:quality_level],
       task_prompt: socket.assigns.task_prompt,
       task_node_path: socket.assigns.task_node_path,
       task_starting_commit: socket.assigns.task_starting_commit,
@@ -121,6 +124,18 @@ defmodule EvoDashWeb.ProjectsLive.StatePersistence do
 
   def maybe_restore_task_mode(socket, mode) when is_binary(mode),
     do: assign(socket, :task_mode, mode)
+
+  @doc """
+  Restores the `quality_level` assign from a persisted value. Only a
+  whitelisted value (`"fast"`/`"balanced"`/`"high_quality"`) is applied — a
+  nil/empty/unknown value leaves the socket unchanged so the default
+  `"balanced"` (set at mount) stays. Whitelist membership check, never
+  `String.to_atom` on persisted input.
+  """
+  def maybe_restore_quality_level(socket, level) when level in @quality_levels,
+    do: assign(socket, :quality_level, level)
+
+  def maybe_restore_quality_level(socket, _), do: socket
 
   @doc """
   Restores the `show_project_settings` assign from a persisted boolean string.

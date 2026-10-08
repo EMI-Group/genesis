@@ -4,8 +4,9 @@ defmodule EvoDashWeb.TaskFormComponents do
   "pageless editor".
 
   One card contains the objective textarea AND a bottom toolbar
-  (`.input-controls` — attach-kind dropdown | mode select | (custom-agent
-  select) | model select | circular icon-only send button) as its last
+  (`.input-controls` — attach-kind dropdown | speed↔quality segmented control |
+  mode select | (custom-agent select) | model select | circular icon-only send
+  button) as its last
   element. The
   layout is server-seeded at render time via `layout_for/1` and client-driven
   by the
@@ -34,7 +35,8 @@ defmodule EvoDashWeb.TaskFormComponents do
 
   Both layouts share the same bottom toolbar (`.input-controls`) — the card's
   last element, ChatGPT/Gemini input-box style: the attach-kind dropdown
-  (text / image / audio, bottom-left) → mode select → (custom-agent select)
+  (text / image / audio, bottom-left) → the speed↔quality segmented control
+  (bottom-left, next to "+") → mode select → (custom-agent select)
   → model select → circular icon-only send button (far right). Only the
   textarea size differs. The accent
   decorations (accent border-color, layered box-shadow glow, top-edge
@@ -131,6 +133,7 @@ defmodule EvoDashWeb.TaskFormComponents do
   attr(:build_systems, :list, default: [])
   attr(:selected_build_system, :string, default: nil)
   attr(:staged_attachments, :list, default: [])
+  attr(:quality_level, :string, default: "balanced")
 
   def task_form(assigns) do
     ~H"""
@@ -200,7 +203,9 @@ defmodule EvoDashWeb.TaskFormComponents do
                  input-box style: ALL controls live in ONE toolbar row pinned to
                  the card's bottom — the ATTACH-KIND DROPDOWN (text / image /
                  audio; bottom-LEFT; a <details class="dropdown"> whose <summary>
-                 is the visual "+" trigger — see below), then free space, then a
+                 is the visual "+" trigger — see below) and the speed↔quality
+                 segmented control (also bottom-LEFT, right after "+"), then
+                 free space, then a
                  RIGHT-ALIGNED cluster: mode select → (custom-agent select) →
                  model select → circular icon-only send button (the cluster's
                  LAST element = the row's far right, no auto margin of its own).
@@ -420,6 +425,67 @@ defmodule EvoDashWeb.TaskFormComponents do
                   <span class="file-manual-error" role="alert" hidden></span>
                 </div>
 
+                <%!-- Speed ↔ quality segmented control — a compact 3-step
+                     DaisyUI `join` group sitting at the toolbar's LEFT, right
+                     after the attach "+" trigger (its `.file-manual` sibling is
+                     position:absolute and takes no flex space). It is a DIRECT
+                     child of .input-controls placed BEFORE the mode select —
+                     which carries the row's ml-auto — so the group stays left
+                     while the [mode | agent | model | send] cluster stays right.
+                     The ACTIVE step (@quality_level, default "balanced") gets
+                     btn-active + btn-primary; the two inactive steps are
+                     btn-ghost. Every button is type="button" (NEVER submit —
+                     the group lives inside <form id="task-form">) and fires
+                     phx-click="select_quality_level" with phx-value-level
+                     ("fast"|"balanced"|"high_quality"). The value is threaded to
+                     the task opt :quality_level (STRING). --%>
+                <div
+                  id="quality-level-control"
+                  class="join shrink-0"
+                  role="group"
+                  aria-label={gettext("Speed / quality trade-off")}
+                >
+                  <%!-- zh_CN: 速度优先（信任上下文、少做校验） --%>
+                  <button
+                    type="button"
+                    id="quality-level-fast"
+                    phx-click="select_quality_level"
+                    phx-value-level="fast"
+                    class={quality_step_class(@quality_level, "fast")}
+                    title={gettext("Prioritise speed — trust the context, run fewer checks")}
+                    aria-pressed={to_string(@quality_level == "fast")}
+                  >
+                    <.icon name="hero-bolt" class="size-3.5" />
+                    {gettext("Fast")}
+                  </button>
+                  <%!-- zh_CN: 均衡（默认，速度与正确性折中） --%>
+                  <button
+                    type="button"
+                    id="quality-level-balanced"
+                    phx-click="select_quality_level"
+                    phx-value-level="balanced"
+                    class={quality_step_class(@quality_level, "balanced")}
+                    title={gettext("Balanced — the default trade-off between speed and correctness")}
+                    aria-pressed={to_string(@quality_level == "balanced")}
+                  >
+                    <.icon name="hero-scale" class="size-3.5" />
+                    {gettext("Balanced")}
+                  </button>
+                  <%!-- zh_CN: 高质量（正确性优先，多验证、跑测试/编译） --%>
+                  <button
+                    type="button"
+                    id="quality-level-high_quality"
+                    phx-click="select_quality_level"
+                    phx-value-level="high_quality"
+                    class={quality_step_class(@quality_level, "high_quality")}
+                    title={gettext("Prioritise correctness — verify more, run tests and compile")}
+                    aria-pressed={to_string(@quality_level == "high_quality")}
+                  >
+                    <.icon name="hero-check-badge" class="size-3.5" />
+                    {gettext("High quality")}
+                  </button>
+                </div>
+
                 <!-- Mode switch — carries the row's auto-margin (ml-auto):
                      it leads the toolbar's RIGHT-ALIGNED cluster [mode | agent |
                      model | send], absorbing the free space after the attach
@@ -602,6 +668,18 @@ defmodule EvoDashWeb.TaskFormComponents do
   end
 
   defp staged_kind_label(_), do: ""
+
+  # Step class for the speed ↔ quality segmented control: the step whose value
+  # equals the selected @quality_level carries the highlight (btn-active +
+  # btn-primary); the others stay btn-ghost. Always `btn btn-xs join-item` so
+  # the three read as one segmented group at the toolbar's left.
+  defp quality_step_class(selected, value) do
+    if selected == value do
+      "btn btn-xs join-item btn-active btn-primary"
+    else
+      "btn btn-xs join-item btn-ghost"
+    end
+  end
 
   # Custom Agent mode is evolve-family: it runs an :evolve task (existing
   # repo, reviewable result) with the chosen custom agent as the root agent.
