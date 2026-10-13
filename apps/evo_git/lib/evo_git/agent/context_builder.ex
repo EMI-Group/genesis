@@ -146,6 +146,60 @@ defmodule EvoGit.Agent.ContextBuilder do
     if blank?(repo_notes), do: "", else: String.trim(repo_notes)
   end
 
+  @doc """
+  Builds the FULL `<context>...</context>` block of the first user prompt.
+
+  The single shared assembly path used BOTH at run start (`Runner.do_run/2`)
+  and by the mid-run compression refresh
+  (`refresh_first_user_message/2`), so the two can never drift.
+
+  Input: a plain map with keys `:node_path, :repo_path, :parent_id,
+  :repo_less, :foreign_repos, :repo_notes, :quality_level` (a `%LoopState{}`
+  satisfies this). Purely reads the CONTEXT.md chain from disk via
+  `build_dynamic_context/1` — so calling it again later re-reads the CURRENT
+  chain — plus the static sections, drops blank ones, joins them with `"\\n\\n"`,
+  and wraps them via `context_block/1`.
+
+  Returns `""` when the joined body is blank (matching `context_block/1`'s
+  convention), so the caller's blank-filter drops it.
+
+  Robust to missing keys (`Map.get/3`), mirroring
+  `build_authority_section/1`/`build_quality_guidance_section/1`.
+  """
+  @spec build_context_block(map()) :: String.t()
+  def build_context_block(%{} = state) do
+    repo_less = Map.get(state, :repo_less) == true
+    foreign_repos = Map.get(state, :foreign_repos) || []
+    parent_id = Map.get(state, :parent_id)
+
+    context_tree =
+      build_dynamic_context(%{
+        node_path: Map.get(state, :node_path),
+        repo_path: Map.get(state, :repo_path)
+      })
+
+    body =
+      [
+        context_tree,
+        build_authority_section(%{
+          parent_id: parent_id,
+          repo_less: repo_less,
+          foreign_repos: foreign_repos
+        }),
+        build_foreign_repos_section(foreign_repos),
+        build_repo_notes_section(Map.get(state, :repo_notes)),
+        build_quality_guidance_section(%{
+          parent_id: parent_id,
+          repo_less: repo_less,
+          quality_level: Map.get(state, :quality_level)
+        })
+      ]
+      |> Enum.reject(&blank?/1)
+      |> Enum.join("\n\n")
+
+    context_block(body)
+  end
+
   # --- Blank Detection ---
 
   @doc """
@@ -203,16 +257,95 @@ defmodule EvoGit.Agent.ContextBuilder do
   @spec build_initial_messages(String.t(), String.t(), integer() | nil, term()) ::
           [ReqLLM.Message.t()]
   def build_initial_messages(system_prompt, combined_prompt, parent_id, attachments) do
-    user_message =
-      case {is_nil(parent_id), attachments} do
-        {true, [_ | _]} ->
-          ReqLLM.Context.user(EvoGit.Attachments.to_content_parts(combined_prompt, attachments))
+    [
+      ReqLLM.Context.system(system_prompt),
+      build_first_user_message(combined_prompt, parent_id, attachments)
+    ]
+  end
 
-        _ ->
-          ReqLLM.Context.user(combined_prompt)
+  @doc """
+  Builds the agent's first USER message (the `[system, user]` user half).
+
+  Pure — never reads the process dictionary. `combined_prompt` is the already
+  joined context/objective block text (a plain `String.t()`). Media
+  attachments (images/audio, see `EvoGit.Attachments`) ride on the ROOT
+  agent's first user message ONLY: when `parent_id` is nil (this agent is the
+  task root — exactly equivalent to SchedMeta depth 0) AND `attachments` is a
+  non-empty list, the message is built as a content-part list —
+  `ReqLLM.Context.user([ContentPart.text(combined_prompt) | image/file parts])`
+  with parts in input order. Otherwise the legacy binary fast path
+  `ReqLLM.Context.user(combined_prompt)` is used, producing a byte-identical
+  message shape. Subagents (non-nil `parent_id`) never inherit attachments;
+  pass `nil` for `attachments` to force the plain-text path.
+
+  The returned message carries whatever metadata `ReqLLM.Context.user/1`
+  assigns (typically none) — turn-tagging happens at the call site
+  (`tag_context_messages_with_turn/2`). Extracted verbatim from
+  `build_initial_messages/4` so the compression refresh
+  (`refresh_first_user_message/2`) reproduces exactly the same message shape.
+  """
+  @spec build_first_user_message(String.t(), integer() | nil, term()) :: ReqLLM.Message.t()
+  def build_first_user_message(combined_prompt, parent_id, attachments) do
+    case {is_nil(parent_id), attachments} do
+      {true, [_ | _]} ->
+        ReqLLM.Context.user(EvoGit.Attachments.to_content_parts(combined_prompt, attachments))
+
+      _ ->
+        ReqLLM.Context.user(combined_prompt)
+    end
+  end
+
+  @doc """
+  Rebuilds the agent's first user message with a FRESH `<context>` block.
+
+  Called by `EvoGit.Agent.ContextCompression.compress_if_needed/2` on a
+  successful compression: the context tree (the CONTEXT.md chain for the
+  agent's node) is otherwise frozen at run start, so an agent that edited or
+  created CONTEXT.md files in its worktree during the run would keep seeing
+  the stale chain after every compression cycle. Re-reading it on each
+  compression keeps the re-injected first message current.
+
+  `msg` is the EXISTING first user message (as it sits in the conversation);
+  `state` is a plain map (a `%EvoGit.Agent.LoopState{}`) carrying
+  `:node_path, :repo_path, :parent_id, :repo_less, :foreign_repos,
+  :repo_notes, :quality_level` PLUS:
+
+    * `:objective` — the RAW objective string (re-rendered through the SAME
+      `objective_block/1`, so the `<objective>` block stays byte-identical);
+    * `:attachments` — the SAME value originally passed to
+      `build_initial_messages/4` (already `nil` for repo-less agents), so media
+      content parts on the root agent's first message are reproduced
+      byte-identically from the stored base64.
+
+  The returned message preserves the ORIGINAL message's metadata
+  (`%{refreshed | metadata: msg.metadata}`) so the turn-0 tag + creation
+  timestamp survive. When the CONTEXT.md chain did NOT change, the refreshed
+  message is structurally identical to the original.
+  """
+  @spec refresh_first_user_message(ReqLLM.Message.t(), map()) :: ReqLLM.Message.t()
+  def refresh_first_user_message(%ReqLLM.Message{} = msg, %{} = state) do
+    objective_body =
+      case Map.get(state, :objective) do
+        objective when is_binary(objective) -> if blank?(objective), do: "", else: objective
+        _ -> ""
       end
 
-    [ReqLLM.Context.system(system_prompt), user_message]
+    combined_prompt =
+      [
+        build_context_block(state),
+        objective_block(objective_body)
+      ]
+      |> Enum.reject(&blank?/1)
+      |> Enum.join("\n\n---\n\n")
+
+    refreshed =
+      build_first_user_message(
+        combined_prompt,
+        Map.get(state, :parent_id),
+        Map.get(state, :attachments)
+      )
+
+    %{refreshed | metadata: msg.metadata}
   end
 
   @doc """

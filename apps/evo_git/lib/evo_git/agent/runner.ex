@@ -163,81 +163,66 @@ defmodule EvoGit.Agent.Runner do
       #
       # Empty/blank sections are dropped so we never emit dangling rules,
       # empty blocks, or doubled delimiters.
-      context_tree =
-        EvoGit.Agent.ContextBuilder.build_dynamic_context(%{
+      #
+      # The `<context>` block is assembled by the ONE shared helper
+      # `ContextBuilder.build_context_block/1` — the same helper the mid-run
+      # compression refresh uses (`ContextBuilder.refresh_first_user_message/2`
+      # via `ContextCompression.compress_if_needed/2`), so the two can never
+      # drift. The helper reads the current CONTEXT.md chain from disk plus:
+      #
+      #   * the delegation-authority statement — authoritatively tells THIS
+      #     agent whether it is the ROOT agent (parent_id nil == depth 0) or a
+      #     NESTED agent and which foreign-repo spawn authority that role
+      #     carries (never the process-dict depth, which may not be populated
+      #     at assembly time; skipped for repo-less agents and single-repo
+      #     tasks);
+      #   * the foreign-repos markdown section ("" when no non-primary repos);
+      #   * the rendered repo-notes block (git-submodules awareness — "" when
+      #     the repo has no gitlinks / detection failed);
+      #   * the quality-level guidance (a SPEED ↔ QUALITY block for the ROOT
+      #     agent ONLY — "" for subagents and repo-less agents).
+      #
+      # All of the above are the fields the LoopState carries so the refresh can
+      # reproduce them verbatim.
+      repo_less = Process.get(:repo_less) == true
+
+      context_block =
+        EvoGit.Agent.ContextBuilder.build_context_block(%{
           node_path: node_path,
-          repo_path: repo_path
-        })
-
-      foreign_repos_section =
-        EvoGit.Agent.ContextBuilder.build_foreign_repos_section(agent_state.foreign_repos)
-
-      # Delegation-authority statement: authoritatively tells THIS agent whether
-      # it is the ROOT agent (parent_id nil == depth 0) or a NESTED agent, and
-      # which foreign-repo spawn authority that role carries. Root signal =
-      # `agent_state.parent_id == nil` (exactly equivalent to SchedMeta depth 0
-      # by construction in Dispatch.register_agent/7) — never the process-dict
-      # depth, which may not be populated at assembly time. Skipped for
-      # repo-less agents (chat persona) and single-repo tasks (returns "" →
-      # dropped by the blank-filter below).
-      authority_section =
-        EvoGit.Agent.ContextBuilder.build_authority_section(%{
+          repo_path: repo_path,
           parent_id: agent_state.parent_id,
-          repo_less: Process.get(:repo_less) == true,
-          foreign_repos: agent_state.foreign_repos
-        })
-
-      # Rendered repo-notes block (git-submodules awareness) — "" when the repo
-      # has no gitlinks (or detection failed), so the blank-filter drops it and
-      # prompts for repos without submodules stay noise-free.
-      repo_notes_section =
-        EvoGit.Agent.ContextBuilder.build_repo_notes_section(agent_state.repo_notes)
-
-      # Quality-level guidance: a SPEED ↔ QUALITY block for the ROOT agent
-      # ONLY. Root signal = `agent_state.parent_id == nil` (exactly equivalent
-      # to SchedMeta depth 0); subagents and repo-less agents get "" — dropped
-      # by the blank-filter below, so their prompts stay byte-identical.
-      quality_guidance_section =
-        EvoGit.Agent.ContextBuilder.build_quality_guidance_section(%{
-          parent_id: agent_state.parent_id,
-          repo_less: Process.get(:repo_less) == true,
+          repo_less: repo_less,
+          foreign_repos: agent_state.foreign_repos,
+          repo_notes: agent_state.repo_notes,
           quality_level: Process.get(:quality_level)
         })
-
-      context_body =
-        [
-          context_tree,
-          authority_section,
-          foreign_repos_section,
-          repo_notes_section,
-          quality_guidance_section
-        ]
-        |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
-        |> Enum.join("\n\n")
 
       objective_body =
         if EvoGit.Agent.ContextBuilder.blank?(objective), do: "", else: to_string(objective)
 
       combined_prompt =
         [
-          EvoGit.Agent.ContextBuilder.context_block(context_body),
+          context_block,
           EvoGit.Agent.ContextBuilder.objective_block(objective_body)
         ]
         |> Enum.reject(&EvoGit.Agent.ContextBuilder.blank?/1)
         |> Enum.join("\n\n---\n\n")
 
-      # Assemble the first two messages ([system, user]) via the pure
-      # ContextBuilder helper. Media attachments (images/audio) ride on the
-      # ROOT agent's first user message ONLY — the helper gates on
-      # `parent_id == nil`; repo-less agents (self-reflective chat) never get
-      # them even with a stray spec opt, so the plain-text path is preserved
-      # (no reflect entry point sends the key).
+      # Media attachments (images/audio) ride on the ROOT agent's first user
+      # message ONLY — the helper gates on `parent_id == nil`; repo-less agents
+      # (self-reflective chat) never get them even with a stray spec opt, so
+      # the plain-text path is preserved (no reflect entry point sends the key).
+      # This exact value is retained on the LoopState so a mid-run compression
+      # can reproduce the same media content parts.
+      attachments =
+        if repo_less, do: nil, else: Process.get(:attachments)
+
       messages =
         EvoGit.Agent.ContextBuilder.build_initial_messages(
           agent_module.system_prompt(),
           combined_prompt,
           agent_state.parent_id,
-          if(Process.get(:repo_less) == true, do: nil, else: Process.get(:attachments))
+          attachments
         )
 
       context = ReqLLM.Context.new(messages)
@@ -281,6 +266,11 @@ defmodule EvoGit.Agent.Runner do
         skill_schemas: skill_schemas,
         foreign_repos: agent_state.foreign_repos,
         repo_notes: agent_state.repo_notes,
+        parent_id: agent_state.parent_id,
+        repo_less: repo_less,
+        quality_level: Process.get(:quality_level),
+        objective: objective,
+        attachments: attachments,
         delegation_level: agent_module.delegation_level()
       }
 

@@ -4,7 +4,9 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   threshold-gating/usage-accumulation paths of `compress_if_needed/2` with
   in-memory `LoopState`/`ReqLLM.Response` values; the below-threshold gate
   performs only a read-only `EvoGit.Config.resolve/1` and never acquires an LLM
-  slot. No shared/global state is mutated.
+  slot. The context-tree refresh cases use per-test temp repo dirs (removed in
+  `on_exit`) and the pure `ContextBuilder.refresh_first_user_message/2`. No
+  shared/global state is mutated.
 
   The real compression LLM call (threshold overflow -> slot -> HTTP request) is
   NOT covered here — it needs a live endpoint and the global scheduler, so it
@@ -294,6 +296,189 @@ defmodule EvoGit.Agent.ContextCompressionTest do
     test "a fresh LoopState starts with zero usage" do
       st = state(total_tokens: 0)
       assert st.usage == Usage.zero()
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Context-tree refresh (compression re-injects a FRESH <context> block)
+  #
+  # The refresh function is public + pure, so it is driven directly against a
+  # real temp repo dir: write a CONTEXT.md chain, build the initial first-user
+  # message with the shared builders, EDIT the chain, refresh, and assert the
+  # <context> block shows the edited content while the <objective> block stays
+  # byte-identical. No LLM/HTTP harness is needed (the sibling
+  # `context_compression_fail_fast_test.exs` covers the compression branch
+  # shape end-to-end).
+  # ---------------------------------------------------------------------------
+
+  describe "ContextBuilder context-tree refresh" do
+    alias EvoGit.Agent.ContextBuilder
+
+    # Writes `<repo>/CONTEXT.md` (root) + `<repo>/<node_rel>/CONTEXT.md` and
+    # returns the repo path; removed in `on_exit`.
+    defp write_repo(node_rel, root_md, node_md) do
+      repo =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_ctx_refresh_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(Path.join(repo, node_rel))
+      File.write!(Path.join(repo, "CONTEXT.md"), root_md)
+      File.write!(Path.join([repo, node_rel, "CONTEXT.md"]), node_md)
+      on_exit(fn -> File.rm_rf!(repo) end)
+      repo
+    end
+
+    # A LoopState carrying exactly the fields the refresh consumes.
+    defp refresh_state(overrides) do
+      state(
+        Keyword.merge(
+          [
+            node_path: "./docs",
+            repo_path: nil,
+            parent_id: nil,
+            repo_less: false,
+            foreign_repos: [],
+            repo_notes: nil,
+            quality_level: nil,
+            objective: "Do the thing.",
+            attachments: nil
+          ],
+          overrides
+        )
+      )
+    end
+
+    # Mirrors the production first-user-message assembly (the SAME shared
+    # helpers `Runner.do_run/2` uses): context block + objective block joined
+    # with the delimiter, then the gated user message.
+    defp original_first_user_message(st) do
+      combined =
+        [
+          ContextBuilder.build_context_block(st),
+          ContextBuilder.objective_block(st.objective)
+        ]
+        |> Enum.reject(&ContextBuilder.blank?/1)
+        |> Enum.join("\n\n---\n\n")
+
+      ContextBuilder.build_first_user_message(combined, st.parent_id, st.attachments)
+    end
+
+    defp text_of(%ReqLLM.Message{content: [%ReqLLM.Message.ContentPart{text: text} | _]}),
+      do: text
+
+    # Extracts the `<objective>...</objective>` substring so byte-identity can
+    # be asserted independently of the (refreshed) `<context>` block.
+    defp objective_section(message_text) do
+      [block] = Regex.run(~r{<objective>.*?</objective>}s, message_text)
+      block
+    end
+
+    test "refreshes the <context> block from the worktree, keeping <objective> byte-identical" do
+      repo = write_repo("docs", "# Root\nroot body\n", "# Docs\nOLD BODY\n")
+      objective = "Implement the widget."
+
+      st = refresh_state(repo_path: repo, objective: objective)
+
+      original = original_first_user_message(st)
+      original_text = text_of(original)
+
+      assert original_text =~ "OLD BODY"
+      refute original_text =~ "NEW BODY"
+
+      original_objective = objective_section(original_text)
+      assert original_objective == "<objective>\n#{objective}\n</objective>"
+
+      # The agent edits the CONTEXT.md chain in its worktree mid-run.
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), "# Docs\nNEW BODY\n")
+
+      refreshed = ContextBuilder.refresh_first_user_message(original, st)
+      refreshed_text = text_of(refreshed)
+
+      # Fresh context tree: the edit is visible, the stale text is gone.
+      assert refreshed_text =~ "NEW BODY"
+      refute refreshed_text =~ "OLD BODY"
+
+      # <objective> block unchanged, byte-for-byte.
+      assert objective_section(refreshed_text) == original_objective
+      assert objective_section(refreshed_text) == "<objective>\n#{objective}\n</objective>"
+
+      # Role preserved + metadata (turn-0 tag + creation timestamp) survives.
+      assert refreshed.role == original.role
+      assert refreshed.metadata == original.metadata
+    end
+
+    test "no CONTEXT.md change -> refreshed message is structurally identical" do
+      repo = write_repo("docs", "# Root\n", "# Docs\nSTABLE\n")
+
+      st =
+        refresh_state(repo_path: repo, objective: "Objective text.")
+
+      original =
+        original_first_user_message(st)
+        |> ContextBuilder.tag_message_turn(0)
+
+      refreshed = ContextBuilder.refresh_first_user_message(original, st)
+
+      assert refreshed == original
+    end
+
+    test "root-agent media content parts are reproduced byte-identically" do
+      repo = write_repo("docs", "# Root\n", "# Docs\nOLD\n")
+      objective = "with media"
+
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64(<<1, 2, 3>>)
+        }
+      ]
+
+      st = refresh_state(repo_path: repo, objective: objective, attachments: attachments)
+
+      original = original_first_user_message(st)
+      assert [%ReqLLM.Message.ContentPart{}, image_part] = original.content
+      assert image_part == ReqLLM.Message.ContentPart.image(<<1, 2, 3>>, "image/png")
+
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), "# Docs\nNEW\n")
+
+      refreshed = ContextBuilder.refresh_first_user_message(original, st)
+
+      assert [%ReqLLM.Message.ContentPart{} = text_part, refreshed_image] = refreshed.content
+      assert refreshed_image == image_part
+      assert text_part.text =~ "NEW"
+      refute text_part.text =~ "OLD"
+    end
+
+    test "a non-root agent's attachments never materialize on refresh (root gate)" do
+      repo = write_repo("docs", "# Root\n", "# Docs\n#\n")
+
+      attachments = [
+        %{
+          "type" => "image",
+          "name" => "a.png",
+          "media_type" => "image/png",
+          "data" => Base.encode64(<<9>>)
+        }
+      ]
+
+      st =
+        refresh_state(
+          repo_path: repo,
+          objective: "sub",
+          parent_id: 7,
+          attachments: attachments
+        )
+
+      original = original_first_user_message(st)
+
+      refreshed = ContextBuilder.refresh_first_user_message(original, st)
+
+      assert [%ReqLLM.Message.ContentPart{}] = refreshed.content
+      assert refreshed == original
     end
   end
 end

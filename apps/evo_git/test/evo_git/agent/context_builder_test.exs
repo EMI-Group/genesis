@@ -409,6 +409,102 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
   end
 
+  describe "build_context_block/1" do
+    # A temp repo dir with a CONTEXT.md chain at "./docs"; removed in `on_exit`.
+    defp temp_repo(root_md, docs_md) do
+      repo =
+        Path.join(System.tmp_dir!(), "evogit_ctx_block_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(repo, "docs"))
+      File.write!(Path.join(repo, "CONTEXT.md"), root_md)
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), docs_md)
+      on_exit(fn -> File.rm_rf!(repo) end)
+      repo
+    end
+
+    test "reads the CURRENT CONTEXT.md chain and wraps it in <context></context>" do
+      repo = temp_repo("# Root\nroot body\n", "# Docs\ndocs body\n")
+
+      block =
+        ContextBuilder.build_context_block(%{
+          node_path: "./docs",
+          repo_path: repo,
+          parent_id: nil,
+          repo_less: false,
+          foreign_repos: [],
+          repo_notes: nil,
+          quality_level: nil
+        })
+
+      assert String.starts_with?(block, "<context>\n")
+      assert String.ends_with?(block, "\n</context>")
+      assert block =~ "root body"
+      assert block =~ "docs body"
+      # Single-repo task -> no authority / foreign-repos sections.
+      refute block =~ "Delegation authority"
+      refute block =~ "Foreign Repositories"
+    end
+
+    test "re-reading after an edit reflects the new content (fresh read, not cached)" do
+      repo = temp_repo("# Root\n", "# Docs\nBEFORE\n")
+
+      st = %{
+        node_path: "./docs",
+        repo_path: repo,
+        parent_id: nil,
+        repo_less: false,
+        foreign_repos: [],
+        repo_notes: nil,
+        quality_level: nil
+      }
+
+      assert ContextBuilder.build_context_block(st) =~ "BEFORE"
+
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), "# Docs\nAFTER\n")
+
+      block = ContextBuilder.build_context_block(st)
+      assert block =~ "AFTER"
+      refute block =~ "BEFORE"
+    end
+
+    test "includes the repo-notes and quality-guidance sections for a root agent" do
+      repo = temp_repo("# Root\n", "# Docs\n")
+
+      block =
+        ContextBuilder.build_context_block(%{
+          node_path: "./docs",
+          repo_path: repo,
+          parent_id: nil,
+          repo_less: false,
+          foreign_repos: [],
+          repo_notes: "## Git Submodules\n\nnote text\n",
+          quality_level: "fast"
+        })
+
+      assert block =~ "## Git Submodules"
+      assert block =~ "note text"
+      assert block =~ "FAST"
+    end
+
+    test "repo_less agents get no authority/quality sections even when requested" do
+      repo = temp_repo("# Root\n", "# Docs\n")
+
+      block =
+        ContextBuilder.build_context_block(%{
+          node_path: "./docs",
+          repo_path: repo,
+          parent_id: nil,
+          repo_less: true,
+          foreign_repos: [],
+          repo_notes: nil,
+          quality_level: "fast"
+        })
+
+      refute block =~ "Delegation authority"
+      refute block =~ "FAST"
+    end
+  end
+
   describe "build_initial_messages/4" do
     # Mirrors the native-struct content-part test idiom at
     # test/evo_git/agent_scheduler/remote_api_test.exs:427-447.
