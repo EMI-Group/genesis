@@ -20,10 +20,15 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
       the inline summary the complete path, decoded-arguments JSON or
       whitespace-collapsed raw arguments.
 
-  Both forms are height-constrained by the template (`agents_live.html.heex`):
-  structured blocks render in a `max-h` + `overflow-y-auto` container, inline
-  summaries are one line with CSS ellipsis. Raw arguments JSON is NEVER dumped
-  for subagent/shell calls.
+  Both forms are height-constrained by their template (`agents_live.html.heex`)
+  call sites. The compact inline detail panel (chat-history list) calls
+  `display/1` — structured blocks render in a `max-h-12` + `overflow-y-auto`
+  container and the inline summary is one line with CSS ellipsis. The
+  full-message modal ("zoom-in" view) calls `display(call, mode: :full)` and
+  renders the untruncated values inside scrollable `max-h-[60vh]`
+  `overflow-y-auto` regions — the modal's inline summary wraps
+  (`whitespace-pre-wrap`) instead of ellipsizing. Raw arguments JSON is NEVER
+  dumped for subagent/shell calls.
 
   Never crashes on any input: defensive extraction reuses
   `EvoDashWeb.Helpers` (`tool_call_name/1`, `tool_call_arguments/1`,
