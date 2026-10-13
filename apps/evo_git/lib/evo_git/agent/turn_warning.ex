@@ -29,15 +29,20 @@ defmodule EvoGit.Agent.TurnWarning do
   counter resets to 0 each time it fires, and also resets when a subagent call is made.
 
   The end and critical countdowns scale with `max_turns`:
-  - Large budgets (≥ ~60 turns): 10-turn end, 3-turn critical.
+  - Large budgets (≥ 100 turns — incl. the typical 100-turn subagent and
+    1000-turn root budgets): 10-turn end, 5-turn critical.
   - Smaller budgets: proportionally shorter countdowns with minimum floors
     (3 turns for end, 1 turn for critical).
+
+  The end band always opens strictly earlier than the critical band
+  (`end_remaining > critical_remaining` holds for every budget), so there is
+  always an `:end` warning before the `:critical` one.
   """
 
   @min_beginning_turn 6
   @near_limit_turns 10
   @near_limit_floor 3
-  @critical_turns 3
+  @critical_turns 5
   @critical_floor 1
   @middle_interval 15
   # for :low agents (3x less frequent)
@@ -70,6 +75,12 @@ defmodule EvoGit.Agent.TurnWarning do
 
       iex> EvoGit.Agent.TurnWarning.current_positional_level(32, 128)
       :beginning
+
+      iex> EvoGit.Agent.TurnWarning.current_positional_level(122, 128)
+      :end
+
+      iex> EvoGit.Agent.TurnWarning.current_positional_level(123, 128)
+      :critical
 
       iex> EvoGit.Agent.TurnWarning.current_positional_level(125, 128)
       :critical
@@ -159,10 +170,10 @@ defmodule EvoGit.Agent.TurnWarning do
     min(@near_limit_turns, max(@near_limit_floor, div(max_turns, 6)))
   end
 
-  # Adaptive critical countdown: 3 turns for large budgets, scales down
+  # Adaptive critical countdown: 5 turns for large budgets, scales down
   # for smaller ones, with a floor of 1 turn remaining.
   defp critical_remaining(max_turns) do
-    min(@critical_turns, max(@critical_floor, div(max_turns, 30)))
+    min(@critical_turns, max(@critical_floor, div(max_turns, 20)))
   end
 
   @level_order %{:none => 0, :beginning => 1, :end => 2, :critical => 3}

@@ -13,6 +13,7 @@ defmodule EvoGit.Agent.LoopState do
   - `agent_id` — scheduler-assigned integer agent ID
   - `agent_module` — the agent implementation module (e.g. `EvoGit.Agents.Manager`)
   - `depth` — recursion depth (0 for top-level agents)
+  - `parent_id` — the parent agent's id, or `nil` when this agent is the ROOT agent of the task (exactly equivalent to depth 0). Used by the compression refresh (`ContextBuilder.refresh_first_user_message/2`) to re-apply the root-only attachment/authority/quality gates.
   - `node_path` — the context-node path this agent is working on
   - `repo_path` — absolute path to the agent's worktree, or `nil` before assignment
   - `turn` — current turn number in the agent loop (starts at 0)
@@ -26,6 +27,10 @@ defmodule EvoGit.Agent.LoopState do
   - `skill_schemas` — tool schemas from enabled skills
   - `foreign_repos` — list of foreign repos available to this agent tree (inherited from parent agent)
   - `repo_notes` — the already-rendered git-submodules note block (markdown text) for this agent's repo tree, or `nil` when the repo has no submodules (or detection failed). Rendered into the agent's `<context>` block; subagents inherit it from the parent (no re-detection).
+  - `repo_less` — `true` when this agent runs without a git worktree (chatbot-style self-reflective agent). Gates the authority/quality sections + attachments off in the `<context>` block.
+  - `quality_level` — the normalized per-task `:quality_level` opt (or `nil`), consulted only for the ROOT agent's quality-guidance section.
+  - `objective` — the RAW objective string this agent was started with (never rewritten). Re-rendered by the compression refresh so the `<objective>` block stays byte-identical.
+  - `attachments` — the `:attachments` value passed to `ContextBuilder.build_initial_messages/4` (already `nil` for repo-less agents), retained so the compression refresh can reproduce the root agent's media content parts.
   - `usage` — cumulative token and cost usage tracking across all LLM calls (`EvoGit.Agent.Usage.t()`)
   - `delegation_hints` — map tracking write-tool calls to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when an agent should be nudged to spawn a subagent.
   - `read_delegation_hints` — map tracking read-tool calls (read_file, rg, glob, list_dir) to child directories (key: normalized child path, value: `%{count: non_neg_integer, hint_shown: boolean}`). Used to detect when a high-level agent should be nudged to delegate investigation to a subagent.
@@ -43,6 +48,7 @@ defmodule EvoGit.Agent.LoopState do
     :depth,
     :node_path,
     :context,
+    parent_id: nil,
     repo_path: nil,
     turn: 0,
     in_grace_period: false,
@@ -54,6 +60,10 @@ defmodule EvoGit.Agent.LoopState do
     skill_schemas: [],
     foreign_repos: [],
     repo_notes: nil,
+    repo_less: false,
+    quality_level: nil,
+    objective: nil,
+    attachments: nil,
     usage: %EvoGit.Agent.Usage{},
     delegation_hints: %{},
     read_delegation_hints: %{},
@@ -64,6 +74,7 @@ defmodule EvoGit.Agent.LoopState do
           agent_id: pos_integer(),
           agent_module: module(),
           depth: non_neg_integer(),
+          parent_id: integer() | nil,
           node_path: String.t(),
           repo_path: String.t() | nil,
           turn: non_neg_integer(),
@@ -77,6 +88,10 @@ defmodule EvoGit.Agent.LoopState do
           skill_schemas: [ReqLLM.Tool.t()],
           foreign_repos: [ForeignRepo.t()],
           repo_notes: String.t() | nil,
+          repo_less: boolean(),
+          quality_level: String.t() | nil,
+          objective: String.t() | nil,
+          attachments: term(),
           usage: Usage.t(),
           delegation_hints: %{String.t() => %{count: non_neg_integer(), hint_shown: boolean()}},
           read_delegation_hints: %{
