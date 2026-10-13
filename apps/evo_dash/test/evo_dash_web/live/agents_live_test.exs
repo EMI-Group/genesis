@@ -1394,6 +1394,163 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "optimistic message pruning after compression" do
+    # BUG fix: an already-drained optimistic message used to come back as a
+    # PERMANENT "Pending" ghost. The optimistic entry was deduped only at render
+    # time against the fetched history, so once the core's context compression
+    # folded the real user entry into a summary the ghost reappeared — forever.
+    # The fix prunes `@optimistic_messages` TERMINALLY (see
+    # EvoDashWeb.AgentsLive.OptimisticMessages.prune/4): on every fetched
+    # history, and on every core `pending_user_messages` queue broadcast (a
+    # KNOWN queue anchors "drained"), so a pruned entry can never be
+    # resurrected. The second test pins the other direction — a genuinely
+    # still-queued message must KEEP its pending hint.
+
+    test "already-drained optimistic message does NOT resurrect as a pending ghost after compression",
+         %{conn: conn} do
+      msg = "hello optimistic world"
+      seed_agent(agent_id(), [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # Select the agent to open its detail panel (renders the chat history).
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      # Open the send-message modal for the running agent.
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => to_string(agent_id()),
+          "message" => msg
+        })
+
+      # The message renders optimistically with the pending hint.
+      assert html =~ msg
+      assert html =~ "will be added on the agent&#39;s next turn"
+
+      # ── Step 1: the realistic DRAIN ───────────────────────────────────
+      # The core resets the agent's queue to [] AND the injected message lands
+      # in the conversation context as a real user entry (turn 1). The
+      # `pending_user_messages: []` in the delta is what anchors the queue to
+      # KNOWN-drained: it is faithful to the real drain (the core broadcasts
+      # the drained queue) and removes any dependence on the ordering of the
+      # queue broadcast emitted by the real send above.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :user, content: [%{text: msg}], metadata: %{turn: 1}}
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 1, pending_user_messages: []], node()}
+      )
+
+      flush_agent_events(view)
+      # The refetch the moved message count triggers renders the real entry.
+      html = wait_for_text(view, "Turn 1")
+
+      # Drained: the pending hint is gone for good and the optimistic bookkeeping
+      # was terminally pruned — the entry is NOT merely hidden by the render-time
+      # dedupe.
+      refute html =~ "will be added on the agent&#39;s next turn"
+      refute Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
+
+      # ── Step 2: COMPRESSION ───────────────────────────────────────────
+      # The real user entry is folded into a summary and disappears from the
+      # history entirely (the exact scenario that resurrected the ghost). The
+      # queue stays KNOWN-drained.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{role: :system, content: [%{text: "sys"}], metadata: %{turn: 0}},
+        %ReqLLM.Message{role: :user, content: [%{text: "initial"}], metadata: %{turn: 0}},
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [%{text: "summary"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 3, pending_user_messages: []], node()}
+      )
+
+      flush_agent_events(view)
+      html = wait_for_text(view, "summary")
+
+      # No pending ghost resurfaced.
+      refute html =~ "will be added on the agent&#39;s next turn"
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # This test performs a REAL core write (send_agent_message →
+      # AgentScheduler → Store.put_agent_state/2), whose
+      # broadcast_agents_updated/0 THROTTLED {:agents_updated, node} bulk signal
+      # lands ~200ms later (EvoGit.AgentScheduler.PubSub @throttle_ms). Emitted
+      # into a LATER test's socket, the bulk signal would set that test's
+      # :pending_agents_refresh, arm a coalescing flush, and its authoritative
+      # (ETS-backed) refresh would then ERASE that test's synthetic in-memory
+      # merge — the historical cross-test flake on this file.
+      #
+      # Sleeping past the throttle and flushing here makes the broadcast land on
+      # THIS socket (which is torn down at the end of the test), so nothing
+      # leaks past teardown. The assertions above already ran.
+      Process.sleep(250)
+      flush_agent_events(view)
+    end
+
+    test "a genuinely queued (not-yet-drained) message STILL renders its pending hint",
+         %{conn: conn} do
+      msg = "hello optimistic world"
+      seed_agent(agent_id(), [])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      view |> element("button[phx-click='open_send_message']") |> render_click()
+
+      html =
+        render_submit(view, "send_agent_message", %{
+          "agent_id" => to_string(agent_id()),
+          "message" => msg
+        })
+
+      assert html =~ msg
+      assert html =~ "will be added on the agent&#39;s next turn"
+
+      # A history refetch that does NOT contain the message while the core's
+      # queue STILL holds it: the queue is the authority — the entry is kept.
+      update_agent_context(agent_id(), [
+        %ReqLLM.Message{
+          role: :user,
+          content: [%{text: "some other real message"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      send(
+        view.pid,
+        {:agent_updated, agent_id(), [message_count: 1, pending_user_messages: [msg]], node()}
+      )
+
+      flush_agent_events(view)
+      html = wait_for_text(view, "some other real message")
+
+      # Still pending: the hint survives and the optimistic bookkeeping is kept.
+      assert html =~ "will be added on the agent&#39;s next turn"
+      assert Map.has_key?(assigns(view)[:optimistic_messages], agent_id())
+
+      # ── Flake containment (leak source) ───────────────────────────────
+      # Same REAL core write as above: its THROTTLED {:agents_updated, node}
+      # bulk signal (~200ms, EvoGit.AgentScheduler.PubSub @throttle_ms) is
+      # awaited and flushed here so it lands on THIS socket (torn down at
+      # teardown) instead of into a later test, where its authoritative
+      # ETS-backed refresh would erase that test's synthetic in-memory merge —
+      # the historical cross-test flake on this file.
+      Process.sleep(250)
+      flush_agent_events(view)
+    end
+  end
+
   describe "safe_text/1" do
     # BUG fix: message content / tool-call arguments that are Maps (not strings)
     # crashed the LiveView with Protocol.UndefinedError: protocol
