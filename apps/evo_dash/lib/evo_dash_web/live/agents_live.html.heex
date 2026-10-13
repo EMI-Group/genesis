@@ -736,7 +736,7 @@
                                         <div class="font-semibold mb-1">
                                           {gettext("Thinking")}
                                         </div>
-                                        <div>
+                                        <div class="whitespace-pre-wrap break-words">
                                           {String.slice(
                                             format_reasoning_details(reasoning_details) || "",
                                             0,
@@ -901,7 +901,7 @@
                   <%= if reasoning_details do %>
                     <div>
                       <h4 class="font-semibold text-warning mb-2">{gettext("Thinking")}</h4>
-                      <pre class="text-sm bg-warning/10 p-3 rounded overflow-x-auto"><%= format_reasoning_details(reasoning_details) %></pre>
+                      <pre class="text-sm whitespace-pre-wrap break-words bg-warning/10 p-3 rounded"><%= format_reasoning_details(reasoning_details) %></pre>
                     </div>
                   <% end %>
                   <%= if @selected_history_entry.data.content && (not is_binary(@selected_history_entry.data.content) || String.trim(@selected_history_entry.data.content) != "") do %>
