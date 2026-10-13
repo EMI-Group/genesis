@@ -203,4 +203,149 @@ defmodule EvoDashWeb.AgentsLive.OptimisticMessagesTest do
       assert OptimisticMessages.latest_turn(history) == 4
     end
   end
+
+  describe "prune/4" do
+    test "queue UNKNOWN (nil): a history-reflected entry is dropped, an unreflected one is kept" do
+      messages = %{
+        1 => [
+          %{content: "reflected", sent_at: @sent_at},
+          %{content: "still-pending", sent_at: @sent_at}
+        ]
+      }
+
+      history = [%{turn: 1, type: "user", data: %{content: "reflected"}}]
+
+      pruned = OptimisticMessages.prune(messages, 1, history, nil)
+
+      assert pruned[1] |> Enum.map(& &1.content) == ["still-pending"]
+    end
+
+    test "queue KNOWN and still holding the content: KEPT even when the history reflects it" do
+      messages = %{1 => [%{content: "hello", sent_at: @sent_at}]}
+      history = [%{turn: 1, type: "user", data: %{content: "hello"}}]
+
+      # Still-queued wins over history reflection: the message has not drained yet.
+      assert OptimisticMessages.prune(messages, 1, history, ["hello"]) == messages
+    end
+
+    test "queue KNOWN and drained: DROPPED even when the history no longer reflects it" do
+      messages = %{1 => [%{content: "drained", sent_at: @sent_at}]}
+
+      # Context compression folded the injected user turn into a summary, so the
+      # real user entry is gone — the KNOWN (empty) queue alone proves the drain.
+      history = [%{turn: 1, type: "assistant", data: %{content: "summary"}}]
+
+      assert OptimisticMessages.prune(messages, 1, history, []) == %{}
+    end
+
+    test "non-user history entries never reflect an optimistic entry" do
+      messages = %{1 => [%{content: "hello", sent_at: @sent_at}]}
+
+      history = [
+        %{turn: 1, type: "assistant", data: %{content: "hello"}},
+        %{turn: 2, type: "system", data: %{content: "hello"}}
+      ]
+
+      # Queue UNKNOWN: nothing proves the drain, so the entry stays.
+      assert OptimisticMessages.prune(messages, 1, history, nil) == messages
+    end
+
+    test "legacy uppercase USER history type reflects (drops) an optimistic entry" do
+      messages = %{1 => [%{content: "hello", sent_at: @sent_at}]}
+      history = [%{turn: 1, type: "USER", data: %{content: "hello"}}]
+
+      assert OptimisticMessages.prune(messages, 1, history, nil) == %{}
+    end
+
+    test "canonical %{text: ...} queue entries hold their text content" do
+      messages = %{1 => [%{content: "hello", sent_at: @sent_at}]}
+      history = [%{turn: 1, type: "user", data: %{content: "hello"}}]
+
+      # The canonical multimodal queue shape holds "hello" just like a bare binary.
+      assert OptimisticMessages.prune(messages, 1, history, [%{text: "hello"}]) == messages
+      assert OptimisticMessages.prune(messages, 1, history, [%{"text" => "hello"}]) == messages
+    end
+
+    test "queue entries that carry no content are ignored" do
+      messages = %{1 => [%{content: "hello", sent_at: @sent_at}]}
+
+      # No entry vouches for "hello", so the KNOWN queue reports it as drained.
+      assert OptimisticMessages.prune(messages, 1, [], [:garbage, %{}, %{other: "hello"}]) == %{}
+    end
+
+    test "the agent_id key is deleted when its kept list becomes empty; other keys are untouched" do
+      messages = %{
+        1 => [%{content: "drained", sent_at: @sent_at}],
+        2 => [%{content: "other-agent", sent_at: @sent_at}]
+      }
+
+      pruned = OptimisticMessages.prune(messages, 1, [], [])
+
+      refute Map.has_key?(pruned, 1)
+      assert pruned[2] == messages[2]
+    end
+
+    test "first-match consumption: one history user entry reflects at most one identical send" do
+      messages = %{
+        1 => [
+          %{content: "same", sent_at: @sent_at},
+          %{content: "same", sent_at: @sent_at}
+        ]
+      }
+
+      history = [%{turn: 1, type: "user", data: %{content: "same"}}]
+
+      # Queue UNKNOWN: the single real user entry proves exactly one drain.
+      pruned = OptimisticMessages.prune(messages, 1, history, nil)
+
+      assert pruned[1] |> Enum.map(& &1.content) == ["same"]
+    end
+
+    test "two identical sends, one matching history entry and a KNOWN drained queue: BOTH dropped" do
+      messages = %{
+        1 => [
+          %{content: "same", sent_at: @sent_at},
+          %{content: "same", sent_at: @sent_at}
+        ]
+      }
+
+      history = [%{turn: 1, type: "user", data: %{content: "same"}}]
+
+      assert OptimisticMessages.prune(messages, 1, history, []) == %{}
+    end
+
+    test "two identical sends with a KNOWN queue still holding the content: BOTH kept" do
+      messages = %{
+        1 => [
+          %{content: "same", sent_at: @sent_at},
+          %{content: "same", sent_at: @sent_at}
+        ]
+      }
+
+      history = [%{turn: 1, type: "user", data: %{content: "same"}}]
+
+      # Neither entry consumes the queue slot — both are still queued verbatim.
+      assert OptimisticMessages.prune(messages, 1, history, ["same"]) == messages
+    end
+
+    test "total on garbage inputs: nil map, nil history, non-list queue and stored value" do
+      # nil map -> empty result.
+      assert OptimisticMessages.prune(nil, 1, nil, nil) == %{}
+
+      # Absent key -> the map is returned with no key added.
+      assert OptimisticMessages.prune(%{2 => []}, 1, nil, nil) == %{2 => []}
+
+      # Non-list stored value -> no entries, so the key is deleted from the output.
+      assert OptimisticMessages.prune(%{1 => "garbage"}, 1, [], nil) == %{}
+
+      # Non-list queue is UNKNOWN and a non-list history is empty: the content-less
+      # entry cannot be proven drained, so it is kept verbatim.
+      entry = %{sent_at: @sent_at}
+      assert OptimisticMessages.prune(%{1 => [entry]}, 1, nil, "garbage") == %{1 => [entry]}
+
+      # Entry without :content yields a nil content; a KNOWN queue cannot hold nil,
+      # so it is treated as drained.
+      assert OptimisticMessages.prune(%{1 => [entry]}, 1, [], []) == %{}
+    end
+  end
 end
