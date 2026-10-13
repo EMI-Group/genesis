@@ -76,9 +76,15 @@ defmodule EvoDashWeb.AgentsLive do
         previous_node: current_node,
         # Optimistic user messages keyed by agent_id (agent_id => [%{content,
         # sent_at}]). Independent of @agents — survives agent/history reloads;
-        # merged into the displayed history at render time and dropped once the
-        # agent's next turn drains the message into context.
+        # merged into the displayed history at render time and TERMINALLY
+        # pruned (OptimisticMessages.prune/4) once an entry is confirmed
+        # drained or no longer queued.
         optimistic_messages: %{},
+        # Last `pending_user_messages` queue broadcast by the core, keyed by
+        # agent_id (agent_id => list of queued contents). Anchors the optimistic
+        # pruning: an entry still present in this queue stays pending, one that
+        # vanished from it (drained) is removed. Absent key = queue unknown.
+        pending_user_messages: %{},
         # Async page-load state: agents_loading gates the tree's loading UI;
         # load_generation is a monotonic counter that stale-guards async load
         # results (only the newest generation may apply).
@@ -167,9 +173,11 @@ defmodule EvoDashWeb.AgentsLive do
           selected_history_entry: nil,
           selected_objective: nil,
           previous_node: current_node,
-          # Agent ids are per-node; optimistic messages from the previous node
-          # must not leak into a different node's agent list.
+          # Agent ids are per-node; optimistic messages (and the queue snapshot
+          # anchoring them) from the previous node must not leak into a
+          # different node's agent list.
           optimistic_messages: %{},
+          pending_user_messages: %{},
           history_gate: %{},
           threshold_cache: nil,
           history_loading_agent_id: nil,
@@ -417,12 +425,26 @@ defmodule EvoDashWeb.AgentsLive do
           count = (agent && agent.message_count) || length(entries)
           history_gate = HistoryGate.record(socket.assigns.history_gate, agent_id, count)
 
+          # The freshly fetched history is authoritative: TERMINALLY prune the
+          # optimistic entries it reflects, and — whenever the core's queue
+          # snapshot for this agent is known — any entry that is no longer
+          # queued either. A pruned copy can never be resurrected by a later
+          # context compression.
+          optimistic_messages =
+            OptimisticMessages.prune(
+              socket.assigns.optimistic_messages,
+              agent_id,
+              entries,
+              Map.get(socket.assigns.pending_user_messages || %{}, agent_id)
+            )
+
           socket =
             assign(socket,
               agents: agents,
               history_gate: history_gate,
               history_loading_agent_id: nil,
-              full_message_pending_agent_id: nil
+              full_message_pending_agent_id: nil,
+              optimistic_messages: optimistic_messages
             )
 
           socket =
@@ -1348,6 +1370,32 @@ defmodule EvoDashWeb.AgentsLive do
 
       socket = assign(socket, :agents, agents)
 
+      # Queue anchoring: the core broadcasts the agent's pending_user_messages
+      # queue on every append AND on drain (reset to []). Whenever the delta
+      # carries it, snapshot the queue and TERMINALLY prune the optimistic
+      # assign — an entry that is no longer queued (and not reflected by the
+      # fetched history) has been drained for good, so a later context
+      # compression can never resurrect it. A delta WITHOUT
+      # :pending_user_messages leaves the snapshot untouched (absent key = queue
+      # unknown -> still-pending entries are kept).
+      {pending_user_messages, optimistic_messages} =
+        if Keyword.has_key?(changed_fields, :pending_user_messages) do
+          queue = Keyword.get(changed_fields, :pending_user_messages)
+
+          optimistic_messages =
+            OptimisticMessages.prune(
+              socket.assigns.optimistic_messages,
+              agent_id,
+              agent.history || [],
+              queue
+            )
+
+          {(socket.assigns.pending_user_messages || %{}) |> Map.put(agent_id, queue),
+           optimistic_messages}
+        else
+          {socket.assigns.pending_user_messages, socket.assigns.optimistic_messages}
+        end
+
       # Detect status change
       old_status = socket.assigns.previous_statuses[agent_id]
       new_status = agent.status
@@ -1387,7 +1435,9 @@ defmodule EvoDashWeb.AgentsLive do
          id_to_display: id_to_display,
          repo_trees: repo_trees,
          previous_statuses: previous_statuses,
-         changed_status_ids: changed_status_ids
+         changed_status_ids: changed_status_ids,
+         pending_user_messages: pending_user_messages,
+         optimistic_messages: optimistic_messages
        )}
     end
   end
