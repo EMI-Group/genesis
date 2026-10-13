@@ -15,7 +15,7 @@ defmodule EvoGit.Agents.Executor do
   def subagent_tool_name, do: "subagent_executor"
 
   def subagent_modules do
-    [EvoGit.Agents.Investigator, __MODULE__]
+    [EvoGit.Agents.Investigator]
   end
 
   def subagent_tool_description do
