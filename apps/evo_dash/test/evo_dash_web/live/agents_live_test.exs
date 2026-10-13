@@ -1235,6 +1235,100 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "thinking block wrapping" do
+    # Regression: a LONG reasoning/thinking block must line-wrap instead of
+    # forcing a horizontal scrollbar. Both render sites carry
+    # `whitespace-pre-wrap break-words` (the inline detail panel's thinking
+    # <div> and the full-message modal's thinking <pre>).
+    #
+    # The modal's OUTER wrapper legitimately keeps `overflow-x-auto` (it scrolls
+    # wide ancestor content), so the "no horizontal scroller" assertion is
+    # SCOPED to the thinking <pre> element itself — a whole-modal refutation
+    # would fail by design.
+    test "thinking text wraps in the inline panel and the full-message modal", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          reasoning_details: [%{text: String.duplicate("A", 300)}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Thinking")
+
+      # Inline panel: the thinking body wraps.
+      assert panel =~ "whitespace-pre-wrap break-words"
+
+      # Open the full-message modal — each history entry contains exactly ONE
+      # button (the "view full message" one).
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal = render(view)
+
+      assert modal =~ ~r/<pre class="text-sm whitespace-pre-wrap break-words bg-warning\/10/
+
+      # Scope the refutation to the thinking <pre>: it must wrap and must NOT
+      # itself introduce a horizontal scroller.
+      thinking_pre_class =
+        modal
+        |> Floki.parse_document!()
+        |> Floki.find("pre")
+        |> Enum.map(&List.first(Floki.attribute(&1, "class")))
+        |> Enum.find(&(is_binary(&1) and &1 =~ "bg-warning/10"))
+
+      refute is_nil(thinking_pre_class)
+      assert thinking_pre_class =~ "whitespace-pre-wrap"
+      assert thinking_pre_class =~ "break-words"
+      refute thinking_pre_class =~ "overflow-x-auto"
+    end
+  end
+
+  describe "full-message modal renders complete tool calls" do
+    # Regression: the inline chat-history panel renders a shell call's command
+    # in COMPACT mode (capped at 200 chars + a trailing "…"), while the
+    # full-message modal renders the COMPLETE command (`mode: :full`).
+    test "the modal shows the untruncated command while the inline panel truncates", %{
+      conn: conn
+    } do
+      cmd = String.duplicate("x", 260)
+
+      call = %ReqLLM.ToolCall{
+        id: "c",
+        function: %{name: "run_bash", arguments: Jason.encode!(%{"command" => cmd})}
+      }
+
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          metadata: %{turn: 1},
+          tool_calls: [call]
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      inline = wait_for_text(view, "Shell call")
+
+      # Compact mode: the command row is capped at 200 chars + a trailing "…".
+      assert inline =~ String.slice(cmd, 0, 200) <> "…"
+      refute inline =~ cmd
+
+      # Full mode: the modal carries the complete, untruncated command.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal = render(view)
+
+      assert modal =~ cmd
+      assert modal =~ "max-h-[60vh]"
+    end
+  end
+
   describe "send_agent_message optimistic display" do
     # The optimistic-display flow (commit 04c82f82): sending a user message
     # appends it to the @optimistic_messages assign and it renders in the
