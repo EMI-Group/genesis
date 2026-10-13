@@ -3,12 +3,22 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
   Pure rendering contract for tool-call messages in the Agents page chat
   history viewer.
 
-  `display/1` returns either:
+  `display/1` and `display/2` return either:
     - `%{label: String.t(), kind: :structured, rows: [{String.t(), String.t()}]}`
       — subagent (`subagent_*` prefix) and shell (`run_bash`/`run_powershell`)
-      calls: key/value rows (path + truncated objective / truncated command).
+      calls: key/value rows (path + objective / command).
     - `%{label: String.t(), kind: :inline, summary: String.t()}`
-      — all other calls: a single compact one-line arguments summary.
+      — all other calls: a single one-line arguments summary.
+
+  `display/2` takes a keyword list of options. `opts[:mode]` selects the
+  rendering mode:
+    - `:compact` (the default, and also the fallback for an unrecognized or
+      non-keyword `opts` / unknown `:mode`) caps the structured row values at
+      200 chars and the inline summary at 160 chars, each with a trailing `"…"`.
+    - `:full` yields the SAME descriptor shape and label text but never caps or
+      appends `"…"` — structured rows carry the complete objective / command and
+      the inline summary the complete path, decoded-arguments JSON or
+      whitespace-collapsed raw arguments.
 
   Both forms are height-constrained by the template (`agents_live.html.heex`):
   structured blocks render in a `max-h` + `overflow-y-auto` container, inline
@@ -29,52 +39,70 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
   @path_keys ["path", "file_path", "dir_path", "paths"]
 
   @doc """
-  Returns the display descriptor for a tool call (see moduledoc).
+  Returns the display descriptor for a tool call in `:compact` mode (see moduledoc).
   """
   def display(call) do
-    do_display(call, tool_call_name(call))
+    display(call, [])
   end
+
+  @doc """
+  Returns the display descriptor for a tool call (see moduledoc).
+
+  `opts[:mode]` is `:compact` (default) or `:full`; any unrecognized or
+  non-keyword `opts` — or an unknown `:mode` — falls back to `:compact`.
+  """
+  def display(call, opts) do
+    do_display(call, tool_call_name(call), display_mode(opts))
+  end
+
+  # Mode resolution is total: a non-keyword list, any other option list, or an
+  # unknown `:mode` value all resolve to `:compact`.
+  defp display_mode(opts) when is_list(opts) do
+    if Keyword.keyword?(opts) and Keyword.get(opts, :mode) == :full, do: :full, else: :compact
+  end
+
+  defp display_mode(_opts), do: :compact
 
   # Subagent tool calls (core `subagent_tool_name/0` family: subagent_manager,
   # subagent_executor, subagent_investigator, ...) — structured rows.
-  defp do_display(call, name) when is_binary(name) do
+  defp do_display(call, name, mode) when is_binary(name) do
     cond do
-      String.starts_with?(name, "subagent_") -> display_subagent(call, name)
-      tool_call_is_shell?(call) -> display_shell(call)
-      true -> build_inline(call, name)
+      String.starts_with?(name, "subagent_") -> display_subagent(call, name, mode)
+      tool_call_is_shell?(call) -> display_shell(call, mode)
+      true -> build_inline(call, name, mode)
     end
   end
 
-  defp do_display(call, _name), do: build_inline(call, "unknown")
+  defp do_display(call, _name, mode), do: build_inline(call, "unknown", mode)
 
-  defp display_subagent(call, label) do
+  defp display_subagent(call, label, mode) do
     case decode_arguments(call) do
       {:ok, decoded} ->
         rows =
           []
           |> add_row(gettext("Path"), subagent_path(decoded))
-          |> add_row(gettext("Objective"), truncate_objective(subagent_objective(decoded)))
+          |> add_row(gettext("Objective"), truncate_objective(subagent_objective(decoded), mode))
 
         if rows == [] do
-          build_inline(call, label)
+          build_inline(call, label, mode)
         else
           %{label: label, kind: :structured, rows: rows}
         end
 
       :error ->
-        build_inline(call, label)
+        build_inline(call, label, mode)
     end
   end
 
-  defp display_shell(call) do
+  defp display_shell(call, mode) do
     %{
       label: gettext("Shell call"),
       kind: :structured,
-      rows: [{gettext("Command"), truncate(shell_command(call), 200)}]
+      rows: [{gettext("Command"), truncate(shell_command(call), 200, mode)}]
     }
   end
 
-  defp build_inline(call, label) do
+  defp build_inline(call, label, mode) do
     summary =
       case decode_arguments(call) do
         {:ok, decoded} ->
@@ -93,7 +121,7 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
           collapse_one_line(tool_call_arguments(call))
       end
 
-    %{label: label, kind: :inline, summary: truncate(summary, 160)}
+    %{label: label, kind: :inline, summary: truncate(summary, 160, mode)}
   end
 
   # `tool_call_arguments/1` returns a JSON binary or a raw value; normalize
@@ -132,8 +160,8 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
     end
   end
 
-  defp truncate_objective(nil), do: nil
-  defp truncate_objective(objective), do: truncate(objective, 200)
+  defp truncate_objective(nil, _mode), do: nil
+  defp truncate_objective(objective, mode), do: truncate(objective, 200, mode)
 
   defp shell_command(call) do
     case decode_arguments(call) do
@@ -170,13 +198,17 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
   defp add_row(rows, _key, ""), do: rows
   defp add_row(rows, key, value) when is_binary(value), do: rows ++ [{key, value}]
 
-  defp truncate(value, max) when is_binary(value) do
+  defp truncate(value, _max, :full), do: value
+
+  defp truncate(value, max, _mode) when is_binary(value) do
     if String.length(value) > max do
       String.slice(value, 0, max) <> "…"
     else
       value
     end
   end
+
+  defp truncate(value, _max, _mode), do: value
 
   defp collapse_one_line(raw) when is_binary(raw) do
     raw
