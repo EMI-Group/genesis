@@ -915,12 +915,12 @@
                       <h4 class="font-semibold text-secondary mb-2">{gettext("Tool Calls")}</h4>
                       <div class="space-y-2">
                         <%= for call <- @selected_history_entry.data.tool_calls do %>
-                          <% display = ToolCallDisplay.display(call) %>
+                          <% display = ToolCallDisplay.display(call, mode: :full) %>
                           <div class="bg-secondary/10 p-3 rounded">
                             <div class="flex items-start gap-2">
                               <span class="font-mono font-semibold shrink-0">{display.label}</span>
                               <%= if display.kind == :structured do %>
-                                <div class="min-w-0 flex-1 max-h-60 overflow-y-auto space-y-1">
+                                <div class="min-w-0 flex-1 max-h-[60vh] overflow-y-auto space-y-1">
                                   <%= for {key, value} <- display.rows do %>
                                     <div class="flex items-start gap-1.5">
                                       <span class="font-mono text-xs uppercase tracking-wide text-base-content/70 shrink-0 w-20">{key}</span>
@@ -931,9 +931,11 @@
                                   <% end %>
                                 </div>
                               <% else %>
-                                <span class="font-mono text-xs whitespace-nowrap overflow-hidden text-ellipsis min-w-0">{safe_text(
-                                  display.summary
-                                )}</span>
+                                <div class="min-w-0 flex-1 max-h-[60vh] overflow-y-auto">
+                                  <span class="font-mono text-xs whitespace-pre-wrap break-all">{safe_text(
+                                    display.summary
+                                  )}</span>
+                                </div>
                               <% end %>
                             </div>
                           </div>
