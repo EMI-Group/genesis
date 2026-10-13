@@ -8,6 +8,8 @@ defmodule EvoGit.Agent.TurnWarningTest do
 
   alias EvoGit.Agent.TurnWarning
 
+  doctest EvoGit.Agent.TurnWarning
+
   describe "current_positional_level/2" do
     test "returns :none at turn 0" do
       assert TurnWarning.current_positional_level(0, 128) == :none
@@ -26,9 +28,9 @@ defmodule EvoGit.Agent.TurnWarningTest do
     end
 
     test "returns :critical when turns_remaining hits critical threshold" do
-      # 128-turn budget: critical fires at 3 turns remaining (turn 125)
-      assert TurnWarning.current_positional_level(125, 128) == :critical
-      assert TurnWarning.current_positional_level(124, 128) == :end
+      # 128-turn budget: critical fires at 5 turns remaining (turn 123)
+      assert TurnWarning.current_positional_level(123, 128) == :critical
+      assert TurnWarning.current_positional_level(122, 128) == :end
     end
 
     test "small budget (8 turns) skips beginning, goes straight to :end" do
@@ -56,6 +58,62 @@ defmodule EvoGit.Agent.TurnWarningTest do
       # div(16, 6) = 2, so end_remaining = min(10, max(3, 2)) = 3
       # 3 remaining
       assert TurnWarning.current_positional_level(13, 16) == :end
+    end
+  end
+
+  describe "current_positional_level/2 critical countdown" do
+    test "typical 100-turn subagent budget: :critical fires at 5 turns remaining" do
+      # end_remaining(100) = 10 (turn 90), critical_remaining(100) = 5 (turn 95)
+      assert TurnWarning.current_positional_level(95, 100) == :critical
+      assert TurnWarning.current_positional_level(94, 100) == :end
+    end
+
+    test "typical 1000-turn root budget: :critical fires at 5 turns remaining" do
+      # end_remaining(1000) = 10 (turn 990), critical_remaining(1000) = 5 (turn 995)
+      assert TurnWarning.current_positional_level(995, 1000) == :critical
+      assert TurnWarning.current_positional_level(994, 1000) == :end
+    end
+
+    test "representative budgets: critical/end remaining counts" do
+      assert remaining_at_first(:critical, 20) == 1
+      assert remaining_at_first(:critical, 30) == 1
+      assert remaining_at_first(:critical, 60) == 3
+      assert remaining_at_first(:critical, 100) == 5
+      assert remaining_at_first(:critical, 1000) == 5
+      assert remaining_at_first(:critical, 128) == 5
+
+      assert remaining_at_first(:end, 20) == 3
+      assert remaining_at_first(:end, 30) == 5
+      assert remaining_at_first(:end, 60) == 10
+      assert remaining_at_first(:end, 100) == 10
+      assert remaining_at_first(:end, 1000) == 10
+    end
+
+    test "for every budget 1..200 the :end band opens strictly before :critical" do
+      for max_turns <- 1..200 do
+        critical_remaining = remaining_at_first(:critical, max_turns)
+
+        assert is_integer(critical_remaining),
+               "expected a :critical band for max_turns=#{max_turns}"
+
+        # A 1-turn budget has a single turn and cannot host a separate :end
+        # band (the critical floor is 1 turn remaining); every larger budget
+        # must fire :end strictly before :critical.
+        if max_turns == 1 do
+          assert is_nil(remaining_at_first(:end, max_turns))
+        else
+          end_remaining = remaining_at_first(:end, max_turns)
+
+          assert is_integer(end_remaining),
+                 "expected an :end band for max_turns=#{max_turns}"
+
+          assert end_remaining > critical_remaining,
+                 ":end must open before :critical for max_turns=#{max_turns} " <>
+                   "(end_remaining=#{end_remaining}, critical_remaining=#{critical_remaining})"
+
+          assert first_turn_for(:end, max_turns) < first_turn_for(:critical, max_turns)
+        end
+      end
     end
   end
 
@@ -88,7 +146,7 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert {:ok, w2} = TurnWarning.check_positional(118, 128, :beginning)
       assert w2.level == :end
 
-      assert {:ok, w3} = TurnWarning.check_positional(125, 128, :end)
+      assert {:ok, w3} = TurnWarning.check_positional(123, 128, :end)
       assert w3.level == :critical
     end
 
@@ -173,7 +231,7 @@ defmodule EvoGit.Agent.TurnWarningTest do
     end
 
     test "uses singular 'turn' when 1 turn remaining" do
-      # max_turns=4: critical_remaining = min(3, max(1, 0)) = 1, so turn 3 (1 remaining)
+      # max_turns=4: critical_remaining = min(5, max(1, 0)) = 1, so turn 3 (1 remaining)
       {:ok, warning} = TurnWarning.check_positional(3, 4, :end)
       msg = TurnWarning.message(warning)
       assert msg =~ "1 turn remaining"
@@ -224,6 +282,25 @@ defmodule EvoGit.Agent.TurnWarningTest do
 
     test ":low agents: check_positional(32, 128, :none, :low) returns :none (beginning suppressed)" do
       assert :none = TurnWarning.check_positional(32, 128, :none, :low)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  # First turn at which `level` fires for a budget (nil when it never fires).
+  defp first_turn_for(level, max_turns) do
+    Enum.find(0..max_turns, fn turn ->
+      TurnWarning.current_positional_level(turn, max_turns) == level
+    end)
+  end
+
+  # Turns remaining when `level` first fires (nil when it never fires).
+  defp remaining_at_first(level, max_turns) do
+    case first_turn_for(level, max_turns) do
+      nil -> nil
+      turn -> max_turns - turn
     end
   end
 end
