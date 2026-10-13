@@ -112,7 +112,20 @@ defmodule EvoGit.Agent.ContextCompression do
                   ReqLLM.Context.user("Summary of previous events:\n" <> text)
                   |> EvoGit.Agent.ContextBuilder.tag_message_timestamp()
 
-                new_context = ReqLLM.Context.new([system_msg, initial_user_msg, summary_msg])
+                # Refresh the re-injected first user message so its `<context>`
+                # block reflects the CURRENT CONTEXT.md chain. Without this the
+                # context tree would stay frozen at run start even after the
+                # agent edited/created CONTEXT.md files in its worktree. The
+                # `<objective>` block (and any root-agent media content parts)
+                # are reproduced byte-identically — only the `<context>` block
+                # is re-read from the worktree (`state.repo_path`).
+                refreshed_user_msg =
+                  EvoGit.Agent.ContextBuilder.refresh_first_user_message(
+                    initial_user_msg,
+                    state
+                  )
+
+                new_context = ReqLLM.Context.new([system_msg, refreshed_user_msg, summary_msg])
                 AgentScheduler.increment_compression_count(agent_id)
 
                 # Cost is recomputed by `EvoGit.Agent.Cost` (see the module doc
