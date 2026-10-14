@@ -1287,6 +1287,51 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "thinking vs response separation" do
+    # Regression: on a reasoning turn the assistant history entry carries a
+    # :thinking content part (mirrored into reasoning_details, which drives the
+    # "Thinking" block) AND a :text part (the visible answer, which drives the
+    # "Response" block). The Response block must be built from :text parts ONLY
+    # — the :thinking part's text must never leak into it, or the two blocks
+    # render byte-identical reasoning.
+    test "the Response block excludes the :thinking part's text", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [
+            %ReqLLM.Message.ContentPart{type: :thinking, text: "REASONING_TOKEN"},
+            %ReqLLM.Message.ContentPart{type: :text, text: "RESPONSE_TOKEN"}
+          ],
+          reasoning_details: [%{text: "REASONING_TOKEN"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      _panel = wait_for_text(view, "Thinking")
+
+      # Open the full-message modal — the assistant view renders the Thinking
+      # <pre> (from reasoning_details) followed by the Response <pre> (from
+      # data.content), and this message has no tool calls, so those are the
+      # modal's only <pre> elements.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal_html = render(view)
+
+      [thinking_pre, response_pre] =
+        modal_html
+        |> Floki.parse_document!()
+        |> Floki.find("#full-message-modal")
+        |> Floki.find("pre")
+
+      assert Floki.text(thinking_pre) =~ "REASONING_TOKEN"
+      assert Floki.text(response_pre) =~ "RESPONSE_TOKEN"
+      refute Floki.text(response_pre) =~ "REASONING_TOKEN"
+    end
+  end
+
   describe "full-message modal renders complete tool calls" do
     # Regression: the inline chat-history panel renders a shell call's command
     # in COMPACT mode (capped at 200 chars + a trailing "…"), while the

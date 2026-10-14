@@ -10,8 +10,9 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
   # and nil metadata, never raise.
   #
   # Pinned behavior notes (verified identical to the pre-rework module):
-  # - message_text/1 joins the :text of EVERY map part (including
-  #   %{type: :thinking, text: _} parts) plus plain binary parts.
+  # - message_text/1 joins the :text of text parts (via
+  #   EvoDashWeb.ContentText.text_of/1) plus plain binary parts; parts with an
+  #   explicit non-text type (e.g. %{type: :thinking, text: _}) are EXCLUDED.
   # - assistant_message?/1 reads only the ATOM :role key — string-KEYED plain
   #   maps are not recognized (real payloads are %ReqLLM.Message{} structs).
   # - role_type/1 on nil yields "nil" (Atom.to_string/1) — benign degradation.
@@ -28,17 +29,18 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
       assert Messages.assistant_text(messages) == "first\nsecond"
     end
 
-    test "empty-content assistants are skipped; thinking parts still contribute their text" do
+    test "empty-content assistants are skipped; thinking parts are EXCLUDED" do
       assert Messages.assistant_text([%{role: :assistant, content: []}]) == ""
-      # Thinking content parts carry :text and ARE joined (pre-rework behavior).
+
+      # Thinking content parts are reasoning, NOT response text — excluded.
       assert Messages.assistant_text([
                %{role: :assistant, content: [%{type: :thinking, text: "think"}]}
-             ]) == "think"
+             ]) == ""
 
       assert Messages.assistant_text([
                %{role: :assistant, content: [%{type: :thinking, text: "think"}]},
                %{role: :assistant, content: [%{text: "visible"}]}
-             ]) == "think\nvisible"
+             ]) == "visible"
     end
 
     test "string-KEYED maps are not recognized (atom :role key only)" do
@@ -57,8 +59,9 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
       assert Messages.message_text(%{content: "plain"}) == "plain"
     end
 
-    test "content-part lists join the :text of every map part plus binary parts" do
-      # :thinking maps and raw binaries both contribute — pinned actual behavior.
+    test "content-part lists join the :text of text parts plus binary parts" do
+      # Bare maps (no type) and raw binaries contribute; :thinking maps are
+      # EXCLUDED (reasoning is not response text).
       assert Messages.message_text(%{
                content: [
                  %{text: "a"},
@@ -68,11 +71,24 @@ defmodule EvoDashWeb.HomeLive.MessagesTest do
                  :junk,
                  %{}
                ]
-             }) == "athinkbbin"
+             }) == "abbin"
     end
 
-    test "thinking-only messages contribute their thinking text" do
-      assert Messages.message_text(%{content: [%{type: :thinking, text: "think"}]}) == "think"
+    test "thinking-only messages contribute NO text" do
+      assert Messages.message_text(%{content: [%{type: :thinking, text: "think"}]}) == ""
+    end
+
+    test "a real :thinking ContentPart is excluded while :text parts contribute" do
+      assert Messages.message_text(%{
+               content: [%ReqLLM.Message.ContentPart{type: :thinking, text: "R"}]
+             }) == ""
+
+      assert Messages.message_text(%{
+               content: [
+                 %ReqLLM.Message.ContentPart{type: :thinking, text: "R"},
+                 %ReqLLM.Message.ContentPart{type: :text, text: "visible"}
+               ]
+             }) == "visible"
     end
 
     test "nil/absent/malformed content is empty" do

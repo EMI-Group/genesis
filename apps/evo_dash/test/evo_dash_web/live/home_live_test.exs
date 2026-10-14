@@ -1508,8 +1508,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # System/user entry contents.
       assert html =~ "you are genesis"
       assert html =~ "New message: hi"
-      # Assistant entry: thinking-part text + reasoning details.
-      assert html =~ "let me inspect the source"
+      # Assistant entry: reasoning details render from reasoning_details; the
+      # :thinking content part's text is EXCLUDED from the entry content (it
+      # would otherwise duplicate the reasoning text).
+      refute html =~ "let me inspect the source"
       assert html =~ "think"
       # Tool entry: tool-name header + result content.
       assert html =~ "Tool Result: spawn_investigator"

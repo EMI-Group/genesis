@@ -35,6 +35,8 @@ defmodule EvoDashWeb.AgentsLive do
     ToolCallDisplay
   }
 
+  alias EvoDashWeb.ContentText
+
   # Minimum interval between commit-graph fetches. Refreshes are already coalesced
   # by the agent-event flush; this further throttles the (heavier) per-repo git
   # RPC. A throttled request arms ONE one-shot :commit_graph_tick — never a poll.
@@ -1814,7 +1816,7 @@ defmodule EvoDashWeb.AgentsLive do
           msg.content
           |> Enum.map(fn part ->
             case content_part_label(part) do
-              nil -> Map.get(part, :text)
+              nil -> ContentText.text_of(part)
               label -> label
             end
           end)
@@ -1831,7 +1833,10 @@ defmodule EvoDashWeb.AgentsLive do
   # Renders a short metadata label for image/audio content parts so multimodal
   # history isn't blank, e.g. "[image: foo.png]" / "[audio: track.mp3]". Every
   # other part type (text/image_url/video_url/thinking/unknown) returns nil —
-  # those contribute nothing beyond what the text extraction already yields.
+  # those contribute nothing here; the `nil` branch of the caller then extracts
+  # the part's text via `EvoDashWeb.ContentText.text_of/1`, which yields text
+  # ONLY for `:text` parts (reasoning lives in `:thinking` parts and is excluded
+  # from the response text).
   # Handles %ReqLLM.Message.ContentPart{} structs and atom/string-keyed maps.
   # TOTAL: never raises, never touches the part's `data` binary.
   defp content_part_label(part) when is_map(part) do

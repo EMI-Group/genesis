@@ -30,10 +30,11 @@ defmodule EvoDashWeb.HomeLive.Messages do
   @doc """
   Extracts the display text of a single message. Total: `nil`/absent content →
   `""`; a plain binary content → itself; a content-part list → the `:text` of
-  each map part, with non-map parts and parts without `:text` skipped.
-  `:thinking`-only parts contribute nothing here — they surface via
-  `reasoning_details` in `to_entries/1` (the thought-process section) instead,
-  keeping the streamed bubble clean. Never raises.
+  each `:text` part (`EvoDashWeb.ContentText.text_of/1`), with non-map parts,
+  `:thinking` parts and parts without binary `:text` skipped. `:thinking` parts
+  are EXCLUDED — reasoning surfaces via `reasoning_details` in `to_entries/1`
+  (the thought-process section) instead, so the streamed bubble and the thought
+  process never show the same text twice. Never raises.
   """
   @spec message_text(term()) :: String.t()
   def message_text(message) when is_map(message) do
@@ -42,10 +43,7 @@ defmodule EvoDashWeb.HomeLive.Messages do
         content
         |> Enum.map(fn
           part when is_map(part) ->
-            case Map.get(part, :text) do
-              text when is_binary(text) -> text
-              _ -> ""
-            end
+            EvoDashWeb.ContentText.text_of(part) || ""
 
           part when is_binary(part) ->
             part
