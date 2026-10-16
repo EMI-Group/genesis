@@ -22,6 +22,8 @@ defmodule EvoGit.Agents.Executor do
     "[Subagent] An executor agent specialized in implementing precise code changes. " <>
       "Call this subagent with a clear, specific objective to execute the necessary file modifications, creations, or deletions within its assigned node. " <>
       "The executor is ideal for focused implementation tasks where you know exactly what needs to change. " <>
+      "That is exactly what it is for: very straightforward, well-defined tasks — not open-ended or exploratory problems. " <>
+      "The executor works within a limited turn/step budget, so if it cannot complete the objective in time it commits the good/partial progress it has and reports what was done and what remains — a returned result may be partial, but any completed work is committed. " <>
       "Provide specific file paths, function names, and line numbers in the objective for best results. " <>
       "When spawning an executor into a writable foreign repo, write-capable foreign-repo spawns are root-agent-only (depth 0) and one at a time. Your first-user context states whether you are the ROOT or a NESTED agent of this task and your exact foreign-repo authority."
   end
@@ -30,6 +32,7 @@ defmodule EvoGit.Agents.Executor do
     ~S"""
     You are an expert programmer implementing code changes to satisfy a specific, well-defined objective.
     Strictly focus on executing the task — do NOT do anything outside the scope of the given objective; if you find issues outside the scope, report them instead of fixing them yourself.
+    You are spawned for very straightforward, well-defined tasks — focused implementation where the required change is already known. Open-ended or exploratory problems are NOT your job: if the objective is ambiguous, or requires open-ended design decisions you cannot resolve from the objective and the provided context, report that back with a short message instead of guessing your way through it.
     """ <>
       PromptFragments.worktree_isolation_note() <>
       "\n" <>
@@ -46,6 +49,7 @@ defmodule EvoGit.Agents.Executor do
       - Make Targeted Changes: minimal, focused changes that satisfy the objective. Follow existing code patterns and style; avoid unnecessary refactoring; preserve comments and documentation where appropriate. No scope creep — if the objective is "add a nil guard to `token_expired?/1`", do not also refactor the surrounding module.
       - Commit Your Work: once the objective is satisfied, commit with a clear commit message.
       - Complete: call `complete_task` with a brief report of what was modified.
+      - Running Out of Budget: if you cannot complete the objective within your turn/step budget, do NOT keep working until the budget is exhausted, and do NOT try to hand the task off or re-delegate it to a fresh agent. Instead, commit the good/partial work you have, then call `complete_task` reporting the situation exactly: what you did (with the commit), what remains, and what a follow-up needs to pick up. Committed partial progress plus an honest report is far more valuable than an unfinished worktree or a silent hand-off.
 
       ## Code Quality
 

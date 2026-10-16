@@ -118,7 +118,7 @@ max_tool_concurrency = 8          # Max concurrent tool executions (default = de
 agent_max_retries = 3             # Crash-retry limit per agent (non_neg_integer, min 0)
 max_agent_depth = 8               # Max subagent recursion depth (pos_integer, min 1)
 max_retries = 15                  # Max total LLM API retries (pos_integer, min 1)
-max_turns = 100                   # Turn cap for SUB-agents (pos_integer, min 1)
+max_turns = 128                   # Turn cap for SUB-agents (pos_integer, min 1)
 max_turns_root = 1000             # Turn cap for the ROOT agent only (pos_integer, min 1)
 delegation_hint_threshold = 5     # Write-tool calls to a child dir before a delegation nudge (pos_integer, min 1; 0 disables)
 read_delegation_hint_threshold = 8 # Read-tool calls to a child dir before an investigator nudge (pos_integer, min 1; 0 disables)

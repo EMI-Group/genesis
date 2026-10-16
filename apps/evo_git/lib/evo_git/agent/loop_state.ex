@@ -53,7 +53,7 @@ defmodule EvoGit.Agent.LoopState do
     turn: 0,
     in_grace_period: false,
     grace_turns_remaining: 0,
-    max_turns: 100,
+    max_turns: 128,
     total_tokens: 0,
     last_warned_level: :none,
     turns_since_subagent: 0,
