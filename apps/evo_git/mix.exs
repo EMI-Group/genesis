@@ -25,7 +25,7 @@ defmodule EvoGit.MixProject do
 
   defp deps do
     [
-      {:req_llm, "~> 1.24.0"},
+      {:req_llm, "~> 1.28"},
       # llm_db is the pricing/model catalog; declared explicitly because
       # EvoGit reads pricing from it directly (it was previously
       # transitive-only via req_llm). Range mirrored from req_llm's
