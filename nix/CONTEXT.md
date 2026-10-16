@@ -28,10 +28,6 @@ Nix build support for Genesis. The primary entry points are the flake at the rep
 - Scripts in this directory are designed to run inside the `nix develop` shell where `curl`, `git`, and `rg` are available.
 - `bundle-vendor.sh` is only needed for the manual `nix develop` → `mix release` workflow. The `nix build` path handles vendor binaries via the derivation's `postInstall` hook.
 
-## Known Issues
-
-- **`nix build .#default` / `.#desktop` cannot complete today, for a reason unrelated to the flake hashes.** The release derivation compiles with the default Elixir of the beam package set that `flake.nix` passes as `beamPackages` (`beam.packagesWith erlang_29` → **Elixir 1.18.4**), while the dev shell and CI use **Elixir 1.20.4** (`flake.nix` devShell sets `beamPkgs.elixir_1_20`; CI pins `ELIXIR_VERSION`). `apps/evo_git/lib/evo_git/config/schema/llm_constraints.ex` stores `%Regex{}` values inside the `@constraint_tables` module attribute, and Elixir 1.18 refuses to escape the compiled pattern's reference when the attribute is read in a function body: `** (ArgumentError) cannot inject attribute @constraint_tables into function/macro because cannot escape #Reference<...>` at `llm_constraints.ex:250`. Elixir 1.20 compiles the same code. Until the release build's Elixir is aligned with the repo toolchain (or the attribute no longer captures a `%Regex{}`), the end-to-end proof is limited to realizing the fixed-output derivations — the build still gets past `configurePhase` (deps compile, NIFs load from the seeded cache) and fails in the app-compilation phase.
-
 ## See Also
 
 - `../flake.nix` — Flake entry point: `nix run` (CLI), `nix run .#desktop` (Tauri), `nix develop` (dev shell)
