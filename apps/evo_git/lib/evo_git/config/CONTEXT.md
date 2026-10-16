@@ -26,7 +26,7 @@
 ### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
 | Function | Description |
 |----------|-------------|
-| `providers/0` | Predefined providers (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba) with models |
+| `providers/0` | Predefined providers (Anthropic, OpenAI, Google, DeepSeek, ZAI, Alibaba, MiniMax, Moonshot AI (Kimi), xAI) with models |
 | `provider_models/1` | Model shortcuts for a provider atom |
 | `resolve_model/2` | `{provider_atom, model_input}` → `"provider:model"` string (backward-compat) |
 | `resolve_model_spec/3` | Map analog: `%{provider: atom, id: string}` + optional `base_url`/`extra`. Opts `:base_url`, `:variant`, `:extra`. |
