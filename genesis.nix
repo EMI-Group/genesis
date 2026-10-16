@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-q3bDwkmlsmkTgwR8LuSeIXS8ccHLl04YUlBUXH83jt0=";
+    hash = "sha256-WoyrdrcRMtJMvp7DAOZ52ooJZeHai3gnGuyTWTmz7PI=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -65,46 +65,70 @@ let
       throw "Unsupported platform for vendor binaries: ${stdenv.hostPlatform.system}";
 
   # ── Precompiled NIFs ──────────────────────────────────────────────
-  # Each entry describes a precompiled Rustler NIF tarball. The NIF version
-  # (e.g. 2.15, 2.17) is tied to the Erlang/OTP ABI that the package was
-  # compiled against. These are per-package and may differ.
+  # Each entry describes a precompiled Rustler NIF tarball. Upstream publishes
+  # one asset per Rust target triple, all sharing the filename shape
+  # `lib<name>_nif-v<version>-nif-<ABI>-<rustTarget>.so.tar.gz` but with
+  # different bytes — so `name`, `url` AND `hash` are all resolved per
+  # `rustTarget` below. A single pinned hash would only ever be correct on the
+  # one platform whose asset produced it.
+  #
+  # The NIF version suffix (e.g. 2.15, 2.17) is tied to the Erlang/OTP ABI the
+  # package was compiled against. These are per-package and may differ.
   #
   # Actual release names/tags were verified against the respective GitHub
-  # repositories (2025-07).
+  # repositories (2025-07, re-verified 2026-10) and the hashes are the flat
+  # SHA-256 of the published tarballs:
+  #   nix hash file --sri <downloaded asset>
   #
   # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
   precompiled_nifs = [
-    # ── mdex_native 0.2.8 (base) ──────────────────────────────────
+    # ── mdex_native 0.2.11 (base) ─────────────────────────────────
+    # Only the plain, unsuffixed asset is fetched: it is the variant selected
+    # by the unset compile-time config
+    # Application.compile_env(:mdex_native, :syntax_highlighter, nil). The
+    # upstream "--lumis"/"--syntect"/"--legacy_cpu" variants exist but are
+    # never used — do not reintroduce them.
     {
-      name = "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
-      version = "0.2.8";
-      file = fetchurl {
-        url =
-          "https://github.com/leandrocp/mdex_native/releases/download/v0.2.8/"
-          + "libmdex_native_nif-v0.2.8-nif-2.15-${rustTarget}.so.tar.gz";
-        hash = "sha256-ljI4QU6lprtFRZhsCcgl3/zXXpMn25q3MG+xqmy9TOw=";
+      prefix = "libmdex_native_nif-v0.2.11-nif-2.15";
+      urlPrefix = "https://github.com/leandrocp/mdex_native/releases/download/v0.2.11";
+      hashes = {
+        x86_64-unknown-linux-gnu = "sha256-ktOfM2EZvOlIRood/H8CBS444WMjQI0aySwKxyYUI6g=";
+        aarch64-unknown-linux-gnu = "sha256-+tJGeCvLJ3zp0Yr/LCrWUsb+3MAP3M5QzyhD4A0CW44=";
+        x86_64-apple-darwin = "sha256-/60oRFLM7H4KlBNzhvLpEBiNQCTosqMQHCYD3QKigQY=";
+        aarch64-apple-darwin = "sha256-vgQVWuxsQ9mpDZ4ILI05mDz27kl85iPiW9Qd9AWMaoA=";
       };
     }
-
-    # mdex_native "--lumis" variant: removed together with the lumis
-    # dependency — it is only selected by the unset compile-time config
-    # Application.compile_env(:mdex_native, :syntax_highlighter, nil), so the
-    # base mdex variant above is the only one ever used. Do not reintroduce it.
 
     # ── xqlite 0.12.2 ───────────────────────────────────────────═
     # Note: this package lives under dimitarvp/xqlite, not leandrocp/xqlite.
-    # The library prefix is "libxqlitenif" (no underscore between xqlite and nif).
+    # The library prefix is "libxqlitenif" (no underscore between xqlite and
+    # nif) and its ABI suffix is nif-2.17 (versus mdex's nif-2.15).
     {
-      name = "libxqlitenif-v0.12.2-nif-2.17-${rustTarget}.so.tar.gz";
-      version = "0.12.2";
-      file = fetchurl {
-        url =
-          "https://github.com/dimitarvp/xqlite/releases/download/v0.12.2/"
-          + "libxqlitenif-v0.12.2-nif-2.17-${rustTarget}.so.tar.gz";
-        hash = "sha256-Aa/gE2ekBGq3ysMLxK47rT9yAmjLgqqPDZio5d0YSlw=";
+      prefix = "libxqlitenif-v0.12.2-nif-2.17";
+      urlPrefix = "https://github.com/dimitarvp/xqlite/releases/download/v0.12.2";
+      hashes = {
+        x86_64-unknown-linux-gnu = "sha256-Aa/gE2ekBGq3ysMLxK47rT9yAmjLgqqPDZio5d0YSlw=";
+        aarch64-unknown-linux-gnu = "sha256-2XcuavYzf8TZZUndnVz2LPDhIXgmfWUn8tBdcWGsmJc=";
+        x86_64-apple-darwin = "sha256-3Z9uEz1tHPS1JKOQwmmt/0i/DG0LfdDfea2GMXFKMgM=";
+        aarch64-apple-darwin = "sha256-R7Px6hSEa31pCqvDqRGb4CcdVolh+mqoqwTpM/MeZvs=";
       };
     }
   ];
+
+  # Resolve the entries above for the host platform. The Rustler precompiled
+  # cache is keyed by the real release asset filename, so `name` must reproduce
+  # it exactly, paired with the hash-pinned FOD for that same target. A target
+  # without a pinned hash fails evaluation instead of silently fetching the
+  # wrong asset.
+  nifAssets = map (nif: {
+    name = "${nif.prefix}-${rustTarget}.so.tar.gz";
+    file = fetchurl {
+      url = "${nif.urlPrefix}/${nif.prefix}-${rustTarget}.so.tar.gz";
+      hash =
+        nif.hashes.${rustTarget}
+          or (throw "No precompiled NIF hash pinned for ${rustTarget} (${stdenv.hostPlatform.system}) in ${nif.prefix}");
+    };
+  }) precompiled_nifs;
 in
 beamPackages.mixRelease {
   inherit pname version src mixFodDeps;
@@ -143,7 +167,7 @@ beamPackages.mixRelease {
       map (nif: ''
         echo "Populating Rustler cache with ${nif.name}"
         cp ${nif.file} $RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH/${nif.name}
-      '') precompiled_nifs
+      '') nifAssets
     )}
     ls -l $RUSTLER_PRECOMPILED_GLOBAL_CACHE_PATH
   '';
