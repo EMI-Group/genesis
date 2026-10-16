@@ -736,16 +736,17 @@
                                         <div class="font-semibold mb-1">
                                           {gettext("Thinking")}
                                         </div>
-                                        <div class="whitespace-pre-wrap break-words">
-                                          {String.slice(
-                                            format_reasoning_details(reasoning_details) || "",
-                                            0,
-                                            200
-                                          )}{if String.length(
-                                                  format_reasoning_details(reasoning_details) ||
-                                                    ""
-                                                ) > 200, do: "..."}
-                                        </div>
+                                        <%!-- `prev` must stay SHORT: this interpolated line has to fit the
+                                        formatter's width, or `mix format` moves the interpolation onto
+                                        its own line and the emitted leading whitespace is rendered
+                                        verbatim by `whitespace-pre-wrap` (regression test: "the inline
+                                        thinking body does not start with template whitespace"). --%>
+                                        <% thinking =
+                                          format_reasoning_details(reasoning_details) || "" %>
+                                        <% prev =
+                                          String.slice(thinking, 0, 200) <>
+                                            if(String.length(thinking) > 200, do: "...", else: "") %>
+                                        <div class="whitespace-pre-wrap break-words">{prev}</div>
                                       </div>
                                     <% end %>
                                     <%= if entry.data.content && String.trim(entry.data.content) != "" do %>

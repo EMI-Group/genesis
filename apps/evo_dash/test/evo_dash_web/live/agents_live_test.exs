@@ -1285,6 +1285,42 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert thinking_pre_class =~ "break-words"
       refute thinking_pre_class =~ "overflow-x-auto"
     end
+
+    # Regression: the inline thinking body is a `whitespace-pre-wrap` element, so
+    # ANY newline/indentation the HEEx template emits between the opening tag and
+    # the interpolated text is PRESERVED and renders as a spurious leading indent
+    # on every thinking block. The interpolation must stay flush against the tags
+    # (the class must stay exactly `whitespace-pre-wrap break-words`).
+    test "the inline thinking body does not start with template whitespace", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          reasoning_details: [%{text: "THINKING_SENTINEL"}],
+          metadata: %{turn: 1}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Thinking")
+
+      [thinking_body] =
+        panel
+        |> Floki.parse_document!()
+        |> Floki.find("#agent-history-entry-#{agent_id()}-0 .whitespace-pre-wrap.break-words")
+
+      assert Floki.attribute(thinking_body, "class") == ["whitespace-pre-wrap break-words"]
+
+      # Floki.text/1 KEEPS the whitespace the template indents around the content
+      # (see the `text/2` helper), so a leading whitespace character here is
+      # exactly the bug — the pre-wrap element would render it verbatim.
+      text = Floki.text(thinking_body)
+      refute text =~ ~r/^\s/
+      assert String.starts_with?(text, "THINKING_SENTINEL")
+    end
   end
 
   describe "thinking vs response separation" do
