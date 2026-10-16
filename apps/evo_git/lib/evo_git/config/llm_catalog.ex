@@ -38,13 +38,16 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "anthropic_api_key",
       variants: nil,
       models: [
-        %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
-        %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"},
-        %{id: "claude-fable-5.1", display_name: "Claude Fable 5.1"},
-        %{id: "claude-fable-5", display_name: "Claude Fable 5"},
-        %{id: "claude-opus-4.8", display_name: "Claude Opus 4.8"},
+        %{id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5"},
+        %{id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5"},
+        %{id: "claude-opus-5-5", display_name: "Claude Opus 5.5"},
+        %{id: "claude-fable-5-1", display_name: "Claude Fable 5.1"},
+        %{id: "claude-opus-5", display_name: "Claude Opus 5"},
         %{id: "claude-sonnet-5", display_name: "Claude Sonnet 5"},
-        %{id: "claude-opus-5", display_name: "Claude Opus 5"}
+        %{id: "claude-fable-5", display_name: "Claude Fable 5"},
+        %{id: "claude-opus-4-8", display_name: "Claude Opus 4.8"},
+        %{id: "claude-opus-4-7", display_name: "Claude Opus 4.7"},
+        %{id: "claude-sonnet-4-6", display_name: "Claude Sonnet 4.6"}
       ]
     },
     %{
@@ -54,6 +57,9 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "openai_api_key",
       variants: nil,
       models: [
+        %{id: "gpt-6.1-sol", display_name: "GPT-6.1 Sol"},
+        %{id: "gpt-6-sol", display_name: "GPT-6 Sol"},
+        %{id: "gpt-6-luna", display_name: "GPT-6 Luna"},
         %{id: "gpt-6-astra", display_name: "GPT-6 Astra"},
         %{id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol"},
         %{id: "gpt-5.6-terra", display_name: "GPT-5.6 Terra"},
@@ -69,6 +75,7 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "google_api_key",
       variants: nil,
       models: [
+        %{id: "gemini-4-argon", display_name: "Gemini 4 Argon"},
         %{id: "gemini-3.8-flash", display_name: "Gemini 3.8 Flash"},
         %{id: "gemini-3.7-flash", display_name: "Gemini 3.7 Flash"},
         %{id: "gemini-3.6-flash", display_name: "Gemini 3.6 Flash"},
@@ -85,8 +92,9 @@ defmodule EvoGit.Config.LLMCatalog do
       variants: nil,
       models: [
         %{id: "deepseek-v4-flash-vision-exp", display_name: "DeepSeek V4 Flash Vision (Exp)"},
-        %{id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro"},
-        %{id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash"}
+        %{id: "deepseek-v4-flash", display_name: "DeepSeek V4 Flash"},
+        %{id: "deepseek-flash", display_name: "DeepSeek V4.1 Flash"},
+        %{id: "deepseek-v4-pro", display_name: "DeepSeek V4 Pro"}
       ]
     },
     %{
@@ -109,9 +117,13 @@ defmodule EvoGit.Config.LLMCatalog do
         }
       ],
       models: [
-        %{id: "qwen-3.8-max", display_name: "Qwen 3.8 Max"},
-        %{id: "qwen-3.7-max", display_name: "Qwen 3.7 Max"},
-        %{id: "qwen-3.6-plus", display_name: "Qwen 3.6 Plus"}
+        %{id: "qwen3.8-omni-flash", display_name: "Qwen3.8 Omni Flash"},
+        %{id: "qwen3.8-flash", display_name: "Qwen3.8 Flash"},
+        %{id: "qwen3.8-max", display_name: "Qwen3.8 Max"},
+        %{id: "qwen3.7-flash", display_name: "Qwen3.7 Flash"},
+        %{id: "qwen3.7-plus", display_name: "Qwen3.7 Plus"},
+        %{id: "qwen3.7-max", display_name: "Qwen3.7 Max"},
+        %{id: "qwen3.6-plus", display_name: "Qwen3.6 Plus"}
       ]
     },
     %{
@@ -134,11 +146,13 @@ defmodule EvoGit.Config.LLMCatalog do
         }
       ],
       models: [
-        %{id: "glm-5.3", display_name: "GLM-5.3"},
+        %{id: "glm-5.3-flashx", display_name: "GLM-5.3 FlashX"},
         %{id: "glm-5.3-flash", display_name: "GLM-5.3 Flash"},
-        %{id: "glm-5", display_name: "GLM-5"},
+        %{id: "glm-5.3", display_name: "GLM-5.3"},
+        %{id: "glm-5.2", display_name: "GLM-5.2"},
         %{id: "glm-5.1", display_name: "GLM-5.1"},
-        %{id: "glm-5.2", display_name: "GLM-5.2"}
+        %{id: "glm-5-turbo", display_name: "GLM-5 Turbo"},
+        %{id: "glm-5", display_name: "GLM-5"}
       ]
     },
     %{
@@ -148,9 +162,11 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "minimax_api_key",
       variants: nil,
       models: [
+        %{id: "MiniMax-M3", display_name: "MiniMax-M3"},
         %{id: "MiniMax-M2.7", display_name: "MiniMax-M2.7"},
         %{id: "MiniMax-M2.7-highspeed", display_name: "MiniMax-M2.7 Highspeed"},
-        %{id: "MiniMax-M3", display_name: "MiniMax-M3"}
+        %{id: "MiniMax-M2.5", display_name: "MiniMax-M2.5"},
+        %{id: "MiniMax-M2.5-highspeed", display_name: "MiniMax-M2.5 Highspeed"}
       ]
     },
     %{
@@ -161,8 +177,9 @@ defmodule EvoGit.Config.LLMCatalog do
       variants: nil,
       models: [
         %{id: "kimi-k3", display_name: "Kimi K3"},
-        %{id: "kimi-k2.7", display_name: "Kimi K2.7"},
-        %{id: "kimi-k2.7-code", display_name: "Kimi K2.7 Code"}
+        %{id: "kimi-k2.7-code-highspeed", display_name: "Kimi K2.7 Code Highspeed"},
+        %{id: "kimi-k2.7-code", display_name: "Kimi K2.7 Code"},
+        %{id: "kimi-k2.6", display_name: "Kimi K2.6"}
       ]
     },
     %{
@@ -172,9 +189,11 @@ defmodule EvoGit.Config.LLMCatalog do
       credential_key: "xai_api_key",
       variants: nil,
       models: [
+        %{id: "grok-4.7", display_name: "Grok 4.7"},
         %{id: "grok-4.6", display_name: "Grok 4.6"},
+        %{id: "grok-4.5", display_name: "Grok 4.5"},
         %{id: "grok-4.3", display_name: "Grok 4.3"},
-        %{id: "grok-4.5", display_name: "Grok 4.5"}
+        %{id: "grok-build-0.1", display_name: "Grok Build 0.1"}
       ]
     },
     %{
