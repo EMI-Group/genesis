@@ -1101,7 +1101,7 @@ pub(crate) fn navigate_webview(window: &tauri::WebviewWindow, url: &str) -> bool
 // ---------------------------------------------------------------------------
 // Per-platform install machinery
 //
-// Mirrors tauri-plugin-updater 2.10.1's `Update::install_inner` semantics per
+// Mirrors tauri-plugin-updater 2.14.0's `Update::install_inner` semantics per
 // platform (the plugin's source was the reference; the watchdog is a plain
 // std::thread with no async runtime, so the plugin's spawn/file operations are
 // replicated directly rather than calling into it):
