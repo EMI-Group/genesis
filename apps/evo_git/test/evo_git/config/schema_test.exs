@@ -189,7 +189,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.scheduler.agent_max_retries == 3
       assert defaults.scheduler.max_agent_depth == 8
       assert defaults.scheduler.max_retries == 15
-      assert defaults.scheduler.max_turns == 100
+      assert defaults.scheduler.max_turns == 128
       assert defaults.scheduler.max_turns_root == 1000
       assert defaults.scheduler.delegation_hint_threshold == 5
       assert defaults.scheduler.read_delegation_hint_threshold == 8

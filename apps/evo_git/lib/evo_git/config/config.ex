@@ -19,7 +19,7 @@ defmodule EvoGit.Config do
       agent_max_retries = 3
       max_agent_depth = 8
       max_retries = 15
-      max_turns = 100
+      max_turns = 128
       max_turns_root = 1000
 
       [llm]

@@ -96,7 +96,7 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:scheduler, :max_turns],
         type: :pos_integer,
-        default: 100,
+        default: 128,
         validation: [min: 1],
         category: :scheduler,
         sub_category: nil,

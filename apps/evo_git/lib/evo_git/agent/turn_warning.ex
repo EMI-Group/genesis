@@ -29,7 +29,7 @@ defmodule EvoGit.Agent.TurnWarning do
   counter resets to 0 each time it fires, and also resets when a subagent call is made.
 
   The end and critical countdowns scale with `max_turns`:
-  - Large budgets (≥ 100 turns — incl. the typical 100-turn subagent and
+  - Large budgets (≥ 100 turns — incl. the typical 128-turn subagent and
     1000-turn root budgets): 10-turn end, 5-turn critical.
   - Smaller budgets: proportionally shorter countdowns with minimum floors
     (3 turns for end, 1 turn for critical).
