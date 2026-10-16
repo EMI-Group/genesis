@@ -3,28 +3,35 @@ defmodule EvoGit.Agent.Cost do
   Self-computed LLM cost for EvoGit agent runs.
 
   EvoGit does **not** trust the cost ReqLLM reports: token COUNTS from
-  `ReqLLM.Response.usage/1` are accurate, but the cost fields are not, so this
-  module recomputes them from the raw token counts plus the `llm_db` pricing
-  catalog, with an EXPLICIT peak/off-peak pricing period resolved from the
-  model profile's `EvoGit.PeakHours` configuration.
+  `ReqLLM.Response.usage/1` are accurate, but the cost fields are not — ReqLLM
+  prices a period-gated catalog only from a CALLER-supplied pricing context,
+  which EvoGit does not pass — so this module recomputes them from the raw
+  token counts plus the `llm_db` pricing catalog, with an EXPLICIT
+  peak/off-peak pricing period resolved from the model profile's
+  `EvoGit.PeakHours` configuration.
 
-  ## Why we recompute (upstream defects — rationale only, do NOT "fix" ReqLLM)
+  ## Why we recompute (rationale only, do NOT "fix" ReqLLM)
 
-  - **Double charging (ReqLLM 1.24).** `ReqLLM.Billing.calculate/2` uses
-    `ReqLLM.Pricing.components/1`, which returns EVERY pricing component and
-    IGNORES each component's `applies_when` condition (ReqLLM's `Component`
-    struct has no such field). For `deepseek:deepseek-v4-flash` that sums BOTH
-    the `off_peak` ($0.15/M in, $0.60/M out) AND the `peak` ($0.30/M in,
-    $1.20/M out) components — ~2x the true rate whatever the actual tariff.
-    We instead ask `LLMDB.Pricing.components_for/2` for the components that
-    apply for our explicit `%{pricing_period: period}` context, so a known
-    non-matching period component is excluded rather than charged.
-  - **No cache discount.** The `token.cache_read*` components meter
-    `"cache_read_tokens"`, a key ABSENT from ReqLLM's normalized usage map
-    (which exposes the cache-hit count as `cached_tokens`), so ReqLLM bills the
-    full cached-inclusive input at the full input rate. We map the component
-    meter/id onto the usage keys ReqLLM actually populates, and subtract the
-    cached tokens from the cache-miss input when the usage map says
+  - **Period-gated pricing needs a caller-supplied context (ReqLLM 1.28).**
+    `ReqLLM.Billing.calculate/3` selects components through
+    `LLMDB.Pricing.components_for/2` and its `Component` struct carries the
+    `applies_when` condition, so the ReqLLM 1.24-era defects are fixed
+    upstream: the peak and off-peak variants of a tariff are never summed, and
+    cached input is discounted. What ReqLLM cannot know is WHICH period we are
+    in — a period-gated component is applied only for a caller-supplied
+    `pricing_context` (`%{pricing_period: …}`) and the request is left UNPRICED
+    when a relevant condition stays unresolved, and EvoGit passes no
+    `pricing_context`. We therefore resolve the peak/off-peak period ourselves
+    from the model profile's `EvoGit.PeakHours` configuration and ask
+    `LLMDB.Pricing.components_for/2` for that explicit
+    `%{pricing_period: period}` context, so the tariff we actually run under is
+    the one billed.
+  - **Cache discount.** Billing the raw catalog components ourselves means
+    mapping each component's meter/id onto the usage keys the normalized usage
+    map (`ReqLLM.Usage.Normalize.normalize/1`) actually carries — the
+    `token.cache_read*` components meter `"cache_read_tokens"` while that map
+    exposes the same count as `cached_tokens` — and subtracting the cached
+    tokens from the cache-miss input when the usage map says
     `input_includes_cached`.
   - **Scope.** Only components we fully understand are billed: `kind: "token"`
     with a positive `rate`/`per` and a recognizable token meter or `token.*`
@@ -39,8 +46,9 @@ defmodule EvoGit.Agent.Cost do
 
   Read `:input_includes_cached` (then the string form) from the usage map —
   `ReqLLM.Usage.Normalize.normalize/1` puts that boolean there on both the
-  streaming and non-streaming paths, and it is what ReqLLM's own
-  `token_usage_count/2` uses. When the key is missing (an older/other-provider
+  streaming and non-streaming paths, and it is the flag ReqLLM's own billing
+  (`ReqLLM.Billing`) reads to decide whether the input total already folds in
+  the cached tokens. When the key is missing (an older/other-provider
   usage map) it is DERIVED deterministically: input includes cached when
   `cached_tokens > 0 and cached_tokens <= input_tokens` (the canonical
   OpenAI-style shape). Which path was taken is logged at `:debug`.
@@ -103,7 +111,7 @@ defmodule EvoGit.Agent.Cost do
   # Component id prefix → token-count group, used when a component carries no
   # (known) `meter`. Order matters: the more specific `token.cache_*` prefixes
   # must be tested before the legacy `token.cache` — mirrors
-  # `ReqLLM.Billing.@token_id_map`.
+  # `ReqLLM.Billing.meter_key/1`.
   @id_prefix_groups [
     {"token.input", :input},
     {"token.output", :output},
@@ -467,7 +475,7 @@ defmodule EvoGit.Agent.Cost do
   defp group_from_id(_id), do: nil
 
   # Input vs output bucket of a component id (mirrors `ReqLLM.Billing`'s
-  # `token_input_item?/1` / `token_output_item?/1` classification).
+  # `meter_key/1` group classification).
   defp cost_bucket(id) when is_binary(id) do
     cond do
       String.starts_with?(id, "token.input") or String.starts_with?(id, "token.cache") ->
@@ -498,8 +506,8 @@ defmodule EvoGit.Agent.Cost do
 
   # Cache-MISS input: the normalized `input_tokens` is cached-INCLUSIVE for the
   # OpenAI-style providers, and the cache-hit tokens are billed separately by
-  # the `token.cache_read*` components. Mirrors the intent of ReqLLM's
-  # `token_usage_count/2`.
+  # the `token.cache_read*` components. Mirrors ReqLLM's own billing
+  # (`ReqLLM.Billing.meters/2`).
   defp token_count(usage_map, :input) do
     input = count(usage_map, :input_tokens)
 
@@ -512,9 +520,8 @@ defmodule EvoGit.Agent.Cost do
 
   defp token_count(usage_map, :output), do: count(usage_map, :output_tokens)
 
-  # The catalog meters cache hits as `cache_read_tokens`, but the normalized
-  # usage map exposes the SAME number as `cached_tokens` (this mismatch is
-  # exactly why ReqLLM gives no cache discount).
+  # The catalog meters cache hits as `cache_read_tokens`; the normalized usage
+  # map carries the same count as `cached_tokens`, which is what we read.
   defp token_count(usage_map, :cache_read), do: count(usage_map, :cached_tokens)
 
   defp token_count(usage_map, :cache_write), do: count(usage_map, :cache_creation_tokens)
