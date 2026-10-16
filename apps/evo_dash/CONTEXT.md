@@ -285,12 +285,12 @@ EvoDash uses **Gettext** (`EvoDashWeb.Gettext`, `use Gettext, otp_app: :evo_dash
 ## Research Notes — ReqLLM-Native Multimodal (Image/Audio) File Attachments (survey addendum)
 
 Refines the "ReqLLM-native file attachment alternative" discussion of the root `./CONTEXT.md` research note ("Research Notes: PDF/DOCX → Plain Text Extraction", which routes detail here); the plain-text pipeline (`EvoDash.AttachedFile.read/1` + `ex_pdf`) is unchanged, and image/audio attachments are additionally implemented as server-side-staged raw-binary content parts (`EvoDash.AttachedFile.read_kind/2` — image/audio kinds, extension allowlist, 15 MiB per-file cap) staged into the Projects page's `:staged_attachments` assign and submitted as the `:attachments` task opt (base64 `"data"`, string-keyed maps; contract + lifecycle: `lib/evo_dash/CONTEXT.md` + `lib/evo_dash_web/live/projects_live/CONTEXT.md`).
-Survey facts below are current as of the vendored `:req_llm` v1.22.0 and `:llm_db` deps (`./deps/req_llm/`, `./deps/llm_db/`).
+Survey facts below are current as of the vendored `:req_llm` 1.28.0 and `:llm_db` 2026.10.5 deps (`./deps/req_llm/`, `./deps/llm_db/`).
 `ReqLLM.Message.ContentPart` types are `:text | :image_url | :video_url | :image | :file | :thinking`; there is no canonical `input_image`/`input_audio` chat-part type, those names exist only at the provider wire level.
 Images ride in `:image` (inline bytes), `:image_url`, or `:file` parts, where `:file` carries raw bytes or a provider-uploaded `file_id`/`owned_file_id` reference.
 Audio in chat is a `:file` part with an `audio/*` media_type, which is practically OpenRouter-only (mp3/wav encode to `input_audio`; other audio raises).
 Audio otherwise lives on separate endpoints: `ReqLLM.transcribe/3` (multipart STT), `ReqLLM.speak/3` (TTS), and the experimental `ReqLLM.OpenAI.Realtime` websocket; OpenAI `modalities: ["audio"]` is output-only.
-Wire translation is per-provider adapter at encode time: the OpenAI-compatible flock (deepseek/qwen/zai/alibaba/groq/mistral/venice/...) encodes ANY raw `:file` bytes as an `image_url` data-URI (`deps/req_llm/lib/req_llm/provider/defaults.ex:1055-1072`), so the older root claim about DeepSeek/Qwen mis-encoding is confirmed.
+Wire translation is per-provider adapter at encode time: the OpenAI-compatible flock (deepseek/qwen/zai/alibaba/groq/mistral/venice/...) encodes ANY raw `:file` bytes as an `image_url` data-URI (`deps/req_llm/lib/req_llm/provider/defaults.ex:1133-1150`), so the older root claim about DeepSeek/Qwen mis-encoding is confirmed.
 OpenAI Chat gating rejects non-image `:file` parts first, while OpenAI Responses accepts image + pdf only.
 Anthropic maps `:file` to image/document base64 blocks; Google Gemini `inlineData`/`fileData` carries arbitrary mime (image + audio + video + pdf).
 OpenRouter handles image + pdf + mp3/wav audio; Bedrock Converse is image-only-inline (drops `:image_url` and audio).
