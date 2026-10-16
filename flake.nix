@@ -14,9 +14,17 @@
 
         # ── BEAM toolchain ──────────────────────────────────────────
         # Erlang/OTP 29 + Elixir 1.20, matching CI version pins.
-        beamPkgs = pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_29;
+        # The `packagesWith erlang_29` set defaults to Elixir 1.18, which cannot
+        # compile the app: it refuses to escape a module attribute holding
+        # compiled %Regex{} values into a function body (see
+        # apps/evo_git/lib/evo_git/config/schema/llm_constraints.ex), so the
+        # package set is extended to Elixir 1.20 instead of relying on that
+        # default. This ONE binding feeds the release builds AND the dev shell,
+        # so the two toolchains cannot drift apart.
+        beamPkgs = (pkgs.beam.packagesWith pkgs.beam.interpreters.erlang_29).extend
+          (final: prev: { elixir = final.elixir_1_20; });
         erlang = beamPkgs.erlang;
-        elixir = beamPkgs.elixir_1_20;
+        elixir = beamPkgs.elixir;
 
         # ── Tauri v2 native dependencies (Linux only) ──────────────
         # These are the NixOS equivalents of the apt packages installed by
