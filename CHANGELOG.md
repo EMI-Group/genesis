@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.7] - 2026-10-16
+
+### Added
+
+- Added a per-task quality level option (Fast/Balanced/High) that persists with the task and steers the root agent's prompt, selectable via a segmented control in the task form.
+- Added a full untruncated mode for tool calls in the agents chat, with complete tool calls shown in the full-message modal.
+
+### Changed
+
+- Raised the default sub-agent turn limit from 100 to 128, with the executor prompt scoped to well-defined tasks that commit partial progress when the budget is exhausted.
+- Turn warnings now trigger a critical 5-turn countdown before the turn limit, and the injected context block is refreshed after context compression so agents see an up-to-date context tree.
+- Updated the built-in LLM provider/model catalog to the latest snapshot, fixing invalid model ids and adding new chat models.
+- Updated Hex dependencies (bandit, llm_db, req, toml_elixir and others) and widened the req_llm constraint to ~> 1.28, bumping it to 1.28.0.
+- Updated the desktop app's Rust dependency stack (Tauri 2.12.4 family); update checks now report "up to date" instead of erroring when no platform payload exists.
+- Pinned the Nix build and dev environments to Elixir 1.20 on OTP 29 so the app compiles correctly.
+
+### Fixed
+
+- Fixed stale "Pending" ghost user messages reappearing on the /agents view after core context compression, while still-queued messages keep their pending hint.
+- Fixed duplicated text in the Response block and /help chat bubble by excluding thinking content parts from response text, and fixed Thinking block text wrapping in the chat history.
+- Fixed endless recursion by preventing Executor agents from delegating the same objective to a child Executor.
+- Fixed Nix builds by refreshing the stale mix dependencies hash and pinning precompiled NIF assets per Rust target so the correct NIF binaries are fetched on each platform, and bumped mdex_native to 0.2.11.
+- Worktree creation no longer times out or crashes on long-running initializations such as node_modules copies on Windows, and failures now report an error so retries proceed promptly.
+
 ## [0.13.6] - 2026-09-30
 
 ### Added
