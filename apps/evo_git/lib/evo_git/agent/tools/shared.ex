@@ -22,6 +22,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     "no changes added to commit"
   ]
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Platform
 
   @doc """
@@ -429,16 +430,22 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   @doc """
   Applies a string replacement edit to file content.
-  Trims trailing whitespace from new_string before applying.
+
+  `new_string` is inserted VERBATIM — every byte the caller asked for, including
+  trailing spaces/tabs and a trailing (or missing) newline. Trailing whitespace
+  is NOT trimmed: the bytes the model wrote are the bytes that must land in the
+  file, and silently dropping them corrupted indentation-sensitive edits.
+  Matching runs on `old_string` only (`find_actual_string/2` +
+  `count_occurrences/2` upstream), so the replacement value never participates
+  in matching or uniqueness counting.
+
   If replace_all is true, replaces all occurrences; otherwise just the first.
   """
   def apply_string_edit(content, old_string, new_string, replace_all) do
-    trimmed_new = String.trim_trailing(new_string)
-
     if replace_all do
-      String.replace(content, old_string, trimmed_new)
+      String.replace(content, old_string, new_string)
     else
-      String.replace(content, old_string, trimmed_new, global: false)
+      String.replace(content, old_string, new_string, global: false)
     end
   end
 
@@ -591,7 +598,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   Performs a string replacement edit on a file.
   Reads the file, finds the old_string (with quote normalization),
   validates uniqueness unless replace_all is true, applies the edit, and writes the result.
-  Returns a result string (success message or error message).
+  Returns a result string (success message or `"Error: "`-prefixed failure message).
   """
   def perform_string_replace(file_path, display_path, old_string, new_string, replace_all) do
     case File.read(file_path) do
@@ -599,12 +606,14 @@ defmodule EvoGit.Agent.Tools.Shared do
         actual_old = find_actual_string(content, old_string)
 
         if is_nil(actual_old) do
-          "Error: old_string not found in file #{display_path}"
+          Failure.error("old_string not found in file #{display_path}")
         else
           match_count = count_occurrences(content, actual_old)
 
           if match_count > 1 and not replace_all do
-            "Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
+            Failure.error(
+              "Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."
+            )
           else
             updated_content = apply_string_edit(content, actual_old, new_string, replace_all)
 
@@ -617,13 +626,13 @@ defmodule EvoGit.Agent.Tools.Shared do
                 end
 
               {:error, reason} ->
-                "Error writing file #{display_path}: #{:file.format_error(reason)}"
+                Failure.error("failed to write #{display_path}: #{:file.format_error(reason)}")
             end
           end
         end
 
       {:error, reason} ->
-        "Error reading file #{display_path}: #{:file.format_error(reason)}"
+        Failure.error("failed to read #{display_path}: #{:file.format_error(reason)}")
     end
   end
 

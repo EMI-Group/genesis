@@ -24,7 +24,9 @@ defmodule EvoGit.Agent.ToolsTest do
       names = Enum.map(schemas, & &1.name)
       assert "read_file" in names
       assert "write_file" in names
-      assert "edit_file" in names
+      # `edit` is the MODEL-FACING schema name (internal dispatch key
+      # `edit_file` — see `EvoGit.Agent.ToolNames`).
+      assert "edit" in names
       assert "make_dir" in names
       assert "read_context" in names
       assert "write_context" in names
@@ -281,7 +283,7 @@ defmodule EvoGit.Agent.ToolsTest do
       assert File.read!(file_path) == "hello world hello world"
     end
 
-    test "strips trailing whitespace from new_string", %{tmp_dir: tmp_dir} do
+    test "keeps trailing whitespace in new_string verbatim", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world")
 
@@ -293,7 +295,7 @@ defmodule EvoGit.Agent.ToolsTest do
         )
 
       assert result =~ "has been updated successfully"
-      assert File.read!(file_path) == "hello elixir"
+      assert File.read!(file_path) == "hello elixir   \n\n"
     end
 
     test "returns error if old_string not found", %{tmp_dir: tmp_dir} do
@@ -759,7 +761,7 @@ defmodule EvoGit.Agent.ToolsTest do
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
     end
 
-    test "strips trailing whitespace from new_string", %{tmp_dir: tmp_dir} do
+    test "keeps trailing whitespace in new_string verbatim", %{tmp_dir: tmp_dir} do
       dir_path = Path.join(tmp_dir, "lib")
       File.mkdir_p!(dir_path)
       File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world")
@@ -777,7 +779,7 @@ defmodule EvoGit.Agent.ToolsTest do
         )
 
       assert result =~ "has been updated successfully"
-      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir"
+      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir   \n\n"
     end
 
     test "edit_context with hostile dir_path (quotes/angle brackets) commits and round-trips", %{
