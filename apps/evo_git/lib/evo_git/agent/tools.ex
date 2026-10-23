@@ -30,6 +30,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.SkillDisable
   alias EvoGit.Agent.Tools.SkillWhere
   alias EvoGit.Agent.Tools.RunCommand
+  alias EvoGit.Agent.ToolNames
 
   # Tools that mutate the system (files, git, shell, skills). Repo-less agents
   # (chatbot-style, no worktree) must never touch git or write files, and
@@ -39,10 +40,20 @@ defmodule EvoGit.Agent.Tools do
   # it is a control tool, not a write tool, and must NOT be blocked by the
   # repo-less guard: the self-reflective agent IS the repo-less agent that
   # needs it to control tasks.
+  #
+  # The MODEL-FACING spellings (`write`, `edit`, `bash` — the trained canonical
+  # names, see `EvoGit.Agent.ToolNames`) are listed alongside the internal
+  # dispatch keys as belt-and-braces: every write check normalises its input
+  # through `ToolNames.normalize/1` first, so these entries are redundant in the
+  # normal path — but they keep the set correct even if a raw model-facing name
+  # ever reaches a check that has not normalised yet.
   @write_tools [
     "create_files",
+    "write",
     "write_file",
+    "edit",
     "edit_file",
+    "bash",
     "make_dir",
     "write_context",
     "edit_context",
@@ -194,25 +205,25 @@ defmodule EvoGit.Agent.Tools do
         ) :: String.t() | EvoGit.Agent.ToolOutput.t() | {:error, term()}
   def execute(tool_name, args, repo_path, repo_root \\ nil, node_path \\ nil)
 
-  # Compile-time tool name for dispatch (matches ShellTool's compile-time @tool_name)
-  @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
-
-  # Well-known shell-tool aliases (matched case-insensitively). LLMs
-  # sometimes call a shell tool by a familiar external name ("Bash",
-  # "Shell", ...) instead of the platform tool name. All of these normalize
-  # to @shell_tool_name so the call actually runs instead of failing with
-  # "Unknown tool". Includes the platform tool names themselves so
-  # case variants ("RUN_BASH") normalize too.
-  @shell_tool_aliases ~w(
-    bash shell sh
-    execute_bash bash_command run_shell shell_command
-    run_bash run_powershell
-  )
+  # Compile-time tool name for dispatch (matches ShellTool's compile-time
+  # @tool_name). Derived from `EvoGit.Agent.ToolNames` so the platform pin has a
+  # SINGLE source of truth.
+  @shell_tool_name ToolNames.shell_tool_name()
 
   @unknown_tool_similarity_threshold 0.7
 
+  # Default per-tool timeout (ms) for the platform shell tool, exposed through
+  # `default_timeout_ms/1` as a read-only seam for the dispatcher.
+  @shell_tool_default_timeout_ms 120_000
+
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
-    maybe_block_repo_less(normalize_tool_name(tool_name), args, repo_path, repo_root, node_path)
+    maybe_block_repo_less(
+      ToolNames.normalize(tool_name),
+      args,
+      repo_path,
+      repo_root,
+      node_path
+    )
   end
 
   # Fallback: some LLMs double-encode the ENTIRE arguments object as a JSON
@@ -222,7 +233,7 @@ defmodule EvoGit.Agent.Tools do
     case Jason.decode(args) do
       {:ok, decoded} when is_map(decoded) ->
         maybe_block_repo_less(
-          normalize_tool_name(tool_name),
+          ToolNames.normalize(tool_name),
           decoded,
           repo_path,
           repo_root,
@@ -236,25 +247,33 @@ defmodule EvoGit.Agent.Tools do
     end
   end
 
-  # Normalizes well-known shell-tool aliases to the platform's shell tool
-  # name. MUST run at the TOP of execute/5 BEFORE the write guards:
-  # run_bash/run_powershell are in @write_tools, so normalizing after the
-  # guards would let a repo-less (or read-only-foreign-repo) agent bypass
-  # the write block by calling "Bash". Keep this ordering.
-  defp normalize_tool_name(tool_name) when is_binary(tool_name) do
-    if String.downcase(tool_name) in @shell_tool_aliases, do: @shell_tool_name, else: tool_name
-  end
-
-  defp normalize_tool_name(tool_name), do: tool_name
+  # Tool-name aliasing lives ENTIRELY in `EvoGit.Agent.ToolNames` (the alias
+  # spine): `normalize/1` maps every accepted spelling — `Read`/`read`,
+  # `Write`/`write`, `Edit`/`edit`, `Bash`/`bash`/`shell`/… , `Grep`/`grep`/
+  # `ripgrep`, `WebSearch`/`web_search`, `Task`/`subagent` — onto the internal
+  # dispatch key, and returns unknown names UNCHANGED (custom tools + dynamic
+  # skills rely on that passthrough).
+  #
+  # LOAD-BEARING ORDERING: normalisation MUST happen at the TOP of `execute/5`,
+  # BEFORE the two write guards (`maybe_block_repo_less/5`,
+  # `maybe_block_read_only_foreign_repo/5`). `run_bash`/`run_powershell` are
+  # write tools, so normalising AFTER the guards would let a repo-less (or
+  # read-only-foreign-repo) agent bypass the write block by calling `Bash`/`sh`.
+  # Every write classification (`write_tool?/1`, `serial_tool?/1`,
+  # `default_timeout_ms/1`) normalises too, because the dispatcher hands them
+  # the RAW model-facing name.
 
   # Classifies a tool name as a WRITE tool for the two dispatch write gates.
   # Extends the built-in write set with user-defined custom tools: a loaded
   # custom tool whose `read_only?/0` is false/absent must be gated exactly like
   # a built-in writer (blocked for repo-less agents and inside read-only foreign
   # repos). Unknown names are never write tools, so this never blocks built-ins
-  # or hallucinated tool calls.
+  # or hallucinated tool calls. The name is normalised first (aliases like
+  # `Bash`/`write` are write tools); an unknown name normalises to itself, so
+  # the custom-tool lookup is unchanged.
   defp write_tool?(tool_name) do
-    tool_name in @write_tools or EvoGit.CustomTools.write_tool?(tool_name)
+    normalized = ToolNames.normalize(tool_name)
+    normalized in @write_tools or EvoGit.CustomTools.write_tool?(normalized)
   end
 
   # Tools that mutate the agent worktree through a NON-ATOMIC read-modify-write
@@ -272,10 +291,15 @@ defmodule EvoGit.Agent.Tools do
   # rather than read-modify-write cycles) and which agents legitimately run
   # several of concurrently — serializing them would be an unrelated
   # performance regression.
-  @non_serial_write_tools ["run_bash", "run_powershell", "run_git", "curl"]
+  #
+  # `bash` (the model-facing shell name) is listed here as the belt-and-braces
+  # counterpart of its `@write_tools` entry: the shell tool may write files, but
+  # it is an opaque whole command, not a read-modify-write cycle, so it must NOT
+  # be serialised. `write`/`edit` are model-facing aliases of two genuine
+  # read-modify-write tools, so they correctly stay in the serial set.
+  @non_serial_write_tools ["run_bash", "run_powershell", "run_git", "curl", "bash"]
 
   @serial_tools @write_tools -- @non_serial_write_tools
-
   @doc """
   Returns `true` for tool names whose execution performs a non-atomic
   read-modify-write on files in the agent worktree and therefore must not
@@ -294,12 +318,51 @@ defmodule EvoGit.Agent.Tools do
   `skill_where`), the shell/exec/network tools (`run_bash`, `run_powershell`,
   `run_git`, `curl`, `run_command`, `search_web`/`web_search`) and any unknown
   name return `false`.
+
+  The incoming name is normalised through `EvoGit.Agent.ToolNames.normalize/1`
+  first, because the dispatcher passes the RAW model-facing name (`write`,
+  `edit`, `bash`, `Read`, …) straight from the LLM response: `serial_tool?("write")`
+  and `serial_tool?("edit")` are `true`, `serial_tool?("bash")` is `false`.
   """
   def serial_tool?(tool_name) when is_binary(tool_name) do
-    tool_name in @serial_tools or EvoGit.CustomTools.write_tool?(tool_name)
+    normalized = ToolNames.normalize(tool_name)
+    normalized in @serial_tools or EvoGit.CustomTools.write_tool?(normalized)
   end
 
   def serial_tool?(_tool_name), do: false
+
+  @doc """
+  `true` when `schema_or_name` matches ANY entry of `whitelist`, comparing
+  ALIAS-AWARE: both sides are normalised through
+  `EvoGit.Agent.ToolNames.matches_any?/2`, so a whitelist entry written with the
+  old spelling (`"read_file"`) matches the new model-facing name (`"read"`) and
+  vice versa — case-insensitively.
+
+  `EvoGit.Agents.Custom.available_tools/0` (not part of this module) SHOULD use
+  this function so `agents.toml` `tools` whitelists written with either spelling
+  keep resolving; today it compares names literally.
+  """
+  @spec whitelist_match?(term(), term()) :: boolean()
+  def whitelist_match?(schema_or_name, whitelist),
+    do: ToolNames.matches_any?(schema_or_name, whitelist)
+
+  @doc """
+  The DEFAULT timeout (ms) a tool should get when the caller does not request one
+  explicitly: `120_000` for the platform shell tool (any accepted spelling of it
+  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `nil` for every other
+  tool (meaning "no per-tool default — the dispatcher's generic default
+  applies").
+
+  Pure, read-only seam: it changes no dispatch behaviour by itself; the
+  dispatcher (a file this module does not own) is expected to consult it for its
+  per-tool default timeout.
+  """
+  @spec default_timeout_ms(term()) :: pos_integer() | nil
+  def default_timeout_ms(tool_name) do
+    if ToolNames.normalize(tool_name) == @shell_tool_name,
+      do: @shell_tool_default_timeout_ms,
+      else: nil
+  end
 
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
