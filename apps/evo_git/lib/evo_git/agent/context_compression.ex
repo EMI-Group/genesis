@@ -1,24 +1,46 @@
 defmodule EvoGit.Agent.ContextCompression do
   @moduledoc """
-  Context compression for the agent loop.
+  Two-stage context compression for the agent loop.
 
-  When the conversation context exceeds the token threshold, this module
-  compresses the interaction history into a dense summary using an LLM call.
-  This prevents context window overflow while preserving essential progress
-  information.
+  When the conversation's reported token count passes the window-relative
+  trigger, the transcript is relieved in TWO stages, cheapest first:
 
-  ## Cache Reuse
+    1. **Stage 1 — model-free pruning**
+       (`EvoGit.Agent.Compression.ToolResultPruner`): the TEXT of old `:tool`
+       results is rewritten to head + marker + tail and old media parts collapse
+       into one placeholder. NO LLM call. When the projected token count falls
+       back under the trigger, this IS the whole compression — the main cost
+       win.
+    2. **Stage 2 — summarising checkpoint**
+       (`EvoGit.Agent.Compression.Checkpoint`): only when pruning was not
+       enough. The OLD span of the transcript (everything older than the last
+       `EvoGit.Agent.Compression.Recency.default_keep_recent_turns/0` turns) is
+       replaced by ONE checkpoint message carrying a summary written by the
+       model from `EvoGit.Agent.Compression.SummaryPrompt.instruction/1`.
 
-  The original message list is preserved and the compression instruction is
-  appended as a new user message. This allows the LLM provider to reuse its
-  cached prefix from previous turns, significantly improving cache hit rate
-  and reducing latency/cost.
+  ## Why two stages
 
-  ## Token Reset
+  Summarising costs a full LLM call over the WHOLE transcript, and most of the
+  pressure in a long agent run is raw tool output (build logs, `rg` dumps, file
+  reads) the agent has already drawn its conclusion from. Shrinking that is
+  free, so it is always tried first; only the residue pruning cannot remove —
+  an enormous RECENT tail — is worth paying a summarising call for.
 
-  After a successful compression, `total_tokens` is reset to 0. This prevents
-  the stale high token count from triggering redundant compressions before
-  the next LLM call updates the count.
+  ## What is never touched
+
+  The system prompt and the original first user message (the provider's
+  cacheable prefix) stay BYTE-IDENTICAL, and the last K turns stay VERBATIM
+  (metadata, turn tags and `tool_call_id`/`tool_calls` pairing intact). Runtime
+  context freshness is therefore delivered by APPENDING a refresh message
+  (`EvoGit.Agent.ContextBuilder.build_context_refresh_message/2`) rather than
+  rewriting message #1: a CONTEXT.md edit made in the worktree mid-run is
+  visible again, and the cached prefix survives.
+
+  ## Token reset
+
+  After every compression event `total_tokens` is reset to 0. This prevents the
+  stale high token count from triggering redundant compressions before the next
+  LLM call updates the count.
 
   ## Usage
 
@@ -40,120 +62,71 @@ defmodule EvoGit.Agent.ContextCompression do
 
   require Logger
 
+  alias EvoGit.Agent.Compression.Checkpoint
+  alias EvoGit.Agent.Compression.LlmRetry
+  alias EvoGit.Agent.Compression.SummaryPrompt
+  alias EvoGit.Agent.Compression.Threshold
+  alias EvoGit.Agent.Compression.ToolResultPruner
+  alias EvoGit.Agent.ContextBuilder
+  alias EvoGit.Agent.Cost
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Usage
-  alias EvoGit.Agent.Cost
   alias EvoGit.AgentScheduler
 
   @doc """
-  Attempts to compress the agent's chat context if it exceeds the token threshold.
+  Attempts to compress the agent's chat context if it exceeds the token
+  threshold.
 
-  The threshold is read from `EvoGit.Config.resolve([:llm, :compression_threshold_tokens])` which resolves from user config.
+  The threshold is window-relative: `EvoGit.Agent.Compression.Threshold.for_model/1`
+  derives it from the model's own context window, falling back to
+  `EvoGit.Config.resolve([:llm, :compression_threshold_tokens])` when the window
+  is unknown.
 
   ## Options
 
     * `:agent_id` — the agent's ID (required, used for logging and LLM slot acquisition)
-    * `:llm_model` — the model to use for the compression LLM call (required)
+    * `:llm_model` — the model to use for the stage-2 summarising call (required)
     * `:llm_generation_params` — keyword list of LLM generation params (temperature, max_tokens, etc.) passed to ReqLLM (optional, defaults to [])
 
   ## Returns
 
     * `%LoopState{}` — the state with the compressed context (or the unchanged
-      state when the threshold is not exceeded);
-    * `{:error, {:llm_request_rejected, message}}` — the compression LLM call
-      was rejected with a NON-RETRYABLE provider error (see
-      `EvoGit.Agent.LlmError`), so nothing was compressed and nothing was
+      state when the threshold is not exceeded, when the message shape is not
+      compressible, or when there was nothing to compact);
+    * `{:error, {:llm_request_rejected, message}}` — the stage-2 LLM call was
+      rejected with a NON-RETRYABLE provider error (see
+      `EvoGit.Agent.LlmError`), so nothing was compacted and nothing was
       charged. This is the same terminal shape the main turn's fail-fast path
       uses; the caller (`EvoGit.Agent.Runner.loop/1`) propagates it out of
       `Runner.run/3` unchanged.
 
-  Every OTHER LLM failure (transient transport errors, 5xx, 402/429 model
-  exhaustion) still RAISES — the pre-existing crash-retry / scheduler-backoff
-  semantics for those classes are unchanged.
+  Every OTHER stage-2 LLM failure (transient transport errors, 5xx, 402/429
+  model exhaustion) still RAISES — see `do_compression_llm_call/6` — so the
+  pre-existing crash-retry / scheduler-backoff semantics for those classes are
+  unchanged. There is deliberately NO silent "fall back to the pruned context"
+  degradation: the retained last-K-turns tail may itself exceed the window, so a
+  silent fallback would just defer the overflow to the very next LLM request (a
+  hard provider error) with no operator-visible signal.
   """
   @spec compress_if_needed(LoopState.t(), keyword()) ::
           LoopState.t() | {:error, {:llm_request_rejected, String.t()}}
   def compress_if_needed(%LoopState{} = state, opts \\ []) do
-    threshold = EvoGit.Config.resolve([:llm, :compression_threshold_tokens])
     agent_id = Keyword.fetch!(opts, :agent_id)
     llm_model = Keyword.fetch!(opts, :llm_model)
     llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])
 
-    if state.total_tokens > threshold do
-      Logger.info(
-        "Agent #{agent_id}: Context length (#{state.total_tokens} tokens) exceeded compression threshold (#{threshold} tokens). Attempting compression..."
-      )
+    info = Threshold.for_model(llm_model)
 
-      messages = ReqLLM.Context.to_list(state.context)
+    # Gate on the model's own window BEFORE doing any work: below the trigger
+    # there is nothing to compress, so no log line and no LLM slot are spent.
+    if Threshold.exceeded?(state.total_tokens, info) do
+      case ReqLLM.Context.to_list(state.context) do
+        # A compressible conversation always starts with [system, first_user];
+        # any other shape (empty, a lone system message) is left alone.
+        [_system, _first_user | _rest] = messages ->
+          compress(agent_id, llm_model, llm_gen_opts, info, state, messages)
 
-      case messages do
-        [system_msg, initial_user_msg | _rest] ->
-          compression_instruction = compression_instruction()
-
-          compression_context =
-            state.context
-            |> ReqLLM.Context.append(ReqLLM.Context.user(compression_instruction))
-
-          # The compression LLM call. A NON-RETRYABLE provider rejection is the
-          # ONE error class that does NOT raise (see `compression_llm_call/3`);
-          # every other failure still raises exactly as it did when the call was
-          # inlined here, so the agent loop's restart logic (AgentScheduler
-          # retry) handles those unchanged. No silent degradation to
-          # uncompressed state on either path.
-          AgentScheduler.with_llm_slot(agent_id, fn ->
-            case compression_llm_call(llm_model, compression_context, llm_gen_opts) do
-              {:ok, response} ->
-                text = ReqLLM.Response.text(response)
-                # Read the usage map ONCE — it feeds both the token counts
-                # (`Usage.from_response_usage/1`) and the self-computed cost.
-                usage_map = ReqLLM.Response.usage(response)
-
-                summary_msg =
-                  ReqLLM.Context.user("Summary of previous events:\n" <> text)
-                  |> EvoGit.Agent.ContextBuilder.tag_message_timestamp()
-
-                # Refresh the re-injected first user message so its `<context>`
-                # block reflects the CURRENT CONTEXT.md chain. Without this the
-                # context tree would stay frozen at run start even after the
-                # agent edited/created CONTEXT.md files in its worktree. The
-                # `<objective>` block (and any root-agent media content parts)
-                # are reproduced byte-identically — only the `<context>` block
-                # is re-read from the worktree (`state.repo_path`).
-                refreshed_user_msg =
-                  EvoGit.Agent.ContextBuilder.refresh_first_user_message(
-                    initial_user_msg,
-                    state
-                  )
-
-                new_context = ReqLLM.Context.new([system_msg, refreshed_user_msg, summary_msg])
-                AgentScheduler.increment_compression_count(agent_id)
-
-                # Cost is recomputed by `EvoGit.Agent.Cost` (see the module doc
-                # there); when there is nothing to recompute from, ReqLLM's
-                # reported cost is kept verbatim.
-                compression_usage =
-                  Usage.from_response_usage(usage_map)
-                  |> Cost.apply_to_usage(usage_map, agent_id)
-
-                %{
-                  state
-                  | context: new_context,
-                    total_tokens: 0,
-                    usage: Usage.add(state.usage, compression_usage)
-                }
-
-              {:error, {:llm_request_rejected, message}} = terminal ->
-                # Fail fast EXACTLY like `ToolDispatch.handle_llm_failure/7`'s
-                # fail-fast branch: ONE `Logger.error` line naming the agent, NO
-                # scheduler backoff report, NO sleep. The terminal tuple is
-                # returned unchanged for `Runner.loop/1` to propagate.
-                Logger.error("Agent #{agent_id}: #{message}")
-
-                terminal
-            end
-          end)
-
-        _ ->
+        _other ->
           state
       end
     else
@@ -161,116 +134,151 @@ defmodule EvoGit.Agent.ContextCompression do
     end
   end
 
-  # Runs the compression LLM call (stream + process-stream) and returns
-  # `{:ok, response}` on success.
-  #
-  # A NON-RETRYABLE provider rejection
-  # (`EvoGit.Agent.LlmError.non_retryable?/1` — a deterministic 4xx such as
-  # Z.AI's HTTP 400 code 1210) is a narrow exception layered ON TOP of the
-  # pre-existing raise path: the request can never succeed on a retry, so
-  # returning the terminal `{:error, {:llm_request_rejected, message}}` — the
-  # SAME shape `ToolDispatch.handle_llm_failure/7` uses — lets the task be
-  # persisted `:failed` with the actionable message instead of crash-retrying
-  # through the identical doomed call.
-  #
-  # EVERY other error class (transient transport errors, 5xx, 402/429 model
-  # exhaustion) keeps the behaviour of the previously inlined
-  # `{:ok, _} = ReqLLM...` matches: the same `MatchError` with the same
-  # right-hand-side value is raised, so the existing crash-retry +
-  # scheduler-backoff semantics are untouched.
-  #
-  # There is deliberately NO try/rescue here: exceptions (e.g.
-  # `{:error, :cancelled}` from a force-kill slot purge inside
-  # `AgentScheduler.with_llm_slot/2`) still propagate immediately.
-  defp compression_llm_call(llm_model, context, llm_gen_opts) do
-    with {:ok, stream_response} <- ReqLLM.stream_text(llm_model, context, llm_gen_opts),
-         {:ok, response} <- ReqLLM.StreamResponse.process_stream(stream_response) do
-      {:ok, response}
+  # --- Orchestration ---
+
+  defp compress(agent_id, llm_model, llm_gen_opts, info, state, messages) do
+    # STAGE 1 — model-free. Always runs first: it is cheap, and when it is
+    # enough it saves the entire summarising call.
+    pruned = ToolResultPruner.prune(messages)
+    projected = Threshold.project(state.total_tokens, pruned.chars_before, pruned.chars_after)
+
+    Logger.info(
+      "Agent #{agent_id}: Context length (#{state.total_tokens} tokens) exceeded the compression " <>
+        "threshold (#{info.threshold} tokens, source: #{info.source}). Stage 1 pruned " <>
+        "#{pruned.pruned} old tool result(s): #{pruned.chars_before} -> #{pruned.chars_after} chars " <>
+        "(projected #{projected} tokens)."
+    )
+
+    # Pruning alone is enough: rebuild from the pruned list and spend nothing.
+    if pruned.pruned > 0 and projected <= info.threshold do
+      finish_pruned_only(state, agent_id, pruned.messages)
     else
-      {:error, reason} = failure ->
-        if EvoGit.Agent.LlmError.non_retryable?(reason) do
-          # The compression call sends NO tools, so the parameter names are the
-          # generation-param keys alone; the model spec is the one this call
-          # targeted. Both come from the caller's own arguments (no scheduler
-          # lookup, so this path cannot raise for a purged agent either).
-          message =
-            EvoGit.Agent.LlmError.format_failure(reason,
-              params: llm_gen_opts,
-              model: llm_model
-            )
-
-          {:error, {:llm_request_rejected, message}}
-        else
-          raise_match_error(failure)
-        end
-
-      other ->
-        raise_match_error(other)
+      summarise(agent_id, llm_model, llm_gen_opts, pruned, state)
     end
   end
 
-  # Re-produces the pre-change raise-on-match behaviour for every result that is
-  # NOT a fail-fast provider rejection (and for any unexpected shape): the
-  # inlined `{:ok, _} = ...` matches raised a `MatchError` carrying the unmatched
-  # right-hand-side value, and `raise MatchError, term: value` renders exactly
-  # that exception and message. Pure, total, never returns.
-  defp raise_match_error(value) do
-    raise MatchError, term: value
+  # STAGE 2 — replace the old span with ONE checkpoint. Skipped entirely when
+  # there is nothing older than the protected last-K-turns suffix: an LLM call
+  # would have nothing to replace (`Checkpoint.build/3` would report
+  # `replaced: 0`), so paying for it is pure waste.
+  defp summarise(agent_id, llm_model, llm_gen_opts, pruned, state) do
+    split = Checkpoint.split(pruned.messages)
+
+    if split.old == [] do
+      Logger.info(
+        "Agent #{agent_id}: nothing older than the last " <>
+          "#{length(split.recent)} message(s) to replace — stage 2 (summarising) skipped."
+      )
+
+      finish_pruned_only(state, agent_id, pruned.messages)
+    else
+      summarise_old_span(agent_id, llm_model, llm_gen_opts, pruned, state)
+    end
   end
 
-  @doc false
+  defp summarise_old_span(agent_id, llm_model, llm_gen_opts, pruned, state) do
+    # The summarising model reads the PRUNED transcript plus ONE appended
+    # instruction message — never the raw list, so a huge old tool result is not
+    # paid for twice. A prior checkpoint's summary is merged in so repeated
+    # compactions ACCUMULATE instead of forgetting earlier facts.
+    instruction = SummaryPrompt.instruction(Checkpoint.prior_summary(pruned.messages))
+
+    context =
+      ReqLLM.Context.new(pruned.messages ++ [ReqLLM.Context.user(instruction)])
+
+    case LlmRetry.summarise(agent_id, llm_model, context, llm_gen_opts) do
+      {:ok, response} ->
+        summary = ReqLLM.Response.text(response)
+        # Read the usage map ONCE — it feeds both the token counts
+        # (`Usage.from_response_usage/1`) and the self-computed cost.
+        usage_map = ReqLLM.Response.usage(response)
+        built = Checkpoint.build(pruned.messages, summary, turn: state.turn)
+
+        compression_usage =
+          Usage.from_response_usage(usage_map)
+          |> Cost.apply_to_usage(usage_map, agent_id)
+
+        if built.replaced == 0 do
+          # A blank summary must never fabricate a checkpoint that silently
+          # drops the transcript, so the pruned context is what we keep — but
+          # the request WAS billed, so its usage is still accounted for.
+          keep_pruned_context(state, agent_id, pruned.messages, compression_usage)
+        else
+          context = built.messages ++ refresh_messages(state)
+
+          AgentScheduler.increment_compression_count(agent_id)
+
+          %{
+            state
+            | context: ReqLLM.Context.new(context),
+              total_tokens: 0,
+              usage: Usage.add(state.usage, compression_usage)
+          }
+        end
+
+      {:error, {:llm_request_rejected, message}} = terminal ->
+        # Fail fast EXACTLY like `ToolDispatch.handle_llm_failure/7`'s fail-fast
+        # branch: ONE `Logger.error` line naming the agent, NO scheduler
+        # backoff report, NO sleep. The terminal tuple is returned unchanged for
+        # `Runner.loop/1` to propagate.
+        Logger.error("Agent #{agent_id}: #{message}")
+
+        terminal
+    end
+  end
+
+  # The prune-only finish shared by (a) "pruning was enough", (b) "nothing older
+  # than the recent tail to replace" and (c) "the summary came back blank". The
+  # messages are NOT shortened by this stage, so the context is only rebuilt
+  # with the pruned tool text plus the runtime-context refresh appended.
+  defp finish_pruned_only(state, agent_id, messages) do
+    keep_pruned_context(state, agent_id, messages, nil)
+  end
+
+  defp keep_pruned_context(state, agent_id, messages, compression_usage) do
+    AgentScheduler.increment_compression_count(agent_id)
+
+    usage =
+      case compression_usage do
+        nil -> state.usage
+        spent -> Usage.add(state.usage, spent)
+      end
+
+    %{
+      state
+      | context: ReqLLM.Context.new(messages ++ refresh_messages(state)),
+        total_tokens: 0,
+        usage: usage
+    }
+  end
+
+  # The runtime-context refresh message appended as the LAST message of every
+  # compression event, so a CONTEXT.md edit made in the worktree mid-run is
+  # visible again WITHOUT rewriting the cacheable first message. `nil` (blank
+  # context block) appends nothing.
+  defp refresh_messages(state) do
+    case ContextBuilder.build_context_refresh_message(state, state.turn) do
+      nil -> []
+      message -> [message]
+    end
+  end
+
+  # --- Stage-2 LLM call ---
+
+  # The bounded retry loop, the slot-per-attempt discipline and the failure
+  # classification live in `EvoGit.Agent.Compression.LlmRetry` (mirroring
+  # `EvoGit.Agent.ToolDispatch.call_llm_with_retry/5` exactly). Two outcomes
+  # matter to this module: `{:ok, response}` to build the checkpoint, and the
+  # terminal `{:error, {:llm_request_rejected, message}}` for a NON-RETRYABLE
+  # provider rejection. Every other failure class RAISES out of there, preserving
+  # the pre-existing crash-retry / scheduler-backoff semantics.
+  @doc """
+  The stage-2 summarisation instruction (backward-compatible entry point).
+
+  Delegates to `EvoGit.Agent.Compression.SummaryPrompt.instruction/0` — the
+  single source of the eight fixed summary sections — so callers that only need
+  the instruction text keep working.
+  """
   @spec compression_instruction() :: String.t()
-  def compression_instruction do
-    """
-    <context_compression>
-    Review the conversation above and create a dense, comprehensive summary that preserves all information needed to continue the work without loss.
-
-    PRESERVE THESE EXACTLY (never paraphrase):
-    - Necessary File paths, module names, function names, variable names
-    - Necessary Configuration values and settings
-    - Critical Error messages and stack traces at hand
-    - Architectural decisions and their reasoning
-
-    SUMMARIZE THESE:
-    - Tool call results (preserve conclusions, drop raw output)
-    - Code explorations (preserve findings, drop search syntax)
-    - Multi-step reasoning (preserve conclusions, drop intermediate steps)
-    - Conversational exchanges (preserve decisions, drop pleasantries)
-
-    DISCARD COMPLETELY:
-    - Acknowledgments, greetings, filler phrases
-    - Repeated or redundant information
-    - Raw tool syntax/JSON that isn't essential
-
-    The original objective is preserved verbatim in the first user message above. Do NOT reproduce, restate, or paraphrase it in your summary. Reference it directly when needed.
-
-    First, silently identify the most critical information. Then output a structured summary using EXACTLY this format:
-
-    ## Current State
-    [Your current state within the overall objective: what major milestones/parts are complete, what remains to be done, and what you should focus on next. This MUST reflect ALL work done across the entire session — not just recent work.]
-
-    ## Completed
-    [Bulleted list of what has been done. If possible, include the node paths or file paths where work was completed.]
-
-    ## Key Findings
-    [Important discoveries, constraints, dependencies found. Include exact names and paths.]
-
-    ## Decisions Made
-    [Architectural or design decisions with their rationale.]
-
-    ## SubAgents Dispatched
-    [Which subagents were spawned, their objectives, and their outcomes.]
-
-    ## Errors Encountered
-    [Failed approaches, bugs found, blockers. Include exact error messages and what was tried.]
-
-    ## Next Steps
-    [Precise, actionable next steps. Reference specific files and functions.]
-
-    CRITICAL: You are working on the SAME original objective as when you started — it is preserved verbatim in the first user message above. Do NOT drift, redefine, narrow, or expand the objective. If your current work seems disconnected from the original objective, STOP and realign to it.
-
-    IMPORTANT: When you eventually call complete_task, your final report MUST summarize the status of the ORIGINAL objective as a whole (refer to the first user message and "Current State" above) — NOT just the most recent sub-task you worked on.
-    </context_compression>
-    """
-  end
+  def compression_instruction, do: SummaryPrompt.instruction()
 end

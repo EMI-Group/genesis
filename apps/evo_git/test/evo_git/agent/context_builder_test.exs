@@ -505,6 +505,139 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
   end
 
+  # The compression-refresh message appended as the LAST message of every
+  # compression event (see `EvoGit.Agent.ContextCompression`): it delivers a
+  # FRESH `<context>` block WITHOUT touching message #1, so the cacheable prefix
+  # (system + original first user message) stays byte-identical.
+  describe "build_context_refresh_message/2" do
+    # Same temp-repo shape as `build_context_block/1` above: a CONTEXT.md chain
+    # at "./docs", removed in `on_exit`.
+    defp refresh_repo(root_md, docs_md) do
+      repo =
+        Path.join(System.tmp_dir!(), "evogit_ctx_refresh_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(repo, "docs"))
+      File.write!(Path.join(repo, "CONTEXT.md"), root_md)
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), docs_md)
+      on_exit(fn -> File.rm_rf!(repo) end)
+      repo
+    end
+
+    defp refresh_state(repo) do
+      %{
+        node_path: "./docs",
+        repo_path: repo,
+        parent_id: nil,
+        repo_less: false,
+        foreign_repos: [],
+        repo_notes: nil,
+        quality_level: nil,
+        objective: "Build the parser."
+      }
+    end
+
+    # The `:text` parts of a message, joined (a refreshed message is built by
+    # `ReqLLM.Context.user/1`, so it is exactly one text part).
+    defp text_of(%ReqLLM.Message{content: content}) when is_list(content) do
+      content
+      |> Enum.filter(&(&1.type == :text))
+      |> Enum.map(& &1.text)
+      |> Enum.join("")
+    end
+
+    defp refresh_text(state, turn) do
+      state |> ContextBuilder.build_context_refresh_message(turn) |> text_of()
+    end
+
+    test "is a :user message carrying the CURRENT <context> block" do
+      repo = refresh_repo("# Root\nroot body\n", "# Docs\ndocs body\n")
+
+      message = ContextBuilder.build_context_refresh_message(refresh_state(repo), nil)
+
+      assert %ReqLLM.Message{role: :user} = message
+
+      text = text_of(message)
+      assert String.contains?(text, "<context>")
+      assert String.contains?(text, "</context>")
+      assert text =~ "root body"
+      assert text =~ "docs body"
+    end
+
+    test "re-renders the chain: an edit made after the first build shows up" do
+      repo = refresh_repo("# Root\n", "# Docs\nBEFORE\n")
+      state = refresh_state(repo)
+
+      assert refresh_text(state, nil) =~ "BEFORE"
+
+      File.write!(Path.join([repo, "docs", "CONTEXT.md"]), "# Docs\nAFTER\n")
+
+      text = refresh_text(state, nil)
+      assert text =~ "AFTER"
+      refute text =~ "BEFORE"
+    end
+
+    test "states that it supersedes earlier snapshots, pins the objective, forbids acknowledgement" do
+      repo = refresh_repo("# Root\n", "# Docs\n")
+      text = refresh_text(refresh_state(repo), nil)
+
+      # Pinned wording — the three things a compressed agent must understand.
+      assert text =~ "automatically generated runtime-context refresh"
+      assert text =~ "SUPERSEDES any earlier <context> snapshot"
+      assert text =~ "The <objective> block is unchanged"
+      assert text =~ "do NOT acknowledge this refresh"
+    end
+
+    test "never carries an <objective> block of its own" do
+      repo = refresh_repo("# Root\n", "# Docs\n")
+
+      text = refresh_text(refresh_state(repo), nil)
+
+      # The notice MENTIONS the <objective> block ("The <objective> block is
+      # unchanged") but no objective BLOCK is rendered: `objective_block/1`
+      # opens with "<objective>\n" and closes with "</objective>".
+      refute text =~ "<objective>\n"
+      refute text =~ "</objective>"
+      # The raw objective is NEVER re-rendered here — it stays verbatim in the
+      # (untouched) first user message.
+      refute text =~ "Build the parser."
+    end
+
+    test "turn-tags the message when a turn is given" do
+      repo = refresh_repo("# Root\n", "# Docs\n")
+      before = System.system_time(:second)
+
+      message = ContextBuilder.build_context_refresh_message(refresh_state(repo), 12)
+
+      assert message.metadata[:turn] == 12
+      assert message.metadata[:timestamp] in before..System.system_time(:second)
+    end
+
+    test "leaves the message untagged for a nil turn" do
+      repo = refresh_repo("# Root\n", "# Docs\n")
+
+      message = ContextBuilder.build_context_refresh_message(refresh_state(repo), nil)
+
+      refute message.metadata[:turn]
+      refute message.metadata[:timestamp]
+    end
+
+    test "returns nil when the rendered context block is blank" do
+      # `build_context_block/1` always renders at least the location line, so no
+      # realistic state reaches the blank branch — it exists so a future
+      # block-builder that CAN render nothing appends no empty message. Pin both
+      # sides: the nil guard's precondition, and that a real state is never nil.
+      blank = %{repo_less: false, foreign_repos: []}
+
+      refute ContextBuilder.build_context_block(blank) == ""
+      refute is_nil(ContextBuilder.build_context_refresh_message(blank, nil))
+
+      repo = refresh_repo("# Root\n", "# Docs\n")
+
+      assert %ReqLLM.Message{} =
+               ContextBuilder.build_context_refresh_message(refresh_state(repo), 0)
+    end
+  end
+
   describe "build_initial_messages/4" do
     # Mirrors the native-struct content-part test idiom at
     # test/evo_git/agent_scheduler/remote_api_test.exs:427-447.
