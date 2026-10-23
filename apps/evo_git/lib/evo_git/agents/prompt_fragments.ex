@@ -406,9 +406,17 @@ Genesis models the codebase as a **Context Tree**: every directory node has a `C
   the "Key rules for foreign repo delegation" list right after the
   "Read-only vs writable foreign repos" bullet). Near-duplicate of those
   bullets by design — this is the shared canonical sentence.
+
+  The fragment deliberately names NO `subagent_*` tool: it is shared by roles
+  whose `subagent_modules/0` differ (Architect spawns
+  investigator/manager/executor/genesis_planner/architect; ContextExtractor
+  spawns only itself), so any concrete tool name here would be a capability
+  claim that is false for at least one reader. Keep the read-only side generic
+  ("any agent may spawn a read-only agent into any foreign repo") — a role
+  names its own spawnable tools only in its own prompt.
   """
   def writable_foreign_repo_clause do
-    "- **Writable vs read-only foreign repos**: Foreign repos may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). Read-only access is **unrestricted** — any agent may spawn a read-only agent (subagent_investigator / subagent_task_scheduler / subagent_context_extractor) into any foreign repo. Write-capable (`:read_write`) spawns are **root-agent-only** (depth 0; nested agents may NOT) and **one at a time** (spawn, wait for completion, then the next — never parallel). Why: the sandbox grants write access only to the agent's LOCAL path, so parallel foreign-repo writes create merge conflicts the spawner cannot control; parallelism inside a writable foreign repo belongs to its internal Manager. Writable changes go to `evogit-agent-*` branches, **tracked by the task** (per-repo commit + branch in the final report), and are NEVER merged into the foreign repo's default branch by the task (that happens later via the dashboard review page). Nested agents needing foreign-repo changes report up to their parent agent (next level up the delegation chain) to handle it. Your first-user context states whether you are the ROOT or a NESTED agent and your exact foreign-repo authority."
+    "- **Writable vs read-only foreign repos**: Foreign repos may be **writable** (`writable = true` in `genesis.toml` `[foreign_repos.<id>]`). Read-only access is **unrestricted** — any agent may spawn a read-only agent into any foreign repo. Write-capable (`:read_write`) spawns are **root-agent-only** (depth 0; nested agents may NOT) and **one at a time** (spawn, wait for completion, then the next — never parallel). Why: the sandbox grants write access only to the agent's LOCAL path, so parallel foreign-repo writes create merge conflicts the spawner cannot control; parallelism inside a writable foreign repo belongs to its internal Manager. Writable changes go to `evogit-agent-*` branches, **tracked by the task** (per-repo commit + branch in the final report), and are NEVER merged into the foreign repo's default branch by the task (that happens later via the dashboard review page). Nested agents needing foreign-repo changes report up to their parent agent (next level up the delegation chain) to handle it. Your first-user context states whether you are the ROOT or a NESTED agent and your exact foreign-repo authority."
   end
 
   # ── Objective scope (Executor + ContextExtractor) ───────────────────────────
