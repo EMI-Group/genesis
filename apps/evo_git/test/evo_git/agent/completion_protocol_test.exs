@@ -15,7 +15,8 @@ defmodule EvoGit.Agent.CompletionProtocolTest do
     * the reported text is returned VERBATIM — blankness is judged after
       trimming, the text itself is never rewritten;
     * every "nothing usable" shape (empty content, whitespace-only text, a
-      thinking-only reply, a nil message) is `:empty` — never a text reply.
+      thinking-only reply, a nil message, a hand-built `content: nil`, non-list
+      content) is `:empty` — never a text reply, never a raise.
 
   `async: true` is safe: `CompletionProtocol` is pure (no git, no HTTP, no
   scheduler, no app env, no ETS, no `:persistent_term`), and every value here is
@@ -80,6 +81,13 @@ defmodule EvoGit.Agent.CompletionProtocolTest do
       resp = tool_call_response([call])
 
       assert {:tool_calls, [returned]} = CompletionProtocol.classify(resp)
+      assert returned == call
+    end
+
+    test "tool calls win even when the message content is not enumerable" do
+      call = read_call("call_1", "./a.ex")
+
+      assert {:tool_calls, [returned]} = CompletionProtocol.classify(response(nil, [call]))
       assert returned == call
     end
   end
@@ -173,6 +181,21 @@ defmodule EvoGit.Agent.CompletionProtocolTest do
 
       assert CompletionProtocol.classify(resp) == :empty
     end
+
+    test "returns :empty (never raises) for a hand-built `content: nil` message" do
+      # ReqLLM's own struct default for `:content` is `[]`, so this shape is only
+      # reachable via a hand-built struct — it must not raise
+      # `Protocol.UndefinedError` out of `ReqLLM.Response.text/1`.
+      resp = response(nil)
+
+      assert resp.message.content == nil
+
+      assert CompletionProtocol.classify(resp) == :empty
+    end
+
+    test "returns :empty (never raises) for non-list content" do
+      assert CompletionProtocol.classify(response("a bare string")) == :empty
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -224,6 +247,20 @@ defmodule EvoGit.Agent.CompletionProtocolTest do
       }
 
       assert CompletionProtocol.report_text(resp) == :empty
+    end
+
+    test "returns :empty (never raises) for a hand-built `content: nil` message" do
+      # Only reachable via a hand-built struct (ReqLLM defaults `:content` to
+      # `[]`); `ReqLLM.Response.text/1` would raise `Protocol.UndefinedError`
+      # enumerating nil.
+      resp = response(nil)
+
+      assert resp.message.content == nil
+      assert CompletionProtocol.report_text(resp) == :empty
+    end
+
+    test "returns :empty (never raises) for non-list content" do
+      assert CompletionProtocol.report_text(response(%{text: "not a list"})) == :empty
     end
   end
 end

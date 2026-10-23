@@ -28,6 +28,18 @@ defmodule EvoGit.Agent.CompletionProtocol do
   Text is read through `ReqLLM.Response.text/1`, which filters `:text` content
   parts ONLY — a streamed reply whose content is `[text, thinking]` therefore
   never promotes the reasoning text to the agent's result.
+
+  ## Totality
+
+  Both functions are TOTAL over any input term. `ReqLLM.Response.tool_calls/1` is
+  reached only for a `%ReqLLM.Response{}` whose message is a `%ReqLLM.Message{}`
+  (its own struct-only shape), and `ReqLLM.Response.text/1` additionally requires
+  that message's `:content` to be a LIST — the shape its `Enum.filter/2` over the
+  content parts needs. Every other shape — a nil or missing message, `content:
+  nil`, or any non-list content — takes the "nothing usable" path: `report_text/1`
+  returns `:empty` and `classify/1` returns `:empty` (unless real tool calls are
+  present, which still win), never `Protocol.UndefinedError` /
+  `FunctionClauseError`.
   """
 
   @doc """
@@ -39,11 +51,15 @@ defmodule EvoGit.Agent.CompletionProtocol do
 
   `raw_text` is returned VERBATIM (not trimmed) so it becomes the agent's report
   byte-for-byte as the model wrote it; blankness is judged after trimming.
+
+  TOTAL: every input without tool calls — including a nil or missing message,
+  `content: nil` and any non-list content — classifies as `:empty`. This function
+  never raises.
   """
-  @spec classify(ReqLLM.Response.t()) ::
+  @spec classify(term()) ::
           {:tool_calls, [ReqLLM.ToolCall.t()]} | {:text_reply, String.t()} | :empty
   def classify(response) do
-    case ReqLLM.Response.tool_calls(response) do
+    case tool_calls(response) do
       [] -> to_outcome(report_text(response))
       calls when is_list(calls) -> {:tool_calls, calls}
     end
@@ -52,12 +68,13 @@ defmodule EvoGit.Agent.CompletionProtocol do
   @doc """
   The assistant's usable text, or `:empty` when it wrote nothing usable.
 
-  Returns `{:ok, raw_text}` for any non-blank text (a nil message or a reply
-  carrying only `:thinking` parts yields `:empty`).
+  Returns `{:ok, raw_text}` for any non-blank text; a nil message, a reply
+  carrying only `:thinking` parts, `content: nil` and any other non-list content
+  all yield `:empty`. TOTAL: this function never raises.
   """
-  @spec report_text(ReqLLM.Response.t()) :: {:ok, String.t()} | :empty
+  @spec report_text(term()) :: {:ok, String.t()} | :empty
   def report_text(response) do
-    case ReqLLM.Response.text(response) do
+    case text(response) do
       text when is_binary(text) ->
         if String.trim(text) == "", do: :empty, else: {:ok, text}
 
@@ -65,6 +82,25 @@ defmodule EvoGit.Agent.CompletionProtocol do
         :empty
     end
   end
+
+  # `ReqLLM.Response.tool_calls/1` is struct-only: it matches on the response and
+  # message shapes (never on `:content`), so the gate here is exactly that shape
+  # — a plain map, a nil/missing message or any other non-`%ReqLLM.Message{}`
+  # value must not raise `FunctionClauseError`, and tool calls still win.
+  defp tool_calls(%ReqLLM.Response{message: %ReqLLM.Message{}} = response) do
+    ReqLLM.Response.tool_calls(response)
+  end
+
+  defp tool_calls(_not_a_well_formed_response), do: []
+
+  # Same shape gate for the text read: `ReqLLM.Response.text/1` enumerates the
+  # content parts, so a non-list `:content` must never reach it.
+  defp text(%ReqLLM.Response{message: %ReqLLM.Message{} = message} = response)
+       when is_list(message.content) do
+    ReqLLM.Response.text(response)
+  end
+
+  defp text(_not_a_well_formed_response), do: nil
 
   defp to_outcome({:ok, text}), do: {:text_reply, text}
   defp to_outcome(:empty), do: :empty
