@@ -538,22 +538,10 @@ defmodule EvoGit.Sandbox.BackgroundTest do
                })
     end
 
-    # OBSERVED vs EXPECTED (documented divergence — `lib/` deliberately NOT
-    # edited, reported instead): `EvoGit.Sandbox.Background.spawn/1`'s
-    # @moduledoc claims "Every function is total: OS failures come back as
-    # `{:error, term()}` and never raise." The systemd-run path DOES return
-    # `{:error, {:systemd_run_failed, _}}` for an unusable cwd, but the PORT
-    # path does not: OTP's `Port.open/2` accepts a `{:cd, dir}` that does not
-    # exist, the child dies in the port-setup `chdir` (exit status 2, before
-    # `exec`), and `spawn/1` therefore returns `{:ok, %{kind: :port, ...}}` for
-    # a job that never ran. Verified directly:
-    # `Port.open(..., {:cd, "/tmp/definitely_missing"})` yields a live port
-    # whose only message is `{:exit_status, 2}`.
-    #
-    # The test below PINS that observed behavior (so a future fix to the
-    # contract fails loudly here) and asserts the part that is contractual in
-    # both shapes: it never raises.
-    test "a non-existent cwd never raises (the port path surfaces it as a child exit)" do
+    # The cwd is validated up front for EVERY backend, so the error tuple — not a
+    # raise and not a live handle for a job that never ran — is the contract.
+    # Matching the tuple also proves the totality property: the call never raises.
+    test "a non-existent cwd is an {:error, {:cwd_missing, path}} tuple on every backend" do
       cwd = nonexistent_path()
       refute File.dir?(cwd)
 
@@ -564,16 +552,7 @@ defmodule EvoGit.Sandbox.BackgroundTest do
         job_id: "bash-nocwd"
       }
 
-      assert {:ok, handle} = Sandbox.spawn_detached(spec)
-
-      on_exit(fn -> Sandbox.kill_detached(handle) end)
-
-      assert handle.kind == :port
-
-      # The job is dead immediately (the child never exec'd), so the status must
-      # not stay `{:running, nil}` forever.
-      assert wait_until(fn -> Sandbox.detached_status(handle) != {:running, nil} end),
-             "expected the failed-cwd job to stop reporting {:running, nil}"
+      assert {:error, {:cwd_missing, ^cwd}} = Sandbox.spawn_detached(spec)
     end
   end
 
