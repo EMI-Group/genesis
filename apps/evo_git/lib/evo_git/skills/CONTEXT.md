@@ -94,6 +94,14 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 - `enable_skill/3` / `disable_skill/3` REGENERATE a node's whole file rather than editing it surgically: the body is re-emitted from `parse_frontmatter/1`'s `String.trim`ed body, and non-`skill` keys are re-serialized by the naive `yaml_kv/2` (`"#{key}: #{value}"`, list values `"key:" <> "  - item"` lines). Nested maps, multi-line strings, or values containing `:`/`#`/quotes can therefore be re-emitted as invalid or lossy YAML (an unparseable frontmatter afterwards makes `extract_context_skill_names/1` return `[]`, silently losing enablement).
 - `remove_skill_from_all_contexts/2` is the ONLY batch entry point (`context_integration.ex:232-252`): it rewrites every matching CONTEXT.md under the passed checkout root. `find_all_context_files/1` skips `.git/_build/deps/node_modules` and `.genesis` worktrees (judged on the path RELATIVE to the scan root) but relies on `Path.wildcard` without `match_dot: true`, so CONTEXT.md files under hidden directories (e.g. `.github/`) are never found or cleaned.
 
+## Known Issues / Gotchas
+
+- **Body-only skills produce a broken name**: `Executor.execute_skill/3`'s no-bash-block branch interpolates `skill_name(args)` (`executor.ex:48`), a placeholder that always returns `""` (`executor.ex:61`) — the LLM receives `"Skill '' instructions:\n\n<body>"` (pinned by `skills_test.exs:531`).
+- **`skill_enable`/`skill_disable` accept an ABSOLUTE `node_path`**: `ContextIntegration.enable_skill/3` / `disable_skill/3` resolve `Platform.safe_expand(node_path, repo_path)` (`platform.ex:359-375`), which returns an absolute input UNCHANGED — no containment/`Platform.path_under?` check — so an LLM-supplied absolute `node_path` rewrites a `CONTEXT.md` outside the repo (the skill tools never call `Shared.validate_file_scope/3`).
+- **Parameter `type` is passed through unvalidated**: `Skills.to_tool_schemas/1` copies the frontmatter `type` string straight into the JSON schema (`skills.ex:143-176`); a bogus type reaches the provider.
+- **A skill whose name collides with a built-in tool is unreachable**: the built-in `execute_tool/5` name clauses match FIRST (`tools.ex:451-492`); the dynamic-skill lookup runs only in the catch-all (`tools.ex:494-529`), and a loaded custom tool of the same name also wins. Skill lookup itself is case-SENSITIVE (`find_skill/2`).
+- **Tool schemas are snapshotted once per agent run** (`runner.ex:239-249`), while dispatch reloads `load_skills/1` at CALL time (`tools.ex:519`) — a skill added mid-run is callable if the model guesses its name but is never advertised, and `skill_enable` only affects agents spawned afterwards.
+
 ## Constraints
 
 - Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
