@@ -136,6 +136,70 @@ defmodule EvoGit.Sandbox do
   end
 
   @doc """
+  Starts a command in a **detached** process that outlives the caller.
+
+  This is the ONE detached entry point, answered for EVERY backend: callers never
+  branch on `backend/0` themselves. `EvoGit.Sandbox.Background` picks how a
+  detached process is represented on the running platform (a transient systemd
+  unit where available, a raw port elsewhere).
+
+  `EvoGit.Sandbox.Behaviour` is deliberately NOT extended with this capability:
+  the behaviour is the FOREGROUND `run/4` / `run_with_partial/6` contract, and a
+  mandatory detached callback would break every backend for a capability only
+  some of them implement natively.
+
+  ## Parameters
+
+  `spec` is a map with:
+
+    * `:command` — the shell command line to run
+    * `:cwd` — the working directory for the command
+    * `:output_path` — the file the backend directs stdout/stderr to
+    * `:job_id` — stable identifier, used in any unit/process name
+
+  ## Returns
+
+    * `{:ok, handle}` — where `handle` is
+      `%{kind: :unit, unit: String.t(), backend: module()}` or
+      `%{kind: :port, port: port(), os_pid: integer() | nil, backend: module()}`
+    * `{:error, reason}` — the detached process could not be started
+  """
+  @spec spawn_detached(%{
+          command: String.t(),
+          cwd: String.t(),
+          output_path: String.t(),
+          job_id: String.t()
+        }) :: {:ok, map()} | {:error, term()}
+  def spawn_detached(spec) do
+    EvoGit.Sandbox.Background.spawn(spec)
+  end
+
+  @doc """
+  Stops a detached process started by `spawn_detached/1`.
+
+  Idempotent from the caller's point of view: killing an already-exited job is
+  not an error condition the caller must handle specially (the backend reports
+  `:ok` when there is nothing left to stop).
+  """
+  @spec kill_detached(map()) :: :ok | {:error, term()}
+  def kill_detached(handle) do
+    EvoGit.Sandbox.Background.kill(handle)
+  end
+
+  @doc """
+  Reports whether a detached process started by `spawn_detached/1` is still alive.
+
+  Returns `{:running, nil}`, `{:exited, exit_code | nil}` or `{:unknown, nil}`
+  when the backend cannot tell (the caller must treat `:unknown` as "still
+  running" rather than assuming completion).
+  """
+  @spec detached_status(map()) ::
+          {:running, nil} | {:exited, integer() | nil} | {:unknown, nil}
+  def detached_status(handle) do
+    EvoGit.Sandbox.Background.status(handle)
+  end
+
+  @doc """
   Resolves the writable `TMPDIR` value for use inside the sandbox.
 
   When a managed **per-task** tmpdir is installed on the current process
