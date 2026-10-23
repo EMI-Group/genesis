@@ -145,6 +145,7 @@ The fill div carries `style="width: <fill_label>%"` — the SAME one-decimal str
 The tick renders only when `meter.tick_pct` is non-nil: an absolutely positioned 2px line (`w-0.5`, `meter.tick_class` = `bg-base-content`, centred via `-translate-x-1/2`) plus a rotated-square cap at its top, at `style="left: <tick_label>%"`, with `title={gettext("Compression triggers at %{tokens} tokens", tokens: format_number(meter.threshold_tokens))}` (the exact threshold token count, comma-grouped; built in the template so no tooltip renders when the tick is hidden).
 The tile header's right side shows the context readout `current / threshold` (both `EvoDashWeb.Helpers.format_number/1`-grouped; current only when the threshold is unknown), and the caption row shows `gettext("Compression at %{tokens}", …)` (or "Compression threshold unknown" when there is no tick) on the left and `gettext("Compressions")` plus the legacy `count (pct%)` label on the right (`agent.compression_pct` keeps its threshold-relative value).
 Zones colour the FILL only; the tick always uses `bg-base-content` so it stays visible over every fill colour and in both themes.
+The tick-hidden "Compression threshold unknown" render is only reachable for an agent map carrying NO `:compression_threshold` key: `ThresholdCache.threshold_for_agent/2` always resolves a positive integer (its 180_000 last resort) and the update path restores a known threshold, so the normal page flow never shows the unknown state.
 
 ## Notes for Agents — Session-memory message timestamps
 
