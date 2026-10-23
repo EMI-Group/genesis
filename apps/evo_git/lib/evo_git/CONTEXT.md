@@ -18,6 +18,9 @@ Core source of the `:evo_git` OTP application: the Agent system (LLM-powered too
 - `./skills/` → Dynamic skill tools system — YAML-frontmatter markdown skills as LLM-callable tools
 - `./store/` → Ecto persistence layer — Operations modules, Boot/migrations, RepoScope, schemas, Ecto.Types, Codec (the wire oracle), Errors, Writer — detail in `store/CONTEXT.md`
 - `./task_registry/` → TaskRegistry support modules — Cleanup, Diagnostics, Lease, ResumeContext, RuntimeOpts, TaskExecutor
+- **Owner identity from inside a tool call** (a tool task's fresh process dictionary; the ONE key it inherits, `$callers`, `SchedMeta.task_ref.pid`, `AgentScheduler.task_id_for_agent/1`) → detail: `./agent/CONTEXT.md` ("Tool-task owner identity") + `./agent_scheduler/CONTEXT.md` (ETS row shapes) + `./task_registry/CONTEXT.md` ("Task Lifecycle & Terminal-Write Sites")
+- Supervised per-resource registry that must die with its OWNER process (`Process.monitor` in the registry, `:DOWN` = teardown) — pattern precedent: `EvoGit.SandboxProcessRegistry` (`sandbox_process_registry.ex`, GenServer state map, NO ETS, no name seam) + `EvoGit.TaskRegistry.server/0` (the `Process.get(:evogit_task_registry_server) || __MODULE__` test-isolation seam)
+- **Supervision tree**: built INLINE in `EvoGit.Application.start/2` (`application.ex:84-132`) — there is **no `lib/evo_git/supervisor.ex`** module; `EvoGit.Supervisor` is only the root supervisor's registered NAME, and the nested agent group is `EvoGit.AgentGroupSupervisor` (`one_for_all`: `Task.Supervisor` named `EvoGit.TaskSupervisor` + `EvoGit.AgentScheduler`)
 
 ## API Surface
 
