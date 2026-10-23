@@ -1336,6 +1336,7 @@ defmodule EvoDashWeb.AgentsLive do
 
       # Track old parent_id for children recalculation
       old_parent_id = agent.parent_id
+      previous_threshold = agent.compression_threshold
 
       # Convert changed_fields keyword list to a map for merging
       changed_map =
@@ -1346,9 +1347,21 @@ defmodule EvoDashWeb.AgentsLive do
       # Merge changed fields into agent
       agent = Map.merge(agent, changed_map)
 
-      # Recalculate compression_pct if total_tokens changed
+      # A nil/non-positive threshold delta means "unknown" — keep the row's
+      # previous (usable) denominator so a bar can never divide by nil.
       agent =
-        if Keyword.has_key?(changed_fields, :total_tokens) do
+        case agent.compression_threshold do
+          threshold when is_integer(threshold) and threshold > 0 ->
+            agent
+
+          _ ->
+            %{agent | compression_threshold: restore_threshold(previous_threshold, socket)}
+        end
+
+      # Recalculate compression_pct when total_tokens OR the threshold changed.
+      agent =
+        if Keyword.has_key?(changed_fields, :total_tokens) or
+             Keyword.has_key?(changed_fields, :compression_threshold) do
           threshold = agent.compression_threshold
           pct = trunc(min(agent.total_tokens / max(threshold, 1) * 100, 100))
           %{agent | compression_pct: pct}
@@ -1614,7 +1627,11 @@ defmodule EvoDashWeb.AgentsLive do
     if Enum.all?(required, &Map.has_key?(summary, &1)) do
       total_tokens = summary[:total_tokens] || 0
       compression_count = summary[:compression_count] || 0
-      compression_threshold = safe_compression_threshold(socket)
+
+      # Prefer the summary's OWN pre-computed threshold (per model context
+      # window); the node-level value is only the fallback.
+      compression_threshold =
+        ThresholdCache.threshold_for_agent(summary, safe_compression_threshold(socket))
 
       compression_pct =
         trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
@@ -1769,12 +1786,15 @@ defmodule EvoDashWeb.AgentsLive do
     end)
   end
 
-  # Reads the compression threshold for the currently viewed node from the
-  # threshold cache. The cache is filled ONLY by the async load/refresh tasks
-  # (see ThresholdCache) — this never RPCs from the LiveView process. On a
+  # Reads the NODE-LEVEL compression threshold for the currently viewed node
+  # from the threshold cache. The cache is filled ONLY by the async load/refresh
+  # tasks (see ThresholdCache) — this never RPCs from the LiveView process. On a
   # cache miss the LOCAL node resolves its config directly (cheap, local); a
-  # remote miss falls back to the default until the next async refresh fills
-  # the cache.
+  # remote miss falls back to the default until the next async refresh fills the
+  # cache. A nil/blank config value now means "unknown" (the setting is
+  # optional; the core derives the real trigger per model), so 180_000 here is a
+  # LAST-RESORT fallback only — each agent's own summary threshold takes
+  # precedence wherever one is available.
   defp safe_compression_threshold(socket) do
     node = socket.assigns.current_node
 
@@ -1795,6 +1815,14 @@ defmodule EvoDashWeb.AgentsLive do
         end
     end
   end
+
+  # Restores the denominator after a threshold delta that is nil/non-positive
+  # ("unknown"): keep the row's previous usable value, else fall back to the
+  # node-level threshold (which itself normalizes to the 180_000 last resort).
+  defp restore_threshold(previous, _socket) when is_integer(previous) and previous > 0,
+    do: previous
+
+  defp restore_threshold(_previous, socket), do: safe_compression_threshold(socket)
 
   # Converts native %ReqLLM.Message{} structs into the %{turn, type, data}
   # entry format the template consumes. The only legitimate conversion here is

@@ -88,8 +88,12 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
       total_tokens = summary[:total_tokens] || 0
       compression_count = summary[:compression_count] || 0
 
-      compression_pct =
-        trunc(min(total_tokens / max(compression_threshold, 1) * 100, 100))
+      # Each summary carries its OWN already-computed trigger threshold (derived
+      # by the core from the model's context window); the node-level value is
+      # only the fallback (a nil config value means "unknown").
+      threshold = ThresholdCache.threshold_for_agent(summary, compression_threshold)
+
+      compression_pct = trunc(min(total_tokens / max(threshold, 1) * 100, 100))
 
       %{
         id: summary[:id],
@@ -120,7 +124,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
         usage: normalize_usage(summary[:usage]),
         total_tokens: total_tokens,
         compression_count: compression_count,
-        compression_threshold: compression_threshold,
+        compression_threshold: threshold,
         compression_pct: compression_pct,
         # History-gate input: number of messages in the agent's session-memory
         # context (0 for not-yet-dispatched agents). NOT the history itself —
