@@ -23,6 +23,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   before the scheduler has started). No `try/rescue` blocks are used.
   """
 
+  alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.SchedMeta
@@ -57,6 +58,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:task_id` — task group ID string (string | nil)
     * `:task_number` — short task number for naming (integer | nil)
     * `:retries` — crash-retry count (integer)
+    * `:compression_threshold` — the agent's derived context-compression trigger
+      in tokens (window-relative; integer)
 
   Returns `[]` when no agents are registered or the ETS tables don't exist yet.
   """
@@ -1118,7 +1121,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       base_commit: safe_phylo_commit(spec.phylo_node, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
-      retries: meta.retries
+      retries: meta.retries,
+      # Per-agent derived compression trigger (window-relative; dashboard-facing).
+      # No agent_state yet — the default-derived threshold is the best estimate.
+      compression_threshold: Threshold.for_model(nil).threshold
     }
   end
 
@@ -1158,7 +1164,11 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       base_commit: safe_phylo_commit(phylo, :base_commit),
       task_id: meta.task_id,
       task_number: meta.task_number,
-      retries: meta.retries
+      retries: meta.retries,
+      # Per-agent derived compression trigger (window-relative; dashboard-facing),
+      # computed from this agent's own model + context window.
+      compression_threshold:
+        Threshold.for_model(state.llm_model, context_window: Map.get(state, :llm_context_window)).threshold
     }
   end
 

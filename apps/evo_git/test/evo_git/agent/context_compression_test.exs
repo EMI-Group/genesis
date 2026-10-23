@@ -143,9 +143,10 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   describe "compress_if_needed/2 threshold gating" do
     @describetag :capture_log
 
-    # `compression_threshold_tokens` resolves from config (defaults to a high
-    # value, typically 100_000+). We pass a total_tokens count far below the
-    # default threshold so compression is skipped without any LLM call.
+    # `compression_threshold_tokens` defaults to `nil`, so the trigger is DERIVED
+    # from the configured context window (200_000 by default -> 126_272 tokens,
+    # or an explicit positive config override). A `total_tokens` of 0 is below
+    # any valid trigger, so compression is skipped without any LLM call.
     test "returns state unchanged when total_tokens is below threshold" do
       st = state(total_tokens: 0, usage: Usage.zero())
 

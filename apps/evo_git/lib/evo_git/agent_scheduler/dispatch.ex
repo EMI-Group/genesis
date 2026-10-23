@@ -76,11 +76,19 @@ defmodule EvoGit.AgentScheduler.Dispatch do
     {resolved_model_id, resolved_model, resolved_params} =
       resolve_model_for_agent(state, spec_model_id)
 
+    # Resolve the compression context window from the ALREADY-RESOLVED profile
+    # id: an unknown requested id already warned inside
+    # resolve_model_for_agent/2, and the canonical id always resolves, so
+    # re-resolving never warns twice — and the window and the model are
+    # guaranteed to come from the same profile.
+    resolved_context_window = resolve_context_window(state, resolved_model_id)
+
     Store.put_agent_state(id, %AgentState{
       context_node: spec.context_node,
       phylo_node: nil,
       llm_model: resolved_model,
       llm_generation_params: resolved_params,
+      llm_context_window: resolved_context_window,
       model_id: resolved_model_id,
       max_retries: state.max_retries,
       max_depth: state.max_depth,
@@ -338,30 +346,7 @@ defmodule EvoGit.AgentScheduler.Dispatch do
   @spec resolve_model_for_agent(State.t(), String.t() | nil) ::
           {String.t(), ReqLLM.model_input(), keyword()}
   def resolve_model_for_agent(%State{} = state, model_id) do
-    profiles = state.model_profiles
-
-    profile =
-      cond do
-        # Explicit model_id provided and found
-        model_id != nil and model_id != "" ->
-          case Enum.find(profiles, fn p -> Map.get(p, :id) == model_id end) do
-            nil ->
-              Logger.warning(
-                "AgentScheduler: Model profile '#{model_id}' not found, falling back to default"
-              )
-
-              List.first(profiles)
-
-            found ->
-              found
-          end
-
-        # No model_id — use default profile
-        true ->
-          List.first(profiles)
-      end
-
-    case profile do
+    case resolve_model_profile(state, model_id) do
       nil ->
         # No profiles configured at all — use state's backward-compat values
         {State.default_model_id(state), state.llm_model, state.llm_generation_params}
@@ -371,6 +356,57 @@ defmodule EvoGit.AgentScheduler.Dispatch do
         model = Map.get(profile, :model, state.llm_model)
         params = EvoGit.Config.Schema.llm_generation_params(profile)
         {resolved_id, model, params}
+    end
+  end
+
+  @doc """
+  Resolves the LLM context window (tokens) for the model profile an agent with
+  `model_id` is bound to.
+
+  Resolves the profile through the SAME shared helper as
+  `resolve_model_for_agent/2`, so the window and the model can never come from
+  different profile-resolution paths. Returns
+  `EvoGit.Config.Schema.LLM.context_window/1` of the resolved profile, or
+  `EvoGit.Config.Schema.LLM.default_context_window/0` (200_000) when NO
+  profile resolves — empty `model_profiles`, an unknown/nil/blank model id on
+  a profile-less state, or the legacy fallback path. Never raises.
+  """
+  @spec resolve_context_window(State.t(), String.t() | nil) :: pos_integer()
+  def resolve_context_window(%State{} = state, model_id) do
+    case resolve_model_profile(state, model_id) do
+      nil -> EvoGit.Config.Schema.LLM.default_context_window()
+      profile -> EvoGit.Config.Schema.LLM.context_window(profile)
+    end
+  end
+
+  # Selects the model profile map for a requested model id (shared by
+  # `resolve_model_for_agent/2` and `resolve_context_window/2`).
+  #
+  # An explicit non-empty id is looked up by `:id`; a requested id that is not
+  # found fall back to the first profile (with a warning); a nil/empty id uses
+  # the first profile directly. Returns `nil` when no profiles are configured.
+  @spec resolve_model_profile(State.t(), String.t() | nil) :: map() | nil
+  defp resolve_model_profile(%State{} = state, model_id) do
+    profiles = state.model_profiles
+
+    cond do
+      # Explicit model_id provided and found
+      model_id != nil and model_id != "" ->
+        case Enum.find(profiles, fn p -> Map.get(p, :id) == model_id end) do
+          nil ->
+            Logger.warning(
+              "AgentScheduler: Model profile '#{model_id}' not found, falling back to default"
+            )
+
+            List.first(profiles)
+
+          found ->
+            found
+        end
+
+      # No model_id — use default profile
+      true ->
+        List.first(profiles)
     end
   end
 

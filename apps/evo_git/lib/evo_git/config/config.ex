@@ -29,7 +29,15 @@ defmodule EvoGit.Config do
       # - "google:gemini-2.0-flash-exp"
       # - "zai:glm-5.1"
       model = "your-model-here"
-      compression_threshold_tokens = 180_000
+      tool_result_pruning = true                  # Stage-1 model-free pruning of old tool results
+      tool_result_pruning_target_fraction = 0.5   # Stage-1 pruning target, fraction of the context window
+      # Optional model profile — the profile's context window drives the
+      # context-compression threshold.
+      # [[llm.models]]
+      # id = "default"
+      # model = "your-model-here"
+      # context_window = 200_000               # optional; default 200_000
+      # compression_threshold_tokens = 150_000 # optional EXPLICIT override; default nil = derived from context_window
 
       [user]
       github_username = "your-username"
@@ -132,7 +140,19 @@ defmodule EvoGit.Config do
   @config_filename "config.toml"
   @credentials_filename "credentials.toml"
 
+  # Optional extra keys a [[llm.models]] profile may carry beyond the schema's
+  # key paths. Model profiles are untyped maps, so `safe_atomize/1`'s
+  # `String.to_existing_atom/1` can only convert these TOML keys when the atom
+  # already exists — this module attribute makes the atoms part of this
+  # module's literal table, which is loaded before any user TOML is atomized.
+  @model_profile_extra_keys [:context_window]
+
   # --- Public API ---
+
+  @doc false
+  # The atoms in `@model_profile_extra_keys`, exposed so the attribute is read
+  # (keeping the literal atoms in the compiled module).
+  def __model_profile_extra_keys__, do: @model_profile_extra_keys
 
   # Test-only helpers to access private pipeline steps. Underscore-prefixed
   # to signal they are internal and not part of the public contract.

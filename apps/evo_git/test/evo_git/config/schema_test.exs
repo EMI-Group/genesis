@@ -40,6 +40,8 @@ defmodule EvoGit.Config.SchemaTest do
       # LLM
       assert [:llm, :model] in paths
       assert [:llm, :compression_threshold_tokens] in paths
+      assert [:llm, :tool_result_pruning] in paths
+      assert [:llm, :tool_result_pruning_target_fraction] in paths
       assert [:llm, :models] in paths
 
       # User
@@ -163,8 +165,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 102 schemas" do
-      assert length(Schema.all_schemas()) == 102
+    test "has exactly 104 schemas" do
+      assert length(Schema.all_schemas()) == 104
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -198,7 +200,12 @@ defmodule EvoGit.Config.SchemaTest do
 
       # LLM
       assert defaults.llm.model == nil
-      assert defaults.llm.compression_threshold_tokens == 180_000
+
+      # compression_threshold_tokens is an OPTIONAL explicit override: nil means
+      # "derive the threshold from the model profile's context_window".
+      assert defaults.llm.compression_threshold_tokens == nil
+      assert defaults.llm.tool_result_pruning == true
+      assert defaults.llm.tool_result_pruning_target_fraction == 0.5
 
       # User
       assert defaults.user.github_username == nil
@@ -378,7 +385,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
       assert length(grouped[:scheduler]) == 11
-      assert length(grouped[:llm]) == 10
+      assert length(grouped[:llm]) == 12
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 19
       assert length(grouped[:truncation]) == 4
@@ -403,6 +410,99 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(resources) == 4
       assert length(process) == 4
       assert length(linux) == 8
+    end
+  end
+
+  describe "context-compression / stage-1 pruning keys" do
+    test "[:llm, :compression_threshold_tokens] is an optional positive integer (nil default)" do
+      schema =
+        Enum.find(Schema.all_schemas(), &(&1.key_path == [:llm, :compression_threshold_tokens]))
+
+      assert schema.type == :pos_integer
+      assert schema.default == nil
+      assert schema.validation == [min: 1]
+      assert schema.category == :llm
+      assert schema.sub_category == nil
+    end
+
+    test "[:llm, :tool_result_pruning] is a boolean defaulting to true" do
+      schema = Enum.find(Schema.all_schemas(), &(&1.key_path == [:llm, :tool_result_pruning]))
+      assert schema.type == :boolean
+      assert schema.default == true
+      assert schema.validation == []
+      assert schema.category == :llm
+      assert schema.sub_category == nil
+    end
+
+    test "[:llm, :tool_result_pruning_target_fraction] is a 0.0..1.0 float defaulting to 0.5" do
+      schema =
+        Enum.find(
+          Schema.all_schemas(),
+          &(&1.key_path == [:llm, :tool_result_pruning_target_fraction])
+        )
+
+      assert schema.type == :float
+      assert schema.default == 0.5
+      assert schema.validation == [min: 0.0, max: 1.0]
+      assert schema.category == :llm
+      assert schema.sub_category == nil
+    end
+
+    test "validate/1 accepts the defaults (threshold derived, pruning on, fraction 0.5)" do
+      assert {:ok, _} = Schema.validate(Schema.defaults())
+    end
+
+    test "validate/1 requires an explicit compression threshold to be positive" do
+      assert {:ok, _} =
+               Schema.validate(
+                 put_in(Schema.defaults(), [:llm, :compression_threshold_tokens], 120_000)
+               )
+
+      assert {:error, errors} =
+               Schema.validate(
+                 put_in(Schema.defaults(), [:llm, :compression_threshold_tokens], 0)
+               )
+
+      assert Enum.any?(
+               errors,
+               &(&1.key_path == [:llm, :compression_threshold_tokens] and &1.rule == :pos_integer)
+             )
+
+      assert Enum.any?(
+               errors,
+               &(&1.key_path == [:llm, :compression_threshold_tokens] and &1.rule == {:min, 1})
+             )
+    end
+
+    test "validate/1 rejects a non-boolean tool_result_pruning" do
+      assert {:error, errors} =
+               Schema.validate(put_in(Schema.defaults(), [:llm, :tool_result_pruning], "yes"))
+
+      error = Enum.find(errors, &(&1.key_path == [:llm, :tool_result_pruning]))
+      assert error.rule == :boolean
+      assert error.value == "yes"
+    end
+
+    test "validate/1 accepts the boundaries of the target-fraction range" do
+      for fraction <- [0.0, 0.5, 1.0] do
+        config =
+          put_in(Schema.defaults(), [:llm, :tool_result_pruning_target_fraction], fraction)
+
+        assert {:ok, _} = Schema.validate(config), "expected #{fraction} to be valid"
+      end
+    end
+
+    test "validate/1 enforces the target-fraction range" do
+      for {fraction, rule} <- [{1.5, {:max, 1.0}}, {-0.1, {:min, 0.0}}] do
+        config =
+          put_in(Schema.defaults(), [:llm, :tool_result_pruning_target_fraction], fraction)
+
+        assert {:error, errors} = Schema.validate(config)
+
+        error = Enum.find(errors, &(&1.key_path == [:llm, :tool_result_pruning_target_fraction]))
+        assert error.rule == rule
+        assert error.value == fraction
+      end
     end
   end
 

@@ -1,16 +1,19 @@
 defmodule EvoGit.Agent.Compression.Threshold do
   @moduledoc """
-  Window-relative context-compression trigger.
+  Window-relative context-compression trigger and stage-1 pruning target.
 
-  Historically the trigger was a single fixed number
-  (`[:llm, :compression_threshold_tokens]`, default 180_000) applied to every
-  model. That is wrong in both directions: a 1M-token window was compressed at
-  18 % of its capacity (wasting the window, and paying for a summarising LLM
-  call that was not needed), while a 128k-token window was compressed far too
-  late. This module derives the trigger from the model's OWN context window, so
-  the same policy fits every model.
+  ## The window comes from configuration, not from the catalog
 
-  ## The formula (for a known window `W`)
+  The trigger is derived from the agent's CONFIGURED context window: the model
+  profile's `[[llm.models]] context_window` key, resolved by the data-plane gate
+  and threaded down as `opts[:context_window]`, falling back to
+  `EvoGit.Config.Schema.LLM.default_context_window/0` (200_000) when the caller
+  supplies nothing usable. The model catalog is consulted only for the OUTPUT
+  reservation (`limits.output`) — its `limits.context` is deliberately never
+  read, because catalog windows are frequently missing or stale while the
+  operator's configured window is the number the runtime actually provisions.
+
+  ## The formula (for a window `W`)
 
       reserved = clamp(output_limit || 8_192, 1_024, 32_768)
       raw      = min(trunc(W * 0.8), W - reserved - 65_536)
@@ -34,39 +37,52 @@ defmodule EvoGit.Agent.Compression.Threshold do
     * **0.9 hard cap** — never trigger at (or past) the window itself; a
       threshold equal to the window would mean "compress only after overflow".
 
-  Worked examples:
+  Worked examples (default 8_192-token output reservation):
 
-      W = 1_000_000  ->  800_000   (a 1M model no longer compresses at the old
-                                    fixed 180_000 = 18 % of its window)
-      W =   131_072  ->   57_344   (a 128k model compresses comfortably before
-                                    overflow: 131_072 - 8_192 - 65_536)
+      W = 1_000_000  ->  800_000
+      W =   200_000  ->  126_272   (the default window)
+      W =   131_072  ->   57_344
+      W =    64_000  ->   32_000   (the floor wins: W - 8_192 - 65_536 < 0)
       W =    32_768  ->   29_491   (the 0.9 cap keeps a tiny window usable)
 
-  When the window is unknown the module degrades to the legacy config value
-  (`source: :config`), so behaviour is unchanged for models the catalog cannot
-  describe.
+  ## The explicit override
+
+  `[:llm, :compression_threshold_tokens]` is an OPTIONAL override: when it is a
+  positive integer it wins verbatim (`source: :config`), whatever the configured
+  window says. Its schema default is `nil`, which means "derive from the window"
+  (`source: :window`).
+
+  ## Stage-1 pruning target
+
+  `pruning_target/2` is the token count the model-free tool-result prune must
+  reach before it is worth adopting: `min(threshold, round(W * fraction))`, with
+  `fraction` defaulting to `default_pruning_target_fraction/0` (0.5) and an
+  unusable fraction normalizing to that default. Reaching the trigger is NOT
+  enough reason to prune — pruning rewrites old tool results and therefore
+  invalidates the provider's cached prefix, so it must recover a LOT of context
+  to pay for itself (`EvoGit.Agent.ContextCompression` owns that decision).
 
   ## Purity
 
-  `for_model/1` reads the model metadata through
+  `for_model/2` reads the output reservation through
   `EvoGit.Config.Schema.LLM.model_metadata/1` (which itself never raises) and
-  the config fallback through `EvoGit.Config.resolve/1`. Everything is a plain
+  the override through `EvoGit.Config.resolve/1`. Everything is a plain
   function call — no scheduler/registry lookup, no process, no state, and no
   `try`/`rescue`.
   """
 
   @typedoc """
-  `source` says which trigger is in force: `:window` (derived from the model's
-  context window) or `:config` (the legacy fixed config value, used when the
-  window is unknown).
+  `source` says which trigger is in force: `:window` (derived from the
+  configured context window) or `:config` (an explicit positive
+  `[:llm, :compression_threshold_tokens]` override).
   """
   @type info :: %{
           threshold: pos_integer(),
-          window: pos_integer() | nil,
+          window: pos_integer(),
           source: :window | :config
         }
 
-  # Compression starts at 80 % of the model's window.
+  # Compression starts at 80 % of the configured window.
   @window_fraction_numerator 8
   @window_fraction_denominator 10
 
@@ -83,33 +99,76 @@ defmodule EvoGit.Agent.Compression.Threshold do
   @min_reserved_output_tokens 1_024
   @max_reserved_output_tokens 32_768
 
+  # Stage 1 must reclaim down to this fraction of the window to be adopted.
+  @default_pruning_target_fraction 0.5
+
   @doc """
   Resolves the compression trigger for `llm_model`.
 
-  `llm_model` is anything `EvoGit.Config.Schema.LLM.model_metadata/1` accepts (a
-  `"provider:id"` string, a profile map, …). A model whose context window cannot
-  be determined falls back to
-  `[:llm, :compression_threshold_tokens]` with `window: nil` and
-  `source: :config`.
+  `llm_model` is anything `EvoGit.Config.Schema.LLM.model_metadata/1` accepts
+  (a `"provider:id"` string, a profile map, …); it is consulted ONLY for the
+  output reservation.
+
+  ## Options
+
+    * `:context_window` — the configured context window in tokens (a positive
+      integer); anything else falls back to
+      `EvoGit.Config.Schema.LLM.default_context_window/0`
+
+  ## Returns
+
+  `%{threshold: pos_integer, window: pos_integer, source: :window | :config}` —
+  `window` is ALWAYS the configured window (never nil).
   """
-  @spec for_model(term()) :: info()
-  def for_model(llm_model) do
-    case context_window(llm_model) do
-      {:ok, window, output_limit} ->
+  @spec for_model(term(), keyword()) :: info()
+  def for_model(llm_model, opts \\ []) do
+    window = configured_window(opts)
+
+    case config_threshold() do
+      threshold when is_integer(threshold) and threshold > 0 ->
+        %{threshold: threshold, window: window, source: :config}
+
+      _unset ->
         %{
-          threshold: threshold_for(window, output_limit),
+          threshold: threshold_for(window, output_limit(llm_model)),
           window: window,
           source: :window
         }
-
-      :unknown ->
-        %{
-          threshold: EvoGit.Config.resolve([:llm, :compression_threshold_tokens]),
-          window: nil,
-          source: :config
-        }
     end
   end
+
+  @doc """
+  The token count Stage-1 tool-result pruning must reach to be worth adopting.
+
+  `min(threshold, round(window * fraction))` — a prune that leaves the context
+  above this target is not considered a real recovery (it invalidated the
+  provider's cached prefix, so it has to buy real headroom).
+
+  A nil/unusable `window` yields the threshold itself (nothing tighter to aim
+  for), and a `fraction` outside the open interval `(0, 1)` — including
+  non-numbers — normalizes to `default_pruning_target_fraction/0`. Total: never
+  raises, an unusable `info` yields 0.
+  """
+  @spec pruning_target(map(), term()) :: non_neg_integer()
+  def pruning_target(info, fraction) when is_map(info) do
+    threshold = threshold_of(info)
+
+    case Map.get(info, :window) do
+      window when is_integer(window) and window > 0 ->
+        min(threshold, round(window * normalize_fraction(fraction)))
+
+      _unusable ->
+        threshold
+    end
+  end
+
+  def pruning_target(_info, _fraction), do: 0
+
+  @doc """
+  The default Stage-1 pruning target fraction of the window (0.5).
+  """
+  @spec default_pruning_target_fraction() :: float()
+  def default_pruning_target_fraction, do: @default_pruning_target_fraction
 
   @doc """
   Whether `total_tokens` is past the trigger.
@@ -156,28 +215,37 @@ defmodule EvoGit.Agent.Compression.Threshold do
 
   def project(total_tokens, _chars_before, _chars_after), do: total_tokens
 
-  ## Window discovery
+  ## Inputs
 
-  # One metadata read serves both the window and the output reservation. Anything
-  # unexpected (missing metadata, non-map limits, an unknown window) degrades to
-  # `:unknown` so `for_model/1` can fall back — this is a per-turn code path and
+  defp configured_window(opts) do
+    case Keyword.get(opts, :context_window) do
+      window when is_integer(window) and window > 0 ->
+        window
+
+      _unusable ->
+        EvoGit.Config.Schema.LLM.default_context_window()
+    end
+  end
+
+  # The override is optional: `nil` (the schema default) means "derive".
+  defp config_threshold do
+    EvoGit.Config.resolve([:llm, :compression_threshold_tokens])
+  end
+
+  # The catalog supplies ONLY the output reservation; `limits.context` is
+  # deliberately ignored (the configured window governs). Anything unexpected
+  # degrades to `nil` (→ the 8_192 default) — this is a per-turn code path and
   # must never raise.
-  defp context_window(llm_model) do
+  defp output_limit(llm_model) do
     case EvoGit.Config.Schema.LLM.model_metadata(llm_model) do
       %{} = metadata ->
         case Map.get(metadata, :limits) do
-          %{} = limits ->
-            case positive_integer(limit(limits, :context)) do
-              nil -> :unknown
-              window -> {:ok, window, positive_integer(limit(limits, :output))}
-            end
-
-          _other ->
-            :unknown
+          %{} = limits -> positive_integer(limit(limits, :output))
+          _other -> nil
         end
 
       _other ->
-        :unknown
+        nil
     end
   end
 
@@ -191,6 +259,18 @@ defmodule EvoGit.Agent.Compression.Threshold do
 
   defp positive_integer(value) when is_integer(value) and value > 0, do: value
   defp positive_integer(_value), do: nil
+
+  defp threshold_of(info) do
+    case Map.get(info, :threshold) do
+      threshold when is_integer(threshold) and threshold > 0 -> threshold
+      _other -> 0
+    end
+  end
+
+  defp normalize_fraction(fraction) when is_number(fraction) and fraction > 0 and fraction < 1,
+    do: fraction
+
+  defp normalize_fraction(_fraction), do: @default_pruning_target_fraction
 
   ## Formula
 

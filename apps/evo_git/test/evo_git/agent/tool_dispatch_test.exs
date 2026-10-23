@@ -603,6 +603,66 @@ defmodule EvoGit.Agent.ToolDispatchTest do
   end
 
   # ---------------------------------------------------------------------------
+  # current_context_window/0
+  # ---------------------------------------------------------------------------
+
+  # Registers a live agent-state row for `agent_id` (the app-global
+  # `:evogit_agent_state` ETS table, cleaned up by the caller) so the
+  # current-agent lookups resolve.
+  defp put_agent_state!(agent_id, overrides) do
+    state =
+      struct!(
+        EvoGit.AgentScheduler.AgentState,
+        Keyword.merge(
+          [
+            context_node: %EvoGit.Core.ContextNode{path: "./", repo: "/tmp/tool_dispatch"},
+            llm_model: "test:model",
+            max_retries: 1,
+            max_depth: 1
+          ],
+          overrides
+        )
+      )
+
+    :ok = EvoGit.AgentScheduler.Store.put_agent_state(agent_id, state)
+  end
+
+  describe "current_context_window/0" do
+    setup do
+      # Unique id so this row can never collide with a sibling test's; the
+      # process dictionary entry mirrors what Runner.setup_dispatch_context/1
+      # installs for a scheduled agent.
+      agent_id = 9_980_000 + :erlang.unique_integer([:positive])
+      Process.put(:evogit_agent_id, agent_id)
+
+      on_exit(fn ->
+        EvoGit.AgentScheduler.Store.delete_agent_state(agent_id)
+        Process.delete(:evogit_agent_id)
+      end)
+
+      %{agent_id: agent_id}
+    end
+
+    test "returns the current agent's configured context window", %{agent_id: agent_id} do
+      put_agent_state!(agent_id, llm_context_window: 131_072)
+
+      assert ToolDispatch.current_context_window() == 131_072
+    end
+
+    test "normalizes an absent/nil window to the 200_000 default", %{agent_id: agent_id} do
+      put_agent_state!(agent_id, llm_context_window: nil)
+
+      assert ToolDispatch.current_context_window() == 200_000
+    end
+
+    test "normalizes a non-positive window to the 200_000 default", %{agent_id: agent_id} do
+      put_agent_state!(agent_id, llm_context_window: 0)
+
+      assert ToolDispatch.current_context_window() == 200_000
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # maybe_append_redundant_cd_warning/5
   # ---------------------------------------------------------------------------
 

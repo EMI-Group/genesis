@@ -175,12 +175,32 @@ defmodule EvoGit.Config.Schema.Definitions do
       %{
         key_path: [:llm, :compression_threshold_tokens],
         type: :pos_integer,
-        default: 180_000,
+        default: nil,
         validation: [min: 1],
         category: :llm,
         sub_category: nil,
         description:
-          "Token count threshold that triggers context compression. When an agent's accumulated context (system prompt, conversation history, tool outputs) exceeds this token count, older context is compressed to avoid hitting the LLM's context window limit."
+          "Optional EXPLICIT override of the context-compression trigger in tokens. When unset (nil), the threshold is derived from the model profile's context_window: min(0.8W, W - reserved_output - 65_536) floored at min(32_000, 0.9W). When an agent's accumulated context exceeds the threshold, older context is compressed to avoid hitting the LLM's context window limit."
+      },
+      %{
+        key_path: [:llm, :tool_result_pruning],
+        type: :boolean,
+        default: true,
+        validation: [],
+        category: :llm,
+        sub_category: nil,
+        description:
+          "Stage-1 model-free pruning of old tool results before the summarising checkpoint. Pruning is only adopted when it recovers a lot (down to the target fraction of the window), because it invalidates the provider prefix cache."
+      },
+      %{
+        key_path: [:llm, :tool_result_pruning_target_fraction],
+        type: :float,
+        default: 0.5,
+        validation: [min: 0.0, max: 1.0],
+        category: :llm,
+        sub_category: nil,
+        description:
+          "Target fraction of the configured context window that Stage-1 tool-result pruning aims to reclaim before the summarising checkpoint. Range: 0.0–1.0."
       },
       %{
         key_path: [:llm, :temperature],
@@ -260,7 +280,7 @@ defmodule EvoGit.Config.Schema.Definitions do
         category: :llm,
         sub_category: nil,
         description:
-          "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty), and an optional provider_options map for provider-specific options (e.g. {store: false} for OpenAI). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
+          "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), optional context_window (positive integer, default 200000 — the model's context window in tokens, used as the context-compression window), optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty), and an optional provider_options map for provider-specific options (e.g. {store: false} for OpenAI). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
       },
       # ── User ───────────────────────────────────────────────────────────
       %{

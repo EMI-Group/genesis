@@ -2,29 +2,43 @@ defmodule EvoGit.Agent.ContextCompression do
   @moduledoc """
   Two-stage context compression for the agent loop.
 
-  When the conversation's reported token count passes the window-relative
-  trigger, the transcript is relieved in TWO stages, cheapest first:
+  When the conversation's reported token count passes the configured
+  window-relative trigger, the transcript is relieved in TWO stages, cheapest
+  first:
 
     1. **Stage 1 — model-free pruning**
        (`EvoGit.Agent.Compression.ToolResultPruner`): the TEXT of old `:tool`
        results is rewritten to head + marker + tail and old media parts collapse
-       into one placeholder. NO LLM call. When the projected token count falls
-       back under the trigger, this IS the whole compression — the main cost
-       win.
+       into one placeholder. NO LLM call.
     2. **Stage 2 — summarising checkpoint**
-       (`EvoGit.Agent.Compression.Checkpoint`): only when pruning was not
-       enough. The OLD span of the transcript (everything older than the last
+       (`EvoGit.Agent.Compression.Checkpoint`): the OLD span of the transcript
+       (everything older than the last
        `EvoGit.Agent.Compression.Recency.default_keep_recent_turns/0` turns) is
        replaced by ONE checkpoint message carrying a summary written by the
        model from `EvoGit.Agent.Compression.SummaryPrompt.instruction/1`.
 
-  ## Why two stages
+  ## Stage 1 is gated hard — it must recover a LOT
 
-  Summarising costs a full LLM call over the WHOLE transcript, and most of the
-  pressure in a long agent run is raw tool output (build logs, `rg` dumps, file
-  reads) the agent has already drawn its conclusion from. Shrinking that is
-  free, so it is always tried first; only the residue pruning cannot remove —
-  an enormous RECENT tail — is worth paying a summarising call for.
+  Stage 1 exists for ONE situation: the agent accidentally read a lot of huge
+  text (a build log, an `rg` dump, a file read it drew one conclusion from).
+  Rewriting those old tool results changes the transcript, so it INVALIDATES the
+  provider's prefix cache for the rest of the run; a prune that saves a little is
+  therefore a net loss.
+
+  Consequently pruning is adopted ONLY when it pruned something AND the projected
+  token count lands at or under the Stage-1 target — a fraction of the configured
+  window (`EvoGit.Agent.Compression.Threshold.pruning_target/2`, default
+  `0.5` of the window) — AND it actually reduced the reported count. Anything
+  less falls through to Stage 2 instead of adopting the prune.
+
+  ## Stage 2 deliberately reads the ORIGINAL transcript
+
+  Stage 2 pays for a full summarising request, and it sends the ORIGINAL,
+  un-pruned message list rather than a pruned one. Pruning the request body would
+  make that request cheaper but would feed the summariser the very information
+  the summary is supposed to preserve — so the larger request is the deliberate
+  choice: information loss is worse than one bigger call. The pruned list is used
+  ONLY as the adopted result of Stage 1.
 
   ## What is never touched
 
@@ -49,7 +63,8 @@ defmodule EvoGit.Agent.ContextCompression do
 
       case EvoGit.Agent.ContextCompression.compress_if_needed(state,
              agent_id: state.agent_id,
-             llm_model: EvoGit.Agent.ToolDispatch.current_model()
+             llm_model: EvoGit.Agent.ToolDispatch.current_model(),
+             llm_context_window: EvoGit.Agent.ToolDispatch.current_context_window()
            ) do
         %EvoGit.Agent.LoopState{} = state ->
           # continue the turn with the compressed (or unchanged) state
@@ -77,15 +92,18 @@ defmodule EvoGit.Agent.ContextCompression do
   Attempts to compress the agent's chat context if it exceeds the token
   threshold.
 
-  The threshold is window-relative: `EvoGit.Agent.Compression.Threshold.for_model/1`
-  derives it from the model's own context window, falling back to
-  `EvoGit.Config.resolve([:llm, :compression_threshold_tokens])` when the window
-  is unknown.
+  The threshold is window-relative: `EvoGit.Agent.Compression.Threshold.for_model/2`
+  derives it from the CONFIGURED context window (`:llm_context_window`), with
+  `[:llm, :compression_threshold_tokens]` acting as an optional explicit
+  override.
 
   ## Options
 
     * `:agent_id` — the agent's ID (required, used for logging and LLM slot acquisition)
-    * `:llm_model` — the model to use for the stage-2 summarising call (required)
+    * `:llm_model` — the model to use for the stage-2 summarising call (required;
+      also the source of the catalog output reservation)
+    * `:llm_context_window` — the configured context window in tokens (optional;
+      defaults to `EvoGit.Config.Schema.LLM.default_context_window/0` = 200_000)
     * `:llm_generation_params` — keyword list of LLM generation params (temperature, max_tokens, etc.) passed to ReqLLM (optional, defaults to [])
 
   ## Returns
@@ -101,12 +119,12 @@ defmodule EvoGit.Agent.ContextCompression do
       `Runner.run/3` unchanged.
 
   Every OTHER stage-2 LLM failure (transient transport errors, 5xx, 402/429
-  model exhaustion) still RAISES — see `do_compression_llm_call/6` — so the
-  pre-existing crash-retry / scheduler-backoff semantics for those classes are
-  unchanged. There is deliberately NO silent "fall back to the pruned context"
-  degradation: the retained last-K-turns tail may itself exceed the window, so a
-  silent fallback would just defer the overflow to the very next LLM request (a
-  hard provider error) with no operator-visible signal.
+  model exhaustion) still RAISES — see `EvoGit.Agent.Compression.LlmRetry` — so
+  the pre-existing crash-retry / scheduler-backoff semantics for those classes
+  are unchanged. There is deliberately NO silent "fall back to the pruned
+  context" degradation: the retained last-K-turns tail may itself exceed the
+  window, so a silent fallback would just defer the overflow to the very next
+  LLM request (a hard provider error) with no operator-visible signal.
   """
   @spec compress_if_needed(LoopState.t(), keyword()) ::
           LoopState.t() | {:error, {:llm_request_rejected, String.t()}}
@@ -115,9 +133,16 @@ defmodule EvoGit.Agent.ContextCompression do
     llm_model = Keyword.fetch!(opts, :llm_model)
     llm_gen_opts = Keyword.get(opts, :llm_generation_params, [])
 
-    info = Threshold.for_model(llm_model)
+    llm_context_window =
+      Keyword.get(
+        opts,
+        :llm_context_window,
+        EvoGit.Config.Schema.LLM.default_context_window()
+      )
 
-    # Gate on the model's own window BEFORE doing any work: below the trigger
+    info = Threshold.for_model(llm_model, context_window: llm_context_window)
+
+    # Gate on the configured window BEFORE doing any work: below the trigger
     # there is nothing to compress, so no log line and no LLM slot are spent.
     if Threshold.exceeded?(state.total_tokens, info) do
       case ReqLLM.Context.to_list(state.context) do
@@ -137,32 +162,66 @@ defmodule EvoGit.Agent.ContextCompression do
   # --- Orchestration ---
 
   defp compress(agent_id, llm_model, llm_gen_opts, info, state, messages) do
-    # STAGE 1 — model-free. Always runs first: it is cheap, and when it is
-    # enough it saves the entire summarising call.
-    pruned = ToolResultPruner.prune(messages)
-    projected = Threshold.project(state.total_tokens, pruned.chars_before, pruned.chars_after)
+    target = Threshold.pruning_target(info, pruning_target_fraction())
 
     Logger.info(
       "Agent #{agent_id}: Context length (#{state.total_tokens} tokens) exceeded the compression " <>
-        "threshold (#{info.threshold} tokens, source: #{info.source}). Stage 1 pruned " <>
-        "#{pruned.pruned} old tool result(s): #{pruned.chars_before} -> #{pruned.chars_after} chars " <>
-        "(projected #{projected} tokens)."
+        "threshold (#{info.threshold} tokens, source: #{info.source}, window: " <>
+        "#{Map.get(info, :window)} tokens). Stage 1 target: #{target} tokens."
     )
 
-    # Pruning alone is enough: rebuild from the pruned list and spend nothing.
-    if pruned.pruned > 0 and projected <= info.threshold do
-      finish_pruned_only(state, agent_id, pruned.messages)
+    if tool_result_pruning_enabled?() do
+      prune_or_summarise(agent_id, llm_model, llm_gen_opts, info, target, state, messages)
     else
-      summarise(agent_id, llm_model, llm_gen_opts, pruned, state)
+      Logger.info(
+        "Agent #{agent_id}: stage 1 (tool-result pruning) disabled by config — stage 2 " <>
+          "(summarising) runs over the ORIGINAL #{length(messages)} message(s)."
+      )
+
+      summarise(agent_id, llm_model, llm_gen_opts, state, messages)
     end
+  end
+
+  # STAGE 1 — model-free. Adopted only when it recovered a LOT: pruning rewrites
+  # history and therefore invalidates the provider's cached prefix, so a small
+  # saving is not worth it. Otherwise Stage 2 runs over the ORIGINAL list.
+  defp prune_or_summarise(agent_id, llm_model, llm_gen_opts, info, target, state, messages) do
+    pruned = ToolResultPruner.prune(messages)
+    projected = Threshold.project(state.total_tokens, pruned.chars_before, pruned.chars_after)
+
+    if adopt_pruned?(pruned, projected, target, state.total_tokens) do
+      Logger.info(
+        "Agent #{agent_id}: stage 1 adopted — pruned #{pruned.pruned} old tool result(s): " <>
+          "#{pruned.chars_before} -> #{pruned.chars_after} chars (projected #{projected} tokens, " <>
+          "target #{target} tokens ≤ threshold #{info.threshold} tokens). " <>
+          "Keeping the pruned context; no LLM call."
+      )
+
+      keep_context(state, agent_id, pruned.messages, nil)
+    else
+      Logger.info(
+        "Agent #{agent_id}: stage 1 rejected — pruned #{pruned.pruned} old tool result(s): " <>
+          "#{pruned.chars_before} -> #{pruned.chars_after} chars (projected #{projected} tokens, " <>
+          "target #{target} tokens, current #{state.total_tokens} tokens). " <>
+          "Stage 2 (summarising) runs over the ORIGINAL context."
+      )
+
+      summarise(agent_id, llm_model, llm_gen_opts, state, messages)
+    end
+  end
+
+  # Adoption needs ALL THREE: something was actually pruned, the projection
+  # reached the Stage-1 target, and the reported count really came down.
+  defp adopt_pruned?(pruned, projected, target, total_tokens) do
+    pruned.pruned > 0 and projected <= target and projected < total_tokens
   end
 
   # STAGE 2 — replace the old span with ONE checkpoint. Skipped entirely when
   # there is nothing older than the protected last-K-turns suffix: an LLM call
   # would have nothing to replace (`Checkpoint.build/3` would report
   # `replaced: 0`), so paying for it is pure waste.
-  defp summarise(agent_id, llm_model, llm_gen_opts, pruned, state) do
-    split = Checkpoint.split(pruned.messages)
+  defp summarise(agent_id, llm_model, llm_gen_opts, state, messages) do
+    split = Checkpoint.split(messages)
 
     if split.old == [] do
       Logger.info(
@@ -170,21 +229,21 @@ defmodule EvoGit.Agent.ContextCompression do
           "#{length(split.recent)} message(s) to replace — stage 2 (summarising) skipped."
       )
 
-      finish_pruned_only(state, agent_id, pruned.messages)
+      finish_without_checkpoint(state, agent_id, messages)
     else
-      summarise_old_span(agent_id, llm_model, llm_gen_opts, pruned, state)
+      summarise_old_span(agent_id, llm_model, llm_gen_opts, state, messages)
     end
   end
 
-  defp summarise_old_span(agent_id, llm_model, llm_gen_opts, pruned, state) do
-    # The summarising model reads the PRUNED transcript plus ONE appended
-    # instruction message — never the raw list, so a huge old tool result is not
-    # paid for twice. A prior checkpoint's summary is merged in so repeated
-    # compactions ACCUMULATE instead of forgetting earlier facts.
-    instruction = SummaryPrompt.instruction(Checkpoint.prior_summary(pruned.messages))
+  defp summarise_old_span(agent_id, llm_model, llm_gen_opts, state, messages) do
+    # The summarising model reads the ORIGINAL transcript plus ONE appended
+    # instruction message. Deliberately NOT the pruned list: pruning would make
+    # this request cheaper but would hide from the summariser exactly what the
+    # summary must preserve. A prior checkpoint's summary is merged in so
+    # repeated compactions ACCUMULATE instead of forgetting earlier facts.
+    instruction = SummaryPrompt.instruction(Checkpoint.prior_summary(messages))
 
-    context =
-      ReqLLM.Context.new(pruned.messages ++ [ReqLLM.Context.user(instruction)])
+    context = ReqLLM.Context.new(messages ++ [ReqLLM.Context.user(instruction)])
 
     case LlmRetry.summarise(agent_id, llm_model, context, llm_gen_opts) do
       {:ok, response} ->
@@ -192,7 +251,7 @@ defmodule EvoGit.Agent.ContextCompression do
         # Read the usage map ONCE — it feeds both the token counts
         # (`Usage.from_response_usage/1`) and the self-computed cost.
         usage_map = ReqLLM.Response.usage(response)
-        built = Checkpoint.build(pruned.messages, summary, turn: state.turn)
+        built = Checkpoint.build(messages, summary, turn: state.turn)
 
         compression_usage =
           Usage.from_response_usage(usage_map)
@@ -200,17 +259,17 @@ defmodule EvoGit.Agent.ContextCompression do
 
         if built.replaced == 0 do
           # A blank summary must never fabricate a checkpoint that silently
-          # drops the transcript, so the pruned context is what we keep — but
+          # drops the transcript, so the ORIGINAL context is what we keep — but
           # the request WAS billed, so its usage is still accounted for.
-          keep_pruned_context(state, agent_id, pruned.messages, compression_usage)
+          keep_context(state, agent_id, messages, compression_usage)
         else
-          context = built.messages ++ refresh_messages(state)
+          rebuilt = built.messages ++ refresh_messages(state)
 
           AgentScheduler.increment_compression_count(agent_id)
 
           %{
             state
-            | context: ReqLLM.Context.new(context),
+            | context: ReqLLM.Context.new(rebuilt),
               total_tokens: 0,
               usage: Usage.add(state.usage, compression_usage)
           }
@@ -227,15 +286,15 @@ defmodule EvoGit.Agent.ContextCompression do
     end
   end
 
-  # The prune-only finish shared by (a) "pruning was enough", (b) "nothing older
-  # than the recent tail to replace" and (c) "the summary came back blank". The
-  # messages are NOT shortened by this stage, so the context is only rebuilt
-  # with the pruned tool text plus the runtime-context refresh appended.
-  defp finish_pruned_only(state, agent_id, messages) do
-    keep_pruned_context(state, agent_id, messages, nil)
+  # The no-checkpoint finish shared by (a) "nothing older than the recent tail
+  # to replace" and (b) "the summary came back blank". The messages are the
+  # ORIGINAL list, so the context is only rebuilt with the runtime-context
+  # refresh appended.
+  defp finish_without_checkpoint(state, agent_id, messages) do
+    keep_context(state, agent_id, messages, nil)
   end
 
-  defp keep_pruned_context(state, agent_id, messages, compression_usage) do
+  defp keep_context(state, agent_id, messages, compression_usage) do
     AgentScheduler.increment_compression_count(agent_id)
 
     usage =
@@ -263,15 +322,22 @@ defmodule EvoGit.Agent.ContextCompression do
     end
   end
 
-  # --- Stage-2 LLM call ---
+  # --- Stage-1 gating config ---
 
-  # The bounded retry loop, the slot-per-attempt discipline and the failure
-  # classification live in `EvoGit.Agent.Compression.LlmRetry` (mirroring
-  # `EvoGit.Agent.ToolDispatch.call_llm_with_retry/5` exactly). Two outcomes
-  # matter to this module: `{:ok, response}` to build the checkpoint, and the
-  # terminal `{:error, {:llm_request_rejected, message}}` for a NON-RETRYABLE
-  # provider rejection. Every other failure class RAISES out of there, preserving
-  # the pre-existing crash-retry / scheduler-backoff semantics.
+  # Anything that is not an explicit `false` keeps pruning enabled: the key's
+  # schema default is `true` and a nil/unreadable value must not silently change
+  # the pipeline.
+  defp tool_result_pruning_enabled? do
+    case EvoGit.Config.resolve([:llm, :tool_result_pruning]) do
+      false -> false
+      _other -> true
+    end
+  end
+
+  defp pruning_target_fraction do
+    EvoGit.Config.resolve([:llm, :tool_result_pruning_target_fraction])
+  end
+
   @doc """
   The stage-2 summarisation instruction (backward-compatible entry point).
 
