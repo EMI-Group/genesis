@@ -45,7 +45,7 @@ Commit messages: `Add skill <name>`, `Edit skill <name>`, `Remove skill <name>`,
 
 ## Write-Tool Classification
 
-`tools.ex:42-58` `@write_tools` includes `skill_add skill_edit skill_remove skill_enable skill_disable` (NOT `skill_list`/`skill_read`/`skill_where`). `serial_tool?/1` (`tools.ex:249-276`) derives `@serial_tools = @write_tools -- ["run_bash","run_powershell","run_git","curl"]`, so all five skill writers are SERIAL (executed one-at-a-time in the parent agent process by `ToolDispatch.batch_execute_tools/4`) — which is also what makes their read-modify-write-then-commit sequences safe within a batch. Classification drives the repo-less / read-only-foreign-repo write gates (`tools.ex:224-232,284-330`) and serialization.
+`tools.ex:42-58` `@write_tools` includes `skill_add skill_edit skill_remove skill_enable skill_disable` (NOT `skill_list`/`skill_read`/`skill_where`). `serial_tool?/1` (`tools.ex:249-276`) derives `@serial_tools = @write_tools -- ["run_bash","run_powershell","run_git","bash"]`, so all five skill writers are SERIAL (executed one-at-a-time in the parent agent process by `ToolDispatch.batch_execute_tools/4`) — which is also what makes their read-modify-write-then-commit sequences safe within a batch. Classification drives the repo-less / read-only-foreign-repo write gates (`tools.ex:224-232,284-330`) and serialization.
 
 ## Constraints
 - Skill files live in `.agents/skills/` — hardcoded in `EvoGit.Skills.skills_dir/0` (`skills.ex:63`), not configurable by the tool layer.
