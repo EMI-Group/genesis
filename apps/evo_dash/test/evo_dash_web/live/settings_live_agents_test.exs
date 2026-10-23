@@ -100,6 +100,18 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     render_hook(view, "save_custom_agent", params)
   end
 
+  # The `value`s of the agent editor's `tools[]` checkboxes that render CHECKED
+  # (alias-aware: a chip whose label is the model-facing name still submits the
+  # agent's own saved spelling as its value).
+  defp checked_tool_values(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s(input[name="tools[]"]))
+    |> Enum.filter(fn el -> Floki.attribute(el, "checked") != [] end)
+    |> Enum.map(fn el -> List.first(Floki.attribute(el, "value")) end)
+    |> MapSet.new()
+  end
+
   # Builds a `%{ok: [...], errors: []}` custom-tools status carrying a single ok
   # entry (the shape `EvoGit.CustomTools.status/0` yields and the panel
   # consumes).
@@ -489,6 +501,43 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
       refute html =~ "Unknown tool names"
       assert html =~ ~s(value="read_file")
+    end
+
+    # The core renamed the MODEL-FACING schema names (`read`, `write`, `bash`, …)
+    # while `agents.toml` may carry any accepted spelling. The editor must
+    # resolve both spellings onto the same tool concept: no bogus warning, the
+    # new-name chip CHECKED, and the agent's own saved spelling preserved in the
+    # submitted value (never rewrite user config).
+    test "treats legacy tool spellings as known and preserves the saved spelling", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      # `read_file`/`run_bash` are the legacy spellings of the `read`/`bash`
+      # concept chips. (`web_search` is deliberately not exercised here: its
+      # schema is env-gated — without a web-search backend it is absent from
+      # `Tools.schemas()`, so it is not a built-in tool name in this env.)
+      save_agent(view, %{"name" => "Legacy", "tools" => ["read_file", "run_bash"]})
+
+      html = render_hook(view, "edit_custom_agent", %{"id" => "legacy"})
+
+      refute html =~ "Unknown tool names"
+
+      checked = checked_tool_values(html)
+      assert MapSet.member?(checked, "read_file")
+      assert MapSet.member?(checked, "run_bash")
+      # The chips are labelled with the NEW model-facing names, so nothing
+      # submits the new spelling when the agent saved the legacy one.
+      refute MapSet.member?(checked, "read")
+      refute MapSet.member?(checked, "bash")
+
+      # A genuinely unknown name alongside the legacy spellings still warns.
+      save_agent(view, %{"name" => "Legacy Mixed", "tools" => ["read_file", "bogus_tool"]})
+
+      html = render_hook(view, "edit_custom_agent", %{"id" => "legacy_mixed"})
+
+      assert html =~
+               "Unknown tool names: bogus_tool. They are neither built-in tools nor loaded custom tools."
+
+      assert MapSet.member?(checked_tool_values(html), "read_file")
     end
   end
 

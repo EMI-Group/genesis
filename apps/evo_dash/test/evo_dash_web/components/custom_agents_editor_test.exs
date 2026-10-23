@@ -116,6 +116,72 @@ defmodule EvoDashWeb.CustomAgentsEditorTest do
     end
   end
 
+  # The core renamed the MODEL-FACING tool names (`read`, `write`, `edit`,
+  # `bash`, `web_search`, …) while `agents.toml` may carry any accepted spelling
+  # (`read_file`, `run_bash`, `search_web`, …). Every name comparison here is
+  # alias-aware through `EvoGit.Agent.ToolNames`.
+  describe "custom_agents_editor/1 — tool-name aliases" do
+    test "a legacy tool spelling checks the model-facing chip and renders no warning" do
+      html =
+        render_edit_form(
+          %{id: @agent_id, tools: ["read_file", "run_bash"]},
+          custom_tool_names: []
+        )
+
+      doc = parse(html)
+
+      # The `read` / shell concept chips are CHECKED …
+      read_chips = Floki.find(doc, ~s(input[name="tools[]"][value="read_file"]))
+      assert length(read_chips) == 1
+      assert attribute(hd(read_chips), "checked") != []
+
+      shell_chips = Floki.find(doc, ~s(input[name="tools[]"][value="run_bash"]))
+      assert length(shell_chips) == 1
+      assert attribute(hd(shell_chips), "checked") != []
+
+      # … while the NEW spelling is only the visible label, never the submitted
+      # value — the agent's own saved spelling is preserved, so a UI re-save
+      # never rewrites `agents.toml`.
+      assert Floki.find(doc, ~s(input[name="tools[]"][value="read"])) == []
+
+      # A legacy spelling is a KNOWN tool, so the amber diagnostic is absent.
+      assert Floki.find(doc, ~s(p[class*="text-warning"])) == []
+      refute html =~ "Unknown tool names"
+    end
+
+    test "a custom tool named after a legacy alias of a built-in is dropped" do
+      html =
+        render_edit_form(
+          %{id: @agent_id, tools: ["my_custom_tool"]},
+          custom_tool_names: ["read_file", "my_custom_tool"]
+        )
+
+      doc = parse(html)
+
+      # Exactly ONE chip for the read concept: the built-in one.
+      read_chips =
+        doc
+        |> Floki.find(~s(input[name="tools[]"]))
+        |> Enum.filter(fn el ->
+          el
+          |> Floki.attribute("value")
+          |> List.first()
+          |> EvoGit.Agent.ToolNames.normalize() == "read_file"
+        end)
+
+      assert [read_chip] = read_chips
+      assert attribute(read_chip, "value") == ["read"]
+      assert attribute(read_chip, "checked") == []
+
+      # The alias never leaks into the custom group, which still carries the
+      # genuinely custom tool.
+      group = custom_tools_group(html)
+      assert group, "expected a rendered \"Custom tools\" group"
+      assert Floki.find(group, ~s(input[name="tools[]"][value="read_file"])) == []
+      assert length(Floki.find(group, ~s(input[name="tools[]"][value="my_custom_tool"]))) == 1
+    end
+  end
+
   # --- helpers ---
 
   # Renders the editor in edit mode: `editing_agent_id` must match the agent's

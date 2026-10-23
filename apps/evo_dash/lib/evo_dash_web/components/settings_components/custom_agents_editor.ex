@@ -10,6 +10,13 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
 
   use EvoDashWeb, :html
 
+  # Every tool-name comparison in this module is ALIAS-AWARE: the core renamed
+  # the model-facing schema names (`read`, `write`, `edit`, `bash`,
+  # `web_search`, …) while `agents.toml` may carry any accepted spelling
+  # (`read_file`, `run_bash`, `search_web`, …). `ToolNames` is the spine that
+  # resolves both spellings onto the same internal dispatch key.
+  alias EvoGit.Agent.ToolNames
+
   import EvoDashWeb.SettingsComponents.CardShell, only: [card_shell: 1]
 
   import EvoDashWeb.SettingsComponents.FormFooter, only: [form_footer: 1]
@@ -323,27 +330,28 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
         </label>
         <% tools = agent_tools(@agent) %>
         <% builtin_tools = tool_names() %>
+        <% builtin_chips = builtin_tool_chips(tools) %>
         <% custom_tools = custom_tool_chips(@custom_tool_names, builtin_tools) %>
         <div class="flex flex-wrap gap-2">
-          <%= for tool <- builtin_tools do %>
+          <%= for {label, value} <- builtin_chips do %>
             <label class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-base-300 bg-base-200/50 cursor-pointer text-xs font-mono hover:bg-base-200">
               <input
                 type="checkbox"
                 name="tools[]"
-                value={tool}
-                checked={tool in tools}
+                value={value}
+                checked={ToolNames.matches_any?(label, tools)}
                 class="checkbox checkbox-xs"
               />
-              {tool}
+              {label}
             </label>
           <% end %>
         </div>
-
         <%!-- Custom tool modules loaded from `<config_dir>/tools/` — an
              ADDITIONAL chip group with the SAME `tools[]` checkbox markup, so
              the save path and `save_custom_agent` parsing are unchanged.
              Order follows the incoming `@custom_tool_names`; names that
-             collide with a built-in tool are dropped (the built-in chip
+             collide with a built-in tool (alias-aware, so `read_file` collides
+             with the `read` concept chip) are dropped (the built-in chip
              already covers them). --%>
         <%= if custom_tools != [] do %>
           <div class="mt-3">
@@ -505,30 +513,56 @@ defmodule EvoDashWeb.SettingsComponents.CustomAgentsEditor do
     |> Enum.reject(&is_nil/1)
   end
 
-  # Loaded custom tool names minus the built-in ones (a built-in chip already
-  # covers a colliding name). Blank/non-binary entries are dropped and the
-  # incoming order is preserved.
-  defp custom_tool_chips(custom_names, builtin) do
-    builtin_set = MapSet.new(builtin)
+  # Built-in chips as `{label, submitted_value}` pairs. The visible LABEL is
+  # always the built-in (model-facing) name, e.g. `read`; the submitted `value`
+  # PRESERVES the agent's own saved spelling when that tool concept is already
+  # selected under an alias (saved `read_file` + chip `read` → `value="read_file"`),
+  # so a legacy `agents.toml` spelling survives a UI re-save unchanged — the
+  # dashboard never silently rewrites user config. With no saved spelling the
+  # value falls back to the built-in name itself.
+  defp builtin_tool_chips(tools) do
+    Enum.map(tool_names(), fn name -> {name, saved_tool_spelling(name, tools) || name} end)
+  end
 
+  # The agent's OWN saved spelling of the tool concept `builtin_name` resolves
+  # to, or nil when the agent does not select that concept at all (alias-aware
+  # and case-insensitive — `ToolNames.normalize/1` down-cases).
+  defp saved_tool_spelling(builtin_name, tools) do
+    key = ToolNames.normalize(builtin_name)
+
+    tools
+    |> Enum.map(&tool_name_string/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.find(fn saved -> ToolNames.normalize(saved) == key end)
+  end
+
+  # Loaded custom tool names minus the built-in ones (a built-in chip already
+  # covers a colliding name — the collision test is ALIAS-AWARE, so a custom
+  # tool literally named `read_file` is dropped in favour of the built-in `read`
+  # concept chip instead of rendering a duplicate chip). Blank/non-binary
+  # entries are dropped and the incoming order is preserved; names that are not
+  # an alias of a built-in concept (e.g. `my_custom_tool`) are unaffected.
+  defp custom_tool_chips(custom_names, builtin) do
     custom_names
     |> Enum.filter(&is_binary/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.uniq()
-    |> Enum.reject(&MapSet.member?(builtin_set, &1))
+    |> Enum.reject(&ToolNames.matches_any?(&1, builtin))
   end
 
   # UI-only diagnostic: names selected on the agent that match NEITHER a
-  # built-in tool NOR a loaded custom tool. Never validated/blocked here — the
-  # `agents.toml` store stays lenient.
+  # built-in tool NOR a loaded custom tool. Alias-aware and case-insensitive, so
+  # a legacy spelling (`read_file`, `run_bash`, `search_web`, …) is KNOWN.
+  # Never validated/blocked here — the `agents.toml` store stays lenient (the
+  # core's `:invalid_tools` semantics live in `EvoGit.CustomAgents.validate/1`).
   defp unknown_tools(tools, builtin, custom_tools) do
-    known = MapSet.new(builtin ++ custom_tools)
+    known = builtin ++ custom_tools
 
     tools
     |> Enum.map(&tool_name_string/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
-    |> Enum.reject(&MapSet.member?(known, &1))
+    |> Enum.reject(&ToolNames.matches_any?(&1, known))
   end
 
   defp tool_name_string(tool) when is_binary(tool), do: if(tool == "", do: nil, else: tool)
