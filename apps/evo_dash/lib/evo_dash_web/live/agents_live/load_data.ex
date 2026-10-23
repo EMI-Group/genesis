@@ -11,7 +11,7 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
   resolved at call time so tests can inject fakes.
   """
 
-  alias EvoDashWeb.AgentsLive.ThresholdCache
+  alias EvoDashWeb.AgentsLive.{ContextMeter, ThresholdCache}
 
   @doc """
   Full page load: agent summaries + the node's config status (layout banner)
@@ -126,6 +126,10 @@ defmodule EvoDashWeb.AgentsLive.LoadData do
         compression_count: compression_count,
         compression_threshold: threshold,
         compression_pct: compression_pct,
+        # The model's context window (the Context meter's full-bar width).
+        # OPTIONAL in the summary — remote/older daemons omit it, in which
+        # case the core default (200_000) applies.
+        context_window: ContextMeter.context_window_from(summary),
         # History-gate input: number of messages in the agent's session-memory
         # context (0 for not-yet-dispatched agents). NOT the history itself —
         # the full history is fetched lazily and only when this count changes.

@@ -27,6 +27,7 @@ defmodule EvoDashWeb.AgentsLive do
   alias EvoDashWeb.AgentsLive.{
     CommitGraph,
     CommitGraphRefresh,
+    ContextMeter,
     HistoryGate,
     LoadData,
     OptimisticMessages,
@@ -1337,6 +1338,7 @@ defmodule EvoDashWeb.AgentsLive do
       # Track old parent_id for children recalculation
       old_parent_id = agent.parent_id
       previous_threshold = agent.compression_threshold
+      previous_context_window = ContextMeter.context_window_from(agent)
 
       # Convert changed_fields keyword list to a map for merging
       changed_map =
@@ -1356,6 +1358,19 @@ defmodule EvoDashWeb.AgentsLive do
 
           _ ->
             %{agent | compression_threshold: restore_threshold(previous_threshold, socket)}
+        end
+
+      # The optional :context_window is NOT part of the delta contract — the
+      # merge above therefore keeps the row's value when the delta omits it.
+      # A delta carrying an unusable value (nil/non-positive/non-integer) must
+      # never reset a known window back to the 200_000 default.
+      agent =
+        case Map.get(changed_map, :context_window) do
+          window when is_integer(window) and window > 0 ->
+            %{agent | context_window: window}
+
+          _ ->
+            %{agent | context_window: previous_context_window}
         end
 
       # Recalculate compression_pct when total_tokens OR the threshold changed.
@@ -1667,6 +1682,10 @@ defmodule EvoDashWeb.AgentsLive do
          compression_count: compression_count,
          compression_threshold: compression_threshold,
          compression_pct: compression_pct,
+         # The model's context window (the Context meter's full-bar width).
+         # OPTIONAL in the summary — absent on remote/older daemons, in which
+         # case the core default (200_000) applies.
+         context_window: ContextMeter.context_window_from(summary),
          # History-gate input: number of messages in the agent's context. NOT
          # recorded into the gate here — the history is empty until first fetch,
          # and recording a count would wrongly suppress the fetch on selection.
