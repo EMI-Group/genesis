@@ -118,10 +118,17 @@ defmodule EvoGit.Sandbox.Background do
   Called from the registry GenServer process, so any Port opened here is OWNED
   by the registry: it receives `{port, {:data, chunk}}` and
   `{port, {:exit_status, code}}` messages.
+
+  Errors are `{:error, term()}` for EVERY backend, including
+  `{:error, {:invalid_spec, spec}}` (an incomplete/blank spec) and
+  `{:error, {:cwd_missing, String.t()}}` (the working directory does not exist —
+  validated up front, so no backend can hand back a handle for a job that never
+  ran).
   """
   @spec spawn(spec()) :: {:ok, handle()} | {:error, term()}
   def spawn(spec) do
-    with :ok <- validate_spec(spec) do
+    with :ok <- validate_spec(spec),
+         :ok <- validate_cwd(spec) do
       do_spawn(EvoGit.Sandbox.backend(), spec)
     end
   rescue
@@ -702,6 +709,19 @@ defmodule EvoGit.Sandbox.Background do
   end
 
   defp validate_spec(spec), do: {:error, {:invalid_spec, spec}}
+
+  # The working directory is validated for EVERY backend, not just the ones that
+  # notice: an unusable cwd fails the systemd-run client loudly, but
+  # `Port.open/2` happily accepts a `{:cd, dir}` that does not exist and the
+  # child then dies in the port-setup `chdir` (exit status 2, before `exec`), so
+  # the port path would otherwise answer `{:ok, handle}` for a job that never
+  # ran. This is the layer-below backstop for the registry's own
+  # `normalize_start_spec/1` check, which already rejects a missing cwd with
+  # prose before reaching here. Runs only after `validate_spec/1` succeeded, so
+  # `cwd` is always a binary here.
+  defp validate_cwd(%{cwd: cwd}) when is_binary(cwd) do
+    if File.dir?(cwd), do: :ok, else: {:error, {:cwd_missing, cwd}}
+  end
 
   # Resolves an executable to an absolute path — `Port.open/2`'s
   # `:spawn_executable` does no PATH search. Raises `:enoent` (caught by the

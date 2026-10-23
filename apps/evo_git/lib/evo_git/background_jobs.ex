@@ -5,7 +5,7 @@ defmodule EvoGit.BackgroundJobs do
   `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the sandbox scratch directory, so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read.
   Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
   Completion detection — two mechanisms, both cheap and idempotent: **lazy** (every `read/2` / `list/1` reconciles a live job against the backend via `EvoGit.Sandbox.detached_status/1` before answering, so a job that ended reports as finished with no notification) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains, and `:port` handles need no tick because their exit arrives as a port message).
-  Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1`, `read/2` (and a dead/unreachable registry); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
+  Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1` and `read/2` answer `{:error, message}` for EVERY failure INCLUDING an unreachable registry (the dead-registry fallback is wrapped in that tuple at both call sites, since their callers pattern-match it exactly); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   """
 
   use GenServer
@@ -108,7 +108,7 @@ defmodule EvoGit.BackgroundJobs do
   @spec start_job(map() | keyword()) :: {:ok, job()} | {:error, String.t()}
   def start_job(spec) do
     with {:ok, normalized} <- normalize_start_spec(spec) do
-      call_registry({:start_job, normalized}, registry_down_error())
+      call_registry({:start_job, normalized}, {:error, registry_down_error()})
     end
   end
 
@@ -132,7 +132,7 @@ defmodule EvoGit.BackgroundJobs do
     with {:ok, max_bytes} <- normalize_max_bytes(Keyword.get(opts, :max_bytes)) do
       call_registry(
         {:read, id, Keyword.get(opts, :owner_pid), max_bytes},
-        registry_down_error()
+        {:error, registry_down_error()}
       )
     end
   end
@@ -331,6 +331,9 @@ defmodule EvoGit.BackgroundJobs do
 
   @impl true
   def init(_opts) do
+    # Trapping exits is what makes `terminate/2` reachable on a shutdown that is not an explicit `GenServer.stop/2`: an UNTRAPPED exit signal from the supervisor kills this process outright, so the "kill every live job" defence would never run. Trapped, the `:gen_server` behaviour turns the PARENT's exit signal into a `terminate/2` call, while any other linked exit reaches the `{:EXIT, pid, reason}` handler below (logged, registry stays up).
+    Process.flag(:trap_exit, true)
+
     # One-shot boot sweep: a job detached into its own systemd unit SURVIVES the BEAM that started it, so a crashed BEAM leaks transient `genesis-job-*` units.
     # `sweep_stale_units/0` is total and only garbage-collects units whose embedded `b<beam_os_pid>` is no longer alive, so it must NEVER kill a job belonging to another live instance on the same host.
     # Non-blocking and gated like the codebase's other boot-time side effects, so registry startup is never delayed or affected in tests.
@@ -524,11 +527,20 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
+  # A `:port` job's child ended (its port is linked to this registry, which opened it), so its `{:EXIT, port, _}` signal is expected and ignored — the real exit status already arrived as `{:exit_status, code}`. ANY OTHER linked exit is unexpected: the registry links ONLY its supervisor (job side effects use the unlinked `Task.start/1`) and `:gen_server` turns a PARENT exit into a `terminate/2` call, so it is logged and the registry stays up — going down would strand every job it tracks.
+  def handle_info({:EXIT, port, _reason}, state) when is_port(port), do: {:noreply, state}
+
+  def handle_info({:EXIT, pid, reason}, state) do
+    Logger.warning("BackgroundJobs: unexpected linked exit #{inspect(pid)} #{inspect(reason)}")
+    {:noreply, state}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
     # Defence in depth: the supervisor is shutting down, so no detached process started by this registry may outlive it.
+    # Bounded by construction: the `:unit` path's `Sandbox.Background.kill/1` delegates to `stop_unit_async/1`, which spawns a `Task` for `systemctl --user stop` and returns immediately, and a `:port` handle's port closes with this process (its child dies with it). The ONE genuinely async risk is therefore a `systemctl --user stop` that does not finish before the VM goes down, and `EvoGit.Sandbox.Background.sweep_stale_units/0` closes it at the next boot by garbage-collecting `genesis-job-*` units whose embedded `b<beam_os_pid>` is no longer alive.
     Enum.each(state.jobs, fn {_id, job} ->
       if live?(job), do: kill_detached(job.handle)
     end)
@@ -969,6 +981,9 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp describe(reason) when is_binary(reason), do: reason
+
+  # The backend's own backstop for a missing `cwd` — the layer BELOW `normalize_start_spec/1`, which already rejects it with prose — rendered as prose so `start_job/1` stays one actionable sentence whichever layer caught it.
+  defp describe({:cwd_missing, path}), do: "the working directory does not exist: #{path}"
   defp describe({tag, detail}) when is_atom(tag), do: "#{tag}: #{describe_value(detail)}"
   defp describe(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp describe(reason), do: describe_value(reason)
