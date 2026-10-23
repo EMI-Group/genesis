@@ -414,4 +414,40 @@ defmodule EvoGit.Agent.ToolNamesTest do
       refute Tools.serial_tool?(nil)
     end
   end
+
+  describe "background job aliases" do
+    # The model-facing schema name and the internal dispatch key are the SAME
+    # for the background-job control tools, so only the extra accepted spellings
+    # live in the alias table — the canonical names pass through unchanged.
+    test "normalize/1 maps the accepted output spellings onto `job_output`" do
+      for spelling <- ~w(bash_output background_output job_status) do
+        assert ToolNames.normalize(spelling) == "job_output"
+      end
+    end
+
+    test "normalize/1 maps the accepted listing spellings onto `job_list`" do
+      for spelling <- ~w(jobs background_jobs) do
+        assert ToolNames.normalize(spelling) == "job_list"
+      end
+    end
+
+    test "normalize/1 maps the accepted kill spellings onto `job_kill`" do
+      for spelling <- ~w(kill_job job_stop stop_job) do
+        assert ToolNames.normalize(spelling) == "job_kill"
+      end
+    end
+
+    test "the canonical spellings normalize to themselves" do
+      for spelling <- ~w(job_output job_list job_kill) do
+        assert ToolNames.normalize(spelling) == spelling
+      end
+    end
+
+    test "matches_any?/2 resolves a canonical name against an alias whitelist" do
+      assert ToolNames.matches_any?("job_output", ["bash_output"])
+      assert ToolNames.matches_any?("job_kill", ["kill_job", "job_stop"])
+      assert ToolNames.matches_any?("job_list", ["jobs"])
+      refute ToolNames.matches_any?("job_output", ["job_kill"])
+    end
+  end
 end
