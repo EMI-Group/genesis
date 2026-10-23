@@ -163,8 +163,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 97 schemas" do
-      assert length(Schema.all_schemas()) == 97
+    test "has exactly 102 schemas" do
+      assert length(Schema.all_schemas()) == 102
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -386,7 +386,7 @@ defmodule EvoGit.Config.SchemaTest do
       assert length(grouped[:nix]) == 2
       assert length(grouped[:git]) == 2
       assert length(grouped[:server]) == 2
-      assert length(grouped[:tools]) == 34
+      assert length(grouped[:tools]) == 39
       assert length(grouped[:node]) == 6
       assert length(grouped[:appearance]) == 1
       assert length(grouped[:data]) == 3
