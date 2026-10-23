@@ -322,7 +322,12 @@ defmodule EvoGit.Agent.ContextCompressionTest do
       repo
     end
 
-    # A LoopState carrying exactly the fields the refresh consumes.
+    # A LoopState carrying exactly the fields the refresh consumes. The `:now`
+    # CLOCK seam is set on the FINISHED struct — `state/1` builds a `%LoopState{}`
+    # via `struct/1`, which silently DROPS unknown keys, so putting `now:` in the
+    # keyword list above would have no effect. Pinning it keeps every
+    # refreshed-vs-original comparison deterministic instead of racing a
+    # minute boundary on the rendered `Current local time:` line.
     defp refresh_state(overrides) do
       state(
         Keyword.merge(
@@ -340,6 +345,7 @@ defmodule EvoGit.Agent.ContextCompressionTest do
           overrides
         )
       )
+      |> Map.put(:now, ~U[2025-06-14 09:32:00Z])
     end
 
     # Mirrors the production first-user-message assembly (the SAME shared
