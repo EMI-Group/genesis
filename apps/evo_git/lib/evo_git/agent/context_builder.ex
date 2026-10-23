@@ -298,12 +298,13 @@ defmodule EvoGit.Agent.ContextBuilder do
   @doc """
   Rebuilds the agent's first user message with a FRESH `<context>` block.
 
-  Called by `EvoGit.Agent.ContextCompression.compress_if_needed/2` on a
-  successful compression: the context tree (the CONTEXT.md chain for the
-  agent's node) is otherwise frozen at run start, so an agent that edited or
-  created CONTEXT.md files in its worktree during the run would keep seeing
-  the stale chain after every compression cycle. Re-reading it on each
-  compression keeps the re-injected first message current.
+  Kept public for backward compatibility (and covered by tests). Compression
+  itself no longer rewrites message #1 — doing so would break the provider's
+  cached prefix, which is why the mid-run refresh is delivered as an APPENDED
+  message instead (`build_context_refresh_message/2`). The context tree (the
+  CONTEXT.md chain for the agent's node) is otherwise frozen at run start, so an
+  agent that edited or created CONTEXT.md files in its worktree during the run
+  would keep seeing the stale chain.
 
   `msg` is the EXISTING first user message (as it sits in the conversation);
   `state` is a plain map (a `%EvoGit.Agent.LoopState{}`) carrying
@@ -346,6 +347,56 @@ defmodule EvoGit.Agent.ContextBuilder do
       )
 
     %{refreshed | metadata: msg.metadata}
+  end
+
+  # The refresh notice prepended to every runtime-context refresh message. The
+  # wording is pinned: it must (a) say the message is machine-generated, (b) say
+  # it SUPERSEDES every earlier `<context>` snapshot, (c) say the `<objective>`
+  # block is unchanged, and (d) forbid acknowledging it, so a compressed agent
+  # neither re-sends a stale context tree nor spends a turn on pleasantries.
+  @context_refresh_notice "This is an automatically generated runtime-context refresh. " <>
+                            "It SUPERSEDES any earlier <context> snapshot in this conversation, " <>
+                            "including the one in the first user message. " <>
+                            "The <objective> block is unchanged. " <>
+                            "Continue the task directly — do NOT acknowledge this refresh."
+
+  @doc """
+  Builds an appenedable `<context>` REFRESH message carrying the CURRENT context
+  tree.
+
+  Used by `EvoGit.Agent.ContextCompression.compress_if_needed/2` on EVERY
+  compression event (both the prune-only and the summarising path) instead of
+  rewriting message #1: the first two messages (system prompt + original user
+  message) must stay BYTE-IDENTICAL so the provider's prompt cache keeps hitting
+  and the verbatim objective is never re-rendered. The freshness is delivered as
+  a NEW final `:user` message (`build_context_block/1` — the same assembly the
+  first user message uses, so a CONTEXT.md edit made in the worktree mid-run is
+  now visible).
+
+  The message states that it SUPERSEDES any earlier `<context>` snapshot and
+  that the `<objective>` block is unchanged; it deliberately carries NO
+  objective block of its own (the objective stays verbatim in message #1).
+
+  `turn` — when an integer, the message is turn-tagged exactly like every other
+  appended message via `tag_message_turn/2`; `nil` leaves it untagged.
+
+  Returns `nil` when `build_context_block/1` renders blank (nothing to refresh),
+  so the caller can skip appending rather than injecting an empty message.
+  """
+  @spec build_context_refresh_message(map(), integer() | nil) :: ReqLLM.Message.t() | nil
+  def build_context_refresh_message(%{} = state, turn) do
+    case build_context_block(state) do
+      context when is_binary(context) and context != "" ->
+        message = ReqLLM.Context.user(@context_refresh_notice <> "\n\n" <> context)
+
+        case turn do
+          turn when is_integer(turn) -> tag_message_turn(message, turn)
+          _ -> message
+        end
+
+      _blank ->
+        nil
+    end
   end
 
   @doc """

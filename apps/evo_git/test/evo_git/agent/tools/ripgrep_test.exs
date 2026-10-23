@@ -76,8 +76,9 @@ defmodule EvoGit.Agent.Tools.RipgrepTest do
 
       result = Tools.execute("rg", %{"args" => encoded_args}, tmp_dir, tmp_dir)
 
-      # Recovery succeeds — the tool runs and finds the match (NOT an array error).
-      assert result =~ "Command executed successfully"
+      # Recovery succeeds — the tool runs bare-args style and finds the match
+      # (NOT an array error). Bare args print a plain `path:line:text` listing.
+      assert result =~ "./sample.ex:1:defmodule Foo do"
       assert result =~ "defmodule Foo"
       refute result =~ "must be an array"
     end
@@ -89,7 +90,8 @@ defmodule EvoGit.Agent.Tools.RipgrepTest do
 
       result = Tools.execute("rg", %{"args" => ["defmodule", "."]}, tmp_dir, tmp_dir)
 
-      assert result =~ "Command executed successfully"
+      # Bare args: a plain `path:line:text` listing, no legacy envelope.
+      assert result =~ "./sample.ex:1:defmodule Foo do"
       assert result =~ "defmodule Foo"
       refute result =~ "Tip:"
     end
@@ -99,7 +101,7 @@ defmodule EvoGit.Agent.Tools.RipgrepTest do
 
       result = Tools.execute("rg", %{"args" => ["refactor", "."]}, tmp_dir, tmp_dir)
 
-      assert result =~ "Command executed successfully"
+      assert result == "./notes.md:1:remember to refactor"
       refute result =~ "Tip:"
     end
   end

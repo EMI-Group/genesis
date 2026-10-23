@@ -257,6 +257,40 @@ defmodule EvoGit.CustomToolsTest do
              end)
     end
 
+    test "the collision guard is alias-aware (canonical names + any-case aliases)" do
+      # `read` is the NEW model-facing name of the built-in read tool; `Bash` and
+      # `Search_Web` are accepted alias spellings of the shell / web-search
+      # built-ins. Dispatch normalises all of them to a built-in before the
+      # custom-tool fallback, so each must be rejected instead of silently
+      # loading a tool that can never fire.
+      write_source_tool!(dir(), "collide_read_#{uniq()}.ex", "read", read_only: true)
+      write_source_tool!(dir(), "collide_bash_#{uniq()}.ex", "Bash", read_only: true)
+      write_source_tool!(dir(), "collide_web_#{uniq()}.ex", "Search_Web", read_only: true)
+      CustomTools.reload()
+
+      errors = CustomTools.status().errors
+
+      for name <- ["read", "Bash", "Search_Web"] do
+        refute CustomTools.known?(name)
+        refute Map.has_key?(CustomTools.load(), name)
+
+        assert Enum.any?(errors, fn %{reason: reason} ->
+                 reason =~ "collides with a built-in tool" and reason =~ "'#{name}'"
+               end),
+               "expected a collision error record for '#{name}', got: #{inspect(errors)}"
+      end
+    end
+
+    test "a name outside the alias table still loads (passthrough is load-bearing)" do
+      tool = "my_write_#{uniq()}"
+      write_source_tool!(dir(), "#{tool}.ex", tool, read_only: true)
+      CustomTools.reload()
+
+      assert CustomTools.known?(tool)
+      assert tool in Enum.map(CustomTools.schemas(), & &1.name)
+      assert Enum.any?(CustomTools.status().ok, &(&1.name == tool))
+    end
+
     test "duplicate custom names across files: first wins (basename order) + reported" do
       suffix = uniq()
       tool = "ct_dup_#{suffix}"

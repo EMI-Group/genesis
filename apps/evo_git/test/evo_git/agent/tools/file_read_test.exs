@@ -300,7 +300,7 @@ defmodule EvoGit.Agent.Tools.FileReadTest do
       result = run(tmp_dir, %{"file_path" => "missing.txt"})
 
       assert String.starts_with?(result, "Error: ")
-      assert result =~ "Error reading file"
+      assert result =~ "Error: reading file"
       assert result =~ "no such file or directory"
     end
   end

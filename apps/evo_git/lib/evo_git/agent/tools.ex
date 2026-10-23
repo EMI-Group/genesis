@@ -18,7 +18,8 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.Glob
   alias EvoGit.Agent.Tools.ListDirectory
   alias EvoGit.Agent.Tools.WebSearch
-  alias EvoGit.Agent.Tools.Curl
+  alias EvoGit.Agent.Tools.WebFetch
+  alias EvoGit.Agent.Tools.Lsp
   alias EvoGit.Agent.Tools.SearchHistory
   alias EvoGit.Agent.Tools.SearchContext
   alias EvoGit.Agent.Tools.SkillList
@@ -60,7 +61,6 @@ defmodule EvoGit.Agent.Tools do
     "run_bash",
     "run_powershell",
     "run_git",
-    "curl",
     "skill_add",
     "skill_edit",
     "skill_remove",
@@ -91,6 +91,17 @@ defmodule EvoGit.Agent.Tools do
         ListDirectory.schema(),
         SearchContext.schema(),
         SearchHistory.schema(),
+        # Network / language-intelligence READERS — both strictly read-only, so
+        # they are also part of `read_only_schemas/0` and are NEVER write tools
+        # (`web_fetch` performs one HTTP GET and writes nothing; `lsp` spawns the
+        # user's configured language server and only analyses a file). Neither is
+        # config-gated at the schema-list level: `web_fetch` always works, and
+        # `lsp` reports a self-explaining `Error:` when no server is configured
+        # (`[lsp] command` / `enabled` in config.toml), which is what teaches the
+        # model to fall back to `read`/`rg`. Contrast `search_web`, which IS
+        # gated behind `[tools] search_enabled` (see `maybe_append_web_search/1`).
+        WebFetch.schema(),
+        Lsp.schema(),
         SkillList.schema(),
         SkillRead.schema(),
         SkillAdd.schema(),
@@ -99,8 +110,7 @@ defmodule EvoGit.Agent.Tools do
         SkillEnable.schema(),
         SkillDisable.schema(),
         SkillWhere.schema()
-        # Git.schema(),
-        # Curl.schema()
+        # Git.schema()
         #
         # NOTE: `run_command` (the task-control shell tool) is deliberately
         # NOT listed here — it is dispatch-registered only (execute_tool/5)
@@ -120,16 +130,14 @@ defmodule EvoGit.Agent.Tools do
 
   ## Reconciliation with the foreign-repo role gate
 
-  `Curl.schema()` was REMOVED — `curl` has no legitimate read-only role (it is
-  not part of the default `schemas/0` set either) and it is a write-capable
-  tool. `Context.write_schema()`/`Context.edit_schema()` and
+  `Context.write_schema()`/`Context.edit_schema()` and
   `ShellTool.schema()` are KEPT by design: read-only agents (Investigator,
   ContextExtractor) must still (a) update CONTEXT.md in their OWN repo — the
   documented investigator contract — and (b) run tests/diagnostics
   (`mix test`) in their own repo via ShellTool. Their WRITE usage inside
   READ-ONLY foreign repos is now blocked by the dispatch-level foreign-repo
   role gate (`maybe_block_read_only_foreign_repo/5`), which treats
-  `run_git`/`curl` as write tools alongside the file/shell/skill writers.
+  `run_git` as a write tool alongside the file/shell/skill writers.
   """
   def read_only_schemas do
     schemas =
@@ -143,7 +151,11 @@ defmodule EvoGit.Agent.Tools do
         Context.edit_schema(),
         ShellTool.schema(),
         SearchContext.schema(),
-        SearchHistory.schema()
+        SearchHistory.schema(),
+        # Read-only network / language-intelligence readers, shared with the
+        # full set — see the matching note in `schemas/0` above.
+        WebFetch.schema(),
+        Lsp.schema()
       ]
 
     maybe_append_web_search(schemas)
@@ -297,7 +309,7 @@ defmodule EvoGit.Agent.Tools do
   # it is an opaque whole command, not a read-modify-write cycle, so it must NOT
   # be serialised. `write`/`edit` are model-facing aliases of two genuine
   # read-modify-write tools, so they correctly stay in the serial set.
-  @non_serial_write_tools ["run_bash", "run_powershell", "run_git", "curl", "bash"]
+  @non_serial_write_tools ["run_bash", "run_powershell", "run_git", "bash"]
 
   @serial_tools @write_tools -- @non_serial_write_tools
   @doc """
@@ -308,16 +320,16 @@ defmodule EvoGit.Agent.Tools do
   This is the SINGLE classification source of truth for serial tool execution
   (the dispatcher partitions a batch on it). The built-in set is the
   `@write_tools` set minus the shell/exec/network tools (`run_bash`,
-  `run_powershell`, `run_git`, `curl`), derived by subtraction so it cannot
+  `run_powershell`, `run_git`), derived by subtraction so it cannot
   drift. A user-defined custom tool that declares itself a write tool
   (`EvoGit.CustomTools.write_tool?/1`) is conservatively included: it is opaque
   user code that may mutate files.
 
   Read-only tools (`read_file`, `read_context`, `glob`, `list_dir`, `rg`,
   `search_context`, `search_history`, `skill_list`, `skill_read`,
-  `skill_where`), the shell/exec/network tools (`run_bash`, `run_powershell`,
-  `run_git`, `curl`, `run_command`, `search_web`/`web_search`) and any unknown
-  name return `false`.
+  `skill_where`, `web_fetch`, `lsp`), the shell/exec/network tools (`run_bash`,
+  `run_powershell`, `run_git`, `run_command`, `search_web`/`web_search`) and any
+  unknown name return `false`.
 
   The incoming name is normalised through `EvoGit.Agent.ToolNames.normalize/1`
   first, because the dispatcher passes the RAW model-facing name (`write`,
@@ -499,8 +511,17 @@ defmodule EvoGit.Agent.Tools do
     WebSearch.execute(args, repo_path, repo_root)
   end
 
-  defp execute_tool("curl", args, repo_path, repo_root, _node_path) when is_map(args) do
-    Curl.execute(args, repo_path, repo_root)
+  # `web_fetch` (one HTTP GET → readable Markdown) and `lsp` (Elixir diagnostics /
+  # hover / definition over the user's configured language server) are READ-ONLY
+  # tools: their model-facing schema name and their internal dispatch key are the
+  # same string, so no `EvoGit.Agent.ToolNames` entry is needed — an unknown name
+  # passes through that alias table unchanged.
+  defp execute_tool("web_fetch", args, repo_path, repo_root, _node_path) when is_map(args) do
+    WebFetch.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("lsp", args, repo_path, repo_root, _node_path) when is_map(args) do
+    Lsp.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool("search_context", args, repo_path, repo_root, _node_path) when is_map(args) do
@@ -610,7 +631,7 @@ defmodule EvoGit.Agent.Tools do
   # offered. Evaluated at call time (not a module attribute) because
   # `schemas/0` reads runtime config (`maybe_append_web_search/1`). This keeps
   # `run_command` deliberately absent (it is not in `schemas/0`) and excludes
-  # the schema-commented-out `curl`/`run_git`.
+  # the schema-commented-out `run_git`.
   defp available_tool_names do
     schemas() |> Enum.map(& &1.name)
   end

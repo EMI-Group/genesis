@@ -15,10 +15,16 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
       LLM request, exactly ONE `Logger.error` line, NO scheduler backoff
       report, the slot released by `with_llm_slot/2`'s `try/after`, and the
       `{:error, {:llm_request_rejected, message}}` tuple returned unchanged;
-    * every OTHER failure class (HTTP 500, HTTP 402 model exhaustion, a refused
-      transport) still RAISES the pre-existing `MatchError` — the crash-retry /
-      scheduler-backoff semantics are unchanged, and the compression call has NO
-      retry loop of its own (exactly one request).
+    * an ORDINARY transient failure (HTTP 500, a refused transport) is RETRIED
+      by the bounded compression retry loop
+      (`EvoGit.Agent.Compression.LlmRetry`, mirroring
+      `ToolDispatch.call_llm_with_retry/5`): `:compression_llm_max_attempts`
+      requests, a short `:llm_retry_backoff_base_ms` sleep between them, and then
+      the pre-existing `MatchError` carrying `{:error, reason}` — the
+      crash-retry semantics are unchanged, and the slot is free again;
+    * MODEL EXHAUSTION (HTTP 402) is NOT retried in-loop: exactly ONE request,
+      the exhaustion reported ONCE to the scheduler's model-wide backoff (so the
+      crash-retry lands after a long wait), and then the same `MatchError`.
 
   `async: false` — drives the GLOBAL `EvoGit.AgentScheduler` GenServer: the
   setup rewrites its `model_profiles` (a single-slot pool), the per-model
@@ -62,6 +68,12 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   @transient_status 500
   @transient_body ~s({"error":{"message":"Internal Server Error"}})
 
+  # The retry seams the compression call reads at CALL time: `max_attempts` total
+  # attempts and a millisecond backoff base (the production default is 1s), so
+  # the transient-error cases stay fast.
+  @max_attempts 3
+  @backoff_base_ms 1
+
   # The per-test agent ids. High and distinct so no sibling test's leftover ETS
   # agent-state row can steer a slot request to another model pool.
   @rejected_agent_id 9_101
@@ -89,32 +101,56 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
   # --- State / call helpers ------------------------------------------------
 
-  # The compression threshold resolves from config (default 180_000) — read it
-  # at runtime rather than hardcoding, so the fixture overflows whatever the
-  # environment configures.
-  defp threshold, do: EvoGit.Config.resolve([:llm, :compression_threshold_tokens])
+  # The compression trigger for `llm_model` — read at runtime (never hardcoded)
+  # so this fixture overflows whatever the environment configures, exactly like
+  # the production gate (`Threshold.for_model/1`).
+  defp trigger(llm_model),
+    do: EvoGit.Agent.Compression.Threshold.for_model(llm_model)
 
-  # The minimal compressible `LoopState`: above the threshold and shaped
-  # `[system, user | rest]`, which is the ONLY shape `compress_if_needed/2`
+  # A compressible conversation: `[system, objective | turns]`, every turn-tagged
+  # message carrying its turn number.
+  #
+  # The turn tags MATTER: the compression recency window keeps the last 4 turns
+  # verbatim, so an untagged (or very short) conversation has NO old span at all
+  # — `Checkpoint.split/2` then reports `old: []` and stage 2 (the summarising
+  # call this file exercises) is skipped entirely. Six tagged turns leave a
+  # 4-message old span to replace.
+  defp conversation do
+    head = [
+      ReqLLM.Context.system("You are a test agent."),
+      ReqLLM.Context.user("Objective: exercise the compression path.") |> tag(0)
+    ]
+
+    turns =
+      for turn <- 0..5 do
+        [
+          ReqLLM.Context.assistant("working on turn #{turn}") |> tag(turn),
+          ReqLLM.Context.user("note #{turn}") |> tag(turn)
+        ]
+      end
+
+    head ++ Enum.concat(turns)
+  end
+
+  defp tag(message, turn), do: EvoGit.Agent.ContextBuilder.tag_message_turn(message, turn)
+
+  # The minimal compressible `LoopState`: one token past the model's trigger and
+  # shaped `[system, user | rest]`, the ONLY shape `compress_if_needed/2`
   # compresses (any other shape returns the state unchanged).
-  defp state(agent_id) do
+  defp state(agent_id, llm_model) do
     %LoopState{
       agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
       node_path: "./",
-      context:
-        ReqLLM.Context.new([
-          ReqLLM.Context.system("You are a test agent."),
-          ReqLLM.Context.user("Objective: exercise the compression path.")
-        ]),
-      total_tokens: threshold() + 1,
+      context: ReqLLM.Context.new(conversation()),
+      total_tokens: trigger(llm_model).threshold + 1,
       usage: Usage.zero()
     }
   end
 
   defp compress(agent_id, model) do
-    ContextCompression.compress_if_needed(state(agent_id),
+    ContextCompression.compress_if_needed(state(agent_id, model),
       agent_id: agent_id,
       llm_model: model
     )
@@ -151,6 +187,10 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
       %{state | llm_backoff_until: Map.delete(state.llm_backoff_until, @model_id)}
     end)
   end
+
+  # Restores an app-env seam: `nil` (unset before the test) deletes the key.
+  defp restore_env(key, nil), do: Application.delete_env(:evo_git, key)
+  defp restore_env(key, value), do: Application.put_env(:evo_git, key, value)
 
   # Pays ReqLLM's one-off `LLMDB.load/1` catalog decode (the packaged 8.6 MB
   # `priv/llm_db/snapshot.json`, MEASURED at ~2.5-4s) ONCE for this module, so
@@ -201,6 +241,15 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     clear_model_backoff()
     on_exit(fn -> clear_model_backoff() end)
 
+    # The compression retry seams (read at CALL time by
+    # `EvoGit.Agent.Compression.LlmRetry`): a bounded attempt budget and a
+    # millisecond backoff base, so the transient-error cases retry quickly.
+    original_max_attempts = Application.get_env(:evo_git, :compression_llm_max_attempts)
+    original_backoff_base = Application.get_env(:evo_git, :llm_retry_backoff_base_ms)
+
+    Application.put_env(:evo_git, :compression_llm_max_attempts, @max_attempts)
+    Application.put_env(:evo_git, :llm_retry_backoff_base_ms, @backoff_base_ms)
+
     # Pin a test API key so the OpenAI provider requests clear the build phase
     # (ReqLLM's key resolution) and reach the transport layer.
     original_api_key = Application.get_env(:req_llm, :openai_api_key)
@@ -218,6 +267,9 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     on_exit(fn ->
       AgentScheduler.resume()
       AgentScheduler.update_config(model_profiles: original_profiles)
+
+      restore_env(:compression_llm_max_attempts, original_max_attempts)
+      restore_env(:llm_retry_backoff_base_ms, original_backoff_base)
 
       if original_api_key do
         Application.put_env(:req_llm, :openai_api_key, original_api_key)
@@ -262,7 +314,8 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     assert message =~ "Invalid API parameter"
     assert message =~ "non-retryable"
 
-    # No retry loop of its own: exactly ONE HTTP request was issued.
+    # A non-retryable rejection fails fast: exactly ONE HTTP request was issued
+    # (never a retry of a deterministic 4xx).
     assert EvoGit.TestLlmServer.request_count(server) == 1
 
     # EXACTLY one error line, carrying the actionable `format_failure/1` text.
@@ -288,7 +341,7 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   # Every other failure class still raises the pre-existing MatchError
   # ---------------------------------------------------------------------------
 
-  test "a 500 still raises MatchError pinning the failed tuple, with one request and a released slot" do
+  test "a 500 is retried up to the attempt budget, then raises MatchError with a released slot" do
     on_exit(fn -> AgentScheduler.release_llm_slot(@transient_agent_id) end)
 
     server = EvoGit.TestLlmServer.start!(@transient_status, @transient_body)
@@ -298,15 +351,16 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     # `raise MatchError, term: value` carries the unmatched right-hand side.
     assert {:error, _reason} = e.term
 
-    # The compression call has NO retry loop: exactly one request.
-    assert EvoGit.TestLlmServer.request_count(server) == 1
+    # An ORDINARY transient failure is retried by the bounded loop: exactly
+    # `:compression_llm_max_attempts` requests, no more.
+    assert EvoGit.TestLlmServer.request_count(server) == @max_attempts
 
-    # The raise propagated THROUGH `with_llm_slot/2`'s `try/after`, which
-    # released the slot on the way out.
+    # The raise propagated THROUGH `with_llm_slot/2`'s `try/after` on every
+    # attempt, which released the slot on the way out.
     assert used_and_waiting(@model_id) == {0, 0}
   end
 
-  test "a 402 model exhaustion still raises MatchError and reports no scheduler backoff" do
+  test "a 402 model exhaustion reports the scheduler backoff once and still raises MatchError" do
     on_exit(fn -> AgentScheduler.release_llm_slot(@exhausted_agent_id) end)
 
     server = EvoGit.TestLlmServer.start!(@exhausted_status, @exhausted_body)
@@ -314,16 +368,23 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     e = assert_raise MatchError, fn -> compress(@exhausted_agent_id, model_at(server.url)) end
 
     assert {:error, _reason} = e.term
+
+    # Model exhaustion is NOT retried in-loop: the long wait belongs to the
+    # scheduler's model-wide backoff queue and to the task's crash-retry, so the
+    # compression call makes exactly ONE request ...
     assert EvoGit.TestLlmServer.request_count(server) == 1
 
-    # The compression path never reports a scheduler backoff for model
-    # exhaustion: it has no retry loop to wait out, so the pre-existing
-    # crash-retry semantics are preserved untouched.
-    assert model_backoff_remaining() == nil
+    # ... and reports the exhaustion ONCE, so the crash-retry lands after a long
+    # scheduler wait instead of instantly re-hitting an exhausted model.
+    case model_backoff_remaining() do
+      nil -> flunk("expected the model's scheduler backoff to be reported")
+      remaining -> assert remaining > 0
+    end
+
     assert used_and_waiting(@model_id) == {0, 0}
   end
 
-  test "a refused transport still raises MatchError pinning the failed tuple" do
+  test "a refused transport is retried and then raises MatchError pinning the failed tuple" do
     on_exit(fn -> AgentScheduler.release_llm_slot(@refused_agent_id) end)
 
     e = assert_raise MatchError, fn -> compress(@refused_agent_id, refused_model()) end

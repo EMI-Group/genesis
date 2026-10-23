@@ -725,6 +725,60 @@ defmodule EvoGit.Config.Schema.Definitions do
           sub_category: nil,
           description:
             "Base path for the :custom tmp mode. Must be an absolute (or ~-relative) path. Empty/nil falls back to the system tmp."
+        },
+        # ── LSP (Elixir code intelligence, `lsp` tool) ─────────────────────
+        # The tool never bundles a language server: it speaks LSP over stdio to the
+        # command configured here. The section is grouped with :tools because that
+        # is where the dashboard renders it; the TOML table is `[lsp]`.
+        %{
+          key_path: [:lsp, :enabled],
+          type: :boolean,
+          default: false,
+          validation: [],
+          category: :tools,
+          sub_category: nil,
+          description:
+            "Enables the `lsp` tool (Elixir diagnostics, hover and go-to-definition). Requires `command` to be set as well. Disabled by default because it needs a language server the user installs."
+        },
+        %{
+          key_path: [:lsp, :command],
+          type: :string,
+          default: nil,
+          validation: [],
+          category: :tools,
+          sub_category: nil,
+          description:
+            "The language server executable the `lsp` tool spawns on stdio, e.g. \"lexical\" or the absolute path of an elixir-ls launcher. Genesis never installs or bundles a language server; empty/nil keeps the tool disabled."
+        },
+        %{
+          key_path: [:lsp, :args],
+          type: :list_of_strings,
+          default: [],
+          validation: [],
+          category: :tools,
+          sub_category: nil,
+          description:
+            "Arguments passed to the language server command, e.g. [\"start\"] for `lexical start`. Defaults to none."
+        },
+        %{
+          key_path: [:lsp, :timeout],
+          type: :pos_integer,
+          default: 30_000,
+          validation: [min: 1],
+          category: :tools,
+          sub_category: nil,
+          description:
+            "Overall time budget in milliseconds for one `lsp` tool call (server start, initialize handshake and one request). Default 30000 (30s)."
+        },
+        %{
+          key_path: [:lsp, :diagnostics_timeout],
+          type: :pos_integer,
+          default: 10_000,
+          validation: [min: 1],
+          category: :tools,
+          sub_category: nil,
+          description:
+            "How long in milliseconds the `lsp` tool waits for the language server's diagnostics after opening the file. Default 10000 (10s); the wait ends earlier once the server goes quiet."
         }
       ]
   end

@@ -70,7 +70,7 @@ defmodule EvoGit.Agent.Tools.SearchHistoryTest do
     test "returns error for invalid regex", %{tmp_dir: tmp_dir} do
       result = Tools.execute("search_history", %{"pattern" => "[invalid"}, tmp_dir, tmp_dir)
 
-      assert result =~ "Error compiling pattern"
+      assert result =~ "Error: compiling pattern '[invalid' failed:"
     end
 
     test "returns error when pattern is missing" do

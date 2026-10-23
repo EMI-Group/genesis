@@ -7,6 +7,7 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
   already enabled at this level or a higher level to avoid redundant entries.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -60,8 +61,10 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
       skill_file = Path.join(skills_path, "#{skill_name}.md")
 
       unless File.exists?(skill_file) do
-        "Error: Skill '#{skill_name}' does not exist in .agents/skills/. " <>
-          "Use skill_add to create it first, or use skill_list to see available skills."
+        Failure.error(
+          "Skill '#{skill_name}' does not exist in .agents/skills/. " <>
+            "Use skill_add to create it first, or use skill_list to see available skills."
+        )
       else
         case EvoGit.Skills.enable_skill(skill_name, node_path, repo_path) do
           {:ok, :already_enabled_here} ->
@@ -81,11 +84,11 @@ defmodule EvoGit.Agent.Tools.SkillEnable do
             Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
           {:error, reason} ->
-            "Error enabling skill: #{reason}"
+            Failure.error("enabling skill: #{reason}")
         end
       end
     else
-      {:error, message} -> message
+      {:error, message} -> Failure.error(message)
     end
   end
 end

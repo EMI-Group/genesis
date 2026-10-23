@@ -50,13 +50,19 @@ defmodule EvoGit.Agents.Custom do
   `<config_dir>/tools/`) are NOT added in this case — they are opt-in only.
 
   When `tools` is a list, only the schemas whose tool name appears in the whitelist
-  survive. The whitelist accepts both built-in tool names (including the subagent
-  tool schemas — their tool names are the spawned module's `subagent_tool_name/0`,
-  e.g. `"subagent_executor"` — and `complete_task`) AND the names of user-defined
-  custom tools loaded from `<config_dir>/tools/` by `EvoGit.CustomTools`. Filtering
-  `complete_task` out is allowed — that is the user's explicit choice (the agent
-  can no longer finish through it). An unknown name in the whitelist simply matches
-  nothing.
+  survive. Matching is **ALIAS-AWARE** (`EvoGit.Agent.Tools.whitelist_match?/2` →
+  `EvoGit.Agent.ToolNames.matches_any?/2`): both sides are normalised through
+  `EvoGit.Agent.ToolNames.normalize/1`, so a whitelist entry written with a
+  pre-rename spelling resolves to the shipped schema — `"read_file"` AND `"read"`
+  both select the `read` schema, likewise `"write_file"`/`"write"`,
+  `"edit_file"`/`"edit"`, `"run_bash"`/`"bash"`, `"search_web"`/`"web_search"`;
+  the comparison is case-insensitive by construction. The whitelist accepts both
+  built-in tool names (including the subagent tool schemas — their tool names are
+  the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"` — and
+  `complete_task`) AND the names of user-defined custom tools loaded from
+  `<config_dir>/tools/` by `EvoGit.CustomTools`. Filtering `complete_task` out is
+  allowed — that is the user's explicit choice (the agent can no longer finish
+  through it). An unknown name in the whitelist simply matches nothing.
 
   ## Subagent name→module mapping
 
@@ -124,8 +130,19 @@ defmodule EvoGit.Agents.Custom do
         # list. Candidates are deduped by name (first occurrence wins) so a name
         # shared between a built-in/subagent/custom schema never yields two
         # schemas with the same name.
+        #
+        # Matching is ALIAS-AWARE: `EvoGit.Agent.Tools.whitelist_match?/2`
+        # normalises BOTH the schema's model-facing name and every whitelist
+        # entry through `EvoGit.Agent.ToolNames.normalize/1`, so an existing
+        # `agents.toml` written before the model-facing rename
+        # (`tools = ["read_file", "write_file"]`) still resolves to the shipped
+        # `read`/`write` schemas — and the new spellings work too. A literal
+        # name comparison here would silently resolve such a whitelist to NO
+        # tools at all.
         (base ++ EvoGit.CustomTools.schemas())
-        |> Enum.filter(fn schema -> EvoGit.Agent.tool_name(schema) in tools end)
+        |> Enum.filter(fn schema ->
+          EvoGit.Agent.Tools.whitelist_match?(EvoGit.Agent.tool_name(schema), tools)
+        end)
         |> dedupe_by_tool_name()
 
       other ->

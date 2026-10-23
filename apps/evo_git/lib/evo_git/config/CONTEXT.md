@@ -149,6 +149,13 @@ dir = "/abs/path/to/data"         # Optional: relocate the runtime data/state di
 [tmp]
 mode = "system"                   # Per-task temporary-directory mode: "system" (default) | "custom" | "per_repo"
 path = "/abs/path/to/tmp"         # Base path for :custom mode; absolute (or ~-relative). Absent/nil = system tmp
+
+[lsp]
+enabled = false                   # Enables the `lsp` tool (Elixir diagnostics/hover/definition). Requires `command`
+command = "lexical"               # Language server executable, e.g. "lexical" or an absolute elixir-ls launcher path; nil/empty keeps the tool disabled
+args = ["start"]                  # Arguments passed to the command
+timeout = 30_000                  # Overall per-call budget (ms)
+diagnostics_timeout = 10_000      # How long to wait for publishDiagnostics after opening the file (ms)
 ```
 
 **`[tmp]` — per-task managed temporary directory**: `EvoGit.Config.resolve([:tmp, :mode])` + `[:tmp, :path]` select the base directory used for an agent task's managed tmpdir (`task_<id>`):
@@ -158,6 +165,11 @@ path = "/abs/path/to/tmp"         # Base path for :custom mode; absolute (or ~-r
 
 `mode` is an `:atom` enum (`"system" | "custom" | "per_repo"`); the TOML string is atomized by the dedicated `[:tmp]` clause in `EvoGit.Config.atomize_enum_values/1` (config.ex) before `Schema.validate` — without that clause the raw string fails the `:atom` type check and lands in validation warnings.
 The `[:tmp, :*]` keys carry `category: :data` (NOT a new `:tmp` category): the dashboard Settings page hardcodes its category set (`EvoDashWeb.SettingsComponents.CategoryMetadata`), so a new category would crash its sidebar render. `:data` renders them generically with no platform filtering; the `[tmp]` TOML table itself is unaffected by the display grouping.
+
+**`[lsp]` — Elixir code intelligence for the `lsp` tool**: the `lsp` tool (`agent/tools/lsp.ex`) never installs, downloads or bundles a language server — it speaks LSP over stdio to whatever this section points at (a user-installed `lexical start` or an elixir-ls launcher), one disposable server process per call.
+Keys (all `category: :tools`, so the dashboard renders them under Tools even though the TOML table is `[lsp]`): `enabled` (`:boolean`, default `false`), `command` (`:string`, default `nil` — the executable, resolved through `EvoGit.Executable.resolve/1` + `System.find_executable/1`), `args` (`:list_of_strings`, default `[]`), `timeout` (`:pos_integer` ms, default `30_000`, `min: 1` — the WHOLE-call budget: spawn, `initialize` handshake and the one analysis request) and `diagnostics_timeout` (`:pos_integer` ms, default `10_000`, `min: 1` — the settle window for `textDocument/publishDiagnostics`, ending earlier once the stream goes quiet).
+The tool is INERT until BOTH `enabled = true` and a non-empty `command` are present: it then returns the self-explaining `Error: no language server configured — set [lsp] command in config.toml`, which is what tells the model to fall back to `read_file`/`rg` — so the section can be absent from `config.toml` entirely and nothing breaks.
+The tool reads the whole section in one call (`EvoGit.Config.resolve([:lsp])`, defensively treating a non-map result as `%{}`); no other subsystem consumes these keys.
 
 **`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml

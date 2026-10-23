@@ -170,13 +170,17 @@ defmodule EvoGit.Agents.CustomTest do
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
       assert "complete_task" in names
-      assert "read_file" in names
-      assert "run_bash" in names
+      assert "read" in names
+      assert "bash" in names
       # The subagent tool schema for the executor subagent is included too.
       assert EvoGit.Agents.Executor.subagent_tool_name() in names
     end
 
-    test "filters to exactly the whitelist when tools is a list" do
+    test "filters to exactly the whitelist when tools is a list (legacy spellings)" do
+      # The whitelist is intentionally written with the PRE-RENAME spellings
+      # (`read_file`/`write_file`): alias-aware matching must still resolve them
+      # to the shipped `read`/`write` schemas — a literal comparison would
+      # resolve this whitelist to no tools at all (the P0 regression).
       id =
         save_definition!(%{
           subagents: ["executor"],
@@ -189,8 +193,8 @@ defmodule EvoGit.Agents.CustomTest do
         EvoGit.Agents.Custom.available_tools()
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
-      assert Enum.sort(names) == ["complete_task", "read_file", "write_file"]
-      refute "run_bash" in names
+      assert Enum.sort(names) == ["complete_task", "read", "write"]
+      refute "bash" in names
       refute EvoGit.Agents.Executor.subagent_tool_name() in names
     end
 
@@ -202,8 +206,35 @@ defmodule EvoGit.Agents.CustomTest do
         EvoGit.Agents.Custom.available_tools()
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
-      assert names == ["read_file"]
+      assert names == ["read"]
       refute "complete_task" in names
+    end
+
+    test "also accepts the shipped model-facing spellings" do
+      id = save_definition!(%{tools: ["read", "write", "bash"]})
+      put_custom_agent!(id)
+
+      names =
+        EvoGit.Agents.Custom.available_tools()
+        |> Enum.map(&EvoGit.Agent.tool_name/1)
+
+      assert Enum.sort(names) == ["bash", "read", "write"]
+    end
+
+    test "mixes legacy and shipped spellings without duplicating schemas" do
+      id = save_definition!(%{tools: ["read_file", "read", "web_search", "search_web"]})
+      put_custom_agent!(id)
+
+      names =
+        EvoGit.Agents.Custom.available_tools()
+        |> Enum.map(&EvoGit.Agent.tool_name/1)
+
+      # `read_file`/`read` are two spellings of ONE concept, as are
+      # `web_search`/`search_web` — dedupe-by-schema-name keeps exactly one
+      # schema per name and no tool is dropped.
+      assert "read" in names
+      assert Enum.uniq(names) == names
+      assert Enum.all?(names, &(&1 in ["read", "web_search"]))
     end
   end
 

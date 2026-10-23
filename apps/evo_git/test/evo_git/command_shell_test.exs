@@ -437,15 +437,18 @@ defmodule EvoGit.CommandShellTest do
       refute output =~ "not available in this release"
     end
 
-    test "handler-level path validation errors surface as shell errors", %{tmp_dir: tmp_dir} do
+    test "handler-level path validation errors surface as Error: strings", %{tmp_dir: tmp_dir} do
       missing = Path.join(tmp_dir, "does_not_exist")
 
-      assert {:error, message} =
+      # Handlers return plain strings, so the shell wraps them as {:ok, output}
+      # — the failure is signalled by the single leading `Error:` prefix (no
+      # tuple, no inspect quoting).
+      assert {:ok, output} =
                CommandShell.execute(
                  "SpawnInvestigator.spawn_investigator #{missing} \"investigate\""
                )
 
-      assert message == "Path does not exist: #{missing}"
+      assert output == "Error: Path does not exist: #{missing}"
     end
   end
 

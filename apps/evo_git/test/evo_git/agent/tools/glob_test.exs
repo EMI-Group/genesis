@@ -44,8 +44,8 @@ defmodule EvoGit.Agent.Tools.GlobTest do
 
       result = Tools.execute("glob", %{"pattern" => "*.ex"}, tmp_dir, tmp_dir)
 
-      assert result =~ "Found:"
-      assert result =~ "sample.ex"
+      # Header-free listing: one relative path per line.
+      assert result == "sample.ex"
     end
 
     test "valid pattern with recursive glob returns matching files", %{tmp_dir: tmp_dir} do
@@ -55,8 +55,8 @@ defmodule EvoGit.Agent.Tools.GlobTest do
 
       result = Tools.execute("glob", %{"pattern" => "**/*.ex"}, tmp_dir, tmp_dir)
 
-      assert result =~ "Found:"
-      assert result =~ "helper.ex"
+      # Header-free listing: relative paths, one per line.
+      assert result == "lib/helper.ex"
     end
   end
 

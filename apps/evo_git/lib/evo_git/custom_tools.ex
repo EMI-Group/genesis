@@ -27,6 +27,13 @@ defmodule EvoGit.CustomTools do
   tool is rejected (first-wins, file order sorted by basename). Both are logged
   and reported through `status/0`.
 
+  The built-in collision check is **alias-aware**: every accepted spelling of a
+  built-in (`read`, `read_file`, `bash`, `shell`, `Search_Web`, …) is reserved,
+  because dispatch normalises the incoming name before its custom-tool fallback
+  — a custom tool named after an alias would load but never fire. Matching is
+  case-insensitive. Names unknown to the alias table (`my_write`, …) load
+  normally.
+
   ## Security
 
   Files under `<config_dir>/tools/` are **user-authored code**, exactly like the

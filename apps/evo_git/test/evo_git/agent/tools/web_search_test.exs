@@ -360,7 +360,7 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
       Application.put_env(:evo_git, :web_search_http_runner, stub_runner(%{"nope" => true}))
 
       result = WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily))
-      assert result == "Search response (unexpected format): %{\"nope\" => true}"
+      assert result == "Error: Search response (unexpected format): %{\"nope\" => true}"
     end
   end
 

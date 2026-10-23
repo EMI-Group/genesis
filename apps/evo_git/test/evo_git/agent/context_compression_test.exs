@@ -55,92 +55,84 @@ defmodule EvoGit.Agent.ContextCompressionTest do
   # ---------------------------------------------------------------------------
 
   describe "compression_instruction/0" do
+    alias EvoGit.Agent.Compression.SummaryPrompt
+
     test "returns a binary string" do
       assert is_binary(ContextCompression.compression_instruction())
     end
 
-    test "does NOT reproduce the original objective (anti-drift: no Original Objective section)" do
-      instruction = ContextCompression.compression_instruction()
-
-      # The "## Original Objective" section was removed — the verbatim
-      # objective is preserved in the first user message instead.
-      refute instruction =~ ~s(## Original Objective)
-      refute instruction =~ ~s(reproduced as close to verbatim as possible)
+    test "is the stage-2 SummaryPrompt instruction (delegates verbatim)" do
+      assert ContextCompression.compression_instruction() == SummaryPrompt.instruction()
     end
 
-    test "contains the Current State section (replaces Overall Progress)" do
+    test "carries all eight fixed summary sections, in SummaryPrompt order" do
       instruction = ContextCompression.compression_instruction()
 
-      assert instruction =~ ~s(## Current State)
+      offsets =
+        Enum.map(SummaryPrompt.sections(), fn header ->
+          case :binary.match(instruction, header) do
+            {offset, _len} -> offset
+            :nomatch -> flunk("missing summary section #{inspect(header)}")
+          end
+        end)
 
-      assert instruction =~
-               ~s(Your current state within the overall objective: what major milestones/parts are complete, what remains to be done, and what you should focus on next.)
+      # Every section is present AND the order is exactly the prompt's order.
+      assert offsets == Enum.sort(offsets)
     end
 
-    test "does NOT contain the old Overall Progress section" do
+    test "names each of the eight sections explicitly" do
       instruction = ContextCompression.compression_instruction()
 
-      refute instruction =~ ~s(## Overall Progress)
-      refute instruction =~ ~s(Cumulative high-level status of the ORIGINAL objective.)
+      for header <- [
+            "## Primary Request and Intent",
+            "## Key Technical Concepts",
+            "## Files and Code",
+            "## Errors and Fixes",
+            "## Pending Jobs",
+            "## Current Work",
+            "## Next Step",
+            "## Critical Context"
+          ] do
+        assert instruction =~ header
+      end
     end
 
-    test "contains the Completed section" do
-      instruction = ContextCompression.compression_instruction()
-      assert instruction =~ ~s(## Completed)
-    end
-
-    test "contains the complete_task reminder about the original objective" do
-      instruction = ContextCompression.compression_instruction()
-
-      assert instruction =~
-               ~s(your final report MUST summarize the status of the ORIGINAL objective as a whole)
-
-      # The reminder now references the first user message and "Current State".
-      assert instruction =~ ~s(refer to the first user message and "Current State" above)
-    end
-
-    test "does NOT contain the old objective drift phrasing" do
-      instruction = ContextCompression.compression_instruction()
-
-      refute instruction =~ ~s(the current goal being worked on)
-      # The old section header should also be gone
-      refute instruction =~ ~s(## Objective\n)
-    end
-
-    test "contains anti-drift note: objective preserved in first user message" do
-      instruction = ContextCompression.compression_instruction()
-
-      assert instruction =~
-               ~s(Do NOT reproduce, restate, or paraphrase)
-
-      assert instruction =~
-               ~s(The original objective is preserved verbatim in the first user message above.)
-    end
-
-    test "contains the CRITICAL anti-drift instruction" do
-      instruction = ContextCompression.compression_instruction()
-
-      assert instruction =~
-               ~s(CRITICAL: You are working on the SAME original objective as when you started)
-
-      assert instruction =~ ~s(Do NOT drift, redefine, narrow, or expand the objective.)
-
-      assert instruction =~ ~s(STOP and realign to it.)
-    end
-
-    test "preserves all other structural sections" do
+    test "keeps the <context_compression> framing" do
       instruction = ContextCompression.compression_instruction()
 
       assert instruction =~ ~s(<context_compression>)
-      assert instruction =~ ~s(PRESERVE THESE EXACTLY)
-      assert instruction =~ ~s(SUMMARIZE THESE)
-      assert instruction =~ ~s(DISCARD COMPLETELY)
-      assert instruction =~ ~s(## Key Findings)
-      assert instruction =~ ~s(## Decisions Made)
-      assert instruction =~ ~s(## SubAgents Dispatched)
-      assert instruction =~ ~s(## Errors Encountered)
-      assert instruction =~ ~s(## Next Steps)
       assert instruction =~ ~s(</context_compression>)
+    end
+
+    test "does NOT reproduce the original objective" do
+      instruction = ContextCompression.compression_instruction()
+
+      refute instruction =~ ~s(## Original Objective)
+      refute instruction =~ ~s(reproduced as close to verbatim as possible)
+      assert instruction =~ ~s(Do not reproduce the original objective)
+    end
+
+    test "does NOT contain any of the OLD section headers" do
+      instruction = ContextCompression.compression_instruction()
+
+      for header <- [
+            "## Current State",
+            "## Overall Progress",
+            "## Completed",
+            "## Key Findings",
+            "## Decisions Made",
+            "## SubAgents Dispatched",
+            "## Errors Encountered",
+            "## Next Steps"
+          ] do
+        refute instruction =~ header
+      end
+    end
+
+    test "with no prior summary it carries no prior-checkpoint merge block" do
+      # The merge block only exists when a prior checkpoint is being folded in
+      # (`SummaryPrompt.instruction/1`), so the plain instruction is byte-stable.
+      refute ContextCompression.compression_instruction() =~ ~s(<prior-checkpoint-summary>)
     end
   end
 

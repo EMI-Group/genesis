@@ -242,6 +242,57 @@ defmodule EvoGit.Agent.ToolDispatchTest do
     test "handles an empty list" do
       assert ToolDispatch.dedupe_tool_calls([], "agent") == []
     end
+
+    test "collapses ALIAS-identical calls: `write_file` and `write` with the same args" do
+      # The model may emit both the model-facing name (`write`) and the internal
+      # dispatch key (`write_file`) with IDENTICAL arguments; without alias-aware
+      # comparison the same mutation would be executed twice.
+      calls = [
+        ReqLLM.ToolCall.new("call_1", "write_file", ~s({"file_path":"./a.ex","content":"x"})),
+        ReqLLM.ToolCall.new("call_2", "write", ~s({"file_path":"./a.ex","content":"x"}))
+      ]
+
+      [only] = ToolDispatch.dedupe_tool_calls(calls, "agent")
+
+      assert only.id == "call_1"
+      assert ReqLLM.ToolCall.name(only) == "write_file"
+    end
+
+    test "collapses alias-identical `read`/`read_file` and `bash`/`run_bash` calls" do
+      read_calls = [
+        ReqLLM.ToolCall.new("call_1", "read_file", ~s({"file_path":"./a.ex"})),
+        ReqLLM.ToolCall.new("call_2", "read", ~s({"file_path":"./a.ex"}))
+      ]
+
+      assert [only_read] = ToolDispatch.dedupe_tool_calls(read_calls, "agent")
+      assert only_read.id == "call_1"
+
+      shell_calls = [
+        ReqLLM.ToolCall.new(
+          "call_1",
+          EvoGit.Agent.ToolNames.shell_tool_name(),
+          ~s({"command":"ls"})
+        ),
+        ReqLLM.ToolCall.new("call_2", "bash", ~s({"command":"ls"}))
+      ]
+
+      assert [only_shell] = ToolDispatch.dedupe_tool_calls(shell_calls, "agent")
+      assert only_shell.id == "call_1"
+    end
+
+    test "keeps genuinely different calls (different args or different concepts)" do
+      calls = [
+        ReqLLM.ToolCall.new("call_1", "write_file", ~s({"file_path":"./a.ex","content":"x"})),
+        # Same concept, DIFFERENT arguments — a real second call.
+        ReqLLM.ToolCall.new("call_2", "write", ~s({"file_path":"./b.ex","content":"x"})),
+        # Same arguments, DIFFERENT concept — a real second call.
+        ReqLLM.ToolCall.new("call_3", "read", ~s({"file_path":"./a.ex","content":"x"}))
+      ]
+
+      result = ToolDispatch.dedupe_tool_calls(calls, "agent")
+
+      assert Enum.map(result, & &1.id) == ["call_1", "call_2", "call_3"]
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -524,6 +575,104 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       # Concurrency is PROVEN behaviourally by the marker interleaving above (a
       # serialized run could never emit start2 before end1), so no wall-clock
       # bound is asserted here — wall-clock bounds are load-fragile.
+    end
+
+    test "an explicit `timeout` argument still wins over the advertised default", context do
+      # The dispatcher raises a resolved timeout to the tool's advertised default
+      # (`Tools.default_timeout_ms/1` — 120 s for the platform shell tool) ONLY
+      # when the model supplied no usable `timeout`. An explicit 120 ms budget
+      # must therefore still cut the call short instead of being lifted to 120 s.
+      %{repo_root: repo_root} = context
+
+      sleep_command =
+        if EvoGit.Platform.os() == :windows, do: "Start-Sleep -Seconds 5", else: "sleep 5"
+
+      calls = [
+        {ReqLLM.ToolCall.new(
+           "call_1",
+           EvoGit.Agent.ToolNames.shell_tool_name(),
+           Jason.encode!(%{"command" => sleep_command, "timeout" => 120})
+         ), 0}
+      ]
+
+      [{0, _tool_call_id, _name, output}] =
+        ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :low)
+
+      assert output =~ "timed out after 120ms"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # maybe_append_redundant_cd_warning/5
+  # ---------------------------------------------------------------------------
+
+  describe "maybe_append_redundant_cd_warning/5" do
+    setup do
+      # The warning fires once per agent run, tracked in the process dictionary.
+      Process.delete(:redundant_cd_warned)
+      on_exit(fn -> Process.delete(:redundant_cd_warned) end)
+      :ok
+    end
+
+    test "model-facing `bash` call with a cd into the worktree appends the warning" do
+      repo_path = "/work/agent-wt"
+
+      output =
+        ToolDispatch.maybe_append_redundant_cd_warning(
+          "Result: ok",
+          "bash",
+          %{"command" => "cd #{repo_path} && ls"},
+          repo_path,
+          "/work"
+        )
+
+      assert output =~ "You don't need to `cd` into your worktree"
+      assert String.starts_with?(output, "Result: ok")
+    end
+
+    test "legacy internal-key spelling still appends the warning" do
+      repo_path = "/work/agent-wt"
+
+      output =
+        ToolDispatch.maybe_append_redundant_cd_warning(
+          "Result: ok",
+          EvoGit.Agent.ToolNames.shell_tool_name(),
+          %{"command" => "cd #{repo_path} && ls"},
+          repo_path,
+          "/work"
+        )
+
+      assert output =~ "You don't need to `cd` into your worktree"
+    end
+
+    test "a non-shell tool never appends the warning" do
+      repo_path = "/work/agent-wt"
+
+      output =
+        ToolDispatch.maybe_append_redundant_cd_warning(
+          "Result: ok",
+          "write",
+          %{"command" => "cd #{repo_path} && ls"},
+          repo_path,
+          "/work"
+        )
+
+      assert output == "Result: ok"
+    end
+
+    test "a shell call without a redundant cd is left untouched" do
+      repo_path = "/work/agent-wt"
+
+      output =
+        ToolDispatch.maybe_append_redundant_cd_warning(
+          "Result: ok",
+          "bash",
+          %{"command" => "ls -la"},
+          repo_path,
+          "/work"
+        )
+
+      assert output == "Result: ok"
     end
   end
 

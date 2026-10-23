@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
   Tool for creating a new skill in the `.agents/skills/` directory.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -61,10 +62,10 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
           Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
         {:error, reason} ->
-          "Error creating skill: #{reason}"
+          Failure.error("creating skill: #{reason}")
       end
     else
-      {:error, message} -> message
+      {:error, message} -> Failure.error(message)
     end
   end
 

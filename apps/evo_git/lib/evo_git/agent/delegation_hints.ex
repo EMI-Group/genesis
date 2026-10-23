@@ -20,11 +20,17 @@ defmodule EvoGit.Agent.DelegationHints do
   re-attaches the extended text with `ToolOutput.with_text/2`, so any media a
   tool attached survives the nudge.
   """
+  alias EvoGit.Agent.ToolNames
   alias EvoGit.Platform
 
-  # Write tools whose file paths should be tracked for delegation hints
+  # Write tools whose file paths should be tracked for delegation hints. These
+  # are INTERNAL dispatch keys: the incoming tool name is matched AFTER alias
+  # normalisation (`EvoGit.Agent.ToolNames.normalize/1`), so the model-facing
+  # names (`write`, `edit`) resolve to the entries here.
   @write_tools_for_delegation ~w(write_file edit_file)
-  # Read/investigation tools whose paths should be tracked for read delegation hints
+  # Read/investigation tools whose paths should be tracked for read delegation
+  # hints — likewise matched AFTER alias normalisation, so the model-facing
+  # `read` resolves to `read_file` here.
   @read_tools_for_delegation ~w(read_file rg glob list_dir)
 
   # Shape of a per-child-path hint entry (shared by the write- and read-tool
@@ -51,8 +57,14 @@ defmodule EvoGit.Agent.DelegationHints do
 
   @doc false
   def extract_child_paths(tool_name, args, node_path, repo_path) do
-    if tool_name in @write_tools_for_delegation do
-      do_extract_child_paths(tool_name, args, node_path, repo_path)
+    # The dispatcher hands us the RAW tool-call name, which is the MODEL-FACING
+    # schema name (`write`, `edit`, …). Normalise it to the internal dispatch
+    # vocabulary the clause heads below are written in BEFORE the membership
+    # test — otherwise the new names never match and no nudge ever fires.
+    normalized = ToolNames.normalize(tool_name)
+
+    if normalized in @write_tools_for_delegation do
+      do_extract_child_paths(normalized, args, node_path, repo_path)
     else
       []
     end
@@ -260,11 +272,12 @@ defmodule EvoGit.Agent.DelegationHints do
   end
 
   # --- Read-Tool Delegation Hinting ---
-  # Tracks how many read-tool calls (read_file, rg, glob, list_dir) target
-  # child directories of the agent's assigned node. When the count exceeds a
-  # threshold, a friendly nudge is appended to the tool output suggesting the
-  # agent delegate investigation to a subagent instead of reading files
-  # directly. Only fires for high-level agents.
+  # Tracks how many read-tool calls (internal dispatch keys `read_file`, `rg`,
+  # `glob`, `list_dir` — the model-facing names `read`/`grep`/… are matched
+  # after alias normalisation) target child directories of the agent's assigned
+  # node. When the count exceeds a threshold, a friendly nudge is appended to
+  # the tool output suggesting the agent delegate investigation to a subagent
+  # instead of reading files directly. Only fires for high-level agents.
 
   def read_delegation_hint_threshold do
     EvoGit.Config.resolve([:scheduler, :read_delegation_hint_threshold])
@@ -272,8 +285,13 @@ defmodule EvoGit.Agent.DelegationHints do
 
   @doc false
   def extract_read_child_paths(tool_name, args, node_path, repo_path) do
-    if tool_name in @read_tools_for_delegation do
-      do_extract_read_child_paths(tool_name, args, node_path, repo_path)
+    # Normalise the RAW model-facing tool-call name to the internal dispatch
+    # vocabulary first (see `extract_child_paths/4`), otherwise the model-facing
+    # `read` never matches the `read_file` clause below.
+    normalized = ToolNames.normalize(tool_name)
+
+    if normalized in @read_tools_for_delegation do
+      do_extract_read_child_paths(normalized, args, node_path, repo_path)
     else
       []
     end
