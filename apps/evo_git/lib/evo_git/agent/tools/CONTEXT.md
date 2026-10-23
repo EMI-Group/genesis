@@ -61,6 +61,15 @@ Every tool module exposes a schema via a `schema/0` (or `schema/1` — only `Web
 
 ## Known Issues / Notes for Agents
 
+### Schema-vs-implementation mismatches (read_file)
+`FileRead.schema/0` advertises "a 128 KB file size limit" / "For large files (>128 KB) you MUST use offset and limit", but `validate_file_size/2` (`file_read.ex:106-114`) enforces `max_size = 256 * 1024` (256 KB) and the error string says `>256 KB`. The gate is skipped entirely whenever the caller passes `offset` OR `limit` (`custom_range?`); the 5 MB streaming threshold (`read_file_with_lines/3`) is independent of it.
+
+### rg injects NO default flags
+`Ripgrep.execute/3` passes the model's `args` array VERBATIM to `EvoGit.sandbox_run(repo_path, "rg", args, repo_root)` — no `-n`, no `--no-heading`, no `--max-count`, no line cap. Line numbers / context flags are entirely the model's responsibility; the tool only rewrites errors into prose and appends advisory tips (`build_hint/1`).
+
+### String-replace semantics (edit_file / edit_context — shared)
+`Shared.perform_string_replace/5` + `apply_string_edit/4`: `new_string` is `String.trim_trailing/1`-ed before insertion (trailing whitespace in the replacement is silently dropped); matching is byte-exact after curly-quote normalization (`find_actual_string/2`), so CRLF files never match. Uniqueness failure message: `"Error: Found #{match_count} matches of old_string in file. Set replace_all=true or provide more context."`; miss: `"Error: old_string not found in file #{display_path}"`.
+
 ### Per-Tool Path Handling (scope validation, sandbox, TMPDIR)
 
 Only FOUR tools call `Shared.validate_file_scope/3` (`shared.ex:308`) — the file-creating writers: `file_write.ex:48` (write_file), `file_edit.ex:65` (edit_file), `file_create.ex:111` (create_files), `make_dir.ex:147` (make_dir).

@@ -113,7 +113,7 @@ Branch-creation failure is tolerated SILENTLY: the foreign entry keeps its `comm
 
 - Both phases: ensure repo → create phylo node → load context node → build spec → run agent → handle result.
 - Agent changes go to **isolated branches** (`genesis/agent_<hex>`), never the working tree. PR creation is optional (requires `gh` CLI).
-- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"` or `"evolve"`.
+- `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` — `Helpers.merge_and_report(repo_path, agent_output, phase)` where phase is `"genesis"`, `"evolve"`, or `"skill"` (skill_extraction.ex:32). `phase` is used ONLY for `String.capitalize/1` log prefixes; `generate_branch_name/1` ignores its argument (`def generate_branch_name(_prefix)`, helpers.ex:193) and always yields `"genesis/agent_" <> 8 lowercase hex` — so evolve and skill-extraction branches are ALSO `genesis/agent_*`.
 - No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
 - PR creation is best-effort and never fails the phase — all PR errors are logged and return `nil`.
 - Evolution `node_path` validation requires a `CONTEXT.md` at the target directory (except root).
