@@ -409,6 +409,47 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
   end
 
+  # The ONE-LINE clock of the runtime-context snapshot (agents otherwise have no
+  # clock at all). Rendered at MINUTE granularity from the `:now` test seam, with
+  # a trailing zone name only when the value knows one.
+  describe "build_clock_section/1" do
+    test "a %DateTime{} renders its wall clock + its own zone name (exact)" do
+      assert ContextBuilder.build_clock_section(%{now: ~U[2025-06-14 09:32:00Z]}) ==
+               "Current local time: 2025-06-14 09:32 (Etc/UTC)"
+    end
+
+    test "a non-UTC %DateTime{} renders ITS zone, not UTC (exact)" do
+      # The timezone database is passed explicitly: `DateTime.from_naive!/3` (and
+      # `DateTime.new!/3`) would fail under `:utc_only_time_zone_database`, i.e.
+      # in a `--no-start` context where the app's boot-time
+      # `Calendar.put_time_zone_database(Tz.TimeZoneDatabase)` never ran.
+      berlin = DateTime.new!(~D[2025-06-14], ~T[09:32:00], "Europe/Berlin", Tz.TimeZoneDatabase)
+
+      assert ContextBuilder.build_clock_section(%{now: berlin}) ==
+               "Current local time: 2025-06-14 09:32 (Europe/Berlin)"
+    end
+
+    test "a %NaiveDateTime{} renders the wall clock with NO zone suffix (exact)" do
+      # Seconds are dropped (minute granularity).
+      assert ContextBuilder.build_clock_section(%{now: ~N[2025-06-14 09:32:45]}) ==
+               "Current local time: 2025-06-14 09:32"
+    end
+
+    test "the REAL-clock path renders the same shape (absent/nil/bogus :now)" do
+      # Production never sets `:now`, so these are the live paths — assert the
+      # SHAPE only (never a value), plus totality: the function must never raise.
+      shape = ~r/^Current local time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}/
+
+      for state <- [%{}, %{now: nil}, %{now: :bogus}, %{now: "2025-06-14 09:32"}] do
+        line = ContextBuilder.build_clock_section(state)
+
+        assert is_binary(line)
+        assert line =~ shape
+        assert String.starts_with?(line, "Current local time: ")
+      end
+    end
+  end
+
   describe "build_context_block/1" do
     # A temp repo dir with a CONTEXT.md chain at "./docs"; removed in `on_exit`.
     defp temp_repo(root_md, docs_md) do
@@ -523,6 +564,9 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       repo
     end
 
+    # The `Current local time:` line is rendered from the `:now` CLOCK seam, so a
+    # fixed value here makes every refreshed-vs-original comparison deterministic
+    # instead of racing a minute boundary.
     defp refresh_state(repo) do
       %{
         node_path: "./docs",
@@ -532,7 +576,8 @@ defmodule EvoGit.Agent.ContextBuilderTest do
         foreign_repos: [],
         repo_notes: nil,
         quality_level: nil,
-        objective: "Build the parser."
+        objective: "Build the parser.",
+        now: ~U[2025-06-14 09:32:00Z]
       }
     end
 
@@ -547,6 +592,55 @@ defmodule EvoGit.Agent.ContextBuilderTest do
 
     defp refresh_text(state, turn) do
       state |> ContextBuilder.build_context_refresh_message(turn) |> text_of()
+    end
+
+    # Mirrors how `Runner.do_run/2` assembles message #1: the `<context>` block
+    # plus the `<objective>` block, joined, materialized by
+    # `build_first_user_message/3` and turn-tagged like every initial message.
+    defp first_user_message(state) do
+      combined =
+        [
+          ContextBuilder.build_context_block(state),
+          ContextBuilder.objective_block(state.objective)
+        ]
+        |> Enum.reject(&ContextBuilder.blank?/1)
+        |> Enum.join("\n\n---\n\n")
+
+      combined
+      |> ContextBuilder.build_first_user_message(
+        Map.get(state, :parent_id),
+        Map.get(state, :attachments)
+      )
+      |> ContextBuilder.tag_message_turn(0)
+    end
+
+    test "message #1 stays byte-identical while the refresh carries a FRESH clock" do
+      repo = refresh_repo("# Root\nroot body\n", "# Docs\ndocs body\n")
+      state = refresh_state(repo)
+
+      msg1 = first_user_message(state)
+      snapshot = :erlang.term_to_binary(msg1)
+
+      # The SAME context state, a LATER clock: the refresh re-renders the line,
+      # message #1 is never rewritten (the provider's cached prefix must not move).
+      later = %{state | now: ~U[2025-06-14 10:07:00Z]}
+      refresh = ContextBuilder.build_context_refresh_message(later, 4)
+      refresh_text = text_of(refresh)
+
+      assert :erlang.term_to_binary(msg1) == snapshot
+      assert text_of(msg1) =~ "Current local time: 2025-06-14 09:32 (Etc/UTC)"
+      assert refresh_text =~ "Current local time: 2025-06-14 10:07 (Etc/UTC)"
+      refute refresh_text =~ "2025-06-14 09:32"
+      # The pinned notice wording is untouched and still leads the message.
+      assert String.starts_with?(
+               refresh_text,
+               "This is an automatically generated runtime-context refresh."
+             )
+
+      # `refresh_first_user_message/2` with the SAME fixed clock reproduces the
+      # original message structurally, and a different clock makes it differ.
+      assert ContextBuilder.refresh_first_user_message(msg1, state) == msg1
+      refute ContextBuilder.refresh_first_user_message(msg1, later) == msg1
     end
 
     test "is a :user message carrying the CURRENT <context> block" do
