@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   Tool for creating empty files and auto-committing them.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -11,16 +12,11 @@ defmodule EvoGit.Agent.Tools.FileCreate do
   def schema do
     ReqLLM.tool(
       name: "create_files",
-      description: """
-      Creates one or more empty files and automatically commits them for git tracking.
-      This tool is useful for creating empty files to spawn subagents on, because subagents need a concrete path to work with, and using empty files is the idiomatic way to do this.
-
-      ## Default Behavior
-
-      By default, this tool:
-      1. Creates all specified empty files (and their parent directories if needed).
-      2. Automatically commits these changes with a descriptive commit message (only the new files are staged/committed, other dirty files are unaffected).
-      """,
+      description:
+        "Use the create_files tool to create several empty files in one call. " <>
+          "Each listed path is written as an EMPTY file, so an existing file at that path is truncated to empty. " <>
+          "Only the listed paths are staged and committed; other dirty files are left alone. " <>
+          "The paths must stay inside the agent's assigned node — anything outside it is rejected.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -28,18 +24,16 @@ defmodule EvoGit.Agent.Tools.FileCreate do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "List of file paths to create. Paths are relative to git repo path. Example: ['./src/index.js', './docs/README.md']."
+              "The file paths to create, relative to the repo root (e.g. ['./src/index.js', './docs/README.md'])."
           },
           "commit" => %{
             "type" => "boolean",
-            "description" =>
-              "Whether to automatically commit the created files. When true, only the newly created files are committed, other files won't be affected. Default: true.",
+            "description" => "Whether to commit the created files. Default: true.",
             "default" => true
           },
           "parents" => %{
             "type" => "boolean",
-            "description" =>
-              "Whether to create parent directories recursively if they don't exist. Default: true.",
+            "description" => "Whether to create missing parent directories. Default: true.",
             "default" => true
           }
         },
@@ -57,6 +51,8 @@ defmodule EvoGit.Agent.Tools.FileCreate do
          {:ok, commit?} <- Shared.fetch_optional_boolean_arg(args, "commit", true),
          {:ok, parents?} <- Shared.fetch_optional_boolean_arg(args, "parents", true) do
       do_create_files(paths, commit?, parents?, repo_path, repo_root, node_path)
+    else
+      {:error, message} -> Failure.error(message)
     end
   end
 
@@ -70,14 +66,14 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     {successes, failures} = Enum.split_with(results, &(&1 == :ok))
 
     base_message =
-      if length(successes) > 0 do
+      if successes != [] do
         if failures == [] do
           "Successfully created #{length(successes)} file#{if(length(successes) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}"
         else
           "Created #{length(successes)} file#{if(length(successes) == 1, do: "", else: "s")}: #{Enum.join(paths, ", ")}. Some files had errors."
         end
       else
-        "Failed to create files: #{Enum.join(paths, ", ")}"
+        Failure.error("failed to create files: #{Enum.join(paths, ", ")}")
       end
 
     message =
@@ -98,7 +94,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
       if commit? and successes != [] do
         case do_commit(repo_path, repo_root, paths) do
           {:ok, output} -> message <> "\n\nChanges committed.\n" <> output
-          {:error, reason} -> message <> "\n\nWarning: Failed to commit: #{reason}"
+          {:error, reason} -> message <> Failure.notice("Failed to commit: #{reason}")
         end
       else
         message

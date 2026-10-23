@@ -6,6 +6,7 @@ defmodule EvoGit.Agent.Tools.SearchContext do
   search architectural documentation and spatial contracts across the codebase.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @default_path "./"
@@ -14,29 +15,26 @@ defmodule EvoGit.Agent.Tools.SearchContext do
   def schema do
     ReqLLM.tool(
       name: "search_context",
-      description: """
-      Search for a regex pattern in all CONTEXT.md files within a given node path recursively.
-      Returns matching lines with their file paths and surrounding context lines.
-      Use this tool to quickly narrow down relevant architectural information to help navigate the codebase and understand spatial contracts.
-      Uses ripgrep internally, so the pattern follows ripgrep's regex syntax.
-      """,
+      description:
+        "Use the search_context tool to search every CONTEXT.md under a node path. " <>
+          "The pattern is a ripgrep regex; matching lines come back with their file path and surrounding context lines.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "pattern" => %{
             "type" => "string",
-            "description" => "The regex pattern to search for in CONTEXT.md files"
+            "description" => "The ripgrep regex pattern to search for in CONTEXT.md files"
           },
           "path" => %{
             "type" => "string",
             "description" =>
-              "The node path (directory) to search within, relative to repository root (e.g., './', './lib', './src/components'). Default: \"./\"",
+              "The node path to search within, relative to the repo root (e.g. './', './lib', './src/components').",
             "default" => @default_path
           },
           "context" => %{
             "type" => "integer",
             "description" =>
-              "Number of context lines to display around matches (combines before and after). Default: #{@default_context}",
+              "How many context lines to show around each match. Default: #{@default_context}",
             "default" => @default_context
           },
           "max_bytes" => %{
@@ -62,13 +60,21 @@ defmodule EvoGit.Agent.Tools.SearchContext do
         {output, exit_code} = EvoGit.sandbox_run(repo_path, "rg", rg_args, repo_root)
 
         cond do
-          exit_code == 0 -> "Command executed successfully.\nOutput:\n#{output}"
-          exit_code == 1 and output == "" -> "No matches found."
-          true -> "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+          exit_code == 0 ->
+            "Command executed successfully.\nOutput:\n#{output}"
+
+          exit_code == 1 and output == "" ->
+            "No matches found."
+
+          true ->
+            Failure.error(
+              "search_context failed with exit code #{exit_code}.",
+              "Output:\n#{output}"
+            )
         end
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 end

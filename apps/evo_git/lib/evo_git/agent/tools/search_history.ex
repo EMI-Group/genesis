@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   Tool for searching patterns in git commit history.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @default_commit_id "HEAD"
@@ -15,35 +16,31 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
   def schema do
     ReqLLM.tool(
       name: "search_history",
-      description: """
-      Searches for a pattern in the git commit history, revealing matching commit IDs and their messages.
-      Use this tool to find relevant commits in the past that may provide explanations, or clues about the codebase's evolution, or provide context for the current task.
-      It searches commit messages (subject and body) and optionally git notes.
-      """,
+      description:
+        "Use the search_history tool to search the git commit history (messages and notes). " <>
+          "Matching commits come back with their short id and subject, newest first; raise max_count or tighten the pattern to narrow the search.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "pattern" => %{
             "type" => "string",
-            "description" =>
-              "The regex pattern to search for in commit messages (and optionally notes)"
+            "description" => "The regex pattern to match against commit messages (and notes)"
           },
           "commit_id" => %{
             "type" => "string",
             "description" =>
-              "The commit ID, branch, or ref to start the log from. Default: \"#{@default_commit_id}\". An empty string also defaults to \"#{@default_commit_id}\".",
+              "The commit, branch, or ref to start the log from. Default: \"#{@default_commit_id}\"; an empty string also means \"#{@default_commit_id}\".",
             "default" => @default_commit_id
           },
           "search_notes" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to also search in git notes. Default: #{@default_search_notes}",
+              "Whether to search git notes as well. Default: #{@default_search_notes}.",
             "default" => @default_search_notes
           },
           "max_count" => %{
             "type" => "integer",
-            "description" =>
-              "Maximum number of commits to search through. Default: #{@default_max_count}",
+            "description" => "Maximum number of commits to walk. Default: #{@default_max_count}.",
             "default" => @default_max_count
           },
           "max_bytes" => %{
@@ -74,7 +71,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
         do_search(pattern, commit_id, search_notes, max_count, repo_path, repo_root)
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 
@@ -112,7 +109,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
     {output, exit_code} = EvoGit.sandbox_run(repo_path, "git", git_args, repo_root)
 
     if exit_code != 0 do
-      "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+      Failure.error("search_history failed with exit code #{exit_code}.", "Output:\n#{output}")
     else
       case compile_regex(pattern) do
         {:ok, regex} ->
@@ -123,7 +120,7 @@ defmodule EvoGit.Agent.Tools.SearchHistory do
           format_results(matches, pattern)
 
         {:error, reason} ->
-          "Error compiling pattern '#{pattern}': #{inspect(reason)}"
+          Failure.error("compiling pattern '#{pattern}' failed: #{inspect(reason)}")
       end
     end
   end

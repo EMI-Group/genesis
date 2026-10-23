@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   Tool for creating directories with optional placeholder files.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @keep_file_options ~w(CONTEXT.md .gitkeep none)
@@ -13,24 +14,10 @@ defmodule EvoGit.Agent.Tools.MakeDir do
   def schema do
     ReqLLM.tool(
       name: "make_dir",
-      description: """
-      Creates one or more directories with optional placeholder files for git tracking.
-
-      ## Why Placeholder Files Are Needed
-
-      Git does NOT track empty directories.
-      If you create a directory without adding any files to it, git will ignore it completely.
-      To make a directory visible in the repository, you need to add at least one file (typically a placeholder file like CONTEXT.md or .gitkeep).
-
-      ## Default Behavior
-
-      By default, this tool:
-      1. Creates all specified directories (with parent directories if needed)
-      2. Creates an empty CONTEXT.md file in each directory (so git tracks them)
-      3. Automatically commits these changes with a descriptive commit message (only the new directories and their keep files are staged/committed, other dirty files are unaffected)
-
-      IMPORTANT: Unless you have a specific reason, it's recommended to keep the default settings to ensure directories are immediately tracked.
-      """,
+      description:
+        "Use the make_dir tool to create a directory (parents included). " <>
+          "Git does NOT track empty directories, so each directory gets a placeholder file (CONTEXT.md by default) and is committed. " <>
+          "The paths must stay inside the agent's assigned node — anything outside it is rejected.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -38,29 +25,24 @@ defmodule EvoGit.Agent.Tools.MakeDir do
             "type" => "array",
             "items" => %{"type" => "string"},
             "description" =>
-              "List of directory paths to create. Paths are relative to git repo path. Example: ['./src/components', './lib/utils']."
+              "The directory paths to create, relative to the repo root (e.g. ['./src/components', './lib/utils'])."
           },
           "keep_file" => %{
             "type" => "string",
             "enum" => @keep_file_options,
             "description" =>
-              "Type of placeholder file to create in each directory so git tracks them. " <>
-                "CONTEXT.md: Creates an empty CONTEXT.md file (default, recommended). " <>
-                ".gitkeep: Creates a .gitkeep file (standard convention but less descriptive). " <>
-                "none: No placeholder file created. Directory won't be tracked by git until you add actual files. " <>
-                "Only use 'none' if you plan to write files to the directory immediately.",
+              "The placeholder file that makes the directory tracked: CONTEXT.md (default), .gitkeep, or none.",
             "default" => "CONTEXT.md"
           },
           "commit" => %{
             "type" => "boolean",
             "description" =>
-              "Whether to automatically commit the created directories. When true, the keep files are committed, other files won't be affected. Default: true.",
+              "Whether to commit the keep files. Only those files are staged. Default: true.",
             "default" => true
           },
           "parents" => %{
             "type" => "boolean",
-            "description" =>
-              "Whether to create parent directories recursively (like 'mkdir -p'). Default: true.",
+            "description" => "Whether to create missing parent directories. Default: true.",
             "default" => true
           }
         },
@@ -79,6 +61,8 @@ defmodule EvoGit.Agent.Tools.MakeDir do
          {:ok, commit?} <- Shared.fetch_optional_boolean_arg(args, "commit", true),
          {:ok, parents?} <- Shared.fetch_optional_boolean_arg(args, "parents", true) do
       do_make_dir(paths, keep_file, commit?, parents?, repo_path, repo_root, node_path)
+    else
+      {:error, message} -> Failure.error(message)
     end
   end
 
@@ -106,14 +90,14 @@ defmodule EvoGit.Agent.Tools.MakeDir do
     {successes, failures} = Enum.split_with(results, &(&1 == :ok))
 
     base_message =
-      if length(successes) > 0 do
+      if successes != [] do
         if failures == [] do
           "Successfully created #{length(successes)} director#{if(length(successes) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}"
         else
           "Created #{length(successes)} director#{if(length(successes) == 1, do: "y", else: "ies")}: #{Enum.join(paths, ", ")}. Some directories had errors."
         end
       else
-        "Failed to create directories: #{Enum.join(paths, ", ")}"
+        Failure.error("failed to create directories: #{Enum.join(paths, ", ")}")
       end
 
     message =
@@ -134,7 +118,7 @@ defmodule EvoGit.Agent.Tools.MakeDir do
       if commit? and successes != [] do
         case do_commit(repo_path, repo_root, paths, keep_file) do
           {:ok, output} -> message <> "\n\nChanges committed.\n" <> output
-          {:error, reason} -> message <> "\n\nWarning: Failed to commit: #{reason}"
+          {:error, reason} -> message <> Failure.notice("Failed to commit: #{reason}")
         end
       else
         message

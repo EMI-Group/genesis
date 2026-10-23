@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.Git do
   Tool for executing git commands.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -18,30 +19,22 @@ defmodule EvoGit.Agent.Tools.Git do
 
     ReqLLM.tool(
       name: "run_git",
-      description: """
-      Executes a git command inside your worktree. The cwd is already set to the repository path.
-      Provide arguments as a list of strings, for example: ["status"], ["diff", "--stat"], ["log", "-1"].
-
-      - NEVER update the git config
-      - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
-      requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
-      commands when given direct instructions.
-      - Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
-      - Never use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
-
-      ## Tips
-      - Run git status to check the current state of the repo
-      - Run git diff to see the specific changes to tracked files
-      - Run git log to see the commit history and understand recent changes
-      #{co_author_tip}
-      """,
+      description:
+        "Use the run_git tool to run a read-only git command. " <>
+          "Arguments are a list of strings without the `git` prefix (e.g. [\"status\"], [\"diff\", \"--stat\"], [\"log\", \"-1\"]); the working directory is already the repository. " <>
+          "Mutating subcommands are classified as write operations, so they are rejected for read-only agents and for read-only foreign repositories. " <>
+          "Never update the git config and never run destructive commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly asks for them. " <>
+          "Never use interactive commands (-i, or --no-edit with rebase). " <>
+          "Tips: git status shows the working tree, git diff shows the unstaged changes, git log shows the commit history.\n" <>
+          co_author_tip,
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "args" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "List of arguments to pass to git, e.g. ['status'], ['diff', 'HEAD']"
+            "description" =>
+              "The git arguments, e.g. [\"status\"], [\"diff\", \"HEAD\"] — the `git` executable itself is not included."
           },
           "max_bytes" => %{
             "type" => "integer",
@@ -67,11 +60,11 @@ defmodule EvoGit.Agent.Tools.Git do
         if exit_code == 0 do
           "Command executed successfully.\nOutput:\n#{output}"
         else
-          "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
+          Failure.error("git failed with exit code #{exit_code}.", "Output:\n#{output}")
         end
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 end

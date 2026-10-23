@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.Context do
   Tools for reading and writing directory CONTEXT.md files.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -12,25 +13,16 @@ defmodule EvoGit.Agent.Tools.Context do
     ReqLLM.tool(
       name: "read_context",
       description:
-        "Reads a CONTEXT.md file from a directory. CONTEXT.md files serve two purposes: " <>
-          "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
-          "and rules for code within it (Constraints). " <>
-          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories " <>
-          "(may also include sibling paths for cross-references like related test directories), " <>
-          "so parent agents know where to delegate work. " <>
-          "Use this to read the context to understand the semantic meaning and expectations for a directory. " <>
-          "IMPORTANT: Prefer spawning a subagent (subagent_manager or subagent_investigator) at " <>
-          "the target path instead of manually calling read_context on it. The subagent automatically " <>
-          "inherits that path's CONTEXT.md and can do work or investigation directly — it's far more " <>
-          "efficient than reading context yourself and then re-communicating findings. Only use read_context " <>
-          "for quick lookups when you need routing information to decide where to delegate.",
+        "Use the read_context tool to read the CONTEXT.md of one directory. " <>
+          "Read it before delegating work into a child directory. " <>
+          "Prefer spawning a subagent at the target path over reading it yourself — the subagent inherits that CONTEXT.md.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory to read CONTEXT.md from (e.g., './', './lib', './src/components')"
+              "The path of the directory to read CONTEXT.md from, relative to the repo root (e.g. './', './lib')."
           }
         },
         "required" => ["dir_path"]
@@ -46,35 +38,26 @@ defmodule EvoGit.Agent.Tools.Context do
     ReqLLM.tool(
       name: "write_context",
       description:
-        "Creates or updates a CONTEXT.md file for a directory. CONTEXT.md serves two purposes: " <>
-          "1) Documentation - describe the directory's purpose (Intent), what it exposes (API Surface), " <>
-          "and rules for code within it (Constraints). " <>
-          "2) Routing Table - a simple markdown list mapping areas/modules/features to child subdirectories " <>
-          "(may also include sibling paths for cross-references like related test directories), " <>
-          "so parent agents know where to delegate work. " <>
-          "The context should be simple, concise, and clear. " <>
-          "CONTEXT.md must describe the CURRENT state of the directory — it is NOT a change log, so do not record past behaviors, previously-fixed bugs, or fix annotations there. " <>
-          "When something changes (e.g. a bug is fixed), REMOVE the outdated text rather than appending notes about the change; past versions live in git history (`git log -p -- <dir>/CONTEXT.md` or the search_history tool). " <>
-          "Use this to document a directory after analyzing its contents or establishing its design, or update existing context. " <>
-          "By default, the tool will create a git commit for the new or updated CONTEXT.md file (only this file), " <>
-          "and you should consider committing it as an important part of your workflow to ensure the context is preserved in the repository history.",
+        "Use the write_context tool to create or replace a directory's CONTEXT.md. " <>
+          "Describe the current state — what the directory is for, what it exposes, and the rules for code in it — never a changelog. " <>
+          "Write one sentence per line so git diffs stay granular. " <>
+          "The directory must stay inside the agent's assigned node.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory where CONTEXT.md should be created/updated (e.g., './', './lib', './src/components')"
+              "The path of the directory whose CONTEXT.md is created or replaced, relative to the repo root (e.g. './lib')."
           },
           "content" => %{
             "type" => "string",
             "description" =>
-              "The full markdown content for the CONTEXT.md file. Common sections: Intent (purpose), API Surface (what it exposes), Constraints (rules for code), and Routing Table (areas → child subdirectories; may include sibling paths for cross-references). Additional sections may be included as appropriate — Design Decisions (why choices were made), Known Issues (gotchas/problems future agents should know), Notes for Agents (hints to prevent wasted investigation), Dependencies (external system packages, services, tool versions), Test Strategy (how to test, known gaps), See Also (cross-references to related modules), and Status (what's complete vs pending). The goal: capture all knowledge future agents will need to work effectively in this directory."
+              "The full markdown content: Intent (purpose), API Surface, Constraints, and a Routing Table of child subdirectories. One sentence per line."
           },
           "commit" => %{
             "type" => "boolean",
-            "description" =>
-              "Whether to create a git commit after writing the CONTEXT.md file. Defaults to true.",
+            "description" => "Whether to commit only this CONTEXT.md file. Default: true.",
             "default" => true
           }
         },
@@ -91,22 +74,17 @@ defmodule EvoGit.Agent.Tools.Context do
     ReqLLM.tool(
       name: "edit_context",
       description:
-        "Creates or updates a CONTEXT.md file for a directory via exact string replacement. " <>
-          "Similar to edit_file but specifically for CONTEXT.md files. " <>
-          "The old_string must match exactly (including whitespace and indentation). " <>
-          "The edit will FAIL if old_string is not unique in the file. " <>
-          "Either provide a larger string with more surrounding context to make it unique " <>
-          "or use replace_all to change every instance of old_string. " <>
-          "CONTEXT.md must describe the CURRENT state of the directory, not a change log — once a recorded issue is resolved (e.g. a bug is fixed), " <>
-          "use this tool to DELETE the stale entry rather than annotating it; past versions live in git history. " <>
-          "By default, the tool will create a git commit for the updated CONTEXT.md file.",
+        "Use the edit_context tool to change part of a directory's CONTEXT.md by exact string replacement. " <>
+          "Delete stale text instead of annotating it — CONTEXT.md describes the current state, not its history. " <>
+          "Write one sentence per line so git diffs stay granular. " <>
+          "The edit fails when old_string is not unique; add surrounding context or set replace_all.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "dir_path" => %{
             "type" => "string",
             "description" =>
-              "The relative path to the directory containing the CONTEXT.md file (e.g., './', './lib', './src/components')"
+              "The path of the directory holding the CONTEXT.md to edit, relative to the repo root (e.g. './lib')."
           },
           "old_string" => %{
             "type" => "string",
@@ -118,13 +96,12 @@ defmodule EvoGit.Agent.Tools.Context do
           },
           "replace_all" => %{
             "type" => "boolean",
-            "description" => "Replace all occurrences of old_string (default: false)",
+            "description" => "Whether to replace every occurrence of old_string. Default: false.",
             "default" => false
           },
           "commit" => %{
             "type" => "boolean",
-            "description" =>
-              "Whether to create a git commit after editing the CONTEXT.md file. Defaults to true.",
+            "description" => "Whether to commit only this CONTEXT.md file. Default: true.",
             "default" => true
           }
         },
@@ -144,7 +121,7 @@ defmodule EvoGit.Agent.Tools.Context do
         do_context_read(full_dir, dir_path)
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 
@@ -168,24 +145,31 @@ defmodule EvoGit.Agent.Tools.Context do
         repo_path,
         repo_root
       )
+    else
+      {:error, message} -> Failure.error(message)
     end
   end
 
   defp do_context_read(full_dir, dir_path) do
     cond do
       not File.exists?(full_dir) ->
-        "Error: directory '#{dir_path}' does not exist"
+        missing_dir_error(dir_path)
 
       not File.dir?(full_dir) ->
-        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+        not_a_dir_error(dir_path)
 
       true ->
         context_path = Path.join(full_dir, "CONTEXT.md")
 
         case File.read(context_path) do
-          {:ok, content} -> content
-          {:error, :enoent} -> "No CONTEXT.md found in directory '#{dir_path}'"
-          {:error, reason} -> "Error reading CONTEXT.md: #{:file.format_error(reason)}"
+          {:ok, content} ->
+            content
+
+          {:error, :enoent} ->
+            Failure.error("No CONTEXT.md found in directory '#{dir_path}'")
+
+          {:error, reason} ->
+            Failure.error("reading CONTEXT.md failed: #{:file.format_error(reason)}")
         end
     end
   end
@@ -202,16 +186,16 @@ defmodule EvoGit.Agent.Tools.Context do
        ) do
     cond do
       not File.exists?(full_dir) ->
-        "Error: directory '#{dir_path}' does not exist"
+        missing_dir_error(dir_path)
 
       not File.dir?(full_dir) ->
-        "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+        not_a_dir_error(dir_path)
 
       true ->
         context_path = Path.join(full_dir, "CONTEXT.md")
 
         if not File.exists?(context_path) do
-          "Error: No CONTEXT.md found in directory '#{dir_path}'"
+          Failure.error("No CONTEXT.md found in directory '#{dir_path}'")
         else
           relative_path = Path.join(dir_path, "CONTEXT.md")
 
@@ -242,6 +226,8 @@ defmodule EvoGit.Agent.Tools.Context do
          {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
          full_dir = Shared.expand_path(dir_path, repo_path) do
       do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
+    else
+      {:error, message} -> Failure.error(message)
     end
   end
 
@@ -250,7 +236,7 @@ defmodule EvoGit.Agent.Tools.Context do
       :ok ->
         cond do
           not File.dir?(full_dir) ->
-            "Error: '#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories."
+            not_a_dir_error(dir_path)
 
           true ->
             context_path = Path.join(full_dir, "CONTEXT.md")
@@ -261,13 +247,21 @@ defmodule EvoGit.Agent.Tools.Context do
                 maybe_commit_context(result_msg, dir_path, commit, repo_path, repo_root)
 
               {:error, reason} ->
-                "Error writing CONTEXT.md: #{:file.format_error(reason)}"
+                Failure.error("writing CONTEXT.md failed: #{:file.format_error(reason)}")
             end
         end
 
       {:error, reason} ->
-        "Error creating directory '#{dir_path}': #{:file.format_error(reason)}"
+        Failure.error("creating directory '#{dir_path}' failed: #{:file.format_error(reason)}")
     end
+  end
+
+  defp missing_dir_error(dir_path) do
+    Failure.error("directory '#{dir_path}' does not exist")
+  end
+
+  defp not_a_dir_error(dir_path) do
+    Failure.error("'#{dir_path}' is a file, not a directory. CONTEXT.md is only for directories.")
   end
 
   # Optionally stages and commits the CONTEXT.md for the given directory.
