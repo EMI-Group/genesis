@@ -496,6 +496,7 @@ defmodule EvoGit.Agent.Runner do
     case EvoGit.Agent.ContextCompression.compress_if_needed(state,
            agent_id: state.agent_id,
            llm_model: EvoGit.Agent.ToolDispatch.current_model(),
+           llm_context_window: EvoGit.Agent.ToolDispatch.current_context_window(),
            llm_generation_params: EvoGit.Agent.ToolDispatch.current_generation_params()
          ) do
       %LoopState{} = state ->

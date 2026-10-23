@@ -46,6 +46,7 @@ defmodule EvoGit.Agent.ToolDispatch do
   require Logger
 
   alias EvoGit.Agent.CompletionProtocol
+  alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolInvocation
   alias EvoGit.Agent.Tools.CompleteTask
@@ -98,6 +99,21 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_state = fetch_current_agent_state!(:current_generation_params)
     agent_state.llm_generation_params
   end
+
+  # The CONFIGURED context window for the calling agent, threaded into the
+  # compression trigger. Read defensively: the field is populated by the
+  # scheduler from the model profile's `context_window`, and an older/absent
+  # value simply means "use the platform default".
+  @doc false
+  def current_context_window do
+    agent_state = fetch_current_agent_state!(:current_context_window)
+    normalize_context_window(Map.get(agent_state, :llm_context_window))
+  end
+
+  defp normalize_context_window(window) when is_integer(window) and window > 0, do: window
+
+  defp normalize_context_window(_window),
+    do: EvoGit.Config.Schema.LLM.default_context_window()
 
   # The resolved model spec for a DIAGNOSTIC annotation on the fail-fast error
   # message (`handle_llm_failure/7`), as opposed to `current_model/0`'s raising
@@ -1161,7 +1177,10 @@ defmodule EvoGit.Agent.ToolDispatch do
       max_retries: agent_state.max_retries,
       max_agent_depth: agent_state.max_depth,
       foreign_repos: agent_state.foreign_repos,
-      compression_threshold: EvoGit.Config.resolve([:llm, :compression_threshold_tokens]),
+      compression_threshold:
+        Threshold.for_model(agent_state.llm_model,
+          context_window: Map.get(agent_state, :llm_context_window)
+        ).threshold,
       agent_type: agent_type_from_module(state.agent_module),
       context_node_path: state.node_path
     )
