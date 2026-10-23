@@ -95,12 +95,11 @@ defmodule EvoGit.Sandbox.MacOS do
   def run(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
     if enabled?() do
       resolved_tmpdir = EvoGit.Sandbox.resolve_tmpdir()
-      profile = generate_profile(cwd, repo_root)
 
       # Once this macOS has been observed rejecting the `(limit ...)` rule,
       # use the stripped profile directly — no guaranteed-failing first
       # attempt on every call.
-      profile = if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
+      profile = effective_profile(cwd, repo_root)
 
       {exec, exec_args} =
         if Nix.active?() do
@@ -154,6 +153,18 @@ defmodule EvoGit.Sandbox.MacOS do
         env: git_env ++ Helpers.temp_env_vars()
       )
     end
+  end
+
+  # Returns the SBPL profile that is actually handed to `sandbox-exec` for
+  # `cwd`: `generate_profile/2`, minus the process-count `(limit ...)` rule
+  # when this macOS has already been observed rejecting it (see the fail-safe
+  # in `run/4`). Shared with `EvoGit.Sandbox.Background`, where a background
+  # job cannot be retried once started — the cached rejection decision is the
+  # only signal available, so the stripped profile must be chosen up front.
+  @doc false
+  def effective_profile(cwd, repo_root \\ nil) do
+    profile = generate_profile(cwd, repo_root)
+    if process_limit_rejected?(), do: strip_process_limit(profile), else: profile
   end
 
   # Generate an SBPL (Sandbox Policy Language) profile.

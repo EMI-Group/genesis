@@ -130,6 +130,72 @@ defmodule EvoGit.Sandbox.Linux do
   @doc "Generates systemd-run argument list."
   @spec args(String.t(), String.t(), [String.t()], String.t() | nil) :: [String.t()]
   def args(cwd, executable, args \\ [], repo_root \\ nil) when is_list(args) do
+    # Foreground shape: block until the unit exits (`--wait`), pipe its output
+    # to the caller (`--pipe`) and let systemd GC the unit afterwards
+    # (`--collect`).
+    build_args(
+      cwd,
+      executable,
+      args,
+      if(repo_root, do: [Path.join(repo_root, ".git")], else: []),
+      [],
+      ["--wait", "--pipe", "--collect"],
+      []
+    )
+  end
+
+  @doc """
+  Generates the systemd-run argument list for a DETACHED (background) job.
+
+  Carries the SAME sandbox fragments as `args/4` — environment (`PATH`, `HOME`,
+  `TMPDIR`, git identity), nix env vars, `WorkingDirectory`, `StandardInput`,
+  the `[sandbox.linux]` security properties, the resource limits, the writable
+  paths and the inaccessible paths — but shaped for a transient user unit that
+  OUTLIVES the client:
+
+    * `--unit=<unit_name>` fixes the unit name (ownership proof) instead of
+      `inject_unit/2`'s per-call generated name;
+    * NO `--wait`, `--pipe` or `--collect` — the client returns as soon as the
+      unit STARTS, and the unit (plus its exit status) is RETAINED after it
+      exits, so `systemctl --user show <unit>` stays queryable;
+    * `StandardOutput=append:<output_path>` + `StandardError=append:<output_path>`
+      instead of piping the output back to the caller (the file and its parent
+      directory are created by the caller — the job only appends).
+
+  The git metadata dir is resolved from `cwd` via `Helpers.git_metadata_dir/2`
+  (following linked-worktree `gitdir:` pointers) because a detached job has no
+  `repo_root` argument.
+  """
+  @spec detached_args(String.t(), String.t(), [String.t()], String.t(), String.t()) ::
+          [String.t()]
+  def detached_args(cwd, executable, args, output_path, unit_name)
+      when is_list(args) and is_binary(output_path) and is_binary(unit_name) do
+    build_args(
+      cwd,
+      executable,
+      args,
+      List.wrap(Helpers.git_metadata_dir(cwd, nil)),
+      ["--unit=#{unit_name}"],
+      [],
+      [
+        "-p",
+        "StandardOutput=append:#{output_path}",
+        "-p",
+        "StandardError=append:#{output_path}"
+      ]
+    )
+  end
+
+  # Shared systemd-run argv assembly — the ONE place the common fragments are
+  # emitted, so `args/4` (foreground) and `detached_args/5` (background) can
+  # never drift:
+  #
+  #   * `extra_write_paths` — git metadata dir(s) granted read+write access;
+  #   * `unit_args`         — `--unit=<name>` for detached jobs, `[]` otherwise;
+  #   * `mode_args`         — `--wait --pipe --collect` for foreground jobs;
+  #   * `stdio_args`        — stdout/stderr properties for detached jobs
+  #                           (foreground pipes the output to the caller).
+  defp build_args(cwd, executable, args, extra_write_paths, unit_args, mode_args, stdio_args) do
     home = System.user_home!()
 
     # Keep sensitive credentials locked down
@@ -176,11 +242,7 @@ defmodule EvoGit.Sandbox.Linux do
         write_paths ++
         nix_paths ++
         List.wrap(Helpers.task_tmpdir_path()) ++
-        if repo_root do
-          [Path.join(repo_root, ".git")]
-        else
-          []
-        end
+        extra_write_paths
 
     read_write_args =
       Enum.flat_map(read_write_paths, fn path ->
@@ -222,14 +284,11 @@ defmodule EvoGit.Sandbox.Linux do
         []
       end
 
-    [
-      "--user",
-      "--slice=evogit",
-      "--wait",
-      "--pipe",
-      "--collect",
-      "-q"
-    ] ++
+    ["--user"] ++
+      unit_args ++
+      ["--slice=evogit"] ++
+      mode_args ++
+      ["-q"] ++
       env_args ++
       nix_env_args ++
       [
@@ -238,6 +297,7 @@ defmodule EvoGit.Sandbox.Linux do
         "-p",
         "StandardInput=null"
       ] ++
+      stdio_args ++
       security_args() ++
       resource_args() ++
       read_write_args ++
