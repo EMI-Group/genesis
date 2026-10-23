@@ -445,6 +445,70 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
+  describe "registry shutdown" do
+    # Covers the REGISTRY-TEARDOWN layer specifically, not the PRIMARY per-agent
+    # guarantee: `init/1` traps exits, so an ordered shutdown (`GenServer.stop/2`,
+    # a supervisor `:shutdown`) reaches `terminate/2` — whose "kill every job still
+    # live" sweep would otherwise be dead code, killed by the raw exit signal
+    # before it runs. The PRIMARY guarantee is the owner-pid `Process.monitor`
+    # `:DOWN` path (covered by "owner death" above), and a `systemd` unit
+    # deliberately SURVIVES the BEAM that started it (reaped by the next boot's
+    # `sweep_stale_units/0`), so teardown here is one layer of defence in depth.
+    test "stopping the registry kills a live detached job (terminate/2 runs because the registry traps exits)",
+         %{registry: registry, tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "sleep 60", cwd: tmp_dir, owner_pid: self()})
+
+      # The handle carries the JOB's OS pid, so everything below is asserted
+      # against the real detached child rather than BEAM bookkeeping. `os_pid` is
+      # `integer() | nil` (nil for a command that exited before the spawn polled
+      # `Port.info(port, :os_pid)`), which is why both branches are kept total.
+      assert {:ok, fetched} = BackgroundJobs.job(job.id)
+      handle = fetched.handle
+      os_pid = handle.os_pid
+      assert handle.kind == :port
+
+      # Safety net for the FAILING-assert path: `on_exit` still runs when a later
+      # line flunks, so a live `sleep 60` can never be leaked.
+      # `EvoGit.Sandbox.Helpers.kill_process_tree/1` is total (never raises).
+      on_exit(fn ->
+        if is_integer(os_pid), do: EvoGit.Sandbox.Helpers.kill_process_tree(os_pid)
+      end)
+
+      # Proving the child is alive FIRST is what makes the teardown assertion
+      # meaningful — a job that never started would trivially "be gone".
+      if is_integer(os_pid) do
+        assert pid_alive?(os_pid)
+      end
+
+      # ORDERED shutdown: with `trap_exit` set, `:gen_server` turns this into a
+      # real `terminate/2` call. The `start_supervised!` child is `:permanent`, so
+      # the test supervisor may restart it — this assertion is about the OS
+      # PROCESS, not about the registry staying down, so nothing below checks
+      # registry liveness.
+      assert :ok = GenServer.stop(registry, :shutdown)
+
+      # Bounded wait that FAILS on the deadline (never an unbounded sleep):
+      # `terminate/2` signals the child's process group (TERM, 100 ms grace,
+      # KILL) and the BEAM reaps the child only once the port's exit is
+      # delivered, so the pid can briefly still answer `kill -0`.
+      if is_integer(os_pid) do
+        assert wait_until(
+                 fn -> not pid_alive?(os_pid) end,
+                 @deadline_ms,
+                 "expected the detached child (pid #{os_pid}) to be gone after the registry shut down"
+               )
+      else
+        # Total fallback for the no-observed-pid case: assert the handle itself is
+        # no longer reported as running.
+        assert wait_until(
+                 fn -> EvoGit.Sandbox.detached_status(handle) != {:running, nil} end,
+                 @deadline_ms,
+                 "expected the detached job handle to stop reporting as running after the registry shut down"
+               )
+      end
+    end
+  end
+
   describe "reap_under/1" do
     test "kills only the jobs under the prefix", %{tmp_dir: tmp_dir} do
       target = Path.join(tmp_dir, "reap_target")
@@ -573,16 +637,9 @@ defmodule EvoGit.BackgroundJobsTest do
     } do
       Process.put(:evogit_background_jobs_server, :bg_jobs_missing_xyz)
 
-      # FINDING (observed vs expected, reported rather than papered over): both
-      # functions are specified and documented as returning `{:error, String.t()}`
-      # ("... one actionable prose sentence ... unreachable registry") and BOTH
-      # production callers pattern-match exactly `{:error, message}`
-      # (`agent/tools/shell_tool.ex:229`, `agent/tools/job_output.ex:121`), but the
-      # dead-registry fallback is passed WITHOUT the tuple wrapper
-      # (`call_registry({:start_job, ...}, registry_down_error())` /
-      # `call_registry({:read, ...}, registry_down_error())` — background_jobs.ex:111,136),
-      # so a bare binary is returned here and those callers hit a CaseClauseError —
-      # the crash the module doc promises a dead registry can never cause.
+      # Contract: an unreachable registry yields the documented `{:error, message}`
+      # tuple — never a bare string (which would crash the production callers at
+      # `agent/tools/shell_tool.ex:229` / `agent/tools/job_output.ex:121`).
       assert {:error, message} = BackgroundJobs.start_job(%{command: "echo hi", cwd: tmp_dir})
       assert message =~ "not running"
 
