@@ -144,17 +144,29 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
   * the STAGE-1 (model-free tool-result pruning) fan-out: a long OLD tool result
     is rewritten to head + marker + tail, the projected token count lands under
-    the trigger, and therefore NO summarising call happens — `total_tokens` is
-    reset, `usage` is untouched (nothing was spent) and `compression_count`
-    still records the compression event;
+    the Stage-1 target, and therefore NO summarising call happens — the stub
+    server records ZERO requests, `total_tokens` is reset, `usage` is untouched
+    (nothing was spent) and `compression_count` still records the event;
+  * STAGE-1 REJECTED: when most of the transcript is non-prunable, the projected
+    count stays above the Stage-1 target, so Stage 2 runs over the ORIGINAL,
+    un-pruned message list (the captured summary request body still carries text
+    that pruning would have deleted);
   * the STAGE-2 (summarising checkpoint) composition, driven end-to-end against
     `StubLlmServer` (a raw-TCP SSE endpoint): the resulting context is
     `[system, first_user, checkpoint, ...last-K-turns verbatim, context_refresh]`
     with the head byte-identical and no orphaned `tool_call_id`;
-  * the window-relative trigger (`:llm_model_metadata_fun` seam), the unknown
-    window config fallback, and the incompressible context shapes.
+  * `[:llm, :tool_result_pruning] = false`: Stage 1 never runs — neither a
+    no-old-span conversation (Stage 2 skipped, so the huge tool result survives
+    BYTE-IDENTICALLY with no request at all) nor an old-span conversation (Stage
+    2's request body keeps the un-pruned tool text);
+  * the window-relative trigger (the window is passed EXPLICITLY through
+    `llm_context_window` / `context_window`), the explicit
+    `[:llm, :compression_threshold_tokens]` override, and the incompressible
+    context shapes.
 
   `async: false` — the module swaps the global `:llm_model_metadata_fun` seam,
+  redirects the process-wide `XDG_CONFIG_HOME` (so the operator's own
+  `config.toml` can never supply a threshold override or disable pruning),
   installs a single-slot model profile on the GLOBAL `EvoGit.AgentScheduler`, and
   registers agent-state ETS rows (which `increment_compression_count/1` requires).
   """
@@ -164,6 +176,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   alias EvoGit.Agent.Compression.Checkpoint
   alias EvoGit.Agent.Compression.SummaryPrompt
   alias EvoGit.Agent.Compression.Threshold
+  alias EvoGit.Agent.Compression.ToolResultPruner
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.ContextCompression
   alias EvoGit.Agent.LoopState
@@ -175,9 +188,12 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   # The recency window protected verbatim by both stages.
   @keep_recent_turns 4
 
-  # A 128k window -> a 57_344-token trigger; a 1M window -> 800_000.
+  # The windows the tests pass EXPLICITLY (`llm_context_window:` /
+  # `context_window:`): a 128k window -> a 57_344-token trigger and a
+  # 57_344-token Stage-1 target; a 1M window -> an 800_000-token trigger.
   @window_128k 131_072
   @window_1m 1_000_000
+  @threshold_128k 57_344
 
   @seam :llm_model_metadata_fun
   @model_id "default"
@@ -197,9 +213,23 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   @stage2_agent 9_202
   @window_agent 9_203
   @config_agent 9_204
+  @reject_agent 9_205
+  @pruning_off_agent 9_206
+  @pruning_off_span_agent 9_207
 
   @huge_tool_output String.duplicate("tool-output-line\n", 14_000) <>
                       "FINAL LINE: 42 tests, 0 failures"
+
+  # Sits ~100_000 characters into a 200_000-character tool output, i.e. far past
+  # the 4 KiB head Stage 1 keeps — so Stage 1 would delete it, and finding it in
+  # a captured summarising request body proves that request carried the
+  # ORIGINAL, un-pruned transcript.
+  @middle_sentinel "MIDDLE-SENTINEL-9F3A2"
+
+  defp sentinel_tool_output do
+    String.duplicate("z", 100_000) <>
+      @middle_sentinel <> String.duplicate("z", 100_000) <> "\nFINAL LINE: sentinel tail"
+  end
 
   # --- State / fixture helpers ---------------------------------------------
 
@@ -263,6 +293,52 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     end)
   end
 
+  # The Stage-1-REJECTED fixture: MOST characters here are NON-prunable (a long
+  # old assistant text plus a long old user note), so pruning the ONE huge old
+  # tool result cannot possibly reach half the window — the projection stays
+  # above the Stage-1 target and Stage 2 must run over the ORIGINAL list.
+  #
+  # Measured against a 128k window (trigger + target = 57_344): ~600k chars
+  # before, ~405k after pruning -> a projection of ~81k tokens, well above the
+  # target but still below the reported count.
+  defp conversation_stage1_rejected do
+    [
+      ReqLLM.Context.system(@system_text),
+      ReqLLM.Context.user(@objective) |> tag(0),
+      ReqLLM.Context.assistant("old analysis " <> String.duplicate("a", 400_000)) |> tag(0),
+      assistant_with_call("reading the big log", "call_old") |> tag(0),
+      tool_result("call_old", sentinel_tool_output()),
+      ReqLLM.Context.user("old note " <> String.duplicate("b", 400_000)) |> tag(1),
+      ReqLLM.Context.assistant("old assistant reply") |> tag(1)
+    ] ++ turn_pairs(2..5)
+  end
+
+  # A conversation whose OLD span is EMPTY (`Checkpoint.split/2` reports
+  # `old: []`, so Stage 2 is skipped) yet which DOES contain a huge prunable tool
+  # result — the shape that makes "Stage 1 never ran" observable rather than
+  # vacuous.
+  #
+  # Why the odd double tool result: the recency boundary here is 3 (11 messages,
+  # so the positional floor `count - 2 * K` = 3 wins over the turn boundary 4),
+  # which leaves the tool result at index 2 OLD for the pruner. `Checkpoint`'s
+  # candidate boundary (index 3) lands on the second `:tool` message, so its
+  # rewind walks back to the head and the old span stays empty.
+  defp conversation_without_old_span do
+    [
+      ReqLLM.Context.system(@system_text),
+      ReqLLM.Context.user(@objective) |> tag(0),
+      tool_result("call_a", @huge_tool_output) |> tag(0),
+      tool_result("call_b", "short second result") |> tag(0),
+      ReqLLM.Context.assistant("turn 1") |> tag(1),
+      ReqLLM.Context.user("note 1") |> tag(1),
+      ReqLLM.Context.assistant("turn 2") |> tag(2),
+      ReqLLM.Context.user("note 2") |> tag(2),
+      ReqLLM.Context.assistant("turn 3") |> tag(3),
+      ReqLLM.Context.user("note 3") |> tag(3),
+      ReqLLM.Context.assistant("turn 4") |> tag(4)
+    ]
+  end
+
   defp state(agent_id, messages, opts) do
     %LoopState{
       agent_id: agent_id,
@@ -319,15 +395,51 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     repo
   end
 
-  # Drives the window through the call-time seam `model_metadata/1` reads.
-  defp stub_window(context, output \\ 8_192) do
+  # The window is passed EXPLICITLY by every test (`llm_context_window:` to
+  # `compress_if_needed/2` and `context_window:` to `Threshold.for_model/2`), so
+  # the metadata seam is pinned to a fixed OUTPUT reservation only. That keeps
+  # the derived trigger the documented one AND avoids forcing the real catalog
+  # decode (ReqLLM's `LLMDB.load/1`, ~2.5s) for a model id that is not in it.
+  defp stub_metadata(output \\ 8_192) do
     Application.put_env(:evo_git, @seam, fn _model ->
-      %{limits: %{context: context, output: output}, capabilities: %{}}
+      %{limits: %{output: output}, capabilities: %{}}
     end)
   end
 
   defp restore_seam(nil), do: Application.delete_env(:evo_git, @seam)
   defp restore_seam(value), do: Application.put_env(:evo_git, @seam, value)
+
+  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir and returns
+  # the config directory the runtime then resolves. Tests that need a config key
+  # write `config.toml` there. Without this the developer's own
+  # `~/.config/genesis/config.toml` (which may set
+  # `compression_threshold_tokens`) would silently override the window formula.
+  defp isolate_config! do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(System.tmp_dir!(), "evogit-stages-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      case original_xdg do
+        nil -> System.delete_env("XDG_CONFIG_HOME")
+        value -> System.put_env("XDG_CONFIG_HOME", value)
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    config_dir = EvoGit.Config.config_dir()
+    File.mkdir_p!(config_dir)
+    config_dir
+  end
+
+  defp write_config!(config_dir, contents) do
+    File.write!(Path.join(config_dir, "config.toml"), contents)
+  end
 
   # Restores the `:req_llm, :openai_api_key` app-env value captured before the
   # pin, DELETING it again when there was none (mirrors
@@ -354,6 +466,12 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
     previous_seam = Application.get_env(:evo_git, @seam)
     on_exit(fn -> restore_seam(previous_seam) end)
+
+    # The metadata seam supplies ONLY the fixed output reservation; every test
+    # passes its window explicitly.
+    stub_metadata()
+
+    config_dir = isolate_config!()
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
     # A single-slot "default" pool: the compression call's slot lives there
@@ -364,7 +482,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
     on_exit(fn -> AgentScheduler.update_config(model_profiles: original_profiles) end)
 
-    %{repo_path: temp_repo()}
+    %{repo_path: temp_repo(), config_dir: config_dir}
   end
 
   # ---------------------------------------------------------------------------
@@ -372,12 +490,17 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   # ---------------------------------------------------------------------------
 
   describe "stage 1 (model-free pruning)" do
-    test "prunes the old tool result and skips the LLM entirely", %{repo_path: repo_path} do
+    test "prunes the old tool result, skips the LLM entirely (zero requests)", %{
+      repo_path: repo_path
+    } do
       register_agent(@stage1_agent)
-      stub_window(@window_128k)
 
-      info = Threshold.for_model("stub:model")
-      assert info.threshold == 57_344
+      info = Threshold.for_model("stub:model", context_window: @window_128k)
+      assert info == %{threshold: @threshold_128k, window: @window_128k, source: :window}
+
+      # The server is what PROVES no LLM call happened: it records zero requests
+      # (it would happily serve one, so a regression into Stage 2 shows up here).
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
 
       original = conversation_with_old_tool_result()
       prior_usage = %Usage{input_tokens: 100, output_tokens: 20, total_tokens: 120}
@@ -393,7 +516,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       result =
         ContextCompression.compress_if_needed(st,
           agent_id: @stage1_agent,
-          llm_model: "stub:model"
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
         )
 
       assert %LoopState{} = result
@@ -427,7 +551,10 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert text_of(refresh) =~ "stage-test context body"
       refute text_of(refresh) =~ "<objective>\n"
 
-      # Nothing was spent: pruning is free, so `usage` is UNCHANGED.
+      # Nothing was spent: pruning is free, so NO request was served and `usage`
+      # is UNCHANGED.
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 0
+      refute_received {:stub_llm_request, _body}
       assert result.usage == prior_usage
 
       # The event is still recorded (token reset + compression counter).
@@ -435,18 +562,78 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert compression_count(@stage1_agent) == 1
     end
 
+    test "Stage 1 is REJECTED when most characters are non-prunable, so Stage 2 runs over the ORIGINAL list",
+         %{repo_path: repo_path} do
+      register_agent(@reject_agent)
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      original = conversation_stage1_rejected()
+      pruned = ToolResultPruner.prune(original)
+      info = Threshold.for_model(llm_model, context_window: @window_128k)
+      target = Threshold.pruning_target(info, 0.5)
+      projected = Threshold.project(120_000, pruned.chars_before, pruned.chars_after)
+
+      # Precondition — Stage 1 DOES prune here, but the projection lands ABOVE
+      # the Stage-1 target (and still below the reported count), which is exactly
+      # the "not worth invalidating the provider cache" case.
+      assert pruned.pruned > 0
+      assert projected > target
+      assert projected < 120_000
+      assert Threshold.exceeded?(120_000, info)
+
+      st =
+        state(@reject_agent, original,
+          repo_path: repo_path,
+          total_tokens: 120_000,
+          turn: 7
+        )
+
+      result =
+        ContextCompression.compress_if_needed(st,
+          agent_id: @reject_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = result
+
+      # Exactly ONE summarising request was served (Stage 2, over the ORIGINAL
+      # list) — the rejected prune never became a second call.
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
+      assert_received {:stub_llm_request, request_body}
+
+      # The request body carries the ORIGINAL transcript: the middle sentinel of
+      # the huge old tool result (Stage 1 would have DELETED it) and the long old
+      # assistant/user text are both present, and no prune marker appears.
+      assert request_body =~ @middle_sentinel
+      assert request_body =~ "old analysis aaa"
+      assert request_body =~ "old note bbb"
+      refute request_body =~ "[... tool result middle pruned ...]"
+
+      # The old span really was replaced by a checkpoint, and the recent tail
+      # survived verbatim.
+      messages = messages_of(result)
+      assert Checkpoint.checkpoint?(Enum.at(messages, 2))
+      refute Enum.any?(messages, &(&1.tool_call_id == "call_old"))
+      assert_no_orphaned_tools(messages)
+
+      assert result.total_tokens == 0
+      assert compression_count(@reject_agent) == 1
+    end
+
     test "the projected token count is what decides — pruning is not enough here", %{
       repo_path: repo_path
     } do
       register_agent(@stage1_agent)
-      stub_window(@window_128k)
 
       # An ordinary (non-prunable) conversation: nothing to prune, so the
       # projection keeps the reported count and stage 2 would have to run. We
       # assert the DECISION, not the call: `Threshold.project/3` on an unchanged
       # list never dips below the trigger.
       original = conversation_for_checkpoint()
-      info = Threshold.for_model("stub:model")
+      info = Threshold.for_model("stub:model", context_window: @window_128k)
 
       assert Threshold.project(60_000, 1_000, 1_000) == 60_000
       assert Threshold.project(60_000, 1_000, 1_000) > info.threshold
@@ -464,6 +651,98 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   end
 
   # ---------------------------------------------------------------------------
+  # [:llm, :tool_result_pruning] = false — Stage 1 never runs
+  # ---------------------------------------------------------------------------
+
+  describe "tool_result_pruning disabled by config" do
+    test "a conversation with NO old span keeps the huge tool result BYTE-IDENTICALLY and calls no LLM",
+         %{repo_path: repo_path, config_dir: config_dir} do
+      register_agent(@pruning_off_agent)
+      write_config!(config_dir, "[llm]\ntool_result_pruning = false\n")
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+
+      original = conversation_without_old_span()
+
+      # Precondition: Stage 2 has NOTHING to replace (so no summarising call is
+      # reachable) while Stage 1 — when enabled — WOULD rewrite the huge tool
+      # result. That contrast is what makes the byte-identity below meaningful.
+      assert Checkpoint.split(original).old == []
+      pruned = ToolResultPruner.prune(original)
+      assert pruned.pruned == 1
+      assert pruned.chars_after < pruned.chars_before
+
+      st = state(@pruning_off_agent, original, repo_path: repo_path, total_tokens: 120_000)
+
+      result =
+        ContextCompression.compress_if_needed(st,
+          agent_id: @pruning_off_agent,
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = result
+
+      # Neither stage ran: the recorded count reset and the counter moved, but
+      # the transcript (plus the appended refresh message) is untouched.
+      messages = messages_of(result)
+      assert length(messages) == length(original) + 1
+      assert Enum.take(messages, length(original)) == original
+
+      tool_message = Enum.at(messages, 2)
+      assert tool_message.role == :tool
+      assert tool_message.tool_call_id == "call_a"
+      assert text_of(tool_message) == @huge_tool_output
+      refute text_of(tool_message) =~ "tool result middle pruned"
+
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 0
+      refute_received {:stub_llm_request, _body}
+
+      assert result.total_tokens == 0
+      assert compression_count(@pruning_off_agent) == 1
+    end
+
+    test "a conversation WITH an old span summarises the UN-PRUNED transcript", %{
+      repo_path: repo_path,
+      config_dir: config_dir
+    } do
+      register_agent(@pruning_off_span_agent)
+      write_config!(config_dir, "[llm]\ntool_result_pruning = false\n")
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      original = conversation_stage1_rejected()
+      assert Checkpoint.split(original).old != []
+
+      st = state(@pruning_off_span_agent, original, repo_path: repo_path, total_tokens: 120_000)
+
+      result =
+        ContextCompression.compress_if_needed(st,
+          agent_id: @pruning_off_span_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = result
+
+      # Stage 2 ran once, and its request carried the huge tool output VERBATIM:
+      # the middle sentinel Stage 1 always deletes is still there.
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
+      assert_received {:stub_llm_request, request_body}
+      assert request_body =~ @middle_sentinel
+      refute request_body =~ "[... tool result middle pruned ...]"
+
+      messages = messages_of(result)
+      assert Checkpoint.checkpoint?(Enum.at(messages, 2))
+      refute Enum.any?(messages, &(&1.tool_call_id == "call_old"))
+
+      assert result.total_tokens == 0
+      assert compression_count(@pruning_off_span_agent) == 1
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Stage 2 — the summarising checkpoint (real streaming LLM call)
   # ---------------------------------------------------------------------------
 
@@ -472,7 +751,6 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       repo_path: repo_path
     } do
       register_agent(@stage2_agent)
-      stub_window(@window_128k)
 
       server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
       llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
@@ -489,7 +767,11 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
         )
 
       result =
-        ContextCompression.compress_if_needed(st, agent_id: @stage2_agent, llm_model: llm_model)
+        ContextCompression.compress_if_needed(st,
+          agent_id: @stage2_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
 
       assert %LoopState{} = result
       messages = messages_of(result)
@@ -594,9 +876,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   describe "window-relative trigger" do
     test "a 1M-context model does NOT compress at 200_000 tokens", %{repo_path: repo_path} do
       register_agent(@window_agent)
-      stub_window(@window_1m)
 
-      assert Threshold.for_model("stub:model").threshold == 800_000
+      assert Threshold.for_model("stub:model", context_window: @window_1m).threshold == 800_000
 
       st =
         state(@window_agent, conversation_with_old_tool_result(),
@@ -607,7 +888,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       result =
         ContextCompression.compress_if_needed(st,
           agent_id: @window_agent,
-          llm_model: "stub:model"
+          llm_model: "stub:model",
+          llm_context_window: @window_1m
         )
 
       # The identical state — no log line, no pruning, no slot, no counter.
@@ -617,10 +899,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
     test "a 128k-context model compresses at 120_000 tokens", %{repo_path: repo_path} do
       register_agent(@window_agent)
-      stub_window(@window_128k)
 
-      info = Threshold.for_model("stub:model")
-      assert info.threshold == 57_344
+      info = Threshold.for_model("stub:model", context_window: @window_128k)
+      assert info.threshold == @threshold_128k
       assert Threshold.exceeded?(120_000, info)
 
       st =
@@ -632,7 +913,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       result =
         ContextCompression.compress_if_needed(st,
           agent_id: @window_agent,
-          llm_model: "stub:model"
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
         )
 
       assert result.total_tokens == 0
@@ -644,49 +926,61 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Unknown window -> the legacy config value, still gated the same way
+  # The explicit [:llm, :compression_threshold_tokens] override
+  #
+  # There is no "unknown window" path any more: the window ALWAYS defaults to
+  # 200_000, so the only way to move the trigger off the formula is this key.
   # ---------------------------------------------------------------------------
 
-  describe "unknown window" do
-    test "falls back to [:llm, :compression_threshold_tokens]", %{repo_path: repo_path} do
+  describe "[:llm, :compression_threshold_tokens] override" do
+    test "a positive override wins over the window and still gates strictly", %{
+      repo_path: repo_path,
+      config_dir: config_dir
+    } do
       register_agent(@config_agent)
-      # A seam answering `nil` => no usable window => the config fallback.
-      Application.put_env(:evo_git, @seam, fn _model -> nil end)
+      write_config!(config_dir, "[llm]\ncompression_threshold_tokens = 90000\n")
 
-      info = Threshold.for_model("mystery:model")
-      config_threshold = EvoGit.Config.resolve([:llm, :compression_threshold_tokens])
+      info = Threshold.for_model("mystery:model", context_window: @window_1m)
 
-      assert info == %{threshold: config_threshold, window: nil, source: :config}
+      # The override wins VERBATIM, while the reported window is still the
+      # configured one (never nil).
+      assert info == %{threshold: 90_000, window: @window_1m, source: :config}
+      assert EvoGit.Config.resolve([:llm, :compression_threshold_tokens]) == 90_000
 
       # Exactly ON the threshold is NOT enough (strictly greater).
       at_threshold =
         state(@config_agent, conversation_with_old_tool_result(),
           repo_path: repo_path,
-          total_tokens: config_threshold
+          total_tokens: 90_000
         )
 
       assert ContextCompression.compress_if_needed(at_threshold,
                agent_id: @config_agent,
-               llm_model: "mystery:model"
+               llm_model: "mystery:model",
+               llm_context_window: @window_1m
              ) == at_threshold
 
       assert compression_count(@config_agent) == 0
 
-      # One past it compresses (via stage 1, so no LLM is reachable here).
+      # One past it compresses — via Stage 1 (0.5 * 1M = 500_000 > the 90_000
+      # override, so pruning is measured against the override itself), so no LLM
+      # is reachable here.
       beyond =
         state(@config_agent, conversation_with_old_tool_result(),
           repo_path: repo_path,
-          total_tokens: config_threshold + 1
+          total_tokens: 90_001
         )
 
       result =
         ContextCompression.compress_if_needed(beyond,
           agent_id: @config_agent,
-          llm_model: "mystery:model"
+          llm_model: "mystery:model",
+          llm_context_window: @window_1m
         )
 
       assert result.total_tokens == 0
       assert compression_count(@config_agent) == 1
+      assert Enum.any?(messages_of(result), &(text_of(&1) =~ "tool result middle pruned"))
     end
   end
 
@@ -697,14 +991,14 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   describe "incompressible context shapes" do
     test "an empty context is returned unchanged", %{repo_path: repo_path} do
       register_agent(@window_agent)
-      stub_window(@window_128k)
 
       st = state(@window_agent, [], repo_path: repo_path, total_tokens: 60_000)
 
       result =
         ContextCompression.compress_if_needed(st,
           agent_id: @window_agent,
-          llm_model: "stub:model"
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
         )
 
       assert result == st
@@ -713,7 +1007,6 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
     test "a system-only context is returned unchanged", %{repo_path: repo_path} do
       register_agent(@window_agent)
-      stub_window(@window_128k)
 
       st =
         state(@window_agent, [ReqLLM.Context.system(@system_text)],
@@ -724,7 +1017,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       result =
         ContextCompression.compress_if_needed(st,
           agent_id: @window_agent,
-          llm_model: "stub:model"
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
         )
 
       assert result == st
