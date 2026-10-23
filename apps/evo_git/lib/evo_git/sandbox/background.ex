@@ -43,6 +43,13 @@ defmodule EvoGit.Sandbox.Background do
       `taskkill /PID <pid> /T /F` tree kill on Windows. As on macOS, a BEAM
       crash can leak the process.
 
+  ## Boot sweep
+
+  `sweep_stale_units/0` runs at registry boot and closes the systemd-run
+  crash leak: it never touches a unit whose embedded `b<beam_os_pid>` is still
+  a live process (a job belonging to another running instance must survive),
+  and `reset-failed` only garbage-collects already-dead transient units.
+
   `EvoGit.Sandbox.Behaviour` is deliberately NOT extended with these callbacks:
   background execution is an entry point layered ON TOP of the backends (it
   reuses their public argv builders, so env vars, isolation and writable-path
@@ -137,6 +144,45 @@ defmodule EvoGit.Sandbox.Background do
   def status(%{kind: :unit} = handle), do: unit_status(handle)
   def status(%{kind: :port, port: port}), do: port_status(port)
   def status(_handle), do: {:unknown, nil}
+
+  @doc """
+  Garbage-collects detached units a CRASHED runtime left behind.
+
+  The systemd-run backend's jobs are deliberately NOT children of the BEAM (they
+  must outlive it), so a BEAM crash leaves its transient units behind with
+  nobody left to stop them. The registry calls this once at boot to close that
+  leak — WITHOUT ever harming a job belonging to another Genesis instance still
+  running on the same host:
+
+    * `inactive` / `failed` units hold no process any more, so they are only
+      garbage-collected (`systemctl --user reset-failed`).
+    * `active` / `activating` / `reloading` units are stopped ONLY when the
+      `b<beam_os_pid>` embedded in the unit name (`genesis-job-b<pid>-<job_id>`)
+      is NOT a live process. A live pid means the owning BEAM is still running,
+      so the unit is left strictly alone — as is any unit whose pid cannot be
+      extracted from its name: the sweep never stops something it cannot
+      attribute.
+
+  Acts only when the ACTIVE backend is `EvoGit.Sandbox.Linux` (the systemd-run
+  backend) and `systemctl` exists; every other case is a no-op. Total: refuses
+  to raise, always returns `:ok`.
+  """
+  @spec sweep_stale_units() :: :ok
+  def sweep_stale_units do
+    if EvoGit.Sandbox.backend() == EvoGit.Sandbox.Linux do
+      list_job_units() |> Enum.each(&sweep_unit/1)
+    end
+
+    :ok
+  rescue
+    error ->
+      Logger.warning("Sandbox.Background: unit sweep failed: #{inspect(error)}")
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning("Sandbox.Background: unit sweep failed: #{inspect({kind, reason})}")
+      :ok
+  end
 
   # ---------------------------------------------------------------------------
   # Spawn dispatch
@@ -241,7 +287,7 @@ defmodule EvoGit.Sandbox.Background do
   end
 
   defp stop_unit(unit) do
-    full_unit = if String.ends_with?(unit, ".service"), do: unit, else: unit <> ".service"
+    full_unit = service_name(unit)
 
     case Helpers.system_cmd("systemctl", ["--user", "stop", full_unit]) do
       {:ok, _output} ->
@@ -485,6 +531,147 @@ defmodule EvoGit.Sandbox.Background do
   end
 
   def classify_unit_state(_info), do: {:unknown, nil}
+
+  @doc false
+  # Parses `systemctl --user list-units --all --plain --no-legend 'genesis-job-*'`
+  # output into `{unit, load, active, sub, description}` tuples, i.e. systemd's
+  # column order (UNIT LOAD ACTIVE SUB DESCRIPTION). `String.split/1` collapses
+  # both extra and running-together whitespace; the description is the only
+  # free-form column, so the remaining columns are re-joined with one space.
+  # Lines with fewer than four columns (garbled output, a stray legend/footer)
+  # are skipped. A non-binary input yields `[]`.
+  @spec parse_list_units(term()) ::
+          [{String.t(), String.t(), String.t(), String.t(), String.t()}]
+  def parse_list_units(output) when is_binary(output) do
+    output
+    |> String.split("\n")
+    |> Enum.flat_map(fn line ->
+      case String.split(line) do
+        [unit, load, active, sub | description] ->
+          [{unit, load, active, sub, Enum.join(description, " ")}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  def parse_list_units(_output), do: []
+
+  @doc false
+  # Extracts the OWNING BEAM's OS pid from a `genesis-job-b<pid>-<job_id>` unit
+  # name (the ".service" suffix is optional). Any other name is `:error` — it is
+  # NOT attributed to anyone, and the sweep never stops a unit it cannot
+  # attribute.
+  @spec beam_pid_from_unit(term()) :: {:ok, integer()} | :error
+  def beam_pid_from_unit(unit) when is_binary(unit) do
+    base = String.replace_suffix(unit, ".service", "")
+
+    case Regex.run(~r/\Agenesis-job-b(\d+)-/, base) do
+      [_match, digits] -> {:ok, String.to_integer(digits)}
+      _ -> :error
+    end
+  end
+
+  def beam_pid_from_unit(_unit), do: :error
+
+  # ---------------------------------------------------------------------------
+  # Boot sweep internals
+  # ---------------------------------------------------------------------------
+
+  defp list_job_units do
+    if System.find_executable("systemctl") do
+      args = ["--user", "list-units", "--all", "--plain", "--no-legend", "genesis-job-*"]
+
+      # stderr is NOT merged: a host whose systemd user bus is unreachable
+      # (containers, headless CI, a systemd-less distro) prints an error there
+      # and exits non-zero — that must stay out of the parsed table.
+      case System.cmd("systemctl", args, stderr_to_stdout: false) do
+        {output, 0} -> parse_list_units(output)
+        {_output, _code} -> []
+      end
+    else
+      []
+    end
+  end
+
+  # `inactive`/`failed` units own no process any more → just garbage-collected.
+  # A still-active unit is stopped ONLY when its embedded owning-BEAM pid is
+  # provably dead; anything unattributable (or any other ActiveState) is left
+  # untouched.
+  defp sweep_unit({unit, _load, active, _sub, _description}) do
+    cond do
+      active in ["inactive", "failed"] ->
+        reset_failed_unit(unit)
+
+      active in ["active", "activating", "reloading"] ->
+        case beam_pid_from_unit(unit) do
+          {:ok, pid} ->
+            if process_alive?(pid) do
+              Logger.debug(
+                "Sandbox.Background: leaving unit '#{unit}' alone — owning runtime (pid #{pid}) is alive"
+              )
+            else
+              stop_and_reset_unit(unit)
+            end
+
+          :error ->
+            Logger.debug(
+              "Sandbox.Background: leaving unit '#{unit}' alone — no owning pid in its name"
+            )
+        end
+
+      true ->
+        :ok
+    end
+  end
+
+  defp sweep_unit(_row), do: :ok
+
+  # POSIX liveness probe for the pid embedded in a unit name. A NON-ZERO exit
+  # means the pid is unusable (ESRCH: gone; EPERM: recycled by another user's
+  # process, so the BEAM that created the unit is gone either way) → not alive.
+  # A probe that cannot even run errs on the SAFE side and reports `true`, so a
+  # unit is never stopped on the strength of a failed probe.
+  defp process_alive?(pid) when is_integer(pid) do
+    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      {_output, _code} -> false
+    end
+  rescue
+    _ -> true
+  catch
+    _, _ -> true
+  end
+
+  # Stops an ATTRIBUTED stale unit (its owning BEAM is provably gone), then
+  # garbage-collects it — the same stop-then-reset-failed pair `kill/1` uses.
+  defp stop_and_reset_unit(unit) do
+    full_unit = service_name(unit)
+
+    case Helpers.system_cmd("systemctl", ["--user", "stop", full_unit]) do
+      {:ok, _output} ->
+        Logger.info(
+          "Sandbox.Background: stopped stale unit '#{full_unit}' — its owning runtime is gone"
+        )
+
+      {:error, output} ->
+        Logger.warning(
+          "Sandbox.Background: failed to stop stale unit '#{full_unit}': #{String.trim(output)}"
+        )
+    end
+
+    reset_failed_unit(full_unit)
+  end
+
+  defp reset_failed_unit(unit) do
+    Helpers.system_cmd("systemctl", ["--user", "reset-failed", service_name(unit)])
+    :ok
+  end
+
+  defp service_name(unit) do
+    if String.ends_with?(unit, ".service"), do: unit, else: unit <> ".service"
+  end
 
   # ---------------------------------------------------------------------------
   # Internals

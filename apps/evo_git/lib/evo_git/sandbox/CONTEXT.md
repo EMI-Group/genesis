@@ -62,8 +62,10 @@ EVERY `:port` handle kills via `Helpers.kill_process_tree(os_pid)` (Windows → 
 The systemd-run unit is the only DETACHED-surviving backend: it outlives the BEAM by design, so `status/1` stays queryable after a crash and a later boot can prove ownership from the unit name.
 Unit naming: `genesis-job-b<beam_os_pid>-<job_id>` (`Background.unit_name/1`) — `beam_os_pid` is `System.pid()`, `job_id` the caller's `"bash-<16 hex>"`; chars outside `[A-Za-z0-9_.:-]` fold to `_`.
 `spawn_unit/1` makes ONE bounded blocking `receive` (`@systemd_run_timeout` 5_000 ms, milliseconds in practice) for the systemd-run client's `{:data, d}`/`{:exit_status, n}`, then reaps via `Helpers.close_port/1`; non-zero status or timeout → `{:error, {:systemd_run_failed, captured_output}}` with the unit stopped so it never leaks.
+**Boot sweep** — `sweep_stale_units/0` (total: never raises, always `:ok`) acts ONLY when the active backend is `EvoGit.Sandbox.Linux` (else no-op, e.g. no `systemctl`): one `systemctl --user list-units --all --plain --no-legend 'genesis-job-*'` (stderr NOT merged; non-zero exit → no-op) → `parse_list_units/1` (pure, `@doc false`) → `{unit, load, active, sub, description}` (whitespace-collapsed columns, description = the remaining columns re-joined, <4-column lines skipped).
+`inactive`/`failed` rows → `systemctl --user reset-failed <unit>` only — no process left to stop.
+`active`/`activating`/`reloading` rows → stopped (`stop` then `reset-failed`) ONLY when the owning BEAM pid from `beam_pid_from_unit/1` (pure — `genesis-job-b<digits>-…`, ".service" suffix tolerated) is NOT alive (`kill -0 <pid>`, exit 0 = alive): a LIVE pid means another running instance owns the job and the unit is never touched, an unattributable name is left ALONE, and a probe that cannot run counts as alive (safe side).
 `status/1` on a `:unit` = `systemctl --user show <unit> -p ActiveState -p ExecMainStatus -p ExecMainCode`, parsed by `parse_systemctl_show/1` then classified by `classify_unit_state/1` — both pure and public (`@doc false`) for tests:
-
 | `ActiveState` | `ExecMainCode` | Result |
 |---|---|---|
 | `active` / `activating` / `reloading` | any | `{:running, nil}` |
@@ -253,5 +255,4 @@ The skills executor (`lib/evo_git/skills/executor.ex` — outside this node) run
 - **Windows clauses untested** (see Windows section) — compile-checked only on Linux.
 - **Nix dev-env wrapping is skipped on Windows (Open)**: `Nix.active?/0` has no platform gate, but neither `run_windows/3` nor `run_with_partial_windows/5` consults it (only the `run_unix` clauses wrap) — with nix enabled, Windows commands silently run WITHOUT the dev-env `source` that every Unix backend performs.
 - **`(limit ...)` syntax unverified on real macOS** — mitigated by the fail-safe retry (see above); validate on a Mac and, if the form is wrong, fix `generate_profile/2`'s emission (tests pin `(limit number 200)`).
-- **`Application.put_env(:evo_git, :sandbox, :disabled)` is a NO-OP** (used in some tests): sandbox mode resolves via `EvoGit.Config.resolve([:sandbox, :mode])` (defaults → user TOML → runtime overrides), NEVER application env.
-- **`config/config.exs:57-58`'s `config :evo_git, sandbox: :auto` is unused** — no lib module reads `Application.get_env(:evo_git, :sandbox)`.
+- **No app-env sandbox switch exists**: `Application.put_env(:evo_git, :sandbox, :disabled)` is a NO-OP and `config/config.exs:57-58`'s `config :evo_git, sandbox: :auto` is unread — sandbox mode/backend resolve only via `EvoGit.Config.resolve([:sandbox, :mode|:backend])` (defaults → user TOML → runtime overrides).
