@@ -10,35 +10,36 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   """
   def schema do
     ReqLLM.tool(
-      name: "edit_file",
+      name: "edit",
       description:
-        "Performs exact string replacements in files. " <>
-          "Usage: " <>
-          "- When editing text from Read tool output, ensure you preserve the exact indentation " <>
-          "(tabs/spaces) as it appears AFTER the line number prefix. " <>
-          "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required. " <>
-          "- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger " <>
-          "string with more surrounding context to make it unique or use `replace_all` to change " <>
-          "every instance of `old_string`.",
+        "Performs an exact string replacement in an existing file.\n" <>
+          "- `old_string` must match the file byte-exactly and must be UNIQUE: if it is not, " <>
+          "extend `old_string` with more surrounding context, or set `replace_all: true`.\n" <>
+          "- Preserve the file's exact indentation from `read` output: the line-number prefix " <>
+          "there is NUMBER<TAB>, so the indentation after it is the real file indentation.\n" <>
+          "- Returns \"The file <file_path> has been updated successfully.\" " <>
+          "(with `replace_all: true`: \"The file <file_path> has been updated. " <>
+          "All occurrences were successfully replaced.\").",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "file_path" => %{
             "type" => "string",
             "description" =>
-              "The path to the file to modify (relative to git repo path, e.g., './lib/app.ex')"
+              "The file to modify (path relative to the repo root, e.g. './lib/app.ex')"
           },
           "old_string" => %{
             "type" => "string",
-            "description" => "The exact text to replace"
+            "description" =>
+              "The exact text to replace — must occur exactly once unless replace_all is true"
           },
           "new_string" => %{
             "type" => "string",
-            "description" => "The replacement text"
+            "description" => "The replacement text, inserted byte-for-byte"
           },
           "replace_all" => %{
             "type" => "boolean",
-            "description" => "Replace all occurrences (default: false)",
+            "description" => "Replace every occurrence of old_string (default: false)",
             "default" => false
           }
         },
@@ -49,7 +50,7 @@ defmodule EvoGit.Agent.Tools.FileEdit do
   end
 
   @doc """
-  Executes the edit_file tool.
+  Executes the `edit` tool (internal dispatch key `edit_file`).
   """
   def execute(args, repo_path, _repo_root, node_path \\ nil) do
     with {:ok, file_path} <- Shared.fetch_string_arg(args, "file_path"),

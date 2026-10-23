@@ -72,6 +72,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
      `EvoGit.Agent.Tools.WebSearchProviders`
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Agent.Tools.WebSearchProviders
 
@@ -89,6 +90,10 @@ defmodule EvoGit.Agent.Tools.WebSearch do
 
   The `_opts` parameter is reserved for future use (e.g., overriding
   defaults per-agent). Currently ignored.
+
+  The model-facing name is `web_search` (the trained spelling); the INTERNAL
+  dispatch key stays `search_web` — `EvoGit.Agent.ToolNames` bridges the two
+  (`websearch`/`web_search`/`search_web` all normalize onto it).
   """
   def schema(_opts) do
     config = EvoGit.Config.resolve()
@@ -118,38 +123,39 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       |> Map.get(:max_bytes)
 
     ReqLLM.tool(
-      name: "search_web",
+      name: "web_search",
       description:
-        "Searches the web for information with the configured search provider. " <>
-          "Returns structured search results including titles, URLs, and content summaries.",
+        "Use the web_search tool to search the web for information with the configured search provider. " <>
+          "Returns the results as titles, URLs, and content summaries " <>
+          "(some providers return one synthesized answer plus citations instead). " <>
+          "Prefer it over guessing when the answer depends on current or external information.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
           "query" => %{
             "type" => "string",
-            "description" => "The search query string"
+            "description" => "The search query."
           },
           "search_depth" => %{
             "type" => "string",
-            "description" => "Search depth: 'basic' or 'advanced' (default: '#{search_depth}')",
+            "description" => "Search depth: 'basic' or 'advanced' (default: '#{search_depth}').",
             "default" => search_depth
           },
           "max_results" => %{
             "type" => "integer",
-            "description" => "Maximum number of results to return (1-50, default #{max_results})",
+            "description" => "Number of results to return, 1-50 (default #{max_results}).",
             "default" => max_results
           },
           "timeout" => %{
             "type" => "integer",
-            "description" =>
-              "Timeout in milliseconds for this tool execution. Default: #{timeout}",
+            "description" => "Timeout in milliseconds for this call (default: #{timeout}).",
             "default" => timeout
           },
           "max_bytes" => %{
             "type" => "integer",
             "description" =>
-              "Maximum output size in bytes before truncation. " <>
-                "Default: #{max_bytes} (#{div(max_bytes, 1024)}KB). Increase up to 131072 (128KB) if you need more output.",
+              "Maximum output size in bytes before truncation; default #{max_bytes} " <>
+                "(#{div(max_bytes, 1024)}KB), raise up to 131072 (128KB) for more output.",
             "default" => max_bytes
           }
         },
@@ -160,7 +166,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   end
 
   @doc """
-  Executes the search_web tool.
+  Executes the web_search tool (internal dispatch key `search_web`).
 
   Reads the provider configuration from `EvoGit.Config.resolve()` at
   execution time, builds a provider config map, and delegates to
@@ -232,7 +238,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     api_key = provider_config.api_key
 
     if is_nil(api_key) or api_key == "" do
-      "Error: API key for search provider is not set"
+      Failure.error("API key for search provider is not set")
     else
       provider = provider_config.provider
       receive_timeout = provider_config.timeout || 30_000
@@ -253,10 +259,10 @@ defmodule EvoGit.Agent.Tools.WebSearch do
           format_provider_response(provider, response_body)
 
         {:ok, %{status: status, body: response_body}} ->
-          "Error: Web search failed with status #{status}. #{inspect(response_body)}"
+          Failure.error("Web search failed with status #{status}. #{inspect(response_body)}")
 
         {:error, reason} ->
-          "Error: Web search request failed: #{inspect(reason)}"
+          Failure.error("Web search request failed: #{inspect(reason)}")
       end
     end
   end
@@ -293,7 +299,7 @@ defmodule EvoGit.Agent.Tools.WebSearch do
         format_answer(answer)
 
       {:error, _reason} ->
-        "Search response (unexpected format): #{inspect(response_body)}"
+        Failure.error("Search response (unexpected format): #{inspect(response_body)}")
     end
   end
 

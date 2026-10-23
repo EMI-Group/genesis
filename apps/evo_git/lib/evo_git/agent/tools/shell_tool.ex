@@ -2,26 +2,34 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @moduledoc """
   Tool for executing shell commands.
 
+  The MODEL-FACING name is `"bash"` on BOTH platforms — the trained register for
+  "run a shell command". The INTERNAL dispatch key stays compile-time pinned per
+  platform (`run_bash` on POSIX, `run_powershell` on Windows):
+  `EvoGit.Agent.ToolNames.normalize/1` maps the model-facing `"bash"` onto the
+  platform's key (so `EvoGit.Agent.Tools.execute/5` dispatches it) and
+  `ToolNames.model_name/1` renders both internal keys back as `"bash"`.
+
   Resolves the effective shell at runtime (configurable via the `[tools] shell`
   config key, defaulting to bash on Linux/macOS and PowerShell on Windows):
   - POSIX shells (bash, sh, zsh, ...): invoked with `-c`
   - PowerShell (powershell, pwsh, ...): invoked with `-EncodedCommand`
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Platform
 
-  # Compile-time platform detection — used for the tool NAME only (dispatch
-  # clauses and the @write_tools block pin the name per platform).
-  @os Platform.os()
-  @on_windows @os == :windows
+  # The MODEL-FACING tool name — `"bash"` on BOTH platforms. This is what the
+  # LLM is offered; the platform's INTERNAL dispatch key (`run_bash` /
+  # `run_powershell`) is resolved from it by `EvoGit.Agent.ToolNames.normalize/1`
+  # inside `EvoGit.Agent.Tools.execute/5`.
+  @tool_name "bash"
 
-  # Compile-time tool name — pinned per platform (run_powershell on Windows,
-  # run_bash otherwise).
-  @tool_name if(@on_windows, do: "run_powershell", else: "run_bash")
-
-  # 3 minutes timeout for running complex commands
-  @default_timeout 180_000
+  # Default command timeout: 2 minutes. A longer-running command must pass an
+  # explicit `timeout`; `@max_timeout` is the hard cap — a larger requested
+  # value is CLAMPED (never rejected), so the advertised cap is the real cap.
+  @default_timeout 120_000
+  @max_timeout 1_800_000
 
   # Matches `cd` targets: absolute paths (`/foo`), dot-relative escapes
   # (`.`, `..`, `./foo`, `../foo`, `../../../`) and plain relative paths
@@ -71,11 +79,19 @@ defmodule EvoGit.Agent.Tools.ShellTool do
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
+          "description" => %{
+            "type" => "string",
+            "description" =>
+              "Clear, short description of what this command does — supply this first."
+          },
           "command" => %{"type" => "string", "description" => command_description()},
           "timeout" => %{
             "type" => "integer",
             "description" =>
-              "Timeout in milliseconds for this tool execution. Default: #{@default_timeout}",
+              "Timeout in milliseconds. Default: #{@default_timeout}. " <>
+                "Maximum: #{@max_timeout} (a larger value is clamped to it). " <>
+                "Background execution is not available yet — a command still running " <>
+                "when the timeout expires is killed.",
             "default" => @default_timeout
           },
           "max_bytes" => %{
@@ -91,25 +107,11 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   end
 
   defp generate_description do
-    find_line =
-      if powershell?() do
-        ""
-      else
-        "- Use find for complex file searching with regex\n      "
-      end
-
-    tmp_suffix =
-      if powershell?() do
-        "."
-      else
-        ", never /tmp."
-      end
-
     find_regex_line =
       if powershell?() do
         ""
       else
-        "\n      - In `find -regex` alternations, place the longest alternative first (e.g., `'.*\\.(tsx|ts)'`)."
+        "\n- In `find -regex` alternations, place the longest alternative first (e.g. `'.*\\.(tsx|ts)'`)."
       end
 
     ls_with_args =
@@ -119,47 +121,32 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         "ls with args"
       end
 
+    tmp_suffix =
+      if powershell?() do
+        "."
+      else
+        ", never /tmp."
+      end
+
     """
-    #{shell_intro()}
-    Useful for running scripts, building, testing, git or executing common command-line tools.
-    The current working directory is automatically set to the repo path (the current git worktree path). Avoid using `cd` — the cwd is already correct.
+    Use the bash tool — not shell commands like cat, sed, grep or find — to run a shell command when the dedicated read/write/edit/glob/rg tools cannot do the job.
 
-    ## General Guidelines
-    STRICT CONSTRAINTS:
+    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it). Background execution is not available yet, so a command still running when the timeout expires is killed.
+
+    The working directory is already the repo path (the current git worktree path) — do not `cd` into it, and never `cd` into the repository root or another agent's worktree. Use relative paths for in-repo operations and absolute paths for external ones, double-quote paths containing spaces, verify parent directories exist before creating files, and use #{tmp_var()} for temporary files#{tmp_suffix}
+
+    Prefer the dedicated tools, not the shell:
     - #{no_shell_for_reads()}
-    - File search: Use glob (not #{file_search_alt()})
-    - Directory creation: Use make_dir (not mkdir)
-    - Read files: Use file_read (not #{read_file_alt()})
-    - Edit files: Use edit_file (not #{edit_file_alt()})
-    - Write files: Use write_file (not #{write_file_alt()})
-    - Communication: Output directly (not #{output_alt()})
-    Aside from these exceptions, you can use #{shell_name()} to run tools for file operations:
-    - Use #{ls_with_args} for listing files with specific needs (e.g., `#{ls_command()}` for detailed listing).
-    #{find_line}- Use project level package managers (e.g., uv, npm, mix, cargo) for managing dependencies.
+    - Read files: the read tool (not #{read_file_alt()}). Edit files: the edit tool (not #{edit_file_alt()}). Write files: the write tool (not #{write_file_alt()}).
+    - Search: glob or rg (not #{file_search_alt()}). Create directories: make_dir (not mkdir).
+    - Listing: #{ls_with_args} for specific needs, e.g. `#{ls_command()}` for a detailed listing.
+    - Communicate by outputting your answer directly (not #{output_alt()}).
+    - Manage dependencies with the project's own package manager (uv, npm, mix, cargo)#{find_regex_line}
 
-    EXECUTION RULES:
-    - Prefer relative paths for in-repo operations and absolute paths for external operations.
-    - Double-quote all paths containing spaces.
-    - Verify parent directories exist before creating files/folders.
-    - Always use #{tmp_var()} for temporary files#{tmp_suffix}#{find_regex_line}
-
-    ## Git Specific Guidelines
-    Use #{shell_name()} for all git operations
-    - NEVER update the git config
-    - NEVER run destructive git commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly
-    requests these actions. Taking unauthorized destructive actions is unhelpful and can result in lost work, so it's best to ONLY run these
-    commands when given direct instructions.
-    - CRITICAL: Commit the changes before calling any tools or subagents. Changes will be LOST if not committed.
-    - CRITICAL: Always create NEW commits rather than amending
-    - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
-    - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
-
-    ### Git Tips
-    - Run git status to check the current state of the repo
-    - Run git add / git commit to save changes before they get lost
-    - Run git status to see all untracked files and changes to tracked files
-    - Run git diff to see the specific changes to tracked files
-    - Run git log to see the commit history and understand recent changes
+    Git — run all git operations here:
+    - Never update the git config. Always create NEW commits rather than amending. Never use the -i flag (git rebase -i, git add -i need interactive input) and never --no-edit with git rebase.
+    - NEVER run destructive commands (push --force, reset --hard, checkout ., restore ., clean -f, branch -D) unless the user explicitly requests them — unauthorized destructive actions lose work.
+    - Commit before delegating to a subagent: uncommitted changes are lost. Inspect state with git status / git diff / git log, then git add + git commit.
     #{co_author_tip()}
     """
   end
@@ -178,7 +165,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
-        timeout = Map.get(args, "timeout", @default_timeout)
+        timeout = args |> Map.get("timeout", @default_timeout) |> effective_timeout()
 
         max_bytes =
           Map.get(
@@ -187,10 +174,17 @@ defmodule EvoGit.Agent.Tools.ShellTool do
             EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
           )
 
-        do_execute(command, repo_path, repo_root, timeout, max_bytes)
+        do_execute(
+          command,
+          description_header(args),
+          repo_path,
+          repo_root,
+          timeout,
+          max_bytes
+        )
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 
@@ -238,10 +232,36 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     end
   end
 
-  defp do_execute(command, repo_path, repo_root, timeout, max_bytes) do
+  # The optional `description` argument as a `# …` header line for the result
+  # text. Absent/blank/non-binary descriptions render `""`, so the output stays
+  # byte-identical to the behaviour before the argument existed.
+  defp description_header(args) do
+    case args do
+      %{"description" => text} when is_binary(text) ->
+        case String.trim(text) do
+          "" -> ""
+          summary -> "# " <> summary <> "\n"
+        end
+
+      _ ->
+        ""
+    end
+  end
+
+  @doc """
+  The effective (clamped) timeout for a requested `timeout` argument.
+
+  An integer above the advertised maximum (#{@max_timeout} ms) is reduced to it;
+  everything else is returned UNCHANGED (a non-integer value is left for the
+  sandbox's own argument guard to report). Never raises.
+  """
+  def effective_timeout(timeout) when is_integer(timeout), do: min(timeout, @max_timeout)
+  def effective_timeout(timeout), do: timeout
+
+  defp do_execute(command, header, repo_path, repo_root, timeout, max_bytes) do
     case main_copy_mutation_error(command, repo_path, repo_root) do
-      nil -> do_execute_allowed(command, repo_path, repo_root, timeout, max_bytes)
-      error -> error
+      nil -> do_execute_allowed(command, header, repo_path, repo_root, timeout, max_bytes)
+      error -> Failure.error(error)
     end
   end
 
@@ -262,7 +282,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     end
   end
 
-  defp do_execute_allowed(command, repo_path, repo_root, timeout, max_bytes) do
+  defp do_execute_allowed(command, header, repo_path, repo_root, timeout, max_bytes) do
     shell = Platform.shell()
     shell_args = Platform.shell_args(command)
 
@@ -278,19 +298,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
          ) do
       {:ok, output, exit_code} ->
         elapsed = System.monotonic_time(:millisecond) - start
-        timing = format_duration(elapsed)
-
-        base =
-          cond do
-            exit_code == 0 ->
-              "[Took: #{timing}] [Exit Code: 0] Command executed successfully. Output:\n#{output}"
-
-            desc = describe_exit_code(exit_code) ->
-              "[Took: #{timing}] [Exit Code: #{exit_code}] #{desc.header} #{desc.description} Output:\n#{output}"
-
-            true ->
-              "[Took: #{timing}] [Exit Code: #{exit_code}] Command failed. Output:\n#{output}"
-          end
+        base = result_text(exit_code, output, header, format_duration(elapsed))
 
         append_hints(base, command, repo_path, repo_root)
 
@@ -299,14 +307,42 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         timing = format_duration(elapsed)
 
         base =
-          "Command timed out after #{timeout}ms (actual: #{timing}). Partial output:\n#{partial_output}"
+          Failure.error(
+            "the command timed out after #{timeout} ms (actual: #{timing}).",
+            header <> "Partial output:\n" <> partial_output
+          )
 
         append_hints(base, command, repo_path, repo_root)
     end
   end
 
+  # Renders a completed command's result. Exit code 0 keeps the descriptive
+  # `[Took: …] [Exit Code: 0] … Output:` envelope; EVERY non-zero exit is a
+  # failure and therefore leads with the literal `Error: ` prefix (a signal kill
+  # states the signal first and its explanation after the error line). A
+  # supplied `description` becomes a `# …` header on the payload block — after
+  # the error line on failures, so the failure text always starts with `Error: `.
+  defp result_text(0, output, header, timing) do
+    "#{header}[Took: #{timing}] [Exit Code: 0] Command executed successfully. Output:\n#{output}"
+  end
+
+  defp result_text(exit_code, output, header, _timing) do
+    case describe_exit_code(exit_code) do
+      %{header: signal_header, description: description} ->
+        Failure.error(signal_header, description <> "\n\n" <> header <> "Output:\n" <> output)
+
+      nil ->
+        Failure.error(
+          "the command failed with exit code #{exit_code}.",
+          header <> "Output:\n" <> output
+        )
+    end
+  end
+
   # Appends non-fatal guidance hints about the command (cd warnings + redundant
-  # nested-shell detection) to the tool output, regardless of exit code.
+  # nested-shell detection) as a TRAILING block after a blank line following the
+  # payload, regardless of exit code. Rendered through `Failure.notice/1`, so a
+  # hint never carries an emoji/marker prefix and can never read as the failure.
   defp append_hints(base, command, repo_path, repo_root) do
     [
       detect_cd_warnings(command, repo_path, repo_root),
@@ -315,7 +351,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     |> Enum.reject(&is_nil/1)
     |> case do
       [] -> base
-      hints -> base <> "\n\n" <> Enum.join(hints, "\n")
+      hints -> base <> Failure.notice(Enum.join(hints, "\n"))
     end
   end
 
@@ -406,13 +442,13 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         not EvoGit.Platform.path_under?(target, repo_path) and
             EvoGit.Platform.path_under?(target, worktree_base) ->
           [
-            "⚠️ You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            "You are trying to `cd` into another agent's worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
           ]
 
         target == root ->
           [
-            "⚠️ You are trying to `cd` into the repository root, which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
+            "You are trying to `cd` into the repository root, which is NOT your worktree. Your worktree is at `#{repo_path}`. Double-check if this is the right path. If this is intentional, you can ignore this warning."
             | acc
           ]
 
@@ -443,7 +479,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   Returns the redundant-cd warning message for the given worktree path.
   """
   def redundant_cd_warning(repo_path) do
-    "⚠️ You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
+    "You don't need to `cd` into your worktree — your working directory is already set to it (`#{repo_path}`). Just run commands directly without changing directory."
   end
 
   # Absolute shell path prefixes, e.g. `/bin/sh`, `/usr/bin/bash`.
@@ -482,7 +518,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
         nil
 
       prefix ->
-        "💡 You don't need to invoke `#{prefix}` — this tool already runs your command in a shell (`#{shell_name}`). Just run the command directly."
+        "You don't need to invoke `#{prefix}` — this tool already runs your command in a shell (`#{shell_name}`). Just run the command directly."
     end
   end
 

@@ -1,8 +1,19 @@
 defmodule EvoGit.Agent.Tools.Glob do
   @moduledoc """
   Tool for file pattern matching using glob patterns.
+
+  Output conventions (aligned with the `rg` tool, so both read as one family):
+
+    * a plain path listing, one per line, newest first — no header;
+    * a TRAILING bracketed footer ONLY when the list is capped:
+      `[showing <max_files> of <total> files; raise max_files or narrow the pattern]`;
+    * an empty result is exactly `No files found.` (the pattern is echoed in a
+      trailing hint);
+    * a malformed pattern is a `Error: `-prefixed one-sentence failure rendered
+      through `EvoGit.Agent.Tools.Failure`.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -12,13 +23,12 @@ defmodule EvoGit.Agent.Tools.Glob do
     ReqLLM.tool(
       name: "glob",
       description:
-        "Fast file pattern matching tool that works with any codebase size. " <>
-          "Supports glob patterns like '**/*.js' or 'src/**/*.ts'. " <>
-          "Returns matching file paths sorted by modification time (newest first). " <>
-          "Usage: " <>
-          "- Use this tool when you need to find files by name patterns. " <>
-          "- Results are limited to 100 files by default (use max_files to adjust). " <>
-          "- Example patterns: '**/*.ex', 'lib/**/*.ex', 'test/**/test_*.ex'",
+        "Use the glob tool to find files by name pattern — it works with any codebase size. " <>
+          "Supports glob patterns like '**/*.js', 'src/**/*.ts', '**/*.{ex,exs}'. " <>
+          "Returns matching file paths, one per line, sorted by modification time (newest first); " <>
+          "100 files by default (raise max_files for more), and when the listing is capped a " <>
+          "trailing footer reports the total. " <>
+          "path is relative to the repository root and defaults to the git repo path.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -69,45 +79,65 @@ defmodule EvoGit.Agent.Tools.Glob do
     full_pattern = Path.join(search_path, pattern)
 
     case safe_wildcard(full_pattern) do
-      {:ok, []} ->
-        "No files found matching pattern: #{pattern}"
-
       {:ok, paths} ->
-        {sorted_paths, total_count} =
-          paths
-          |> Enum.flat_map(fn path ->
-            case File.stat(path) do
-              {:ok, stat} -> [{path, stat.mtime}]
-              {:error, _} -> []
-            end
-          end)
-          |> Enum.sort_by(fn {_path, mtime} -> mtime end, :desc)
-          |> then(fn sorted ->
-            total = length(sorted)
-
-            truncated =
-              if total > max_files do
-                Enum.take(sorted, max_files)
-              else
-                sorted
-              end
-
-            {truncated, total}
-          end)
-
-        relative_paths =
-          Enum.map(sorted_paths, fn {path, _mtime} ->
-            Path.relative_to(path, search_path)
-          end)
-
-        truncated = total_count > max_files
-
-        format_result(relative_paths, total_count, truncated)
+        case sort_by_mtime_desc(paths) do
+          # Every match vanished between globbing and stat-ing: an empty listing,
+          # not an error.
+          [] -> no_files(pattern)
+          sorted -> render_paths(sorted, search_path, max_files)
+        end
 
       {:error, reason} ->
-        format_pattern_error(pattern, reason)
+        pattern_error(pattern, reason)
     end
   end
+
+  defp sort_by_mtime_desc(paths) do
+    paths
+    |> Enum.flat_map(fn path ->
+      case File.stat(path) do
+        {:ok, stat} -> [{path, stat.mtime}]
+        {:error, _} -> []
+      end
+    end)
+    |> Enum.sort_by(fn {_path, mtime} -> mtime end, :desc)
+  end
+
+  # One path per line, newest first, no header. The footer reports the totals
+  # ONLY when files were dropped, so a complete listing is returned byte-identical.
+  defp render_paths(sorted, search_path, max_files) do
+    total = length(sorted)
+
+    listing =
+      sorted
+      |> Enum.take(max_files)
+      |> Enum.map(fn {path, _mtime} -> Path.relative_to(path, search_path) end)
+      |> Enum.join("\n")
+
+    if total > max_files do
+      listing <> "\n" <> truncation_footer(max_files, total)
+    else
+      listing
+    end
+  end
+
+  defp truncation_footer(max_files, total) do
+    "[showing #{max_files} of #{total} files; raise max_files or narrow the pattern]"
+  end
+
+  # Fixed first line (the sentence models are trained on), then the pattern as a
+  # trailing hint so an unexpected empty result stays diagnosable.
+  defp no_files(pattern), do: "No files found." <> Failure.notice("[pattern: #{pattern}]")
+
+  defp pattern_error(pattern, reason) do
+    Failure.error(
+      "invalid glob pattern '#{pattern}' (malformed: #{inspect(unwrap_badpattern(reason))}). " <>
+        "Please check the pattern syntax — e.g. ensure braces '{...}' and brackets '[...]' are balanced."
+    )
+  end
+
+  defp unwrap_badpattern({:badpattern, reason}), do: reason
+  defp unwrap_badpattern(reason), do: reason
 
   # KEEP (try/catch, not rescue): Path.wildcard has no non-crashing variant.
   # We genuinely expect this error — the glob pattern is user input (from the
@@ -125,27 +155,5 @@ defmodule EvoGit.Agent.Tools.Glob do
       :throw, reason -> {:error, reason}
       :exit, reason -> {:error, reason}
     end
-  end
-
-  defp format_pattern_error(pattern, {:badpattern, reason}) do
-    "Error: invalid glob pattern '#{pattern}' (malformed: #{inspect(reason)}). " <>
-      "Please check the pattern syntax — e.g. ensure braces '{...}' and brackets '[...]' are balanced."
-  end
-
-  defp format_pattern_error(pattern, reason) do
-    "Error: invalid glob pattern '#{pattern}' (#{inspect(reason)}). " <>
-      "Please check the pattern syntax — e.g. ensure braces '{...}' and brackets '[...]' are balanced."
-  end
-
-  defp format_result(paths, total_count, truncated) do
-    count = length(paths)
-
-    truncated_str = if truncated, do: " (truncated)", else: ""
-
-    header = "Found: #{count} of #{total_count} files#{truncated_str}\n"
-
-    paths_str = Enum.join(paths, "\n")
-
-    header <> "\n" <> paths_str
   end
 end
