@@ -991,8 +991,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
   end
 
   describe "compression threshold" do
-    # The compression % bars use the node's [:llm, :compression_threshold_tokens]
-    # from the RESOLVED config (via ThresholdCache), not the 100_000 fallback.
+    # Each compression % bar prefers the agent summary's OWN
+    # `compression_threshold` (the core derives it per model context window).
+    # The node's [:llm, :compression_threshold_tokens] resolved-config value is
+    # the fallback, and 180_000 is a LAST-RESORT fallback only (the setting is
+    # optional — nil means "unknown").
 
     test "threshold_from_config/1 extracts the threshold from the resolved config" do
       assert ThresholdCache.threshold_from_config(
@@ -1001,6 +1004,47 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert ThresholdCache.threshold_from_config({:ok, %{}}) == 180_000
       assert ThresholdCache.threshold_from_config({:error, :timeout}) == 180_000
+    end
+
+    test "threshold_from_config/1 treats a nil/invalid threshold as unknown" do
+      # The setting is OPTIONAL in the core (nil = derive it from the model's
+      # context window), so every unusable shape must fall through to the
+      # 180_000 last resort — never crash on the bar's division.
+      for config <- [
+            %{llm: %{compression_threshold_tokens: nil}},
+            %{llm: nil},
+            %{},
+            %{llm: %{compression_threshold_tokens: 0}},
+            %{llm: %{compression_threshold_tokens: -42_000}},
+            %{llm: %{compression_threshold_tokens: "42_000"}}
+          ] do
+        assert ThresholdCache.threshold_from_config({:ok, config}) == 180_000
+      end
+
+      assert ThresholdCache.threshold_from_config({:ok, nil}) == 180_000
+      assert ThresholdCache.threshold_from_config({:error, :timeout}) == 180_000
+    end
+
+    test "threshold_for_agent/2 prefers the per-agent threshold over the node-level one" do
+      # Atom-keyed summary (the native RemoteAPI summary shape).
+      assert ThresholdCache.threshold_for_agent(%{compression_threshold: 100_000}, 42_000) ==
+               100_000
+
+      # String-keyed summary (defensive read — a JSON-shaped summary).
+      assert ThresholdCache.threshold_for_agent(%{"compression_threshold" => 50_000}, 42_000) ==
+               50_000
+
+      # Absent/nil/non-integer/non-positive per-agent values fall back.
+      assert ThresholdCache.threshold_for_agent(%{}, 42_000) == 42_000
+      assert ThresholdCache.threshold_for_agent(%{compression_threshold: nil}, 42_000) == 42_000
+      assert ThresholdCache.threshold_for_agent(%{compression_threshold: 0}, 42_000) == 42_000
+      assert ThresholdCache.threshold_for_agent(%{compression_threshold: 12.5}, 42_000) == 42_000
+      assert ThresholdCache.threshold_for_agent(%{compression_threshold: "1"}, 42_000) == 42_000
+      assert ThresholdCache.threshold_for_agent(nil, 42_000) == 42_000
+
+      # An unusable node-level fallback lands on the 180_000 last resort.
+      assert ThresholdCache.threshold_for_agent(%{}, nil) == 180_000
+      assert ThresholdCache.threshold_for_agent(%{}, 0) == 180_000
     end
 
     test "default_threshold/0 falls back to 180_000" do
@@ -1033,6 +1077,162 @@ defmodule EvoDashWeb.AgentsLiveTest do
       # default, which would render "(21%)".
       assert html =~ "(50%)"
       refute html =~ "(21%)"
+    end
+
+    test "compression percentage prefers an atom-keyed per-agent threshold", %{conn: conn} do
+      id = agent_id()
+
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        [summary_agent(id: id, total_tokens: 50_000, compression_threshold: 100_000)]
+      end)
+
+      # The node-level value (42_000) would render 100% here — the per-agent
+      # 100_000 must win.
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
+      assert agent.compression_threshold == 100_000
+      assert agent.compression_pct == 50
+
+      view |> element("#agent-card-#{id}") |> render_click()
+      view |> element("button[phx-click='toggle_usage']") |> render_click()
+      html = render(view)
+
+      # 50_000 / 100_000 = 50% (the node threshold would cap it at 100%).
+      assert html =~ "(50%)"
+      refute html =~ "(100%)"
+    end
+
+    test "compression percentage prefers a string-keyed per-agent threshold", %{conn: conn} do
+      id = agent_id()
+
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        [
+          summary_agent(id: id, total_tokens: 25_000)
+          |> Map.put("compression_threshold", 50_000)
+        ]
+      end)
+
+      # The node-level value would render 59% (25_000 / 42_000) — the
+      # string-keyed per-agent 50_000 must win.
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
+      assert agent.compression_threshold == 50_000
+      assert agent.compression_pct == 50
+
+      view |> element("#agent-card-#{id}") |> render_click()
+      view |> element("button[phx-click='toggle_usage']") |> render_click()
+      html = render(view)
+
+      assert html =~ "(50%)"
+      refute html =~ "(59%)"
+    end
+
+    test "a nil configured threshold renders against 180_000 without crashing", %{conn: conn} do
+      id = agent_id()
+
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        [summary_agent(id: id, total_tokens: 90_000)]
+      end)
+
+      # The core's OPTIONAL threshold: nil means "derive it per model".
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: nil}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      current_node = node()
+      assert {^current_node, 180_000, _} = assigns(view)[:threshold_cache]
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
+      assert agent.compression_threshold == 180_000
+      assert agent.compression_pct == 50
+
+      view |> element("#agent-card-#{id}") |> render_click()
+      view |> element("button[phx-click='toggle_usage']") |> render_click()
+
+      # 90_000 / 180_000 = 50% — a nil threshold must not crash the bar.
+      assert render(view) =~ "(50%)"
+    end
+
+    test "registered event uses the summary's per-agent threshold", %{conn: conn} do
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      summary =
+        summary_agent(id: 2, total_tokens: 25_000, compression_threshold: 50_000)
+
+      send(view.pid, {:agent_registered, 2, summary, node()})
+      flush_agent_events(view)
+
+      registered = assigns(view)[:agents] |> Enum.find(&(&1.id == 2))
+      assert registered.compression_threshold == 50_000
+      assert registered.compression_pct == 50
+    end
+
+    test "an updated event recomputes against a changed threshold and ignores a nil one", %{
+      conn: conn
+    } do
+      id = agent_id()
+
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        [summary_agent(id: id, total_tokens: 50_000, compression_threshold: 100_000)]
+      end)
+
+      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
+        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
+      end)
+
+      on_exit(&clear_agents_env/0)
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+
+      # A threshold-only delta recomputes the bar: 50_000 / 50_000 = 100%.
+      send(view.pid, {:agent_updated, id, [compression_threshold: 50_000], node()})
+      flush_agent_events(view)
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
+      assert agent.compression_threshold == 50_000
+      assert agent.compression_pct == 100
+
+      # A nil threshold delta means "unknown" — the previous denominator is
+      # kept (never a division by nil); total_tokens still drives the pct.
+      send(
+        view.pid,
+        {:agent_updated, id, [compression_threshold: nil, total_tokens: 25_000], node()}
+      )
+
+      flush_agent_events(view)
+
+      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
+      assert agent.compression_threshold == 50_000
+      assert agent.compression_pct == 50
     end
   end
 

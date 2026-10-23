@@ -1783,6 +1783,75 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute Map.has_key?(file_profile, "off_peak_days")
       assert hd(file_profile["peak_hours"]) == %{"start" => "09:00", "end" => "12:00"}
     end
+
+    test "save_model_profile persists context_window as an integer", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "context_window" => "128000"
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert (Map.get(profile, :context_window) || Map.get(profile, "context_window")) == 128_000
+
+      # File-level check: the raw TOML carries a real integer.
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      assert file_profile["context_window"] == 128_000
+    end
+
+    test "save_model_profile omits a blank context_window while keeping other keys", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "default",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7",
+        "context_window" => "128000"
+      })
+
+      saved = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      assert saved["context_window"] == 128_000
+
+      # Re-save with a blank context_window — the key must be omitted entirely
+      # (never nil), so the core's default applies.
+      render_hook(view, "edit_model_profile", %{"profile_id" => "default"})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "default",
+          "profile_id_new" => "default",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "3",
+          "temperature" => "0.7",
+          "context_window" => ""
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      refute Map.has_key?(profile, :context_window) or Map.has_key?(profile, "context_window")
+
+      file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
+      refute Map.has_key?(file_profile, "context_window")
+      # The other profile keys survive the re-save untouched.
+      assert file_profile["model"] == "anthropic:claude-sonnet-4-6"
+      assert file_profile["concurrency"] == 3
+      assert file_profile["temperature"] == 0.7
+    end
   end
 
   describe "ModelProfileHelpers.move_model_profile/3" do

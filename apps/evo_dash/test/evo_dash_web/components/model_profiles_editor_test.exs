@@ -100,6 +100,52 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       assert attribute(input, "value") == ["Asia/Shanghai"]
     end
 
+    test "context_window renders as a number input with min=1024 and placeholder 200000" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+
+      assert [input] = find(html, ~s(input[name="context_window"]))
+      assert attribute(input, "type") == ["number"]
+      assert attribute(input, "min") == ["1024"]
+      assert attribute(input, "placeholder") == ["200000"]
+      # Absent → empty input (the core default applies).
+      assert attribute(input, "value") == [""]
+    end
+
+    test "context_window pre-fills the profile's saved value" do
+      html =
+        render_edit_form(%{
+          id: "profile-1",
+          model: "deepseek:deepseek-v4-pro",
+          context_window: 128_000
+        })
+
+      assert attr(find(html, ~s(input[name="context_window"])), 0, "value") == ["128000"]
+    end
+
+    test "a form draft's context_window wins over the profile's saved value" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        context_window: 128_000
+      }
+
+      html = render_edit_form(profile, draft: %{"context_window" => "64000"})
+
+      assert attr(find(html, ~s(input[name="context_window"])), 0, "value") == ["64000"]
+    end
+
+    test "a draft's blank context_window clears the profile's saved value" do
+      profile = %{
+        id: "profile-1",
+        model: "deepseek:deepseek-v4-pro",
+        context_window: 128_000
+      }
+
+      html = render_edit_form(profile, draft: %{"context_window" => ""})
+
+      assert attr(find(html, ~s(input[name="context_window"])), 0, "value") == [""]
+    end
+
     test "peak_concurrency 0 pre-fills as \"0\" in the input" do
       html =
         render_edit_form(%{
