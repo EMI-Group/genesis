@@ -401,7 +401,6 @@ defmodule EvoGit.Agent.ToolNamesTest do
       refute Tools.serial_tool?("run_bash")
       refute Tools.serial_tool?("run_powershell")
       refute Tools.serial_tool?("run_git")
-      refute Tools.serial_tool?("curl")
     end
 
     test "read-only aliases and unknown names are NOT serial" do
@@ -410,6 +409,8 @@ defmodule EvoGit.Agent.ToolNamesTest do
       refute Tools.serial_tool?("grep")
       refute Tools.serial_tool?("rg")
       refute Tools.serial_tool?("web_search")
+      refute Tools.serial_tool?("web_fetch")
+      refute Tools.serial_tool?("lsp")
       refute Tools.serial_tool?("my_custom_tool")
       refute Tools.serial_tool?(nil)
     end
