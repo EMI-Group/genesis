@@ -137,8 +137,10 @@ defmodule EvoGit.Agent.ToolsTest do
 
     # Write tools that are NOT read-modify-write file operations: opaque whole
     # commands / network calls that agents legitimately run concurrently.
+    # `bash` is the MODEL-FACING shell name (`run_bash`/`run_powershell` are the
+    # internal dispatch keys); `serial_tool?/1` normalises both spellings.
     @non_serial_write_tool_names ~w(
-      run_bash run_powershell run_git curl run_command search_web web_search
+      run_bash run_powershell bash run_git run_command search_web web_search
     )
 
     test "returns true for every file-mutating read-modify-write tool" do
@@ -951,25 +953,49 @@ defmodule EvoGit.Agent.ToolsTest do
         refute "web_search" in names
       end)
     end
+  end
 
-    test "curl is NOT included in read_only_schemas/0 (removed — write-capable tool)" do
+  describe "read_only_schemas/0 contents" do
+    test "offers the read-only network / language-intelligence readers" do
       names = Enum.map(Tools.read_only_schemas(), & &1.name)
-      refute "curl" in names
+
+      assert "web_fetch" in names
+      assert "lsp" in names
+    end
+
+    test "omits the file-mutating write tools" do
+      names = Enum.map(Tools.read_only_schemas(), & &1.name)
+
+      # `write_context`/`edit_context`/`bash` are KEPT by design (read-only
+      # agents still update CONTEXT.md and run `mix test` in their own repo);
+      # every other writer must be absent from the read-only set.
+      for name <- ~w(write edit create_files make_dir run_git skill_add skill_edit skill_remove) do
+        refute name in names,
+               "expected the write tool #{inspect(name)} to be absent from read_only_schemas/0"
+      end
     end
   end
 
   describe "execute/5 - read-only foreign repo write gate" do
     test "blocks write tools inside a read-only foreign repo", %{tmp_dir: tmp_dir} do
       with_read_only_foreign_repo(tmp_dir, fn repo_path ->
+        # The guard classifies an ALIAS-AWARE tool name and blocks BEFORE any
+        # tool runs, so the argument values below are never interpreted — the
+        # fixture is about the SPELLING (model-facing names such as `write` /
+        # `edit` / `bash` alongside the internal dispatch keys).
         for {name, args} <- [
               {"write_file", %{"file_path" => "test.txt", "content" => "x"}},
+              {"write", %{"file_path" => "test.txt", "content" => "x"}},
               {"edit_file",
                %{"file_path" => "test.txt", "old_string" => "a", "new_string" => "b"}},
+              {"edit", %{"file_path" => "test.txt", "old_string" => "a", "new_string" => "b"}},
+              {"create_files", %{"paths" => [%{"path" => "test.txt", "content" => "x"}]}},
+              {"make_dir", %{"path" => "sub"}},
               {"write_context", %{"dir_path" => "lib", "content" => "x"}},
+              {"edit_context", %{"dir_path" => "lib", "old_string" => "a", "new_string" => "b"}},
               {"run_bash", %{"command" => "echo hi"}},
               {"Bash", %{"command" => "echo hi"}},
-              {"run_git", %{"args" => ["status"]}},
-              {"curl", %{"url" => "https://example.com", "output" => "x.html"}}
+              {"run_git", %{"args" => ["status"]}}
             ] do
           result = Tools.execute(name, args, repo_path)
 
