@@ -76,7 +76,7 @@ Nothing in this directory restarts or stops the runtime — no `System.stop/halt
 The **3-level configuration system** (resolved at runtime, not via Elixir `Config`):
 1. **Application defaults** — Hardcoded in `EvoGit.Config.defaults/0`: scheduler settings, empty `llm`/`user` maps, sandbox `:auto`, evolution parameters, truncation limits. **No default model or username is provided.**
 2. **User config** — `~/.config/genesis/config.toml` (XDG-compliant, cross-platform):
-   - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `compression_threshold_tokens`
+   - `[llm]` → `model = "provider:model"` (e.g. `"anthropic:claude-sonnet-4-20250514"`), `[[llm.models]]` profiles (`id`, `model`, `concurrency`, optional `context_window` default 200_000, generation params, peak/off-peak fields), optional `compression_threshold_tokens` override (nil = derive from the profile's `context_window`), `tool_result_pruning`, `tool_result_pruning_target_fraction`
    - `[scheduler]` → `default_llm_max_concurrency`, `max_tool_concurrency`, `agent_max_retries`, `max_agent_depth`, `max_retries`
    - `[user]` → `github_username`
    - `[sandbox]` → `mode` ("auto"|"enabled"|"disabled")

@@ -228,25 +228,25 @@ delivered where the model already looks (tool descriptions), not in a role essay
 | | `dsh` | Ours |
 |---|---|---|
 | Measure | `tokenMeter.measure().totalTokens` = last reported usage + signed delta over the surface since then; `CHARS_PER_TOKEN = 4`, **no tokenizer**; includes generation, not just prompt | `state.total_tokens` (system + input + output + reasoning accumulated per turn) |
-| Trigger | `thresholdTokens = min(W*0.8, W − reservedCompletion − 65536)`, `retainTokens = (W − O)*0.16` — **window-relative** | fixed `[:llm] :compression_threshold_tokens` = **180 000** for every model (a 1 M-context model compresses at 18%; a 128 K model would blow past the window first) |
+| Trigger | `thresholdTokens = min(W*0.8, W − reservedCompletion − 65536)`, `retainTokens = (W − O)*0.16` — **window-relative** | `min(0.8·W, W − reserved − 64K)` floor `min(32K, 0.9·W)`, with `W` read from each `[[llm.models]]` profile's configured `context_window` (**default 200 000**) — config, not the catalog; `[:llm] :compression_threshold_tokens` is an optional explicit override |
 | Trigger points | 4: `agent/pre-step` over pressure, `CONTEXT_WINDOW_EXCEEDED`, `IMAGE_OFFLOAD_REQUIRED`, `/compact` | 1: `ContextCompression.maybe_compress/1` at the top of `loop/1` |
 
-The fixed-threshold model is a genuine correctness gap once profiles declare heterogeneous context windows:
-`dsh` derives the threshold from the window; we hardcode a number that is simultaneously too eager for large
-models (needless compression, needless cost) and too late for small ones.
+`W` is deliberately an operator-declared per-profile value rather than the catalog's `limits.context`: models
+with nominally huge windows often degrade in quality — and price higher — at long context, so the budget must
+reflect the window the operator actually wants to use, not the largest one the provider advertises.
 
 ### 3.2 Strategy diff
 
 | | `dsh` | Ours |
 |---|---|---|
-| Stage 1 | **model-free tool-result pruner**: `thresholdChars` 8192, keep head 4096 + tail 1024, middle replaced by `\n\n[... tool result middle pruned ...]\n\n`; **if this alone suffices, no model call happens** | none |
-| Stage 2 | model summarization | model summarization, no retry loop, no tools |
-| Result shape | a **`user/message`** with `surfaceOp: {op:'replace', startSeq, endSeq}` and `kind:'compact-checkpoint'`, wrapped in "This is an automatically generated checkpoint … Continue the task directly … without acknowledging this checkpoint." + `<compacted-summary>` | the context is **replaced** by exactly `[system, refreshed_first_user, user("Summary of previous events:\n" <> text)]` |
-| History retained | everything outside the replaced span — recent turns survive; compaction **shadows**, never deletes (shadowed nodes must be cited) | nothing. Every non-system message except the summary is gone |
-| Cache | checkpoint is appended, prefix untouched → cache survives | first user message is **rewritten** and the tail is discarded → full cache miss every cycle |
-| Summary template | 8 fixed sections: `## Primary Request and Intent`, `## Key Technical Concepts`, `## Files and Code`, `## Errors and Fixes`, `## Pending Jobs`, `## Current Work`, `## Next Step`, `## Critical Context`; rules "Do NOT mention this summarization request", "preserve exact file paths/commands/error strings", merge-into-prior-checkpoint | 5-point ordered list ("objective verbatim, completed steps, decisions, unresolved problems, next step") written as "instructions to your future self" |
-| Failure | `compactionRetries` 1, `maxOverflowRetries` 1, durable in-flight lock (`compaction/start`) so a crash yields `busy`, never false success | non-retryable rejection → graceful `{:llm_request_rejected, …}`; **any other LLM error raises `MatchError` with zero retries** |
-| Multi-modal | `[image omitted to fit request image limits; <identity>. …]` placeholder | attachment media stays byte-identical in the refreshed first message → **re-sent at full cost after every compression** |
+| Stage 1 | **model-free tool-result pruner**: `thresholdChars` 8192, keep head 4096 + tail 1024, middle replaced by `\n\n[... tool result middle pruned ...]\n\n`; **if this alone suffices, no model call happens** | the same pruner (identical sizes/marker), but adopted **only when it projects the context down to `min(threshold, 0.5·W)`** — otherwise the pruned candidate is discarded and stage 2 summarises the **ORIGINAL** context, because rewriting history breaks the cached prefix and must buy real headroom; toggle `[:llm] :tool_result_pruning`, target `[:llm] :tool_result_pruning_target_fraction` (default 0.5) |
+| Stage 2 | model summarization | model summarization over the original transcript, no tools |
+| Result shape | a **`user/message`** with `surfaceOp: {op:'replace', startSeq, endSeq}` and `kind:'compact-checkpoint'`, wrapped in "This is an automatically generated checkpoint … Continue the task directly … without acknowledging this checkpoint." + `<compacted-summary>` | one user-role checkpoint message inserted after the byte-identical `[system, first_user]` head, followed by the last K turns verbatim and an appended runtime-context refresh |
+| History retained | everything outside the replaced span — recent turns survive; compaction **shadows**, never deletes (shadowed nodes must be cited) | the system message, the first user message (byte-identical) and the last K=4 turns verbatim; everything older is replaced by the checkpoint (a prior checkpoint's summary is merged into the next one) |
+| Cache | checkpoint is appended, prefix untouched → cache survives | the byte-identical head survives; everything from index 2 shifts when the checkpoint replaces the old span |
+| Summary template | 8 fixed sections: `## Primary Request and Intent`, `## Key Technical Concepts`, `## Files and Code`, `## Errors and Fixes`, `## Pending Jobs`, `## Current Work`, `## Next Step`, `## Critical Context`; rules "Do NOT mention this summarization request", "preserve exact file paths/commands/error strings", merge-into-prior-checkpoint | the same 8 fixed sections, the same "continue without acknowledging" instruction and prior-checkpoint merge (see §9.6) |
+| Failure | `compactionRetries` 1, `maxOverflowRetries` 1, durable in-flight lock (`compaction/start`) so a crash yields `busy`, never false success | bounded transient retries (3 attempts, exponential backoff), non-retryable rejection fails fast as `{:llm_request_rejected, …}`, exhaustion RAISES; blank summary keeps the original context but still bills the call |
+| Multi-modal | `[image omitted to fit request image limits; <identity>. …]` placeholder | attachments in the first user message stay byte-identical and are re-sent; media parts inside OLD tool results are replaced by one text placeholder per message by stage 1 |
 
 ### 3.3 Other context levers
 
@@ -514,12 +514,18 @@ authoritative comparison.
 `agent/compression/`:
 
 1. **`Compression.Threshold`** — the trigger is window-relative (`min(0.8·W, W − reserved − 64K)`, floored at
-   `min(32_000, 0.9·W)`) instead of the fixed 180 K, using the model's real context window from the catalog;
-   the old config value remains the unknown-window fallback.
+   `min(32_000, 0.9·W)`), where `W` is the `[[llm.models]]` profile's configured `context_window`
+   (default 200 000). The model catalog is consulted ONLY for the output reservation, never for the window:
+   long-context quality and pricing degrade, so the operator-declared budget is the right one.
+   `[:llm] :compression_threshold_tokens` is now an optional explicit override (nil = derive).
 2. **`Compression.ToolResultPruner`** — a model-free stage one: results older than the recency window are cut
    to head + tail with an explicit `[... tool result middle pruned ...]` marker, never splitting a
-   `tool_calls` ↔ `tool_call_id` pair and never touching the system or first user message. If pruning alone
-   brings the context under the threshold, **no LLM call happens at all**.
+   `tool_calls` ↔ `tool_call_id` pair and never touching the system or first user message. It is adopted
+   **only when the projection lands at or below `min(threshold, fraction × W)`** (fraction default 0.5,
+   `[:llm] :tool_result_pruning_target_fraction`); otherwise the pruned candidate is thrown away and stage two
+   summarises the **original** transcript, because pruning rewrites the cached prefix and must buy real
+   headroom to be worth it. `[:llm] :tool_result_pruning` (default true) disables stage one entirely.
+   When stage one is adopted **no LLM call happens at all**.
 3. **`Compression.Checkpoint`** — stage two delivers the summary as a single user-role checkpoint message that
    *span-replaces* the older span, instructing the model to continue without acknowledging it, while the last
    K=4 turns stay verbatim. The system message and the first user message stay **byte-identical** (cache
