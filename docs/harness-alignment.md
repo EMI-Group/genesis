@@ -406,3 +406,157 @@ models trained against `dsh`/Claude-Code-shaped harnesses.
 Each round should be evaluated with the same objective suite, tracking: turns-to-completion, tool-call error
 rate (parse failures, unknown tools, unique-match edit failures), compression count and cost per task, and
 human review acceptance rate.
+
+---
+
+## 9. Implementation status — what is actually shipped
+
+This section records, per proposal above, what landed in the codebase and the decisions taken where we
+deliberately diverged from `dsh`. It is a status ledger, not a re-derivation: the diff tables above remain the
+authoritative comparison.
+
+### 9.1 Shipped — completion protocol (proposal 1.1)
+
+- `EvoGit.Agent.CompletionProtocol.classify/1` (`apps/evo_git/lib/evo_git/agent/completion_protocol.ex`) →
+  `{:tool_calls, calls}` | `{:text_reply, text}` | `:empty`. Built on `ReqLLM.Response.tool_calls/1` +
+  `ReqLLM.Response.text/1`, so only `:text` content parts count — for a streamed/reasoned reply whose assembled
+  content is `[text, thinking]`, the reasoning text can never be promoted into the report.
+- **A reply with no tool calls ends the run, and its text is the report** — exactly `dsh`'s rule. The text is
+  wrapped into the same `%Result{}` the explicit route builds, so the scheduler, `merge_and_report`, archive
+  refs, usage accounting, persistence and the dashboard all stay unchanged.
+- Two completion routes share one builder. The implicit route **commits the worktree before capturing
+  `commit_sha`** (`AgentScheduler.Dispatch.commit_pending_in_worktree/0` first) — otherwise `merge_and_report`
+  takes the no-changes path and the work dies with the worktree. The dirty-workspace gate deliberately does NOT
+  apply to the implicit route: the model has already finished, and a legitimate finish must never be turned
+  into a refusal.
+- `complete_task` remains supported and optional.
+- The no-tool-call nudge budget dropped from 3 to 1 and now fires only for `:empty` (a genuinely empty
+  response); a response with usable text is not a protocol violation.
+
+### 9.2 Shipped — tool-call robustness (proposals 1.2, 1.4b, 1.3, 1.5)
+
+- `EvoGit.Agent.ToolInvocation` (`agent/tool_invocation.ex`): a 3-stage tolerant argument parse (map → raw
+  non-blank string → explicit error) so a malformed tool-argument payload produces a normal
+  `Error: invalid arguments: …` tool result instead of a `FunctionClauseError` inside a linked `Task.async`.
+  `arguments_map/1` is total; `resolve_timeout/4` centralises timeout resolution.
+- Tool raises are contained per call (`Error: Tool execution crashed: <banner>`), while `:kill`/`:shutdown`/
+  `{:shutdown, _}` still propagate — cancellation semantics are untouched.
+- Shell timeout: an omitted `timeout` on the platform shell tool now resolves to `max(120_000, configured)`
+  clamped by `[:scheduler, :max_tool_timeout]` (was silently cut at the generic 10 s default). An explicit
+  positive `timeout` is honoured as before.
+- Truncated tool output now spills the full text to a file under `EvoGit.TaskTmpdir.current/0` and tells the
+  model the path (`[output truncated; full output: <path>]`) instead of destroying it.
+- One failure shape: `EvoGit.Agent.Tools.Failure.error/1,2` + `notice/1` normalise every tool failure to a
+  single `Error: ` prefix (stripping the legacy `⚠️`/`💡`/`[NOTICE]`/`[WARNING]` markers).
+
+### 9.3 Shipped — tool-surface alignment (proposal 1.2 name-distance table)
+
+- `EvoGit.Agent.ToolNames` (`agent/tool_names.ex`) is the single alias spine: `normalize/1`, `model_name/1`,
+  `shell_tool_name/0`, `matches_any?/2`, `table/0`. Model-facing canonical names are now `read`, `write`,
+  `edit`, `bash`, `web_search`; internal dispatch keys (`read_file`/`write_file`/`edit_file`/`run_bash`/
+  `run_powershell`/`search_web`) are unchanged, and every legacy spelling is accepted as an alias
+  (case-insensitively), so `agents.toml` tool whitelists and any stale prompt keep working.
+- Normalisation runs at the TOP of `Tools.execute/5`, **before** the repo-less / read-only-foreign-repo write
+  guards. This ordering is load-bearing: the shell is a write tool, so normalising after the guards would let a
+  repo-less agent bypass the write block by calling `Bash`.
+- **`rg` deliberately keeps its name.** Decision: ripgrep is more powerful and far easier to distribute
+  cross-platform than a `grep` shim; `grep`/`ripgrep` are accepted as aliases, so a model reaching for `grep`
+  still lands on `rg`. This is the one name we chose not to converge.
+- Output conventions aligned: `read` clips over-long lines, adds the
+  `(Showing lines 1-3 of 30. Use offset=4 to continue.)` / `(End of file - total N lines)` footers and a proper
+  past-EOF error; `edit` inserts `new_string` byte-for-byte (no silent trailing trim); `rg` with bare
+  `PATTERN [PATH]` args injects `--line-number --no-heading` and caps at 250 matches with a narrowing footer
+  while an explicit flag set passes through untouched; `glob` reports `[showing N of M files; …]`.
+- Unknown tools answer with a closest-name suggestion (`String.jaro_distance/2 ≥ 0.7`) plus the current
+  available-tool list, so the model can self-correct instead of repeating the call.
+
+### 9.4 Shipped — `web_fetch`, `lsp`, and the retirement of `curl` (proposals 3.6, 3.8)
+
+- **`curl` is gone** (unlisted, unsandboxed, two dead params, and `System.cmd("curl")` was an `:enoent` hazard).
+  A `curl` call now yields `Error: Unknown tool 'curl'`.
+- **`web_fetch`** (`agent/tools/web_fetch.ex` + the pure `agent/tools/html_to_markdown.ex`): one HTTP GET via
+  `Req` (an existing dependency — no new service, no third-party proxy, entirely local), streamed with a raw
+  byte cap so an oversized body stops at the socket, HTML→Markdown conversion, ≤5 manual redirects restricted
+  to the same scheme + same host, a best-effort private-host/SSRF blocklist over every resolved address, and
+  the envelope `Fetched <url> (HTTP <code>)`. IP pinning is explicitly NOT claimed — it is a guard, not a
+  boundary.
+- **`lsp`** (`agent/tools/lsp.ex` + the pure `agent/tools/lsp/protocol.ex`): one tool with
+  `action ∈ diagnostics|hover|definition`, speaking the ASCII `Content-Length` LSP base protocol over stdio to
+  a **user-configured** server (`[lsp] enabled/command/args/timeout/diagnostics_timeout`) — nothing bundled or
+  downloaded, and unconfigured it returns a self-explaining `Error: no language server configured …`. Every
+  wait is bounded, and the server is SIGKILLed by OS pid in `try/after` so no orphan survives.
+
+### 9.5 Shipped — background jobs, sandbox-integrated (proposal 3.5, minus PTY)
+
+- `bash` gained `run_in_background`; companion tools `job_output` (delta reads + optional bounded `wait`),
+  `job_list`, `job_kill` mirror `dsh`'s names, job-id shape and envelopes. `job_output`/`job_list`/`job_kill`
+  are control tools (in both schema lists, never write, never serial); **starting** a background process is
+  classified as a write CALL (`Tools.write_call?/2`) — it can mutate anything a foreground command can, so a
+  repo-less or read-only-foreign-repo agent must not start one, while it may still collect and kill its own
+  jobs.
+- `EvoGit.BackgroundJobs` (supervised registry) is the bookkeeping layer; `EvoGit.Sandbox` gained
+  `spawn_detached/1`, `kill_detached/1`, `detached_status/1` so every backend answers consistently, with the
+  per-backend containment mechanism chosen from what the backend already provides (a named systemd transient
+  unit on the systemd backend, `--die-with-parent` + session-leader tree kill under bwrap, a tree kill
+  elsewhere).
+- **The primary leak guarantee is a `Process.monitor/1` on the OWNING AGENT pid** — one choke point that covers
+  normal completion, crash, graceful cancel and force kill. Defence in depth: `terminate/2` reaps every job,
+  and worktree destruction calls `reap_under/1` immediately before the directory is removed, so a job whose cwd
+  lives inside `.genesis/workers/<id>` can never outlive it. Output always lands in a file under the per-task
+  tmpdir, never a live pipe that could block on a dead reader.
+- **PTY is deliberately not implemented**: pure pipes with file-backed output cover the real workflows
+  (dev server, test watcher) and a dependency-free cross-platform PTY would not be honest. The
+  block-buffering caveat is documented instead.
+
+### 9.6 Shipped — context compression (proposals 2.3, 2.4, 2.5)
+
+`EvoGit.Agent.ContextCompression.compress_if_needed/2` is now two stages, composed from
+`agent/compression/`:
+
+1. **`Compression.Threshold`** — the trigger is window-relative (`min(0.8·W, W − reserved − 64K)`, floored at
+   `min(32_000, 0.9·W)`) instead of the fixed 180 K, using the model's real context window from the catalog;
+   the old config value remains the unknown-window fallback.
+2. **`Compression.ToolResultPruner`** — a model-free stage one: results older than the recency window are cut
+   to head + tail with an explicit `[... tool result middle pruned ...]` marker, never splitting a
+   `tool_calls` ↔ `tool_call_id` pair and never touching the system or first user message. If pruning alone
+   brings the context under the threshold, **no LLM call happens at all**.
+3. **`Compression.Checkpoint`** — stage two delivers the summary as a single user-role checkpoint message that
+   *span-replaces* the older span, instructing the model to continue without acknowledging it, while the last
+   K=4 turns stay verbatim. The system message and the first user message stay **byte-identical** (cache
+   stability), and the runtime-context refresh is an APPENDED superseding user message — message #1 is never
+   rewritten.
+- `Compression.LlmRetry` keeps our failure model rather than `dsh`'s: bounded transient retries mirroring
+  `call_llm_with_retry/5`, one slot acquisition per attempt, non-retryable provider errors fail fast, and
+  exhaustion RAISES so the scheduler's crash-retry/backoff applies. A pruned-only silent fallback was rejected
+  because the retained tail can itself overflow the window, which would defer a hard provider overflow with no
+  operator signal.
+
+### 9.7 Shipped — prompts and the runtime clock (proposals 1.9, 2.2-adjacent)
+
+- One canonical finish sentence replaces the "you must call `complete_task`" mandate in every role that has a
+  loop (Architect, Manager, Executor, ContextExtractor, TaskScheduler, GenesisPlanner, Investigator, SkillExtractor,
+  SelfReflective) — the read-only Investigator previously had no finish statement at all.
+- All prompt-side tool references were repointed to the model-facing names; `web_fetch` / `lsp` are mentioned
+  where they solve a role's problem (docs lookup, Elixir diagnostics) and omitted where they would be
+  catalogue padding.
+- **A clock now exists**: `ContextBuilder.build_clock_section/1` renders
+  `Current local time: YYYY-MM-DD HH:MM (Zone)` as the last line of the runtime-context block, re-rendered only
+  into the appended compression refresh (so the cacheable prefix stays stable). A `:now` key on the state map
+  is the deterministic test seam.
+- Tone alignment only: emphatic mandate prose (`⚡ FIRST ACTION`, `CRITICAL:` caps, emoji bullets) was restated
+  as plain sentences with every requirement preserved; per-role prompt size moved by 0–5%.
+
+### 9.8 Deliberately NOT done
+
+| Item | Why |
+|---|---|
+| `todo_write` + durable todo state | Trained for a different model family; our turn/delegation structure carries the plan |
+| `send_message` / `interrupt_agent` / `list_agents` (3.1) | Same reason; our delegation is blocking by design and cancellation is task-level |
+| Plan mode | Needs read-only enforcement to be safe for us, and its value overlaps our TaskScheduler prose plan |
+| MCP, `run_code`/PTC, `workflow`/`ralph` script tool | No concrete need yet |
+| PTY / `terminal_*` | See 9.5 |
+| Skills-catalog injection, repeat-tool-call guard (3/5/8) | Both are `dsh`-specific compensations; unmeasured for us |
+| Durable transcript / JSONL session log (3.2) | The largest structural proposal; needs its own round |
+| Prompt diet (2.9) | Must be A/B'd, not shipped blind |
+| `web_search` `queries[]` shaping + untrusted-data notice (3.7) | Still open |
+| Prompt-cache `cache_control` opt-in (3.9) | Still open; the byte-identical message #1 invariant is now in place, which is the prerequisite |
