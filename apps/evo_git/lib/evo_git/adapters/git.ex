@@ -241,12 +241,13 @@ defmodule EvoGit.Adapters.Git do
   @doc """
   Commits staged changes with the given message.
 
-  The message (plus the optional co-author trailer) is written to a unique
-  temporary file and passed to git via `-F` instead of `-m` — arbitrary
-  LLM-generated content must never be passed as a `-m` argv element on Windows
-  (MSYS2 re-parsing splits embedded quotes; see the module "## Notes for
-  agents" section). `git commit -F <file>` and `-m <msg>` share the same
-  `whitespace` cleanup for non-edited messages, so semantics are identical.
+  The message (plus the optional co-author trailer) is written to a temporary
+  file that is unique per OS process and per call, and passed to git via `-F`
+  instead of `-m` — arbitrary LLM-generated content must never be passed as a
+  `-m` argv element on Windows (MSYS2 re-parsing splits embedded quotes; see the
+  module "## Notes for agents" section). `git commit -F <file>` and `-m <msg>`
+  share the same `whitespace` cleanup for non-edited messages, so semantics are
+  identical.
 
   Returns `{:ok, output}` on success or `{:error, {tag, output}}` on failure
   (see the module "## Return contract" section). A
@@ -915,10 +916,24 @@ defmodule EvoGit.Adapters.Git do
   # messages, commit messages). Content-bearing args must be passed via a temp
   # file, never as a `-m`-style argv element (see "## Notes for agents" in the
   # moduledoc). The file is deleted by `with_temp_msg_file/3`'s try/after.
-  defp temp_file_path(extension) do
+  #
+  # The OS process id is part of the name because `System.unique_integer/1` is
+  # unique only WITHIN one BEAM: every fresh VM restarts the monotonic counter
+  # at 1, so two BEAMs sharing one `TMPDIR` (a `genesis_remote` daemon plus a
+  # local BEAM on the same host, or several agent VMs under one managed
+  # `EvoGit.TaskTmpdir`) both pick `genesis_git_msg_1.txt` — and the loser's
+  # `after File.rm/1` deletes the winner's file while its `git commit -F` reads
+  # it: "fatal: could not read log file '...'". The pid segment makes the name
+  # injective across OS processes regardless of digit length (the `_` separator
+  # disambiguates a pid that is a digit prefix of another). `System.pid/0` is
+  # ASCII digits on every platform, so the name stays portable; deterministic
+  # per VM, no randomness.
+  @doc false
+  def temp_file_path(extension) do
     Path.join(
       System.tmp_dir!(),
-      "genesis_git_msg_#{System.unique_integer([:positive, :monotonic])}#{extension}"
+      "genesis_git_msg_#{System.pid()}_" <>
+        "#{System.unique_integer([:positive, :monotonic])}#{extension}"
     )
   end
 
