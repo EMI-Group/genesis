@@ -297,6 +297,56 @@ defmodule EvoGit.Agent.DelegationHintsTest do
     end
   end
 
+  # ── Alias awareness: the MODEL-FACING names must work too ─────────────────
+  #
+  # The dispatcher passes the RAW tool-call name — the model-facing schema name
+  # (`write`, `edit`, `read`, …), not the internal dispatch key — so the entry
+  # points normalise through `EvoGit.Agent.ToolNames.normalize/1` before the
+  # membership test. Without that, no delegation nudge ever fires.
+
+  describe "extract_child_paths/4 alias normalisation (model-facing names)" do
+    test "model-facing `write` extracts the child dir" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] = DelegationHints.extract_child_paths("write", args, "./", @repo_path)
+    end
+
+    test "model-facing `edit` extracts the child dir" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] = DelegationHints.extract_child_paths("edit", args, "./", @repo_path)
+    end
+
+    test "`write` under a non-root node extracts the nested child" do
+      args = %{"file_path" => "./src/components/button.tsx"}
+
+      assert ["./src/components"] =
+               DelegationHints.extract_child_paths("write", args, "./src", @repo_path)
+    end
+
+    test "matching is case-insensitive" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] = DelegationHints.extract_child_paths("WRITE", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_child_paths("Edit", args, "./", @repo_path)
+    end
+
+    test "legacy internal-key spellings keep working (regression)" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] = DelegationHints.extract_child_paths("write_file", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_child_paths("edit_file", args, "./", @repo_path)
+    end
+
+    test "non-write tools still return [] after normalisation" do
+      args = %{"file_path" => "./src/foo.ex"}
+
+      assert [] = DelegationHints.extract_child_paths("read", args, "./", @repo_path)
+      assert [] = DelegationHints.extract_child_paths("bash", args, "./", @repo_path)
+      assert [] = DelegationHints.extract_child_paths(nil, args, "./", @repo_path)
+    end
+  end
+
   # ── do_extract_child_paths/4 — per-write-tool clause variants ─────────────
 
   describe "do_extract_child_paths/4 tool clauses" do
@@ -569,6 +619,46 @@ defmodule EvoGit.Agent.DelegationHintsTest do
 
       assert ["./src"] =
                DelegationHints.extract_read_child_paths("glob", args, "./", @repo_path)
+    end
+  end
+
+  # ── Read-tool alias normalisation (model-facing names) ────────────────────
+
+  describe "extract_read_child_paths/4 alias normalisation" do
+    test "model-facing `read` extracts the child dir" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] =
+               DelegationHints.extract_read_child_paths("read", args, "./", @repo_path)
+    end
+
+    test "model-facing `read` under a non-root node extracts the nested child" do
+      args = %{"file_path" => "./src/components/button.tsx"}
+
+      assert ["./src/components"] =
+               DelegationHints.extract_read_child_paths("read", args, "./src", @repo_path)
+    end
+
+    test "matching is case-insensitive" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] =
+               DelegationHints.extract_read_child_paths("READ", args, "./", @repo_path)
+    end
+
+    test "legacy internal-key spelling keeps working (regression)" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] =
+               DelegationHints.extract_read_child_paths("read_file", args, "./", @repo_path)
+    end
+
+    test "non-read tools still return [] after normalisation" do
+      args = %{"file_path" => "./src/foo.ex"}
+
+      assert [] = DelegationHints.extract_read_child_paths("write", args, "./", @repo_path)
+      assert [] = DelegationHints.extract_read_child_paths("bash", args, "./", @repo_path)
+      assert [] = DelegationHints.extract_read_child_paths(nil, args, "./", @repo_path)
     end
   end
 

@@ -685,10 +685,16 @@ defmodule EvoGit.Agent.ToolDispatch do
   `:name`/`:arguments` keys.
 
   Deduplicates by `:id` first, then by identical content tuple
-  `{name, arguments}`. Keeps the first occurrence in each pass. Logs a
+  `{normalized name, arguments}`. Keeps the first occurrence in each pass. Logs a
   `Logger.warning/1` whenever duplicates are removed, including the agent id,
   the count removed, the before/after totals, and a description of what was
   removed.
+
+  Names are compared **ALIAS-AWARE**: the content pass normalises each call's
+  name through `EvoGit.Agent.ToolNames.normalize/1`, so a response that emits
+  the model-facing spelling (`write`/`read`/`bash`) alongside the internal
+  dispatch key (`write_file`/`read_file`/`run_bash`) with identical arguments
+  collapses to ONE call — otherwise the same mutation would be executed twice.
   """
   def dedupe_tool_calls(tool_calls, agent_id) when is_list(tool_calls) do
     original_count = length(tool_calls)
@@ -697,10 +703,13 @@ defmodule EvoGit.Agent.ToolDispatch do
     # Enum.dedup_by/2 removes consecutive duplicates, keeping the first.
     by_id = Enum.dedup_by(tool_calls, & &1.id)
 
-    # Pass 2 — dedupe by identical content {name, arguments-as-decoded-map}
+    # Pass 2 — dedupe by identical content {alias-normalized-name,
+    # arguments-as-decoded-map}. Normalising the name is what makes
+    # `write_file` and `write` (same args) the SAME call.
     final =
       Enum.dedup_by(by_id, fn call ->
-        {ReqLLM.ToolCall.name(call), ReqLLM.ToolCall.args_map(call)}
+        {EvoGit.Agent.ToolNames.normalize(ReqLLM.ToolCall.name(call)),
+         ReqLLM.ToolCall.args_map(call)}
       end)
 
     final_count = length(final)
@@ -1428,6 +1437,14 @@ defmodule EvoGit.Agent.ToolDispatch do
   # long test run that simply omits the argument must not be silently cut at the
   # generic 10 s `[:scheduler, :default_tool_timeout]` — and every other tool
   # keeps that configured default.
+  #
+  # The ADVERTISED-DEFAULT seam (`EvoGit.Agent.Tools.default_timeout_ms/1`) is
+  # then applied on top: a tool that publishes its own default timeout for the
+  # "model omitted the argument" case (today the platform shell tool's 120 s)
+  # raises the resolved timeout to that value. It is a pure MAX — it can never
+  # LOWER the resolved timeout, so `resolve_timeout/4`'s own shell fallback and
+  # an explicit `timeout` argument are both unaffected — and it is clamped by
+  # the same `max_timeout`.
   defp execute_tool_with_timeout(
          name,
          args,
@@ -1445,6 +1462,8 @@ defmodule EvoGit.Agent.ToolDispatch do
         EvoGit.Agent.DelegationHints.default_tool_timeout(),
         max_timeout
       )
+
+    tool_timeout = apply_advertised_tool_timeout(tool_timeout, name, args, max_timeout)
 
     tool_timeout =
       if approval_window_tool_call?(name, args) do
@@ -1509,6 +1528,42 @@ defmodule EvoGit.Agent.ToolDispatch do
       end
     end)
   end
+
+  # Applies a tool's OWN advertised default timeout
+  # (`EvoGit.Agent.Tools.default_timeout_ms/1`) to the resolved per-call timeout.
+  #
+  # Pure MAX + `max_timeout` clamp: `min(max(resolved, advertised), max_timeout)`.
+  # It can only RAISE the resolved timeout, never lower it, so the platform-shell
+  # 120 s fallback in `ToolInvocation.resolve_timeout/4` and a resolved value
+  # that is already larger both survive untouched. An explicit `timeout`
+  # argument (a positive integer under `"timeout"`) means the model asked for a
+  # specific budget, so the advertised default does not apply — that is the same
+  # "explicit wins" rule `resolve_timeout/4` implements.
+  defp apply_advertised_tool_timeout(resolved, name, args, max_timeout) do
+    case EvoGit.Agent.Tools.default_timeout_ms(name) do
+      advertised when is_integer(advertised) and advertised > 0 ->
+        if explicit_timeout_arg?(args) do
+          resolved
+        else
+          resolved |> max(advertised) |> min(max_timeout)
+        end
+
+      _no_advertised_default ->
+        resolved
+    end
+  end
+
+  # True when `args` carries a usable explicit `timeout` (a positive integer).
+  # TOTAL: the tolerant arguments parse can hand the dispatcher a RAW string, a
+  # nil or anything else — only a map can declare a `timeout`.
+  defp explicit_timeout_arg?(args) when is_map(args) do
+    case Map.get(args, "timeout") do
+      timeout when is_integer(timeout) and timeout > 0 -> true
+      _absent_or_invalid -> false
+    end
+  end
+
+  defp explicit_timeout_arg?(_args), do: false
 
   # The body of one tool-execution task. Runs INSIDE the `Task.async` (so it is
   # linked to the agent process) and therefore contains the failure containment
@@ -1731,7 +1786,11 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def maybe_append_redundant_cd_warning(output, name, args, repo_path, repo_root) do
-    if name in ["run_bash", "run_powershell"] do
+    # ALIAS-AWARE: the model-facing shell tool name is `bash` while the internal
+    # dispatch keys are `run_bash` / `run_powershell`, so compare through the
+    # alias spine (`EvoGit.Agent.ToolNames`) instead of a hardcoded name list —
+    # otherwise a `bash` call never reaches the warning.
+    if EvoGit.Agent.ToolNames.normalize(name) == EvoGit.Agent.ToolNames.shell_tool_name() do
       command = Map.get(args, "command", "")
 
       if EvoGit.Agent.Tools.ShellTool.redundant_cd?(command, repo_path, repo_root) and
