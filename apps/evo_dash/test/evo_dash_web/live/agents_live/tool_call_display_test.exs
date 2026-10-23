@@ -22,6 +22,11 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
     }
   end
 
+  # A tool call for the model-facing name `name` with the given argument map.
+  defp call(name, args) do
+    %ReqLLM.ToolCall{id: "c", function: %{name: name, arguments: Jason.encode!(args)}}
+  end
+
   # Reads the single structured row value of a descriptor (the row KEY is a
   # localized msgid, so match by position rather than by label text).
   defp row_value(%{rows: [{_key, value}]}), do: value
@@ -86,6 +91,96 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
         assert is_binary(descriptor.label)
         assert descriptor.kind in [:structured, :inline]
       end
+    end
+  end
+
+  describe "alias-aware names (model-facing -> previous rendering)" do
+    test "read renders as the historical read_file inline path row" do
+      descriptor = ToolCallDisplay.display(call("read", %{"path" => "./lib/app.ex"}))
+
+      assert descriptor == %{label: "read_file", kind: :inline, summary: "./lib/app.ex"}
+    end
+
+    test "edit renders as the historical edit_file inline label" do
+      descriptor = ToolCallDisplay.display(call("edit", %{"path" => "./lib/app.ex"}))
+
+      assert descriptor.label == "edit_file"
+      assert descriptor.kind == :inline
+      assert descriptor.summary == "./lib/app.ex"
+    end
+
+    test "write renders as the historical write_file inline label" do
+      descriptor = ToolCallDisplay.display(call("write", %{"path" => "./lib/new.ex"}))
+
+      assert descriptor.label == "write_file"
+      assert descriptor.kind == :inline
+      assert descriptor.summary == "./lib/new.ex"
+    end
+
+    test "bash renders as a Shell call with a Command row" do
+      cmd = "mix test apps/evo_dash/test"
+
+      descriptor = ToolCallDisplay.display(call("bash", %{"command" => cmd}))
+
+      assert descriptor.label == "Shell call"
+      assert descriptor.kind == :structured
+      assert row_value(descriptor) == cmd
+    end
+
+    test "Bash (capitalized) is a shell call too" do
+      descriptor = ToolCallDisplay.display(call("Bash", %{"command" => "ls -la"}))
+
+      assert descriptor.label == "Shell call"
+      assert descriptor.kind == :structured
+      assert row_value(descriptor) == "ls -la"
+    end
+
+    test "web_search renders as the historical search_web inline label" do
+      descriptor = ToolCallDisplay.display(call("web_search", %{"query" => "elixir genserver"}))
+
+      assert descriptor.label == "search_web"
+      assert descriptor.kind == :inline
+      assert descriptor.summary == ~s({"query":"elixir genserver"})
+    end
+
+    test "rg and glob keep their own names" do
+      assert %{label: "rg"} = ToolCallDisplay.display(call("rg", %{"pattern" => "TODO"}))
+      assert %{label: "glob"} = ToolCallDisplay.display(call("glob", %{"pattern" => "**/*.ex"}))
+    end
+
+    test "a legacy read_file call still labels read_file" do
+      descriptor = ToolCallDisplay.display(call("read_file", %{"path" => "./lib/app.ex"}))
+
+      assert descriptor == %{label: "read_file", kind: :inline, summary: "./lib/app.ex"}
+    end
+
+    test "an unknown/custom tool name passes through unchanged" do
+      descriptor =
+        ToolCallDisplay.display(call("my_custom_tool", %{"path" => "./lib/app.ex"}))
+
+      assert descriptor.label == "my_custom_tool"
+      assert descriptor.kind == :inline
+      assert descriptor.summary == "./lib/app.ex"
+    end
+
+    test "the accepted subagent alias spellings render as structured subagent rows" do
+      args = %{"path" => "./lib", "objective" => "Investigate the store"}
+
+      for name <- ["subagent_manager", "subagent", "task"] do
+        descriptor = ToolCallDisplay.display(call(name, args))
+
+        assert descriptor.kind == :structured
+        # The label is the normalized internal key (`subagent_manager`).
+        assert descriptor.label == "subagent_manager"
+        assert descriptor.rows == [{"Path", "./lib"}, {"Objective", "Investigate the store"}]
+      end
+    end
+
+    test "a non-binary name falls back to the unknown label" do
+      descriptor = ToolCallDisplay.display(%{name: nil})
+
+      assert descriptor.label == "unknown"
+      assert descriptor.kind == :inline
     end
   end
 end

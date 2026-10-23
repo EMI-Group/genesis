@@ -451,6 +451,34 @@ defmodule EvoDashWeb.HelpersTest do
              })
     end
 
+    test "returns true for the model-facing shell name bash (map + ReqLLM struct)" do
+      assert tool_call_is_shell?(%{function: %{name: "bash"}})
+
+      assert tool_call_is_shell?(%{"function" => %{"name" => "bash", "arguments" => "{}"}})
+
+      assert tool_call_is_shell?(%ReqLLM.ToolCall{
+               id: "call_2",
+               function: %{name: "bash", arguments: ~s({"command":"ls"})}
+             })
+    end
+
+    test "is case-insensitive and accepts the shell aliases" do
+      assert tool_call_is_shell?(%{function: %{name: "Bash"}})
+      assert tool_call_is_shell?(%{function: %{name: "SHELL"}})
+      assert tool_call_is_shell?(%{function: %{name: "shell"}})
+      assert tool_call_is_shell?(%{function: %{name: "sh"}})
+      assert tool_call_is_shell?(%{function: %{name: "Run_Bash"}})
+    end
+
+    test "returns false for non-shell model-facing names and unknown/custom tools" do
+      refute tool_call_is_shell?(%{function: %{name: "read"}})
+      refute tool_call_is_shell?(%{function: %{name: "edit"}})
+      refute tool_call_is_shell?(%{function: %{name: "write"}})
+      refute tool_call_is_shell?(%{function: %{name: "rg"}})
+      refute tool_call_is_shell?(%{function: %{name: "web_search"}})
+      refute tool_call_is_shell?(%{function: %{name: "bogus_tool"}})
+    end
+
     test "returns false for other tools and unknown shapes" do
       refute tool_call_is_shell?(%{function: %{name: "read_file"}})
       refute tool_call_is_shell?(%{"function" => %{"name" => "search"}})
@@ -523,6 +551,11 @@ defmodule EvoDashWeb.HelpersTest do
   describe "tool_call_display/1" do
     test "returns {Shell call, command} for shell calls" do
       call = %{function: %{name: "run_bash", arguments: ~s({"command":"mix test"})}}
+      assert tool_call_display(call) == {"Shell call", "mix test"}
+    end
+
+    test "treats the model-facing bash name as a shell call too" do
+      call = %{function: %{name: "bash", arguments: ~s({"command":"mix test"})}}
       assert tool_call_display(call) == {"Shell call", "mix test"}
     end
 

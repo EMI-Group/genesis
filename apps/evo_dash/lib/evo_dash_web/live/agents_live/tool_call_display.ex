@@ -5,10 +5,26 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
 
   `display/1` and `display/2` return either:
     - `%{label: String.t(), kind: :structured, rows: [{String.t(), String.t()}]}`
-      — subagent (`subagent_*` prefix) and shell (`run_bash`/`run_powershell`)
-      calls: key/value rows (path + objective / command).
+      — subagent (`subagent_*` prefix, including the accepted alias spellings
+      `task`/`subagent`) and shell (the platform shell tool `bash` plus every
+      accepted spelling of it) calls: key/value rows (path + objective /
+      command).
     - `%{label: String.t(), kind: :inline, summary: String.t()}`
       — all other calls: a single one-line arguments summary.
+
+  ## Alias-aware naming
+
+  The MODEL-FACING tool names (`read`, `write`, `edit`, `bash`, `web_search`)
+  differ from the INTERNAL dispatch keys (`read_file`, `write_file`,
+  `edit_file`, `run_bash`/`run_powershell`, `search_web`). The tool key is
+  derived ONCE through the core alias spine `EvoGit.Agent.ToolNames.normalize/1`
+  and used for BOTH the subagent grouping test and the descriptor label, so a
+  live agent's `read`/`edit`/`write`/`web_search` call renders EXACTLY as the
+  historical `read_file`/`edit_file`/`write_file`/`search_web` call did. Names
+  outside the alias table pass through UNCHANGED, so custom tools keep their own
+  name. Shell classification is delegated to
+  `EvoDashWeb.Helpers.tool_call_is_shell?/1` (itself alias-aware), which is why
+  `bash` renders as a `Shell call` with a `Command` row.
 
   `display/2` takes a keyword list of options. `opts[:mode]` selects the
   rendering mode:
@@ -32,7 +48,8 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
 
   Never crashes on any input: defensive extraction reuses
   `EvoDashWeb.Helpers` (`tool_call_name/1`, `tool_call_arguments/1`,
-  `tool_call_is_shell?/1`) and JSON decoding is pattern-matched, not raised.
+  `tool_call_is_shell?/1`), name normalization reuses `EvoGit.Agent.ToolNames`,
+  and JSON decoding is pattern-matched, not raised.
   """
 
   use Gettext, backend: EvoDashWeb.Gettext
@@ -68,13 +85,16 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
 
   defp display_mode(_opts), do: :compact
 
-  # Subagent tool calls (core `subagent_tool_name/0` family: subagent_manager,
-  # subagent_executor, subagent_investigator, ...) — structured rows.
+  # Resolve the tool key ONCE through the core alias spine: a model-facing name
+  # (`read`/`write`/`edit`/`bash`/`web_search`/`task`/…) becomes its internal
+  # dispatch key, while an unknown/custom name passes through UNCHANGED.
   defp do_display(call, name, mode) when is_binary(name) do
+    key = EvoGit.Agent.ToolNames.normalize(name)
+
     cond do
-      String.starts_with?(name, "subagent_") -> display_subagent(call, name, mode)
+      String.starts_with?(key, "subagent_") -> display_subagent(call, key, mode)
       tool_call_is_shell?(call) -> display_shell(call, mode)
-      true -> build_inline(call, name, mode)
+      true -> build_inline(call, key, mode)
     end
   end
 
