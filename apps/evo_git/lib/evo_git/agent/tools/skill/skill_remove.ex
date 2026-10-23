@@ -6,6 +6,7 @@ defmodule EvoGit.Agent.Tools.SkillRemove do
   across the repository are also cleaned up automatically.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -71,10 +72,10 @@ defmodule EvoGit.Agent.Tools.SkillRemove do
           end
 
         {:error, reason} ->
-          "Error removing skill: #{reason}"
+          Failure.error("removing skill: #{reason}")
       end
     else
-      {:error, message} -> message
+      {:error, message} -> Failure.error(message)
     end
   end
 

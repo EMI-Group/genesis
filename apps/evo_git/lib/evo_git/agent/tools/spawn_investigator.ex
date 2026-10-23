@@ -22,6 +22,7 @@ defmodule EvoGit.Agent.Tools.SpawnInvestigator do
   a dispatch-level repo-less path-threading change plus an LLM test seam.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Agent.Tools.SpawnInvestigatorProbe
 
@@ -29,11 +30,14 @@ defmodule EvoGit.Agent.Tools.SpawnInvestigator do
   Executes the spawn_investigator command (read-only investigation probe).
 
   Validates the required `path`/`objective` arguments — a missing or non-string
-  argument returns the shared descriptive `{:error, "Missing required argument
-  '...'..."}` tuple. Then spec-error-style path validation: the path must
-  exist, must be a directory, and must be an existing git repository (a `.git`
-  directory or a `.git` `gitdir:` pointer file); a violation returns a
-  descriptive `{:error, message}` tuple naming the path and the problem. On
+  argument surfaces the shared descriptive "Missing required argument '...'"
+  message. Then spec-error-style path validation: the path must exist, must be a
+  directory, and must be an existing git repository (a `.git` directory or a
+  `.git` `gitdir:` pointer file); a violation surfaces a descriptive message
+  naming the path and the problem. Every failure path is a plain String in the
+  single-`Error:`-prefix shape (`EvoGit.Agent.Tools.Failure.error/1`), so the
+  command handler's output reads the same as every other tool's failure —
+  callers never see an `{:error, message}` tuple or `inspect`-quoted text. On
   success dispatches to the bounded read-only probe and returns its report as a
   plain String.
   """
@@ -42,6 +46,8 @@ defmodule EvoGit.Agent.Tools.SpawnInvestigator do
          {:ok, objective} <- Shared.fetch_string_arg(args, "objective"),
          :ok <- validate_path(path) do
       SpawnInvestigatorProbe.investigate(path, objective)
+    else
+      {:error, message} -> Failure.error(message)
     end
   end
 

@@ -250,24 +250,21 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
     end
 
     test "missing required args return a descriptive error without raising" do
-      # SpawnInvestigator's `with` has no else clause, so the error surfaces as
-      # a {:error, message} tuple (still never raises).
-      assert {:error, message} = SpawnInvestigator.execute(%{"path" => "./"}, nil, nil)
-      assert message == "Missing required argument 'objective'. Please provide a valid value."
+      # Every failure path of the handler is a plain single-`Error:`-prefixed
+      # string (never an {:error, message} tuple) and it never raises.
+      assert SpawnInvestigator.execute(%{"path" => "./"}, nil, nil) ==
+               "Error: Missing required argument 'objective'. Please provide a valid value."
 
-      assert {:error, message} = SpawnInvestigator.execute(%{"objective" => "x"}, nil, nil)
-      assert message == "Missing required argument 'path'. Please provide a valid value."
+      assert SpawnInvestigator.execute(%{"objective" => "x"}, nil, nil) ==
+               "Error: Missing required argument 'path'. Please provide a valid value."
     end
 
     test "rejects a non-existent path with a descriptive error naming the path" do
-      assert {:error, message} =
-               SpawnInvestigator.execute(
-                 %{"path" => "/nonexistent/spawn_investigator/path", "objective" => "x"},
-                 nil,
-                 nil
-               )
-
-      assert message == "Path does not exist: /nonexistent/spawn_investigator/path"
+      assert SpawnInvestigator.execute(
+               %{"path" => "/nonexistent/spawn_investigator/path", "objective" => "x"},
+               nil,
+               nil
+             ) == "Error: Path does not exist: /nonexistent/spawn_investigator/path"
     end
 
     test "rejects a non-git directory with a descriptive error naming the path",
@@ -275,11 +272,8 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       plain = Path.join(tmp_dir, "plain_dir_#{System.unique_integer([:positive])}")
       File.mkdir_p!(plain)
 
-      assert {:error, message} =
-               SpawnInvestigator.execute(%{"path" => plain, "objective" => "x"}, nil, nil)
-
-      assert message ==
-               "Path is not a git repository (no .git directory or gitdir pointer): #{plain}"
+      assert SpawnInvestigator.execute(%{"path" => plain, "objective" => "x"}, nil, nil) ==
+               "Error: Path is not a git repository (no .git directory or gitdir pointer): #{plain}"
     end
   end
 

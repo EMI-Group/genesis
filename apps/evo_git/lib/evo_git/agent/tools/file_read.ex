@@ -117,7 +117,7 @@ defmodule EvoGit.Agent.Tools.FileRead do
         )
 
       {:error, reason} ->
-        Failure.error("Error reading file #{display_path}: #{:file.format_error(reason)}")
+        Failure.error("reading file #{display_path} failed: #{:file.format_error(reason)}")
     end
   end
 

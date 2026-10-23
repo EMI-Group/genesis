@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.SkillRead do
   Tool for reading the full content of a skill file by name.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -38,7 +39,7 @@ defmodule EvoGit.Agent.Tools.SkillRead do
         EvoGit.Skills.read_skill(repo_path, name)
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 end

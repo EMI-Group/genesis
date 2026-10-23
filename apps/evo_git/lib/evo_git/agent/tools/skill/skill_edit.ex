@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
   Tool for editing an existing skill file by replacing its content.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -61,10 +62,10 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
           )
 
         {:error, reason} ->
-          "Error editing skill: #{reason}"
+          Failure.error("editing skill: #{reason}")
       end
     else
-      {:error, message} -> message
+      {:error, message} -> Failure.error(message)
     end
   end
 end
