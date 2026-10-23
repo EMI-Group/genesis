@@ -21,10 +21,33 @@ defmodule EvoGit.Agent.ToolDispatch do
   string concatenation and re-wrap afterwards. `EvoGit.Agent.OutputSanitizer`,
   `EvoGit.Agent.TruncationFeedback` and `EvoGit.Agent.DelegationHints` never see
   or return a `%ToolOutput{}`.
+
+  ## Completion protocol (harness-aligned)
+
+  The turn ends when the model STOPS calling tools — a text reply with zero tool
+  calls is an IMPLICIT COMPLETION, exactly like the reference harness the models
+  are trained on (`EvoGit.Agent.CompletionProtocol` classifies each response):
+
+    * tool calls present → execute them and continue the loop (the model may
+      still call `complete_task` explicitly — that tool stays fully functional,
+      including its dirty-workspace gate, archive refs and git note);
+    * ZERO tool calls with usable text → `implicit_complete/2` commits any
+      pending work and builds the SAME `%EvoGit.Agent.Result{}` the explicit
+      route builds, so scheduler result handling, `merge_and_report`, the
+      `genesis/agent_*` review branch, task persistence and the dashboard are
+      all unchanged;
+    * ZERO tool calls and no usable text (an empty provider response) → one
+      nudge, then the unchanged bounded protocol-violation path
+      (grace/recovery), so a genuinely broken turn still cannot spin forever.
+
+  `complete_task` is therefore a supported, OPTIONAL tool rather than the only
+  way to finish.
   """
   require Logger
 
+  alias EvoGit.Agent.CompletionProtocol
   alias EvoGit.Agent.LoopState
+  alias EvoGit.Agent.ToolInvocation
   alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Agent.OutputSanitizer
   alias EvoGit.Agent.ToolOutput
@@ -43,12 +66,18 @@ defmodule EvoGit.Agent.ToolDispatch do
   # approves, before the tool task is killed.
   @approval_execution_buffer 30_000
 
-  # Maximum consecutive "no tool calls" nudges before ending the turn gracefully.
-  # When the LLM returns no tool calls, we append a user-role nudge message and
-  # re-prompt. After this many consecutive nudges with still no tool calls, we
-  # stop and end the turn via the existing protocol-violation path (recovery or
+  # Maximum consecutive EMPTY-response nudges before ending the turn gracefully.
+  # A response with zero tool calls and no usable text (e.g. a provider
+  # returning an empty message) is still a protocol failure — but a recoverable
+  # one, so it gets exactly ONE nudge and re-prompt (the reference harness
+  # recovers the same case as an EMPTY_RESPONSE code). After that the turn ends
+  # via the existing protocol-violation path (grace/recovery or
   # :recovery_failed) instead of crashing or spinning forever.
-  @max_no_tool_call_nudges 3
+  #
+  # A response with zero tool calls and NON-EMPTY text is NOT a failure: it is
+  # the model finishing, and it never reaches this nudge (see
+  # `EvoGit.Agent.CompletionProtocol`).
+  @max_no_tool_call_nudges 1
 
   # Base (ms) of the LLM retry exponential backoff. Overridable at call time via
   # the app env `:llm_retry_backoff_base_ms` (mirrors the other app-env test
@@ -210,6 +239,20 @@ defmodule EvoGit.Agent.ToolDispatch do
       {:ok, response} ->
         process_llm_response(response, state, subagent_modules, loop_fn, trigger_recovery_fn)
 
+      {:implicit_completion, response, text} ->
+        # The model stopped calling tools and wrote text: that is the harness's
+        # completion signal. Route it through the SAME post-response
+        # bookkeeping as a tool-calling turn (usage, turn advance, ETS sync, so
+        # the dashboard still sees the final assistant message), then finish.
+        process_llm_response(
+          response,
+          state,
+          subagent_modules,
+          loop_fn,
+          trigger_recovery_fn,
+          text
+        )
+
       {:error, :protocol_violation} ->
         handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
 
@@ -225,17 +268,24 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # --- LLM Prompting (transient-error retry + no-tool-call nudging) ---
+  # --- LLM Prompting (transient-error retry + empty-response nudging) ---
 
   @doc false
-  # Calls the LLM and re-prompts (with a user-role nudge) when the model returns
-  # no tool calls, instead of retrying the same unchanged context or crashing.
+  # Calls the LLM and classifies the turn outcome via
+  # `EvoGit.Agent.CompletionProtocol.classify/1`:
+  #
+  #   * `{:tool_calls, _}` → `{:ok, response}`, the loop continues normally.
+  #   * `{:text_reply, text}` → `{:implicit_completion, response, text}`: the
+  #     model finished by writing text instead of calling a tool (the harness
+  #     completion signal). No nudge — nudging here would fight the training
+  #     distribution and turn a legitimate finish into a protocol violation.
+  #   * `:empty` → zero tool calls AND no usable text, a recoverable protocol
+  #     failure: append ONE nudge and re-prompt, then end the turn gracefully
+  #     via `{:error, :protocol_violation}` (feeding the existing
+  #     grace/recovery path — no crash, no new try/rescue).
+  #
   # Transient transport/stream errors are still retried with exponential backoff
-  # inside `call_llm_with_retry/5`; only the semantic "no tool calls" case is
-  # handled here by appending a nudge message and re-prompting. After
-  # `@max_no_tool_call_nudges` consecutive nudges with still no tool calls, the
-  # turn ends gracefully via `{:error, :protocol_violation}`, feeding the
-  # existing recovery path (no crash, no new try/rescue).
+  # inside `call_llm_with_retry/5`.
   #
   # A NON-RETRYABLE provider rejection (`EvoGit.Agent.LlmError`) is the one
   # other graceful terminal arm: the retry loop already failed fast, so
@@ -255,20 +305,23 @@ defmodule EvoGit.Agent.ToolDispatch do
        ) do
     case call_llm_with_retry(context, tools, llm_gen_opts, agent_id, max_retries) do
       {:ok, response, _llm_duration} ->
-        case ensure_tool_calls(response, agent_id) do
-          :ok ->
+        case CompletionProtocol.classify(response) do
+          {:tool_calls, _calls} ->
             {:ok, response}
 
-          {:error, :no_tool_calls} ->
+          {:text_reply, text} ->
+            {:implicit_completion, response, text}
+
+          :empty ->
             if nudge_count >= @max_no_tool_call_nudges do
               Logger.warning(
-                "Agent #{agent_id}: LLM returned no tool calls after #{nudge_count} consecutive nudges (#{nudge_count + 1} attempts), ending turn gracefully"
+                "Agent #{agent_id}: LLM returned an empty response (no tool calls, no text) after #{nudge_count} consecutive nudges (#{nudge_count + 1} attempts), ending turn gracefully"
               )
 
               {:error, :protocol_violation}
             else
               Logger.warning(
-                "Agent #{agent_id}: LLM returned no tool calls, appending nudge and continuing (nudge #{nudge_count + 1}/#{@max_no_tool_call_nudges})"
+                "Agent #{agent_id}: LLM returned an empty response (no tool calls, no text), appending nudge and continuing (nudge #{nudge_count + 1}/#{@max_no_tool_call_nudges})"
               )
 
               nudge_context = append_no_tool_call_nudge(response.context)
@@ -525,28 +578,37 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   # Appends a user-role nudge message to the context (which already contains the
-  # assistant's tool-less response), instructing the model to make a tool call.
+  # assistant's EMPTY response), asking the model to either call a tool or say
+  # what it did.
   def append_no_tool_call_nudge(context) do
     ReqLLM.Context.append(context, no_tool_call_nudge_message())
   end
 
   @doc false
-  # The user-role nudge message appended when the LLM returns no tool calls.
+  # The user-role nudge message appended when the LLM returns an EMPTY response
+  # (zero tool calls AND no usable text). It is deliberately NOT used for a
+  # text-only reply — that reply is the completion signal, not a failure.
   # Stamped with a creation-time timestamp (not turn-tagged — it can be
   # appended between turns inside prompt_until_tools_or_limit).
   def no_tool_call_nudge_message do
     EvoGit.Agent.ContextBuilder.tag_message_timestamp(
       user(
-        "You did not make any tool calls in your last response. You must use the " <>
-          "provided tools to accomplish the task. Please respond with a tool call."
+        "Your last response was empty: you did not make any tool calls and you " <>
+          "did not write any text. If you have finished the task, reply with a " <>
+          "plain-text summary of what you did — no tool call is needed to " <>
+          "finish. Otherwise, respond with a tool call."
       )
     )
   end
 
-  # Handles the protocol-violation outcome (no usable tool calls) by either
+  # Handles the protocol-violation outcome (an EMPTY response — no tool calls and
+  # no usable text, after the single nudge was already spent) by either
   # triggering recovery (when not in the grace period), re-entering the loop
   # during grace with budget remaining (consuming one grace turn), or returning
   # :recovery_failed (when the grace budget is exhausted).
+  #
+  # A response with non-empty text never reaches here: it is an implicit
+  # completion (see `EvoGit.Agent.CompletionProtocol`).
   defp handle_protocol_violation(%LoopState{} = state, loop_fn, trigger_recovery_fn) do
     cond do
       EvoGit.Agent.grace_period_continue_failed?(state) ->
@@ -660,12 +722,20 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc false
+  # Handles one LLM response: usage accounting, tool-call dedupe, turn/context
+  # advance, ETS sync, then either the implicit-completion finish (when
+  # `completion_text` is supplied — the model replied with text and no tool
+  # calls) or normal tool-call processing.
+  #
+  # `completion_text` (optional, default `nil`) is the model's own report text
+  # from `EvoGit.Agent.CompletionProtocol`; it becomes the agent result verbatim.
   def process_llm_response(
         response,
         %LoopState{} = state,
         subagent_modules,
         loop_fn,
-        trigger_recovery_fn
+        trigger_recovery_fn,
+        completion_text \\ nil
       ) do
     state = update_turn_usage(state, response)
     {tool_calls, response} = prepare_tool_calls(response, state.agent_id)
@@ -682,22 +752,29 @@ defmodule EvoGit.Agent.ToolDispatch do
     Process.put(:delegation_hints, state.delegation_hints)
     Process.put(:read_delegation_hints, state.read_delegation_hints)
 
-    case process_tool_calls(tool_calls, state, subagent_modules) do
-      {:complete, final_result} ->
-        {:ok, final_result}
+    if completion_text do
+      # Implicit completion: the bookkeeping above already recorded the turn
+      # (including the final assistant message in the context), so all that is
+      # left is the completion side effects shared with explicit `complete_task`.
+      {:ok, build_completion(state, completion_text)}
+    else
+      case process_tool_calls(tool_calls, state, subagent_modules) do
+        {:complete, final_result} ->
+          {:ok, final_result}
 
-      {:continue, tool_responses, subagent_usage} ->
-        continue_after_tools(
-          tool_responses,
-          subagent_usage,
-          tool_calls,
-          state,
-          subagent_modules,
-          loop_fn
-        )
+        {:continue, tool_responses, subagent_usage} ->
+          continue_after_tools(
+            tool_responses,
+            subagent_usage,
+            tool_calls,
+            state,
+            subagent_modules,
+            loop_fn
+          )
 
-      {:error, :protocol_violation} ->
-        handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
+        {:error, :protocol_violation} ->
+          handle_protocol_violation(state, loop_fn, trigger_recovery_fn)
+      end
     end
   end
 
@@ -902,11 +979,13 @@ defmodule EvoGit.Agent.ToolDispatch do
   # --- Tool Call Processing ---
 
   @doc false
-  # Defensive fallback: an LLM response with zero tool calls is detected in
-  # prompt_until_tools_or_limit/5 (via ensure_tool_calls/2) before tool calls are
-  # ever extracted, so an empty list should never reach here in normal
-  # operation. Kept as a guard so any unexpected empty-list input degrades to a
-  # protocol violation rather than a crash in process_regular_tool_calls/3.
+  # Defensive fallback: an EMPTY response (zero tool calls, no usable text) is
+  # detected in prompt_until_tools_or_limit/6 via
+  # `EvoGit.Agent.CompletionProtocol.classify/1` before tool calls are ever
+  # extracted, and a text-only reply is turned into an implicit completion
+  # there, so an empty list should never reach here in normal operation. Kept as
+  # a guard so any unexpected empty-list input degrades to a protocol violation
+  # rather than a crash in process_regular_tool_calls/3.
   def process_tool_calls([], _state, _subagent_modules), do: {:error, :protocol_violation}
 
   def process_tool_calls(tool_calls, %LoopState{} = state, subagent_modules)
@@ -921,11 +1000,13 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc false
-  # Detects an LLM response with zero tool calls. Returns :ok when tool calls are
-  # present, otherwise {:error, :no_tool_calls}. The caller
-  # (`prompt_until_tools_or_limit/5`) handles the no-tool-call case by appending a
-  # nudge message and re-prompting, then ending gracefully after a bounded number
-  # of nudges. This function only emits a warning; it does NOT retry or crash.
+  # Predicate + log line: did the response carry any tool call?
+  #
+  # The TURN OUTCOME is decided by `EvoGit.Agent.CompletionProtocol.classify/1`
+  # (tool calls → continue, text reply → implicit completion, neither → one
+  # nudge), so this helper is not on the decision path. It is retained as the
+  # public "no tool calls at all" check + warning used when diagnosing an empty
+  # response.
   def ensure_tool_calls(response, agent_id) do
     if ReqLLM.Response.tool_calls(response) == [] do
       Logger.warning("Agent #{agent_id}: LLM returned no tool calls")
@@ -937,8 +1018,35 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   @doc false
   def handle_complete_call(complete_call, %LoopState{in_grace_period: grace} = state, tool_calls) do
-    complete_args = ReqLLM.ToolCall.args_map(complete_call)
+    case ToolInvocation.arguments(complete_call) do
+      {:ok, complete_args} when is_map(complete_args) ->
+        finish_complete_call(complete_args, state, tool_calls, grace)
 
+      {:error, reason} ->
+        invalid_complete_arguments(tool_calls, reason)
+
+      {:ok, _raw_arguments} ->
+        # The tolerant parse handed back a raw (unparseable) string: there is no
+        # `result` / `check_git_status` to read, so ask the model to re-issue the
+        # call instead of silently completing with a placeholder result.
+        invalid_complete_arguments(
+          tool_calls,
+          "the arguments could not be decoded as a JSON object"
+        )
+    end
+  end
+
+  # A `complete_task` call whose arguments do not decode must not complete the
+  # turn with a fabricated result, and must not crash on `Map.get/2` with nil:
+  # answer every call in the batch with the standard invalid-arguments result so
+  # the model can self-correct on the next turn (mirroring the dirty-workspace
+  # path, which also answers EVERY call to keep the tool-call/result pairing).
+  defp invalid_complete_arguments(tool_calls, reason) do
+    {:continue, error_tool_responses(tool_calls, ToolInvocation.invalid_arguments_result(reason)),
+     nil}
+  end
+
+  defp finish_complete_call(complete_args, state, tool_calls, grace) do
     # Check if git status validation is enabled (default: true).
     # During the grace period, skip the dirty workspace check entirely: the
     # agent gets exactly one recovery turn, and a dirty workspace would return
@@ -954,7 +1062,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     # skipped entirely (the real Genesis source root being dirty is irrelevant,
     # and a dirty real repo would wedge completion with warnings).
     if Process.get(:repo_less) == true or grace or not check_git_status do
-      do_complete(complete_call, state)
+      do_complete(complete_args, state)
     else
       repo_path = Process.get(:repo_path)
 
@@ -964,28 +1072,57 @@ defmodule EvoGit.Agent.ToolDispatch do
             "Agent #{state.agent_id}: Workspace is dirty at completion. Warning: #{warning_msg}"
           )
 
-          tool_responses =
-            Enum.map(tool_calls, fn call ->
-              tool_call_id = call.id || ReqLLM.ToolCall.name(call) || "unknown"
-              tool_result(tool_call_id, ReqLLM.ToolCall.name(call), warning_msg)
-            end)
-
-          {:continue, tool_responses, nil}
+          {:continue, error_tool_responses(tool_calls, warning_msg), nil}
 
         {:clean, _} ->
-          do_complete(complete_call, state)
+          do_complete(complete_args, state)
       end
     end
   end
 
-  defp do_complete(complete_call, %LoopState{} = state) do
+  # One tool result per call in the batch carrying `message` — keeps the
+  # tool-call / tool-result pairing intact (a missing result for any call in the
+  # batch causes provider API errors).
+  defp error_tool_responses(tool_calls, message) do
+    Enum.map(tool_calls, fn call ->
+      tool_call_id = call.id || ReqLLM.ToolCall.name(call) || "unknown"
+      tool_result(tool_call_id, ReqLLM.ToolCall.name(call), message)
+    end)
+  end
+
+  # The EXPLICIT completion route (`complete_task`): sync the worktree commit,
+  # then build the result. Its dirty-workspace gate was already applied by
+  # `finish_complete_call/5`.
+  defp do_complete(complete_args, %LoopState{} = state) do
     # Sync the current commit before completing
     commit_sha = sync_and_get_current_commit(state)
 
-    complete_args = ReqLLM.ToolCall.args_map(complete_call)
-
     result = Map.get(complete_args, "result", "Task finished.")
 
+    {:complete, build_completion(state, result, commit_sha)}
+  end
+
+  # The IMPLICIT completion route (a text reply with no tool calls).
+  #
+  # Any pending work is committed FIRST so the sha reported to the runtime is
+  # reviewable: without this the commit would only happen in `Runner.run/3`'s
+  # post-run auto-commit fallback, i.e. AFTER `commit_sha` was captured, and
+  # `Runtime.Helpers.merge_and_report/3,4` would take the no-changes path and
+  # drop the work with the worktree. `commit_pending_in_worktree/0` is a no-op
+  # for a clean workspace and for repo-less agents, and it never raises (git
+  # errors are logged, not propagated), so it cannot turn a legitimate finish
+  # into a failure. The explicit dirty-workspace gate is deliberately NOT
+  # applied here — the model has finished; there is nothing to correct.
+  defp build_completion(%LoopState{} = state, result) do
+    AgentScheduler.Dispatch.commit_pending_in_worktree()
+    build_completion(state, result, sync_and_get_current_commit(state))
+  end
+
+  # Shared completion builder for BOTH routes: identical `%Result{}` shape and
+  # identical side effects (git note when `base_commit` is set, archive refs when
+  # archiving), so every downstream consumer is oblivious to how the agent
+  # finished.
+  defp build_completion(%LoopState{} = state, result, commit_sha) do
     # Get metadata from agent state
     {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
     depth = AgentScheduler.current_depth()
@@ -995,33 +1132,30 @@ defmodule EvoGit.Agent.ToolDispatch do
     # being truthy, so both are skipped for repo-less agents.
     base_commit = if Process.get(:repo_less), do: nil, else: agent_state.phylo_node.base_commit
 
-    final_result =
-      CompleteTask.complete(
-        state.agent_id,
-        result,
-        commit_sha,
-        base_commit: base_commit,
-        parent_id: agent_state.parent_id,
-        depth: depth,
-        objective: agent_state.objective,
-        usage: state.usage,
-        archive: agent_state.archive,
-        compression_count: agent_state.compression_count,
-        repo_id: agent_state.repo_id,
-        repo_root: agent_state.repo_root,
-        llm_model: agent_state.llm_model,
-        model_id: agent_state.model_id,
-        llm_generation_params: agent_state.llm_generation_params,
-        max_turns: agent_state.max_turns,
-        max_retries: agent_state.max_retries,
-        max_agent_depth: agent_state.max_depth,
-        foreign_repos: agent_state.foreign_repos,
-        compression_threshold: EvoGit.Config.resolve([:llm, :compression_threshold_tokens]),
-        agent_type: agent_type_from_module(state.agent_module),
-        context_node_path: state.node_path
-      )
-
-    {:complete, final_result}
+    CompleteTask.complete(
+      state.agent_id,
+      result,
+      commit_sha,
+      base_commit: base_commit,
+      parent_id: agent_state.parent_id,
+      depth: depth,
+      objective: agent_state.objective,
+      usage: state.usage,
+      archive: agent_state.archive,
+      compression_count: agent_state.compression_count,
+      repo_id: agent_state.repo_id,
+      repo_root: agent_state.repo_root,
+      llm_model: agent_state.llm_model,
+      model_id: agent_state.model_id,
+      llm_generation_params: agent_state.llm_generation_params,
+      max_turns: agent_state.max_turns,
+      max_retries: agent_state.max_retries,
+      max_agent_depth: agent_state.max_depth,
+      foreign_repos: agent_state.foreign_repos,
+      compression_threshold: EvoGit.Config.resolve([:llm, :compression_threshold_tokens]),
+      agent_type: agent_type_from_module(state.agent_module),
+      context_node_path: state.node_path
+    )
   end
 
   @doc false
@@ -1203,21 +1337,37 @@ defmodule EvoGit.Agent.ToolDispatch do
   # worker for the parallel group. Only the tool-execution call happens here —
   # hint tracking and the redundant-cd warning are applied later in the parent
   # process, in index order (see `apply_tool_output_tracking/3`).
+  #
+  # Arguments go through the tolerant three-stage parse
+  # (`EvoGit.Agent.ToolInvocation.arguments/1`): a decoded JSON object is passed
+  # to the tool layer, a non-blank but unparseable argument string is passed
+  # through RAW (the tool layer answers with a self-correcting error), and when
+  # nothing is recoverable the call is answered with a normal
+  # `Error: invalid arguments: …` result. This is the fix for the crash path:
+  # `ReqLLM.ToolCall.args_map/1` returns nil for undecodable arguments, and a
+  # nil reaching `EvoGit.Agent.Tools.execute/5` (whose clauses are `is_map` /
+  # `is_binary`) raised `FunctionClauseError` inside the LINKED tool task and
+  # killed the whole agent instead of letting the model self-correct.
   defp run_tool_call(call, index, ctx) do
     name = ReqLLM.ToolCall.name(call)
-    args = ReqLLM.ToolCall.args_map(call)
 
     output =
-      execute_tool_with_timeout(
-        name,
-        args,
-        ctx.agent_id,
-        ctx.repo_path,
-        ctx.repo_root,
-        ctx.node_path,
-        ctx.max_timeout,
-        ctx.taskdir
-      )
+      case ToolInvocation.arguments(call) do
+        {:ok, args} ->
+          execute_tool_with_timeout(
+            name,
+            args,
+            ctx.agent_id,
+            ctx.repo_path,
+            ctx.repo_root,
+            ctx.node_path,
+            ctx.max_timeout,
+            ctx.taskdir
+          )
+
+        {:error, reason} ->
+          ToolInvocation.invalid_arguments_result(reason)
+      end
 
     {index, call, output}
   end
@@ -1234,7 +1384,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   # output never becomes a struct — `rewrap_output/2` returns the plain binary.
   def apply_tool_output_tracking({index, call, output}, {acc_results, hints, read_hints}, ctx) do
     name = ReqLLM.ToolCall.name(call)
-    args = ReqLLM.ToolCall.args_map(call)
+    # TOTAL accessor: the tolerant parse may have handed a RAW string to the tool
+    # layer (undecodable arguments), and the hint helpers are map-only.
+    args = ToolInvocation.arguments_map(call)
     tool_call_id = call.id || name || "unknown"
 
     output =
@@ -1267,6 +1419,15 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   # Runs a single tool call inside a tool slot with an async task, bounded
   # timeout, and output sanitization/truncation feedback.
+  #
+  # The per-call timeout rule lives in `EvoGit.Agent.ToolInvocation.resolve_timeout/4`:
+  # an explicit `timeout` argument wins (clamped by `[:scheduler,
+  # :max_tool_timeout]`), an OMITTED timeout on the platform shell tool
+  # (`bash` / `run_bash` / `run_powershell` / `pwsh` / `shell` / …) gets a
+  # generous 120 s default — the shell schema advertises a long timeout, so a
+  # long test run that simply omits the argument must not be silently cut at the
+  # generic 10 s `[:scheduler, :default_tool_timeout]` — and every other tool
+  # keeps that configured default.
   defp execute_tool_with_timeout(
          name,
          args,
@@ -1278,7 +1439,12 @@ defmodule EvoGit.Agent.ToolDispatch do
          taskdir
        ) do
     tool_timeout =
-      Map.get(args, "timeout", EvoGit.Agent.DelegationHints.default_tool_timeout())
+      ToolInvocation.resolve_timeout(
+        name,
+        args,
+        EvoGit.Agent.DelegationHints.default_tool_timeout(),
+        max_timeout
+      )
 
     tool_timeout =
       if approval_window_tool_call?(name, args) do
@@ -1293,7 +1459,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         approval_timeout = EvoGit.CommandApproval.timeout()
         tool_timeout |> max(approval_timeout + @approval_execution_buffer) |> min(max_timeout)
       else
-        min(tool_timeout, max_timeout)
+        tool_timeout
       end
 
     AgentScheduler.with_tool_slot(agent_id, fn ->
@@ -1310,33 +1476,21 @@ defmodule EvoGit.Agent.ToolDispatch do
 
       task =
         Task.async(fn ->
-          # Spawned tasks do NOT inherit the caller's process dictionary, so
-          # re-install the resolved per-task tmpdir unconditionally — every tool
-          # that consults `EvoGit.Sandbox.resolve_tmpdir/0` (sandbox TMPDIR
-          # injection, commit-message files, skill scripts, partial outputs)
-          # must see the correct dir. A nil value is harmless (`current/0`
-          # returns nil for a non-binary).
-          EvoGit.TaskTmpdir.put_current(taskdir)
-
-          case run_command_context do
-            {run_agent_id, run_task_id} ->
-              Process.put(:evogit_agent_id, run_agent_id)
-              Process.put(:evogit_task_id, run_task_id)
-
-            nil ->
-              :ok
-          end
-
-          EvoGit.Agent.Tools.execute(
+          execute_tool_task(
             name,
             args,
             repo_path,
             repo_root,
-            node_path
+            node_path,
+            taskdir,
+            run_command_context
           )
         end)
 
       case Task.yield(task, tool_timeout) || Task.shutdown(task) do
+        {:ok, {:tool_crashed, message}} ->
+          "Error: Tool execution crashed: #{message}"
+
         {:ok, {:error, reason}} ->
           "Error: #{inspect(reason)}"
 
@@ -1354,6 +1508,63 @@ defmodule EvoGit.Agent.ToolDispatch do
           "Error: Tool execution timed out after #{tool_timeout}ms. Some output may have been partially captured by the tool."
       end
     end)
+  end
+
+  # The body of one tool-execution task. Runs INSIDE the `Task.async` (so it is
+  # linked to the agent process) and therefore contains the failure containment
+  # described below.
+  defp execute_tool_task(
+         name,
+         args,
+         repo_path,
+         repo_root,
+         node_path,
+         taskdir,
+         run_command_context
+       ) do
+    # Spawned tasks do NOT inherit the caller's process dictionary, so
+    # re-install the resolved per-task tmpdir unconditionally — every tool
+    # that consults `EvoGit.Sandbox.resolve_tmpdir/0` (sandbox TMPDIR
+    # injection, commit-message files, skill scripts, partial outputs)
+    # must see the correct dir. A nil value is harmless (`current/0`
+    # returns nil for a non-binary).
+    EvoGit.TaskTmpdir.put_current(taskdir)
+
+    case run_command_context do
+      {run_agent_id, run_task_id} ->
+        Process.put(:evogit_agent_id, run_agent_id)
+        Process.put(:evogit_task_id, run_task_id)
+
+      nil ->
+        :ok
+    end
+
+    # Reason for the try/rescue/catch: `Task.async/1` LINKS this task to the
+    # agent process, so a RAISING tool implementation (a wrong-typed argument, an
+    # unresolved executable inside a tool, a buggy custom tool) would kill the
+    # whole agent before `Task.yield/2` could ever observe it — the caller's
+    # `{:exit, reason}` arm is unreachable for raises, because the linked exit
+    # signal is delivered directly and the agent does not trap exits. Containing
+    # the failure HERE converts it into a normal tool result
+    # (`Error: Tool execution crashed: …`) that the model can self-correct from
+    # on the next turn. `:kill` (this module's own timeout shutdown) and the
+    # `:shutdown`/`:normal` exit family are re-raised unchanged so a legitimate
+    # task exit is never swallowed and still reaches the `{:exit, reason}` arm.
+    try do
+      EvoGit.Agent.Tools.execute(name, args, repo_path, repo_root, node_path)
+    rescue
+      exception ->
+        {:tool_crashed, Exception.format_banner(:error, exception)}
+    catch
+      :exit, reason when reason in [:normal, :shutdown, :kill] ->
+        exit(reason)
+
+      :exit, {:shutdown, _} = reason ->
+        exit(reason)
+
+      kind, reason ->
+        {:tool_crashed, "#{kind} #{inspect(reason)}"}
+    end
   end
 
   # --- Multimodal tool output: wrap boundary ---
