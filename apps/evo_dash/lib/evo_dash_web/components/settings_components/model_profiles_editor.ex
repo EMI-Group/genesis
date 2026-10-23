@@ -291,6 +291,32 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </p>
       </div>
 
+      <%!-- context window (optional) ── --%>
+      <div class="form-control">
+        <label class="label pb-1">
+          <span class="label-text font-semibold text-xs">
+            <%!-- zh_CN: Context Window = 模型上下文窗口（单次请求可容纳的最大词元数），留空 = 默认 200000 --%>{gettext(
+              "Context Window (optional)"
+            )}
+          </span>
+        </label>
+        <input
+          type="number"
+          name="context_window"
+          value={
+            draft_or_profile(@draft, "context_window", profile_param(@profile, :context_window) || "")
+          }
+          min="1024"
+          placeholder="200000"
+          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
+        />
+        <p class="text-xs text-base-content/70 mt-1">
+          {gettext(
+            "Maximum context window of the model in tokens. Leave empty to use the default (200000)."
+          )}
+        </p>
+      </div>
+
       <%!-- Peak hours (optional) ── --%>
       <div class="form-control">
         <label class="label pb-1">
@@ -898,6 +924,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       [
         {:temperature, gettext("temp")},
         {:max_tokens, gettext("max_tokens")},
+        {:context_window, gettext("context_window")},
         {:reasoning_effort, gettext("reasoning")},
         {:top_p, gettext("top_p")},
         {:top_k, gettext("top_k")},

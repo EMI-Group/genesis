@@ -224,6 +224,51 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
   end
 
+  describe "parse_model_profile_params/2 — context_window field" do
+    @context_params %{
+      "provider" => "deepseek",
+      "model_id" => "deepseek-v4-pro",
+      "base_url" => "",
+      "extra" => ""
+    }
+
+    test "an absent context_window omits the key (core default applies)" do
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(@context_params, "profile-1")
+
+      refute Map.has_key?(profile, :context_window),
+             "context_window key must stay absent when the param is missing"
+    end
+
+    test "a blank context_window omits the key" do
+      params = Map.put(@context_params, "context_window", "")
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      refute Map.has_key?(profile, :context_window)
+    end
+
+    test "an integer string becomes an integer :context_window key" do
+      params = Map.put(@context_params, "context_window", "128000")
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      assert profile.context_window == 128_000
+    end
+
+    test "non-numeric garbage does not crash and omits the key (maybe_put_int/3 behavior)" do
+      params = Map.put(@context_params, "context_window", "128k")
+
+      assert {:ok, profile} =
+               ModelProfileHelpers.parse_model_profile_params(params, "profile-1")
+
+      # maybe_put_int/3 without a default skips the key when parsing fails.
+      refute Map.has_key?(profile, :context_window)
+    end
+  end
+
   describe "parse_model_profile_params/2 — peak/off-peak concurrency fields" do
     @peak_params %{
       "provider" => "deepseek",

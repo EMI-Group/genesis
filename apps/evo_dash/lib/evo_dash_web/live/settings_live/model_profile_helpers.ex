@@ -159,6 +159,10 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   Returns `{:ok, profile_map}` on success, or `{:error, reason_string}` when
   validation fails (model_id required, invalid extra/provider_options JSON).
 
+  The optional `context_window` form key is parsed as an integer profile field
+  (`:context_window`); a blank/absent/non-numeric value OMITS the key so TOML
+  omits it and the evo_git core applies its default (200_000).
+
   Also parses the optional peak/off-peak day fields (see `parse_peak_fields/1`):
   the profile-level `off_peak_days` form key (multi-checkbox list, possibly
   containing a `""` hidden-seed entry) → optional `:off_peak_days` profile key,
@@ -258,6 +262,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
               %{id: id}
               |> Map.put(:model, model_value)
               |> maybe_put_int(:concurrency, params["concurrency"], 3)
+              |> maybe_put_int(:context_window, params["context_window"])
               |> maybe_put_float(:temperature, params["temperature"])
               |> maybe_put_string(:reasoning_effort, params["reasoning_effort"])
               |> maybe_put_int(:max_tokens, params["max_tokens"])
