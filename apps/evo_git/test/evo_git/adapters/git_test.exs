@@ -743,4 +743,51 @@ defmodule EvoGit.Adapters.GitTest do
       refute File.dir?(leftover)
     end
   end
+
+  describe "temp_file_path/1 (`-F` message files)" do
+    test "embeds the OS pid so concurrent BEAMs sharing one TMPDIR cannot collide" do
+      # `System.unique_integer/1` is unique only WITHIN one BEAM: a fresh VM
+      # restarts the monotonic counter at 1, so the pid-less naming scheme
+      # (`genesis_git_msg_<n>.txt`) handed two VMs sharing a `TMPDIR` the SAME
+      # path — the loser's `after File.rm/1` then deleted the winner's file
+      # while its `git commit -F` was still reading it ("fatal: could not read
+      # log file '...'"), and cross-contaminated commit messages when it merely
+      # overwrote it. The OS pid segment is what makes the name disjoint across
+      # OS processes; `System.pid/0` is ASCII digits, and the `_` separator
+      # keeps the mapping injective even when one pid is a digit prefix of
+      # another.
+      path = Git.temp_file_path(".txt")
+      basename = Path.basename(path)
+
+      assert Path.dirname(path) == System.tmp_dir!()
+      assert basename =~ ~r/\Agenesis_git_msg_#{System.pid()}_\d+\.txt\z/
+      # The identity-free (pid-less) shape must never come back.
+      refute basename =~ ~r/\Agenesis_git_msg_\d+\.txt\z/
+    end
+
+    test "is unique per call and keeps the extension and tmpdir" do
+      paths = for _ <- 1..50, do: Git.temp_file_path(".json")
+
+      assert length(Enum.uniq(paths)) == 50
+      assert Enum.all?(paths, &String.ends_with?(&1, ".json"))
+      assert Enum.all?(paths, &(Path.dirname(&1) == System.tmp_dir!()))
+    end
+
+    test "a commit leaves another OS process's message file untouched", %{tmp_dir: tmp_dir} do
+      # Simulate a concurrent BEAM's in-flight `-F` file: same tmpdir, name
+      # differing only by the pid segment. Deterministic (no randomness) — the
+      # "foreign" pid is simply our pid + 1.
+      foreign_pid = System.pid() |> String.to_integer() |> Kernel.+(1) |> Integer.to_string()
+      foreign = Path.join(System.tmp_dir!(), "genesis_git_msg_#{foreign_pid}_1.txt")
+      File.write!(foreign, "SENTINEL OWNED BY ANOTHER BEAM\n")
+      on_exit(fn -> File.rm(foreign) end)
+
+      File.write!(Path.join(tmp_dir, "a.txt"), "a\n")
+      {:ok, _} = Git.add(tmp_dir, "a.txt")
+      assert {:ok, _} = Git.commit(tmp_dir, "commit from this BEAM")
+
+      # Neither overwritten nor deleted by our commit's try/after cleanup.
+      assert File.read(foreign) == {:ok, "SENTINEL OWNED BY ANOTHER BEAM\n"}
+    end
+  end
 end

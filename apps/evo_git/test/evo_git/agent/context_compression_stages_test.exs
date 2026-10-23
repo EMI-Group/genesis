@@ -342,12 +342,12 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     # PIN the provider credential the stage-2 stubbed round trip needs:
     # `ReqLLM.Keys.get/2` resolves a provider key from
     # `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY`
-    # env var) and never from the model spec's `api_key` field, so without a pin
-    # this module borrows the credential `EvoGit.Config.credentials/0` loaded at
-    # boot from the developer's real `credentials.toml`. A module that deletes
-    # that key without restoring it (e.g. `config_test`'s `reqllm_key_cleanup/0`;
-    # the boot-time load never repeats because the credentials read is cached)
-    # would otherwise turn the stage-2 call into `provider_build_failed`.
+    # env var) and never from the model spec's `api_key` field — so the credential
+    # is declared here instead of being borrowed from whatever
+    # `EvoGit.Config.credentials/0` loaded at boot out of the developer's real
+    # `credentials.toml`. Declaring it makes this module behave identically with an
+    # empty config dir; `on_exit` restores the previous value (or deletes the key
+    # again when there was none).
     previous_api_key = Application.get_env(:req_llm, :openai_api_key)
     Application.put_env(:req_llm, :openai_api_key, @api_key)
     on_exit(fn -> restore_api_key(previous_api_key) end)

@@ -16,11 +16,15 @@ defmodule EvoGit.Agent.ToolInvocation do
     2. non-blank but UNPARSEABLE raw arguments → the RAW STRING is passed through,
        so the tool layer decides/reports (it already has a `is_binary(args)`
        clause that answers with a self-correcting error string);
-    3. nothing recoverable (missing/blank/null arguments) →
+    3. nothing recoverable (missing/blank/null arguments, or a call that is not a
+       `%ReqLLM.ToolCall{}` at all — a plain map, nil, an RPC-decoded term) →
        `{:error, reason}`, which the caller renders as the standard
        `Error: invalid arguments: <reason>` tool result so the model can
        self-correct on the next turn.
 
+  The call SHAPE is checked before any `ReqLLM.ToolCall.*` accessor runs: those
+  accessors are struct-only, so a non-struct call takes stage 3 instead of
+  raising `FunctionClauseError`.
   ## Per-call timeout
 
   `resolve_timeout/4` centralizes the timeout rule so an omitted `timeout` means
@@ -57,12 +61,15 @@ defmodule EvoGit.Agent.ToolInvocation do
   Tolerant three-stage parse of one tool call's arguments (see the moduledoc).
 
   Returns `{:ok, args}` where `args` is a decoded map OR the raw argument
-  string, and `{:error, reason}` when nothing usable could be recovered.
+  string, and `{:error, reason}` when nothing usable could be recovered — which
+  includes any call that is not a `%ReqLLM.ToolCall{}`.
+
+  TOTAL: never raises.
   """
-  @spec arguments(ReqLLM.ToolCall.t()) :: {:ok, map() | String.t()} | {:error, String.t()}
+  @spec arguments(term()) :: {:ok, map() | String.t()} | {:error, String.t()}
   def arguments(call) do
-    case ReqLLM.ToolCall.args_map(call) do
-      args when is_map(args) -> {:ok, args}
+    case decoded_args(call) do
+      {:ok, args} when is_map(args) -> {:ok, args}
       _not_decodable -> raw_arguments(raw_args_json(call))
     end
   end
@@ -72,12 +79,13 @@ defmodule EvoGit.Agent.ToolInvocation do
 
   TOTAL by design: the hint/telemetry helpers downstream of tool execution are
   map-only (`Map.get/3`), and the tolerant parse may legitimately hand a raw
-  STRING to the tool layer — they must never see a non-map.
+  STRING to the tool layer — they must never see a non-map. A call that is not a
+  `%ReqLLM.ToolCall{}` is undecodable by definition and yields `%{}`.
   """
-  @spec arguments_map(ReqLLM.ToolCall.t()) :: map()
+  @spec arguments_map(term()) :: map()
   def arguments_map(call) do
-    case ReqLLM.ToolCall.args_map(call) do
-      args when is_map(args) -> args
+    case decoded_args(call) do
+      {:ok, args} when is_map(args) -> args
       _not_decodable -> %{}
     end
   end
@@ -143,15 +151,21 @@ defmodule EvoGit.Agent.ToolInvocation do
 
   defp explicit_timeout(_args), do: :none
 
-  # `args_json/1` is struct-only; an unexpected call shape must not raise here.
-  defp raw_args_json(call) do
-    ReqLLM.ToolCall.args_json(call)
-  rescue
-    # Reason: the model/provider may hand us a malformed call struct (or a plain
-    # map in tests/RPC paths). A preparation helper must degrade to the
-    # "nothing recoverable" stage instead of crashing the agent.
-    _error -> nil
-  end
+  # The `ReqLLM.ToolCall.*` accessors are struct-only (they match
+  # `%ReqLLM.ToolCall{function: %{arguments: _}}`). The call shape is verified
+  # BEFORE either of them is touched, so an unexpected call shape (a plain map, a
+  # nil, an RPC-decoded term, a struct with no `function`) degrades to the
+  # "nothing recoverable" stage instead of raising `FunctionClauseError` and
+  # crashing the agent.
+  defp decoded_args(%ReqLLM.ToolCall{function: %{arguments: _}} = call),
+    do: {:ok, ReqLLM.ToolCall.args_map(call)}
+
+  defp decoded_args(_not_a_tool_call), do: :undecodable
+
+  defp raw_args_json(%ReqLLM.ToolCall{function: %{arguments: _}} = call),
+    do: ReqLLM.ToolCall.args_json(call)
+
+  defp raw_args_json(_not_a_tool_call), do: nil
 
   # Stage 2: a non-blank raw string is handed to the tool layer as-is.
   defp raw_arguments(raw) when is_binary(raw) do

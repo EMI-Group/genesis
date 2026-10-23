@@ -9,7 +9,10 @@ defmodule EvoGit.Agent.ToolInvocationTest do
   non-blank but unparseable raw argument string is handed on VERBATIM (the tool
   layer answers it with a self-correcting error string), and nothing recoverable
   becomes `{:error, reason}` which the caller renders as the standard
-  `Error: invalid arguments: <reason>` result. `arguments_map/1` stays TOTAL for
+  `Error: invalid arguments: <reason>` result. A call that is not a
+  `%ReqLLM.ToolCall{}` at all (a plain map, nil, an RPC-decoded term) takes that
+  same "nothing recoverable" path rather than raising `FunctionClauseError` out
+  of a struct-only accessor. `arguments_map/1` stays TOTAL for
   the same shapes (a map or `%{}`, never a raise), because the hint/telemetry
   helpers downstream of tool execution are map-only.
 
@@ -75,6 +78,18 @@ defmodule EvoGit.Agent.ToolInvocationTest do
       assert {:error, reason} = ToolInvocation.arguments(call("read", nil))
       assert reason =~ "could not be decoded"
     end
+
+    test "returns {:error, reason} for a non-ToolCall map instead of raising" do
+      assert {:error, reason} = ToolInvocation.arguments(%{"id" => "x"})
+      assert reason =~ "could not be decoded"
+    end
+
+    test "returns {:error, reason} for nil and other non-ToolCall values instead of raising" do
+      for value <- [nil, "read", [id: "x"], :read_call] do
+        assert {:error, reason} = ToolInvocation.arguments(value)
+        assert reason =~ "could not be decoded"
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -102,6 +117,16 @@ defmodule EvoGit.Agent.ToolInvocationTest do
 
     test "degrades nil arguments to %{} instead of raising" do
       assert ToolInvocation.arguments_map(call("read", nil)) == %{}
+    end
+
+    test "degrades a non-ToolCall map to %{} instead of raising" do
+      assert ToolInvocation.arguments_map(%{"id" => "x"}) == %{}
+    end
+
+    test "degrades nil and other non-ToolCall values to %{} instead of raising" do
+      for value <- [nil, "read", [id: "x"], :read_call] do
+        assert ToolInvocation.arguments_map(value) == %{}
+      end
     end
   end
 

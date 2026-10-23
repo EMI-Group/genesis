@@ -51,15 +51,16 @@ defmodule EvoGit.Agent.OutputSanitizer do
   # `run_bash` → `bash`, `search_web` → `web_search`, …). BOTH spellings are
   # listed here on purpose so the per-tool default cap keeps applying whichever
   # spelling the caller passes — deliberately without depending on the
-  # (concurrently changing) tool-name alias table.
+  # (concurrently changing) tool-name alias table. Bare shell-executable names
+  # (`powershell`, `pwsh`) are neither tool names nor accepted aliases — the
+  # shell tool's accepted spellings are `bash`/`shell`/`sh`/`run_bash`/
+  # `run_powershell`/… — so they are deliberately absent.
   @high_output_tools MapSet.new([
                        # shell / exec
                        "run_bash",
                        "bash",
                        "shell",
                        "run_powershell",
-                       "powershell",
-                       "pwsh",
                        # read / write / edit
                        "read_file",
                        "read",
