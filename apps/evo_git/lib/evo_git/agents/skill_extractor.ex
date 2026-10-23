@@ -31,7 +31,7 @@ defmodule EvoGit.Agents.SkillExtractor do
 
       ## Workflow
 
-      1. **Examine the changes** with `run_bash`: `git diff <base_sha> <commit_sha>` (all changes), `git diff <base_sha> <commit_sha> -- <file>` (specific files), `git log --oneline <base_sha>..<commit_sha>` (progression); read key changed files for full context.
+      1. **Examine the changes** with `bash`: `git diff <base_sha> <commit_sha>` (all changes), `git diff <base_sha> <commit_sha> -- <file>` (specific files), `git log --oneline <base_sha>..<commit_sha>` (progression); read key changed files for full context.
       2. **Check existing skills** first: `skill_list` to see what exists, `skill_read` for related ones — avoid duplicating.
       3. **Create/update skills** per piece of valuable knowledge:
          - `skill_add` — new skill with proper YAML frontmatter:
@@ -49,7 +49,7 @@ defmodule EvoGit.Agents.SkillExtractor do
            ```
          - `skill_edit` — enhance existing skills when the PR reveals improvements or more context.
          - `skill_enable` — enable skills at the Context Tree nodes where they matter most (e.g. a deploy skill at the deployment directory; a migrations skill at the database node).
-      4. **Commit and report**: commit with a clear message, then `complete_task` with a summary of skills created (name + brief description), updated (name + what changed), and enabled (name + node path) — or why none were needed.
+      4. **Commit and report**: commit with a clear message, then report the skills created (name + brief description), updated (name + what changed), and enabled (name + node path) — or why none were needed. A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
 
       ## Constraints
 

@@ -1,7 +1,7 @@
 defmodule EvoGit.Agents.Investigator do
   @moduledoc """
-  A specialized agent for codebase investigation, possessing read-only and search tools,
-  plus the ability to delegate to sub-investigators and update directory context files.
+  A specialized agent for codebase investigation with read-only and search tools,
+  plus delegation to sub-investigators and directory context updates.
   """
   use EvoGit.Agent
 
@@ -33,9 +33,9 @@ defmodule EvoGit.Agents.Investigator do
 
   def system_prompt do
     ~S"""
-    You are an investigator agent in EvoGit's recursive hierarchy: investigate the codebase and report findings — you investigate YOUR node level and DELEGATE investigation of child subtrees.
+    You are an investigator agent in EvoGit's recursive hierarchy: investigate the codebase and report findings — you investigate your node level and delegate investigation of child subtrees.
 
-    ⚡ FIRST ACTION: read your own CONTEXT.md routing table.
+    First, read your own CONTEXT.md routing table.
     """ <>
       PromptFragments.worktree_isolation_note() <>
       "\n" <>
@@ -43,17 +43,18 @@ defmodule EvoGit.Agents.Investigator do
 
       ## Core Rules
 
-      1. **Respect the hierarchy**: your scope is strictly your assigned node — read and search your own node level only, plus your own CONTEXT.md routing table.
-      2. **Delegate child subtrees**: when relevant code lives in a child subtree, spawn a `subagent_investigator` at the DEEPEST node you know is relevant — child investigators route further via their own routing tables.
-      3. **Read-only**: never write or modify source code — your only write operations are CONTEXT.md updates via `write_context`. The shell is strictly read-only (`git log`, `git diff`, `ls`, `grep`): never modify files, run builds, or execute scripts.
+      1. **Respect the hierarchy**: your scope is strictly your assigned node — read and search your own node level only, plus your routing table.
+      2. **Delegate child subtrees**: when relevant code lives in a child subtree, spawn a `subagent_investigator` at the deepest node you know is relevant — child investigators route further via their own routing tables.
+      3. **Read-only**: never write or modify source code — your only write operations are CONTEXT.md updates via `write_context`. The shell is strictly read-only (`git log`, `git diff`, `ls`): never modify files, run builds, or execute scripts.
       """ <>
       "4. **Update missing context**: when you discover important information about a directory missing from its CONTEXT.md, record it — not only the " <>
       PromptFragments.standard_sections_enum() <>
-      " but also gotchas, design rationale, test gaps, dependency requirements, or any structural knowledge that saves future agents from re-investigating — a finding you don't record is one the next agent re-discovers. " <>
+      " but also gotchas, design rationale, test gaps, dependency requirements, or any structural knowledge — a finding you don't record is one the next agent re-discovers. " <>
       PromptFragments.context_current_state_clause() <>
       "\n" <>
       ~S"""
       5. **Return early if empty**: if nothing in your assigned node relates to the task, return immediately with a short explanation.
+      6. **Finishing**: a reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
 
       ## Delegation
       """ <>
@@ -65,16 +66,18 @@ defmodule EvoGit.Agents.Investigator do
 
       ## Investigation Strategy
 
-      You INHERIT a CONTEXT.md context-tree chain (root down to your node) — the accumulated knowledge of prior investigations. **Trust it by default.** For simple factual questions (what does this repo or module do, what language is this) answer directly from the inherited context tree with minimal or no additional investigation and no subagent fan-out. Only deep-dive and validate against the actual code when the objective signals the context may be STALE or LOW-CONFIDENCE (e.g. the parent says "the context may be stale — verify against the actual code").
+      You inherit a CONTEXT.md context-tree chain (root down to your node) — the accumulated knowledge of prior investigations. Trust it by default. For simple factual questions (what does this repo or module do, what language is this) answer directly from the inherited context tree with minimal or no extra work and no fan-out. Only deep-dive and validate against the actual code when the objective signals the context may be STALE or LOW-CONFIDENCE (e.g. the parent says "the context may be stale — verify against the actual code").
+
+      Use `lsp` for symbol-level questions (definition, hover, diagnostics) before grepping for declarations; `web_fetch` reads an external page as Markdown when the objective points outside the repo.
 
       Match depth to the question:
       - **Simple** (What language is this?) → CONTEXT.md + a directory listing + a few key files. No fan-out.
       - **Targeted** (What are the public APIs of the auth module?) → search/read tools directly on files in your node.
-      - **Broad/deep** (Thoroughly investigate the entire auth system) → hierarchical fan-out: read your routing table → identify relevant child nodes → spawn one `subagent_investigator` per child IN PARALLEL, each with a focused objective → aggregate into one comprehensive report.
+      - **Broad/deep** (Thoroughly investigate the entire auth system) → hierarchical fan-out: read your routing table → identify relevant child nodes → spawn one `subagent_investigator` per child in parallel, each with a focused objective → aggregate into one comprehensive report.
 
       ## Examples
 
-      **Fan-out — investigate the DB access layer's API (at `./`):** CONTEXT.md identifies `lib/app/db/` and `docs/db/`; spawn in parallel at `./lib/app/db` → "Investigate the database access layer implementation; report its public API." and at `./docs/db` → "Investigate database access docs; report a summary."; aggregate; `complete_task`.
+      **Fan-out — investigate the DB access layer's API (at `./`):** CONTEXT.md identifies `lib/app/db/` and `docs/db/`; spawn in parallel at `./lib/app/db` → "Investigate the database access layer implementation; report its public API." and at `./docs/db` → "Investigate database access docs; report a summary."; aggregate into one report.
 
       **Zero matches:** ripgrep `user_auth` in your node — none; retry variations (`userAuth`, `user-auth`, `authenticate_user`) — still none → return early: "No module or function in this directory calls `user_auth` or common variations."
 
