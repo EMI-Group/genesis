@@ -22,11 +22,14 @@ defmodule EvoGit.Agent.ToolsTest do
       assert length(schemas) > 0
 
       names = Enum.map(schemas, & &1.name)
-      assert "read_file" in names
-      assert "write_file" in names
-      # `edit` is the MODEL-FACING schema name (internal dispatch key
-      # `edit_file` — see `EvoGit.Agent.ToolNames`).
+
+      # `read` / `write` / `edit` / `bash` are the MODEL-FACING schema names; the
+      # internal dispatch keys stay `read_file` / `write_file` / `edit_file` /
+      # `run_bash` (see `EvoGit.Agent.ToolNames`).
+      assert "read" in names
+      assert "write" in names
       assert "edit" in names
+      assert "bash" in names
       assert "make_dir" in names
       assert "read_context" in names
       assert "write_context" in names
@@ -212,7 +215,7 @@ defmodule EvoGit.Agent.ToolsTest do
 
     test "returns error for missing file", %{tmp_dir: tmp_dir} do
       result = Tools.execute("read_file", %{"file_path" => "missing.txt"}, tmp_dir)
-      assert result =~ "Error reading file"
+      assert result =~ "Error: reading file"
     end
   end
 
@@ -459,7 +462,9 @@ defmodule EvoGit.Agent.ToolsTest do
 
     test "returns message if no matches", %{tmp_dir: tmp_dir} do
       result = Tools.execute("glob", %{"pattern" => "missing/*.ex"}, tmp_dir)
-      assert result =~ "No files found matching pattern"
+
+      # Fixed first line + the pattern echoed as a trailing hint.
+      assert result == "No files found.\n\n[pattern: missing/*.ex]"
     end
   end
 
@@ -479,7 +484,7 @@ defmodule EvoGit.Agent.ToolsTest do
 
     test "returns error for missing directory", %{tmp_dir: tmp_dir} do
       result = Tools.execute("list_dir", %{"dir_path" => "missing"}, tmp_dir)
-      assert result =~ "Error listing directory"
+      assert result == "Error: listing directory 'missing' failed: no such file or directory"
     end
   end
 
@@ -557,8 +562,7 @@ defmodule EvoGit.Agent.ToolsTest do
           tmp_dir
         )
 
-      assert result =~ "Error creating directory"
-      assert result =~ "not a directory"
+      assert result == "Error: creating directory 'test.txt' failed: not a directory"
     end
 
     test "write_context with hostile dir_path (quotes/angle brackets) commits and round-trips", %{
@@ -827,7 +831,7 @@ defmodule EvoGit.Agent.ToolsTest do
     test "suggests the closest tool name for a near miss", %{tmp_dir: tmp_dir} do
       result = Tools.execute("read_fil", %{}, tmp_dir)
       assert result =~ "Unknown tool 'read_fil'"
-      assert result =~ "Did you mean 'read_file'"
+      assert result =~ "Did you mean 'read'?"
     end
 
     test "lists the available tools when there is no close match", %{tmp_dir: tmp_dir} do
@@ -931,20 +935,20 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "search_web in schemas" do
-    test "search_web is NOT included in schemas/0 by default (config disabled)" do
+  describe "web_search in schemas" do
+    test "web_search is NOT included in schemas/0 by default (config disabled)" do
       with_isolated_config(fn ->
         schemas = Tools.schemas()
         names = Enum.map(schemas, & &1.name)
-        refute "search_web" in names
+        refute "web_search" in names
       end)
     end
 
-    test "search_web is NOT included in read_only_schemas/0 by default (config disabled)" do
+    test "web_search is NOT included in read_only_schemas/0 by default (config disabled)" do
       with_isolated_config(fn ->
         schemas = Tools.read_only_schemas()
         names = Enum.map(schemas, & &1.name)
-        refute "search_web" in names
+        refute "web_search" in names
       end)
     end
 
@@ -1097,7 +1101,7 @@ defmodule EvoGit.Agent.ToolsTest do
   describe "WebSearch.schema/1" do
     test "returns a valid tool schema with defaults" do
       schema = EvoGit.Agent.Tools.WebSearch.schema()
-      assert schema.name == "search_web"
+      assert schema.name == "web_search"
       assert schema.description =~ "web"
       assert schema.parameter_schema["properties"]["query"]
       assert schema.parameter_schema["required"] == ["query"]
