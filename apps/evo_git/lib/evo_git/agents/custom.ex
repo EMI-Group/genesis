@@ -35,7 +35,7 @@ defmodule EvoGit.Agents.Custom do
         agent_type: :read | :read_write,         # absent/nil → :read_write (inherited default)
         delegation_level: :high | :low,          # absent/nil → :low (agents.toml schema default)
         subagents: ["executor", "investigator"], # absent/nil → [] (no subagents)
-        tools: ["read_file", "write_file"] | nil # nil/absent → all standard tools
+        tools: ["read", "write"] | nil           # nil/absent → all standard tools
       }
 
   A `tools` entry may name a built-in tool OR a user-defined custom tool (loaded
@@ -50,19 +50,22 @@ defmodule EvoGit.Agents.Custom do
   `<config_dir>/tools/`) are NOT added in this case — they are opt-in only.
 
   When `tools` is a list, only the schemas whose tool name appears in the whitelist
-  survive. Matching is **ALIAS-AWARE** (`EvoGit.Agent.Tools.whitelist_match?/2` →
+  survive. The shipped model-facing names are `read`, `write`, `edit`, `bash`, `rg`,
+  `glob`, `web_search`, `web_fetch`, `lsp` plus the unrenamed tools. Matching is
+  **ALIAS-AWARE** (`EvoGit.Agent.Tools.whitelist_match?/2` →
   `EvoGit.Agent.ToolNames.matches_any?/2`): both sides are normalised through
-  `EvoGit.Agent.ToolNames.normalize/1`, so a whitelist entry written with a
-  pre-rename spelling resolves to the shipped schema — `"read_file"` AND `"read"`
-  both select the `read` schema, likewise `"write_file"`/`"write"`,
+  `EvoGit.Agent.ToolNames.normalize/1`, so a whitelist written with a pre-rename
+  spelling still resolves to the shipped schema — `"read_file"` AND `"read"` both
+  select the `read` schema, likewise `"write_file"`/`"write"`,
   `"edit_file"`/`"edit"`, `"run_bash"`/`"bash"`, `"search_web"`/`"web_search"`;
   the comparison is case-insensitive by construction. The whitelist accepts both
   built-in tool names (including the subagent tool schemas — their tool names are
   the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"` — and
-  `complete_task`) AND the names of user-defined custom tools loaded from
+  `complete_task`, which remains an OPTIONAL tool: a reply with no tool calls
+  already finishes the run) AND the names of user-defined custom tools loaded from
   `<config_dir>/tools/` by `EvoGit.CustomTools`. Filtering `complete_task` out is
-  allowed — that is the user's explicit choice (the agent can no longer finish
-  through it). An unknown name in the whitelist simply matches nothing.
+  allowed — that is the user's explicit choice (the agent then finishes with a
+  plain text reply). An unknown name in the whitelist simply matches nothing.
 
   ## Subagent name→module mapping
 
@@ -136,9 +139,9 @@ defmodule EvoGit.Agents.Custom do
         # entry through `EvoGit.Agent.ToolNames.normalize/1`, so an existing
         # `agents.toml` written before the model-facing rename
         # (`tools = ["read_file", "write_file"]`) still resolves to the shipped
-        # `read`/`write` schemas — and the new spellings work too. A literal
-        # name comparison here would silently resolve such a whitelist to NO
-        # tools at all.
+        # `read`/`write` schemas — and the new spellings (`["read", "write"]`)
+        # work too. A literal name comparison here would silently resolve such a
+        # whitelist to NO tools at all.
         (base ++ EvoGit.CustomTools.schemas())
         |> Enum.filter(fn schema ->
           EvoGit.Agent.Tools.whitelist_match?(EvoGit.Agent.tool_name(schema), tools)
