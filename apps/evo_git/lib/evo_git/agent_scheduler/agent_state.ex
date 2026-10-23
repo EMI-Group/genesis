@@ -13,6 +13,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     `nil` before the agent is dispatched to a worktree
   - `llm_model` — the LLM model string for this agent to use
   - `llm_generation_params` — the LLM generation parameters (temperature, max_tokens, etc.) passed to ReqLLM calls
+  - `llm_context_window` — the agent's configured LLM context window in tokens (from its model profile's `context_window`), used for the compression threshold and the stage-1 pruning target; defaults to 200_000
   - `model_id` — the model profile id this agent is bound to (determines which per-model slot pool is used). Defaults to `"default"`.
   - `max_retries` — maximum LLM call retries for this agent
   - `max_depth` — maximum agent recursion depth
@@ -58,6 +59,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
     compression_count: 0,
     total_tokens: 0,
     llm_generation_params: [],
+    llm_context_window: 200_000,
     repo_id: "primary",
     repo_root: nil,
     foreign_repos: [],
@@ -72,6 +74,7 @@ defmodule EvoGit.AgentScheduler.AgentState do
           phylo_node: PhyloGraphNode.t() | nil,
           llm_model: ReqLLM.model_input(),
           llm_generation_params: keyword(),
+          llm_context_window: pos_integer(),
           model_id: String.t(),
           max_retries: pos_integer(),
           max_depth: pos_integer(),
