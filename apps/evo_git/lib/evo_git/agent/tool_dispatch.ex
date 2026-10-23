@@ -1225,7 +1225,10 @@ defmodule EvoGit.Agent.ToolDispatch do
         indexed_calls,
         EvoGit.Agent.DelegationHints.max_tool_timeout(),
         repo_root,
-        state.delegation_level
+        state.delegation_level,
+        # The RECEIVING role: the read-delegation nudge names only the subagent
+        # tools this role can actually spawn (its `subagent_modules/0`).
+        state.agent_module
       )
 
     # Sync current_commit after tool execution for dashboard visibility
@@ -1235,7 +1238,13 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   @doc false
-  def batch_execute_tools(indexed_calls, max_timeout, repo_root, delegation_level) do
+  def batch_execute_tools(
+        indexed_calls,
+        max_timeout,
+        repo_root,
+        delegation_level,
+        agent_module \\ nil
+      ) do
     agent_id = AgentScheduler.current_agent_id()
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
@@ -1276,6 +1285,9 @@ defmodule EvoGit.Agent.ToolDispatch do
       node_path: node_path,
       max_timeout: max_timeout,
       delegation_level: delegation_level,
+      # The receiving role module, used by the read-delegation nudge to name
+      # only the subagent tools this role actually has.
+      agent_module: agent_module,
       threshold: threshold,
       read_threshold: read_threshold,
       conflict_files: conflict_files,
@@ -1787,7 +1799,8 @@ defmodule EvoGit.Agent.ToolDispatch do
         read_hints,
         read_child_paths,
         ctx.read_threshold,
-        ctx.delegation_level
+        ctx.delegation_level,
+        ctx.agent_module
       )
     else
       {output, read_hints}

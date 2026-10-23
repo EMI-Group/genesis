@@ -11,7 +11,7 @@ defmodule EvoGit.Agent.DelegationHints do
   ## Wrap boundary (BINARY-ONLY contract)
 
   This module is BINARY-ONLY: `maybe_append_delegation_hint/4` and
-  `maybe_append_read_delegation_hint/5` take a string and return a string. They
+  `maybe_append_read_delegation_hint/6` take a string and return a string. They
   never receive or return a `%EvoGit.Agent.ToolOutput{}` — the wrap/unwrap
   between a binary and a `%ToolOutput{}` happens ONLY inside
   `EvoGit.Agent.ToolDispatch` (see `EvoGit.Agent.ToolOutput` → "Wrap boundary
@@ -33,6 +33,12 @@ defmodule EvoGit.Agent.DelegationHints do
   # `read` resolves to `read_file` here.
   @read_tools_for_delegation ~w(read_file rg glob list_dir)
 
+  # The subagent tool names the read hint may suggest. Which of them a nudge
+  # actually names is decided per RECEIVING role (see `investigator_hint_names/1`)
+  # — never hardcoded into the message text.
+  @investigator_subagent_tool "subagent_investigator"
+  @manager_subagent_tool "subagent_manager"
+  @suggestable_subagent_tools [@investigator_subagent_tool, @manager_subagent_tool]
   # Shape of a per-child-path hint entry (shared by the write- and read-tool
   # hint families): `count` holds the number of tracked tool calls, `hint_shown`
   # gates the once-only emission of the delegation nudge.
@@ -235,11 +241,20 @@ defmodule EvoGit.Agent.DelegationHints do
       "The subagent will run in its own isolated worktree on top of your committed changes and can handle the implementation autonomously."
   end
 
-  defp read_hint_message(child_path, count, _threshold) do
+  defp read_hint_message(child_path, count, _threshold, names) do
     "💡 **Delegation Hint**: You've been reading/investigating files in `#{child_path}` for #{count} turns. " <>
-      "As a high-level agent, investigation of child subtrees should be delegated — spawn a `subagent_investigator` (or `subagent_manager`) at `#{child_path}` and let it investigate its own domain. " <>
+      "As a high-level agent, investigation of child subtrees should be delegated — spawn #{spawn_phrase(names)} at `#{child_path}` and let it investigate its own domain. " <>
       "Your turns are for routing decisions, coordination, and review — not deep investigation."
   end
+
+  # Renders the subagent tool name(s) the hint suggests, in the historical
+  # wording when both are available: "a `subagent_investigator` (or
+  # `subagent_manager`)".
+  defp spawn_phrase([investigator, manager])
+       when investigator == @investigator_subagent_tool and manager == @manager_subagent_tool,
+       do: "a `#{investigator}` (or `#{manager}`)"
+
+  defp spawn_phrase([name]), do: "a `#{name}`"
 
   @doc """
   Increments the write-tool delegation hint counter for each child path.
@@ -332,13 +347,23 @@ defmodule EvoGit.Agent.DelegationHints do
   directory's read-tool call count crosses `threshold` for the first time.
   Only fires for high-level agents (`delegation_level == :high`). Returns the
   updated output and read-hints map.
+
+  `agent_module` is the RECEIVING role: the nudge names only the subagent tools
+  that role can actually spawn, resolved from its `subagent_modules/0` via each
+  module's `subagent_tool_name/0` (see `investigator_hint_names/1`) — a role
+  whose only subagent is the investigator is never pointed at
+  `subagent_manager`. `nil` (unknown role: direct/unit-test callers) keeps the
+  historical wording naming both. A role with neither tool gets NO hint, and
+  the function is total — it never raises, whatever the role's subagent list
+  looks like.
   """
   @spec maybe_append_read_delegation_hint(
           String.t(),
           hints(),
           [String.t()],
           pos_integer(),
-          atom()
+          atom(),
+          module() | nil
         ) ::
           {String.t(), hints()}
   def maybe_append_read_delegation_hint(
@@ -346,14 +371,59 @@ defmodule EvoGit.Agent.DelegationHints do
         read_hints,
         child_paths,
         threshold,
-        delegation_level
+        delegation_level,
+        agent_module \\ nil
       ) do
-    if delegation_level == :high do
-      maybe_append_hint(output, read_hints, child_paths, threshold, :count, &read_hint_message/3)
+    names = investigator_hint_names(agent_module)
+
+    if delegation_level == :high and names != [] do
+      builder = fn child_path, count, thr -> read_hint_message(child_path, count, thr, names) end
+      maybe_append_hint(output, read_hints, child_paths, threshold, :count, builder)
     else
       {output, read_hints}
     end
   end
+
+  # The subagent tool names the nudge may suggest for `agent_module`, restricted
+  # to what that role actually offers. Order is the suggestable order
+  # (investigator first), so the multi-name wording stays stable.
+  #
+  # `nil` means "role unknown" (direct/unit-test callers) — keep the widest
+  # historical wording. Any other non-module value degrades the same way.
+  defp investigator_hint_names(nil), do: @suggestable_subagent_tools
+
+  defp investigator_hint_names(agent_module) when is_atom(agent_module) do
+    available = subagent_tool_names(agent_module)
+    Enum.filter(@suggestable_subagent_tools, &(&1 in available))
+  end
+
+  defp investigator_hint_names(_agent_module), do: @suggestable_subagent_tools
+
+  # Every model-facing subagent tool name the role exposes: its
+  # `subagent_modules/0` mapped through each module's `subagent_tool_name/0`,
+  # `nil` names dropped. Total by construction — a role without
+  # `subagent_modules/0` and a listed module without `subagent_tool_name/0`
+  # (or returning nil) both simply contribute nothing.
+  defp subagent_tool_names(agent_module) do
+    if Code.ensure_loaded?(agent_module) and
+         function_exported?(agent_module, :subagent_modules, 0) do
+      agent_module.subagent_modules()
+      |> List.wrap()
+      |> Enum.flat_map(&subagent_tool_name/1)
+    else
+      []
+    end
+  end
+
+  defp subagent_tool_name(module) when is_atom(module) and not is_nil(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :subagent_tool_name, 0) do
+      List.wrap(module.subagent_tool_name())
+    else
+      []
+    end
+  end
+
+  defp subagent_tool_name(_module), do: []
 
   @spec entry_count(hints(), String.t()) :: non_neg_integer()
   def entry_count(hints, child_path) do

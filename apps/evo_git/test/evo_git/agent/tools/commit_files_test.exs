@@ -9,6 +9,8 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
       dirty/untracked sibling stays out of the commit;
     * commits via `git commit -F <tmpfile>` and appends the co-author trailer
       only when `[:git, :co_authored_by_enabled] != false`;
+    * names that tmpfile with the OS pid (`Shared.commit_message_file_path/0`)
+      so concurrent BEAMs sharing one resolved tmpdir cannot collide;
     * treats an empty/blank file list and a nothing-staged commit as graceful
       no-ops (`{:ok, output}`), while a failed `git add` is `{:error, message}`.
 
@@ -195,9 +197,58 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Helpers
+  # commit_message_file_path/0 (`-F` message files)
   # ---------------------------------------------------------------------------
 
+  describe "commit_message_file_path/0" do
+    test "embeds the OS pid so concurrent BEAMs sharing one tmpdir cannot collide" do
+      # `System.unique_integer/1` is unique only WITHIN one BEAM: a fresh VM
+      # restarts the monotonic counter at 1, while `resolve_tmpdir/0` resolves to
+      # the SHARED managed per-task tmpdir whenever one is installed — so the
+      # pid-less naming scheme (`genesis_git_commit_msg_<n>.txt`) handed two VMs
+      # the SAME path: the loser's `after File.rm/1` then deleted the winner's
+      # `-F` file while its `git commit` was still reading it ("fatal: could not
+      # read log file '...'"), and cross-contaminated commit messages when it
+      # merely overwrote it.
+      path = Shared.commit_message_file_path()
+      basename = Path.basename(path)
+
+      assert Path.dirname(path) == EvoGit.Sandbox.resolve_tmpdir()
+      assert basename =~ ~r/\Agenesis_git_commit_msg_#{System.pid()}_\d+\.txt\z/
+      # The identity-free (pid-less) shape must never come back.
+      refute basename =~ ~r/\Agenesis_git_commit_msg_\d+\.txt\z/
+    end
+
+    test "is unique per call and keeps the .txt extension" do
+      paths = for _ <- 1..50, do: Shared.commit_message_file_path()
+
+      assert length(Enum.uniq(paths)) == 50
+      assert Enum.all?(paths, &String.ends_with?(&1, ".txt"))
+    end
+
+    test "a commit leaves another OS process's message file untouched", %{repo: repo} do
+      # Simulate a concurrent BEAM's in-flight `-F` file: same tmpdir, name
+      # differing only by the pid segment. Deterministic (no randomness) — the
+      # "foreign" pid is simply our pid + 1.
+      foreign_pid = System.pid() |> String.to_integer() |> Kernel.+(1) |> Integer.to_string()
+
+      foreign =
+        Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis_git_commit_msg_#{foreign_pid}_1.txt")
+
+      File.write!(foreign, "SENTINEL OWNED BY ANOTHER BEAM\n")
+      on_exit(fn -> File.rm(foreign) end)
+
+      File.write!(Path.join(repo, "sentinel.txt"), "s\n")
+      assert {:ok, _out} = Shared.commit_files(repo, repo, ["sentinel.txt"], "Add sentinel")
+
+      # Neither overwritten nor deleted by our commit's try/after cleanup.
+      assert File.read(foreign) == {:ok, "SENTINEL OWNED BY ANOTHER BEAM\n"}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
   # Fresh temp git repo with one committed README.md and a deterministic commit
   # identity (repo-local, so it also works inside the test sandbox path).
   defp new_repo! do

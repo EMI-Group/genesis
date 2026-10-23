@@ -788,6 +788,132 @@ defmodule EvoGit.Agent.DelegationHintsTest do
     end
   end
 
+  # ── maybe_append_read_delegation_hint/6 — role-aware subagent names ────────
+  #
+  # The nudge must name only the subagent tools the RECEIVING role can actually
+  # spawn (resolved from its `subagent_modules/0`), never a tool it does not have.
+
+  describe "maybe_append_read_delegation_hint/6 — role-aware subagent names" do
+    test "GenesisPlanner (investigator-only subagents) never names subagent_manager" do
+      # EvoGit.Agents.GenesisPlanner is `delegation_level :high` but its
+      # `subagent_modules/0` lists the Investigator only — nudging it toward
+      # `subagent_manager` pointed at a tool it cannot call.
+      assert EvoGit.Agents.GenesisPlanner.subagent_modules() == [EvoGit.Agents.Investigator]
+
+      {output, hints} =
+        DelegationHints.maybe_append_read_delegation_hint(
+          "output",
+          %{},
+          ["./src"],
+          1,
+          :high,
+          EvoGit.Agents.GenesisPlanner
+        )
+
+      assert output =~ "Delegation Hint"
+      assert output =~ "subagent_investigator"
+      refute output =~ "subagent_manager"
+      assert %{"./src" => %{count: 1, hint_shown: true}} = hints
+    end
+
+    test "a role that has the Manager still gets the subagent_manager mention" do
+      assert EvoGit.Agents.Manager in EvoGit.Agents.Manager.subagent_modules()
+
+      {output, _hints} =
+        DelegationHints.maybe_append_read_delegation_hint(
+          "output",
+          %{},
+          ["./src"],
+          1,
+          :high,
+          EvoGit.Agents.Manager
+        )
+
+      # Historical wording preserved when both tools are available.
+      assert output =~ "subagent_investigator"
+      assert output =~ "(or `subagent_manager`)"
+      assert output =~ "./src"
+    end
+
+    test "an unknown role (nil) keeps the historical both-names wording" do
+      {output, _hints} =
+        DelegationHints.maybe_append_read_delegation_hint("output", %{}, ["./src"], 1, :high, nil)
+
+      assert output =~ "subagent_investigator"
+      assert output =~ "subagent_manager"
+    end
+
+    test "a role with neither suggestable tool produces no hint (total, no raise)" do
+      # SelfReflective has NO subagents at all — no hint, no crash, counters
+      # untouched.
+      assert EvoGit.Agents.SelfReflective.subagent_modules() == []
+
+      {output, hints} =
+        DelegationHints.maybe_append_read_delegation_hint(
+          "output",
+          %{},
+          ["./src"],
+          1,
+          :high,
+          EvoGit.Agents.SelfReflective
+        )
+
+      assert output == "output"
+      assert hints == %{}
+    end
+
+    test "a role whose subagent modules lack subagent_tool_name/0 is total" do
+      # `subagent_modules/0` entries without a `subagent_tool_name/0` callback
+      # (or returning nil / a non-module) contribute no name at all — the hint
+      # path must stay total instead of raising.
+      assert {output, hints} =
+               DelegationHints.maybe_append_read_delegation_hint(
+                 "output",
+                 %{},
+                 ["./src"],
+                 1,
+                 :high,
+                 RoleWithUntitledSubagents
+               )
+
+      assert output == "output"
+      assert hints == %{}
+    end
+
+    test "a role with no subagent_modules/0 callback at all is total" do
+      assert {output, hints} =
+               DelegationHints.maybe_append_read_delegation_hint(
+                 "output",
+                 %{},
+                 ["./src"],
+                 1,
+                 :high,
+                 String
+               )
+
+      assert output == "output"
+      assert hints == %{}
+    end
+
+    test "the behaviour default (empty subagent_modules/0) produces no hint" do
+      # `HintAgent` adopts `EvoGit.Agent` without overriding `subagent_modules/0`
+      # — the behaviour default is `[]`.
+      assert HintAgent.subagent_modules() == []
+
+      assert {output, %{}} =
+               DelegationHints.maybe_append_read_delegation_hint(
+                 "output",
+                 %{},
+                 ["./src"],
+                 1,
+                 :high,
+                 HintAgent
+               )
+
+      assert output == "output"
+    end
+  end
+
   # ── Config accessors ──────────────────────────────────────────────────────
   #
   # These read from EvoGit.Config.resolve/1 and must return positive integers
@@ -822,4 +948,11 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       assert DelegationHints.max_tool_timeout() > DelegationHints.default_tool_timeout()
     end
   end
+end
+
+# A role whose `subagent_modules/0` lists entries that do NOT export
+# `subagent_tool_name/0` (plus a nil and a non-module atom) — pins the hint's
+# TOTAL role-name resolution: every entry contributes nothing instead of raising.
+defmodule EvoGit.Agent.DelegationHintsTest.RoleWithUntitledSubagents do
+  def subagent_modules, do: [String, nil, :not_a_module]
 end

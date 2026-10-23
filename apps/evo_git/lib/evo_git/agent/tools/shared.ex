@@ -558,11 +558,7 @@ defmodule EvoGit.Agent.Tools.Shared do
   defp nothing_to_commit?(_code, _output), do: false
 
   defp commit_with_message_file(repo_path, repo_root, message) do
-    temp_path =
-      Path.join(
-        EvoGit.Sandbox.resolve_tmpdir(),
-        "genesis_git_commit_msg_#{System.unique_integer([:positive, :monotonic])}.txt"
-      )
+    temp_path = commit_message_file_path()
 
     try do
       case File.write(temp_path, message <> co_author_trailer()) do
@@ -580,6 +576,31 @@ defmodule EvoGit.Agent.Tools.Shared do
     after
       File.rm(temp_path)
     end
+  end
+
+  # Path of the temporary file `commit_with_message_file/3` passes to
+  # `git commit -F` (deleted again in a `try/after`, never left behind).
+  #
+  # The OS process id is part of the name and is LOAD-BEARING — never drop it.
+  # `System.unique_integer([:positive, :monotonic])` is unique only WITHIN one
+  # BEAM: every fresh VM restarts the monotonic counter at 1, while
+  # `EvoGit.Sandbox.resolve_tmpdir/0` resolves to the SHARED managed per-task
+  # tmpdir (e.g. `/tmp/genesis/task_<id>`) whenever a per-task dir is installed
+  # on the calling process — so two concurrent BEAMs picked the SAME
+  # `genesis_git_commit_msg_<n>.txt`: the loser's `after File.rm/1` deleted the
+  # winner's `-F` file mid `git commit` ("fatal: could not read log file
+  # '...'"), and a mere overwrite silently committed the other task's message.
+  # The pid segment makes the name disjoint across OS processes regardless of
+  # digit length (the `_` separator keeps it injective when one pid is a digit
+  # prefix of another). `System.pid/0` is ASCII digits on every platform, so the
+  # name stays portable; deterministic per VM, no randomness.
+  @doc false
+  def commit_message_file_path do
+    Path.join(
+      EvoGit.Sandbox.resolve_tmpdir(),
+      "genesis_git_commit_msg_#{System.pid()}_" <>
+        "#{System.unique_integer([:positive, :monotonic])}.txt"
+    )
   end
 
   defp co_author_trailer do
