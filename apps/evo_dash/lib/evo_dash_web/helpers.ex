@@ -517,17 +517,23 @@ defmodule EvoDashWeb.Helpers do
 
   def tool_call_arguments(_), do: "{}"
 
-  # Shell-execution tool names (core `EvoGit.Agent.Tools`: `run_bash` on
-  # non-Windows, `run_powershell` on Windows). Their arguments JSON carries a
-  # `"command"` field (plus an optional `"timeout"`).
-  @shell_tool_names ["run_bash", "run_powershell"]
-
+  # Shell-execution calls: ONE platform shell tool, model-facing name `bash`
+  # (the INTERNAL dispatch key stays `run_bash` on non-Windows and
+  # `run_powershell` on Windows). Every accepted spelling — `bash`, `Bash`,
+  # `shell`, `sh`, `run_bash`, `run_powershell`, … — is resolved by the core
+  # alias spine `EvoGit.Agent.ToolNames`, so no hardcoded list lives here.
+  # Their arguments JSON carries a `"command"` field (plus an optional
+  # `"timeout"`).
   @doc """
-  Returns `true` when the tool call is a shell-execution call
-  (`run_bash` / `run_powershell`).
+  Returns `true` when the tool call is a shell-execution call — any accepted
+  spelling of the platform shell tool (`bash` model-facing; `run_bash` /
+  `run_powershell` internal keys) as resolved by `EvoGit.Agent.ToolNames`.
   """
   def tool_call_is_shell?(call) do
-    tool_call_name(call) in @shell_tool_names
+    EvoGit.Agent.ToolNames.matches_any?(
+      tool_call_name(call),
+      [EvoGit.Agent.ToolNames.shell_tool_name()]
+    )
   end
 
   @doc """
