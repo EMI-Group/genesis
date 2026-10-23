@@ -33,6 +33,10 @@ defmodule EvoGit.Agents.PromptFragments do
     `worktree_isolation_note/0` starts with "You are in an isolated
     worktree"). This file is legitimately long — the string literals
     are data, not logic.
+  - **Register:** plain imperatives and declarative sentences. Rules are
+    stated once, in the same voice as a tool description — no emoji
+    prefixes, no shouted caps (`CRITICAL`/`MUST`/`ALWAYS`), no rhetorical
+    emphasis. A rule's force comes from being stated, not from its volume.
   """
 
   # ── Worktree isolation notes ────────────────────────────────────────────────
@@ -77,8 +81,8 @@ defmodule EvoGit.Agents.PromptFragments do
   "Investigating child subtrees yourself is rarely the best use of your turns …"
 
   Used by: Manager (inside the "Strongly prefer delegating child subtree
-  investigation." bullet), Investigator (opening of the "# ⚠️ Strongly
-  Prefer Delegating Child Subtree Investigation" section).
+  investigation." bullet), Investigator (opening of its "Strongly Prefer
+  Delegating Child Subtree Investigation" section).
 
   Deliberately NOT used by Architect (wording differs: "Investigating or
   implementing in child subtrees yourself …") or GenesisPlanner ("Investigating
@@ -110,7 +114,7 @@ defmodule EvoGit.Agents.PromptFragments do
   findings) after every report — doubling token cost for no new information.
   """
   def subagent_report_trust_clause do
-    "Trust subagent reports by default, as you trust the Context Tree: accept a completion summary as accurate — do NOT re-investigate or re-derive its findings. Deep re-review only on concrete trouble signals (failing tests, contradictions between reports, diff touching files unrelated to the objective, subagent reporting failure/uncertainty)."
+    "Trust subagent reports by default, as you trust the Context Tree: accept a completion summary as accurate — do not re-investigate or re-derive its findings. Deep re-review only on concrete trouble signals (failing tests, contradictions between reports, diff touching files unrelated to the objective, subagent reporting failure/uncertainty)."
   end
 
   # ── Genesis architecture (Manager + Architect) ───────────────────────────
@@ -237,9 +241,8 @@ Genesis is a recursive software development framework"
   @doc """
   "the user or project config specifies a structure, convention, or file organization,"
 
-  Used by: Manager ("…first** — if " <> clause <> " that is always the highest
-  priority."), Architect ("…ALWAYS the highest priority. If " <> clause <>
-  " follow it unconditionally.").
+  Used by: Manager and Architect — both follow the clause with a statement
+  that a specified structure takes precedence over other conventions.
   """
   def user_config_specifies_clause do
     "the user or project config specifies a structure, convention, or file organization,"
@@ -330,7 +333,7 @@ Genesis models the codebase as a **Context Tree**: every directory node has a `C
   # ── CONTEXT.md describes current state, not history ─────────────────────────
 
   @doc """
-  "CONTEXT.md documents the **current state** of the code — what is TRUE NOW …"
+  "CONTEXT.md documents the **current state** of the code — what is true now …"
 
   Shared "current state, not history" paragraph, extended with active
   CONTEXT.md maintenance guidance: keep files concise by pruning when adding
@@ -349,7 +352,7 @@ Genesis models the codebase as a **Context Tree**: every directory node has a `C
   Documentation section list, before the Routing Table item).
   """
   def context_current_state_clause do
-    "CONTEXT.md documents the **current state** — what is TRUE NOW (intent, API surface, constraints, known issues, design decisions) — not a change log. No history: no past behaviors, \"was X, now Y\", \"bug fixed\"/\"FIXED\" annotations, dated changelog entries. A bug that exists NOW may be recorded (e.g. `## Known Issues`), but once fixed DELETE the text outright (`edit_context`) — never mark it fixed. For history use git (`git log -p -- <path>`, `search_history`) — git IS the change log. Actively maintain the file: prune/condense stale or redundant text in the same pass as adding new content (git preserves what you remove). One sentence per line so git diffs stay granular. Put each finding at the level it belongs: child/descendant findings go in that node's CONTEXT.md plus a routing-table entry here — don't hoard in the parent. A section that keeps growing despite pruning → extract detail into a skill (`.agents/skills/`, `skill_add`/`skill_enable`) and leave a pointer. A read CONTEXT.md showing `... [Content Truncated] ...` exceeded the per-file limit (~64 KB each, not the chain) — prune to essentials and push detail down to child nodes or a skill."
+    "CONTEXT.md documents the **current state** — what is true now (intent, API surface, constraints, known issues, design decisions) — not a change log. Record no history: no past behaviors, no \"was X, now Y\", no \"bug fixed\"/\"FIXED\" annotations, no dated changelog entries. A bug that exists now may be recorded (e.g. `## Known Issues`); once it is fixed, delete the text (`edit_context`) instead of marking it fixed. For history use git (`git log -p -- <path>`, `search_history`) — git is the change log. Maintain the file actively: prune or condense stale and redundant text in the same pass as adding new content (git preserves what you remove). Write one sentence per line so git diffs stay granular. Put each finding at the level it belongs: child and descendant findings go in that node's CONTEXT.md plus a routing-table entry here, not hoarded in the parent. A section that keeps growing despite pruning is a candidate for extraction into a skill (`.agents/skills/`, `skill_add`/`skill_enable`), with a pointer left behind. A read CONTEXT.md that shows `... [Content Truncated] ...` exceeded the per-file limit (~64 KB each, not the chain) — prune it to essentials and push detail down to child nodes or a skill."
   end
 
   # ── Foreign repositories (Architect + ContextExtractor) ──────────────────
