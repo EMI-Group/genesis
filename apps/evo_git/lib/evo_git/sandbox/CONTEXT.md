@@ -18,6 +18,22 @@ None — leaf directory (modules: `behaviour.ex`, `bwrap.ex`, `helpers.ex`, `lin
 | `EvoGit.Sandbox.None` | Passthrough backend — no OS-level isolation on Windows/unsupported platforms; `run_with_partial` Windows clause kills the whole process tree on timeout via `taskkill /PID <pid> /T /F` (walks cmd.exe/powershell grandchildren, not just the direct child), driven by the OS pid resolved by `wait_for_os_pid/2`. Public `resolve_executable/1` — binary-safe executable resolution for direct port spawning (normalizes via `to_string/1`; absolute paths as-is when regular files; PATH/PATHEXT via `System.find_executable/1`; Windows known-location fallback for `powershell`/`pwsh`; `nil` when not found) |
 | `EvoGit.Nix` | Shared helper — builds the dev env ONCE via `nix print-dev-env`, caches the bash script to `<data_dir>/nix-dev-env.sh`, sources it per call via `bash -c "source <path>; exec <cmd>"`. Gate: `active?/0` (enabled + build not failed); `enabled?/0` = static capability check |
 
+## Argv Shapes & Kill Primitives — at a glance
+
+Exact argv heads (each builder is the single source of truth for its backend; **no `spawn_detached`/background entry point exists today** — every backend path is foreground-owned):
+
+- Linux `args/4` (`linux.ex:225-251`): `["--user", "--slice=evogit", "--wait", "--pipe", "--collect", "-q"] ++ env_args ++ nix_env_args ++ ["-p", "WorkingDirectory=<cwd>", "-p", "StandardInput=null"] ++ security_args() ++ resource_args() ++ read_write_args ++ inaccessible_args ++ [cmd | args]`. `--unit=<name>` is NOT produced by `args/4` — `inject_unit/2` (`linux.ex:77-79`) splices it right after `--user` in `run/4`/`run_with_partial/6`, using the name from `SandboxProcessRegistry.register/0` (`"evogit-run-<system_time_ms>-<unique_integer>"`, `sandbox_process_registry.ex:128-132`). No `--scope` and no `--pty`: systemd-run's default transient **service** unit is used, `--wait` blocks the client until it exits and `--pipe` carries stdout/stderr; `--collect` makes systemd GC the unit once it terminates, so `systemctl --user show <unit> -p ActiveState,ExecMainStatus` is only queryable WHILE the unit is alive.
+- bwrap `args/4` (`bwrap.ex:299-305`) wraps the private `build_args/5` (`:399-507`): `["--die-with-parent", "--new-session"] ++ unshare_flags ++ ["--ro-bind","/","/","--dev","/dev","--proc","/proc"] ++ tmp_bind_args ++ writable_bind_args ++ task_tmp_bind_args ++ deny_args ++ ["--chdir", cwd] ++ env_setenv_args ++ ["--", cmd | cmd_args]` — every option precedes the `--` separator (GOption stops at the first non-option).
+- macOS: `run/4`/`run_with_partial/6` spawn `System.cmd("sandbox-exec", ["-p", <profile>, "--", exec | exec_args], cd: cwd, env: [{"TMPDIR", tmpdir} | git_env])` (`macos.ex:474-480`); the SBPL builder is `generate_profile/2` (`macos.ex:183-454`).
+- none: `run/4` = `System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: …)`; `run_with_partial/6` = direct `Port.open({:spawn_executable, resolved}, [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, args}, {:cd, cwd}, {:env, Helpers.port_env(git_env)}])` (`none.ex:294-299`).
+
+Kill/timeout primitives:
+- Linux: the timeout shuts down the CLIENT `Task` only — the unit keeps running and is stopped asynchronously by `SandboxProcessRegistry.release(unit)` → `systemctl --user stop <unit>.service` (`sandbox_process_registry.ex:134-147`); `run/4` has NO timeout (`--wait` blocks indefinitely).
+- bwrap: no `Task` — `kill_process_group/1` runs `kill -TERM -- -<pgid>` → 100 ms → `kill -KILL -- -<pgid>` → `kill -KILL <pid>` (`bwrap.ex:634-642`), negative pgid valid because `--new-session` makes bwrap the session leader.
+- Windows/none: `taskkill /PID <pid> /T /F` (`none.ex:338-344`), pid from `Helpers.wait_for_os_pid/1`.
+- macOS: `Task.shutdown` only — the `sandbox-exec` child is never explicitly killed.
+- The ONLY pre-existing detached/long-lived spawn in the tree is the SSH remote daemon: `systemd-run --user --unit=genesis-remote-<id> --setenv=RELEASE_NODE=… --setenv=RELEASE_COOKIE=… <launcher> start`, preceded by `systemctl --user reset-failed <unit>` (`remote_connection.ex:1796-1824`); macOS uses a launchd plist + `launchctl`.
+
 ## Behaviour Contract
 All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) formally implement `@behaviour EvoGit.Sandbox.Behaviour`:
 - `enabled?/0` — sandboxing available for this platform/mode
