@@ -1242,6 +1242,160 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
+  describe "context meter" do
+    # The Context tile is ONE meter whose full width is the model's context
+    # window (`:context_window` summary key, 200_000 when absent) with a tick at
+    # the compression threshold, so the bar keeps showing the remaining headroom
+    # after a compression has fired. The geometry/label contract is unit-tested
+    # in the sibling agents_live/context_meter_test.exs; these tests pin the
+    # RENDERED attribute contract the CSS/data consumers read.
+
+    test "renders an empty fill with a 63.1% threshold tick", %{conn: conn} do
+      id = agent_id()
+
+      view =
+        mount_context_meter(conn, [
+          summary_agent(
+            id: id,
+            total_tokens: 0,
+            compression_threshold: 126_272,
+            context_window: 200_000
+          )
+        ])
+
+      attrs = context_meter_attrs(view)
+
+      assert attrs["data-context-fill-pct"] == "0.0"
+      assert attrs["data-context-tick-pct"] == "63.1"
+      assert attrs["data-context-zone"] == "success"
+      assert attrs["data-context-window-tokens"] == "200000"
+      assert attrs["data-context-threshold-tokens"] == "126272"
+      assert attrs["data-context-current-tokens"] == "0"
+
+      # The tick's caption carries the compression token count.
+      html = render(view)
+      assert html =~ "Compression at 126,272"
+      refute html =~ "Compression threshold unknown"
+    end
+
+    test "the fill grows with the current tokens and turns amber past 80%", %{conn: conn} do
+      id = agent_id()
+
+      view =
+        mount_context_meter(conn, [
+          summary_agent(
+            id: id,
+            total_tokens: 110_000,
+            compression_threshold: 126_272,
+            context_window: 200_000
+          )
+        ])
+
+      attrs = context_meter_attrs(view)
+
+      # 110_000 / 200_000 = 55% of the WINDOW (not 87% of the threshold).
+      assert attrs["data-context-fill-pct"] == "55.0"
+      assert attrs["data-context-zone"] == "warning"
+      assert attrs["data-context-tick-pct"] == "63.1"
+      assert attrs["data-context-current-tokens"] == "110000"
+    end
+
+    test "reaching the threshold turns the fill red", %{conn: conn} do
+      id = agent_id()
+
+      view =
+        mount_context_meter(conn, [
+          summary_agent(
+            id: id,
+            total_tokens: 126_272,
+            compression_threshold: 126_272,
+            context_window: 200_000
+          )
+        ])
+
+      attrs = context_meter_attrs(view)
+
+      assert attrs["data-context-zone"] == "error"
+      assert attrs["data-context-fill-pct"] == "63.1"
+      assert attrs["data-context-tick-pct"] == "63.1"
+      assert attrs["data-context-current-tokens"] == "126272"
+    end
+
+    test "a summary without :context_window falls back to the 200_000 default", %{conn: conn} do
+      id = agent_id()
+
+      # Older/remote summaries omit the optional :context_window — the meter
+      # must still render against the core's 200_000 default.
+      summary = summary_agent(id: id, total_tokens: 110_000, compression_threshold: 126_272)
+      refute Map.has_key?(summary, :context_window)
+
+      view = mount_context_meter(conn, [summary])
+
+      attrs = context_meter_attrs(view)
+
+      assert attrs["data-context-window-tokens"] == "200000"
+      assert attrs["data-context-tick-pct"] == "63.1"
+      assert attrs["data-context-fill-pct"] == "55.0"
+
+      assert assigns(view)[:agents] |> Enum.find(&(&1.id == id)) |> Map.get(:context_window) ==
+               200_000
+    end
+
+    test "a zero-token summary without :context_window renders an empty fill", %{conn: conn} do
+      id = agent_id()
+
+      view =
+        mount_context_meter(conn, [
+          summary_agent(id: id, total_tokens: 0, compression_threshold: 126_272)
+        ])
+
+      attrs = context_meter_attrs(view)
+
+      assert attrs["data-context-fill-pct"] == "0.0"
+      assert attrs["data-context-tick-pct"] == "63.1"
+      assert attrs["data-context-window-tokens"] == "200000"
+      assert attrs["data-context-zone"] == "success"
+    end
+
+    test "an agent without a usable threshold hides the tick", %{conn: conn} do
+      id = agent_id()
+
+      view =
+        mount_context_meter(
+          conn,
+          [summary_agent(id: id, total_tokens: 110_000, compression_threshold: 126_272)],
+          expand: false
+        )
+
+      # Every load path materializes a threshold (ThresholdCache's 180_000 last
+      # resort), so the tick-hidden branch is only reachable for an agent map
+      # that carries none — strip it from the selected agent, then render
+      # through a REAL event (the toggle) because replace_state alone pushes no
+      # diff to the test proxy.
+      :sys.replace_state(view.pid, fn state ->
+        agents =
+          Enum.map(state.socket.assigns.agents, &Map.delete(&1, :compression_threshold))
+
+        %{
+          state
+          | socket: %{state.socket | assigns: Map.put(state.socket.assigns, :agents, agents)}
+        }
+      end)
+
+      view |> element("button[phx-click='toggle_usage']") |> render_click()
+
+      html = render(view)
+      attrs = context_meter_attrs(view)
+
+      refute Map.has_key?(attrs, "data-context-tick-pct")
+      refute Map.has_key?(attrs, "data-context-threshold-tokens")
+      assert attrs["data-context-fill-pct"] == "55.0"
+      assert attrs["data-context-window-tokens"] == "200000"
+      assert html =~ "Compression threshold unknown"
+      refute html =~ "Compression at "
+    end
+  end
+
   describe "config_status node-awareness" do
     # BUG 3 fix: config_status was read once in mount via
     # EvoGit.Config.config_status() and never refreshed per-node. The layout
@@ -3504,6 +3658,45 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp install_agents(summaries) when is_list(summaries) do
     Application.put_env(:evo_dash, :agents_list_runner, fn _node -> summaries end)
     on_exit(&clear_agents_env/0)
+  end
+
+  # Mounts /agents with ONE stubbed summary, selects its agent card (the only
+  # place the detail panel renders) and — unless `expand: false` — expands the
+  # "Token and Cost" panel, which is the only place the Context meter renders.
+  # `:agents_config_runner` is stubbed to an EMPTY resolved config so the
+  # node-level compression threshold is deterministic (the 180_000 last resort)
+  # and never depends on the developer's real config; every fixture supplies its
+  # own per-agent `compression_threshold`, which wins anyway.
+  defp mount_context_meter(conn, summaries, opts \\ []) do
+    install_agents(summaries)
+    Application.put_env(:evo_dash, :agents_config_runner, fn _node -> {:ok, %{}} end)
+
+    {:ok, view, _html} = live(conn, ~p"/agents")
+    flush_agents_load(view)
+
+    view |> element("#agent-card-#{agent_id()}") |> render_click()
+
+    if Keyword.get(opts, :expand, true) do
+      view |> element("button[phx-click='toggle_usage']") |> render_click()
+    end
+
+    view
+  end
+
+  # The rendered #agent-context-meter node's attributes as a map. Must run on a
+  # PARSED document (Floki on the raw html binary confuses the LiveView
+  # envelope), and only after the usage panel has been expanded.
+  defp context_meter_attrs(view) do
+    nodes =
+      view
+      |> render()
+      |> Floki.parse_document!()
+      |> Floki.find("#agent-context-meter")
+
+    assert [meter] = nodes
+    assert {"div", attrs, _children} = meter
+
+    Map.new(attrs)
   end
 
   # An {:error, _} reply from EVERY group yields {:error, first-ish failure}
