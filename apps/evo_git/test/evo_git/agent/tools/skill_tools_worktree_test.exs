@@ -315,6 +315,58 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
     end
   end
 
+  # Every FAILURE return of the skill tools renders through
+  # `EvoGit.Agent.Tools.Failure.error/1` — exactly one leading `Error: ` prefix,
+  # no marker, no `inspect` quoting — while the non-failure notices stay
+  # unprefixed. Pinned by exact equality so a re-shape cannot drift silently.
+  describe "failure message shape" do
+    test "argument validation failures gain the single Error: prefix", %{
+      repo_root: repo_root,
+      repo_path: repo_path
+    } do
+      assert SkillRead.execute(%{}, repo_path, repo_root) ==
+               "Error: Missing required argument 'name'. Please provide a valid value."
+
+      assert SkillWhere.execute(%{}, repo_path, repo_root) ==
+               "Error: Missing required argument 'skill_name'. Please provide a valid value."
+    end
+
+    test "skill-level failures render 'Error: <verb> skill: <reason>'", %{
+      repo_root: repo_root,
+      repo_path: repo_path
+    } do
+      assert SkillEdit.execute(
+               %{"name" => "missing", "content" => skill_content("missing")},
+               repo_path,
+               repo_root
+             ) == "Error: editing skill: Skill 'missing' not found"
+
+      assert SkillRemove.execute(%{"name" => "missing"}, repo_path, repo_root) ==
+               "Error: removing skill: Skill 'missing' not found"
+
+      assert SkillEnable.execute(%{"skill_name" => "missing"}, repo_path, repo_root, "./") ==
+               "Error: Skill 'missing' does not exist in .agents/skills/. " <>
+                 "Use skill_add to create it first, or use skill_list to see available skills."
+
+      # The duplicate-add failure comes back through the same shape, with the
+      # reason the CRUD layer produced.
+      SkillAdd.execute(%{"content" => skill_content(@skill_name)}, repo_path, repo_root)
+
+      assert SkillAdd.execute(%{"content" => skill_content(@skill_name)}, repo_path, repo_root) ==
+               "Error: creating skill: Skill '#{@skill_name}' already exists at " <>
+                 Path.join(repo_path, ".agents/skills/#{@skill_name}.md")
+    end
+
+    test "a non-failure notice stays unprefixed", %{repo_root: repo_root, repo_path: repo_path} do
+      # `skill_disable` on a node that never enabled the skill is informational,
+      # NOT a failure — it must not gain an `Error:` prefix.
+      disabled = SkillDisable.execute(%{"skill_name" => "missing"}, repo_path, repo_root, "./")
+
+      refute String.starts_with?(disabled, "Error:")
+      assert disabled =~ "was not enabled"
+    end
+  end
+
   describe "commit argument validation" do
     test "a non-boolean commit is rejected before any write or commit", %{
       repo_root: repo_root,
@@ -329,7 +381,7 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
           repo_root
         )
 
-      assert result == ~s(Argument 'commit' must be a boolean, got: "yes")
+      assert result == ~s(Error: Argument 'commit' must be a boolean, got: "yes")
       refute File.exists?(Path.join(repo_path, ".agents/skills/#{@skill_name}.md"))
       assert head_sha(repo_path) == before
 
@@ -343,7 +395,7 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
           "./"
         )
 
-      assert enable_result == ~s(Argument 'commit' must be a boolean, got: "yes")
+      assert enable_result == ~s(Error: Argument 'commit' must be a boolean, got: "yes")
       refute File.exists?(Path.join(repo_path, "CONTEXT.md"))
       assert head_sha(repo_path) == before
     end

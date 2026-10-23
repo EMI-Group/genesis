@@ -7,6 +7,7 @@ defmodule EvoGit.Agent.Tools.SkillWhere do
   appears in the YAML front matter's `skill` list.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -55,7 +56,7 @@ defmodule EvoGit.Agent.Tools.SkillWhere do
         end
 
       {:error, message} ->
-        message
+        Failure.error(message)
     end
   end
 end

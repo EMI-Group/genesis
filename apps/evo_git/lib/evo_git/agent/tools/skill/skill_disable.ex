@@ -6,6 +6,7 @@ defmodule EvoGit.Agent.Tools.SkillDisable do
   (and below, unless re-enabled at a lower level) will no longer have access.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -65,10 +66,10 @@ defmodule EvoGit.Agent.Tools.SkillDisable do
             "Use skill_where to find where it is enabled."
 
         {:error, reason} ->
-          "Error disabling skill: #{reason}"
+          Failure.error("disabling skill: #{reason}")
       end
     else
-      {:error, message} -> message
+      {:error, message} -> Failure.error(message)
     end
   end
 end
