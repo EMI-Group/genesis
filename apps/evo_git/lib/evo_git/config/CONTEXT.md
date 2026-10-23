@@ -126,7 +126,7 @@ max_tool_timeout = 1_800_000      # Hard cap (ms) on any agent-requested tool ti
 default_tool_timeout = 10_000     # Default tool timeout (ms) when the agent omits one (pos_integer, min 1)
 [llm]
 model = "provider:model"          # REQUIRED, e.g. "anthropic:claude-sonnet-4-20250514"
-compression_threshold_tokens = 180_000  # OPTIONAL override (pos_integer, min 1); default nil = derive from the profile's context_window
+# compression_threshold_tokens = 150_000  # OPTIONAL explicit override (pos_integer, min 1); default nil = threshold derived from the profile's context_window (default 200_000)
 tool_result_pruning = true        # Stage-1 model-free pruning of old tool results (boolean, default true)
 tool_result_pruning_target_fraction = 0.5  # Stage-1 pruning target as a fraction of the context window (float 0.0–1.0, default 0.5)
 

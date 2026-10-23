@@ -29,9 +29,15 @@ defmodule EvoGit.Config do
       # - "google:gemini-2.0-flash-exp"
       # - "zai:glm-5.1"
       model = "your-model-here"
-      # compression_threshold_tokens = 180_000  # optional override; derived from the profile's context_window when unset
       tool_result_pruning = true                  # Stage-1 model-free pruning of old tool results
       tool_result_pruning_target_fraction = 0.5   # Stage-1 pruning target, fraction of the context window
+      # Optional model profile — the profile's context window drives the
+      # context-compression threshold.
+      # [[llm.models]]
+      # id = "default"
+      # model = "your-model-here"
+      # context_window = 200_000               # optional; default 200_000
+      # compression_threshold_tokens = 150_000 # optional EXPLICIT override; default nil = derived from context_window
 
       [user]
       github_username = "your-username"
