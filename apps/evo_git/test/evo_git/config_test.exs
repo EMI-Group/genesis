@@ -301,6 +301,143 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "[llm] context-window / stage-1 pruning save/load round-trip" do
+    # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
+    # never the developer's real ~/.config/genesis/config.toml.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-config-llm-window-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "defaults: threshold derived (nil), pruning on, target fraction 0.5" do
+      # Isolated XDG_CONFIG_HOME points at an empty tmp dir — no config.toml,
+      # so every value resolves to its schema default.
+      assert Config.resolve([:llm, :compression_threshold_tokens]) == nil
+      assert Config.resolve([:llm, :tool_result_pruning]) == true
+      assert Config.resolve([:llm, :tool_result_pruning_target_fraction]) == 0.5
+    end
+
+    test "explicit values are written to config.toml and resolve back" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :compression_threshold_tokens], 120_000)
+        |> put_in([:llm, :tool_result_pruning], false)
+        |> put_in([:llm, :tool_result_pruning_target_fraction], 0.75)
+
+      assert :ok = Config.save_user_config(config)
+
+      contents = File.read!(Config.config_path())
+      assert contents =~ "compression_threshold_tokens"
+      assert contents =~ "tool_result_pruning"
+      assert contents =~ "tool_result_pruning_target_fraction"
+
+      assert Config.resolve([:llm, :compression_threshold_tokens]) == 120_000
+      assert Config.resolve([:llm, :tool_result_pruning]) == false
+      assert Config.resolve([:llm, :tool_result_pruning_target_fraction]) == 0.75
+    end
+
+    test "an absent compression_threshold_tokens stays out of config.toml and resolves to nil" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :tool_result_pruning], false)
+
+      assert :ok = Config.save_user_config(config)
+
+      contents = File.read!(Config.config_path())
+      refute contents =~ "compression_threshold_tokens"
+
+      # nil = "derive from the model profile's context_window".
+      assert Config.resolve([:llm, :compression_threshold_tokens]) == nil
+
+      # The pruning keys still survive resolution.
+      assert Config.resolve([:llm, :tool_result_pruning]) == false
+      assert Config.resolve([:llm, :tool_result_pruning_target_fraction]) == 0.5
+    end
+
+    test "strip_flat_llm_fields preserves the pruning keys when models is non-empty" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :model], "anthropic:claude-sonnet-4")
+        |> put_in([:llm, :temperature], 0.5)
+        |> put_in([:llm, :tool_result_pruning], false)
+        |> put_in([:llm, :tool_result_pruning_target_fraction], 0.25)
+        |> put_in([:llm, :models], [%{id: "default", model: "anthropic:claude-sonnet-4"}])
+
+      llm = Config.__strip_flat_llm_fields__(config).llm
+
+      # Flat generation params are stripped...
+      refute Map.has_key?(llm, :model)
+      refute Map.has_key?(llm, :temperature)
+      # ...but the compression/pruning knobs are NOT generation params.
+      assert llm.tool_result_pruning == false
+      assert llm.tool_result_pruning_target_fraction == 0.25
+      assert Map.has_key?(llm, :compression_threshold_tokens)
+    end
+
+    test "strip_flat_llm_fields preserves the pruning keys for string-keyed configs" do
+      config = %{
+        llm: %{
+          "model" => "anthropic:claude-sonnet-4",
+          "temperature" => 0.5,
+          "models" => [%{id: "default", model: "anthropic:claude-sonnet-4"}],
+          "compression_threshold_tokens" => 100_000,
+          "tool_result_pruning" => false,
+          "tool_result_pruning_target_fraction" => 0.25
+        }
+      }
+
+      llm = Config.__strip_flat_llm_fields__(config).llm
+
+      refute Map.has_key?(llm, "model")
+      refute Map.has_key?(llm, "temperature")
+      assert llm["compression_threshold_tokens"] == 100_000
+      assert llm["tool_result_pruning"] == false
+      assert llm["tool_result_pruning_target_fraction"] == 0.25
+    end
+
+    test "the three [llm] keys survive the stringify + TOML encode/decode round trip" do
+      config =
+        Config.defaults()
+        |> put_in([:llm, :compression_threshold_tokens], 100_000)
+        |> put_in([:llm, :tool_result_pruning], false)
+        |> put_in([:llm, :tool_result_pruning_target_fraction], 0.75)
+
+      pipeline =
+        config
+        |> Map.delete(:evolution)
+        |> Config.__strip_flat_llm_fields__()
+        |> Config.__stringify_keys__()
+
+      assert {:ok, toml} = TomlElixir.encode(pipeline)
+      assert {:ok, decoded} = TomlElixir.decode(toml)
+
+      llm = decoded["llm"]
+      assert llm["compression_threshold_tokens"] == 100_000
+      assert llm["tool_result_pruning"] == false
+      assert llm["tool_result_pruning_target_fraction"] == 0.75
+    end
+  end
+
   describe "config_status/0 validation_errors" do
     test "returns validation_errors key" do
       status = Config.config_status()

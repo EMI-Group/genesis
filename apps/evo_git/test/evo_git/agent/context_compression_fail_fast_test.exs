@@ -74,6 +74,13 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   @max_attempts 3
   @backoff_base_ms 1
 
+  # The context window is passed EXPLICITLY (`llm_context_window:`), so the gate
+  # and the `state/2` trigger are derived from the SAME deterministic window and
+  # can never disagree because the operator's own `config.toml` changed a
+  # threshold override between the two calls.
+  @context_window 131_072
+  @threshold 57_344
+
   # The per-test agent ids. High and distinct so no sibling test's leftover ETS
   # agent-state row can steer a slot request to another model pool.
   @rejected_agent_id 9_101
@@ -101,11 +108,18 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
   # --- State / call helpers ------------------------------------------------
 
-  # The compression trigger for `llm_model` — read at runtime (never hardcoded)
-  # so this fixture overflows whatever the environment configures, exactly like
-  # the production gate (`Threshold.for_model/1`).
-  defp trigger(llm_model),
-    do: EvoGit.Agent.Compression.Threshold.for_model(llm_model)
+  # The compression trigger for `llm_model` over the EXPLICIT window every call
+  # in this module passes — the same function the production gate uses, so the
+  # fixture overflows deterministically.
+  defp trigger(llm_model) do
+    info =
+      EvoGit.Agent.Compression.Threshold.for_model(llm_model, context_window: @context_window)
+
+    assert info == %{threshold: @threshold, window: @context_window, source: :window},
+           "expected the window-derived trigger, got #{inspect(info)}"
+
+    info
+  end
 
   # A compressible conversation: `[system, objective | turns]`, every turn-tagged
   # message carrying its turn number.
@@ -152,8 +166,35 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   defp compress(agent_id, model) do
     ContextCompression.compress_if_needed(state(agent_id, model),
       agent_id: agent_id,
-      llm_model: model
+      llm_model: model,
+      llm_context_window: @context_window
     )
+  end
+
+  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir, so the
+  # operator's own `~/.config/genesis/config.toml` can never contribute a
+  # `[:llm, :compression_threshold_tokens]` override (which would flip the
+  # trigger's source away from `:window`) or disable Stage 1.
+  defp isolate_config! do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(System.tmp_dir!(), "evogit-fail-fast-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      case original_xdg do
+        nil -> System.delete_env("XDG_CONFIG_HOME")
+        value -> System.put_env("XDG_CONFIG_HOME", value)
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    File.mkdir_p!(EvoGit.Config.config_dir())
+    :ok
   end
 
   # `{used, waiting}` of `model_id`'s live LLM pool, defaulting to a clean pool
@@ -234,6 +275,9 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     # A clean, unpaused scheduler regardless of prior tests (resume/1 is a no-op
     # when not paused).
     AgentScheduler.resume()
+
+    # Isolate the user config BEFORE anything resolves the compression trigger.
+    isolate_config!()
 
     # Defensive: a sibling test may have left the "default" model in a long
     # model-exhaustion backoff — clear it so every test starts from a neutral
