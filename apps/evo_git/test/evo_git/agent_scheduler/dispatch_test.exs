@@ -351,6 +351,149 @@ defmodule EvoGit.AgentScheduler.DispatchTest do
     end
   end
 
+  # --- Context Window Resolution ---
+
+  describe "resolve_context_window/2" do
+    test "returns the requested profile's context_window" do
+      state =
+        State.from_model_profiles([
+          %{id: "default", model: "provider:default"},
+          %{id: "big", model: "provider:big", context_window: 131_072}
+        ])
+
+      assert Dispatch.resolve_context_window(state, "big") == 131_072
+    end
+
+    test "resolves each profile's window independently" do
+      state =
+        State.from_model_profiles([
+          %{id: "default", model: "provider:default"},
+          %{id: "big", model: "provider:big", context_window: 131_072},
+          %{id: "small", model: "provider:small", context_window: 32_768}
+        ])
+
+      assert Dispatch.resolve_context_window(state, "big") == 131_072
+      assert Dispatch.resolve_context_window(state, "small") == 32_768
+      # A profile with no explicit context_window falls back to the 200_000 default.
+      assert Dispatch.resolve_context_window(state, "default") == 200_000
+    end
+
+    test "nil and empty model_id use the first profile's window" do
+      state =
+        State.from_model_profiles([
+          %{id: "first", model: "provider:first", context_window: 131_072},
+          %{id: "second", model: "provider:second", context_window: 32_768}
+        ])
+
+      assert Dispatch.resolve_context_window(state, nil) == 131_072
+      assert Dispatch.resolve_context_window(state, "") == 131_072
+    end
+
+    test "an unknown model_id falls back to the first profile's window with a warning" do
+      state =
+        State.from_model_profiles([
+          %{id: "first", model: "provider:first", context_window: 131_072},
+          %{id: "second", model: "provider:second", context_window: 32_768}
+        ])
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert Dispatch.resolve_context_window(state, "nonexistent") == 131_072
+        end)
+
+      assert log =~ "Model profile 'nonexistent' not found"
+    end
+
+    test "returns the 200_000 default when no profiles are configured" do
+      # Same shape resolve_model_for_agent/2 reads: empty model_profiles.
+      state = %State{model_profiles: []}
+
+      assert Dispatch.resolve_context_window(state, nil) == 200_000
+      assert Dispatch.resolve_context_window(state, "") == 200_000
+
+      # An unknown id on a profile-less state also warns and degrades to the
+      # default (no profile to fall back TO).
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert Dispatch.resolve_context_window(state, "nonexistent") == 200_000
+      end)
+
+      assert Dispatch.resolve_context_window(state, nil) ==
+               EvoGit.Config.Schema.LLM.default_context_window()
+    end
+  end
+
+  describe "register_agent/7 llm_context_window" do
+    test "persists the resolved profile's context window on the AgentState row" do
+      state = %{
+        State.from_model_profiles([
+          %{id: "default", model: "provider:default"},
+          %{id: "big", model: "provider:big", context_window: 131_072}
+        ])
+        | next_agent_id: :erlang.unique_integer([:positive])
+      }
+
+      # `model_id_locked: true` skips the user model-selection script, so the
+      # resolved profile (and therefore the window) is deterministic even when
+      # the developer's own agents.toml defines a `[model_selection]` script.
+      spec = %AgentSpec{
+        context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/home/user/primary/.genesis/workers/worker_T9_A1",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
+        agent_module: DummyAgent,
+        objective: "test",
+        repo_id: "primary",
+        model_id: "big",
+        opts: [model_id_locked: true]
+      }
+
+      task_id = "task-window-#{:erlang.unique_integer([:positive])}"
+      {agent_id, _state} = Dispatch.register_agent(state, spec, nil, nil, 0, task_id, 1)
+
+      on_exit(fn ->
+        Store.delete_agent_state(agent_id)
+        Store.delete_sched_meta(agent_id)
+      end)
+
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      assert agent_state.model_id == "big"
+      assert agent_state.llm_context_window == 131_072
+    end
+
+    test "defaults llm_context_window to 200_000 when no profiles are configured" do
+      state = %State{
+        model_profiles: [],
+        next_agent_id: :erlang.unique_integer([:positive])
+      }
+
+      spec = %AgentSpec{
+        context_node: %ContextNode{path: "./", repo: "/home/user/primary"},
+        phylo_node: %PhyloGraphNode{
+          repo: "/home/user/primary",
+          base_commit: "abc123",
+          current_commit: "abc123"
+        },
+        agent_module: DummyAgent,
+        objective: "test",
+        repo_id: "primary",
+        opts: [model_id_locked: true]
+      }
+
+      task_id = "task-window-default-#{:erlang.unique_integer([:positive])}"
+      {agent_id, _state} = Dispatch.register_agent(state, spec, nil, nil, 0, task_id, 1)
+
+      on_exit(fn ->
+        Store.delete_agent_state(agent_id)
+        Store.delete_sched_meta(agent_id)
+      end)
+
+      {:ok, agent_state} = Store.get_agent_state(agent_id)
+      assert agent_state.llm_context_window == 200_000
+    end
+  end
+
   # --- try_dispatch: no worktree I/O ---
 
   describe "try_dispatch/2 performs no worktree I/O" do

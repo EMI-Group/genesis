@@ -4,14 +4,18 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   API over scheduler ETS state.
 
   Uses `async: false` because the tests (a) manipulate the global named ETS
-  tables (`:evogit_agent_state` and `:evogit_sched_meta`) and (b) write task
+  tables (`:evogit_agent_state` and `:evogit_sched_meta`), (b) write task
   rows directly into the app-level `EvoGit.Store` singleton (`insert_task/2` →
-  `EvoGit.Store.put_task/2`, cleaned up in `on_exit`).
+  `EvoGit.Store.put_task/2`, cleaned up in `on_exit`), and (c) the
+  `list_agents/0 compression_threshold` describe repoints the process-wide
+  `XDG_CONFIG_HOME` so `EvoGit.Config.resolve/1` sees no
+  `compression_threshold_tokens` override.
   """
 
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.Usage
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.RemoteAPI
@@ -411,6 +415,87 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
 
       ids = Enum.map(summaries, & &1.id) |> Enum.sort()
       assert ids == [1, 2]
+    end
+  end
+
+  # ── list_agents/0 compression_threshold ────────────────────────────
+
+  describe "list_agents/0 compression_threshold" do
+    # `Threshold.for_model/2` honors the OPTIONAL
+    # [:llm, :compression_threshold_tokens] user-config override, which wins
+    # over every window-derived value (this developer machine's own
+    # config.toml sets it to 150_000). Point XDG_CONFIG_HOME at an EMPTY temp
+    # dir — no genesis/config.toml exists there — so the absolute
+    # window-derived pins below (57_344 / 126_272) are deterministic. Safe to
+    # redirect: this module is `async: false`.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit-remote-api-cfg-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "every summary carries an integer compression_threshold (both branches)" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_context_window: 131_072))
+
+      # Agent 2 exists only in sched_meta (registered, not yet dispatched), so
+      # it exercises the sched-meta-only summary branch.
+      put_sched_meta(2, %SchedMeta{id: 2, depth: 1, spec: agent_spec()})
+
+      summaries = RemoteAPI.list_agents()
+      assert length(summaries) == 2
+
+      Enum.each(summaries, fn summary ->
+        assert Map.has_key?(summary, :compression_threshold)
+        assert is_integer(summary.compression_threshold)
+        assert summary.compression_threshold > 0
+      end)
+    end
+
+    test "derives the threshold from the agent's own context window (agent-state branch)" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_model: "test:model", llm_context_window: 131_072))
+
+      [summary] = RemoteAPI.list_agents()
+
+      # Formula pin: 131_072 window with the default 8_192-token output
+      # reservation (min(0.8W, W - 8_192 - 65_536)) → 57_344.
+      assert summary.compression_threshold == 57_344
+
+      assert summary.compression_threshold ==
+               Threshold.for_model("test:model", context_window: 131_072).threshold
+
+      # Genuinely window-relative — NOT the default-derived value.
+      assert summary.compression_threshold != Threshold.for_model(nil).threshold
+    end
+
+    test "uses the default-derived threshold for a sched-meta-only agent" do
+      put_sched_meta(3, %SchedMeta{id: 3, depth: 0, spec: agent_spec()})
+
+      [summary] = RemoteAPI.list_agents()
+
+      # No agent_state → no configured window → the 200_000 default window.
+      assert summary.compression_threshold == 126_272
+      assert summary.compression_threshold == Threshold.for_model(nil).threshold
     end
   end
 
