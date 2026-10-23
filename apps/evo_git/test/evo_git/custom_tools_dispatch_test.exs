@@ -255,7 +255,8 @@ defmodule EvoGit.CustomToolsDispatchTest do
 
       names = available_tool_names()
       refute tool in names
-      assert "read_file" in names
+      assert "read" in names
+      assert "bash" in names
       assert "complete_task" in names
     end
 
