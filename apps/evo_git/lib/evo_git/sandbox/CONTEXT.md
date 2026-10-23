@@ -39,6 +39,7 @@ Kill/timeout primitives:
 
 Background jobs (outliving the tool call that started them) go through `EvoGit.Sandbox.Background` (`background.ex`): `spawn/1`, `kill/1`, `status/1`.
 `spawn(spec)` takes `%{command, cwd, output_path, job_id}` (all four required non-empty binaries, else `{:error, {:invalid_spec, spec}}`) → `{:ok, handle} | {:error, term()}`.
+A `cwd` that is not an existing directory answers `{:error, {:cwd_missing, path}}` on EVERY backend — validated in `spawn/1` right after `validate_spec/1`, before backend dispatch, because `Port.open/2` accepts a missing `{:cd, dir}` and the child would die before `exec` (the caller would otherwise record a job that never ran). `EvoGit.BackgroundJobs` maps it to the prose "the working directory does not exist: <path>"; its own `normalize_start_spec/1` already rejects a missing cwd, so this is the layer-below backstop.
 `output_path` and its parent directory are PRE-CREATED by the caller and never truncated: port-based backends have their stream appended to it by the registry, the systemd backend lets systemd append (`StandardOutput=append:` / `StandardError=append:`).
 `handle` = `%{kind: :unit, unit, backend}` | `%{kind: :port, port, os_pid, backend}`; `status/1` → `{:running, nil} | {:exited, integer() | nil} | {:unknown, nil}`; `kill/1` → `:ok | {:error, term()}`.
 `spawn/1` runs in the CALLER's process (the `EvoGit.BackgroundJobs` registry GenServer), so a `:port` handle's Port is owned by that registry — it receives `{:data, chunk}` / `{:exit_status, n}` and must keep draining them.
