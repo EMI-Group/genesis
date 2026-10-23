@@ -356,6 +356,98 @@ defmodule EvoGit.Config.EctoValidationTest do
 
       assert {:ok, _} = Schema.validate(%{llm: %{models: [string_keyed]}})
     end
+
+    test "a valid positive context_window passes (atom- and string-keyed)" do
+      atom_keyed = %{id: "x", model: "a:b", context_window: 200_000}
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [atom_keyed]}})
+
+      string_keyed = %{"id" => "x", "model" => "a:b", "context_window" => 64_000}
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [string_keyed]}})
+    end
+
+    test "an absent or nil context_window produces no error" do
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b"}]}})
+
+      assert {:ok, _} =
+               Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b", context_window: nil}]}})
+
+      assert {:ok, _} =
+               Schema.validate(%{
+                 llm: %{models: [%{"id" => "x", "model" => "a:b", "context_window" => nil}]}
+               })
+    end
+
+    test "context_window = 0 is a :integer error at [:llm, :models, 0, :context_window]" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{id: "x", model: "a:b", context_window: 0}]}
+               })
+
+      assert error.key_path == [:llm, :models, 0, :context_window]
+      assert error.rule == :integer
+      assert error.value == 0
+      assert error.message == "context_window must be a positive integer, got 0"
+    end
+
+    test "a negative context_window is rejected at the same path" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{id: "x", model: "a:b", context_window: -1}]}
+               })
+
+      assert error.key_path == [:llm, :models, 0, :context_window]
+      assert error.rule == :integer
+      assert error.value == -1
+      assert error.message == "context_window must be a positive integer, got -1"
+    end
+
+    test "a non-integer context_window (string or float) is rejected (no coercion)" do
+      assert {:error, [string_error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{id: "x", model: "a:b", context_window: "200000"}]}
+               })
+
+      assert string_error.key_path == [:llm, :models, 0, :context_window]
+      assert string_error.rule == :integer
+      assert string_error.value == "200000"
+      assert string_error.message == "context_window must be a positive integer, got \"200000\""
+
+      assert {:error, [float_error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{id: "x", model: "a:b", context_window: 200_000.0}]}
+               })
+
+      assert float_error.key_path == [:llm, :models, 0, :context_window]
+      assert float_error.rule == :integer
+      assert float_error.message == "context_window must be a positive integer, got 200000.0"
+    end
+
+    test "a string-keyed invalid context_window is reported at the same atom path" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{"id" => "x", "model" => "a:b", "context_window" => 0}]}
+               })
+
+      assert error.key_path == [:llm, :models, 0, :context_window]
+      assert error.rule == :integer
+      assert error.value == 0
+      assert error.message == "context_window must be a positive integer, got 0"
+    end
+
+    test "context_window is validated at the profile's own index" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{
+                   models: [
+                     %{id: "ok", model: "a:b", context_window: 64_000},
+                     %{id: "bad", model: "c:d", context_window: 0}
+                   ]
+                 }
+               })
+
+      assert error.key_path == [:llm, :models, 1, :context_window]
+      assert error.rule == :integer
+    end
   end
 
   describe "crash resilience on garbage nested structures" do
