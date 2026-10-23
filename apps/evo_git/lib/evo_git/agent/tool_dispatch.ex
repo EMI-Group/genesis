@@ -1239,6 +1239,24 @@ defmodule EvoGit.Agent.ToolDispatch do
     agent_id = AgentScheduler.current_agent_id()
     repo_path = Process.get(:repo_path) || raise "repo_path not in process dictionary"
 
+    # The OWNER identity every spawned tool task needs, resolved ONCE per batch
+    # (this function always runs in the AGENT process, so `self()` IS the agent
+    # pid) and threaded down to `execute_tool_task/7`, which re-installs it in
+    # each tool task's process dictionary.
+    #
+    # The pid MUST be the AGENT's, never the tool task's: the tool `Task` is
+    # shut down IMMEDIATELY after the tool returns
+    # (`Task.yield(task, tool_timeout) || Task.shutdown(task)`), so anything
+    # monitoring it — `EvoGit.BackgroundJobs` binds a detached job's lifetime to
+    # its owner — would see an exit at once and kill the job on the spot. The
+    # AGENT pid is the one lifetime signal that covers agent completion, crash,
+    # graceful cancel and force-kill.
+    owner = %{
+      agent_id: agent_id,
+      task_id: AgentScheduler.task_id_for_agent(agent_id),
+      agent_pid: self()
+    }
+
     {:ok, %{context_node: %{path: node_path}}} =
       AgentScheduler.get_agent_state(agent_id)
 
@@ -1252,7 +1270,7 @@ defmodule EvoGit.Agent.ToolDispatch do
     conflict_files = cached_conflict_files(repo_path)
 
     ctx = %{
-      agent_id: agent_id,
+      owner: owner,
       repo_path: repo_path,
       repo_root: repo_root,
       node_path: node_path,
@@ -1366,7 +1384,7 @@ defmodule EvoGit.Agent.ToolDispatch do
           execute_tool_with_timeout(
             name,
             args,
-            ctx.agent_id,
+            ctx.owner,
             ctx.repo_path,
             ctx.repo_root,
             ctx.node_path,
@@ -1445,10 +1463,15 @@ defmodule EvoGit.Agent.ToolDispatch do
   # LOWER the resolved timeout, so `resolve_timeout/4`'s own shell fallback and
   # an explicit `timeout` argument are both unaffected — and it is clamped by
   # the same `max_timeout`.
+  #
+  # `owner` is the batch's resolved owner identity (`%{agent_id:, task_id:,
+  # agent_pid:}` — see `batch_execute_tools/4`): the agent id is what the tool
+  # slot pool is acquired under, and the WHOLE map is re-installed inside the
+  # spawned task below.
   defp execute_tool_with_timeout(
          name,
          args,
-         agent_id,
+         owner,
          repo_path,
          repo_root,
          node_path,
@@ -1481,18 +1504,7 @@ defmodule EvoGit.Agent.ToolDispatch do
         tool_timeout
       end
 
-    AgentScheduler.with_tool_slot(agent_id, fn ->
-      # run_command's approval gate reads the owning agent/task ids from the
-      # process dictionary (EvoGit.CommandShell.request_approval/3). Spawned
-      # tasks do NOT inherit the caller's process dictionary, so resolve and
-      # re-establish those two keys inside the task for run_command calls.
-      run_command_context =
-        if name == "run_command" do
-          {agent_id, AgentScheduler.task_id_for_agent(agent_id)}
-        else
-          nil
-        end
-
+    AgentScheduler.with_tool_slot(owner.agent_id, fn ->
       task =
         Task.async(fn ->
           execute_tool_task(
@@ -1502,7 +1514,7 @@ defmodule EvoGit.Agent.ToolDispatch do
             repo_root,
             node_path,
             taskdir,
-            run_command_context
+            owner
           )
         end)
 
@@ -1568,6 +1580,9 @@ defmodule EvoGit.Agent.ToolDispatch do
   # The body of one tool-execution task. Runs INSIDE the `Task.async` (so it is
   # linked to the agent process) and therefore contains the failure containment
   # described below.
+  #
+  # `owner` is the batch's owner identity (`%{agent_id:, task_id:, agent_pid:}`
+  # — resolved ONCE per batch in `batch_execute_tools/4`, in the agent process).
   defp execute_tool_task(
          name,
          args,
@@ -1575,7 +1590,7 @@ defmodule EvoGit.Agent.ToolDispatch do
          repo_root,
          node_path,
          taskdir,
-         run_command_context
+         owner
        ) do
     # Spawned tasks do NOT inherit the caller's process dictionary, so
     # re-install the resolved per-task tmpdir unconditionally — every tool
@@ -1585,14 +1600,22 @@ defmodule EvoGit.Agent.ToolDispatch do
     # returns nil for a non-binary).
     EvoGit.TaskTmpdir.put_current(taskdir)
 
-    case run_command_context do
-      {run_agent_id, run_task_id} ->
-        Process.put(:evogit_agent_id, run_agent_id)
-        Process.put(:evogit_task_id, run_task_id)
-
-      nil ->
-        :ok
-    end
+    # EVERY tool task gets the full owner identity (no `run_command` special
+    # case):
+    #
+    #   * `:evogit_agent_pid` — the AGENT's pid, read by
+    #     `EvoGit.BackgroundJobs.current_owner_pid/0` to bind a detached job's
+    #     lifetime to its owner. It MUST be the agent pid, never `self()` here:
+    #     this tool task is shut down the moment the tool returns
+    #     (`Task.yield/2 || Task.shutdown/1`), so a job monitored on it would be
+    #     killed instantly — the agent pid is the one lifetime signal covering
+    #     agent completion, crash, graceful cancel and force-kill.
+    #   * `:evogit_agent_id` / `:evogit_task_id` — read by the command-approval
+    #     gate (`EvoGit.CommandShell.request_approval/3`) and by the
+    #     task-control/background-job tools that report who acted.
+    Process.put(:evogit_agent_id, owner.agent_id)
+    Process.put(:evogit_task_id, owner.task_id)
+    Process.put(:evogit_agent_pid, owner.agent_pid)
 
     # Reason for the try/rescue/catch: `Task.async/1` LINKS this task to the
     # agent process, so a RAISING tool implementation (a wrong-typed argument, an

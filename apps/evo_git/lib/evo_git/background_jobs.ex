@@ -2,46 +2,10 @@ defmodule EvoGit.BackgroundJobs do
   @moduledoc """
   Registry for detached ("background") shell jobs started by agents.
 
-  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE
-  detached entry point, answered by every sandbox backend) and records it. The
-  command's stdout/stderr accumulate in a per-job log file under the sandbox
-  scratch directory. Callers poll `job/2` for status and drain the log with
-  `read/2`, which returns only the bytes produced since the previous read.
-
-  ## Job lifetime — the owner monitor
-
-  Every job is bound to its OWNING AGENT process (`:owner_pid`). `start_job/1`
-  installs ONE `Process.monitor/1` per owner; when that process dies, EVERY job
-  it started is killed and the monitor bookkeeping is dropped. Because agent
-  processes are unlinked `Task.Supervisor.async_nolink` children killed by
-  `Lifecycle.cancel_agent/2`, this single monitor covers all of the ways an agent
-  can end — normal completion, a crash, a graceful cancel AND a force kill — so
-  no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor
-  is deliberately installed on the AGENT pid, never on the short-lived tool task
-  that calls this module.
-
-  ## Completion detection
-
-  Two mechanisms, both cheap and idempotent:
-
-    * **Lazy** — every `read/2` / `list/1` reconciles a live job against the
-      backend (`EvoGit.Sandbox.detached_status/1`) before answering, so a job
-      that ended reports as finished with no notification.
-    * **Periodic tick** — while at least one live job uses a `:unit` handle, ONE
-      `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code`
-      land promptly even if nobody reads. The timer is disarmed as soon as no
-      such job remains. `:port` handles need no tick: their exit arrives as a
-      port message.
-
-  ## Error vocabulary
-
-  Failures a caller must act on are returned as ONE actionable prose sentence,
-  never a bare atom — `start_job/1` and `read/2` (and a dead/unreachable
-  registry). The ownership/finished probes in `job/2` and `kill/3` keep the small
-  semantic tuples documented on those functions so a caller can branch on them
-  before formatting prose.
-
-  No input is ever converted with `String.to_atom/1`.
+  `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the sandbox scratch directory, so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read.
+  Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
+  Completion detection — two mechanisms, both cheap and idempotent: **lazy** (every `read/2` / `list/1` reconciles a live job against the backend via `EvoGit.Sandbox.detached_status/1` before answering, so a job that ended reports as finished with no notification) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains, and `:port` handles need no tick because their exit arrives as a port message).
+  Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1`, `read/2` (and a dead/unreachable registry); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   """
 
   use GenServer
@@ -50,19 +14,21 @@ defmodule EvoGit.BackgroundJobs do
 
   alias EvoGit.Platform
 
+  # Compile-time Mix env — safe in releases (`Mix.env/0` is evaluated at compile time; in prod releases it resolves to `:prod`).
+  # Used to skip the one-shot boot sweep of stale detached units in the test env, matching the existing codebase pattern (`EvoGit.Application`'s boot-distribution gate).
+  @mix_env Mix.env()
+
   ## Tunables (module attributes only — deliberately no config keys)
 
   # Maximum number of LIVE jobs a single owner (agent) may have at once.
   @max_jobs_per_owner 10
   # Periodic reconcile interval for live `:unit`-handled jobs.
   @tick_interval_ms 1_000
-  # Suggested polling defaults for callers implementing a `wait: true` loop
-  # (this module does NOT block — see `wait_default_ms/0`).
+  # Suggested polling defaults for callers implementing a `wait: true` loop (this module does NOT block — see `wait_default_ms/0`).
   @wait_default_ms 8_000
   @wait_max_ms 60_000
   @poll_interval_ms 100
-  # A spawn can briefly block (systemd-run / port open), so registry calls use an
-  # explicit timeout instead of the 5s default.
+  # A spawn can briefly block (systemd-run / port open), so registry calls use an explicit timeout instead of the 5s default.
   @call_timeout 15_000
   # Default `read/2` byte cap when the caller does not pass `:max_bytes`.
   @default_max_bytes 20_000
@@ -108,15 +74,7 @@ defmodule EvoGit.BackgroundJobs do
   ## Client API
 
   @doc """
-  Resolves the `EvoGit.BackgroundJobs` server name for the CURRENT process.
-
-  Returns the value stored under the `:evogit_background_jobs_server` process
-  dictionary key when present (an isolated instance started with a custom
-  `:name` — the suite seam), otherwise the default registered name `__MODULE__`.
-
-  Read at CALL time — never cached — so every client function routes to whichever
-  instance the calling process was pointed at. When the key is unset the default
-  registered singleton is used, keeping production behaviour unchanged.
+  Resolves the `EvoGit.BackgroundJobs` server name for the CURRENT process: the value stored under the `:evogit_background_jobs_server` process dictionary key when present (an isolated instance started with a custom `:name` — the suite seam), otherwise the default registered name `__MODULE__`. Read at CALL time — never cached — so every client function routes to whichever instance the calling process was pointed at; when the key is unset the default registered singleton is used, keeping production behaviour unchanged.
   """
   @spec server() :: GenServer.server()
   def server do
@@ -130,13 +88,7 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   @doc """
-  Resolves the owning AGENT pid for the current call — the ONE place `:owner_pid`
-  is looked up.
-
-  Reads the `:evogit_agent_pid` process-dictionary key that the agent runner
-  installs in every process it drives (agents and the tool tasks they spawn).
-  Returns `nil` when the key is absent, so callers can produce an actionable
-  error instead of binding a job to a short-lived tool task.
+  Resolves the owning AGENT pid for the current call — the ONE place `:owner_pid` is looked up. Reads the `:evogit_agent_pid` process-dictionary key that the agent runner installs in every process it drives (agents and the tool tasks they spawn); returns `nil` when the key is absent, so callers can produce an actionable error instead of binding a job to a short-lived tool task.
   """
   @spec current_owner_pid() :: pid() | nil
   def current_owner_pid do
@@ -147,23 +99,9 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   @doc """
-  Starts a detached background job.
-
-  ## Spec (`map` or keyword list)
-
-    * `:command` (**required**) — the shell command line to run
-    * `:cwd` (**required**) — existing absolute working directory
-    * `:owner_pid` (**required**) — the owning AGENT pid; defaults to
-      `current_owner_pid/0` when absent
-    * `:repo_root` — optional repository root (context only)
-    * `:label` — optional short human label (defaults to the command's first line)
-    * `:agent_id` / `:task_id` — optional identifiers carried on the record
-
-  ## Returns
-
-    * `{:ok, job}` — the job record (`t:job/0`); output is written to its
-      `:output_path` field
-    * `{:error, message}` — one actionable prose sentence
+  Starts a detached background job and returns its record.
+  Spec (`map` or keyword list): `:command` (**required**) — the shell command line to run; `:cwd` (**required**) — existing absolute working directory; `:owner_pid` (**required**) — the owning AGENT pid, defaulting to `current_owner_pid/0` when absent; `:repo_root` — optional repository root (context only); `:label` — optional short human label (defaults to the command's first line); `:agent_id` / `:task_id` — optional identifiers carried on the record.
+  Returns `{:ok, job}` — the job record (`t:job/0`), whose output is written to its `:output_path` field — or `{:error, message}`, one actionable prose sentence.
   """
   @spec start_job(map() | keyword()) :: {:ok, job()} | {:error, String.t()}
   def start_job(spec) do
@@ -174,15 +112,7 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Fetches one job by id, reconciling a live job against the backend first.
-
-  `opts[:owner_pid]` fences ownership: when it is set, a job belonging to another
-  owner yields `{:error, :not_owner}`. Otherwise the lookup is unscoped.
-
-  ## Returns
-
-    * `{:ok, job}`
-    * `{:error, :not_found}` — unknown id (or the registry is unreachable)
-    * `{:error, :not_owner}` — the job belongs to a different owner
+  `opts[:owner_pid]` fences ownership: when it is set, a job belonging to another owner yields `{:error, :not_owner}`; otherwise the lookup is unscoped. Returns `{:ok, job}`, `{:error, :not_found}` (unknown id, or an unreachable registry) or `{:error, :not_owner}` (the job belongs to a different owner).
   """
   @spec job(String.t(), keyword()) :: {:ok, job()} | {:error, :not_found | :not_owner}
   def job(id, opts \\ []) when is_binary(id) do
@@ -190,24 +120,9 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   @doc """
-  Reads output produced since the previous read.
-
-  The job's `:cursor` advances ONLY by the bytes actually returned, so a capped
-  read never loses data: when more output is pending, the returned `:text` ends
-  with `"[... more output pending; call job_output again]"`.
-
-  ## Options
-
-    * `:max_bytes` — maximum number of output bytes returned BY THIS CALL
-      (positive integer, default `#{@default_max_bytes}`). Bytes beyond the cap
-      stay unread for the next call.
-    * `:owner_pid` — fences ownership (another owner's job is an error)
-
-  ## Returns
-
-    * `{:ok, %{text: String.t(), job: job}}`
-    * `{:error, message}` — one actionable prose sentence (unknown/foreign job,
-      missing output file, bad `:max_bytes`, unreachable registry)
+  Reads output produced since the previous read. The job's `:cursor` advances ONLY by the bytes actually returned, so a capped read never loses data: when more output is pending, the returned `:text` ends with `"[... more output pending; call job_output again]"`.
+  Options: `:max_bytes` — maximum number of output bytes returned BY THIS CALL (positive integer, default `#{@default_max_bytes}`; bytes beyond the cap stay unread for the next call); `:owner_pid` — fences ownership (another owner's job is an error).
+  Returns `{:ok, %{text: String.t(), job: job}}` or `{:error, message}` — one actionable prose sentence (unknown/foreign job, missing output file, bad `:max_bytes`, unreachable registry).
   """
   @spec read(String.t(), keyword()) ::
           {:ok, %{text: String.t(), job: job()}} | {:error, String.t()}
@@ -222,9 +137,7 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Lists jobs, newest first, reconciling live jobs against the backend first.
-
-  `opts[:owner_pid]` limits the result to one owner's jobs. Returns `[]` when the
-  registry is unreachable (a list-shaped API never raises).
+  `opts[:owner_pid]` limits the result to one owner's jobs. Returns `[]` when the registry is unreachable (a list-shaped API never raises).
   """
   @spec list(keyword()) :: [job()]
   def list(opts \\ []) do
@@ -235,20 +148,8 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   @doc """
-  Kills a job (and its detached process) if it is still live.
-
-  `reason` is recorded in the job's `:detail` as `"killed (<reason>)"`; `nil`
-  becomes `"stopped by request"`.
-
-  ## Returns
-
-    * `{:ok, job}` — the job is now `:killed`
-    * `{:error, :not_found}` — unknown id (or the registry is unreachable)
-    * `{:error, :not_owner}` — `opts[:owner_pid]` fences a different owner's job
-    * `{:error, {:already_finished, job}}` — the job already reached a terminal
-      status; nothing was killed
-    * `{:error, message}` — the backend could not stop the process (one
-      actionable prose sentence; the job is left in `:stopping`)
+  Kills a job (and its detached process) if it is still live. `reason` is recorded in the job's `:detail` as `"killed (<reason>)"`; `nil` becomes `"stopped by request"`.
+  Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (unknown id, or an unreachable registry), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
   """
   @spec kill(String.t(), term(), keyword()) ::
           {:ok, job()}
@@ -261,12 +162,7 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   @doc """
-  Kills every live job whose `cwd` is `prefix` or a directory under it.
-
-  Used when a worktree / scratch directory is removed: the detached processes
-  would otherwise keep running with a deleted working directory. Ownership is
-  deliberately NOT part of the fence here (reaping is a directory-scoped
-  administrative action) and the call ALWAYS answers `:ok`.
+  Kills every live job whose `cwd` is `prefix` or a directory under it — used when a worktree / scratch directory is removed, since the detached processes would otherwise keep running with a deleted working directory. Ownership is deliberately NOT part of the fence here (reaping is a directory-scoped administrative action) and the call ALWAYS answers `:ok`.
   """
   @spec reap_under(String.t()) :: :ok
   def reap_under(prefix) when is_binary(prefix) and prefix != "" do
@@ -305,8 +201,7 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Registry plumbing
 
-  # Every public call goes through here so a dead/absent registry can never make
-  # a calling tool crash with an exit.
+  # Every public call goes through here so a dead/absent registry can never make a calling tool crash with an exit.
   defp call_registry(message, fallback) do
     try do
       GenServer.call(server(), message, @call_timeout)
@@ -324,9 +219,7 @@ defmodule EvoGit.BackgroundJobs do
   defp request_tag(message), do: inspect(message)
 
   defp registry_down_error do
-    "The background job service is not running (it may be restarting after a crash), so this " <>
-      "request did nothing. Retry in a moment; if it keeps failing, run the command in the " <>
-      "foreground instead."
+    "The background job service is not running (it may be restarting after a crash), so this request did nothing. Retry in a moment; if it keeps failing, run the command in the foreground instead."
   end
 
   ## Spec normalization (client side — `:owner_pid` must be resolved in the CALLER)
@@ -343,29 +236,23 @@ defmodule EvoGit.BackgroundJobs do
     cond do
       is_nil(command) ->
         {:error,
-         "A background job needs a non-empty `command` string; pass the shell command to run as " <>
-           "`command` and retry."}
+         "A background job needs a non-empty `command` string; pass the shell command to run as `command` and retry."}
 
       is_nil(cwd) ->
         {:error,
-         "A background job needs `cwd` — the absolute working directory to run in. Pass an " <>
-           "existing directory as `cwd` and retry."}
+         "A background job needs `cwd` — the absolute working directory to run in. Pass an existing directory as `cwd` and retry."}
 
       not is_binary(cwd) ->
         {:error,
-         "`cwd` must be a path string (the working directory to run in); got #{inspect(cwd)}. " <>
-           "Retry with an existing absolute directory."}
+         "`cwd` must be a path string (the working directory to run in); got #{inspect(cwd)}. Retry with an existing absolute directory."}
 
       not File.dir?(cwd) ->
         {:error,
-         "The background job's working directory does not exist: #{cwd}. Pass an existing " <>
-           "absolute directory as `cwd` and retry."}
+         "The background job's working directory does not exist: #{cwd}. Pass an existing absolute directory as `cwd` and retry."}
 
       not is_pid(owner_pid) ->
         {:error,
-         "Background jobs must be started from an agent tool call so the job can be tied to the " <>
-           "agent's lifetime, but no owning agent process was found for this call. Retry from the " <>
-           "agent's tool call (or pass `owner_pid`)."}
+         "Background jobs must be started from an agent tool call so the job can be tied to the agent's lifetime, but no owning agent process was found for this call. Retry from the agent's tool call (or pass `owner_pid`)."}
 
       true ->
         {:ok,
@@ -383,12 +270,10 @@ defmodule EvoGit.BackgroundJobs do
 
   defp normalize_start_spec(_spec) do
     {:error,
-     "A background job needs a spec map (or keyword list) with at least `command` and `cwd`; " <>
-       "got #{inspect(nil)}. Retry with a spec map."}
+     "A background job needs a spec map (or keyword list) with at least `command` and `cwd`; got #{inspect(nil)}. Retry with a spec map."}
   end
 
-  # Maps the fixed set of STRING spec keys onto atoms. Atom keys pass through
-  # untouched; unknown keys are dropped.
+  # Maps the fixed set of STRING spec keys onto atoms. Atom keys pass through untouched; unknown keys are dropped.
   defp normalize_spec_keys(spec) do
     Enum.reduce(spec, %{}, fn {key, value}, acc ->
       case spec_key(key) do
@@ -436,15 +321,30 @@ defmodule EvoGit.BackgroundJobs do
 
   defp normalize_max_bytes(other) do
     {:error,
-     "`max_bytes` must be a positive integer — the maximum number of output bytes to return from " <>
-       "this call; got #{inspect(other)}. Omit it to use the default of #{@default_max_bytes} " <>
-       "bytes."}
+     "`max_bytes` must be a positive integer — the maximum number of output bytes to return from this call; got #{inspect(other)}. Omit it to use the default of #{@default_max_bytes} bytes."}
   end
 
   ## GenServer callbacks
 
   @impl true
   def init(_opts) do
+    # One-shot boot sweep: a job detached into its own systemd unit SURVIVES the BEAM that started it, so a crashed BEAM leaks transient `genesis-job-*` units.
+    # `sweep_stale_units/0` is total and only garbage-collects units whose embedded `b<beam_os_pid>` is no longer alive, so it must NEVER kill a job belonging to another live instance on the same host.
+    # Non-blocking and gated like the codebase's other boot-time side effects, so registry startup is never delayed or affected in tests.
+    if @mix_env != :test and EvoGit.Sandbox.backend() == EvoGit.Sandbox.Linux do
+      # Belt and braces: the sweep is already total, but a raise here must never take the registry down.
+      Task.start(fn ->
+        try do
+          EvoGit.Sandbox.Background.sweep_stale_units()
+        rescue
+          exception ->
+            Logger.warning(
+              "BackgroundJobs: boot sweep of stale detached units failed (#{Exception.message(exception)})"
+            )
+        end
+      end)
+    end
+
     {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil}}
   end
 
@@ -583,9 +483,7 @@ defmodule EvoGit.BackgroundJobs do
     {:noreply, arm_tick(state)}
   end
 
-  # The load-bearing lifetime guarantee: one monitor per OWNER (agent) pid. Every
-  # way an agent can end funnels through this single `:DOWN` — normal completion,
-  # crash, graceful cancel, force kill.
+  # The load-bearing lifetime guarantee: one monitor per OWNER (agent) pid. Every way an agent can end funnels through this single `:DOWN` — normal completion, crash, graceful cancel, force kill.
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     case Map.fetch(state.owners, pid) do
       {:ok, %{ref: ^ref, ids: ids}} ->
@@ -602,8 +500,7 @@ defmodule EvoGit.BackgroundJobs do
 
                     {:error, message} ->
                       Logger.warning(
-                        "BackgroundJobs: killing #{id} after owner #{inspect(pid)} exit failed: " <>
-                          message
+                        "BackgroundJobs: killing #{id} after owner #{inspect(pid)} exit failed: #{message}"
                       )
 
                       acc
@@ -628,8 +525,7 @@ defmodule EvoGit.BackgroundJobs do
 
   @impl true
   def terminate(_reason, state) do
-    # Defence in depth: the supervisor is shutting down, so no detached process
-    # started by this registry may outlive it.
+    # Defence in depth: the supervisor is shutting down, so no detached process started by this registry may outlive it.
     Enum.each(state.jobs, fn {_id, job} ->
       if live?(job), do: kill_detached(job.handle)
     end)
@@ -653,8 +549,7 @@ defmodule EvoGit.BackgroundJobs do
            }) do
       {ref, state} = ensure_owner_monitor(state, spec.owner_pid)
 
-      # `spec.repo_root` is accepted for caller context only — the job record has
-      # no slot for it (its `cwd` is what `reap_under/1` matches on).
+      # `spec.repo_root` is accepted for caller context only — the job record has no slot for it (its `cwd` is what `reap_under/1` matches on).
       job = %{
         id: id,
         kind: "bash",
@@ -679,14 +574,12 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  # Output destination is decided ONCE, at spawn time, and stored on the job: a
-  # detached process has no process dictionary to re-derive it from later.
+  # Output destination is decided ONCE, at spawn time, and stored on the job: a detached process has no process dictionary to re-derive it from later.
   defp scratch_dir do
     EvoGit.Sandbox.resolve_tmpdir()
   end
 
-  # Non-bang on purpose: a permission problem must surface as prose, never as a
-  # crash of the shared registry.
+  # Non-bang on purpose: a permission problem must surface as prose, never as a crash of the shared registry.
   defp prepare_output_file(path) do
     with :ok <- File.mkdir_p(Path.dirname(path)),
          :ok <- File.touch(path) do
@@ -694,8 +587,7 @@ defmodule EvoGit.BackgroundJobs do
     else
       {:error, reason} ->
         {:error,
-         "Could not create the background job's output file at #{path} " <>
-           "(#{describe(reason)}). Check that the scratch directory is writable, then retry."}
+         "Could not create the background job's output file at #{path} (#{describe(reason)}). Check that the scratch directory is writable, then retry."}
     end
   end
 
@@ -706,25 +598,20 @@ defmodule EvoGit.BackgroundJobs do
 
       {:error, reason} ->
         {:error,
-         "Could not start the background job (#{describe(reason)}). Retry; if it keeps failing, " <>
-           "run the command in the foreground instead."}
+         "Could not start the background job (#{describe(reason)}). Retry; if it keeps failing, run the command in the foreground instead."}
 
       other ->
         {:error,
-         "Could not start the background job (unexpected backend reply " <>
-           "#{inspect(other)}). Retry; if it keeps failing, run the command in the foreground " <>
-           "instead."}
+         "Could not start the background job (unexpected backend reply #{inspect(other)}). Retry; if it keeps failing, run the command in the foreground instead."}
     end
   rescue
     exception ->
       {:error,
-       "Could not start the background job (#{Exception.message(exception)}). Retry; if it keeps " <>
-         "failing, run the command in the foreground instead."}
+       "Could not start the background job (#{Exception.message(exception)}). Retry; if it keeps failing, run the command in the foreground instead."}
   catch
     kind, reason ->
       {:error,
-       "Could not start the background job (#{kind}: #{describe(reason)}). Retry; if it keeps " <>
-         "failing, run the command in the foreground instead."}
+       "Could not start the background job (#{kind}: #{describe(reason)}). Retry; if it keeps failing, run the command in the foreground instead."}
   end
 
   defp generate_id(jobs) do
@@ -787,8 +674,7 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Status reconciliation
 
-  # Reconciles a LIVE job against the backend so a finished job reports finished
-  # with no notification. Terminal jobs are returned untouched.
+  # Reconciles a LIVE job against the backend so a finished job reports finished with no notification. Terminal jobs are returned untouched.
   defp reconcile(job, state) do
     job = reconcile_job(job)
     {job, put_job(state, job)}
@@ -848,18 +734,15 @@ defmodule EvoGit.BackgroundJobs do
 
       {:error, detail} ->
         {:error,
-         "Could not stop background job #{inspect(job.id)} (#{describe(detail)}). The process may " <>
-           "still be running; retry the kill, or check the process before removing its directory."}
+         "Could not stop background job #{inspect(job.id)} (#{describe(detail)}). The process may still be running; retry the kill, or check the process before removing its directory."}
 
       other ->
         {:error,
-         "Could not stop background job #{inspect(job.id)} (unexpected backend reply " <>
-           "#{inspect(other)}). The process may still be running; retry the kill."}
+         "Could not stop background job #{inspect(job.id)} (unexpected backend reply #{inspect(other)}). The process may still be running; retry the kill."}
     end
   end
 
-  # Exit-status mapping: 0 → completed, other integer → failed, unknown → failed.
-  # A job we had already asked to stop (kill in flight) settles as killed.
+  # Exit-status mapping: 0 → completed, other integer → failed, unknown → failed. A job we had already asked to stop (kill in flight) settles as killed.
   defp mark_finished(%{status: :stopping} = job, code) do
     %{
       job
@@ -907,8 +790,7 @@ defmodule EvoGit.BackgroundJobs do
 
     case File.stat(path) do
       {:ok, %File.Stat{type: :regular, size: size}} ->
-        # A file that shrank under us (truncated/replaced) restarts at 0 so the
-        # new content is not skipped forever.
+        # A file that shrank under us (truncated/replaced) restarts at 0 so the new content is not skipped forever.
         cursor = if size < job.cursor, do: 0, else: job.cursor
         available = max(size - cursor, 0)
         take = min(available, max_bytes)
@@ -935,9 +817,7 @@ defmodule EvoGit.BackgroundJobs do
 
       {:error, reason} ->
         {:error,
-         "The output file for background job #{inspect(job.id)} is not readable at #{path} " <>
-           "(#{describe(reason)}). Start a new background job to capture the command's output " <>
-           "again."}
+         "The output file for background job #{inspect(job.id)} is not readable at #{path} (#{describe(reason)}). Start a new background job to capture the command's output again."}
     end
   end
 
@@ -961,13 +841,11 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp unreadable_output_error(job) when is_map(job) do
-    "The output file for background job #{inspect(job.id)} is not a readable regular file at " <>
-      "#{job.output_path}. Start a new background job to capture the command's output again."
+    "The output file for background job #{inspect(job.id)} is not a readable regular file at #{job.output_path}. Start a new background job to capture the command's output again."
   end
 
   defp unreadable_output_error(path, reason) do
-    "Could not read the background job's output file at #{path} (#{describe(reason)}). Retry; if " <>
-      "it keeps failing, start a new background job."
+    "Could not read the background job's output file at #{path} (#{describe(reason)}). Retry; if it keeps failing, start a new background job."
   end
 
   defp build_text(delta, pending?) do
@@ -980,9 +858,7 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  # Detached output is arbitrary bytes; invalid UTF-8 would poison a JSON-encoded
-  # tool result downstream, so drop the invalid chunks (cursor advance is still
-  # byte-based, so no data is replayed).
+  # Detached output is arbitrary bytes; invalid UTF-8 would poison a JSON-encoded tool result downstream, so drop the invalid chunks (cursor advance is still byte-based, so no data is replayed).
   defp scrub_utf8(binary) do
     if String.valid?(binary) do
       binary
@@ -1001,8 +877,7 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  # Port messages are only dispatched here; the file is the single record of the
-  # output so a reader never races the append.
+  # Port messages are only dispatched here; the file is the single record of the output so a reader never races the append.
   defp append_output(job, chunk) do
     case File.write(job.output_path, chunk, [:append]) do
       :ok ->
@@ -1010,8 +885,7 @@ defmodule EvoGit.BackgroundJobs do
 
       {:error, reason} ->
         Logger.warning(
-          "BackgroundJobs: could not append output for #{job.id} to #{job.output_path} " <>
-            "(#{describe(reason)}); the chunk was dropped"
+          "BackgroundJobs: could not append output for #{job.id} to #{job.output_path} (#{describe(reason)}); the chunk was dropped"
         )
     end
   end
@@ -1046,9 +920,7 @@ defmodule EvoGit.BackgroundJobs do
     end)
   end
 
-  defp sort_newest_first(jobs) do
-    Enum.sort_by(jobs, &started_key/1, :desc)
-  end
+  defp sort_newest_first(jobs), do: Enum.sort_by(jobs, &started_key/1, :desc)
 
   defp started_key(job) do
     case job.started_at do
@@ -1057,9 +929,7 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  # Finished records are retained so a caller can still read the tail after the
-  # process exits; the oldest are dropped past the retention cap. Live jobs are
-  # never pruned.
+  # Finished records are retained so a caller can still read the tail after the process exits; the oldest are dropped past the retention cap. Live jobs are never pruned.
   defp prune_finished(state) do
     finished = state.jobs |> Map.values() |> Enum.reject(&live?/1)
     excess = length(finished) - @max_finished_retained
@@ -1084,18 +954,15 @@ defmodule EvoGit.BackgroundJobs do
   ## Prose helpers
 
   defp limit_error do
-    "background job limit reached for this agent (limit: #{@max_jobs_per_owner}); " <>
-      "use job_kill to stop an unneeded job, wait for it to finish, then retry"
+    "background job limit reached for this agent (limit: #{@max_jobs_per_owner}); use job_kill to stop an unneeded job, wait for it to finish, then retry"
   end
 
   defp ownership_error(id, :not_found) do
-    "No background job with id #{inspect(id)} is known to this agent. Call job_list to see this " <>
-      "agent's background jobs, then retry with a valid id."
+    "No background job with id #{inspect(id)} is known to this agent. Call job_list to see this agent's background jobs, then retry with a valid id."
   end
 
   defp ownership_error(id, :not_owner) do
-    "Background job #{inspect(id)} belongs to another agent, so this agent cannot read it. Call " <>
-      "job_list to see this agent's own background jobs."
+    "Background job #{inspect(id)} belongs to another agent, so this agent cannot read it. Call job_list to see this agent's own background jobs."
   end
 
   defp describe(reason) when is_binary(reason), do: reason

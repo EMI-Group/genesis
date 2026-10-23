@@ -31,6 +31,9 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.SkillDisable
   alias EvoGit.Agent.Tools.SkillWhere
   alias EvoGit.Agent.Tools.RunCommand
+  alias EvoGit.Agent.Tools.JobOutput
+  alias EvoGit.Agent.Tools.JobList
+  alias EvoGit.Agent.Tools.JobKill
   alias EvoGit.Agent.ToolNames
 
   # Tools that mutate the system (files, git, shell, skills). Repo-less agents
@@ -40,7 +43,10 @@ defmodule EvoGit.Agent.Tools do
   # NOTE: `run_command` (the task-control shell tool) is deliberately NOT here —
   # it is a control tool, not a write tool, and must NOT be blocked by the
   # repo-less guard: the self-reflective agent IS the repo-less agent that
-  # needs it to control tasks.
+  # needs it to control tasks. The three background-job control tools
+  # (`job_output`, `job_list`, `job_kill`) are control tools for the same
+  # reason — see `write_call?/2` below for the ONE write capability that is an
+  # ARGUMENT rather than a tool name.
   #
   # The MODEL-FACING spellings (`write`, `edit`, `bash` — the trained canonical
   # names, see `EvoGit.Agent.ToolNames`) are listed alongside the internal
@@ -109,7 +115,16 @@ defmodule EvoGit.Agent.Tools do
         SkillRemove.schema(),
         SkillEnable.schema(),
         SkillDisable.schema(),
-        SkillWhere.schema()
+        SkillWhere.schema(),
+        # Background-job CONTROL tools (output / list / kill for detached shell
+        # jobs started with the shell tool's `run_in_background` argument).
+        # Control tools like `run_command` — NOT write tools, NOT serial tools
+        # (they never read-modify-write a file). Every agent that can run a
+        # command in its own worktree may legitimately start and manage jobs
+        # there, so they belong in BOTH the full and the read-only sets.
+        JobOutput.schema(),
+        JobList.schema(),
+        JobKill.schema()
         # Git.schema()
         #
         # NOTE: `run_command` (the task-control shell tool) is deliberately
@@ -155,7 +170,14 @@ defmodule EvoGit.Agent.Tools do
         # Read-only network / language-intelligence readers, shared with the
         # full set — see the matching note in `schemas/0` above.
         WebFetch.schema(),
-        Lsp.schema()
+        Lsp.schema(),
+        # Background-job CONTROL tools, shared with the full set: a read-only
+        # agent still owns a worktree and may start + manage detached jobs in
+        # it (`job_output`/`job_list`/`job_kill` mutate no file and are never
+        # classified as write tools — see `write_call?/2`).
+        JobOutput.schema(),
+        JobList.schema(),
+        JobKill.schema()
       ]
 
     maybe_append_web_search(schemas)
@@ -228,6 +250,11 @@ defmodule EvoGit.Agent.Tools do
   # `default_timeout_ms/1` as a read-only seam for the dispatcher.
   @shell_tool_default_timeout_ms 120_000
 
+  # Default per-tool timeout (ms) for `job_output`: a bounded `wait` blocks up
+  # to 60 s INSIDE the tool, so the generic 10 s default would abort a
+  # legitimate wait. 65 s = the 60 s wait budget + headroom for reading output.
+  @job_output_default_timeout_ms 65_000
+
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     maybe_block_repo_less(
       ToolNames.normalize(tool_name),
@@ -288,6 +315,66 @@ defmodule EvoGit.Agent.Tools do
     normalized in @write_tools or EvoGit.CustomTools.write_tool?(normalized)
   end
 
+  @doc """
+  `true` when this tool CALL is a WRITE capability — what the two dispatch write
+  guards (`maybe_block_repo_less/5`, `maybe_block_read_only_foreign_repo/5`)
+  consult.
+
+  ## Why a call-level predicate (and not just `write_tool?/1`)
+
+  Starting a BACKGROUND process is a write capability: a detached job can
+  mutate anything a foreground command could (files, git state, the whole
+  repo), and it outlives the tool call that started it. But `run_in_background`
+  is an ARGUMENT of the shell tool (`bash`), not a tool name, so it cannot be
+  expressed in the `@write_tools` name set at all — a name-only guard would let
+  a repo-less (or read-only-foreign-repo) agent start a detached job through the
+  very tool the guard already allows for reads/tests.
+
+  A background START is therefore classified as a write call here, while a
+  FOREGROUND shell command stays exactly as classified before (it is a write
+  tool in `@write_tools`, unchanged).
+
+  `write_tool?/1` itself stays UNCHANGED — it is the NAME-only classification
+  used by `serial_tool?/1` and by the custom-tool gate.
+
+  Total and side-effect free: non-binary names and non-map args simply yield
+  `false` for the parts that cannot match.
+  """
+  @spec write_call?(term(), term()) :: boolean()
+  def write_call?(tool_name, args) do
+    # == `write_tool?(tool_name) or
+    #     (ToolNames.normalize(tool_name) == @shell_tool_name and
+    #        background_start?(args))`
+    write_tool?(tool_name) or shell_background_start?(tool_name, args)
+  end
+
+  # The ONE narrowing of a write call to its background-start form: the shell
+  # tool (the platform compile-time name — `run_bash` / `run_powershell`; every
+  # accepted spelling normalises onto it) called with a truthy
+  # `run_in_background`. Used both by `write_call?/2` and by the two guards, so
+  # a blocked background start gets a message that NAMES the argument mode
+  # instead of the generic "tool is disabled".
+  defp shell_background_start?(tool_name, args) do
+    ToolNames.normalize(tool_name) == @shell_tool_name and background_start?(args)
+  end
+
+  @doc false
+  # Lenient truthy check of the shell tool's `run_in_background` argument: the
+  # model may emit a real JSON boolean (`true`) or the string `"true"`; anything
+  # else (absent, `false`, `"false"`, other junk, non-map args) is NOT a
+  # background start. Deliberately lenient in the BLOCKING direction only —
+  # dispatch must still let `args` be passed through untouched.
+  @spec background_start?(term()) :: boolean()
+  def background_start?(args) when is_map(args) do
+    case Map.get(args, "run_in_background") do
+      true -> true
+      "true" -> true
+      _other -> false
+    end
+  end
+
+  def background_start?(_args), do: false
+
   # Tools that mutate the agent worktree through a NON-ATOMIC read-modify-write
   # (read the original bytes, transform, write the whole file back). Two such
   # calls targeting the SAME file must never overlap: each would read the
@@ -328,7 +415,8 @@ defmodule EvoGit.Agent.Tools do
   Read-only tools (`read_file`, `read_context`, `glob`, `list_dir`, `rg`,
   `search_context`, `search_history`, `skill_list`, `skill_read`,
   `skill_where`, `web_fetch`, `lsp`), the shell/exec/network tools (`run_bash`,
-  `run_powershell`, `run_git`, `run_command`, `search_web`/`web_search`) and any
+  `run_powershell`, `run_git`, `run_command`, `search_web`/`web_search`), the
+  background-job control tools (`job_output`, `job_list`, `job_kill`) and any
   unknown name return `false`.
 
   The incoming name is normalised through `EvoGit.Agent.ToolNames.normalize/1`
@@ -361,9 +449,13 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   The DEFAULT timeout (ms) a tool should get when the caller does not request one
   explicitly: `120_000` for the platform shell tool (any accepted spelling of it
-  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `nil` for every other
-  tool (meaning "no per-tool default — the dispatcher's generic default
-  applies").
+  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `65_000` for
+  `job_output` (its `wait` argument may block up to 60 s inside the tool, so the
+  generic 10 s default would cut a bounded wait short — 65 s leaves the wait's
+  own 60 s budget plus headroom for reading the output file), and `nil` for
+  every other tool (meaning "no per-tool default — the dispatcher's generic
+  default applies"). `job_list` / `job_kill` are fast registry calls and
+  deliberately keep the generic default.
 
   Pure, read-only seam: it changes no dispatch behaviour by itself; the
   dispatcher (a file this module does not own) is expected to consult it for its
@@ -371,22 +463,45 @@ defmodule EvoGit.Agent.Tools do
   """
   @spec default_timeout_ms(term()) :: pos_integer() | nil
   def default_timeout_ms(tool_name) do
-    if ToolNames.normalize(tool_name) == @shell_tool_name,
-      do: @shell_tool_default_timeout_ms,
-      else: nil
+    case ToolNames.normalize(tool_name) do
+      @shell_tool_name -> @shell_tool_default_timeout_ms
+      "job_output" -> @job_output_default_timeout_ms
+      _other -> nil
+    end
   end
 
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)
-  # must never touch git or write files. Block write tools for them before
-  # dispatching; every execution path in `execute/5` routes through here so
-  # there is no bypass. The repo-less guard runs FIRST (ordered before the
-  # foreign-repo gate), then the foreign-repo gate, then `execute_tool`.
+  # must never touch git or write files. Block write CALLS for them before
+  # dispatching (`write_call?/2`: the name-based write set PLUS the shell's
+  # `run_in_background` start argument — a detached job is a write capability
+  # even though it is not a tool name); every execution path in `execute/5`
+  # routes through here so there is no bypass. The repo-less guard runs FIRST
+  # (ordered before the foreign-repo gate), then the foreign-repo gate, then
+  # `execute_tool`.
   defp maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path) do
-    if Process.get(:repo_less) && write_tool?(tool_name) do
-      "Error: this agent has read-only access to the system — the #{tool_name} tool is disabled."
-    else
-      maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path)
+    cond do
+      # Boolean-safe on purpose (`!= true` / `not`, never bare `nil && …` inside
+      # `not/1`): `Process.get(:repo_less)` is simply UNSET for ordinary agents.
+      Process.get(:repo_less) != true or not write_call?(tool_name, args) ->
+        maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path)
+
+      # The NARROW case is tested FIRST, deliberately: the shell tool is itself
+      # in `@write_tools`, so a purely name-based arm placed before it would
+      # shadow it and a background START would be reported only as "the tool is
+      # disabled" — losing the one actionable fact (the detached-job ARGUMENT is
+      # what makes it a write capability).
+      shell_background_start?(tool_name, args) ->
+        "Error: this agent has read-only access to the system — " <>
+          "starting a BACKGROUND process (bash's `run_in_background` mode) is disabled: " <>
+          "a detached job is a write capability that outlives the tool call and can modify " <>
+          "anything a foreground command could. The shell tool is itself a write tool, so it " <>
+          "is disabled for this agent in every mode."
+
+      true ->
+        # `write_call?/2` held and the call is not a background start, so the
+        # name-based write set is what matched (plus custom write tools).
+        "Error: this agent has read-only access to the system — the #{tool_name} tool is disabled."
     end
   end
 
@@ -398,8 +513,11 @@ defmodule EvoGit.Agent.Tools do
   # repos via `EvoGit.Core.ForeignRepo.resolve_path/2` (root-path fallback —
   # agent worktree paths live under `<root>/.genesis/workers/...`, which the
   # prefix logic handles robustly). When the agent runs inside a foreign repo
-  # whose `writable` is not literally `true`, every write tool is blocked
-  # before dispatch. Only `true` is writable — `ForeignRepo.new/3` coerces.
+  # whose `writable` is not literally `true`, every write CALL is blocked before
+  # dispatch — `write_call?/2`, i.e. the write tool set PLUS a background shell
+  # start (`run_in_background`), which is a write capability expressed as an
+  # ARGUMENT rather than as a tool name. Only `true` is writable —
+  # `ForeignRepo.new/3` coerces.
   defp maybe_block_read_only_foreign_repo(tool_name, args, repo_path, repo_root, node_path) do
     foreign_repos =
       Process.get(:foreign_repos, [])
@@ -421,15 +539,31 @@ defmodule EvoGit.Agent.Tools do
             nil
         end
 
-    if resolved_repo && resolved_repo.writable != true && write_tool?(tool_name) do
-      "Error: this agent operates in a read-only foreign repository (#{resolved_repo.root}) — " <>
-        "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
-        "that accept modifications; read-only foreign repos are for investigation only."
-    else
-      case test_tool_override(tool_name) do
-        nil -> execute_tool(tool_name, args, repo_path, repo_root, node_path)
-        fun -> fun.(args, repo_path, repo_root, node_path)
-      end
+    cond do
+      # Boolean-safe on purpose: `resolved_repo` is nil for the vast majority of
+      # agents (not inside any foreign repo), so it must never be fed to `not/1`.
+      is_nil(resolved_repo) or resolved_repo.writable == true or
+          not write_call?(tool_name, args) ->
+        case test_tool_override(tool_name) do
+          nil -> execute_tool(tool_name, args, repo_path, repo_root, node_path)
+          fun -> fun.(args, repo_path, repo_root, node_path)
+        end
+
+      # Same ordering rule as `maybe_block_repo_less/5`: the narrow
+      # background-start case is tested BEFORE the name-based arm, because the
+      # shell tool is itself in `@write_tools` and would otherwise shadow it.
+      shell_background_start?(tool_name, args) ->
+        # Background shell start in a read-only foreign repo — a detached job is
+        # a write capability (see `write_call?/2`), so name the argument mode.
+        "Error: this agent operates in a read-only foreign repository (#{resolved_repo.root}) — " <>
+          "starting a BACKGROUND process (bash's `run_in_background` mode) is disabled: " <>
+          "a detached job is a write capability that can modify the repository. " <>
+          "The shell tool is itself a write tool, so it is disabled here in every mode."
+
+      true ->
+        "Error: this agent operates in a read-only foreign repository (#{resolved_repo.root}) — " <>
+          "the #{tool_name} tool is disabled. Writable foreign repos are the only foreign repos " <>
+          "that accept modifications; read-only foreign repos are for investigation only."
     end
   end
 
@@ -573,6 +707,26 @@ defmodule EvoGit.Agent.Tools do
   # guard; the self-reflective agent is the repo-less agent that needs it).
   defp execute_tool("run_command", args, repo_path, repo_root, _node_path) when is_map(args) do
     RunCommand.execute(args, repo_path, repo_root)
+  end
+
+  # Background-job CONTROL tools (`job_output` / `job_list` / `job_kill`) —
+  # control tools exactly like `run_command`, dispatched with the same
+  # `(args, repo_path, repo_root)` shape. They manage the detached shell jobs
+  # started with the shell tool's `run_in_background` argument; their owner
+  # identity comes from the process dictionary the dispatcher installs in every
+  # tool task (`:evogit_agent_pid` / `:evogit_agent_id` / `:evogit_task_id` —
+  # see `EvoGit.Agent.ToolDispatch.execute_tool_task/7`), so the repo paths are
+  # accepted but unused.
+  defp execute_tool("job_output", args, repo_path, repo_root, _node_path) when is_map(args) do
+    JobOutput.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("job_list", args, repo_path, repo_root, _node_path) when is_map(args) do
+    JobList.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("job_kill", args, repo_path, repo_root, _node_path) when is_map(args) do
+    JobKill.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool(unknown_tool, args, repo_path, repo_root, node_path)
