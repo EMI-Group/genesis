@@ -497,6 +497,63 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       assert summary.compression_threshold == 126_272
       assert summary.compression_threshold == Threshold.for_model(nil).threshold
     end
+
+    # ── context_window ───────────────────────────────────────────────
+    test "every summary carries a positive integer context_window (both branches)" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_context_window: 131_072))
+      put_sched_meta(2, %SchedMeta{id: 2, depth: 1, spec: agent_spec()})
+
+      summaries = RemoteAPI.list_agents()
+      assert length(summaries) == 2
+
+      Enum.each(summaries, fn summary ->
+        assert Map.has_key?(summary, :context_window)
+        assert is_integer(summary.context_window)
+        assert summary.context_window > 0
+      end)
+    end
+
+    test "uses the core default context_window for a sched-meta-only agent" do
+      put_sched_meta(3, %SchedMeta{id: 3, depth: 0, spec: agent_spec()})
+      [summary] = RemoteAPI.list_agents()
+
+      assert summary.context_window == 200_000
+      assert summary.context_window == EvoGit.Config.Schema.LLM.default_context_window()
+    end
+
+    test "uses the agent state's configured context_window" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_model: "test:model", llm_context_window: 128_000))
+      [summary] = RemoteAPI.list_agents()
+
+      assert summary.context_window == 128_000
+
+      assert summary.compression_threshold ==
+               Threshold.for_model("test:model", context_window: 128_000).threshold
+    end
+
+    test "falls back to the core default when the configured window is nil" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_model: "test:model", llm_context_window: nil))
+      [summary] = RemoteAPI.list_agents()
+
+      assert summary.context_window == 200_000
+
+      assert summary.compression_threshold ==
+               Threshold.for_model("test:model", context_window: 200_000).threshold
+    end
+
+    test "falls back to the core default when the configured window is not positive" do
+      put_sched_meta(1, %SchedMeta{id: 1, depth: 0, spec: agent_spec()})
+      put_agent_state(1, agent_state(llm_model: "test:model", llm_context_window: 0))
+      [summary] = RemoteAPI.list_agents()
+
+      assert summary.context_window == 200_000
+
+      assert summary.compression_threshold ==
+               Threshold.for_model("test:model", context_window: 200_000).threshold
+    end
   end
 
   # ── get_agent_history/1 ───────────────────────────────────────────

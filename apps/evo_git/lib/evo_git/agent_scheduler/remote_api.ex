@@ -60,6 +60,8 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     * `:retries` — crash-retry count (integer)
     * `:compression_threshold` — the agent's derived context-compression trigger
       in tokens (window-relative; integer)
+    * `:context_window` — the resolved configured context window in tokens
+      (positive integer; the dashboard tick is `compression_threshold / context_window`)
 
   Returns `[]` when no agents are registered or the ETS tables don't exist yet.
   """
@@ -1124,7 +1126,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       retries: meta.retries,
       # Per-agent derived compression trigger (window-relative; dashboard-facing).
       # No agent_state yet — the default-derived threshold is the best estimate.
-      compression_threshold: Threshold.for_model(nil).threshold
+      # The dashboard draws the tick at compression_threshold / context_window.
+      compression_threshold: Threshold.for_model(nil).threshold,
+      context_window: EvoGit.Config.Schema.LLM.default_context_window()
     }
   end
 
@@ -1136,6 +1140,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
     # to the spec's phylo_node. For repo-less agents BOTH are nil (no worktree,
     # no commits) — emit nil commits rather than crashing.
     phylo = state.phylo_node || meta.spec.phylo_node
+
+    # Normalized once so the dashboard tick (compression_threshold /
+    # context_window) and the threshold itself can never disagree.
+    context_window = normalize_context_window(state.llm_context_window)
 
     %{
       id: id,
@@ -1167,8 +1175,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
       retries: meta.retries,
       # Per-agent derived compression trigger (window-relative; dashboard-facing),
       # computed from this agent's own model + context window.
+      # The dashboard draws the tick at compression_threshold / context_window.
       compression_threshold:
-        Threshold.for_model(state.llm_model, context_window: Map.get(state, :llm_context_window)).threshold
+        Threshold.for_model(state.llm_model, context_window: context_window).threshold,
+      context_window: context_window
     }
   end
 
@@ -1182,4 +1192,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   # context_node).
   defp safe_context_path(nil), do: nil
   defp safe_context_path(node), do: node.path
+
+  # A nil / non-positive-integer configured window falls back to the core
+  # default (never raises — no try/rescue needed).
+  defp normalize_context_window(window) when is_integer(window) and window > 0, do: window
+  defp normalize_context_window(_other), do: EvoGit.Config.Schema.LLM.default_context_window()
 end
