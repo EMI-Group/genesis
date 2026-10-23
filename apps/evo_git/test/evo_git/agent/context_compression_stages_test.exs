@@ -181,6 +181,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
   @seam :llm_model_metadata_fun
   @model_id "default"
+  # The credential the stubbed stage-2 round trip authenticates with (see the
+  # `setup/1` pin).
+  @api_key "test-key"
 
   # The summary text the stub server streams back, and the `## Current Work`
   # section it deliberately opens with (so it looks like a real summary).
@@ -326,13 +329,31 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   defp restore_seam(nil), do: Application.delete_env(:evo_git, @seam)
   defp restore_seam(value), do: Application.put_env(:evo_git, @seam, value)
 
+  # Restores the `:req_llm, :openai_api_key` app-env value captured before the
+  # pin, DELETING it again when there was none (mirrors
+  # `tool_dispatch_retry_slot_test`).
+  defp restore_api_key(nil), do: Application.delete_env(:req_llm, :openai_api_key)
+  defp restore_api_key(value), do: Application.put_env(:req_llm, :openai_api_key, value)
+
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
     AgentScheduler.resume()
 
+    # PIN the provider credential the stage-2 stubbed round trip needs:
+    # `ReqLLM.Keys.get/2` resolves a provider key from
+    # `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY`
+    # env var) and never from the model spec's `api_key` field, so without a pin
+    # this module borrows the credential `EvoGit.Config.credentials/0` loaded at
+    # boot from the developer's real `credentials.toml`. A module that deletes
+    # that key without restoring it (e.g. `config_test`'s `reqllm_key_cleanup/0`;
+    # the boot-time load never repeats because the credentials read is cached)
+    # would otherwise turn the stage-2 call into `provider_build_failed`.
+    previous_api_key = Application.get_env(:req_llm, :openai_api_key)
+    Application.put_env(:req_llm, :openai_api_key, @api_key)
+    on_exit(fn -> restore_api_key(previous_api_key) end)
+
     previous_seam = Application.get_env(:evo_git, @seam)
     on_exit(fn -> restore_seam(previous_seam) end)
-
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
     # A single-slot "default" pool: the compression call's slot lives there

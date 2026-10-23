@@ -243,8 +243,26 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   # `EvoGit.Adapters.Git.run/2` trims command output, so `Git.show/2` hands this
   # content back WITHOUT the trailing newline (assertions compare trimmed).
   @uncommitted_content "uncommitted work\n"
+  # The credential the stubbed round trip authenticates with (see `setup_all/1`).
+  @api_key "test-key"
 
   setup_all do
+    # PIN the provider credential this file's stubbed round trip needs.
+    # `ReqLLM.Keys.get/2` resolves a provider key from
+    # `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY`
+    # env var) — it never reads the model spec's `api_key` field — so without a
+    # pin this module has NO credential of its own: it silently inherited the one
+    # `EvoGit.Config.credentials/0` loaded at boot from the developer's real
+    # `credentials.toml` (`AgentScheduler.init/1`). A module that DELETES that key
+    # and does not restore it (e.g. `config_test`'s `reqllm_key_cleanup/0`, which
+    # unset every known credential key; the boot-time load never runs again
+    # because the credentials read is cached) then turns every LLM round trip
+    # here into `provider_build_failed`. The same test-env pin the sibling
+    # `tool_dispatch_retry_slot_test` uses keeps this file order-independent.
+    previous_api_key = Application.get_env(:req_llm, :openai_api_key)
+    Application.put_env(:req_llm, :openai_api_key, @api_key)
+    on_exit(fn -> restore_api_key(previous_api_key) end)
+
     # ReqLLM's FIRST call in a fresh BEAM pays a one-off `LLMDB.load/1`: reading
     # + JSON-decoding the packaged multi-megabyte model catalog (~2.5s). Pay it
     # here ONCE so no individual test is charged it; a build-phase/transport
@@ -270,9 +288,15 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
     AgentScheduler.resume()
 
+    # Re-pin the provider credential per test (see `setup_all/1`): a process
+    # leaked by an earlier module could still delete the key between tests.
+    original_api_key = Application.get_env(:req_llm, :openai_api_key)
+    Application.put_env(:req_llm, :openai_api_key, @api_key)
+
     # One deterministic LLM pool for `@model_id` (2 slots, no peak windows), so
     # every slot request below is granted immediately regardless of any user
     # config.toml profile that might carry a peak-hours hard pause.
+    on_exit(fn -> restore_api_key(original_api_key) end)
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
     AgentScheduler.update_config(
@@ -548,6 +572,12 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   end
 
   defp new_agent_id, do: 9_700_000 + :erlang.unique_integer([:positive])
+
+  # Restores the `:req_llm, :openai_api_key` app-env value captured before the
+  # pin, DELETING it again when there was none — so the pin never leaks into a
+  # sibling module (mirrors `tool_dispatch_retry_slot_test`).
+  defp restore_api_key(nil), do: Application.delete_env(:req_llm, :openai_api_key)
+  defp restore_api_key(value), do: Application.put_env(:req_llm, :openai_api_key, value)
 
   defp initial_context do
     ReqLLM.Context.new([
