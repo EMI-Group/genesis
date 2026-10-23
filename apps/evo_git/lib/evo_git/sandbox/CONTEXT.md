@@ -39,7 +39,7 @@ Kill/timeout primitives:
 
 Background jobs (outliving the tool call that started them) go through `EvoGit.Sandbox.Background` (`background.ex`): `spawn/1`, `kill/1`, `status/1`.
 `spawn(spec)` takes `%{command, cwd, output_path, job_id}` (all four required non-empty binaries, else `{:error, {:invalid_spec, spec}}`) → `{:ok, handle} | {:error, term()}`.
-`output_path` and its parent directory are PRE-CREATED by the caller — the sandbox only appends.
+`output_path` and its parent directory are PRE-CREATED by the caller and never truncated: port-based backends have their stream appended to it by the registry, the systemd backend lets systemd append (`StandardOutput=append:` / `StandardError=append:`).
 `handle` = `%{kind: :unit, unit, backend}` | `%{kind: :port, port, os_pid, backend}`; `status/1` → `{:running, nil} | {:exited, integer() | nil} | {:unknown, nil}`; `kill/1` → `:ok | {:error, term()}`.
 `spawn/1` runs in the CALLER's process (the `EvoGit.BackgroundJobs` registry GenServer), so a `:port` handle's Port is owned by that registry — it receives `{:data, chunk}` / `{:exit_status, n}` and must keep draining them.
 Every function is TOTAL: OS calls are wrapped in `rescue`/`catch` → `{:error, term()}` / `{:unknown, nil}` — nothing raises into the registry.
@@ -53,7 +53,7 @@ Per-backend PRIMARY lifetime guarantee and kill mechanism:
 | Backend | Handle | Spawn shape | PRIMARY guarantee |
 |---|---|---|---|
 | `Linux` (systemd-run) | `:unit` | transient user unit, argv from `Linux.detached_args/5` | the unit itself — survives BEAM death by design; killed via `systemctl --user stop` then `reset-failed` inside `Task.start` (returns `:ok` immediately, never blocking the registry — mirrors `SandboxProcessRegistry`'s `:DOWN` handling) |
-| `Bwrap` | `:port` | `Bwrap.args/4`, inner command `<shell> -c "(cmd) >> <out> 2>&1"` | bwrap is a session leader (`--new-session`) and in full capability the pid-namespace root, so killing it takes the whole tree (plus `--die-with-parent` covers BEAM death) |
+| `Bwrap` | `:port` | `Bwrap.args/4`, inner command `<shell> <shell_args(command)>` — the RAW command: the registry appends the port stream to the output file | bwrap is a session leader (`--new-session`) and in full capability the pid-namespace root, so killing it takes the whole tree (plus `--die-with-parent` covers BEAM death) |
 | `MacOS` | `:port` | `sandbox-exec -p <profile> -- <shell> <shell_args(cmd)>`, profile from `MacOS.effective_profile/2` | NO pid namespace — the PRIMARY guarantee is the registry's owner-process monitor + a tree kill, so a BEAM crash can leak a process |
 | `None` (Windows/unsupported) | `:port` | `<shell> <shell_args(cmd)>` | no isolation at all — owner-process monitor + tree kill only, so a BEAM crash can leak a process |
 

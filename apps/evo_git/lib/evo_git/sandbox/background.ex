@@ -43,6 +43,19 @@ defmodule EvoGit.Sandbox.Background do
       `taskkill /PID <pid> /T /F` tree kill on Windows. As on macOS, a BEAM
       crash can leak the process.
 
+  ## Output capture
+
+  Port-based backends (bwrap, sandbox-exec, none, and every disabled path) spawn
+  the command through the platform shell with `:stderr_to_stdout`, and the
+  registry (`EvoGit.BackgroundJobs`) appends each port `{:data, chunk}` message
+  to the job's output file. The command string therefore reaches the shell
+  VERBATIM — it is never wrapped in an in-shell redirection, because grouping it
+  (`( command ) >> file 2>&1`) breaks any command containing `#`, a heredoc or a
+  trailing comment.
+
+  The systemd backend has no port stream: systemd writes the file directly via
+  `-p StandardOutput=append:<path>` / `-p StandardError=append:<path>`.
+
   ## Boot sweep
 
   `sweep_stale_units/0` runs at registry boot and closes the systemd-run
@@ -314,7 +327,7 @@ defmodule EvoGit.Sandbox.Background do
       EvoGit.Sandbox.Bwrap.args(
         spec.cwd,
         shell,
-        Platform.shell_args(redirect_command(spec.command, spec.output_path)),
+        Platform.shell_args(spec.command),
         nil
       )
 
@@ -336,7 +349,7 @@ defmodule EvoGit.Sandbox.Background do
 
     argv =
       ["-p", EvoGit.Sandbox.MacOS.effective_profile(spec.cwd, nil), "--", shell] ++
-        Platform.shell_args(redirect_command(spec.command, spec.output_path))
+        Platform.shell_args(spec.command)
 
     # Same TMPDIR injection shape as `MacOS.run/4`; `Helpers.port_env/1` converts
     # the pairs to the charlists `Port.open/2` demands.
@@ -369,7 +382,7 @@ defmodule EvoGit.Sandbox.Background do
         {:spawn_executable, resolve!(shell)},
         [:binary, :exit_status, :hide, :stderr_to_stdout] ++
           [
-            {:args, Platform.shell_args(redirect_command(spec.command, spec.output_path))},
+            {:args, Platform.shell_args(spec.command)},
             {:cd, spec.cwd}
           ] ++
           env_option()
@@ -689,25 +702,6 @@ defmodule EvoGit.Sandbox.Background do
   end
 
   defp validate_spec(spec), do: {:error, {:invalid_spec, spec}}
-
-  # Appends stdout+stderr to `output_path` inside the command STRING (used by
-  # the shell-spawned backends; systemd-run uses its own StandardOutput/
-  # StandardError properties instead).
-  #
-  # The command string is GROUPED before redirecting: `a && b >> f` would only
-  # redirect `b`, losing everything the earlier commands printed.
-  defp redirect_command(command, output_path) do
-    if EvoGit.Powershell.powershell_executable?(Platform.shell()) do
-      # PowerShell is NOT POSIX — a single-quoted string is a literal and
-      # `'\''` escaping does not apply — so the redirection target is
-      # double-quoted with the backtick escape, and `& { ... }` is the
-      # equivalent of the POSIX subshell grouping. The whole script is handed to
-      # `-EncodedCommand` afterwards, so these quotes never travel through argv.
-      "& { " <> command <> " } >> \"" <> String.replace(output_path, "\"", "`\"") <> "\" 2>&1"
-    else
-      "(" <> command <> ") >> " <> Helpers.shell_escape(output_path) <> " 2>&1"
-    end
-  end
 
   # Resolves an executable to an absolute path — `Port.open/2`'s
   # `:spawn_executable` does no PATH search. Raises `:enoent` (caught by the
