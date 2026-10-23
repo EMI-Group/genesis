@@ -154,11 +154,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
     end
 
-    test "returns error tuple for invalid keep_file value", %{tmp_dir: tmp_dir} do
+    test "returns error string for invalid keep_file value", %{tmp_dir: tmp_dir} do
       result = MakeDir.execute(%{"paths" => ["lib"], "keep_file" => "invalid.txt"}, tmp_dir, nil)
 
-      assert {:error, message} = result
-      assert message =~ "Invalid keep_file value"
+      assert result =~
+               ~s(Error: Invalid keep_file value: invalid.txt. Must be one of: ["CONTEXT.md", ".gitkeep", "none"])
     end
   end
 
@@ -205,11 +205,10 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert File.dir?(Path.join(tmp_dir, "existing/child"))
     end
 
-    test "returns error tuple for invalid parents value", %{tmp_dir: tmp_dir} do
+    test "returns error string for invalid parents value", %{tmp_dir: tmp_dir} do
       result = MakeDir.execute(%{"paths" => ["lib"], "parents" => "yes"}, tmp_dir, nil)
 
-      assert {:error, message} = result
-      assert message =~ "parents must be a boolean"
+      assert result =~ "Error: parents must be a boolean"
     end
   end
 
@@ -337,12 +336,11 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert result =~ "Errors:"
     end
 
-    test "returns error tuple for invalid paths format", %{tmp_dir: tmp_dir} do
+    test "returns error string for invalid paths format", %{tmp_dir: tmp_dir} do
       result = MakeDir.execute(%{"paths" => "not-an-array"}, tmp_dir, nil)
 
-      # Should return an error tuple
-      assert {:error, message} = result
-      assert message =~ "must be an array"
+      # A plain `Error: `-prefixed string, not an `{:error, _}` tuple.
+      assert result =~ "Error: Argument 'paths' must be an array."
     end
 
     test "returns error string (not a crash) for absolute path with node_path set", %{

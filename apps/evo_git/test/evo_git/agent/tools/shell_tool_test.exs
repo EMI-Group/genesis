@@ -338,12 +338,12 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert result =~ "hello"
     end
 
-    test "general failure includes [Exit Code: N] in the status prefix", %{tmp_dir: tmp_dir} do
+    test "general failure leads with an Error: line naming the exit code", %{tmp_dir: tmp_dir} do
       # `exit 42` produces a non-zero, non-signal exit code.
       result = ShellTool.execute(%{"command" => "exit 42"}, tmp_dir, tmp_dir)
 
-      assert result =~ ~S"[Exit Code: 42]"
-      assert result =~ "Command failed."
+      assert result =~ "Error: the command failed with exit code 42."
+      refute result =~ ~S"[Exit Code:"
     end
 
     test "exit code appears immediately after the [Took: ...] prefix", %{tmp_dir: tmp_dir} do
@@ -352,15 +352,15 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert result =~ ~r/^\[Took: [^\]]+\] \[Exit Code: 0\]/
     end
 
-    test "signal-kill exit code (>= 128) is shown in the prefix", %{tmp_dir: tmp_dir} do
+    test "signal-kill exit code (>= 128) is reported with the signal name", %{tmp_dir: tmp_dir} do
       # `kill -TERM $$` sends SIGTERM to the shell → exit code 143.
       result = ShellTool.execute(%{"command" => "kill -TERM $$"}, tmp_dir, tmp_dir)
 
-      assert result =~ ~S"[Exit Code: 143]"
-      assert result =~ "was killed by signal"
+      assert result =~ "Error: Command was killed by signal (exit code 143 — SIGTERM)."
+      assert result =~ "The process was killed by the operating system (SIGTERM)."
     end
 
-    test "timeout does not include an [Exit Code:] prefix", %{tmp_dir: tmp_dir} do
+    test "timeout is an Error: line with no [Exit Code:] prefix", %{tmp_dir: tmp_dir} do
       # `sleep` exceeds a 1ms timeout, hitting the timeout branch (no exit code).
       result =
         ShellTool.execute(
@@ -370,7 +370,8 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
         )
 
       refute result =~ ~S"[Exit Code:"
-      assert result =~ "Command timed out"
+      assert result =~ "Error: the command timed out after 1 ms (actual: "
+      assert result =~ "Partial output:"
     end
 
     test "redundant nested shell invocation appends a hint to the output", %{tmp_dir: tmp_dir} do
