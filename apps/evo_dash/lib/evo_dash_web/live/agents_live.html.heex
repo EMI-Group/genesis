@@ -572,7 +572,11 @@
                               <div
                                 class="absolute inset-y-0 w-2 -translate-x-1/2 cursor-default"
                                 style={"left: #{meter.tick_label}%"}
-                                title={meter.tick_title}
+                                title={
+                                  gettext("Compression triggers at %{tokens} tokens",
+                                    tokens: format_number(meter.threshold_tokens)
+                                  )
+                                }
                               >
                                 <div class={[
                                   "absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full",

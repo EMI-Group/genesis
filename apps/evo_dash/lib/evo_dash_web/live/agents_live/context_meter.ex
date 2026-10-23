@@ -32,8 +32,6 @@ defmodule EvoDashWeb.AgentsLive.ContextMeter do
   unknown (nil/non-positive) threshold means `:success`.
   """
 
-  alias EvoDashWeb.Helpers
-
   # The core's default context window, used when the (optional) summary key is
   # absent — remote daemons and older summaries do not carry it.
   @default_context_window 200_000
@@ -46,8 +44,7 @@ defmodule EvoDashWeb.AgentsLive.ContextMeter do
 
   @typedoc """
   The meter view model: percentages (rounded to one decimal), their string
-  rendering, the zone + its daisyUI classes, the raw token counts and the
-  tick's tooltip text.
+  rendering, the zone + its daisyUI classes and the raw token counts.
   """
   @type meter :: %{
           fill_pct: float(),
@@ -60,8 +57,7 @@ defmodule EvoDashWeb.AgentsLive.ContextMeter do
           current_tokens: non_neg_integer(),
           threshold_tokens: pos_integer() | nil,
           window_tokens: pos_integer(),
-          compression_count: non_neg_integer(),
-          tick_title: String.t() | nil
+          compression_count: non_neg_integer()
         }
 
   @doc """
@@ -95,8 +91,7 @@ defmodule EvoDashWeb.AgentsLive.ContextMeter do
       current_tokens: current_tokens,
       threshold_tokens: threshold_tokens,
       window_tokens: window_tokens,
-      compression_count: compression_count,
-      tick_title: threshold_tokens && tick_title(threshold_tokens)
+      compression_count: compression_count
     }
   end
 
@@ -162,10 +157,6 @@ defmodule EvoDashWeb.AgentsLive.ContextMeter do
   end
 
   defp zone(_current_tokens, _threshold_tokens), do: :success
-
-  defp tick_title(threshold_tokens) do
-    "Compression triggers at #{Helpers.format_number(threshold_tokens)} tokens"
-  end
 
   # Atom key preferred, string key as a defensive fallback (a JSON-shaped
   # summary). Total — a non-map agent yields nil.
