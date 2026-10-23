@@ -658,9 +658,9 @@ defmodule EvoGit.Agent.Runner do
     if objective do
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to call `#{@complete_tool}` NOW with your best answer.
+      Your priority is to call `#{@complete_tool}` NOW with your best answer, or simply reply with your report as plain text — a text reply with no tool calls finishes the task, so no tool call is required.
 
-      If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
+      If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
 
       Your original objective was:
       #{objective}
@@ -670,9 +670,9 @@ defmodule EvoGit.Agent.Runner do
     else
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation.
+      Your priority is to call `#{@complete_tool}` NOW with your best answer explaining the situation, or simply reply with your report as plain text — a text reply with no tool calls finishes the task, so no tool call is required.
 
-      If you have critical uncommitted changes, commit them first, then immediately call `#{@complete_tool}`. Your already-committed work is safe.
+      If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
       """
     end
   end
