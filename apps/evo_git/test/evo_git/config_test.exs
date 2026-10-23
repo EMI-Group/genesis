@@ -326,9 +326,15 @@ defmodule EvoGit.ConfigTest do
   end
 
   describe "api_key_present?/1" do
-    # The set of ReqLLM atoms consulted; we clean up after each test so the
-    # shared BEAM environment stays clean.
+    # The ReqLLM credential keys live in the BEAM-global `:req_llm` app env, so
+    # these tests work on a SNAPSHOT: `setup` records every key's current value
+    # (with `@absent` marking a key that had none) BEFORE the test body clears
+    # them, and `on_exit` puts the environment back exactly as it found it — so
+    # no later module can observe a credential this module wiped.
+    @absent :__evogit_absent__
 
+    # Clears every credential key so a test can observe "no key anywhere"; the
+    # `setup` snapshot above is what lets `on_exit` undo it faithfully.
     defp reqllm_key_cleanup do
       for var <- EvoGit.Config.LLMCatalog.known_credential_keys(),
           key_atom = EvoGit.Config.credential_key_to_reqllm_key(var),
@@ -337,8 +343,29 @@ defmodule EvoGit.ConfigTest do
       end
     end
 
+    # {key_atom, value | @absent} for every credential key ReqLLM consults.
+    defp reqllm_key_snapshot do
+      for var <- EvoGit.Config.LLMCatalog.known_credential_keys(),
+          key_atom = EvoGit.Config.credential_key_to_reqllm_key(var),
+          not is_nil(key_atom) do
+        {key_atom, Application.get_env(:req_llm, key_atom, @absent)}
+      end
+    end
+
+    defp reqllm_key_restore(snapshot) do
+      for {key_atom, value} <- snapshot do
+        case value do
+          @absent -> Application.delete_env(:req_llm, key_atom)
+          value -> Application.put_env(:req_llm, key_atom, value)
+        end
+      end
+
+      :ok
+    end
+
     setup do
-      on_exit(&reqllm_key_cleanup/0)
+      snapshot = reqllm_key_snapshot()
+      on_exit(fn -> reqllm_key_restore(snapshot) end)
 
       :ok
     end
@@ -963,6 +990,12 @@ defmodule EvoGit.ConfigTest do
     setup do
       original_xdg = System.get_env("XDG_CONFIG_HOME")
 
+      # These tests satisfy the :api_key gate by storing a ReqLLM credential, so
+      # snapshot the `:req_llm` credential keys up front and restore them on exit
+      # (the app env is BEAM-global — leaving the store empty would hide a
+      # credential from every later module that builds a provider request).
+      reqllm_snapshot = reqllm_key_snapshot()
+
       tmp_xdg =
         Path.join(
           System.tmp_dir!(),
@@ -983,8 +1016,8 @@ defmodule EvoGit.ConfigTest do
         end
 
         File.rm_rf!(tmp_xdg)
-        # Remove the ReqLLM key this describe sets so later tests see a clean store.
-        Application.delete_env(:req_llm, :openai_api_key)
+        # Put the `:req_llm` app env back exactly as this describe found it.
+        reqllm_key_restore(reqllm_snapshot)
       end)
 
       :ok

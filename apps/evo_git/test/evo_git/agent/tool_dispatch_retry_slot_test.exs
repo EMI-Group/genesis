@@ -373,7 +373,7 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   # first. It does NOT reduce the module's total wall clock.
   #
   # The API key is pinned only for the duration of the warm-up call (the
-  # per-test `setup/1` below keeps pinning it the way it always has).
+  # per-test `setup/1` below pins it again for each test).
   #
   # The warm-up's expected failure is logged from the FINCH POOL process, not
   # from the test process, so ExUnit's per-test `capture_log` cannot attribute
@@ -415,9 +415,8 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
     # Pin a test API key in the ReqLLM application env so the refused_model's
     # OpenAI provider requests clear the build phase (ReqLLM.Keys resolution)
     # and reach the transport layer where they fail fast with connection-refused.
-    # Without this, a prior test that deletes :openai_api_key (e.g.
-    # config_test's credential cleanup) leaves the env empty, causing a
-    # provider-build failure that changes the error shape and crashes warm_pool/0.
+    # Without a declared credential the request would fail at build time instead
+    # (`provider_build_failed`), changing the error shape this module asserts.
     original_api_key = Application.get_env(:req_llm, :openai_api_key)
     Application.put_env(:req_llm, :openai_api_key, "test-key")
 

@@ -250,15 +250,12 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     # PIN the provider credential this file's stubbed round trip needs.
     # `ReqLLM.Keys.get/2` resolves a provider key from
     # `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY`
-    # env var) — it never reads the model spec's `api_key` field — so without a
-    # pin this module has NO credential of its own: it silently inherited the one
-    # `EvoGit.Config.credentials/0` loaded at boot from the developer's real
-    # `credentials.toml` (`AgentScheduler.init/1`). A module that DELETES that key
-    # and does not restore it (e.g. `config_test`'s `reqllm_key_cleanup/0`, which
-    # unset every known credential key; the boot-time load never runs again
-    # because the credentials read is cached) then turns every LLM round trip
-    # here into `provider_build_failed`. The same test-env pin the sibling
-    # `tool_dispatch_retry_slot_test` uses keeps this file order-independent.
+    # env var) — it never reads the model spec's `api_key` field — so the
+    # credential is declared here rather than borrowed from the one
+    # `EvoGit.Config.credentials/0` loads at boot out of the developer's real
+    # `credentials.toml`. Declaring it keeps this file independent of the config
+    # dir it runs under and of every other module's env handling; the same
+    # test-env pin the sibling `tool_dispatch_retry_slot_test` uses.
     previous_api_key = Application.get_env(:req_llm, :openai_api_key)
     Application.put_env(:req_llm, :openai_api_key, @api_key)
     on_exit(fn -> restore_api_key(previous_api_key) end)
@@ -288,8 +285,9 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
     AgentScheduler.resume()
 
-    # Re-pin the provider credential per test (see `setup_all/1`): a process
-    # leaked by an earlier module could still delete the key between tests.
+    # Re-assert the credential per test (see `setup_all/1`): the `:req_llm` app
+    # env is BEAM-global, so a sibling module interleaving between tests must not
+    # be able to change what this test authenticates with.
     original_api_key = Application.get_env(:req_llm, :openai_api_key)
     Application.put_env(:req_llm, :openai_api_key, @api_key)
 
