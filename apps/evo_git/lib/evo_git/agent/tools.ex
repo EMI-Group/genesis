@@ -18,6 +18,8 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.Glob
   alias EvoGit.Agent.Tools.ListDirectory
   alias EvoGit.Agent.Tools.WebSearch
+  alias EvoGit.Agent.Tools.WebFetch
+  alias EvoGit.Agent.Tools.Lsp
   alias EvoGit.Agent.Tools.SearchHistory
   alias EvoGit.Agent.Tools.SearchContext
   alias EvoGit.Agent.Tools.SkillList
@@ -89,6 +91,17 @@ defmodule EvoGit.Agent.Tools do
         ListDirectory.schema(),
         SearchContext.schema(),
         SearchHistory.schema(),
+        # Network / language-intelligence READERS — both strictly read-only, so
+        # they are also part of `read_only_schemas/0` and are NEVER write tools
+        # (`web_fetch` performs one HTTP GET and writes nothing; `lsp` spawns the
+        # user's configured language server and only analyses a file). Neither is
+        # config-gated at the schema-list level: `web_fetch` always works, and
+        # `lsp` reports a self-explaining `Error:` when no server is configured
+        # (`[lsp] command` / `enabled` in config.toml), which is what teaches the
+        # model to fall back to `read`/`rg`. Contrast `search_web`, which IS
+        # gated behind `[tools] search_enabled` (see `maybe_append_web_search/1`).
+        WebFetch.schema(),
+        Lsp.schema(),
         SkillList.schema(),
         SkillRead.schema(),
         SkillAdd.schema(),
@@ -138,7 +151,11 @@ defmodule EvoGit.Agent.Tools do
         Context.edit_schema(),
         ShellTool.schema(),
         SearchContext.schema(),
-        SearchHistory.schema()
+        SearchHistory.schema(),
+        # Read-only network / language-intelligence readers, shared with the
+        # full set — see the matching note in `schemas/0` above.
+        WebFetch.schema(),
+        Lsp.schema()
       ]
 
     maybe_append_web_search(schemas)
@@ -310,9 +327,9 @@ defmodule EvoGit.Agent.Tools do
 
   Read-only tools (`read_file`, `read_context`, `glob`, `list_dir`, `rg`,
   `search_context`, `search_history`, `skill_list`, `skill_read`,
-  `skill_where`), the shell/exec/network tools (`run_bash`, `run_powershell`,
-  `run_git`, `run_command`, `search_web`/`web_search`) and any unknown
-  name return `false`.
+  `skill_where`, `web_fetch`, `lsp`), the shell/exec/network tools (`run_bash`,
+  `run_powershell`, `run_git`, `run_command`, `search_web`/`web_search`) and any
+  unknown name return `false`.
 
   The incoming name is normalised through `EvoGit.Agent.ToolNames.normalize/1`
   first, because the dispatcher passes the RAW model-facing name (`write`,
@@ -492,6 +509,19 @@ defmodule EvoGit.Agent.Tools do
 
   defp execute_tool("search_web", args, repo_path, repo_root, _node_path) when is_map(args) do
     WebSearch.execute(args, repo_path, repo_root)
+  end
+
+  # `web_fetch` (one HTTP GET → readable Markdown) and `lsp` (Elixir diagnostics /
+  # hover / definition over the user's configured language server) are READ-ONLY
+  # tools: their model-facing schema name and their internal dispatch key are the
+  # same string, so no `EvoGit.Agent.ToolNames` entry is needed — an unknown name
+  # passes through that alias table unchanged.
+  defp execute_tool("web_fetch", args, repo_path, repo_root, _node_path) when is_map(args) do
+    WebFetch.execute(args, repo_path, repo_root)
+  end
+
+  defp execute_tool("lsp", args, repo_path, repo_root, _node_path) when is_map(args) do
+    Lsp.execute(args, repo_path, repo_root)
   end
 
   defp execute_tool("search_context", args, repo_path, repo_root, _node_path) when is_map(args) do
