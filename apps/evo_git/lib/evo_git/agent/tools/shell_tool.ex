@@ -88,11 +88,16 @@ defmodule EvoGit.Agent.Tools.ShellTool do
           "timeout" => %{
             "type" => "integer",
             "description" =>
-              "Timeout in milliseconds. Default: #{@default_timeout}. " <>
-                "Maximum: #{@max_timeout} (a larger value is clamped to it). " <>
-                "Background execution is not available yet — a command still running " <>
-                "when the timeout expires is killed.",
+              "Timeout in milliseconds for a FOREGROUND command. Default: #{@default_timeout}. " <>
+                "Maximum: #{@max_timeout} (a larger value is clamped to it). A command still " <>
+                "running when the timeout expires is killed. A background command " <>
+                "(run_in_background: true) has no timeout.",
             "default" => @default_timeout
+          },
+          "run_in_background" => %{
+            "type" => "boolean",
+            "description" =>
+              "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies."
           },
           "max_bytes" => %{
             "type" => "integer",
@@ -131,10 +136,9 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     """
     Use the bash tool — not shell commands like cat, sed, grep or find — to run a shell command when the dedicated read/write/edit/glob/rg tools cannot do the job.
 
-    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it). Background execution is not available yet, so a command still running when the timeout expires is killed.
+    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it), and a command still running when the timeout expires is killed. Set `run_in_background: true` to start a long-running command instead: it returns a job id immediately and no timeout applies — read its output with `job_output`, list your jobs with `job_list`, and stop it with `job_kill`.
 
     The working directory is already the repo path (the current git worktree path) — do not `cd` into it, and never `cd` into the repository root or another agent's worktree. Use relative paths for in-repo operations and absolute paths for external ones, double-quote paths containing spaces, verify parent directories exist before creating files, and use #{tmp_var()} for temporary files#{tmp_suffix}
-
     Prefer the dedicated tools, not the shell:
     - #{no_shell_for_reads()}
     - Read files: the read tool (not #{read_file_alt()}). Edit files: the edit tool (not #{edit_file_alt()}). Write files: the write tool (not #{write_file_alt()}).
@@ -161,31 +165,78 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
   @doc """
   Executes the shell tool.
+
+  A `run_in_background: true` call is handled FIRST — before `timeout` is read or
+  validated — so a background start can never be rejected for a bad timeout (a
+  background command has no timeout at all).
   """
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_string_arg(args, "command") do
       {:ok, command} ->
-        timeout = args |> Map.get("timeout", @default_timeout) |> effective_timeout()
-
-        max_bytes =
-          Map.get(
-            args,
-            "max_bytes",
-            EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
-          )
-
-        do_execute(
-          command,
-          description_header(args),
-          repo_path,
-          repo_root,
-          timeout,
-          max_bytes
-        )
+        if Shared.get_optional_boolean(args, "run_in_background", false) do
+          start_background_job(command, repo_path, repo_root)
+        else
+          execute_foreground(command, args, repo_path, repo_root)
+        end
 
       {:error, message} ->
         Failure.error(message)
     end
+  end
+
+  defp execute_foreground(command, args, repo_path, repo_root) do
+    timeout = args |> Map.get("timeout", @default_timeout) |> effective_timeout()
+
+    max_bytes =
+      Map.get(
+        args,
+        "max_bytes",
+        EvoGit.Config.resolve([:truncation, :tool_output_default_max_bytes])
+      )
+
+    do_execute(
+      command,
+      description_header(args),
+      repo_path,
+      repo_root,
+      timeout,
+      max_bytes
+    )
+  end
+
+  # Starts a DETACHED background job and returns its id at once. The same
+  # main-copy mutation guard as a foreground command applies first: a background
+  # start can mutate anything a foreground command could, so it is gated exactly
+  # like a write tool.
+  defp start_background_job(command, repo_path, repo_root) do
+    case main_copy_mutation_error(command, repo_path, repo_root) do
+      nil -> do_start_background_job(command, repo_path, repo_root)
+      error -> Failure.error(error)
+    end
+  end
+
+  defp do_start_background_job(command, repo_path, repo_root) do
+    case EvoGit.BackgroundJobs.start_job(%{
+           command: command,
+           cwd: repo_path,
+           repo_root: repo_root,
+           label: background_label(command),
+           owner_pid: EvoGit.BackgroundJobs.current_owner_pid(),
+           agent_id: Process.get(:evogit_agent_id),
+           task_id: Process.get(:evogit_task_id)
+         }) do
+      {:ok, job} -> "started background job #{Map.get(job, :id, "unknown")}"
+      {:error, message} -> Failure.error(message)
+    end
+  end
+
+  # A short human label for the job list: the command's first line, bounded.
+  defp background_label(command) do
+    command
+    |> String.split("\n", parts: 2)
+    |> List.first()
+    |> String.trim()
+    |> String.slice(0, 60)
   end
 
   @doc """

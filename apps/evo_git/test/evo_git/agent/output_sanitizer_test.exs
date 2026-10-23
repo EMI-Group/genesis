@@ -468,7 +468,9 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
           "\e[32mDownload complete\e[0m"
 
       {result, truncation_info} =
-        OutputSanitizer.sanitize_and_truncate(input, "curl", %{"url" => "http://example.com"})
+        OutputSanitizer.sanitize_and_truncate(input, "web_fetch", %{
+          "url" => "http://example.com"
+        })
 
       # Should have ANSI codes removed
       refute result =~ "\e["

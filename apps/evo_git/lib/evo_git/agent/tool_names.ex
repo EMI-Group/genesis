@@ -35,6 +35,7 @@ defmodule EvoGit.Agent.ToolNames do
   | grep | `rg` | `rg` | `grep`, `ripgrep`, `rg` |
   | glob | `glob` | `glob` | `glob` |
   | web search | `web_search` | `search_web` | `websearch`, `web_search`, `search_web` |
+  | background jobs | `job_output` / `job_list` / `job_kill` | same (identity) | `job_output`, `bash_output`, `background_output`, `job_status` / `job_list`, `jobs`, `background_jobs` / `job_kill`, `kill_job`, `job_stop`, `stop_job` |
   | delegate (subagent) | `subagent_manager` (+ `subagent_executor`, … — generated per module, NOT renamed this round) | `subagent_manager` | `task`, `subagent`, `subagent_manager` |
 
   Notes:
@@ -100,7 +101,19 @@ defmodule EvoGit.Agent.ToolNames do
     "websearch" => "search_web",
     "web_search" => "search_web",
     "search_web" => "search_web",
+    # background jobs — the model-facing schema name and the internal dispatch
+    # key are the SAME (`job_output` / `job_list` / `job_kill`), so only the
+    # extra accepted spellings appear here; the canonical names pass through
+    # the table unchanged like any other unknown name.
+    "bash_output" => "job_output",
+    "background_output" => "job_output",
+    "job_status" => "job_output",
+    "jobs" => "job_list",
+    "background_jobs" => "job_list",
+    "kill_job" => "job_kill",
+    "job_stop" => "job_kill",
     # delegation (accepted spelling only — see the moduledoc note)
+    "stop_job" => "job_kill",
     "task" => "subagent_manager",
     "subagent" => "subagent_manager",
     "subagent_manager" => "subagent_manager"

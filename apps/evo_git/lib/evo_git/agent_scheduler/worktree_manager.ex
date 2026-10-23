@@ -71,6 +71,7 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.AgentScheduler.WorktreeRetry
   alias EvoGit.AgentScheduler.Worktrees
+  alias EvoGit.BackgroundJobs
 
   # The Runner's create request must NEVER be aborted by a timeout, so the
   # caller waits forever and the create pipeline is responsible for always
@@ -696,6 +697,10 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
   # prune and the branch delete, keeping the dir+registration pair consistent
   # for a later create/cleanup to rm_rf properly.
   defp destroy_worktree(worktree_path, repo_root, branch_name) do
+    # A detached background job whose cwd is inside this directory must never
+    # outlive it — a still-running job would hold the dir open and break rm_rf.
+    safe_reap(worktree_path)
+
     case WorktreeRetry.rm_rf_retry(worktree_path) do
       {:ok, _} ->
         # Dir is gone — safe to prune stale registrations and delete the
@@ -723,6 +728,29 @@ defmodule EvoGit.AgentScheduler.WorktreeManager do
     end
 
     :ok
+  end
+
+  # Reaps detached background jobs rooted in a worktree before its directory is
+  # removed. `reap_under/1` is documented total, but it crosses a
+  # `GenServer.call`, so teardown must survive ANY failure mode of the registry.
+  defp safe_reap(prefix) do
+    try do
+      BackgroundJobs.reap_under(prefix)
+    rescue
+      error ->
+        Logger.warning(
+          "WorktreeManager: Failed to reap background jobs under #{prefix}: #{inspect(error)}"
+        )
+
+        :ok
+    catch
+      :exit, reason ->
+        Logger.warning(
+          "WorktreeManager: Failed to reap background jobs under #{prefix}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
   end
 
   # Cleans up orphaned `evogit-agent-*` branches from previous runs.

@@ -67,14 +67,15 @@ defmodule EvoGit.Agent.OutputSanitizer do
                        "write",
                        "edit_file",
                        "edit",
-                       # search / network
+                       # search / network / language intelligence
                        "rg",
                        "grep",
-                       "curl",
                        "run_git",
                        "git",
                        "search_web",
                        "web_search",
+                       "web_fetch",
+                       "lsp",
                        "search_context",
                        "search_history"
                      ])

@@ -103,6 +103,12 @@ defmodule EvoGit.Application do
        name: EvoGit.TaskRegistry.ProcessRegistry,
        id: :task_registry_process_registry},
       {EvoGit.TaskRegistry, []},
+      # Registry for DETACHED ("background") shell jobs started by agents.
+      # Unconditional — unlike the Linux-only SandboxProcessRegistry/SandboxSlice
+      # below, background jobs exist on every platform (the detached entry point
+      # in EvoGit.Sandbox is answered for every backend). Jobs are killed when
+      # their owning agent process dies.
+      {EvoGit.BackgroundJobs, []},
       {EvoGit.AgentScheduler.WorktreeManager, []},
       {EvoGit.AgentGroupSupervisor, []},
       # Peak-hour LLM concurrency engine — watches the local wall clock and

@@ -15,6 +15,9 @@ defmodule EvoGit.Sandbox.Helpers do
   # last half). Matches OutputSanitizer's truncation window.
   @truncate_size 8192
 
+  # Grace period between SIGTERM and SIGKILL in `kill_process_tree/1` — time
+  # for a well-behaved process to flush and exit before the hard kill.
+  @kill_grace_ms 100
   # ---------------------------------------------------------------------------
   # Shell escaping
   # ---------------------------------------------------------------------------
@@ -514,6 +517,71 @@ defmodule EvoGit.Sandbox.Helpers do
   def close_port(port) when is_port(port) do
     if Port.info(port) != nil, do: Port.close(port)
     :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Process-tree termination (background / detached jobs)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Kills a whole process TREE, given the pid of its session/process-group
+  leader. Total: never raises and always returns `:ok` — every failure (missing
+  `kill`/`taskkill` binary, already-dead pid, permission denied) is swallowed
+  because termination is best-effort and the caller (a background-job registry)
+  must not crash on it.
+
+  POSIX: `pid` is expected to be BOTH the session leader and the process-group
+  id — the shapes produced by `Port.open({:spawn_executable, ...})` (each child
+  gets its own process group) and by `bwrap --new-session` (bwrap `setsid`s
+  before forking, so its pid IS the pgid) both satisfy this. Signals the GROUP
+  (`kill -TERM -- -<pgid>`, 100 ms grace, then `kill -KILL -- -<pgid>`) and
+  falls back to signalling the bare pid when the group is already gone.
+
+  Windows: `taskkill /PID <pid> /T /F`, which walks the pid's CURRENT
+  descendants (cmd.exe / powershell grandchildren included). The blast radius is
+  strictly descendant-only, so it can never reach the BEAM (the child's parent).
+  """
+  @spec kill_process_tree(pos_integer() | nil) :: :ok
+  def kill_process_tree(pid) when is_integer(pid) do
+    try do
+      if EvoGit.Platform.windows?() do
+        run_kill("taskkill", ["/PID", Integer.to_string(pid), "/T", "/F"])
+      else
+        posix_kill_tree(Integer.to_string(pid))
+      end
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
+  end
+
+  def kill_process_tree(_), do: :ok
+
+  # TERM the group, grace period, then KILL the group; when the group is
+  # already gone (kill exits non-zero) escalate on the bare pid instead.
+  defp posix_kill_tree(pid) do
+    case run_kill("kill", ["-TERM", "--", "-" <> pid]) do
+      :ok ->
+        Process.sleep(@kill_grace_ms)
+        run_kill("kill", ["-KILL", "--", "-" <> pid])
+
+      :error ->
+        run_kill("kill", ["-TERM", "--", pid])
+        Process.sleep(@kill_grace_ms)
+        run_kill("kill", ["-KILL", "--", pid])
+    end
+
+    :ok
+  end
+
+  # Runs a kill primitive and reports only whether the exit code was 0. The
+  # output is deliberately discarded — `kill` diagnostics are not actionable.
+  defp run_kill(cmd, args) do
+    case System.cmd(cmd, args, stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {_output, _code} -> :error
+    end
   end
 
   # ---------------------------------------------------------------------------

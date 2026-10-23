@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linux,Bwrap,MacOS,None,Helpers,Behaviour}`) plus the nix dev-env integration module (`EvoGit.Nix`). The tests are mostly **pure argument-generation** checks (systemd-run / bwrap / SBPL strings) plus direct-execution behavior of the `None` backend; no real sandboxing backend is executed in the test environment.
+ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linux,Bwrap,MacOS,None,Helpers,Behaviour,Background}`) plus the nix dev-env integration module (`EvoGit.Nix`). The tests are mostly **pure argument-generation** checks (systemd-run / bwrap / SBPL strings) plus direct-execution behavior of the `None` backend; no real sandboxing backend is executed in the test environment.
 
 ## File Map
 
@@ -14,6 +14,7 @@ ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linu
 - `linux_test.exs` (`EvoGit.Sandbox.LinuxTest`) — `Linux.args/4` (systemd-run arg generation): TMPDIR forwarding, `ReadWritePaths` (incl. the managed per-task tmpdir `-p ReadWritePaths=-<dir>` pair + its `TMPDIR` override), PATH/HOME, nix, `GIT_EDITOR` injection, bash wrapping for stdin; no real `systemd-run` is run. Also a runtime check that the DISABLED `Linux.run/4` path exports the installed per-task dir as `TMPDIR`/`TMP`/`TEMP`.
 - `macos_test.exs` (`EvoGit.Sandbox.MacOSTest`) — `MacOS.generate_profile/2` SBPL rules (deny-by-default, tmp/cwd/git-metadata writes, sensitive-dir deny list incl. `/private` symlink spellings, write_paths `~` expansion, default cache dirs, process-count limit, the managed per-task tmpdir read+write subpath rules), the linked-worktree `gitdir:` pointer resolution, `EvoGit.Sandbox.resolve_tmpdir/0` (legacy fallback rules + the managed-per-task-dir short-circuit), the fail-safe `{MacOS, :process_limit_rejected}` cache, and a runtime check that the DISABLED `MacOS.run/4` path (forced via `[sandbox] mode = "disabled"` in the isolated config) exports the installed per-task dir. A `MacOS.run/4` enabled-path execution test is guarded to real macOS hosts only.
 - `nix_test.exs` (`EvoGit.NixTest`) — `EvoGit.Nix`: `dev_env_state/0`, `active?/0`, `wrap_command/2` (tuple shape, dev-env sourcing, shell escaping), `reset_state/0`, `nix_env_vars/0`, `sanitize_dev_env_output/1` (NIX_BUILD_TOP mktemp rotation substitution).
+- `background_test.exs` (`EvoGit.Sandbox.BackgroundTest`) — the detached (background) command layer: `Background.unit_name/1`; the `systemctl show` parsers/classifiers (`parse_systemctl_show/1`, `classify_unit_state/1` for every running/inactive/failed/unknown row, and the full parse → classify pipeline); `parse_list_units/1`; `beam_pid_from_unit/1`; `Linux.detached_args/5` vs `Linux.args/4` argv shape pinning; the detached entry points' totality (`Sandbox.spawn_detached/1` invalid/empty specs, a non-existent `cwd` pinned as `{:error, {:cwd_missing, path}}` on EVERY backend (never a raise, never a handle for a job that never ran), `Sandbox.kill_detached/1` and `Sandbox.detached_status/1` garbage handles, `Helpers.kill_process_tree/1`); and ONE real `Port.open/2` spawn → kill → `kill -0`-probed round trip. No real systemd unit is ever started — the `@mix_env == :test` gate keeps `Linux.enabled?/0` false, so `Background.spawn/1` always takes the plain-port path.
 
 ## Constraints
 
@@ -33,6 +34,7 @@ ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linu
   - `linux_test.exs` — `System.put_env/1` for `$TMPDIR` + `$XDG_CONFIG_HOME`, `Application.put_env/2` for `:nix_enabled`.
   - `macos_test.exs` — `System.put_env/1` for `$TMPDIR` + `$XDG_CONFIG_HOME`, `Application.put_env/2` for `:nix_enabled`, `:persistent_term` `{MacOS, :process_limit_rejected}`.
   - `nix_test.exs` — `Application.put_env/2` for `:nix_enabled`, `:persistent_term` `:evogit_nix_dev_env_state` (via `Nix.reset_state/0` and direct seeds).
+  - `background_test.exs` — real host process work no other module may observe: one genuine `Sandbox.spawn_detached/1` round trip (a live `sleep` child spawned through a port owned by the test process, then killed and probed with `kill -0` until the OS confirms it is gone) plus `kill -0` liveness probes against a reaped pid; it also writes the `:nix_enabled` app-env key. Everything else in the module is pure and needs no isolation.
   - Do NOT flip any of these to `async: true`: the mutated state is read by production paths and by other modules.
 - Installing a per-task tmpdir (`EvoGit.TaskTmpdir.put_current/1`) is a PROCESS-LOCAL pdict write — it mutates no BEAM-global state, so it does NOT force serialization (the `async: true` `helpers_test.exs` uses it freely).
 
