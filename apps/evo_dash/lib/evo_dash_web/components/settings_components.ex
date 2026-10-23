@@ -80,9 +80,11 @@ defmodule EvoDashWeb.SettingsComponents do
         <%!-- LLM category: the Quick Setup panel and Model Profiles editor
              contain their own nested <form> elements (save_api_key,
              save_custom_model, save_model_profile). They must NOT be nested
-             inside a save_category form (invalid HTML). Only the flat cards
-             (compression_threshold_tokens) are wrapped in the save_category
-             form inside the scroll body below. The pinned save bar sits
+             inside a save_category form (invalid HTML). Only the flat global
+             `[llm]` cards (non-per-profile keys, e.g. the compression-threshold
+             override, the tool-result pruning toggle/target and the flat
+             generation defaults) are wrapped in the save_category form inside
+             the scroll body below. The pinned save bar sits
              OUTSIDE that form and submits it via the HTML `form`
              association attribute (see the bar after the scroll body). --%>
         <div class="flex-1 overflow-y-auto px-8 py-8 relative">
@@ -558,10 +560,12 @@ defmodule EvoDashWeb.SettingsComponents do
               </p>
             </div>
 
-            <%!-- Flat LLM setting cards (only compression_threshold_tokens
-                 remains after filtering). Wrapped in their own save_category
-                 form (id settings-form-llm); the pinned save bar below the
-                 scroll body submits them via the HTML `form` attribute. --%>
+            <%!-- Flat LLM setting cards (every non-per-profile `[llm]` key
+                 after filtering: compression-threshold override, tool-result
+                 pruning toggle + target fraction, flat generation defaults).
+                 Wrapped in their own save_category form (id settings-form-llm);
+                 the pinned save bar below the scroll body submits them via the
+                 HTML `form` attribute. --%>
             <.form
               for={%{}}
               phx-submit="save_category"
