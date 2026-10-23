@@ -15,6 +15,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
+  alias EvoGit.Agent.Tools.Failure
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -23,9 +24,10 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     ReqLLM.tool(
       name: "complete_task",
       description:
-        "Call this tool to report your findings and results. This is the ONLY way to finish. " <>
-          "Your report MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on. " <>
-          "Write your final report in the same language as the original objective.",
+        "Use the complete_task tool to end the task and report your findings — it is the ONLY way to finish. " <>
+          "Commit the work you want to keep before calling it (pass check_git_status: false to skip the workspace check). " <>
+          "The report MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on, " <>
+          "and is written in the same language as the original objective.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -48,17 +50,19 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
   end
 
   @doc """
-  Checks if the workspace is dirty and returns a warning message if so.
+  Checks if the workspace is dirty and returns a failure message if so.
 
-  Returns {:dirty, warning_message} if dirty, {:clean, nil} if clean.
+  Returns `{:dirty, failure_message}` if dirty, `{:clean, nil}` if clean. The
+  message is rendered through `EvoGit.Agent.Tools.Failure.error/2`, so it leads
+  with the literal `Error: ` prefix models key "this call did not succeed" off,
+  followed by the guidance (git status + what to do next).
   """
   def check_workspace_dirty(repo_path) do
     case Git.status(repo_path) do
       {:ok, status_output} when is_binary(status_output) and status_output != "" ->
         formatted_status = format_git_status_porcelain(status_output)
 
-        warning_msg = """
-        [NOTICE] The workspace has uncommitted changes.
+        guidance = """
         Please commit the necessary files before calling complete_task.
 
         Git status:
@@ -67,7 +71,7 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
         After committing the files you want to keep, call complete_task again with check_git_status: false to skip the git status check.
         """
 
-        {:dirty, warning_msg}
+        {:dirty, Failure.error("the workspace has uncommitted changes.", guidance)}
 
       _ ->
         {:clean, nil}
