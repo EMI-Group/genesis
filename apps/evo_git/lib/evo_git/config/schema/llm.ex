@@ -27,6 +27,10 @@ defmodule EvoGit.Config.Schema.LLM do
   require Logger
   alias EvoGit.Config.Schema.LLMConstraints
 
+  # Default context window (tokens) for context-compression decisions when a
+  # model profile carries no explicit `context_window`.
+  @default_context_window 200_000
+
   # Normalizes the metadata-source result (app-env seam or catalog lookup) to the
   # documented `%{limits:, capabilities:}` / `nil` contract.
   defp normalize_metadata(metadata), do: LLMConstraints.normalize_metadata(metadata)
@@ -118,6 +122,88 @@ defmodule EvoGit.Config.Schema.LLM do
     case model_profiles(config) do
       [] -> {:error, :not_found}
       [profile | _] -> {:ok, profile}
+    end
+  end
+
+  @doc """
+  Default context window (tokens) assumed when a model profile does not carry
+  an explicit `context_window`.
+  """
+  @spec default_context_window() :: pos_integer()
+  def default_context_window, do: @default_context_window
+
+  @doc """
+  Resolves the context window (tokens) declared by a single model profile.
+
+  Reads the optional `context_window` profile key (atom- OR string-keyed —
+  TOML decoding may leave string keys). A present positive integer is
+  returned as-is; an absent/nil value or ANY invalid value (non-integer,
+  zero, negative) yields `default_context_window/0`, logging a warning for
+  the invalid case. Never raises.
+
+  ## Example
+
+      iex> Schema.LLM.context_window(%{id: "default", context_window: 123_456})
+      123_456
+
+      iex> Schema.LLM.context_window(%{id: "default"})
+      200_000
+
+      iex> Schema.LLM.context_window(%{"context_window" => 50_000})
+      50_000
+  """
+  @spec context_window(map()) :: pos_integer()
+  def context_window(profile) when is_map(profile) do
+    case profile_field(profile, :context_window) do
+      nil ->
+        @default_context_window
+
+      value when is_integer(value) and value > 0 ->
+        value
+
+      value ->
+        Logger.warning(
+          "Invalid LLM model profile context_window #{inspect(value)} " <>
+            "(expected a positive integer) — using default #{@default_context_window}"
+        )
+
+        @default_context_window
+    end
+  end
+
+  def context_window(_other), do: @default_context_window
+
+  @doc """
+  Resolves the context window (tokens) for a model profile selected by id
+  from a resolved config map.
+
+  `{:error, :not_found}` (unknown or non-binary id, or a malformed config
+  map) yields `default_context_window/0`. Never raises.
+
+  ## Example
+
+      iex> Schema.LLM.context_window_for(%{llm: %{models: [%{id: "fast", context_window: 64_000}]}}, "fast")
+      64_000
+
+      iex> Schema.LLM.context_window_for(%{llm: %{models: []}}, "missing")
+      200_000
+  """
+  @spec context_window_for(map(), String.t()) :: pos_integer()
+  def context_window_for(config, model_id) when is_map(config) and is_binary(model_id) do
+    case get_model_profile(config, model_id) do
+      {:ok, profile} -> context_window(profile)
+      {:error, :not_found} -> default_context_window()
+    end
+  end
+
+  def context_window_for(_config, _model_id), do: default_context_window()
+
+  # Reads a model-profile field from an atom- or string-keyed map. A
+  # `case Map.get` (not `||`) distinguishes "absent" from "present but nil".
+  defp profile_field(profile, key) do
+    case Map.get(profile, key) do
+      nil -> Map.get(profile, Atom.to_string(key))
+      value -> value
     end
   end
 

@@ -449,6 +449,16 @@ defmodule EvoGit.Config.EctoValidation do
         validate_timezone_field(path, timezone)
       end
 
+    # Optional context window (tokens) for context-compression decisions.
+    context_window = profile_field(profile, :context_window)
+
+    context_window_errors =
+      if is_nil(context_window) do
+        []
+      else
+        validate_context_window(path, context_window)
+      end
+
     # Optional list of days on which the profile is entirely off-peak (normal
     # concurrency 24/7, every peak_hours window suppressed).
     off_peak_days = profile_field(profile, :off_peak_days)
@@ -466,6 +476,7 @@ defmodule EvoGit.Config.EctoValidation do
       peak_concurrency_errors ++
       peak_hours_errors ++
       timezone_errors ++
+      context_window_errors ++
       off_peak_days_errors
   end
 
@@ -493,6 +504,25 @@ defmodule EvoGit.Config.EctoValidation do
         error(
           path ++ [:peak_concurrency],
           "peak_concurrency must be a non-negative integer, got #{inspect(value)}",
+          value,
+          :integer
+        )
+      ]
+    end
+  end
+
+  # Validates the optional context_window profile field: must be a positive
+  # integer (token count) when present. Scalar decision routes through
+  # EctoTypes' strict PosInteger cast; the message/rule mirror the type-level
+  # `:integer` rule for backward compatibility.
+  defp validate_context_window(path, value) do
+    if EctoTypes.valid?(:pos_integer, value) do
+      []
+    else
+      [
+        error(
+          path ++ [:context_window],
+          "context_window must be a positive integer, got #{inspect(value)}",
           value,
           :integer
         )
