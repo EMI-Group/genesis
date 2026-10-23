@@ -65,7 +65,7 @@ Skills are **globally defined** in `.agents/skills/` but **hierarchically enable
 | `extract_context_skill_names/1` | Parse a CONTEXT.md's `skill:` frontmatter field |
 | `remove_skill_from_all_contexts/2` | Clean up all CONTEXT.md references (used when deleting a skill) |
 
-Agent-loop startup pipeline (`EvoGit.Agent`): `load_skills/1` → `hierarchical_skill_names/2` → `filter_skills/2` → `to_tool_schemas/1`. Only skills enabled at/above the agent's node become LLM-callable tools.
+Agent-loop startup pipeline (`Runner.do_run/2`, `runner.ex:239-249`): `load_skills(repo_path)` → `hierarchical_skill_names(node_path, repo_path)` → `filter_skills/2` → `to_tool_schemas/1`, kept on `LoopState.skill_schemas` and appended in `effective_tools/1` (`runner.ex:721-736`) AFTER `agent_module.available_tools()` — so a custom agent's `tools` whitelist does NOT filter dynamic skill tools, and only the max-depth subagent-tool removal touches them. `node_path` = `agent_state.context_node.path` (relative), `repo_path` = the agent's WORKTREE (`<repo_root>/.genesis/workers/...`). Only skills enabled at/above the agent's node become LLM-callable tools.
 
 ### Skill Struct (`EvoGit.Skills.Skill`)
 
