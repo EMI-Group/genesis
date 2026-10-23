@@ -1,11 +1,22 @@
 defmodule EvoGit.Agent.Tools.CompleteTask do
   @moduledoc """
-  The completion tool that agents use to submit their final results.
+  The explicit completion tool an agent MAY use to submit its final results.
 
-  This tool has special handling:
-  - It performs a git status check before allowing completion (can be disabled)
-  - It records the branch name for the completion commit
-  - It returns commit information along with the result
+  `complete_task` is OPTIONAL. An assistant reply with NO tool calls finishes the
+  run by itself: the reply text becomes the agent's report — the harness-aligned
+  protocol implemented in `EvoGit.Agent.CompletionProtocol`. Both routes build
+  the identical `%EvoGit.Agent.Result{}` with the identical side effects (git
+  note on the base commit, archive refs when archiving), so every downstream
+  consumer is oblivious to how the agent finished.
+
+  Calling this tool explicitly differs from a plain text reply in three ways:
+  - the report is passed as the `result` argument instead of being taken from
+    the assistant's reply text
+  - the dirty-workspace check runs before finishing (disable with
+    `check_git_status: false`); the implicit route deliberately skips that check
+    and commits any pending work instead
+  - the run ends immediately, even when the same turn requested further tool
+    calls (those are not executed)
 
   The tool is handled specially in the agent loop and doesn't go through
   the standard tool execution pipeline.
@@ -24,9 +35,11 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
     ReqLLM.tool(
       name: "complete_task",
       description:
-        "Use the complete_task tool to end the task and report your findings — it is the ONLY way to finish. " <>
-          "Commit the work you want to keep before calling it (pass check_git_status: false to skip the workspace check). " <>
-          "The report MUST summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on, " <>
+        "End the task and report your findings. Calling this tool is OPTIONAL: a plain assistant reply with no tool calls " <>
+          "also finishes the task, and that reply text becomes the report. Use complete_task when you want to pass an " <>
+          "explicit `result` summary, to run the workspace check, or to finish while other tool calls are still pending. " <>
+          "Commit the work you want to keep before finishing (pass check_git_status: false to skip the workspace check). " <>
+          "The report should summarize the status of the ORIGINAL objective as a whole, not just the most recent sub-task you worked on, " <>
           "and is written in the same language as the original objective.",
       parameter_schema: %{
         "type" => "object",
