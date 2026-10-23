@@ -104,7 +104,9 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 
 ## Constraints
 
-- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive); files named `{name}.md`
+- Skill names use `^[a-z][a-z0-9_-]*$` (case-insensitive) and files are `{name}.md` — but that regex is enforced ONLY by `validate_skill_text/1` on `add_skill`/`edit_skill`; `load_skills/1` accepts any `.md` file and its `name` (falling back to `CRUD.filename_to_name/1`, which replaces non-`[a-zA-Z0-9_-]` chars with `-`), so a hand-written file with an invalid name still becomes a tool whose name is sent to the provider.
+- **No skill is enabled by default**: `filter_skills/2` returns `[]` for an empty name list (`context_integration.ex:108-115`) — availability requires a `skill:` entry in a `CONTEXT.md` along the node's ancestor chain (root `./` included), read from the worktree.
+- The `skill:` frontmatter list is metadata ONLY — `ContextNode.build_context/2` strips all frontmatter via `EvoGit.Skills.strip_front_matter/1` (`core/context_node.ex:188-189`), so agents never see enablement state as text; availability is expressed purely by the injected tool schemas.
 - Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
 - YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
 - Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
