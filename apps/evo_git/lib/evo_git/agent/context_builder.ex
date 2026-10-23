@@ -7,12 +7,36 @@ defmodule EvoGit.Agent.ContextBuilder do
   handles syncing agent state (context, usage, turn, tokens) to ETS.
   Also provides turn-tagging and creation-time timestamp stamping utilities
   for messages in the chat context (timestamps are Unix seconds).
+
+  ## The runtime-context snapshot carries a CLOCK
+
+  The `<context>…</context>` snapshot (`build_context_block/1`) ends with a
+  one-line clock (`build_clock_section/1`) — the current local date/time, e.g.
+  `Current local time: 2025-06-14 09:32 (Europe/Berlin)` — so an agent can tell
+  how stale a commit, log line or issue is. It is the LAST section (environment
+  band last: stable sections first, volatile environment data last).
+
+  Two invariants hold:
+
+    * **Byte-identity of message #1** — the clock is re-rendered into the
+      APPENDED refresh message (`build_context_refresh_message/2`), never into
+      the system message or the original first user message, so the provider's
+      cacheable prefix stays byte-identical across compression cycles.
+    * **`:now` test seam** — every section builder reads the clock through a
+      `:now` key on its plain-map input (`build_clock_section/1`,
+      `build_context_block/1`, `build_context_refresh_message/2`,
+      `refresh_first_user_message/2`); a `%DateTime{}`/`%NaiveDateTime{}` pins
+      the rendered line exactly, `nil`/absent (the production case) means
+      "the real local clock, now".
   """
 
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.AgentScheduler
 
+  # The zone the clock section falls back to when no local zone name can be
+  # resolved — `NaiveDateTime.local_now/1`'s own default (Elixir's "local now").
+  @default_time_zone "Etc/UTC"
   # --- Dynamic Context Building ---
 
   @doc """
@@ -132,6 +156,111 @@ defmodule EvoGit.Agent.ContextBuilder do
   end
 
   @doc """
+  Builds the ONE-LINE clock section of the runtime-context snapshot.
+
+  Agents otherwise have no clock at all, so any "how stale is this?" reasoning
+  is blind. Format is terse, plain, no emoji, no markdown header, and at MINUTE
+  granularity (no seconds, so the value is stable within a minute):
+
+      Current local time: 2025-06-14 09:32 (Europe/Berlin)
+
+  The trailing zone name is rendered only when the value KNOWS one (a
+  `%DateTime{}` carries its `:time_zone`); when it is unavailable the line
+  degrades to `Current local time: 2025-06-14 09:32`.
+
+  Input: a plain map with an optional `:now` key — the deterministic TEST SEAM:
+
+    * `%DateTime{}` — its own wall-clock value + its own zone name;
+    * `%NaiveDateTime{}` — its wall-clock value, no zone name;
+    * `nil`/absent (the production case) — the current local time, computed at
+      CALL time, degrading to UTC (`#{@default_time_zone}`) when local-zone
+      resolution is unavailable.
+
+  Pure and TOTAL: never raises (an unusable `TZ` value or a missing time-zone
+  database falls back to the naive local wall clock), never reads the process
+  dictionary. Mirrors `build_authority_section/1`'s "plain map, robust to
+  missing keys" convention; the rendered line is never blank.
+  """
+  @spec build_clock_section(map()) :: String.t()
+  def build_clock_section(%{} = state) do
+    {naive, zone} = clock_value(Map.get(state, :now))
+
+    "Current local time: " <> Calendar.strftime(naive, "%Y-%m-%d %H:%M") <> zone_suffix(zone)
+  end
+
+  defp zone_suffix(zone) when is_binary(zone) and zone != "", do: " (" <> zone <> ")"
+  defp zone_suffix(_zone), do: ""
+
+  # Resolves the `:now` seam to `{%NaiveDateTime{} (second precision), zone | nil}`.
+  defp clock_value(%DateTime{time_zone: zone} = now) do
+    {now |> DateTime.to_naive() |> NaiveDateTime.truncate(:second), zone_name(zone)}
+  end
+
+  defp clock_value(%NaiveDateTime{} = now), do: {NaiveDateTime.truncate(now, :second), nil}
+
+  defp clock_value(_absent), do: current_clock()
+
+  defp zone_name(zone) when is_binary(zone) do
+    case String.trim(zone) do
+      "" -> nil
+      name -> name
+    end
+  end
+
+  defp zone_name(_zone), do: nil
+
+  # The real clock, computed at CALL time. `NaiveDateTime.local_now/0` is the
+  # OS local wall clock (`:calendar.local_time/0`, which honors `TZ`) and needs
+  # no time-zone database — unlike `local_now/1`, which converts through the
+  # wall-clock database and would raise when none is installed. The zone LABEL
+  # is resolved separately (Elixir exposes no portable "the OS's zone name"
+  # API). Defensive: an unusable clock source must never take an agent down, so
+  # the value degrades to UTC.
+  defp current_clock do
+    {NaiveDateTime.truncate(NaiveDateTime.local_now(), :second), local_zone_name()}
+  rescue
+    _ -> utc_clock()
+  catch
+    _kind, _reason -> utc_clock()
+  end
+
+  defp utc_clock do
+    {NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second), @default_time_zone}
+  end
+
+  # Best-effort local zone NAME — the cheapest hints are the `TZ` environment
+  # variable (e.g. `Europe/Berlin`; POSIX allows a leading `:`) and the
+  # `/etc/localtime` symlink into the IANA `zoneinfo` tree. Nothing resolvable →
+  # `nil`, and the line renders the wall-clock value without a zone name.
+  defp local_zone_name do
+    zone_name(System.get_env("TZ") |> strip_zone_prefix()) || zone_name(zoneinfo_link())
+  rescue
+    _ -> nil
+  catch
+    _kind, _reason -> nil
+  end
+
+  defp strip_zone_prefix(zone) when is_binary(zone) do
+    case String.trim_leading(zone, ":") do
+      "" -> nil
+      name -> name
+    end
+  end
+
+  defp strip_zone_prefix(_zone), do: nil
+
+  defp zoneinfo_link do
+    with {:ok, link} <- File.read_link("/etc/localtime"),
+         [_prefix, name] <- String.split(link, "zoneinfo/", parts: 2) do
+      name
+    else
+      _unresolvable -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc """
   Builds the git-submodules note section for the first user prompt.
 
   `repo_notes` is the ALREADY-RENDERED markdown block (produced by
@@ -154,11 +283,17 @@ defmodule EvoGit.Agent.ContextBuilder do
   (`refresh_first_user_message/2`), so the two can never drift.
 
   Input: a plain map with keys `:node_path, :repo_path, :parent_id,
-  :repo_less, :foreign_repos, :repo_notes, :quality_level` (a `%LoopState{}`
-  satisfies this). Purely reads the CONTEXT.md chain from disk via
-  `build_dynamic_context/1` — so calling it again later re-reads the CURRENT
-  chain — plus the static sections, drops blank ones, joins them with `"\\n\\n"`,
-  and wraps them via `context_block/1`.
+  :repo_less, :foreign_repos, :repo_notes, :quality_level` plus the optional
+  clock seam `:now` (a `%DateTime{}`/`%NaiveDateTime{}` pins the rendered
+  `Current local time:` line; `nil`/absent means the real local clock, now —
+  see `build_clock_section/1`). A `%LoopState{}` satisfies this. Purely reads
+  the CONTEXT.md chain from disk via `build_dynamic_context/1` — so calling it
+  again later re-reads the CURRENT chain — plus the static sections, drops
+  blank ones, joins them with `"\\n\\n"`, and wraps them via `context_block/1`.
+
+  Section order is pinned (environment band LAST, so the stable sections form a
+  cacheable prefix): `context tree`, delegation authority, foreign repos, repo
+  notes, quality guidance, then the CLOCK line.
 
   Returns `""` when the joined body is blank (matching `context_block/1`'s
   convention), so the caller's blank-filter drops it.
@@ -192,7 +327,8 @@ defmodule EvoGit.Agent.ContextBuilder do
           parent_id: parent_id,
           repo_less: repo_less,
           quality_level: Map.get(state, :quality_level)
-        })
+        }),
+        build_clock_section(%{now: Map.get(state, :now)})
       ]
       |> Enum.reject(&blank?/1)
       |> Enum.join("\n\n")
@@ -316,12 +452,18 @@ defmodule EvoGit.Agent.ContextBuilder do
     * `:attachments` — the SAME value originally passed to
       `build_initial_messages/4` (already `nil` for repo-less agents), so media
       content parts on the root agent's first message are reproduced
-      byte-identically from the stored base64.
+      byte-identically from the stored base64;
+    * `:now` — the CLOCK seam (see `build_clock_section/1`). Production never
+      sets it (absent = the real local clock at call time), so a refreshed
+      message carries a FRESH `Current local time:` line; a test that compares
+      a refreshed message against the original must pass the SAME fixed `:now`
+      on both sides.
 
   The returned message preserves the ORIGINAL message's metadata
   (`%{refreshed | metadata: msg.metadata}`) so the turn-0 tag + creation
-  timestamp survive. When the CONTEXT.md chain did NOT change, the refreshed
-  message is structurally identical to the original.
+  timestamp survive. When the CONTEXT.md chain did NOT change and `:now` is
+  pinned to the same value, the refreshed message is structurally identical to
+  the original.
   """
   @spec refresh_first_user_message(ReqLLM.Message.t(), map()) :: ReqLLM.Message.t()
   def refresh_first_user_message(%ReqLLM.Message{} = msg, %{} = state) do
@@ -376,6 +518,9 @@ defmodule EvoGit.Agent.ContextBuilder do
   The message states that it SUPERSEDES any earlier `<context>` snapshot and
   that the `<objective>` block is unchanged; it deliberately carries NO
   objective block of its own (the objective stays verbatim in message #1).
+  Its trailing CLOCK line (`build_clock_section/1`) is re-rendered from the
+  `:now` seam on `state` — absent in production, so every refresh carries a
+  FRESH `Current local time:` reading while message #1 keeps the run-start one.
 
   `turn` — when an integer, the message is turn-tagged exactly like every other
   appended message via `tag_message_turn/2`; `nil` leaves it untagged.
