@@ -59,6 +59,11 @@ Configuration I/O bridge between the Settings LiveView and the core runtime.
 | `build_whitelist/1`, `build_provider_whitelist/1` | Builds whitelist maps for safe untrusted-string-to-atom conversion (avoids `String.to_existing_atom/1` + `try/rescue`). |
 
 Only `update_runtime_from_file_config/2` touches the socket — all other functions are pure.
+
+Flat global `[llm]` cards (including boolean and float typed keys such as `tool_result_pruning` / `tool_result_pruning_target_fraction`) need NO dashboard code: the LLM category renders every `EvoGit.Config.Schema.schemas_by_category/0` entry not in `SettingCard.@flat_llm_excluded_key_paths` through `<.setting_card>` (`:float` → `number` input with `step="0.01"`, `:boolean` → hidden `"false"` + toggle `"true"`), and `params_to_category_config/3` parses the very same schemas back.
+A boolean card's absence (or any value other than the string `"true"`) parses as `false` and is written — never treated as a delete — because the `:boolean` branch runs before the nil/`""` check; the hidden companion input guarantees an unchecked toggle submits `"false"`.
+A float card's unparsable value (`"abc"`, a repeated-name list) is dropped from both accumulators (written nowhere, deleted nowhere), while an emptied float field queues the key for deletion.
+Both branches are covered by `apps/evo_dash/test/evo_dash_web/live/settings_live/config_io_test.exs` ("params_to_category_config/3 with :boolean and :float schemas").
 ### `EvoDashWeb.SettingsLive.CustomAgentEvents` (`custom_agent_events.ex`)
 Event handlers for the Settings `:agents` category (custom agents + model-selection script — the per-node `agents.toml` file, NOT config.toml). All functions take a socket (+ params) and return a socket; all persistence goes through `EvoDash.NodeContext` (local node calls `EvoGit.CustomAgents` directly, remote routes `:erpc` via `EvoGit.RemoteNode`), and atom conversions use whitelist lookups (no try/rescue).
 | Function | Purpose |

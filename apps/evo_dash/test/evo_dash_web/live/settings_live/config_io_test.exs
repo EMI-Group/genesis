@@ -1,7 +1,9 @@
 defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
   @moduledoc """
   Pure unit tests for EvoDashWeb.SettingsLive.ConfigIO's `:list_of_strings`
-  handling (e.g. `[sandbox] write_paths`).
+  handling (e.g. `[sandbox] write_paths`) and for the data-driven `:boolean` /
+  `:float` branches used by flat global `[llm]` cards (e.g.
+  `tool_result_pruning`, `tool_result_pruning_target_fraction`).
 
   These are pure data-transformation functions operating on plain maps — no
   LiveView, Phoenix socket, or DB setup is required.
@@ -23,6 +25,34 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
       sub_category: nil,
       description:
         "User-defined list of writable paths for sandboxed tool execution (e.g. cache directories). When set, this list REPLACES the built-in writable cache-dir list; an explicitly empty list disables those writable paths entirely. When unset (nil), the platform's default writable paths are used."
+    }
+  end
+
+  # Mirrors the real schema shape for a flat global [llm] boolean key, e.g. the
+  # core's [:llm, :tool_result_pruning] (type :boolean, default true).
+  defp boolean_schema do
+    %{
+      key_path: [:llm, :tool_result_pruning],
+      type: :boolean,
+      default: true,
+      validation: [],
+      category: :llm,
+      sub_category: nil,
+      description: "Whether tool results are pruned during context compression."
+    }
+  end
+
+  # Mirrors the real schema shape for a flat global [llm] float key, e.g. the
+  # core's [:llm, :tool_result_pruning_target_fraction] (type :float).
+  defp float_schema do
+    %{
+      key_path: [:llm, :tool_result_pruning_target_fraction],
+      type: :float,
+      default: 0.5,
+      validation: [min: 0.0, max: 1.0],
+      category: :llm,
+      sub_category: nil,
+      description: "Target fraction of the compression threshold kept after pruning."
     }
   end
 
@@ -194,6 +224,113 @@ defmodule EvoDashWeb.SettingsLive.ConfigIOTest do
 
       assert get_in(config, [:scheduler, :default_llm_max_concurrency]) == 4
       assert get_in(config, [:sandbox, :write_paths]) == ["/tmp/a"]
+    end
+  end
+
+  describe "params_to_category_config/3 with :boolean and :float schemas" do
+    test ":boolean stores true for a \"true\" param" do
+      params = %{"llm.tool_result_pruning" => "true"}
+
+      assert {%{llm: %{tool_result_pruning: true}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [boolean_schema()])
+    end
+
+    test ":boolean stores false for a \"false\" param" do
+      params = %{"llm.tool_result_pruning" => "false"}
+
+      assert {%{llm: %{tool_result_pruning: false}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [boolean_schema()])
+    end
+
+    test ":boolean treats a missing param as false and does NOT queue it for deletion" do
+      # Actual behavior: the :boolean branch runs BEFORE the nil/"" check, so an
+      # absent param parses as `value == "true"` → false and the key is written.
+      # That is the intended value for a rendered boolean card: the checkbox
+      # renders a hidden `value="false"` companion input
+      # (setting_card.ex:240-249), so an UNCHECKED checkbox submits "false" and
+      # the absent-param case can only mean "false" too — never "delete/unset".
+      assert {%{llm: %{tool_result_pruning: false}}, []} =
+               ConfigIO.params_to_category_config(%{}, :llm, [boolean_schema()])
+    end
+
+    test ":boolean treats an empty-string param as false and does NOT queue it for deletion" do
+      params = %{"llm.tool_result_pruning" => ""}
+
+      assert {%{llm: %{tool_result_pruning: false}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [boolean_schema()])
+    end
+
+    test ":boolean treats any non-\"true\" value as false" do
+      params = %{"llm.tool_result_pruning" => "1"}
+
+      assert {%{llm: %{tool_result_pruning: false}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [boolean_schema()])
+    end
+
+    test ":float stores a parsed float for a numeric string" do
+      params = %{"llm.tool_result_pruning_target_fraction" => "0.5"}
+
+      assert {%{llm: %{tool_result_pruning_target_fraction: 0.5}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [float_schema()])
+    end
+
+    test ":float stores a parsed float for a smaller numeric string" do
+      params = %{"llm.tool_result_pruning_target_fraction" => "0.25"}
+
+      config = ConfigIO.params_to_category_config(params, :llm, [float_schema()])
+
+      assert {%{llm: %{tool_result_pruning_target_fraction: 0.25}}, []} = config
+      assert is_float(get_in(elem(config, 0), [:llm, :tool_result_pruning_target_fraction]))
+    end
+
+    test ":float does NOT write a garbage value and does NOT queue it for deletion" do
+      # SettingsUtils.parse_float/1 returns nil for an unparsable string; the
+      # `is_nil(parsed)` branch then drops the key from BOTH accumulators.
+      params = %{"llm.tool_result_pruning_target_fraction" => "abc"}
+
+      assert {%{}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [float_schema()])
+    end
+
+    test ":float drops a non-binary param value (parse_float/1 → nil) without deletion" do
+      # Plug collapses repeated same-name inputs into a list; parse_float/1 has
+      # no list clause and returns nil → neither written nor queued for deletion.
+      params = %{"llm.tool_result_pruning_target_fraction" => ["0.5"]}
+
+      assert {%{}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [float_schema()])
+    end
+
+    test ":float treats an empty-string param as empty (queued for deletion)" do
+      # Unlike :boolean, a :float card has NO hidden companion input, so an
+      # emptied numeric field means "unset" and the key is deleted.
+      params = %{"llm.tool_result_pruning_target_fraction" => ""}
+
+      assert {%{}, [[:llm, :tool_result_pruning_target_fraction]]} =
+               ConfigIO.params_to_category_config(params, :llm, [float_schema()])
+    end
+
+    test "boolean and float keys land in the same nested config map" do
+      params = %{
+        "llm.tool_result_pruning" => "true",
+        "llm.tool_result_pruning_target_fraction" => "0.25"
+      }
+
+      assert {%{llm: %{tool_result_pruning: true, tool_result_pruning_target_fraction: 0.25}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [
+                 boolean_schema(),
+                 float_schema()
+               ])
+    end
+
+    test "a missing boolean and a present float still merge into one nested map" do
+      params = %{"llm.tool_result_pruning_target_fraction" => "0.5"}
+
+      assert {%{llm: %{tool_result_pruning: false, tool_result_pruning_target_fraction: 0.5}}, []} =
+               ConfigIO.params_to_category_config(params, :llm, [
+                 boolean_schema(),
+                 float_schema()
+               ])
     end
   end
 end
