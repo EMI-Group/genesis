@@ -158,17 +158,64 @@ defmodule EvoGit.Agent.TruncationFeedback do
   # --- Truncation Feedback ---
 
   @doc """
-  Appends a one-line truncation warning to the tool output when the output was
+  Appends a one-line truncation notice to the tool output when the output was
   truncated. No-op when truncation_info is nil.
+
+  The notice is SUCCESS-side guidance appended after the content (never a
+  failure) and is deliberately terse and decoration-free: no emoji and no
+  bracketed warning/notice tags.
+
+  The caps come from `truncation_info` (`:effective_max` / `:global_max`) so the
+  hint can never drift from the cap the sanitizer actually applied; a map
+  without those keys (e.g. the `:invalid_utf8` info from `EvoGit.UTF8`) falls
+  back to the configured `[:truncation, :tool_output_max_bytes]` value — the
+  previously hardcoded ceiling is gone on purpose.
+  When the sanitizer spilled the full output, the notice names the spill file so
+  the model can `read` the omitted part instead of narrowing blindly.
   """
   def append_truncation_feedback(output, nil, _tool_name), do: output
 
   def append_truncation_feedback(output, truncation_info, _tool_name) do
+    original_size = Map.get(truncation_info, :original_size, 0)
+    truncated_size = Map.get(truncation_info, :truncated_size, 0)
+
+    global_max = Map.get(truncation_info, :global_max) || configured_global_max()
+    effective_max = Map.get(truncation_info, :effective_max) || global_max
+
+    limit_clause =
+      case effective_max do
+        max when is_integer(max) and max > 0 -> " (limit #{max})"
+        _ -> ""
+      end
+
+    raise_clause =
+      case global_max do
+        max when is_integer(max) and max > 0 -> "raise max_bytes (up to #{max})"
+        _ -> "raise max_bytes"
+      end
+
+    spill_clause =
+      case Map.get(truncation_info, :spill_path) do
+        path when is_binary(path) -> ", or read the full output at #{path}"
+        _ -> ""
+      end
+
     feedback =
-      "⚠️ Output truncated: original #{truncation_info.original_size} bytes, kept " <>
-        "#{truncation_info.truncated_size} bytes — " <>
-        "narrow the pattern/path or raise max_bytes (up to 131072) for the full result."
+      "Output truncated: original #{original_size} bytes, kept " <>
+        "#{truncated_size} bytes#{limit_clause} — " <>
+        "narrow the pattern/path or #{raise_clause}" <>
+        spill_clause <> "."
 
     output <> "\n\n" <> feedback
+  end
+
+  # The configured ceiling, used when the truncation_info map does not carry the
+  # caps itself (e.g. the `:invalid_utf8` info from `EvoGit.UTF8`). Never a
+  # literal: the hint must reflect the live `[truncation]` configuration.
+  defp configured_global_max do
+    case EvoGit.Config.resolve([:truncation, :tool_output_max_bytes]) do
+      max when is_integer(max) and max > 0 -> max
+      _ -> nil
+    end
   end
 end

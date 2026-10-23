@@ -192,7 +192,7 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
         TruncationFeedback.append_truncation_feedback("output text", truncation_info, "run_bash")
 
       assert result =~ "output text"
-      assert result =~ "⚠️ Output truncated"
+      assert result =~ "Output truncated"
       assert result =~ "original 200000 bytes"
       assert result =~ "kept 50000 bytes"
       assert result =~ "max_bytes (up to 131072)"
@@ -207,7 +207,7 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
 
       result = TruncationFeedback.append_truncation_feedback("text", truncation_info, "read_file")
 
-      assert result =~ "⚠️ Output truncated"
+      assert result =~ "Output truncated"
       assert result =~ "original 100 bytes"
     end
 
@@ -240,7 +240,7 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
         TruncationFeedback.append_truncation_feedback("my output", truncation_info, "run_bash")
 
       # The original output should be followed by \n\n then the feedback marker
-      assert result =~ "my output\n\n⚠️"
+      assert result =~ "my output\n\nOutput truncated"
     end
 
     test "appended feedback states accurate sizes and the single remediation" do
@@ -252,12 +252,100 @@ defmodule EvoGit.Agent.TruncationFeedbackTest do
 
       result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
 
-      assert result =~ "⚠️ Output truncated"
+      assert result =~ "Output truncated"
       assert result =~ "original 72154 bytes"
       assert result =~ "kept 8192 bytes"
       assert result =~ "max_bytes (up to 131072)"
       # No old `---` separator line before the feedback
       refute result =~ "\n\n---"
+    end
+  end
+
+  describe "append_truncation_feedback/3 caps, spill locator and notice shape" do
+    test "uses the caps carried by truncation_info instead of a hardcoded ceiling" do
+      truncation_info = %{
+        reason: :size_exceeded,
+        original_size: 40_000,
+        truncated_size: 4_096,
+        effective_max: 4_096,
+        global_max: 65_536,
+        spill_path: nil
+      }
+
+      result =
+        TruncationFeedback.append_truncation_feedback("output", truncation_info, "rg")
+
+      assert result =~ "original 40000 bytes"
+      assert result =~ "kept 4096 bytes (limit 4096)"
+      assert result =~ "raise max_bytes (up to 65536)"
+      # The drifting literal must be gone
+      refute result =~ "131072"
+    end
+
+    test "names the spill file so the model can read the omitted part" do
+      truncation_info = %{
+        reason: :size_exceeded,
+        original_size: 40_000,
+        truncated_size: 8_192,
+        effective_max: 16_384,
+        global_max: 131_072,
+        spill_path: "/tmp/genesis/task_7/tool_output_rg_1_2.txt"
+      }
+
+      result =
+        TruncationFeedback.append_truncation_feedback("output", truncation_info, "rg")
+
+      assert result =~
+               "or read the full output at /tmp/genesis/task_7/tool_output_rg_1_2.txt."
+
+      # Appended after the content, separated by a blank line
+      assert result =~ "output\n\nOutput truncated"
+    end
+
+    test "omits the spill clause when no spill file was written" do
+      truncation_info = %{
+        reason: :size_exceeded,
+        original_size: 40_000,
+        truncated_size: 8_192,
+        effective_max: 16_384,
+        global_max: 131_072,
+        spill_path: nil
+      }
+
+      result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
+
+      refute result =~ "full output"
+      assert result =~ "raise max_bytes (up to 131072)."
+    end
+
+    test "the notice is marker- and emoji-free" do
+      truncation_info = %{
+        reason: :size_exceeded,
+        original_size: 9_000,
+        truncated_size: 1_000,
+        effective_max: 1_000,
+        global_max: 8_192,
+        spill_path: "/tmp/x.txt"
+      }
+
+      result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "bash")
+
+      refute result =~ "⚠️"
+      refute result =~ "💡"
+      refute result =~ "[NOTICE]"
+      refute result =~ "[WARNING"
+      refute result =~ "WARNING"
+      # Success-side guidance, never an `Error:`-prefixed failure
+      refute result =~ "Error:"
+    end
+
+    test "falls back to the configured ceiling when a cap key is absent" do
+      truncation_info = %{reason: :invalid_utf8, original_size: 100, truncated_size: 95}
+
+      result = TruncationFeedback.append_truncation_feedback("o", truncation_info, "rg")
+
+      configured = EvoGit.Config.resolve([:truncation, :tool_output_max_bytes])
+      assert result =~ "raise max_bytes (up to #{configured})"
     end
   end
 end

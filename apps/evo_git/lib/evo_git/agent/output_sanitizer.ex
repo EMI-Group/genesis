@@ -14,10 +14,24 @@ defmodule EvoGit.Agent.OutputSanitizer do
   All functions return `{result, truncation_info}` tuples where:
   - `result` is the sanitized/truncated output
   - `truncation_info` is `nil` when no truncation occurred, or a map:
-      `%{reason: :invalid_utf8 | :size_exceeded, original_size: pos_integer, truncated_size: pos_integer}`
+      `%{reason: :invalid_utf8 | :size_exceeded, original_size: pos_integer,
+        truncated_size: pos_integer}` — the size-exceeded variant additionally
+      carries `effective_max`, `global_max` and `spill_path` (see below).
 
   Steps: ensure_utf8 → strip_ansi → strip_progress_bars → truncate
 
+  ## Truncation spill file
+
+  A size-exceeded truncation writes the FULL (pre-truncation, post-sanitize)
+  output to a spill file inside the current task's scratch directory
+  (`EvoGit.TaskTmpdir.current/0`), named
+  `tool_output_<tool_name>_<millis>_<unique>.txt`. The inline result keeps the
+  head+tail slices and gains a trailing locator line
+  `[output truncated; full output: <path>]`, so the model can `read` the omitted
+  middle instead of narrowing blindly. The write is best-effort: with no
+  per-task tmpdir installed (direct/unit-test callers) or on a filesystem error
+  the locator simply omits the path — a spill failure never fails the tool call.
+  The path is reported as `truncation_info.spill_path` (`nil` when none).
   ## Wrap boundary (BINARY-ONLY contract)
 
   This module is BINARY-ONLY: it takes a string and returns a string. It never
@@ -30,22 +44,47 @@ defmodule EvoGit.Agent.OutputSanitizer do
   """
   require Logger
 
+  # Tools whose default cap is the SMALLER `[:truncation, :tool_output_default_max_bytes]`
+  # (everything else defaults to the global ceiling). The tool name handed to
+  # the sanitizer is the RAW model-facing name, and the model-facing names are
+  # being aligned with DeepSeek-Harness conventions (`read_file` → `read`,
+  # `run_bash` → `bash`, `search_web` → `web_search`, …). BOTH spellings are
+  # listed here on purpose so the per-tool default cap keeps applying whichever
+  # spelling the caller passes — deliberately without depending on the
+  # (concurrently changing) tool-name alias table.
   @high_output_tools MapSet.new([
+                       # shell / exec
                        "run_bash",
+                       "bash",
+                       "shell",
                        "run_powershell",
+                       "powershell",
+                       "pwsh",
+                       # read / write / edit
                        "read_file",
+                       "read",
+                       "write_file",
+                       "write",
+                       "edit_file",
+                       "edit",
+                       # search / network
                        "rg",
+                       "grep",
                        "curl",
                        "run_git",
+                       "git",
                        "search_web",
+                       "web_search",
                        "search_context",
                        "search_history"
                      ])
-
   @ansi_regex ~r/\e\[[0-9;]*[a-zA-Z]|\e\][^\x07]*\x07|\e[()][AB012]|\e\[[0-9;]*m/
   @progress_bar_regex ~r/^[\s\r]*\[[=\->#*_ ]+\]\s*\d*%?\s*$/
   @spinner_regex ~r/^[\|\/\-\\]$/
 
+  # Cap for the tool-name slug embedded in a spill file name (keeps the name
+  # well under filesystem limits regardless of what a caller passes).
+  @spill_tool_slug_max 48
   # --- Public API ---
 
   @doc """
@@ -121,7 +160,13 @@ defmodule EvoGit.Agent.OutputSanitizer do
   - `[:truncation, :tool_output_truncate_size]` (default: 8192 bytes)
 
   Returns `{result, truncation_info}` where truncation_info is `nil` when no
-  truncation occurred, or `%{reason: :size_exceeded, original_size: pos_integer, truncated_size: pos_integer}`.
+  truncation occurred, or
+  `%{reason: :size_exceeded, original_size: pos_integer, truncated_size: pos_integer,
+     effective_max: pos_integer, global_max: pos_integer, spill_path: String.t() | nil}`.
+
+  On truncation the full original output is spilled to the current task's
+  scratch directory (see the moduledoc) and located inline; `spill_path` is the
+  spill file path, or `nil` when the spill could not be written.
 
   Non-binary results pass through as `{result, nil}`.
   """
@@ -154,16 +199,13 @@ defmodule EvoGit.Agent.OutputSanitizer do
           first_part <> "\n... [#{omitted} bytes omitted] ...\n" <> last_part
         end
 
+      # Spill the FULL (pre-truncation, post-sanitize) output so a follow-up
+      # `read` can open the omitted middle instead of narrowing blindly.
+      spill_path = write_spill_file(result, tool_name)
+
       truncated =
-        (truncation_header(
-           effective_max,
-           original_size,
-           first_part,
-           last_part,
-           omitted,
-           global_max
-         ) <>
-           "\n" <> body)
+        (truncation_header(effective_max, original_size, first_part, last_part, omitted) <>
+           "\n" <> body <> spill_locator(spill_path))
         |> String.trim()
 
       # Defensive UTF-8 safety net: String.byte_slice/3 is already
@@ -178,7 +220,10 @@ defmodule EvoGit.Agent.OutputSanitizer do
        %{
          reason: :size_exceeded,
          original_size: original_size,
-         truncated_size: retained
+         truncated_size: retained,
+         effective_max: effective_max,
+         global_max: global_max,
+         spill_path: spill_path
        }}
     end
   end
@@ -212,20 +257,81 @@ defmodule EvoGit.Agent.OutputSanitizer do
 
   # Short, factual inline header the LLM sees at the top of a truncated output.
   # Must be accurate in both cases: omitted > 0 (head + tail kept) and the
-  # edge case where the whole output was retained (omitted == 0).
-  defp truncation_header(effective_max, original_size, first_part, last_part, omitted, global_max) do
+  # edge case where the whole output was retained (omitted == 0). Deliberately
+  # decoration-free (no bracketed warning tag, no emoji) and terse: the hint plus
+  # the caps live in `EvoGit.Agent.TruncationFeedback`'s trailing notice and in
+  # the spill-file locator, never here.
+  defp truncation_header(effective_max, original_size, first_part, last_part, omitted) do
     if omitted == 0 do
-      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
-        "#{effective_max}-byte limit — the full output was retained unchanged (nothing omitted)]"
+      "[Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit; the full output was retained unchanged (nothing omitted)]"
     else
       first_size = byte_size(first_part)
       last_size = byte_size(last_part)
 
-      "[WARNING: Output truncated: original #{original_size} bytes exceeded the " <>
-        "#{effective_max}-byte limit — kept first #{first_size} + last #{last_size} bytes, " <>
-        "#{omitted} bytes omitted. Narrow the pattern/path or raise max_bytes (up to #{global_max}).]"
+      "[Output truncated: original #{original_size} bytes exceeded the " <>
+        "#{effective_max}-byte limit; kept first #{first_size} + last #{last_size} bytes, " <>
+        "#{omitted} bytes omitted]"
     end
   end
+
+  # Appended AFTER the kept head+tail content: the locator line that lets the
+  # model open the full output with a follow-up read. Empty when the spill could
+  # not be written (no per-task tmpdir, filesystem error).
+  defp spill_locator(nil), do: ""
+
+  defp spill_locator(path) when is_binary(path),
+    do: "\n\n[output truncated; full output: #{path}]"
+
+  # Writes the FULL, pre-truncation output into the current task's scratch
+  # directory and returns the path, or `nil` when there is no per-task tmpdir
+  # (direct/unit-test callers) or the write fails. Plain `case` matches only —
+  # a spill must never fail the tool call, and a write error is already the
+  # fully-handled `{:error, reason}` shape (no raise to guard against).
+  defp write_spill_file(full_output, tool_name) do
+    case EvoGit.TaskTmpdir.current() do
+      dir when is_binary(dir) ->
+        path = Path.join(dir, spill_file_name(tool_name))
+
+        case File.write(path, full_output) do
+          :ok ->
+            path
+
+          {:error, reason} ->
+            Logger.debug(
+              "OutputSanitizer: could not write spill file #{path}: #{inspect(reason)}"
+            )
+
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # `tool_output_<slug>_<millis>_<unique>.txt` — self-describing per call and
+  # collision-free: `System.unique_integer([:positive, :monotonic])` is unique
+  # per BEAM even for two truncations in the same millisecond (the millis
+  # component keeps the name human-readable/chronological).
+  defp spill_file_name(tool_name) do
+    "tool_output_#{spill_tool_slug(tool_name)}_" <>
+      "#{System.system_time(:millisecond)}_" <>
+      "#{System.unique_integer([:positive, :monotonic])}.txt"
+  end
+
+  defp spill_tool_slug(tool_name) when is_binary(tool_name) do
+    slug =
+      tool_name
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9_]+/, "_")
+      |> String.trim("_")
+      |> String.slice(0, @spill_tool_slug_max)
+
+    if slug == "", do: "tool", else: slug
+  end
+
+  defp spill_tool_slug(_tool_name), do: "tool"
 
   defp determine_effective_max(tool_name, tool_args, global_max, default_max) do
     case tool_args do

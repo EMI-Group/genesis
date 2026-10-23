@@ -280,12 +280,155 @@ defmodule EvoGit.Agent.OutputSanitizerTest do
 
       assert truncated =~ "Output truncated"
       assert truncated =~ "11808 bytes omitted"
-      assert truncated =~ "max_bytes (up to 131072)"
       # Header is short/factual and reports the original size plus the kept
       # head/tail byte counts
       assert truncated =~ "original 20000 bytes"
       assert truncated =~ "kept first 4096 + last 4096 bytes"
       assert truncation_info.truncated_size == 8_192
+    end
+
+    test "the inline header reports the effective cap and carries no marker or emoji" do
+      EvoGit.TaskTmpdir.put_current(nil)
+      result = String.duplicate("f", 20_000)
+
+      {truncated, truncation_info} =
+        OutputSanitizer.truncate(result, "tool", %{"max_bytes" => 100})
+
+      assert truncation_info.effective_max == 100
+      assert is_integer(truncation_info.global_max) and truncation_info.global_max >= 100
+      assert truncated =~ "100-byte limit"
+      # The hint must reflect the cap actually applied, never a baked-in 131072
+      refute truncated =~ "131072"
+      # Success-side notice: no failure/marker decoration
+      refute truncated =~ "[WARNING"
+      refute truncated =~ "[NOTICE]"
+      refute truncated =~ "⚠️"
+      refute truncated =~ "💡"
+    end
+
+    test "truncation_info keeps the pinned keys and adds the cap/spill keys" do
+      EvoGit.TaskTmpdir.put_current(nil)
+      result = String.duplicate("g", 20_000)
+
+      {_truncated, truncation_info} = OutputSanitizer.truncate(result, "rg", %{})
+
+      assert truncation_info.reason == :size_exceeded
+      assert truncation_info.original_size == 20_000
+      assert truncation_info.truncated_size == 8_192
+      assert truncation_info.spill_path == nil
+
+      assert truncation_info |> Map.keys() |> Enum.sort() ==
+               [
+                 :effective_max,
+                 :global_max,
+                 :original_size,
+                 :reason,
+                 :spill_path,
+                 :truncated_size
+               ]
+    end
+  end
+
+  describe "truncate/3 spill file" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "evogit_spill_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf(dir) end)
+      EvoGit.TaskTmpdir.put_current(dir)
+      %{dir: dir}
+    end
+
+    test "writes exactly one spill file holding the full pre-truncation output", %{dir: dir} do
+      full = String.duplicate("a", 20_000)
+
+      {truncated, truncation_info} = OutputSanitizer.truncate(full, "run_bash", %{})
+
+      assert truncation_info.reason == :size_exceeded
+      spill_path = truncation_info.spill_path
+      assert is_binary(spill_path)
+      assert Path.dirname(spill_path) == dir
+      # Byte-identical to the binary handed to truncate/3
+      assert File.read!(spill_path) == full
+
+      assert [basename] = File.ls!(dir)
+      assert Path.basename(spill_path) == basename
+      assert basename =~ ~r/^tool_output_run_bash_\d+_\d+\.txt$/
+
+      # Head+tail stay inline, the locator comes after them with the exact path
+      assert truncated =~ "kept first 4096 + last 4096 bytes"
+      assert truncated =~ "[output truncated; full output: #{spill_path}]"
+      assert String.ends_with?(truncated, "[output truncated; full output: #{spill_path}]")
+    end
+
+    test "two truncations in the same millisecond never collide", %{dir: dir} do
+      full = String.duplicate("b", 20_000)
+
+      {_, first} = OutputSanitizer.truncate(full, "rg", %{})
+      {_, second} = OutputSanitizer.truncate(full, "rg", %{})
+
+      refute first.spill_path == second.spill_path
+      assert length(File.ls!(dir)) == 2
+      assert File.read!(second.spill_path) == full
+    end
+
+    test "the spill file name is a sanitized, self-describing tool name", %{dir: dir} do
+      full = String.duplicate("e", 20_000)
+
+      {_, truncation_info} = OutputSanitizer.truncate(full, "Read/File X", %{"max_bytes" => 100})
+
+      assert Path.basename(truncation_info.spill_path) =~
+               ~r/^tool_output_read_file_x_\d+_\d+\.txt$/
+
+      assert File.exists?(truncation_info.spill_path)
+      assert length(File.ls!(dir)) == 1
+    end
+
+    test "an unusable tool name still yields a usable file name", %{dir: dir} do
+      full = String.duplicate("z", 20_000)
+
+      {_, truncation_info} = OutputSanitizer.truncate(full, "工具", %{"max_bytes" => 100})
+
+      assert Path.basename(truncation_info.spill_path) =~ ~r/^tool_output_tool_\d+_\d+\.txt$/
+      assert length(File.ls!(dir)) == 1
+    end
+
+    test "no per-task tmpdir installed: truncation still returns, without a spill locator" do
+      EvoGit.TaskTmpdir.put_current(nil)
+      full = String.duplicate("c", 20_000)
+
+      assert {truncated, truncation_info} = OutputSanitizer.truncate(full, "rg", %{})
+
+      assert is_binary(truncated)
+      assert truncation_info.spill_path == nil
+      assert truncation_info.reason == :size_exceeded
+      refute truncated =~ "full output:"
+      assert truncated =~ "Output truncated"
+    end
+
+    test "an unwritable spill directory never raises and omits the path", %{dir: dir} do
+      # A non-existent nested directory: File.write/2 returns {:error, :enoent}
+      # instead of raising, so the tool result is still produced.
+      EvoGit.TaskTmpdir.put_current(Path.join([dir, "does", "not", "exist"]))
+      full = String.duplicate("d", 20_000)
+
+      assert {truncated, truncation_info} = OutputSanitizer.truncate(full, "rg", %{})
+
+      assert is_binary(truncated)
+      assert truncation_info.spill_path == nil
+      refute truncated =~ "full output:"
+      assert truncated =~ "11808 bytes omitted"
+    end
+
+    test "the inline result stays valid UTF-8 with a spill locator appended", %{dir: dir} do
+      full = String.duplicate("€", 20_000)
+
+      {truncated, truncation_info} = OutputSanitizer.truncate(full, "rg", %{})
+
+      assert String.valid?(truncated)
+      assert truncated =~ String.duplicate("€", 100)
+      assert truncated =~ "[output truncated; full output: #{truncation_info.spill_path}]"
+      assert File.read!(truncation_info.spill_path) == full
+      assert length(File.ls!(dir)) == 1
     end
   end
 
