@@ -261,8 +261,10 @@ defmodule EvoGit.CustomTools.Loader do
 
       {:ok, %ReqLLM.Tool{name: name} = tool} when is_binary(name) and name != "" ->
         cond do
-          MapSet.member?(builtin, name) ->
-            {:error, "tool name '#{name}' collides with a built-in tool"}
+          MapSet.member?(builtin, String.downcase(name)) ->
+            {:error,
+             "tool name '#{name}' collides with a built-in tool " <>
+               "(or one of its accepted spellings)"}
 
           MapSet.member?(seen, name) ->
             {:error, "duplicate custom tool name '#{name}' (first definition wins)"}
@@ -340,7 +342,7 @@ defmodule EvoGit.CustomTools.Loader do
         |> Enum.map(&EvoGit.Agent.tool_name/1)
         |> Enum.reject(&is_nil/1)
 
-      MapSet.new(schema_names ++ @non_schema_builtins)
+      builtin_name_set(schema_names)
     rescue
       error ->
         Logger.warning(
@@ -348,7 +350,7 @@ defmodule EvoGit.CustomTools.Loader do
             "(#{Exception.format(:error, error)}) — using dispatch-only built-ins only"
         )
 
-        MapSet.new(@non_schema_builtins)
+        fallback_builtin_names()
     catch
       kind, reason ->
         Logger.warning(
@@ -356,9 +358,38 @@ defmodule EvoGit.CustomTools.Loader do
             "using dispatch-only built-ins only"
         )
 
-        MapSet.new(@non_schema_builtins)
+        fallback_builtin_names()
     end
   end
+
+  # The (down-cased) set of names a custom tool may NOT take. It must be
+  # ALIAS-AWARE: `EvoGit.Agent.Tools.execute/5` normalises the incoming name
+  # through `EvoGit.Agent.ToolNames.normalize/1` BEFORE it reaches the
+  # custom-tool fallback, so a custom tool named after ANY accepted spelling
+  # (`read_file`, `read`, `bash`, `shell`, `Search_Web`, …) is shadowed by the
+  # built-in and could never fire. Rejecting it here surfaces that as an error
+  # record instead of a tool that silently loads and is never dispatched.
+  #
+  # The set is therefore: model-facing schema names ++ their internal dispatch
+  # keys ++ every accepted alias spelling from `EvoGit.Agent.ToolNames.table/0`
+  # ++ the dispatch-only built-ins. Down-cased because normalisation is
+  # case-insensitive (`Read` is shadowed too). Names unknown to the alias table
+  # are unaffected — that passthrough is load-bearing for real custom tools.
+  defp builtin_name_set(schema_names) do
+    (schema_names ++
+       Enum.map(schema_names, &EvoGit.Agent.ToolNames.normalize/1) ++
+       Map.keys(EvoGit.Agent.ToolNames.table()) ++
+       @non_schema_builtins)
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.downcase/1)
+    |> MapSet.new()
+  end
+
+  # The degraded collision set: the literal dispatch-only built-ins, already
+  # lower-case. Deliberately self-contained (no `EvoGit.Agent.Tools` /
+  # `ToolNames` call) so a failure enumerating the built-ins cannot raise again
+  # from inside the rescue/catch.
+  defp fallback_builtin_names, do: MapSet.new(@non_schema_builtins)
 
   defp error(file, reason), do: %{file: file, reason: reason}
 end
