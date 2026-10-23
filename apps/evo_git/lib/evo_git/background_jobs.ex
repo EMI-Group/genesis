@@ -30,6 +30,8 @@ defmodule EvoGit.BackgroundJobs do
   @poll_interval_ms 100
   # A spawn can briefly block (systemd-run / port open), so registry calls use an explicit timeout instead of the 5s default.
   @call_timeout 15_000
+  # `reap_under/1` runs inside a GenServer teardown path (WorktreeManager's `:DOWN`), so it must fail fast instead of stalling that process.
+  @reap_call_timeout 5_000
   # Default `read/2` byte cap when the caller does not pass `:max_bytes`.
   @default_max_bytes 20_000
   # Retention cap for FINISHED job records (live jobs are never pruned).
@@ -166,7 +168,7 @@ defmodule EvoGit.BackgroundJobs do
   """
   @spec reap_under(String.t()) :: :ok
   def reap_under(prefix) when is_binary(prefix) and prefix != "" do
-    case call_registry({:reap_under, prefix}, :ok) do
+    case call_registry({:reap_under, prefix}, :ok, @reap_call_timeout) do
       _ -> :ok
     end
   end
@@ -202,9 +204,10 @@ defmodule EvoGit.BackgroundJobs do
   ## Registry plumbing
 
   # Every public call goes through here so a dead/absent registry can never make a calling tool crash with an exit.
-  defp call_registry(message, fallback) do
+  # The timeout is explicit per call: `reap_under/1` passes a short one so a wedged registry cannot stall its caller.
+  defp call_registry(message, fallback, timeout \\ @call_timeout) do
     try do
-      GenServer.call(server(), message, @call_timeout)
+      GenServer.call(server(), message, timeout)
     catch
       :exit, reason ->
         Logger.warning(
@@ -268,9 +271,9 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
-  defp normalize_start_spec(_spec) do
+  defp normalize_start_spec(spec) do
     {:error,
-     "A background job needs a spec map (or keyword list) with at least `command` and `cwd`; got #{inspect(nil)}. Retry with a spec map."}
+     "A background job needs a spec map (or keyword list) with at least `command` and `cwd`; got #{inspect(spec)}. Retry with a spec map."}
   end
 
   # Maps the fixed set of STRING spec keys onto atoms. Atom keys pass through untouched; unknown keys are dropped.
