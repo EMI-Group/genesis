@@ -520,8 +520,14 @@ defmodule EvoDashWeb.AgentsLiveTest do
       agent = assigns(view)[:agents] |> Enum.find(&(&1.id == agent_id()))
       assert agent.status == :waiting
       assert agent.total_tokens == 21_000
-      # 21_000 / 42_000 = 50% — recomputed from the node's configured threshold.
-      assert agent.compression_pct == 50
+      # The bar is recomputed from the changed :total_tokens against the
+      # agent's OWN threshold: each agent summary carries a
+      # `compression_threshold` (the core derives it from that model's context
+      # window — 126_272 for the default 200k window) which takes precedence
+      # over the node-level `[:llm, :compression_threshold_tokens]` fallback
+      # (42_000 in this stub). 21_000 / 126_272 truncates to 16.
+      assert agent.compression_threshold != 42_000
+      assert agent.compression_pct == trunc(min(21_000 / agent.compression_threshold * 100, 100))
       assert assigns(view)[:changed_status_ids] |> MapSet.member?(agent_id())
     end
 
