@@ -1,11 +1,39 @@
 defmodule EvoGit.Agent.Tools.Ripgrep do
   @moduledoc """
   Tool for executing ripgrep (rg) commands.
+
+  Two output conventions, chosen by the caller's args (see `bare_args?/1`):
+
+    * BARE args (`PATTERN [PATH ...]`, no option token) — the tool injects
+      `--line-number` and `--no-heading` and caps the payload at `@max_lines`
+      lines with a narrowing footer, so the model gets a plain
+      `path:line:text` listing. Nothing matched renders exactly
+      `No matches found.`.
+    * EXPLICIT args (any leading-dash token: `-l`, `-c`, `--json`, `-A/-B/-C`,
+      and the `-e`/`-f` forms) — passed through VERBATIM under the legacy
+      `Command executed successfully.\\nOutput:\\n<raw>` envelope. The caller
+      asked for exactly that shape, so nothing is injected and nothing capped.
+
+  Failures are rendered through `EvoGit.Agent.Tools.Failure`, so they always
+  start with the literal `Error: ` and carry any grep-mistake tip as a trailing
+  block instead of blending it into the sentence.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @bare_numeric_flag_regex ~r/\A-\d+\z/
+
+  # Injected for the BARE-args case only: a line number in front of each match
+  # and one match per line (`path:line:text`) instead of matches grouped under
+  # bare file headings.
+  @bare_default_flags ["--line-number", "--no-heading"]
+
+  # Payload cap for the BARE-args case. Unbounded rg output (a 50 000-match
+  # search) floods the context window; the model narrows the pattern instead.
+  @max_lines 250
+
+  @truncation_footer "[results truncated at #{@max_lines} matches; narrow the pattern or add a path to see fewer]"
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -14,26 +42,16 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
     ReqLLM.tool(
       name: "rg",
       description: """
-      Executes ripgrep (rg) to search for patterns in files. Provide arguments as a list of strings.
-      The working directory is set to git repo path (the current git worktree path).
+      Use the rg tool to search file contents with ripgrep (rg) — it is recursive by default and respects .gitignore.
 
-      ripgrep (rg) recursively searches the current directory for lines matching a regex pattern.
-      By default, ripgrep will respect gitignore rules and automatically skip hidden files/directories and binary files.
-      IMPORTANT: Explicitly provide the pattern and path arguments, otherwise rg will try to read them from stdin, which will cause the command to hang and timeout.
+      Explicitly provide the pattern and path — rg reads stdin and hangs otherwise.
 
-      USAGE:
-          rg [OPTIONS] PATTERN [PATH ...]
-          rg [OPTIONS] -e PATTERN ... [PATH ...]
-          rg [OPTIONS] -f PATTERNFILE ... [PATH ...]
-          rg [OPTIONS] --files [PATH ...]
-          rg [OPTIONS] --type-list
-          command | rg [OPTIONS] PATTERN
-          rg [OPTIONS] --help
-          rg [OPTIONS] --version
+      ARGS: `["PATTERN"]`, `["PATTERN", "PATH"]`, or the same plus your own flags. When no flag is passed, rg runs with line numbers on, no headings, and a #{@max_lines}-line cap, so the output is a plain `path:line:text` listing. Pass your own flags to control the output exactly — an explicit flag set is passed through unchanged.
 
       EXAMPLE ARGS:
-          ["-n", "TODO", "src/"] - searches for the pattern "TODO" in the "src/" and prints line numbers
-          ["-i", "-e", "fixme", "."] - case-insensitive
+          ["TODO", "src/"] - finds TODO under src/, prints path:line:text
+          ["-i", "-e", "fixme", "."] - case-insensitive, pattern given via -e
+          ["-l", "defmodule"] - filenames only
 
       COMMON MISTAKES (rg is NOT grep):
           1. `-<n>` (e.g. `-9`): This is grep syntax, NOT ripgrep. ripgrep does not support bare numerical shorthand flags (no `-1`, `-5`, `-99`). To control context lines, use `-C <n>` / `--context <n>` (lines before AND after), `-A <n>` / `--after-context <n>` (lines after), or `-B <n>` / `--before-context <n>` (lines before).
@@ -46,7 +64,8 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
           "args" => %{
             "type" => "array",
             "items" => %{"type" => "string"},
-            "description" => "List of arguments to pass to rg, e.g. ['-n', 'pattern', 'path']"
+            "description" =>
+              "List of arguments to pass to rg, e.g. ['TODO', 'src/'] or ['-l', 'TODO']"
           },
           "max_bytes" => %{
             "type" => "integer",
@@ -66,26 +85,79 @@ defmodule EvoGit.Agent.Tools.Ripgrep do
   def execute(args, repo_path, repo_root) do
     case Shared.fetch_array_arg(args, "args") do
       {:ok, sanitized_args} ->
+        bare? = bare_args?(sanitized_args)
+
         {output, exit_code} =
-          EvoGit.sandbox_run(repo_path, "rg", sanitized_args, repo_root)
+          EvoGit.sandbox_run(repo_path, "rg", rg_args(sanitized_args, bare?), repo_root)
 
-        hint = build_hint(sanitized_args)
-
-        cond do
-          exit_code == 0 ->
-            "Command executed successfully.\nOutput:\n#{output}"
-
-          exit_code == 1 and output == "" ->
-            base = "No matches found."
-            if hint, do: base <> "\n" <> hint, else: base
-
-          true ->
-            base = "Command failed with exit code #{exit_code}.\nOutput:\n#{output}"
-            if hint, do: base <> "\n" <> hint, else: base
-        end
+        render(output, exit_code, build_hint(sanitized_args), bare?)
 
       {:error, message} ->
         message
+    end
+  end
+
+  # A BARE call is `PATTERN [PATH ...]` with NO option token at all: no element
+  # starts with `-`. That keeps every explicit flag set intact for free — `-l`,
+  # `-c`, `--json`, `-A/-B/-C`, and the `-e`/`-f` forms (which take the pattern
+  # as an option VALUE) all carry a leading-dash token and are therefore NOT
+  # bare. An EMPTY list is not bare either: there is no pattern to shape, so the
+  # call is passed through unchanged rather than silently rewritten.
+  defp bare_args?([_ | _] = args), do: not Enum.any?(args, &String.starts_with?(&1, "-"))
+  defp bare_args?(_args), do: false
+
+  defp rg_args(args, true), do: @bare_default_flags ++ args
+  defp rg_args(args, false), do: args
+
+  # BARE-args success: a plain `path:line:text` listing, capped. The footer sits
+  # OUTSIDE the cap, so a truncated result never hides its own footer.
+  defp render(output, 0, hint, true) do
+    case payload_lines(output) do
+      [] -> no_matches(hint)
+      lines -> cap_lines(lines) <> hint_notice(hint)
+    end
+  end
+
+  # EXPLICIT-args success: the caller chose its own flags, so the raw payload
+  # goes out untouched under the legacy envelope.
+  defp render(output, 0, _hint, false), do: "Command executed successfully.\nOutput:\n#{output}"
+
+  # rg exits 1 when nothing matched — same sentence in both conventions.
+  defp render(_output, 1, hint, _bare), do: no_matches(hint)
+
+  defp render(output, exit_code, hint, _bare) do
+    guidance = output_block(output) <> hint_notice(hint)
+    Failure.error("rg failed with exit code #{exit_code}.", guidance)
+  end
+
+  defp no_matches(hint), do: "No matches found." <> hint_notice(hint)
+
+  # `build_hint/1` returns nil when the args carry no grep mistake — never hand
+  # that to `Failure.notice/1`, which would stringify it to "nil".
+  defp hint_notice(nil), do: ""
+  defp hint_notice(hint), do: Failure.notice(hint)
+
+  defp payload_lines(output) do
+    case String.trim_trailing(output) do
+      "" -> []
+      text -> String.split(text, "\n")
+    end
+  end
+
+  # Caps the payload at `@max_lines` and appends the narrowing footer ONLY when
+  # lines were dropped, so a complete listing is returned byte-identical.
+  defp cap_lines(lines) do
+    if length(lines) > @max_lines do
+      (lines |> Enum.take(@max_lines) |> Enum.join("\n")) <> "\n" <> @truncation_footer
+    else
+      Enum.join(lines, "\n")
+    end
+  end
+
+  defp output_block(output) do
+    case String.trim_trailing(output) do
+      "" -> ""
+      text -> "Output:\n" <> text
     end
   end
 
