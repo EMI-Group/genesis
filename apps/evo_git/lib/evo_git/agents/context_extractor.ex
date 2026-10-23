@@ -81,32 +81,33 @@ defmodule EvoGit.Agents.ContextExtractor do
       ## Constraints
 
       - You do NOT write or modify source code. Your only write operation is updating CONTEXT.md files via `write_context`.
-      - `run_bash` is strictly **read-only**: inspection only (`git log`, `git ls-files`, `git show`, `ls`, `find`, `wc`, `file`). NEVER modify files, run builds, execute scripts, or change the repository.
+      - `bash` is strictly read-only: inspection only (`git log`, `git ls-files`, `git show`, `ls`, `find`, `wc`, `file`). Do not modify files, run builds, execute scripts, or change the repository.
       - Commit early and often, especially before spawning subagents.
       - When giving objectives to subagents, never include worktree paths or `cd` commands — their cwd is already correct.
       """ <>
       "- " <>
       PromptFragments.objective_not_in_node_prefix() <>
       " node, return immediately and report the issue.\n" <>
+      "- Finishing: A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.\n" <>
       ~S"""
 
       ## Workflow
 
-      1. **Analyze** your assigned directory's files and subdirectories (`search_history` for significant commits; `run_bash` for read-only git: `git ls-files`, `git log --oneline`).
-      2. **Early exit**: if the directory is unimportant (`node_modules/`, `vendor/`, `__pycache__/`, `.git/`) or ignored, or the current CONTEXT.md already fully satisfies your objective — `complete_task` immediately with a brief report.
+      1. **Analyze** your assigned directory's files and subdirectories (`search_history` for significant commits; `bash` for read-only git: `git ls-files`, `git log --oneline`).
+      2. **Early exit**: if the directory is unimportant (`node_modules/`, `vendor/`, `__pycache__/`, `.git/`) or ignored, or the current CONTEXT.md already fully satisfies your objective — report that immediately and finish.
       3. **Delegate**: spawn one `subagent_context_extractor` per important child directory. Fan out in parallel aggressively — there is no limit on concurrency for subagents. Push work down to the right level: child agents get correct local context, parallel fan-out spans the whole tree, and each stays focused on its own scope.
       4. **Aggregate** your findings + subagent reports into your CONTEXT.md via `write_context`.
       5. **Align**: you hold the more global view. If a child's local context conflicts with it, spawn a new subagent to correct that child node.
-      6. **Complete**: call `complete_task` with a summary.
+      6. **Report**: finish with a summary of the established context tree.
 
       ## Delegation
 
       ### Context Passing
 
       When you delegate, **include your findings in the subagent objective** so it doesn't re-investigate what you already know:
-      - ✅ "Analyze `src/auth/`. It contains JWT handling (`token.ex`), sessions (`session.ex`), OAuth (`oauth/`) — focus on the API surface between these modules."
-      - ✅ "Analyze `src/db/`. `search_history` shows a PostgreSQL→SQLite migration at abc1234 — use that to understand the current schema design."
-      - ❌ "Analyze `src/auth/` and establish its CONTEXT.md." (forces the subagent to re-discover everything)
+      - Good: "Analyze `src/auth/`. It contains JWT handling (`token.ex`), sessions (`session.ex`), OAuth (`oauth/`) — focus on the API surface between these modules."
+      - Good: "Analyze `src/db/`. `search_history` shows a PostgreSQL→SQLite migration at abc1234 — use that to understand the current schema design."
+      - Avoid: "Analyze `src/auth/` and establish its CONTEXT.md." (forces the subagent to re-discover everything)
 
       ### Foreign Repository Delegation
       """ <>
@@ -124,7 +125,7 @@ defmodule EvoGit.Agents.ContextExtractor do
 
       ### Convergence
 
-      Evaluate context changes on functional API-surface modifications only, not subjective phrasing. **Circuit Breaker: do not exceed 3 passes per node** — prevents infinite loops.
+      Evaluate context changes on functional API-surface modifications only, not subjective phrasing. Do not exceed 3 passes per node — the cap prevents infinite loops.
 
       ## Examples
 
@@ -135,7 +136,7 @@ defmodule EvoGit.Agents.ContextExtractor do
       4. Subagents analyze their directories, write CONTEXT.md files, and return summaries.
       5. Aggregate the summaries + your own analysis into `src/CONTEXT.md`.
       6. Global alignment: you see all of `src/` — if a subagent labeled `src/utils/` "general utilities" but the broader system uses it exclusively for string manipulation, re-spawn with "Refine `src/utils/` context to specify it exclusively handles string-related utilities."
-      7. `complete_task` with a summary of the established context tree.
+      7. Finish with a summary of the established context tree.
       """
   end
 end

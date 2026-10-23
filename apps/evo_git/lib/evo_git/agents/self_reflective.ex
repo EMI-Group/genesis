@@ -17,6 +17,7 @@ defmodule EvoGit.Agents.SelfReflective do
   alias EvoGit.Agent.Tools.RunCommand
   alias EvoGit.Agent.Tools.SearchContext
   alias EvoGit.Agent.Tools.SearchHistory
+  alias EvoGit.Agent.Tools.WebFetch
   alias EvoGit.Agent.Tools.WebSearch
 
   def agent_type, do: :read
@@ -28,6 +29,7 @@ defmodule EvoGit.Agents.SelfReflective do
       FileRead.schema(),
       Ripgrep.schema(),
       Glob.schema(),
+      WebFetch.schema(),
       ListDirectory.schema(),
       Context.read_schema(),
       SearchContext.schema(),
@@ -55,9 +57,9 @@ defmodule EvoGit.Agents.SelfReflective do
     - Control tasks: list/inspect; start type "genesis"/"evolve"/"reflect"/"extract_skills"; continue or resume a previous one (`resume_from`); gracefully cancel, force-kill, or delete (see 2).
     - Know the environment: recent projects and platform/system facts (see 2).
     - Guide the user to any dashboard page with `GuideUser` (see 2).
-    - Search the web when web search is available.
+    - Read a page or pasted URL as Markdown (`web_fetch`); search the web when available.
 
-    1. **Read the Genesis codebase and documentation (read-only).** Your repo_path IS the Genesis source root — the system you are part of. Explore with `read_file`, `read_context`, `list_dir`, `rg`, `glob`, `search_context`, `search_history`; `search_web` (when available) for external info. Strictly READ-ONLY — never modify the Genesis source.
+    1. **Read the Genesis codebase and documentation (read-only).** Your repo_path IS the Genesis source root — the system you are part of. Explore with `read`, `read_context`, `list_dir`, `rg`, `glob`, `search_context`, `search_history`; `web_fetch` to read a pasted URL or an external doc as Markdown; `web_search` (when available) for external info. Strictly READ-ONLY — never modify the Genesis source.
 
     2. **Control tasks, know the environment, guide the user — with ONE tool: `run_command`.** Commands are `<Module>.<function>` + positional and/or `key=value` args (e.g. `StartTask.start_task evolve "Write a parser"`, `ListTasks.list_tasks statuses=completed,running`):
 
@@ -91,10 +93,10 @@ defmodule EvoGit.Agents.SelfReflective do
     suffix = ~S"""
     # Rules
 
-    - No shell access (no `run_bash`), write tools disabled — you can never modify files: strictly read-only over the system itself.
+    - No shell access (no `bash` tool at all), write tools disabled — you can never modify files: strictly read-only over the system itself.
     - **Answer fast.** Greetings, "what can you do", how-to-use-Genesis questions — anything answerable from the capability list or the `run_command` catalog above: answer IMMEDIATELY from that knowledge, NO read tools, NO source investigation. Read tools only when the question genuinely requires the live Genesis source or state not already in this prompt. Keep answers concise. When asked to investigate the system, dig in with your read tools and report findings; when the user asks, create, continue, resume, or cancel tasks on their behalf.
     - **Never suggest CLI usage by default.** The user is in the Genesis GUI/dashboard (this chat), NOT a terminal: never suggest, describe, or reference command-line usage — no `mix run ... -- evolve/genesis` invocations, no terminal/`evogit` commands, no CLI flags, no "run this in a terminal" hints. Guide with dashboard pages/actions and the in-app capabilities above instead. (The `run_command` catalog is dashboard-side tool syntax, NOT CLI usage.) Only exception: the user EXPLICITLY asks about the command-line interface — then answer, but never volunteer CLI hints on your own.
-    - **The text you pass to `complete_task` IS the answer the user reads in the chat** — the only output channel. Call it with the DIRECT, self-contained answer itself: what Genesis does for the user, first-person in their language (optionally a very short "anything else?" / "还需要我帮忙吗？" closing). It must NOT read as a third-person activity log ("the user asked… I introduced…" / "已向用户介绍…") nor as an internal status report.
+    - **Your final message text is the answer the user reads in this chat.** A reply with no tool calls ends your run, and its text is used as your answer — no tool call is needed to finish. `complete_task` is optional: call it only when you want to pass an explicit structured result, and its text is used the same way. Either way, write the DIRECT, self-contained answer itself: what Genesis does for the user, first-person in their language (optionally a very short "anything else?" / "还需要我帮忙吗？" closing). It must NOT read as a third-person activity log ("the user asked… I introduced…" / "已向用户介绍…") nor as an internal status report.
     """
 
     # The command catalog is rendered at runtime from the compile-time
