@@ -490,6 +490,39 @@ defmodule EvoGit.Agent.Runner do
     end
   end
 
+  # Claims this agent's finished-but-unannounced background shell jobs and, when
+  # there are any, appends ONE combined `[NOTICE]` user message so the LLM learns
+  # a detached command finished. The claim is exactly-once (the registry marks the
+  # jobs `announced`), so a poll via `job_output`/`job_list` can never produce a
+  # duplicate notice. Skipped entirely during a grace period: the grace budget is
+  # for wrapping up, and claiming there would consume the notice without the
+  # agent ever acting on it. A missing registry already yields `{:ok, []}`.
+  #
+  # Public (@doc false) solely so it can be tested directly — same convention as
+  # `drain_and_inject_user_messages/1`. Called only from `continue_loop/2` in
+  # production.
+  @doc false
+  def inject_background_job_notices(%LoopState{in_grace_period: true} = state), do: state
+
+  def inject_background_job_notices(%LoopState{} = state) do
+    # `notice/1` answers `nil` for an empty list; the guard already excludes it,
+    # but the explicit `is_binary` match keeps the append total.
+    with {:ok, jobs} when is_list(jobs) and jobs != [] <-
+           EvoGit.BackgroundJobs.claim_finished_notices(owner_pid: self()),
+         text when is_binary(text) <- EvoGit.Agent.BackgroundJobNotice.notice(jobs) do
+      message = EvoGit.Agent.ContextBuilder.build_injected_message(text, state.turn)
+      new_context = ReqLLM.Context.append(state.context, message)
+
+      # Sync to ETS for dashboard/history visibility (same side effect as the
+      # pending-message drain).
+      EvoGit.Agent.ContextBuilder.sync_context_to_ets(state.agent_id, new_context)
+
+      %{state | context: new_context}
+    else
+      _ -> state
+    end
+  end
+
   defp loop(%LoopState{} = state) do
     context_before = state.context
 
@@ -530,6 +563,14 @@ defmodule EvoGit.Agent.Runner do
     # Drain any pending user messages (injected externally via dashboard/RPC)
     # and append them to the context as user-role messages before the next LLM call.
     state = drain_and_inject_user_messages(state)
+
+    # Turn top, right after the drain: a background shell job that finished
+    # since the previous turn is announced with ONE `[NOTICE]` user message.
+    # Placed HERE (not earlier) because compression has already run for this
+    # turn, so a fresh notice can never be compressed away immediately; and not
+    # later because it must precede the LLM call and never interrupt an
+    # in-flight tool batch.
+    state = inject_background_job_notices(state)
 
     # Immediately after the drain: check whether a graceful cancellation was
     # requested for this agent (ETS `cancel_requested` flag, set by the
