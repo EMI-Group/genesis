@@ -758,7 +758,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           category: :tools,
           sub_category: nil,
           description:
-            "Enables the `lsp` tool (Elixir diagnostics, hover and go-to-definition). Requires `command` to be set as well. Disabled by default because it needs a language server the user installs."
+            "Offers the `lsp` tool (Elixir diagnostics, hover and go-to-definition) to agents. While disabled (default) the tool is not offered to any agent at all. Enabling it together with a non-empty `command` makes the tool appear in every agent's tool list."
         },
         %{
           key_path: [:lsp, :command],
@@ -768,7 +768,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           category: :tools,
           sub_category: nil,
           description:
-            "The language server executable the `lsp` tool spawns on stdio, e.g. \"lexical\" or the absolute path of an elixir-ls launcher. Genesis never installs or bundles a language server; empty/nil keeps the tool disabled."
+            "The language server executable the `lsp` tool spawns on stdio, e.g. \"lexical\" or the absolute path of an elixir-ls launcher. Genesis never installs or bundles a language server. `enabled = true` plus a non-empty command makes the tool appear in every agent's tool list; nil/empty keeps it hidden from all agents."
         },
         %{
           key_path: [:lsp, :args],

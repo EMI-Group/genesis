@@ -914,6 +914,34 @@ defmodule EvoGit.Config do
     end
   end
 
+  @doc """
+  Returns whether the `lsp` tool is enabled and configured.
+
+  This is the SINGLE gate for offering the `lsp` tool at all: while it is
+  `false` (the default) the tool is not offered to ANY agent — no schema is
+  built and no prompt tokens are spent on it. The tool reappears in every
+  agent's tool list only once the `[lsp]` section sets `enabled = true` AND
+  a non-empty `command`.
+
+  Tolerance/never raises: the section is resolved through `resolve/1` (so
+  schema defaults apply when `[lsp]` is absent) and a nil/non-map section,
+  an `enabled` value other than `true`/`"true"`, and a nil/non-binary/blank
+  `command` all yield `false`.
+  """
+  @spec lsp_enabled?() :: boolean()
+  def lsp_enabled? do
+    case resolve([:lsp]) do
+      %{} = config ->
+        enabled = Map.get(config, :enabled)
+        command = Map.get(config, :command)
+
+        enabled in [true, "true"] and is_binary(command) and String.trim(command) != ""
+
+      _other ->
+        false
+    end
+  end
+
   # --- Private Helpers ---
 
   # Deep merges two maps. `override` values take precedence.

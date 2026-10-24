@@ -10,6 +10,7 @@ None — leaf directory.
 
 ### `EvoGit.Config.Schema.Definitions`
 Returns all config key schemas as a flat list of maps. Each schema: `key_path` (dotted atom path, e.g. `:scheduler.agent_workers`), `type`, `default`, `validation`, `category`, `sub_category`, `description`. Covers scheduler, sandbox, git, truncation, and more.
+The five `[lsp]` keys (`:enabled`, `:command`, `:args`, `:timeout`, `:diagnostics_timeout`) describe the `lsp` tool's configuration; the `lsp` tool is offered to agents only while `EvoGit.Config.lsp_enabled?/0` is true (`[:lsp, :enabled] = true` plus a non-empty `[:lsp, :command]`), so the default `enabled = false` keeps it out of every agent's tool list.
 
 ### `EvoGit.Config.Schema.LLM`
 Extracts LLM generation parameters from config/model profiles. `llm_generation_params/1` accepts a model profile map or a resolved config map and returns a keyword list suitable for `ReqLLM`.
