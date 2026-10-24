@@ -102,30 +102,41 @@ defmodule EvoGit.Agent.Compression.SummaryPromptTest do
   end
 
   describe "instruction/1 — background shell jobs" do
-    test "mandates listing every STILL-RUNNING background job with id, command/label and status" do
-      instruction = SummaryPrompt.instruction()
-
-      assert instruction =~
-               "Every background shell job that is still running MUST be listed under Pending Jobs " <>
-                 "with its exact job id, its command/label and its status"
-
-      assert instruction =~ "never drop a running job"
-    end
-
-    test "requires only a one-line outcome for a finished job" do
-      assert SummaryPrompt.instruction() =~ "a finished job needs only a one-line outcome"
-    end
-
-    test "the Pending Jobs guidance names the background-job fields" do
+    test "the Pending Jobs guidance covers work started but not finished, one line each" do
       instruction = SummaryPrompt.instruction()
 
       [_before, rest] = String.split(instruction, "## Pending Jobs", parts: 2)
       ["", guidance_line | _] = String.split(rest, "\n")
+      guidance_line = String.trim(guidance_line)
 
-      assert String.trim(guidance_line) != ""
-      assert guidance_line =~ "exact job id"
-      assert guidance_line =~ "command/label"
-      assert guidance_line =~ "STILL-RUNNING"
+      assert guidance_line != ""
+      assert guidance_line =~ "started but not finished"
+      assert guidance_line =~ "one line each"
+    end
+
+    test "the Pending Jobs guidance defers background shell jobs to the runtime" do
+      instruction = SummaryPrompt.instruction()
+
+      [_before, rest] = String.split(instruction, "## Pending Jobs", parts: 2)
+      ["", guidance_line | _] = String.split(rest, "\n")
+      guidance_line = String.trim(guidance_line)
+
+      assert guidance_line =~ "Background shell jobs are tracked automatically by the runtime"
+      assert guidance_line =~ "re-injected there"
+      assert guidance_line =~ "never duplicate them here"
+      # No job bookkeeping is duplicated into the checkpoint.
+      refute guidance_line =~ "exact job id"
+      refute guidance_line =~ "command/label"
+      refute guidance_line =~ "STILL-RUNNING"
+    end
+
+    test "does not mandate listing background jobs under Pending Jobs" do
+      instruction = SummaryPrompt.instruction()
+
+      refute instruction =~ "MUST be listed under Pending Jobs"
+      refute instruction =~ "exact job id"
+      refute instruction =~ "never drop a running job"
+      refute instruction =~ "a finished job needs only a one-line outcome"
     end
   end
 

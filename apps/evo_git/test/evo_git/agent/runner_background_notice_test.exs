@@ -123,6 +123,21 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     )
   end
 
+  # The output file is written by the detached process; poll it (bounded) so a
+  # sanity check on a job's output cannot race the final flush.
+  defp await_output!(output_path, marker) do
+    wait_until(
+      fn ->
+        case File.read(output_path) do
+          {:ok, text} -> if text =~ marker, do: {:ok, text}, else: :retry
+          {:error, _reason} -> :retry
+        end
+      end,
+      @deadline_ms,
+      "job output at #{output_path} never contained the expected marker"
+    )
+  end
+
   defp wait_until(fun, timeout, message) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline, message)
@@ -233,6 +248,70 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert state.context.messages == []
 
     assert {:ok, _} = BackgroundJobs.kill(job.id)
+  end
+
+  # ---------------------------------------------------------------------------
+  # One batch, notification-only
+  # ---------------------------------------------------------------------------
+
+  test "two jobs finished before the turn boundary get ONE combined [NOTICE] message",
+       %{tmp_dir: tmp_dir} do
+    first = start_job!("echo first", tmp_dir)
+    second = start_job!("echo second", tmp_dir)
+    _ = await_terminal!(first.id)
+    _ = await_terminal!(second.id)
+
+    existing = ReqLLM.Context.user("already here")
+    state = loop_state(ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
+    before = length(state.context.messages)
+
+    new_state = Runner.inject_background_job_notices(state)
+
+    # Exactly ONE message is appended, and it is the single combined notice.
+    assert length(new_state.context.messages) == before + 1
+    assert [notice] = notice_messages(new_state.context)
+    assert notice.metadata[:turn] == @turn
+
+    text = text_of(notice)
+    assert text =~ "2 background shell jobs finished"
+    assert text =~ first.id
+    assert text =~ second.id
+    # One job line per job — not one message per job.
+    assert length(String.split(text, "\n- ")) == 3
+
+    # Exactly-once: nothing is left to claim, so a second turn appends nothing.
+    again = Runner.inject_background_job_notices(new_state)
+    assert again == new_state
+    assert length(again.context.messages) == before + 1
+    assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+  end
+
+  test "the notice is notification-only — it never carries the job's output",
+       %{tmp_dir: tmp_dir} do
+    marker = "SECRET_OUTPUT_MARKER"
+
+    # stdout gets the marker only by DECODING it, so it never appears literally
+    # in the command string (which is also the default label).
+    command = "printf %s #{Base.encode64(marker)} | base64 -d"
+    refute command =~ marker
+
+    job = start_job!(command, tmp_dir)
+    job = await_terminal!(job.id)
+
+    # Sanity: the output really did carry the marker, so the negative assertion
+    # below cannot pass vacuously.
+    await_output!(job.output_path, marker)
+
+    state = Runner.inject_background_job_notices(loop_state())
+
+    assert [notice] = notice_messages(state.context)
+    text = text_of(notice)
+
+    refute text =~ marker
+    assert text =~ job.id
+    assert text =~ "completed (exit code: 0)"
+    assert text =~ "`job_output`"
+    assert text =~ "`job_list`"
   end
 
   # ---------------------------------------------------------------------------

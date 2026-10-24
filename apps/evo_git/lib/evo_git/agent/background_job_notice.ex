@@ -7,10 +7,12 @@ defmodule EvoGit.Agent.BackgroundJobNotice do
   agent may lose every trace of them once the old span is replaced by a summary.
   The two renderers here are the shared, IO-free text sources for that state:
 
-    * `section/1` — the `<context>` sub-section carried by the runtime-context
-      refresh message appended on every compression event
-      (`EvoGit.Agent.ContextBuilder.build_context_block/1`), so the live job list
-      is re-injected after compaction;
+    * `section/1` — the `<context>` sub-section of the runtime-context refresh
+      message that `EvoGit.Agent.ContextBuilder.build_context_block/1` appends on
+      every compression event. The job snapshot rides only the SUMMARISING
+      (stage-2) compression path; the stage-1 prune-only path deliberately
+      injects no job snapshot, so the live job list is re-injected only after a
+      summary replaces the old span;
     * `notice/1` — ONE combined `[NOTICE]`-prefixed message for jobs that just
       reached a terminal status (rendered here, appended by the agent loop).
 
