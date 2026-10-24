@@ -48,7 +48,11 @@ defmodule EvoGit.Agent.ContextCompression do
   context freshness is therefore delivered by APPENDING a refresh message
   (`EvoGit.Agent.ContextBuilder.build_context_refresh_message/2`) rather than
   rewriting message #1: a CONTEXT.md edit made in the worktree mid-run is
-  visible again, and the cached prefix survives.
+  visible again, and the cached prefix survives. That refresh message also
+  carries the agent's LIVE background shell jobs
+  (`EvoGit.Agent.BackgroundJobNotice.section/1`, snapshot injected in
+  `refresh_messages/1`), so a job started before the compaction is not lost with
+  the summarised span.
 
   ## Token reset
 
@@ -315,8 +319,18 @@ defmodule EvoGit.Agent.ContextCompression do
   # compression event, so a CONTEXT.md edit made in the worktree mid-run is
   # visible again WITHOUT rewriting the cacheable first message. `nil` (blank
   # context block) appends nothing.
+  #
+  # The live background-job snapshot is injected into the state map here (the
+  # agent process IS the job owner pid), because a background shell job outlives
+  # the tool call that started it and its only other trace is the transcript
+  # span that compression just summarised away. `snapshot/1` is a non-reconciling
+  # state read that answers `[]` when the registry is down, so a registry hiccup
+  # can never fail a compression.
   defp refresh_messages(state) do
-    case ContextBuilder.build_context_refresh_message(state, state.turn) do
+    refreshed_state =
+      Map.put(state, :background_jobs, EvoGit.BackgroundJobs.snapshot(owner_pid: self()))
+
+    case ContextBuilder.build_context_refresh_message(refreshed_state, state.turn) do
       nil -> []
       message -> [message]
     end

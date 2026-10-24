@@ -544,6 +544,61 @@ defmodule EvoGit.Agent.ContextBuilderTest do
       refute block =~ "Delegation authority"
       refute block =~ "FAST"
     end
+
+    test "keeps the block BYTE-IDENTICAL when :background_jobs is absent, nil or empty" do
+      repo = temp_repo("# Root\n", "# Docs\n")
+
+      state = %{
+        node_path: "./docs",
+        repo_path: repo,
+        parent_id: nil,
+        repo_less: false,
+        foreign_repos: [],
+        repo_notes: nil,
+        quality_level: nil,
+        now: ~U[2025-06-14 09:32:00Z]
+      }
+
+      baseline = ContextBuilder.build_context_block(state)
+
+      assert baseline ==
+               ContextBuilder.build_context_block(Map.put(state, :background_jobs, nil))
+
+      assert baseline ==
+               ContextBuilder.build_context_block(Map.put(state, :background_jobs, []))
+
+      refute baseline =~ "Background Jobs"
+    end
+
+    test "renders the background-jobs section BEFORE the clock line" do
+      repo = temp_repo("# Root\n", "# Docs\n")
+
+      block =
+        ContextBuilder.build_context_block(%{
+          node_path: "./docs",
+          repo_path: repo,
+          parent_id: nil,
+          repo_less: false,
+          foreign_repos: [],
+          repo_notes: nil,
+          quality_level: nil,
+          background_jobs: [
+            %{id: "bash-abc123", label: "mix test", status: :running, detail: nil}
+          ],
+          now: ~U[2025-06-14 09:32:00Z]
+        })
+
+      assert block =~ "## Background Jobs"
+      assert block =~ "bash-abc123"
+      assert block =~ "mix test"
+      assert block =~ "running"
+
+      # The clock stays the LAST section of the block.
+      assert String.ends_with?(
+               block,
+               "Current local time: 2025-06-14 09:32 (Etc/UTC)\n</context>"
+             )
+    end
   end
 
   # The compression-refresh message appended as the LAST message of every
@@ -713,6 +768,24 @@ defmodule EvoGit.Agent.ContextBuilderTest do
 
       refute message.metadata[:turn]
       refute message.metadata[:timestamp]
+    end
+
+    test "a state carrying background jobs includes the jobs section in the refresh" do
+      repo = refresh_repo("# Root\n", "# Docs\n")
+
+      state =
+        Map.put(refresh_state(repo), :background_jobs, [
+          %{id: "bash-refresh01", label: "sleep 30", status: :running, detail: nil}
+        ])
+
+      text = refresh_text(state, 3)
+
+      assert text =~ "## Background Jobs"
+      assert text =~ "bash-refresh01"
+      assert text =~ "sleep 30"
+      assert text =~ "running"
+      # The pinned notice still leads the message.
+      assert String.contains?(text, "SUPERSEDES any earlier <context> snapshot")
     end
 
     test "returns nil when the rendered context block is blank" do

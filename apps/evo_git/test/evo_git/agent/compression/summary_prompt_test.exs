@@ -101,6 +101,34 @@ defmodule EvoGit.Agent.Compression.SummaryPromptTest do
     end
   end
 
+  describe "instruction/1 — background shell jobs" do
+    test "mandates listing every STILL-RUNNING background job with id, command/label and status" do
+      instruction = SummaryPrompt.instruction()
+
+      assert instruction =~
+               "Every background shell job that is still running MUST be listed under Pending Jobs " <>
+                 "with its exact job id, its command/label and its status"
+
+      assert instruction =~ "never drop a running job"
+    end
+
+    test "requires only a one-line outcome for a finished job" do
+      assert SummaryPrompt.instruction() =~ "a finished job needs only a one-line outcome"
+    end
+
+    test "the Pending Jobs guidance names the background-job fields" do
+      instruction = SummaryPrompt.instruction()
+
+      [_before, rest] = String.split(instruction, "## Pending Jobs", parts: 2)
+      ["", guidance_line | _] = String.split(rest, "\n")
+
+      assert String.trim(guidance_line) != ""
+      assert guidance_line =~ "exact job id"
+      assert guidance_line =~ "command/label"
+      assert guidance_line =~ "STILL-RUNNING"
+    end
+  end
+
   describe "instruction/1 — prior summary merging" do
     test "omits the merge clause and the prior text when no prior summary is given" do
       instruction = SummaryPrompt.instruction()

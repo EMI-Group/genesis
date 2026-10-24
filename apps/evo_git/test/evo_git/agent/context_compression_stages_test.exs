@@ -216,6 +216,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   @reject_agent 9_205
   @pruning_off_agent 9_206
   @pruning_off_span_agent 9_207
+  @jobs_agent 9_208
 
   @huge_tool_output String.duplicate("tool-output-line\n", 14_000) <>
                       "FINAL LINE: 42 tests, 0 failures"
@@ -560,6 +561,59 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       # The event is still recorded (token reset + compression counter).
       assert result.total_tokens == 0
       assert compression_count(@stage1_agent) == 1
+    end
+
+    test "the refresh message re-injects the agent's LIVE background jobs",
+         %{repo_path: repo_path} do
+      register_agent(@jobs_agent)
+
+      # An ISOLATED registry + a REAL job owned by the test process (which is the
+      # process `refresh_messages/1` runs in, so `owner_pid: self()` resolves to
+      # this job's owner). A still-running `sleep` keeps it deterministic — no
+      # waiting for a terminal status.
+      registry = :"compression_jobs_#{System.unique_integer([:positive])}"
+      start_supervised!({EvoGit.BackgroundJobs, [name: registry]})
+      Process.put(:evogit_background_jobs_server, registry)
+      Process.put(:evogit_agent_pid, self())
+
+      assert {:ok, job} =
+               EvoGit.BackgroundJobs.start_job(%{
+                 command: "sleep 30",
+                 cwd: repo_path,
+                 label: "long running suite"
+               })
+
+      on_exit(fn ->
+        Process.delete(:evogit_background_jobs_server)
+        Process.delete(:evogit_agent_pid)
+        File.rm(job.output_path)
+      end)
+
+      # The SAME stage-1 fixture as the pruning test above, so the stage-1 adopt
+      # path is what reaches `refresh_messages/1` (and no LLM call is spent).
+      st =
+        state(@jobs_agent, conversation_with_old_tool_result(),
+          repo_path: repo_path,
+          total_tokens: 60_000
+        )
+
+      result =
+        ContextCompression.compress_if_needed(st,
+          agent_id: @jobs_agent,
+          llm_model: "stub:model",
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = result
+
+      refresh = result |> messages_of() |> List.last()
+      assert refresh.role == :user
+
+      text = text_of(refresh)
+      assert text =~ "## Background Jobs"
+      assert text =~ job.id
+      assert text =~ "long running suite"
+      assert text =~ "running"
     end
 
     test "Stage 1 is REJECTED when most characters are non-prunable, so Stage 2 runs over the ORIGINAL list",

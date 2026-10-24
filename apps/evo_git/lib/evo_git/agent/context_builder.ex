@@ -30,6 +30,7 @@ defmodule EvoGit.Agent.ContextBuilder do
       "the real local clock, now".
   """
 
+  alias EvoGit.Agent.BackgroundJobNotice
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.AgentScheduler
@@ -286,14 +287,18 @@ defmodule EvoGit.Agent.ContextBuilder do
   :repo_less, :foreign_repos, :repo_notes, :quality_level` plus the optional
   clock seam `:now` (a `%DateTime{}`/`%NaiveDateTime{}` pins the rendered
   `Current local time:` line; `nil`/absent means the real local clock, now —
-  see `build_clock_section/1`). A `%LoopState{}` satisfies this. Purely reads
-  the CONTEXT.md chain from disk via `build_dynamic_context/1` — so calling it
+  see `build_clock_section/1`) and the optional `:background_jobs` list (the
+  agent's live/finished background shell jobs, rendered by
+  `EvoGit.Agent.BackgroundJobNotice.section/1`; absent/`nil`/`[]` renders
+  nothing, so the block stays byte-identical for an agent with no jobs). A
+  `%LoopState{}` satisfies this. Purely reads the CONTEXT.md chain from disk via
+  `build_dynamic_context/1` — so calling it
   again later re-reads the CURRENT chain — plus the static sections, drops
   blank ones, joins them with `"\\n\\n"`, and wraps them via `context_block/1`.
 
   Section order is pinned (environment band LAST, so the stable sections form a
   cacheable prefix): `context tree`, delegation authority, foreign repos, repo
-  notes, quality guidance, then the CLOCK line.
+  notes, quality guidance, background jobs, then the CLOCK line.
 
   Returns `""` when the joined body is blank (matching `context_block/1`'s
   convention), so the caller's blank-filter drops it.
@@ -328,6 +333,7 @@ defmodule EvoGit.Agent.ContextBuilder do
           repo_less: repo_less,
           quality_level: Map.get(state, :quality_level)
         }),
+        BackgroundJobNotice.section(Map.get(state, :background_jobs)),
         build_clock_section(%{now: Map.get(state, :now)})
       ]
       |> Enum.reject(&blank?/1)
