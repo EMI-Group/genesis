@@ -521,6 +521,10 @@ defmodule EvoGit.Agent.ContextBuilder do
   first user message uses, so a CONTEXT.md edit made in the worktree mid-run is
   now visible).
 
+  The `## Background Jobs` snapshot is supplied ONLY by the summarising path,
+  which puts it on `state[:background_jobs]`; the prune-only path passes a state
+  without that key, so its refresh message carries no jobs section.
+
   The message states that it SUPERSEDES any earlier `<context>` snapshot and
   that the `<objective>` block is unchanged; it deliberately carries NO
   objective block of its own (the objective stays verbatim in message #1).
@@ -549,6 +553,40 @@ defmodule EvoGit.Agent.ContextBuilder do
         nil
     end
   end
+
+  @doc """
+  True only for a runtime-context refresh message built by
+  `build_context_refresh_message/2`.
+
+  A refresh message is a `%ReqLLM.Message{role: :user}` whose text content
+  STARTS WITH the pinned `#{@context_refresh_notice}` notice. TOTAL: any other
+  value — `nil`, another struct or map, a non-`:user` role, missing/empty
+  content, or a malformed content part with a non-binary `:text` — returns
+  `false` and never raises.
+  """
+  @spec refresh_message?(term()) :: boolean()
+  def refresh_message?(%ReqLLM.Message{role: :user, content: content}) do
+    content
+    |> content_text()
+    |> String.starts_with?(@context_refresh_notice)
+  end
+
+  def refresh_message?(_message), do: false
+
+  # The `:text` content parts of a message's content, joined. Total over
+  # non-list content, non-map parts and non-binary `:text` values.
+  defp content_text(content) when is_binary(content), do: content
+
+  defp content_text(content) when is_list(content) do
+    content
+    |> Enum.map(fn
+      %{type: :text, text: text} when is_binary(text) -> text
+      _part -> ""
+    end)
+    |> Enum.join("")
+  end
+
+  defp content_text(_content), do: ""
 
   @doc """
   Materializes ONE injected (mid-run) user message into an LLM user message.

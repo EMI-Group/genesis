@@ -217,6 +217,8 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   @pruning_off_agent 9_206
   @pruning_off_span_agent 9_207
   @jobs_agent 9_208
+  @jobs_stage2_agent 9_209
+  @jobs_accumulation_agent 9_210
 
   @huge_tool_output String.duplicate("tool-output-line\n", 14_000) <>
                       "FINAL LINE: 42 tests, 0 failures"
@@ -384,6 +386,34 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   defp compression_count(agent_id) do
     {:ok, agent_state} = SchedStore.get_agent_state(agent_id)
     agent_state.compression_count
+  end
+
+  # Starts an ISOLATED `EvoGit.BackgroundJobs` registry carrying ONE still-running
+  # job owned by the test process — the very process compression runs in, so
+  # `EvoGit.BackgroundJobs.snapshot(owner_pid: self())` resolves to this job's
+  # owner. The `:evogit_background_jobs_server` process-dictionary seam points the
+  # registry calls at it. Returns `{registry, job}`.
+  defp start_live_job!(repo_path, label) do
+    registry = :"compression_jobs_#{System.unique_integer([:positive])}"
+    # A per-registry child id, so one test can start a SECOND isolated registry.
+    start_supervised!({EvoGit.BackgroundJobs, [name: registry]}, id: registry)
+    Process.put(:evogit_background_jobs_server, registry)
+    Process.put(:evogit_agent_pid, self())
+
+    assert {:ok, job} =
+             EvoGit.BackgroundJobs.start_job(%{
+               command: "sleep 30",
+               cwd: repo_path,
+               label: label
+             })
+
+    on_exit(fn ->
+      Process.delete(:evogit_background_jobs_server)
+      Process.delete(:evogit_agent_pid)
+      File.rm(job.output_path)
+    end)
+
+    {registry, job}
   end
 
   # A temp repo whose CONTEXT.md the refresh message renders, so "the refresh
@@ -563,34 +593,16 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert compression_count(@stage1_agent) == 1
     end
 
-    test "the refresh message re-injects the agent's LIVE background jobs",
+    test "the stage-1 refresh message carries NO background-jobs snapshot",
          %{repo_path: repo_path} do
       register_agent(@jobs_agent)
 
-      # An ISOLATED registry + a REAL job owned by the test process (which is the
-      # process `refresh_messages/1` runs in, so `owner_pid: self()` resolves to
-      # this job's owner). A still-running `sleep` keeps it deterministic — no
-      # waiting for a terminal status.
-      registry = :"compression_jobs_#{System.unique_integer([:positive])}"
-      start_supervised!({EvoGit.BackgroundJobs, [name: registry]})
-      Process.put(:evogit_background_jobs_server, registry)
-      Process.put(:evogit_agent_pid, self())
-
-      assert {:ok, job} =
-               EvoGit.BackgroundJobs.start_job(%{
-                 command: "sleep 30",
-                 cwd: repo_path,
-                 label: "long running suite"
-               })
-
-      on_exit(fn ->
-        Process.delete(:evogit_background_jobs_server)
-        Process.delete(:evogit_agent_pid)
-        File.rm(job.output_path)
-      end)
+      # A still-running `sleep` keeps the snapshot deterministic — no waiting for
+      # a terminal status.
+      {_registry, job} = start_live_job!(repo_path, "long running suite")
 
       # The SAME stage-1 fixture as the pruning test above, so the stage-1 adopt
-      # path is what reaches `refresh_messages/1` (and no LLM call is spent).
+      # path is what reaches `refresh_messages/2` (and no LLM call is spent).
       st =
         state(@jobs_agent, conversation_with_old_tool_result(),
           repo_path: repo_path,
@@ -609,11 +621,13 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       refresh = result |> messages_of() |> List.last()
       assert refresh.role == :user
 
+      # The plain runtime-context refresh is still appended on the prune-only
+      # path — but it deliberately carries NO background-jobs snapshot.
       text = text_of(refresh)
-      assert text =~ "## Background Jobs"
-      assert text =~ job.id
-      assert text =~ "long running suite"
-      assert text =~ "running"
+      assert text =~ "stage-test context body"
+      assert text =~ "SUPERSEDES any earlier <context> snapshot"
+      refute text =~ "## Background Jobs"
+      refute text =~ job.id
     end
 
     test "Stage 1 is REJECTED when most characters are non-prunable, so Stage 2 runs over the ORIGINAL list",
@@ -881,6 +895,126 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert result.usage.total_tokens == 138
     end
 
+    test "the summarising refresh message re-injects the agent's LIVE background jobs",
+         %{repo_path: repo_path} do
+      register_agent(@jobs_stage2_agent)
+
+      {_registry, job} = start_live_job!(repo_path, "summarising suite")
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      st =
+        state(@jobs_stage2_agent, conversation_for_checkpoint(),
+          repo_path: repo_path,
+          total_tokens: 60_000,
+          turn: 7
+        )
+
+      result =
+        ContextCompression.compress_if_needed(st,
+          agent_id: @jobs_stage2_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = result
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
+
+      # The refresh appended by the SUMMARISING path carries the live snapshot.
+      refresh = result |> messages_of() |> List.last()
+      assert refresh.role == :user
+
+      text = text_of(refresh)
+      assert text =~ "## Background Jobs"
+      assert text =~ job.id
+      assert text =~ "summarising suite"
+      assert text =~ "running"
+    end
+
+    test "a SECOND summarising compression keeps exactly ONE current Background Jobs section",
+         %{repo_path: repo_path} do
+      register_agent(@jobs_accumulation_agent)
+
+      # FIRST snapshot: job A is live.
+      {_registry_a, job_a} = start_live_job!(repo_path, "first job alpha")
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      first =
+        state(@jobs_accumulation_agent, conversation_for_checkpoint(),
+          repo_path: repo_path,
+          total_tokens: 60_000,
+          turn: 7
+        )
+
+      first_result =
+        ContextCompression.compress_if_needed(first,
+          agent_id: @jobs_accumulation_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = first_result
+      assert first_result |> messages_of() |> List.last() |> text_of() =~ job_a.id
+
+      # Turn the first result into a LATER conversation. The appended turns carry
+      # turn numbers far ABOVE the first compression's turn (7), so the second
+      # compression's recency boundary lands AFTER the stale refresh: the stale
+      # snapshot sits inside the protected recent tail and would survive verbatim
+      # without the explicit cleanup.
+      extended = messages_of(first_result) ++ turn_pairs(17..19)
+      split = Checkpoint.split(extended)
+
+      assert length(split.old) > 0
+      assert Enum.any?(split.recent, &(text_of(&1) =~ job_a.id))
+      refute Enum.any?(split.old, &(text_of(&1) =~ job_a.id))
+
+      # SECOND snapshot: a FRESH registry holding only job B. A killed/finished
+      # job would still be listed by `snapshot/1`, so a fresh registry is what
+      # makes "absent from the current snapshot" real.
+      {_registry_b, job_b} = start_live_job!(repo_path, "second job beta")
+      assert job_b.id != job_a.id
+
+      second =
+        state(@jobs_accumulation_agent, extended,
+          repo_path: repo_path,
+          total_tokens: 60_000,
+          turn: 20
+        )
+
+      second_result =
+        ContextCompression.compress_if_needed(second,
+          agent_id: @jobs_accumulation_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      assert %LoopState{} = second_result
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 2
+
+      messages = messages_of(second_result)
+      texts = Enum.map(messages, &text_of/1)
+
+      # Exactly ONE `## Background Jobs` section survives, and it is the CURRENT
+      # snapshot: the stale job id is gone from the WHOLE context.
+      assert Enum.count(texts, &String.contains?(&1, "## Background Jobs")) == 1
+      refute Enum.any?(texts, &String.contains?(&1, job_a.id))
+      assert Enum.any?(texts, &String.contains?(&1, job_b.id))
+
+      # Head byte-identical, order preserved, the new refresh LAST.
+      assert Enum.at(messages, 0) == Enum.at(extended, 0)
+      assert Enum.at(messages, 1) == Enum.at(extended, 1)
+
+      refresh = List.last(messages)
+      assert ContextBuilder.refresh_message?(refresh)
+      assert text_of(refresh) =~ job_b.id
+
+      assert second_result.total_tokens == 0
+      assert compression_count(@jobs_accumulation_agent) == 2
+    end
+
     test "a conversation whose old span would orphan a tool result rewinds the boundary", %{
       repo_path: repo_path
     } do
@@ -920,6 +1054,71 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert blank.messages == messages
 
       assert %LoopState{} = state(@stage2_agent, messages, repo_path: repo_path, total_tokens: 0)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # drop_stale_background_job_refreshes/1 — the stale-snapshot cleanup
+  # ---------------------------------------------------------------------------
+
+  describe "drop_stale_background_job_refreshes/1" do
+    test "drops refreshes carrying a Background Jobs section, keeps every other message in order",
+         %{repo_path: repo_path} do
+      plain_refresh =
+        ContextBuilder.build_context_refresh_message(
+          %{node_path: "./", repo_path: repo_path},
+          nil
+        )
+
+      jobs_refresh =
+        ContextBuilder.build_context_refresh_message(
+          %{
+            node_path: "./",
+            repo_path: repo_path,
+            background_jobs: [%{id: "bash-stale00000000", status: :running, label: "stale job"}]
+          },
+          nil
+        )
+
+      assert ContextBuilder.refresh_message?(plain_refresh)
+      assert ContextBuilder.refresh_message?(jobs_refresh)
+      assert text_of(jobs_refresh) =~ "## Background Jobs"
+
+      system = ReqLLM.Context.system(@system_text)
+      first_user = ReqLLM.Context.user(@objective)
+      assistant = ReqLLM.Context.assistant("working")
+      tool = tool_result("call_x", "tool output")
+      checkpoint = Checkpoint.checkpoint_message(@summary, 3)
+      notice = ReqLLM.Context.user("[NOTICE] 1 background shell job finished:\n- `bash-x`")
+
+      messages = [
+        system,
+        first_user,
+        assistant,
+        jobs_refresh,
+        tool,
+        checkpoint,
+        plain_refresh,
+        notice
+      ]
+
+      assert ContextCompression.drop_stale_background_job_refreshes(messages) ==
+               [system, first_user, assistant, tool, checkpoint, plain_refresh, notice]
+
+      # TOTAL: malformed message shapes never match and never raise.
+      malformed = [
+        nil,
+        :not_a_message,
+        %{role: :user},
+        %ReqLLM.Message{role: :user, content: "binary content is not a list"},
+        %ReqLLM.Message{role: :user, content: [%{type: :text, text: 42}]},
+        %ReqLLM.Message{role: :assistant, content: [%{type: :text, text: @summary}]}
+      ]
+
+      assert ContextCompression.drop_stale_background_job_refreshes(malformed ++ [jobs_refresh]) ==
+               malformed
+
+      assert ContextCompression.drop_stale_background_job_refreshes(:not_a_list) == :not_a_list
     end
   end
 

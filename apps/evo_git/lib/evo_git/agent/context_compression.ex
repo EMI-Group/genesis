@@ -48,11 +48,18 @@ defmodule EvoGit.Agent.ContextCompression do
   context freshness is therefore delivered by APPENDING a refresh message
   (`EvoGit.Agent.ContextBuilder.build_context_refresh_message/2`) rather than
   rewriting message #1: a CONTEXT.md edit made in the worktree mid-run is
-  visible again, and the cached prefix survives. That refresh message also
-  carries the agent's LIVE background shell jobs
+  visible again, and the cached prefix survives.
+
+  The refresh message carries the agent's LIVE background shell jobs
   (`EvoGit.Agent.BackgroundJobNotice.section/1`, snapshot injected in
-  `refresh_messages/1`), so a job started before the compaction is not lost with
-  the summarised span.
+  `refresh_messages/2`) ONLY on the summarising path, where the old span — the
+  job's only other trace — is about to be replaced by a summary. The prune-only
+  path appends the same plain runtime-context refresh with NO jobs section. On
+  the summarising path every earlier refresh message that carries a
+  `## Background Jobs` section is dropped before the new one is appended
+  (`drop_stale_background_job_refreshes/1`), so exactly ONE section — the
+  CURRENT snapshot — survives a compression, even when an older snapshot sits
+  inside the protected recent tail.
 
   ## Token reset
 
@@ -201,7 +208,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "Keeping the pruned context; no LLM call."
       )
 
-      keep_context(state, agent_id, pruned.messages, nil)
+      keep_context(state, agent_id, pruned.messages, nil, false)
     else
       Logger.info(
         "Agent #{agent_id}: stage 1 rejected — pruned #{pruned.pruned} old tool result(s): " <>
@@ -265,9 +272,11 @@ defmodule EvoGit.Agent.ContextCompression do
           # A blank summary must never fabricate a checkpoint that silently
           # drops the transcript, so the ORIGINAL context is what we keep — but
           # the request WAS billed, so its usage is still accounted for.
-          keep_context(state, agent_id, messages, compression_usage)
+          keep_context(state, agent_id, messages, compression_usage, true)
         else
-          rebuilt = built.messages ++ refresh_messages(state)
+          rebuilt =
+            drop_stale_background_job_refreshes(built.messages) ++
+              refresh_messages(state, true)
 
           AgentScheduler.increment_compression_count(agent_id)
 
@@ -293,12 +302,18 @@ defmodule EvoGit.Agent.ContextCompression do
   # The no-checkpoint finish shared by (a) "nothing older than the recent tail
   # to replace" and (b) "the summary came back blank". The messages are the
   # ORIGINAL list, so the context is only rebuilt with the runtime-context
-  # refresh appended.
+  # refresh appended — on this summarising path that refresh carries the CURRENT
+  # background-job snapshot, and any earlier snapshot is dropped first.
   defp finish_without_checkpoint(state, agent_id, messages) do
-    keep_context(state, agent_id, messages, nil)
+    keep_context(state, agent_id, messages, nil, true)
   end
 
-  defp keep_context(state, agent_id, messages, compression_usage) do
+  # Rebuilds the context with the runtime-context refresh appended as the last
+  # message. `include_background_jobs?` is true ONLY on the summarising path:
+  # there the old span (which may hold the job's only other trace) is being
+  # replaced, so the CURRENT snapshot must be re-injected and stale ones dropped.
+  # The prune-only path keeps the pre-existing plain refresh.
+  defp keep_context(state, agent_id, messages, compression_usage, include_background_jobs?) do
     AgentScheduler.increment_compression_count(agent_id)
 
     usage =
@@ -307,9 +322,16 @@ defmodule EvoGit.Agent.ContextCompression do
         spent -> Usage.add(state.usage, spent)
       end
 
+    rebuilt =
+      if include_background_jobs? do
+        drop_stale_background_job_refreshes(messages) ++ refresh_messages(state, true)
+      else
+        messages ++ refresh_messages(state, false)
+      end
+
     %{
       state
-      | context: ReqLLM.Context.new(messages ++ refresh_messages(state)),
+      | context: ReqLLM.Context.new(rebuilt),
         total_tokens: 0,
         usage: usage
     }
@@ -320,21 +342,59 @@ defmodule EvoGit.Agent.ContextCompression do
   # visible again WITHOUT rewriting the cacheable first message. `nil` (blank
   # context block) appends nothing.
   #
-  # The live background-job snapshot is injected into the state map here (the
-  # agent process IS the job owner pid), because a background shell job outlives
-  # the tool call that started it and its only other trace is the transcript
-  # span that compression just summarised away. `snapshot/1` is a non-reconciling
-  # state read that answers `[]` when the registry is down, so a registry hiccup
-  # can never fail a compression.
-  defp refresh_messages(state) do
+  # When `include_background_jobs?` is true the live background-job snapshot is
+  # injected into the state map here (the agent process IS the job owner pid),
+  # because a background shell job outlives the tool call that started it and its
+  # only other trace is the transcript span that compression just summarised
+  # away. `snapshot/1` is a non-reconciling state read that answers `[]` when the
+  # registry is down, so a registry hiccup can never fail a compression.
+  defp refresh_messages(state, include_background_jobs?) do
     refreshed_state =
-      Map.put(state, :background_jobs, EvoGit.BackgroundJobs.snapshot(owner_pid: self()))
+      if include_background_jobs? do
+        Map.put(state, :background_jobs, EvoGit.BackgroundJobs.snapshot(owner_pid: self()))
+      else
+        state
+      end
 
     case ContextBuilder.build_context_refresh_message(refreshed_state, state.turn) do
       nil -> []
       message -> [message]
     end
   end
+
+  # The exact section marker rendered by
+  # `EvoGit.Agent.BackgroundJobNotice.section/1`.
+  @background_jobs_marker "## Background Jobs"
+
+  @doc false
+  # Drops every runtime-context refresh message that carries a
+  # `## Background Jobs` section, preserving the ORDER and every non-matching
+  # message (system prompt, first user message, checkpoint, recent tail, tool
+  # messages, `[NOTICE]` messages). TOTAL: a non-list input is returned as-is,
+  # and a malformed message simply never matches.
+  @spec drop_stale_background_job_refreshes([term()]) :: [term()]
+  def drop_stale_background_job_refreshes(messages) when is_list(messages) do
+    Enum.reject(messages, &stale_background_job_refresh?/1)
+  end
+
+  def drop_stale_background_job_refreshes(messages), do: messages
+
+  defp stale_background_job_refresh?(message) do
+    ContextBuilder.refresh_message?(message) and
+      String.contains?(message_text(message), @background_jobs_marker)
+  end
+
+  # The `:text` content parts of a message, joined. Total over malformed shapes.
+  defp message_text(%ReqLLM.Message{content: content}) when is_list(content) do
+    content
+    |> Enum.map(fn
+      %{type: :text, text: text} when is_binary(text) -> text
+      _part -> ""
+    end)
+    |> Enum.join("")
+  end
+
+  defp message_text(_message), do: ""
 
   # --- Stage-1 gating config ---
 
