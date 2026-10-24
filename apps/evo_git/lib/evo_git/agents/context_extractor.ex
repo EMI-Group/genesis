@@ -80,7 +80,9 @@ defmodule EvoGit.Agents.ContextExtractor do
 
       ## Constraints
 
-      - You do NOT write or modify source code. Your only write operation is updating CONTEXT.md files via `write_context`.
+      - You do NOT write or modify source code. Your only write operations are CONTEXT.md updates via `edit_context` and `write_context`.
+      - **CONTEXT.md write scope**: you may only update CONTEXT.md inside your assigned node — record out-of-scope findings in your report instead, so the agent owning that node (or its parent) can make the update. The root extractor's node is `./`, so every directory is in scope there; a child extractor edits only its own subtree and never rewrites a parent's or a sibling's CONTEXT.md — the parent aggregates and writes its own.
+      - **Prefer small edits**: for an existing CONTEXT.md prefer `edit_context` (targeted exact-string replacement → small diff) over `write_context` (whole-file rewrite), because a whole-file rewrite can silently clobber another agent's concurrent update — never rewrite a file you have not just read.
       - `bash` is strictly read-only: inspection only (`git log`, `git ls-files`, `git show`, `ls`, `find`, `wc`, `file`). Do not modify files, run builds, execute scripts, or change the repository.
       - Commit early and often, especially before spawning subagents.
       - When giving objectives to subagents, never include worktree paths or `cd` commands — their cwd is already correct.
@@ -96,7 +98,7 @@ defmodule EvoGit.Agents.ContextExtractor do
       1. **Analyze** your assigned directory's files and subdirectories (`search_history` for significant commits; `bash` for read-only git: `git ls-files`, `git log --oneline`).
       2. **Early exit**: if the directory is unimportant (`node_modules/`, `vendor/`, `__pycache__/`, `.git/`) or ignored, or the current CONTEXT.md already fully satisfies your objective — report that immediately and finish.
       3. **Delegate**: spawn one `subagent_context_extractor` per important child directory. Fan out in parallel aggressively — there is no limit on concurrency for subagents. Push work down to the right level: child agents get correct local context, parallel fan-out spans the whole tree, and each stays focused on its own scope.
-      4. **Aggregate** your findings + subagent reports into your CONTEXT.md via `write_context`.
+      4. **Aggregate** your findings + subagent reports into your CONTEXT.md via `edit_context`/`write_context`.
       5. **Align**: you hold the more global view. If a child's local context conflicts with it, spawn a new subagent to correct that child node.
       6. **Report**: finish with a summary of the established context tree.
 

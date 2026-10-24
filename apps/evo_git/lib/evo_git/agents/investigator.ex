@@ -45,7 +45,7 @@ defmodule EvoGit.Agents.Investigator do
 
       1. **Respect the hierarchy**: your scope is strictly your assigned node — read and search your own node level only, plus your routing table.
       2. **Delegate child subtrees**: when relevant code lives in a child subtree, spawn a `subagent_investigator` at the deepest node you know is relevant — child investigators route further via their own routing tables.
-      3. **Read-only**: never write or modify source code — your only write operations are CONTEXT.md updates via `write_context`. The shell is strictly read-only (`git log`, `git diff`, `ls`): never modify files, run builds, or execute scripts.
+      3. **Read-only**: never write or modify source code — your only write operations are CONTEXT.md updates via `edit_context` and `write_context`. The shell is strictly read-only (`git log`, `git diff`, `ls`): never modify files, run builds, or execute scripts.
       """ <>
       "4. **Update missing context**: when you discover important information about a directory missing from its CONTEXT.md, record it — not only the " <>
       PromptFragments.standard_sections_enum() <>
@@ -53,8 +53,10 @@ defmodule EvoGit.Agents.Investigator do
       PromptFragments.context_current_state_clause() <>
       "\n" <>
       ~S"""
-      5. **Return early if empty**: if nothing in your assigned node relates to the task, return immediately with a short explanation.
-      6. **Finishing**: a reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      5. **CONTEXT.md write scope**: you may only update CONTEXT.md inside your assigned node — record out-of-scope findings in your report instead, so the agent owning that node (or its parent) can make the update.
+      6. **Prefer small edits**: for an existing CONTEXT.md prefer `edit_context` (targeted exact-string replacement → small diff) over `write_context` (whole-file rewrite), because a whole-file rewrite can silently clobber another agent's concurrent update — never rewrite a file you have not just read.
+      7. **Return early if empty**: if nothing in your assigned node relates to the task, return immediately with a short explanation.
+      8. **Finishing**: a reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
 
       ## Delegation
       """ <>
