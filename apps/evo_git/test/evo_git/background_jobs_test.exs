@@ -591,6 +591,135 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
+  describe "snapshot/1 (non-reconciling state read)" do
+    test "is owner-scoped, newest first, and capped at 20", %{tmp_dir: tmp_dir} do
+      # One at a time: the per-owner LIVE cap is 10, while finished jobs only
+      # count toward retention — so sequential short jobs yield 21 finished ones.
+      ids =
+        for n <- 1..21 do
+          job = start_job!(%{command: "echo #{n}", cwd: tmp_dir})
+          _ = await_status!(job.id, :completed, 15_000)
+          job.id
+        end
+
+      snapshot = BackgroundJobs.snapshot()
+      assert length(snapshot) == 20
+
+      newest_first = Enum.reverse(ids)
+      assert Enum.map(snapshot, & &1.id) == Enum.take(newest_first, 20)
+      assert Enum.all?(snapshot, &(&1.status == :completed))
+    end
+
+    test "excludes another owner's jobs", %{tmp_dir: tmp_dir} do
+      owner = spawn(fn -> Process.sleep(:infinity) end)
+
+      mine = start_job!(%{command: "echo mine", cwd: tmp_dir})
+      theirs = start_job!(%{command: "sleep 30", cwd: tmp_dir, owner_pid: owner})
+
+      assert Enum.map(BackgroundJobs.snapshot(owner_pid: self()), & &1.id) == [mine.id]
+      assert Enum.map(BackgroundJobs.snapshot(owner_pid: owner), & &1.id) == [theirs.id]
+
+      assert {:ok, _} = BackgroundJobs.kill(theirs.id)
+      Process.exit(owner, :kill)
+    end
+
+    test "is a pure state read: no cursor advance, no reconcile, no announced mark", %{
+      tmp_dir: tmp_dir
+    } do
+      job = start_job!(%{command: "echo hello", cwd: tmp_dir})
+      _ = await_status!(job.id, :completed)
+
+      first = BackgroundJobs.snapshot()
+      second = BackgroundJobs.snapshot()
+      assert Enum.map(first, & &1.cursor) == Enum.map(second, & &1.cursor)
+      # `read/2` is the only consumer of output: the full text is still pending.
+      assert {:ok, %{text: "hello\n"}} = BackgroundJobs.read(job.id)
+
+      # `snapshot/1` never marks a job announced (that is `read/2` / `list/1` only).
+      assert [%{announced: false} = snap] = first
+      assert snap.id == job.id
+    end
+
+    test "is empty for an unknown owner" do
+      assert BackgroundJobs.snapshot(owner_pid: spawn(fn -> :ok end)) == []
+    end
+  end
+
+  describe "claim_finished_notices/1 (exactly-once, owner-scoped)" do
+    test "claims only terminal, unannounced jobs and marks them", %{tmp_dir: tmp_dir} do
+      finished = start_job!(%{command: "echo done", cwd: tmp_dir})
+      _ = await_status!(finished.id, :completed)
+
+      running = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+
+      assert {:ok, [claimed]} = BackgroundJobs.claim_finished_notices()
+      assert claimed.id == finished.id
+      assert claimed.status == :completed
+      assert claimed.announced
+
+      # Exactly-once: the claim marked it in registry state.
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+      assert {:ok, %{announced: true}} = BackgroundJobs.job(finished.id)
+
+      assert {:ok, _} = BackgroundJobs.kill(running.id)
+    end
+
+    test "returns multiple terminal jobs newest first", %{tmp_dir: tmp_dir} do
+      older = start_job!(%{command: "echo one", cwd: tmp_dir})
+      _ = await_status!(older.id, :completed)
+      newer = start_job!(%{command: "echo two", cwd: tmp_dir})
+      _ = await_status!(newer.id, :completed)
+
+      assert {:ok, claimed} = BackgroundJobs.claim_finished_notices()
+      assert Enum.map(claimed, & &1.id) == [newer.id, older.id]
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+    end
+
+    test "never claims a running job", %{tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+
+      assert {:ok, _} = BackgroundJobs.kill(job.id)
+    end
+
+    test "read/2 on a terminal job marks it announced, so a following claim is empty", %{
+      tmp_dir: tmp_dir
+    } do
+      job = start_job!(%{command: "echo hello", cwd: tmp_dir})
+      _ = await_status!(job.id, :completed)
+
+      assert {:ok, %{job: read_job}} = BackgroundJobs.read(job.id)
+      assert read_job.announced
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+    end
+
+    test "list/1 on a terminal job marks it announced, so a following claim is empty", %{
+      tmp_dir: tmp_dir
+    } do
+      job = start_job!(%{command: "echo hello", cwd: tmp_dir})
+      _ = await_status!(job.id, :completed)
+
+      assert [listed] = BackgroundJobs.list(owner_pid: self())
+      assert listed.announced
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+    end
+
+    test "read/2 and list/1 leave a running job unannounced", %{tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+
+      assert {:ok, %{job: read_job}} = BackgroundJobs.read(job.id)
+      refute read_job.announced
+
+      assert [listed] = BackgroundJobs.list(owner_pid: self())
+      refute listed.announced
+
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+      assert {:ok, _} = BackgroundJobs.kill(job.id)
+    end
+  end
+
   describe "registry constants and status vocabulary" do
     test "exposes the documented tunables" do
       assert BackgroundJobs.max_jobs_per_owner() == 10
@@ -660,6 +789,10 @@ defmodule EvoGit.BackgroundJobsTest do
       # tuples"; `kill/3`'s spec names "unknown id, or an unreachable registry").
       assert {:error, :not_found} = BackgroundJobs.job("bash-0000000000000000")
       assert {:error, :not_found} = BackgroundJobs.kill("bash-0000000000000000")
+
+      # The two per-turn reads answer their documented empty shapes and never raise.
+      assert BackgroundJobs.snapshot() == []
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
     end
   end
 

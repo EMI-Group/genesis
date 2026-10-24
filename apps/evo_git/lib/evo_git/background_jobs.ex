@@ -36,6 +36,8 @@ defmodule EvoGit.BackgroundJobs do
   @default_max_bytes 20_000
   # Retention cap for FINISHED job records (live jobs are never pruned).
   @max_finished_retained 100
+  # Per-owner cap on `snapshot/1` (the per-turn read; a full `list/1` stays uncapped).
+  @snapshot_limit 20
 
   @id_prefix "bash-"
 
@@ -58,7 +60,8 @@ defmodule EvoGit.BackgroundJobs do
           started_at: DateTime.t() | nil,
           finished_at: DateTime.t() | nil,
           cursor: non_neg_integer(),
-          lines_read: non_neg_integer()
+          lines_read: non_neg_integer(),
+          announced: boolean()
         }
 
   # Spec keys accepted by `start_job/1`, mapped from their STRING spellings.
@@ -146,6 +149,49 @@ defmodule EvoGit.BackgroundJobs do
     case call_registry({:list, Keyword.get(opts, :owner_pid)}, []) do
       jobs when is_list(jobs) -> jobs
       _ -> []
+    end
+  end
+
+  @doc """
+  Returns a NON-RECONCILING snapshot of one owner's jobs, newest first, capped at #{@snapshot_limit}.
+  `opts[:owner_pid]` defaults to `current_owner_pid/0`; an unknown owner (or an unreachable registry) yields `[]`.
+  This is the per-turn query shape: it reads registry state and nothing else — no backend reconciliation, no output-file I/O and no state mutation (no cursor advance) — so it is cheap enough to call on every agent turn. Use `list/1` when a reconciled status is required.
+  """
+  @spec snapshot(keyword()) :: [job()]
+  def snapshot(opts \\ []) do
+    owner_pid = Keyword.get(opts, :owner_pid) || current_owner_pid()
+
+    if is_pid(owner_pid) and registry_alive?() do
+      call_registry({:snapshot, owner_pid}, [])
+    else
+      []
+    end
+  end
+
+  @doc """
+  Claims this owner's finished-but-unannounced jobs in ONE registry call: returns `{:ok, jobs}` (newest first) and marks exactly those jobs `announced: true`, so a second call can never return the same job again.
+  `opts[:owner_pid]` defaults to `current_owner_pid/0`; nothing to claim (or an unreachable registry / unknown owner) yields `{:ok, []}`.
+  Selection is a state read only — the periodic tick already refreshes `:unit`-handled jobs within about a second — and only TERMINAL statuses (`:completed | :killed | :failed`) are eligible.
+  """
+  @spec claim_finished_notices(keyword()) :: {:ok, [job()]}
+  def claim_finished_notices(opts \\ []) do
+    owner_pid = Keyword.get(opts, :owner_pid) || current_owner_pid()
+
+    if is_pid(owner_pid) and registry_alive?() do
+      call_registry({:claim_finished_notices, owner_pid}, {:ok, []})
+    else
+      {:ok, []}
+    end
+  end
+
+  # Cheap pre-flight for the two state-only reads above: a registry that died between this check and the call is still
+  # caught by `call_registry/3`'s single centralized `catch :exit` boundary (the repo forbids scattering broad rescues),
+  # but skipping the doomed `GenServer.call` keeps the failure path off the caller's critical path.
+  defp registry_alive? do
+    case server() do
+      pid when is_pid(pid) -> Process.alive?(pid)
+      name when is_atom(name) -> Process.whereis(name) != nil
+      _other -> true
     end
   end
 
@@ -387,6 +433,8 @@ defmodule EvoGit.BackgroundJobs do
 
         case read_delta(job, max_bytes) do
           {:ok, text, job} ->
+            # The caller just learned this job's status from the tool result, so a later notice would be a duplicate.
+            job = mark_announced(job)
             {:reply, {:ok, %{text: text, job: job}}, put_job(state, job)}
 
           {:error, message} ->
@@ -405,10 +453,39 @@ defmodule EvoGit.BackgroundJobs do
     {jobs, state} =
       Enum.reduce(jobs, {[], state}, fn job, {acc, acc_state} ->
         {job, acc_state} = reconcile(job, acc_state)
-        {[job | acc], acc_state}
+        # Same rule as `read/2`: a terminal job handed back to the caller counts as announced.
+        job = mark_announced(job)
+        {[job | acc], put_job(acc_state, job)}
       end)
 
     {:reply, Enum.reverse(jobs), state}
+  end
+
+  def handle_call({:snapshot, owner_pid}, _from, state) do
+    # Pure state read: no reconciliation, no file I/O, no mutation.
+    jobs =
+      state.jobs
+      |> Map.values()
+      |> Enum.filter(&(&1.owner_pid == owner_pid))
+      |> sort_newest_first_with_id()
+      |> Enum.take(@snapshot_limit)
+
+    {:reply, jobs, state}
+  end
+
+  def handle_call({:claim_finished_notices, owner_pid}, _from, state) do
+    # Exactly-once: the SAME call selects and marks, so two consecutive claims cannot return the same job.
+    {claimed, state} =
+      state.jobs
+      |> Map.values()
+      |> Enum.filter(&(&1.owner_pid == owner_pid and terminal?(&1) and not &1.announced))
+      |> sort_newest_first_with_id()
+      |> Enum.reduce({[], state}, fn job, {acc, acc_state} ->
+        job = %{job | announced: true}
+        {[job | acc], put_job(acc_state, job)}
+      end)
+
+    {:reply, {:ok, Enum.reverse(claimed)}, state}
   end
 
   def handle_call({:kill, id, reason, owner_pid}, _from, state) do
@@ -582,7 +659,8 @@ defmodule EvoGit.BackgroundJobs do
         started_at: DateTime.utc_now(),
         finished_at: nil,
         cursor: 0,
-        lines_read: 0
+        lines_read: 0,
+        announced: false
       }
 
       {:ok, job, put_job(add_owner_job(state, spec.owner_pid, id), job)}
@@ -924,6 +1002,19 @@ defmodule EvoGit.BackgroundJobs do
   defp live?(%{status: status}), do: status in [:running, :stopping]
   defp live?(_job), do: false
 
+  # Terminal = the job can never change status again, so it is eligible for a (single) completion notice.
+  defp terminal?(%{status: status}), do: status in [:completed, :killed, :failed]
+  defp terminal?(_job), do: false
+
+  # Marks a terminal job as announced ONCE; never reset back to `false` and never touches a live job.
+  defp mark_announced(job) do
+    if terminal?(job) and not job.announced do
+      %{job | announced: true}
+    else
+      job
+    end
+  end
+
   defp unit_handle?(%{kind: :unit}), do: true
   defp unit_handle?(_handle), do: false
 
@@ -936,6 +1027,10 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   defp sort_newest_first(jobs), do: Enum.sort_by(jobs, &started_key/1, :desc)
+
+  # Deterministic newest-first ordering for the state-only reads: two jobs started in the same microsecond would
+  # otherwise come back in arbitrary map-iteration order.
+  defp sort_newest_first_with_id(jobs), do: Enum.sort_by(jobs, &{-started_key(&1), &1.id})
 
   defp started_key(job) do
     case job.started_at do
