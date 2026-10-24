@@ -160,6 +160,25 @@ defmodule EvoGit.Agent.Tools.SharedTest do
       assert message =~ "/home/user/orig"
     end
 
+    test "rejects write path inside a read-only foreign repository with a multi-byte root" do
+      # Regression: byte-vs-grapheme prefix mismatch made every path under a
+      # non-ASCII root look like "not in any repo" — bypassing this gate.
+      foreign_root = "/home/user/a—b/orig"
+
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: foreign_root, writable: false}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      result =
+        Shared.validate_file_scope(foreign_root <> "/lib/app.ex", "./lib", "/home/user/repo")
+
+      assert {:error, message} = result
+      assert message =~ "read-only foreign repository"
+      assert message =~ foreign_root
+    end
+
     test "rejects write path nested deep inside a read-only foreign repository" do
       Process.put(:foreign_repos, [
         %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: false}

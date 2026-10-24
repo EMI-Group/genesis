@@ -261,6 +261,21 @@ defmodule EvoGit.Core.ForeignRepoTest do
       repo = ForeignRepo.new("test", "/Source/proj")
       assert {:error, :not_in_repo} = ForeignRepo.normalize_path(repo, "")
     end
+
+    test "handles a repo root containing multi-byte UTF-8 characters" do
+      # Regression: the prefix check mixed a BYTE offset (`byte_size/1`) with a
+      # GRAPHEME index (`String.at/2`), so any non-ASCII root component made
+      # every path look outside the repo.
+      root = "/tmp/genesis/a—b/repo"
+      repo = ForeignRepo.new("test", root)
+
+      assert byte_size(root) != String.length(root)
+      assert {:ok, "./src/x.ex"} = ForeignRepo.normalize_path(repo, root <> "/src/x.ex")
+      assert {:ok, "./"} = ForeignRepo.normalize_path(repo, root)
+
+      assert {:error, :not_in_repo} =
+               ForeignRepo.normalize_path(repo, "/tmp/genesis/a—b/repo2/x.ex")
+    end
   end
 
   describe "resolve_path/2" do
@@ -325,6 +340,20 @@ defmodule EvoGit.Core.ForeignRepoTest do
     test "resolves repo root to ./" do
       repos = [ForeignRepo.new("primary", "/Source/proj")]
       assert {:ok, "primary", "./"} = ForeignRepo.resolve_path(repos, "/Source/proj")
+    end
+
+    test "resolves a read-only foreign repo whose root contains multi-byte UTF-8" do
+      repos = [
+        ForeignRepo.new("primary", "/Source/proj"),
+        ForeignRepo.new("original", "/Source/a—b/original-proj", writable: false)
+      ]
+
+      assert {:ok, "original", "./src/main.py"} =
+               ForeignRepo.resolve_path(repos, "/Source/a—b/original-proj/src/main.py")
+
+      # Sibling prefix with the same non-ASCII root must NOT match.
+      assert {:error, :not_in_any_repo} =
+               ForeignRepo.resolve_path(repos, "/Source/a—b/original-proj2/src/main.py")
     end
 
     test "resolves UNC-rooted repos by id" do

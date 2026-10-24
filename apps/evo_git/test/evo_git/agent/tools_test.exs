@@ -1104,13 +1104,6 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  # NOTE: this describe (and its test names) must stay ASCII-ONLY. ExUnit derives
-  # the `:tmp_dir` path from the test name, and `EvoGit.Core.ForeignRepo.normalize_path/2`
-  # compares a BYTE offset (`byte_size(root)`) with a GRAPHEME index
-  # (`Platform.path_next_is_separator?/2` → `String.at/2`), so a multi-byte
-  # character (e.g. an em dash) earlier in the path makes path resolution
-  # silently return `{:error, :not_in_repo}` — the read-only foreign repo would
-  # then look like "not in any repo".
   describe "CONTEXT.md node scope - repo role interaction" do
     test "a read-only foreign repo is still rejected at the PATH level for both tools", %{
       tmp_dir: tmp_dir

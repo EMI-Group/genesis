@@ -88,6 +88,22 @@ defmodule EvoGit.PlatformTest do
     test "returns false when prefix_len exceeds string length" do
       refute Platform.path_next_is_separator?("foo", 10)
     end
+
+    test "treats prefix_len as a BYTE offset on multi-byte UTF-8 paths" do
+      # "a—b" holds an em dash (3 bytes): byte_size 9 vs String.length 7, so a
+      # grapheme-indexed implementation reads the wrong character.
+      root = "/tmp/a—b/repo"
+      path = root <> "/src/x.ex"
+
+      assert byte_size(root) != String.length(root)
+      assert Platform.path_next_is_separator?(path, byte_size(root))
+      refute Platform.path_next_is_separator?(path, String.length(root))
+    end
+
+    test "returns false when the byte offset lands mid-character" do
+      # Byte at offset 7 is the second byte of the em dash — not a separator.
+      refute Platform.path_next_is_separator?("/tmp/a—b/repo", 7)
+    end
   end
 
   describe "unc?/1" do

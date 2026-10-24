@@ -387,14 +387,21 @@ defmodule EvoGit.Platform do
   end
 
   @doc """
-  Returns true if the character at `prefix_len` in `path` is a path separator
+  Returns true if the BYTE at `prefix_len` in `path` is a path separator
   (either / or \\).
+
+  `prefix_len` is a byte offset (not a grapheme/character index), so callers
+  may pass `byte_size(prefix)` directly — mixing the two silently
+  mis-resolves any path containing multi-byte UTF-8 characters. False when
+  the offset is at or beyond the end of the binary (and when the byte at the
+  offset is a UTF-8 continuation byte, i.e. the offset lands mid-character).
   """
   @spec path_next_is_separator?(String.t(), non_neg_integer()) :: boolean()
-  def path_next_is_separator?(path, prefix_len) when is_binary(path) and is_integer(prefix_len) do
-    case String.at(path, prefix_len) do
-      nil -> false
-      char -> char == "/" or char == "\\"
+  def path_next_is_separator?(path, prefix_len)
+      when is_binary(path) and is_integer(prefix_len) and prefix_len >= 0 do
+    case path do
+      <<_::binary-size(^prefix_len), sep, _::binary>> -> sep == ?/ or sep == ?\\
+      _ -> false
     end
   end
 
