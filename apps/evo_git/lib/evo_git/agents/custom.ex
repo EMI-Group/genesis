@@ -51,7 +51,9 @@ defmodule EvoGit.Agents.Custom do
 
   When `tools` is a list, only the schemas whose tool name appears in the whitelist
   survive. The shipped model-facing names are `read`, `write`, `edit`, `bash`, `rg`,
-  `glob`, `web_search`, `web_fetch`, `lsp` plus the unrenamed tools. Matching is
+  `glob`, `web_search`, `web_fetch` plus the unrenamed tools — and `lsp` only
+  when the user enables and configures a language server (`[lsp] enabled = true`
+  with a non-empty `command`). Matching is
   **ALIAS-AWARE** (`EvoGit.Agent.Tools.whitelist_match?/2` →
   `EvoGit.Agent.ToolNames.matches_any?/2`): both sides are normalised through
   `EvoGit.Agent.ToolNames.normalize/1`, so a whitelist written with a pre-rename

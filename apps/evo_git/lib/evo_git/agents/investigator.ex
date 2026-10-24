@@ -68,7 +68,7 @@ defmodule EvoGit.Agents.Investigator do
 
       You inherit a CONTEXT.md context-tree chain (root down to your node) — the accumulated knowledge of prior investigations. Trust it by default. For simple factual questions (what does this repo or module do, what language is this) answer directly from the inherited context tree with minimal or no extra work and no fan-out. Only deep-dive and validate against the actual code when the objective signals the context may be STALE or LOW-CONFIDENCE (e.g. the parent says "the context may be stale — verify against the actual code").
 
-      Use `lsp` for symbol-level questions (definition, hover, diagnostics) before grepping for declarations; `web_fetch` reads an external page as Markdown when the objective points outside the repo.
+      If an `lsp` tool is available (the user configured a language server), use it for symbol-level questions (definition, hover, diagnostics) before grepping for declarations; `web_fetch` reads an external page as Markdown when the objective points outside the repo.
 
       Match depth to the question:
       - **Simple** (What language is this?) → CONTEXT.md + a directory listing + a few key files. No fan-out.
