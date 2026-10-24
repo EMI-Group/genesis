@@ -210,6 +210,87 @@ defmodule EvoGit.Agent.Tools.SharedTest do
     end
   end
 
+  describe "validate_file_scope/4 (custom formatter)" do
+    test "returns the custom formatter's message for an out-of-node path" do
+      repo_path = "/home/user/repo"
+      expanded = "/home/user/repo/doc"
+
+      # A DIRECTORY target (CONTEXT.md's owning directory) is not a plain file,
+      # so callers pass their own formatter; the scope math is unchanged and the
+      # formatter receives the REPO-RELATIVE target plus the node path.
+      formatter = fn target, node -> "CUSTOM out-of-scope #{target} for nodes under #{node}" end
+
+      assert Shared.validate_file_scope(expanded, "./src", repo_path, formatter) ==
+               {:error, "CUSTOM out-of-scope doc for nodes under ./src"}
+    end
+
+    test "still returns :ok for an in-node path, a descendant and a nil node_path" do
+      repo_path = "/home/user/repo"
+      formatter = fn target, node -> "CUSTOM #{target} #{node}" end
+
+      assert Shared.validate_file_scope("/home/user/repo/src", "./src", repo_path, formatter) ==
+               :ok
+
+      assert Shared.validate_file_scope(
+               "/home/user/repo/src/deep/nested",
+               "./src",
+               repo_path,
+               formatter
+             ) == :ok
+
+      assert Shared.validate_file_scope("/home/user/repo/anywhere", nil, repo_path, formatter) ==
+               :ok
+    end
+
+    test "a custom formatter does not bypass the read-only foreign repo path check" do
+      Process.put(:foreign_repos, [
+        %EvoGit.Core.ForeignRepo{id: "orig", root: "/home/user/orig", writable: false}
+      ])
+
+      on_exit(fn -> Process.delete(:foreign_repos) end)
+
+      formatter = fn target, node -> "CUSTOM #{target} #{node}" end
+
+      assert {:error, message} =
+               Shared.validate_file_scope(
+                 "/home/user/orig/src",
+                 "./src",
+                 "/home/user/repo",
+                 formatter
+               )
+
+      assert message =~ "read-only foreign repository"
+      refute message =~ "CUSTOM"
+    end
+  end
+
+  describe "format_context_scope_error/2" do
+    test "teaches who owns the update and where the finding belongs" do
+      message = Shared.format_context_scope_error("doc", "./src")
+
+      assert message =~ "Cannot modify CONTEXT.md at 'doc'."
+      assert message =~ "You are assigned to work within './src'"
+      assert message =~ "outside your scope"
+      assert message =~ "The agent that owns 'doc' (or its parent) must make that update"
+      assert message =~ "Put the finding in your report instead"
+
+      # The remedy is not left to the model to invent: it must not write the
+      # file from here, and the owning node's agent acts on the report.
+      assert message =~ "do not write it from here"
+      assert message =~ "the agent that owns that node can act on it"
+    end
+
+    test "differs from the default FILE formatter (directory-specific remedy)" do
+      context_message = Shared.format_context_scope_error("doc", "./src")
+      file_message = Shared.format_scope_error("doc/notes.md", "./src")
+
+      assert context_message =~ "Cannot modify CONTEXT.md at 'doc'."
+      refute context_message =~ "notes.md"
+      assert file_message =~ "Cannot modify 'doc/notes.md'."
+      refute file_message =~ "CONTEXT.md"
+    end
+  end
+
   describe "fetch_array_arg/2" do
     test "returns a real list unchanged" do
       assert Shared.fetch_array_arg(%{"args" => ["-n", "foo", "."]}, "args") ==

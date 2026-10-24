@@ -824,6 +824,398 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
+  describe "write_context node scope" do
+    test "writes the agent's own node and its descendants", %{tmp_dir: tmp_dir} do
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./src", "content" => "src context", "commit" => false},
+          tmp_dir,
+          nil,
+          "./src"
+        )
+
+      assert result == "Successfully updated CONTEXT.md for directory './src'"
+      assert File.read!(Path.join(tmp_dir, "src/CONTEXT.md")) == "src context"
+
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./src/nested/deeper", "content" => "deep context", "commit" => false},
+          tmp_dir,
+          nil,
+          "./src"
+        )
+
+      assert result ==
+               "Successfully updated CONTEXT.md for directory './src/nested/deeper'"
+
+      assert File.read!(Path.join(tmp_dir, "src/nested/deeper/CONTEXT.md")) == "deep context"
+    end
+
+    test "rejects a sibling directory and touches neither the filesystem nor git", %{
+      tmp_dir: tmp_dir
+    } do
+      init_git_repo!(tmp_dir)
+
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./doc", "content" => "doc context", "commit" => true},
+          tmp_dir,
+          tmp_dir,
+          "./src"
+        )
+
+      assert_context_scope_error(result, "doc")
+
+      # Rejected BEFORE any filesystem change: the directory was never created
+      # and nothing was staged or committed.
+      refute File.exists?(Path.join(tmp_dir, "doc"))
+      assert last_commit_subject(tmp_dir) == "init commit"
+      assert git_status_porcelain(tmp_dir) == ""
+    end
+
+    test "rejects the repo root (a parent node) and a sibling without touching either file", %{
+      tmp_dir: tmp_dir
+    } do
+      root_context = Path.join(tmp_dir, "CONTEXT.md")
+      File.write!(root_context, "root context")
+      File.mkdir_p!(Path.join(tmp_dir, "doc"))
+      File.write!(Path.join(tmp_dir, "doc/CONTEXT.md"), "doc context")
+
+      # A node may only write ITSELF and its DESCENDANTS — never a parent
+      # (`./`, the repo root) and never a sibling (`./doc`).
+      parent_result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./", "content" => "hijacked root", "commit" => false},
+          tmp_dir,
+          nil,
+          "./src"
+        )
+
+      sibling_result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./doc/CONTEXT.md", "content" => "hijacked doc", "commit" => false},
+          tmp_dir,
+          nil,
+          "./src"
+        )
+
+      assert_context_scope_error(parent_result, ".")
+      assert_context_scope_error(sibling_result, "doc/CONTEXT.md")
+
+      # Both pre-existing files are byte-identical afterwards.
+      assert File.read!(root_context) == "root context"
+      assert File.read!(Path.join(tmp_dir, "doc/CONTEXT.md")) == "doc context"
+    end
+
+    test "a root agent (node_path './') may write the root, a child and a deep descendant", %{
+      tmp_dir: tmp_dir
+    } do
+      init_git_repo!(tmp_dir)
+
+      assert "Successfully updated CONTEXT.md for directory './'" =
+               Tools.execute(
+                 "write_context",
+                 %{"dir_path" => "./", "content" => "root context", "commit" => false},
+                 tmp_dir,
+                 tmp_dir,
+                 "./"
+               )
+
+      assert "Successfully updated CONTEXT.md for directory './doc'" =
+               Tools.execute(
+                 "write_context",
+                 %{"dir_path" => "./doc", "content" => "doc context", "commit" => false},
+                 tmp_dir,
+                 tmp_dir,
+                 "./"
+               )
+
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./src/deep", "content" => "deep context", "commit" => true},
+          tmp_dir,
+          tmp_dir,
+          "./"
+        )
+
+      assert result =~ "Successfully updated CONTEXT.md for directory './src/deep'"
+      assert result =~ "Committed:"
+
+      assert File.read!(Path.join(tmp_dir, "CONTEXT.md")) == "root context"
+      assert File.read!(Path.join(tmp_dir, "doc/CONTEXT.md")) == "doc context"
+      assert File.read!(Path.join(tmp_dir, "src/deep/CONTEXT.md")) == "deep context"
+      assert last_commit_subject(tmp_dir) =~ "Update CONTEXT.md for ./src/deep"
+    end
+
+    test "the 4-arity execute/4 (node_path nil) still allows any directory", %{tmp_dir: tmp_dir} do
+      # Backward compatibility: direct callers that pass no node_path are not
+      # scope-checked at all — the pre-existing 4-arity contract.
+      result =
+        Tools.execute(
+          "write_context",
+          %{"dir_path" => "./doc", "content" => "doc context", "commit" => false},
+          tmp_dir,
+          tmp_dir
+        )
+
+      assert result == "Successfully updated CONTEXT.md for directory './doc'"
+      assert File.read!(Path.join(tmp_dir, "doc/CONTEXT.md")) == "doc context"
+    end
+
+    test "Context.execute_write/3 (node_path defaults to nil) still writes anywhere", %{
+      tmp_dir: tmp_dir
+    } do
+      assert "Successfully updated CONTEXT.md for directory 'outside/any/node'" =
+               EvoGit.Agent.Tools.Context.execute_write(
+                 %{
+                   "dir_path" => "outside/any/node",
+                   "content" => "direct context",
+                   "commit" => false
+                 },
+                 tmp_dir,
+                 nil
+               )
+
+      assert File.read!(Path.join(tmp_dir, "outside/any/node/CONTEXT.md")) == "direct context"
+    end
+  end
+
+  describe "edit_context node scope" do
+    test "edits the agent's own node and its descendants", %{tmp_dir: tmp_dir} do
+      File.mkdir_p!(Path.join(tmp_dir, "src/deep"))
+      File.write!(Path.join(tmp_dir, "src/CONTEXT.md"), "old src")
+      File.write!(Path.join(tmp_dir, "src/deep/CONTEXT.md"), "old deep")
+
+      assert "The file ./src/CONTEXT.md has been updated successfully." =
+               Tools.execute(
+                 "edit_context",
+                 %{
+                   "dir_path" => "./src",
+                   "old_string" => "old",
+                   "new_string" => "new",
+                   "commit" => false
+                 },
+                 tmp_dir,
+                 nil,
+                 "./src"
+               )
+
+      assert "The file ./src/deep/CONTEXT.md has been updated successfully." =
+               Tools.execute(
+                 "edit_context",
+                 %{
+                   "dir_path" => "./src/deep",
+                   "old_string" => "old",
+                   "new_string" => "new",
+                   "commit" => false
+                 },
+                 tmp_dir,
+                 nil,
+                 "./src"
+               )
+
+      assert File.read!(Path.join(tmp_dir, "src/CONTEXT.md")) == "new src"
+      assert File.read!(Path.join(tmp_dir, "src/deep/CONTEXT.md")) == "new deep"
+    end
+
+    test "rejects a sibling directory, leaving its CONTEXT.md byte-identical and uncommitted", %{
+      tmp_dir: tmp_dir
+    } do
+      init_git_repo!(tmp_dir)
+
+      doc_context = Path.join(tmp_dir, "doc/CONTEXT.md")
+      File.mkdir_p!(Path.dirname(doc_context))
+      File.write!(doc_context, "# Doc\n\nOriginal content here")
+      System.cmd("git", ["add", "doc/CONTEXT.md"], cd: tmp_dir)
+      System.cmd("git", ["commit", "-m", "doc context commit"], cd: tmp_dir)
+      original = File.read!(doc_context)
+
+      result =
+        Tools.execute(
+          "edit_context",
+          %{
+            "dir_path" => "./doc",
+            "old_string" => "Original",
+            "new_string" => "Rewritten",
+            "commit" => true
+          },
+          tmp_dir,
+          tmp_dir,
+          "./src"
+        )
+
+      assert_context_scope_error(result, "doc")
+
+      # The rejection happens BEFORE the file is read/replaced or committed.
+      assert File.read!(doc_context) == original
+      assert last_commit_subject(tmp_dir) == "doc context commit"
+      assert git_status_porcelain(tmp_dir) == ""
+    end
+
+    test "a non-existent OUT-OF-SCOPE directory reports the scope error, not 'does not exist'", %{
+      tmp_dir: tmp_dir
+    } do
+      # The scope check precedes the existence check, so the model learns the
+      # real obstacle (scope) instead of a misleading missing-directory error.
+      result =
+        Tools.execute(
+          "edit_context",
+          %{
+            "dir_path" => "./nope",
+            "old_string" => "a",
+            "new_string" => "b",
+            "commit" => false
+          },
+          tmp_dir,
+          nil,
+          "./src"
+        )
+
+      assert_context_scope_error(result, "nope")
+      refute result =~ "does not exist"
+      refute File.exists?(Path.join(tmp_dir, "nope"))
+    end
+
+    test "Context.execute_edit/3 (node_path defaults to nil) still edits anywhere", %{
+      tmp_dir: tmp_dir
+    } do
+      File.mkdir_p!(Path.join(tmp_dir, "outside/any/node"))
+      File.write!(Path.join(tmp_dir, "outside/any/node/CONTEXT.md"), "old")
+
+      assert "The file outside/any/node/CONTEXT.md has been updated successfully." =
+               EvoGit.Agent.Tools.Context.execute_edit(
+                 %{
+                   "dir_path" => "outside/any/node",
+                   "old_string" => "old",
+                   "new_string" => "new",
+                   "commit" => false
+                 },
+                 tmp_dir,
+                 nil
+               )
+
+      assert File.read!(Path.join(tmp_dir, "outside/any/node/CONTEXT.md")) == "new"
+    end
+  end
+
+  # NOTE: this describe (and its test names) must stay ASCII-ONLY. ExUnit derives
+  # the `:tmp_dir` path from the test name, and `EvoGit.Core.ForeignRepo.normalize_path/2`
+  # compares a BYTE offset (`byte_size(root)`) with a GRAPHEME index
+  # (`Platform.path_next_is_separator?/2` → `String.at/2`), so a multi-byte
+  # character (e.g. an em dash) earlier in the path makes path resolution
+  # silently return `{:error, :not_in_repo}` — the read-only foreign repo would
+  # then look like "not in any repo".
+  describe "CONTEXT.md node scope - repo role interaction" do
+    test "a read-only foreign repo is still rejected at the PATH level for both tools", %{
+      tmp_dir: tmp_dir
+    } do
+      foreign_root = Path.join(tmp_dir, "foreign")
+
+      # The AGENT is a primary-repo agent (so the dispatch-level gate lets the
+      # call through); the TARGET directory lives inside the read-only foreign
+      # repo. Only `validate_file_scope/4`'s path-level check can catch this —
+      # and it does, before the node-scope comparison.
+      with_repo_role(
+        [%EvoGit.Core.ForeignRepo{id: "orig", root: foreign_root, writable: false}],
+        EvoGit.Core.ForeignRepo.primary_id(),
+        tmp_dir,
+        fn _repo_path ->
+          foreign_dir = Path.join(foreign_root, "src")
+
+          write_result =
+            Tools.execute(
+              "write_context",
+              %{"dir_path" => foreign_dir, "content" => "foreign context", "commit" => false},
+              tmp_dir,
+              nil,
+              "./src"
+            )
+
+          edit_result =
+            Tools.execute(
+              "edit_context",
+              %{
+                "dir_path" => foreign_dir,
+                "old_string" => "a",
+                "new_string" => "b",
+                "commit" => false
+              },
+              tmp_dir,
+              nil,
+              "./src"
+            )
+
+          for result <- [write_result, edit_result] do
+            assert String.starts_with?(result, "Error: ")
+            assert result =~ "read-only foreign repository"
+            refute result =~ "outside your scope"
+          end
+
+          refute File.exists?(Path.join(foreign_dir, "CONTEXT.md"))
+        end
+      )
+    end
+
+    test "a writable foreign repo still accepts an in-node CONTEXT.md write", %{
+      tmp_dir: tmp_dir
+    } do
+      with_foreign_repo(tmp_dir, [writable: true], fn repo_path ->
+        result =
+          Tools.execute(
+            "write_context",
+            %{"dir_path" => "./src", "content" => "foreign context", "commit" => false},
+            repo_path,
+            nil,
+            "./src"
+          )
+
+        assert result == "Successfully updated CONTEXT.md for directory './src'"
+        assert File.read!(Path.join(repo_path, "src/CONTEXT.md")) == "foreign context"
+      end)
+    end
+
+    test "a primary repo with a read-only foreign repo registered still writes its own subtree",
+         %{tmp_dir: tmp_dir} do
+      with_primary_repo(tmp_dir, fn repo_path ->
+        write_result =
+          Tools.execute(
+            "write_context",
+            %{"dir_path" => "./src", "content" => "primary context", "commit" => false},
+            repo_path,
+            nil,
+            "./src"
+          )
+
+        File.mkdir_p!(Path.join(tmp_dir, "doc"))
+        File.write!(Path.join(tmp_dir, "doc/CONTEXT.md"), "old")
+
+        edit_result =
+          Tools.execute(
+            "edit_context",
+            %{
+              "dir_path" => "./doc",
+              "old_string" => "old",
+              "new_string" => "new",
+              "commit" => false
+            },
+            repo_path,
+            nil,
+            "./"
+          )
+
+        assert write_result == "Successfully updated CONTEXT.md for directory './src'"
+        assert edit_result =~ "has been updated successfully"
+        assert File.read!(Path.join(tmp_dir, "doc/CONTEXT.md")) == "new"
+      end)
+    end
+  end
+
   describe "execute/4 - unknown tool" do
     test "returns error for unknown tool", %{tmp_dir: tmp_dir} do
       result = Tools.execute("unknown_tool", %{}, tmp_dir)
@@ -1210,6 +1602,43 @@ defmodule EvoGit.Agent.ToolsTest do
 
   defp with_no_foreign_repos(tmp_dir, fun) do
     with_repo_role([], EvoGit.Core.ForeignRepo.primary_id(), tmp_dir, fun)
+  end
+
+  # Initializes a git repository in `dir` with a single "init commit". Mirrors
+  # the inline fixture the existing write_context/edit_context commit tests use,
+  # so a rejected node-scope call can be proven to leave history untouched.
+  defp init_git_repo!(dir) do
+    System.cmd("git", ["init"], cd: dir)
+    System.cmd("git", ["config", "user.email", "test@example.com"], cd: dir)
+    System.cmd("git", ["config", "user.name", "Test User"], cd: dir)
+    File.write!(Path.join(dir, "README.md"), "init")
+    System.cmd("git", ["add", "README.md"], cd: dir)
+    System.cmd("git", ["commit", "-m", "init commit"], cd: dir)
+    :ok
+  end
+
+  defp last_commit_subject(dir) do
+    {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: dir)
+    String.trim(log)
+  end
+
+  defp git_status_porcelain(dir) do
+    {status, 0} = System.cmd("git", ["status", "--porcelain"], cd: dir)
+    String.trim(status)
+  end
+
+  # Asserts the out-of-node CONTEXT.md rejection shape: an `"Error: "` result
+  # carrying the whole teaching text from `Shared.format_context_scope_error/2`
+  # (the target path is rendered repo-relative — `"doc"`, or `"."` for the repo
+  # root itself).
+  defp assert_context_scope_error(result, target) do
+    assert String.starts_with?(result, "Error: "),
+           "expected an Error: result, got: #{inspect(result)}"
+
+    assert result =~ "Cannot modify CONTEXT.md at '#{target}'."
+    assert result =~ "outside your scope"
+    assert result =~ "The agent that owns '#{target}' (or its parent) must make that update"
+    assert result =~ "Put the finding in your report instead"
   end
 
   # Runs `fun` with XDG_CONFIG_HOME pointed at a fresh temp directory that
