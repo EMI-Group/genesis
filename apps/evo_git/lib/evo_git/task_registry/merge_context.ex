@@ -167,7 +167,24 @@ defmodule EvoGit.TaskRegistry.MergeContext do
         "merges (merge earlier commits one at a time, resolving and committing each step), " <>
         "or resolve conflicts in a rough way first, commit, and then continue developing " <>
         "on top of that commit to integrate the missing pieces (subagent-friendly because " <>
-        "the rough state is committed)."
+        "the rough state is committed).",
+      "- CONTEXT.md conflicts are ownership conflicts, not text conflicts: identify which " <>
+        "side's node path OWNS the conflicting file (the node directory whose subtree " <>
+        "contains it — the agent rooted at `./src` owns `./src/CONTEXT.md`, and the root " <>
+        "agent at `./` is everybody's ancestor) and keep that side's version for that file.",
+      "- When BOTH sides legitimately own the same node (a genuine same-node conflict, e.g. " <>
+        "two agents both rooted at `./src`), do NOT pick one side wholesale: deliberately " <>
+        "merge both sides — keep both sides' routing-table entries and both sets of " <>
+        "documented facts, reconciling wording only where it is genuinely the same fact.",
+      "- Prefer `edit_context` with small, surgical edits over rewriting whole CONTEXT.md " <>
+        "files.",
+      "- Never delete or drop another node's routing-table entries merely because they " <>
+        "conflict textually: a routing entry for a child subdirectory must survive, and if " <>
+        "both sides added different routing entries for different children, both belong in " <>
+        "the merged table.",
+      "- CONTEXT.md conflicts are never resolved by discarding one side's content; if " <>
+        "ownership is genuinely ambiguous, keep both sides and note the ambiguity in the " <>
+        "file."
     ]
 
     writable_repos_line = PrevTaskRepos.writable_repos_line(foreign_repos)

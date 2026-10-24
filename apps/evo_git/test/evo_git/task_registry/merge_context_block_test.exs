@@ -13,8 +13,29 @@ defmodule EvoGit.TaskRegistry.MergeContextBlockTest do
 
   use ExUnit.Case, async: true
 
+  alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
   alias EvoGit.TaskRegistry.MergeContext
+
+  # Hint fragments that predate the CONTEXT.md merge-conflict policy — they must
+  # keep rendering unchanged.
+  @preexisting_hint_fragments [
+    "Hints:",
+    "Commit conflict resolutions before delegating",
+    "inspect `git log/diff",
+    "incremental milestone merges"
+  ]
+
+  # The CONTEXT.md-specific merge-conflict policy hints appended after the
+  # pre-existing hints.
+  @context_md_policy_fragments [
+    "CONTEXT.md conflicts are ownership conflicts, not text conflicts",
+    "keep that side's version",
+    "do NOT pick one side wholesale",
+    "`edit_context`",
+    "routing entry for a child subdirectory must survive",
+    "note the ambiguity"
+  ]
 
   describe "build_merge_context_block/2" do
     test "includes task id, shas, branch, merge target, goal, and hints" do
@@ -32,6 +53,39 @@ defmodule EvoGit.TaskRegistry.MergeContextBlockTest do
       assert block =~ "uncommitted"
       assert block =~ "`git log/diff"
       assert block =~ "--- End Merge Conflict Resolution Context ---"
+    end
+
+    test "keeps every pre-existing hint fragment" do
+      block = MergeContext.build_merge_context_block(build_task(), "main")
+
+      for fragment <- @preexisting_hint_fragments do
+        assert block =~ fragment, "missing pre-existing hint fragment: #{fragment}"
+      end
+    end
+
+    test "includes the CONTEXT.md merge-conflict policy hints" do
+      block = MergeContext.build_merge_context_block(build_task(), "main")
+
+      for fragment <- @context_md_policy_fragments do
+        assert block =~ fragment, "missing CONTEXT.md policy fragment: #{fragment}"
+      end
+    end
+
+    test "starts and ends with the context block delimiters" do
+      block = MergeContext.build_merge_context_block(build_task(), "main")
+
+      assert String.starts_with?(block, "--- Merge Conflict Resolution Context ---")
+      assert String.ends_with?(block, "--- End Merge Conflict Resolution Context ---")
+    end
+
+    test "appends the policy hints before the closing delimiter" do
+      block = MergeContext.build_merge_context_block(build_task(), "main")
+
+      closing = "--- End Merge Conflict Resolution Context ---"
+      [before_closing, after_closing] = String.split(block, closing)
+
+      assert before_closing =~ "CONTEXT.md conflicts are ownership conflicts"
+      assert after_closing == ""
     end
 
     test "omits the base sha line when base_sha is nil" do
@@ -56,10 +110,56 @@ defmodule EvoGit.TaskRegistry.MergeContextBlockTest do
       assert block =~ "Merge target branch: unknown"
     end
 
+    test "derives foreign repos from the previous task's opts and keeps the policy hints" do
+      task =
+        build_task(
+          opts: [
+            path: "/tmp/merge-context-prev",
+            mode: "simple",
+            foreign_repos: [
+              %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "abc123"}
+            ]
+          ]
+        )
+
+      block = MergeContext.build_merge_context_block(task, "main")
+
+      assert block =~ "Writable foreign repos: orig@abc123"
+
+      for fragment <- @preexisting_hint_fragments ++ @context_md_policy_fragments do
+        assert block =~ fragment, "missing hint fragment: #{fragment}"
+      end
+    end
+
     test "returns an empty string for non-TaskInfo input" do
       assert MergeContext.build_merge_context_block(nil, "main") == ""
       assert MergeContext.build_merge_context_block("not-a-task", "main") == ""
       assert MergeContext.build_merge_context_block(%{id: "x"}, "main") == ""
+    end
+  end
+
+  describe "build_merge_context_block/3" do
+    test "includes the pre-existing and CONTEXT.md policy hints with explicit foreign repos" do
+      foreign_repos = [
+        %ForeignRepo{id: "orig", root: "/tmp/orig", writable: true, base_sha: "abc123"}
+      ]
+
+      block = MergeContext.build_merge_context_block(build_task(), "main", foreign_repos)
+
+      assert block =~ "--- Merge Conflict Resolution Context ---"
+      assert block =~ "Writable foreign repos: orig@abc123"
+      assert block =~ "--- End Merge Conflict Resolution Context ---"
+
+      for fragment <- @preexisting_hint_fragments ++ @context_md_policy_fragments do
+        assert block =~ fragment, "missing hint fragment: #{fragment}"
+      end
+
+      assert String.ends_with?(block, "--- End Merge Conflict Resolution Context ---")
+    end
+
+    test "returns an empty string for non-TaskInfo input" do
+      assert MergeContext.build_merge_context_block(nil, "main", []) == ""
+      assert MergeContext.build_merge_context_block("not-a-task", "main", []) == ""
     end
   end
 

@@ -11,9 +11,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
   @moduletag :tmp_dir
 
+  alias EvoGit.Adapters.Git
+  alias EvoGit.Agent.ContextMerge.Report
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentProcessing
+  alias EvoGit.AgentSpec
+  alias EvoGit.Core.ContextNode
   alias EvoGit.Core.ForeignRepo
+  alias EvoGit.Core.PhyloGraphNode
 
   alias EvoGit.Agent.Usage
 
@@ -1144,5 +1149,361 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       # (cached_tokens / input_tokens * 100 = 300/500 * 100 = 60.0)
       assert_in_delta Usage.cache_hit_rate(accumulated), 60.0, 0.01
     end
+  end
+
+  describe "subagent result merging (ContextMerge wiring)" do
+    test "clean multi-child merge: success note and merged branches deleted", %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "clean_merge"))
+
+      base =
+        commit_files(
+          dir,
+          [{"CONTEXT.md", "# Root\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
+          "base"
+        )
+
+      on_branch(dir, "evogit-agent-T1-A0", base)
+      child_one = commit_files(dir, [{"src/b.ex", "defmodule B do\nend\n"}], "child one")
+
+      on_branch(dir, "evogit-agent-T1-A1", base)
+      child_two = commit_files(dir, [{"doc/x.md", "# Doc\n"}], "child two")
+
+      on_branch(dir, "parent", base)
+
+      children = [
+        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
+        child(1, child_two, "./doc", branch: "evogit-agent-T1-A1")
+      ]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./")
+
+      assert %Report{status: :clean} = report
+      assert Enum.map(report.entries, & &1.status) == [:merged, :merged]
+      assert report.genuine_conflicts == []
+
+      note = SubagentProcessing.build_merge_message(report, children, "", [])
+
+      assert note =~ "System Note: Successfully auto-merged changes from subagents."
+      assert File.read!(Path.join(dir, "src/b.ex")) =~ "defmodule B"
+      assert File.read!(Path.join(dir, "doc/x.md")) == "# Doc\n"
+
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A0")
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A1")
+
+      assert SubagentProcessing.delete_merged_branches(report, dir) == :ok
+
+      refute Git.branch_exists?(dir, "evogit-agent-T1-A0")
+      refute Git.branch_exists?(dir, "evogit-agent-T1-A1")
+    end
+
+    test "out-of-scope CONTEXT.md edit is dropped in favour of the parent", %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "out_of_scope"))
+
+      base =
+        commit_files(
+          dir,
+          [{"src/CONTEXT.md", "base src context\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
+          "base"
+        )
+
+      # A child spawned at ./doc edits ./src/CONTEXT.md (out of scope).
+      on_branch(dir, "evogit-agent-T1-A0", base)
+
+      child_sha =
+        commit_files(
+          dir,
+          [{"src/CONTEXT.md", "child src context\n"}, {"doc/x.md", "# Doc\n"}],
+          "child work"
+        )
+
+      on_branch(dir, "parent", base)
+      commit_files(dir, [{"src/CONTEXT.md", "parent src context\n"}], "parent work")
+
+      children = [child(0, child_sha, "./doc", branch: "evogit-agent-T1-A0")]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./src")
+
+      assert report.status == :clean
+
+      assert [%{status: :auto_resolved, node_path: "./doc", commit_sha: ^child_sha}] =
+               report.entries
+
+      note = SubagentProcessing.build_merge_message(report, children, "", [])
+
+      assert note =~ "Dropped out-of-scope edit"
+      assert note =~ "child node: ./doc"
+      assert note =~ "child src context"
+
+      assert File.read!(Path.join(dir, "src/CONTEXT.md")) == "parent src context\n"
+      assert File.read!(Path.join(dir, "doc/x.md")) == "# Doc\n"
+      assert clean_worktree?(dir)
+    end
+
+    test "in-scope child beats an ancestor-level parent edit", %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "in_scope"))
+
+      base = commit_files(dir, [{"src/CONTEXT.md", "base src context\n"}], "base")
+
+      on_branch(dir, "evogit-agent-T1-A0", base)
+      child_sha = commit_files(dir, [{"src/CONTEXT.md", "child src context\n"}], "child work")
+
+      on_branch(dir, "parent", base)
+      commit_files(dir, [{"src/CONTEXT.md", "root parent context\n"}], "parent work")
+
+      children = [child(0, child_sha, "./src", branch: "evogit-agent-T1-A0")]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./")
+
+      assert report.status == :clean
+      assert [%{status: :auto_resolved}] = report.entries
+      assert report.genuine_conflicts == []
+
+      note = SubagentProcessing.build_merge_message(report, children, "", [])
+
+      assert note =~ "System Note: Successfully auto-merged changes from subagents."
+      assert note =~ "src/CONTEXT.md: kept theirs (node ./src)"
+      assert File.read!(Path.join(dir, "src/CONTEXT.md")) == "child src context\n"
+      assert clean_worktree?(dir)
+    end
+
+    test "same-node CONTEXT.md conflict: reported, worktree clean, no branch deleted",
+         %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "same_node"))
+
+      base =
+        commit_files(
+          dir,
+          [{"src/CONTEXT.md", "shared line\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
+          "base"
+        )
+
+      on_branch(dir, "evogit-agent-T1-A0", base)
+      child_one = commit_files(dir, [{"src/CONTEXT.md", "child one\n"}], "child one")
+
+      on_branch(dir, "evogit-agent-T1-A1", base)
+      child_two = commit_files(dir, [{"src/CONTEXT.md", "child two\n"}], "child two")
+
+      on_branch(dir, "parent", base)
+
+      children = [
+        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
+        child(1, child_two, "./src", branch: "evogit-agent-T1-A1")
+      ]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./")
+
+      assert report.status == :conflict
+
+      note = SubagentProcessing.build_merge_message(report, children, "", [])
+
+      assert note =~ "System Note: Auto-merging subagent changes hit conflicts."
+      assert note =~ "your worktree is clean at HEAD"
+      assert note =~ child_one
+      assert note =~ child_two
+      assert note =~ "./src"
+      assert note =~ "unresolved: both sides own this node"
+      refute note =~ "Branches of merged children were deleted"
+      assert porcelain(dir) == ""
+
+      assert SubagentProcessing.delete_merged_branches(report, dir) == :ok
+
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A0")
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A1")
+    end
+
+    test "non-CONTEXT.md conflict is never auto-resolved and keeps both branches",
+         %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "source_conflict"))
+
+      base =
+        commit_files(
+          dir,
+          [{"CONTEXT.md", "# Root\n"}, {"src/a.ex", "line\n"}],
+          "base"
+        )
+
+      on_branch(dir, "evogit-agent-T1-A0", base)
+      child_one = commit_files(dir, [{"src/a.ex", "one\n"}], "child one")
+
+      on_branch(dir, "evogit-agent-T1-A1", base)
+      child_two = commit_files(dir, [{"src/a.ex", "two\n"}], "child two")
+
+      on_branch(dir, "parent", base)
+
+      children = [
+        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
+        child(1, child_two, "./src", branch: "evogit-agent-T1-A1")
+      ]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./")
+
+      assert report.status == :conflict
+      assert report.auto_resolutions == []
+      assert [conflict] = report.genuine_conflicts
+      assert conflict.file == "src/a.ex"
+
+      note = SubagentProcessing.build_merge_message(report, children, "", [])
+
+      assert note =~ "src/a.ex"
+      refute note =~ "Auto-resolutions applied"
+      refute note =~ "Branches of merged children were deleted"
+      assert porcelain(dir) == ""
+
+      assert SubagentProcessing.delete_merged_branches(report, dir) == :ok
+
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A0")
+      assert Git.branch_exists?(dir, "evogit-agent-T1-A1")
+    end
+
+    test "cross-repo results only: the cross-repo note is the whole message", %{tmp_dir: tmp_dir} do
+      dir = init_repo(Path.join(tmp_dir, "cross_repo_only"))
+      commit_files(dir, [{"CONTEXT.md", "# Root\n"}], "base")
+
+      specs = [{0, subagent_spec(0, "./", repo_id: "original")}]
+      results = [{:ok, %Result{result: "done", commit_sha: "abc123", branch: "foreign-branch"}}]
+
+      {children, cross_repo_details} =
+        SubagentProcessing.collect_mergeable_results(specs, results, "primary")
+
+      assert children == []
+      assert cross_repo_details == [{"original", "abc123"}]
+
+      report = SubagentProcessing.perform_merge(dir, children, "./")
+      assert report == nil
+
+      cross_repo_note =
+        "\nSystem Note: 1 cross-repo subagent(s) completed in foreign repositories:\n  - original: abc123"
+
+      assert SubagentProcessing.build_merge_message(
+               report,
+               children,
+               cross_repo_note,
+               cross_repo_details
+             ) == cross_repo_note
+    end
+
+    test "no results at all yields no message" do
+      assert SubagentProcessing.build_merge_message(nil, [], "", []) == nil
+      assert SubagentProcessing.perform_merge("/nonexistent", [], "./") == nil
+    end
+
+    test "collect_mergeable_results/3 keeps spawn order and separates cross-repo children" do
+      specs = [
+        {7, subagent_spec(7, "./src", objective: "seven")},
+        {3, subagent_spec(3, "./doc", agent_module: EvoGit.Agents.Investigator)},
+        {5, subagent_spec(5, "./", repo_id: "original")},
+        {9, subagent_spec(9, "./lib")}
+      ]
+
+      results = [
+        {:ok, %Result{result: "a", commit_sha: "sha7", branch: "branch7"}},
+        {:ok, %Result{result: "b", commit_sha: "sha3", branch: "branch3"}},
+        {:ok, %Result{result: "c", commit_sha: "sha5", branch: "branch5"}},
+        {:error, :failed}
+      ]
+
+      {children, cross_repo_details} =
+        SubagentProcessing.collect_mergeable_results(specs, results, "primary")
+
+      assert children == [
+               %{
+                 index: 7,
+                 commit_sha: "sha7",
+                 branch: "branch7",
+                 node_path: "./src",
+                 agent_module: EvoGit.Agents.Executor,
+                 objective: "seven"
+               },
+               %{
+                 index: 3,
+                 commit_sha: "sha3",
+                 branch: "branch3",
+                 node_path: "./doc",
+                 agent_module: EvoGit.Agents.Investigator,
+                 objective: "objective 3"
+               }
+             ]
+
+      assert cross_repo_details == [{"original", "sha5"}]
+
+      # nil commit shas are skipped; a nil branch is carried through untouched.
+      assert {[%{commit_sha: "sha1", branch: nil}], []} =
+               SubagentProcessing.collect_mergeable_results(
+                 [{1, subagent_spec(1, "./")}],
+                 [{:ok, %Result{result: "x", commit_sha: "sha1"}}],
+                 "primary"
+               )
+
+      assert SubagentProcessing.collect_mergeable_results(
+               [{1, subagent_spec(1, "./")}],
+               [{:ok, %Result{result: "x", commit_sha: nil}}],
+               "primary"
+             ) == {[], []}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Merge-test helpers — real git repos under the ExUnit tmp dir.
+  # ---------------------------------------------------------------------------
+
+  defp init_repo(dir) do
+    File.mkdir_p!(dir)
+
+    for args <- [
+          ["init", "-q"],
+          ["config", "user.email", "test@example.com"],
+          ["config", "user.name", "Test User"],
+          ["config", "commit.gpgsign", "false"]
+        ] do
+      {_output, 0} = System.cmd("git", args, cd: dir, stderr_to_stdout: true)
+    end
+
+    dir
+  end
+
+  defp commit_files(dir, files, message) do
+    Enum.each(files, fn {path, content} ->
+      full_path = Path.join(dir, path)
+      File.mkdir_p!(Path.dirname(full_path))
+      File.write!(full_path, content)
+    end)
+
+    {:ok, _output} = Git.add(dir, ".")
+    {:ok, _output} = Git.commit(dir, message)
+    {:ok, sha} = Git.rev_parse(dir)
+    sha
+  end
+
+  defp on_branch(dir, branch, from_sha) do
+    {:ok, _output} = Git.run(["checkout", "-q", "-B", branch, from_sha], dir)
+    :ok
+  end
+
+  defp clean_worktree?(dir), do: porcelain(dir) == ""
+
+  defp porcelain(dir) do
+    {:ok, output} = Git.status(dir)
+    output
+  end
+
+  defp child(index, commit_sha, node_path, opts) do
+    %{
+      index: index,
+      commit_sha: commit_sha,
+      branch: Keyword.get(opts, :branch, "evogit-agent-T1-A#{index}"),
+      node_path: node_path,
+      agent_module: Keyword.get(opts, :agent_module, EvoGit.Agents.Executor),
+      objective: Keyword.get(opts, :objective, "child #{index}")
+    }
+  end
+
+  defp subagent_spec(index, node_path, opts \\ []) do
+    %AgentSpec{
+      context_node: %ContextNode{path: node_path, repo: "/repo"},
+      phylo_node: %PhyloGraphNode{repo: "/repo", base_commit: "base", current_commit: "base"},
+      agent_module: Keyword.get(opts, :agent_module, EvoGit.Agents.Executor),
+      objective: Keyword.get(opts, :objective, "objective #{index}"),
+      repo_id: Keyword.get(opts, :repo_id, "primary")
+    }
   end
 end
