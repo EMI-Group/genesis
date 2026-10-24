@@ -41,7 +41,8 @@ defmodule EvoGit.Agent.Tools.Context do
         "Use the write_context tool to create or replace a directory's CONTEXT.md. " <>
           "Describe the current state — what the directory is for, what it exposes, and the rules for code in it — never a changelog. " <>
           "Write one sentence per line so git diffs stay granular. " <>
-          "The directory must stay inside the agent's assigned node.",
+          "The directory must stay inside the agent's assigned node. " <>
+          "Out-of-scope findings belong in your report.",
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -77,6 +78,8 @@ defmodule EvoGit.Agent.Tools.Context do
         "Use the edit_context tool to change part of a directory's CONTEXT.md by exact string replacement. " <>
           "Delete stale text instead of annotating it — CONTEXT.md describes the current state, not its history. " <>
           "Write one sentence per line so git diffs stay granular. " <>
+          "The directory must stay inside the agent's assigned node. " <>
+          "Out-of-scope findings belong in your report. " <>
           "The edit fails when old_string is not unique; add surrounding context or set replace_all.",
       parameter_schema: %{
         "type" => "object",
@@ -127,14 +130,26 @@ defmodule EvoGit.Agent.Tools.Context do
 
   @doc """
   Executes the edit_context tool.
+
+  `node_path` is the agent's assigned node; `nil` means unrestricted (kept for
+  direct callers/tests). The target directory is scope-checked BEFORE any
+  existence check, read or string replacement, so an out-of-node path leaves
+  both the filesystem and the repository untouched.
   """
-  def execute_edit(args, repo_path, repo_root) do
+  def execute_edit(args, repo_path, repo_root, node_path \\ nil) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
          {:ok, old_string} <- Shared.fetch_string_arg(args, "old_string"),
          {:ok, new_string} <- Shared.fetch_string_arg(args, "new_string"),
          {:ok, replace_all} <- Shared.validate_replace_all(Map.get(args, "replace_all", false)),
          {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
-         full_dir = Shared.expand_path(dir_path, repo_path) do
+         full_dir = Shared.expand_path(dir_path, repo_path),
+         :ok <-
+           Shared.validate_file_scope(
+             full_dir,
+             node_path,
+             repo_path,
+             &Shared.format_context_scope_error/2
+           ) do
       do_context_edit(
         full_dir,
         dir_path,
@@ -219,12 +234,23 @@ defmodule EvoGit.Agent.Tools.Context do
 
   @doc """
   Executes the write_context tool.
+
+  `node_path` is the agent's assigned node; `nil` means unrestricted (kept for
+  direct callers/tests). The target directory is scope-checked BEFORE
+  `File.mkdir_p`, so an out-of-node path creates nothing and commits nothing.
   """
-  def execute_write(args, repo_path, repo_root) do
+  def execute_write(args, repo_path, repo_root, node_path \\ nil) do
     with {:ok, dir_path} <- Shared.fetch_string_arg(args, "dir_path"),
          {:ok, content} <- Shared.fetch_string_arg(args, "content"),
          {:ok, commit} <- Shared.validate_commit(Map.get(args, "commit", true)),
-         full_dir = Shared.expand_path(dir_path, repo_path) do
+         full_dir = Shared.expand_path(dir_path, repo_path),
+         :ok <-
+           Shared.validate_file_scope(
+             full_dir,
+             node_path,
+             repo_path,
+             &Shared.format_context_scope_error/2
+           ) do
       do_context_write(full_dir, dir_path, content, commit, repo_path, repo_root)
     else
       {:error, message} -> Failure.error(message)
