@@ -485,6 +485,9 @@ authoritative comparison.
   a **user-configured** server (`[lsp] enabled/command/args/timeout/diagnostics_timeout`) — nothing bundled or
   downloaded, and unconfigured it returns a self-explaining `Error: no language server configured …`. Every
   wait is bounded, and the server is SIGKILLed by OS pid in `try/after` so no orphan survives.
+  **The schema is OFF by default** (the user judged it rarely used): it is appended to the tool list only when
+  `[lsp] enabled = true` AND a non-empty `command` are set, so the stock configuration spends no prompt space
+  on a tool most users cannot use. Dispatch stays registered for the enabled path.
 
 ### 9.5 Shipped — background jobs, sandbox-integrated (proposal 3.5, minus PTY)
 
