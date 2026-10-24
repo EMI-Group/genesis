@@ -3,8 +3,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
   Subagent call processing for the agent loop.
 
   Handles building subagent specs from tool calls, spawning subagents
-  through the scheduler, merging results back (including octopus merges),
-  and formatting the output for the LLM context.
+  through the scheduler, merging results back (via `EvoGit.Agent.ContextMerge`,
+  which is ownership-aware for `CONTEXT.md` conflicts), and formatting the
+  output for the LLM context.
 
   ## Usage
 
@@ -20,6 +21,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   require Logger
 
+  alias EvoGit.Agent.ContextMerge
+  alias EvoGit.Agent.ContextMerge.Report
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentSchemas
@@ -54,7 +57,8 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Invalid calls get immediate error results fed back to the LLM so it can correct them.
     {valid_calls, invalid_results} = split_valid_subagent_calls(indexed_calls)
 
-    {subagent_specs, path_error_results} = build_specs_and_errors(valid_calls, state)
+    {specs_with_index, path_error_results} = build_specs_and_errors(valid_calls, state)
+    subagent_specs = Enum.map(specs_with_index, fn {_index, spec} -> spec end)
 
     # The parent agent commits its pending changes before spawning subagents.
     # Runs in the agent process (this process), using Process.get(:repo_path).
@@ -72,31 +76,26 @@ defmodule EvoGit.Agent.SubagentProcessing do
       {all_results, nil, Usage.zero()}
     else
       {:ok, agent_state} = AgentScheduler.get_agent_state(state.agent_id)
-      parent_commit = agent_state.phylo_node.current_commit
       parent_repo_id = agent_state.repo_id
 
       # Separate same-repo and cross-repo results.
       # "Same repo" means the child's repo id equals the parent's repo id — a
       # foreign-repo parent's own children are same-repo too. Cross-repo
       # subagents commit to their own repo, no merge needed into parent.
-      {successful_shas, cross_repo_details} =
-        collect_mergeable_results(subagent_specs, results, parent_repo_id)
+      {children, cross_repo_details} =
+        collect_mergeable_results(specs_with_index, results, parent_repo_id)
 
       repo_path = Process.get(:repo_path) || raise "Missing repo_path in process dictionary"
 
       cross_repo_note = build_cross_repo_note(cross_repo_details)
 
-      merge_message =
-        build_merge_message(
-          repo_path,
-          successful_shas,
-          parent_commit,
-          cross_repo_note,
-          cross_repo_details
-        )
+      # ONE merge report drives both the LLM note and branch cleanup.
+      report = perform_merge(repo_path, children, state.node_path || "./")
 
-      # Only delete branches for same-repo subagents
-      delete_same_repo_branches(subagent_specs, results, repo_path, parent_repo_id)
+      merge_message = build_merge_message(report, children, cross_repo_note, cross_repo_details)
+
+      # Only branches whose work actually landed in HEAD are deleted.
+      delete_merged_branches(report, repo_path)
 
       # Sync current_commit after subagents complete (parent worktree state may have changed)
       sync_commit_fn.(state)
@@ -447,7 +446,9 @@ defmodule EvoGit.Agent.SubagentProcessing do
 
   # Builds AgentSpecs for the valid calls and converts any path-resolution
   # errors into indexed error results for LLM feedback.
-  # Returns `{subagent_specs, path_error_results}`.
+  # Returns `{specs_with_index, path_error_results}`, where `specs_with_index` is
+  # `[{original_index, %AgentSpec{}}]` in tool-call order so specs, results and
+  # calls stay aligned (path errors are split out and carry their own index).
   defp build_specs_and_errors(valid_calls, state) do
     foreign_repo_commits = AgentScheduler.get_foreign_repo_commits(state.agent_id)
     spec_results = build_subagent_specs(valid_calls, state, foreign_repo_commits)
@@ -455,6 +456,13 @@ defmodule EvoGit.Agent.SubagentProcessing do
     # Separate valid AgentSpecs from path-resolution errors
     {subagent_specs, path_errors} =
       Enum.split_with(spec_results, &is_struct(&1, AgentSpec))
+
+    # `build_subagent_specs/3` emits one entry per valid call, in order, so the
+    # valid calls' indices zip 1:1 with the produced specs.
+    specs_with_index =
+      valid_calls
+      |> Enum.map(fn {_call, index} -> index end)
+      |> Enum.zip(subagent_specs)
 
     # Convert path-resolution errors to invalid result format for LLM feedback
     path_error_results =
@@ -464,7 +472,7 @@ defmodule EvoGit.Agent.SubagentProcessing do
         {index, tool_call_id, name, "Error: #{error_msg}"}
       end)
 
-    {subagent_specs, path_error_results}
+    {specs_with_index, path_error_results}
   end
 
   # Converts a scheduler-level error (e.g. scheduler paused) from spawn_sub_agents
@@ -480,29 +488,46 @@ defmodule EvoGit.Agent.SubagentProcessing do
     error_results ++ path_error_results ++ Enum.reverse(invalid_results)
   end
 
-  # Separates subagent results into same-repo commit SHAs (mergeable into the
+  # Separates subagent results into same-repo children (mergeable into the
   # parent) and cross-repo details (committed to their own repo, no merge needed).
   # A child is same-repo when its repo id equals the PARENT's repo id — so a
   # foreign-repo parent's own children are mergeable into its worktree.
-  # Returns `{successful_shas, cross_repo_details}`.
-  defp collect_mergeable_results(subagent_specs, results, parent_repo_id) do
-    {same_repo_shas, cross_repo_details} =
-      Enum.reduce(Enum.zip(subagent_specs, results), {[], []}, fn {spec, result},
-                                                                  {shas, details} ->
+  # Returns `{children, cross_repo_details}` with `children` in spawn order as
+  # `ContextMerge.child()` maps.
+  @doc false
+  @spec collect_mergeable_results(
+          [{non_neg_integer(), AgentSpec.t()}],
+          [term()],
+          String.t()
+        ) :: {[ContextMerge.child()], [{String.t(), String.t()}]}
+  def collect_mergeable_results(specs_with_index, results, parent_repo_id) do
+    {children, cross_repo_details} =
+      specs_with_index
+      |> Enum.zip(results)
+      |> Enum.reduce({[], []}, fn {{index, spec}, result}, {children, details} ->
         case result do
-          {:ok, %Result{commit_sha: sha}} when is_binary(sha) ->
+          {:ok, %Result{commit_sha: sha, branch: branch}} when is_binary(sha) ->
             if spec.repo_id == parent_repo_id do
-              {[sha | shas], details}
+              child = %{
+                index: index,
+                commit_sha: sha,
+                branch: branch,
+                node_path: spec.context_node.path,
+                agent_module: spec.agent_module,
+                objective: spec.objective
+              }
+
+              {[child | children], details}
             else
-              {shas, [{spec.repo_id, sha} | details]}
+              {children, [{spec.repo_id, sha} | details]}
             end
 
           _ ->
-            {shas, details}
+            {children, details}
         end
       end)
 
-    {Enum.reverse(same_repo_shas), Enum.reverse(cross_repo_details)}
+    {Enum.reverse(children), Enum.reverse(cross_repo_details)}
   end
 
   # Builds the system note describing cross-repo subagent completions,
@@ -518,33 +543,57 @@ defmodule EvoGit.Agent.SubagentProcessing do
     "\nSystem Note: #{length(cross_repo_details)} cross-repo subagent(s) completed in foreign repositories:\n#{details_str}"
   end
 
-  # Skip merge if no same-repo subagents returned successful commits.
-  defp build_merge_message(
-         repo_path,
-         successful_shas,
-         parent_commit,
-         cross_repo_note,
-         cross_repo_details
-       ) do
-    cond do
-      successful_shas == [] and cross_repo_details != [] -> cross_repo_note
-      successful_shas == [] -> nil
-      true -> perform_merge(repo_path, successful_shas, parent_commit, cross_repo_note)
-    end
+  # Builds the note fed back to the LLM from the merge report.
+  # Preserves the historical "nothing to report" behavior: no same-repo children
+  # and no cross-repo details → nil; cross-repo activity only → the cross-repo
+  # note; a merge that left HEAD unchanged → nil.
+  @doc false
+  @spec build_merge_message(
+          Report.t() | nil,
+          [ContextMerge.child()],
+          String.t(),
+          [{String.t(), String.t()}]
+        ) :: String.t() | nil
+  def build_merge_message(nil, [], cross_repo_note, cross_repo_details)
+      when cross_repo_details != [] do
+    cross_repo_note
   end
 
-  # Deletes branches of successful same-repo subagents (repo id == parent's).
-  defp delete_same_repo_branches(subagent_specs, results, repo_path, parent_repo_id) do
-    same_repo_branches =
-      for {spec, {:ok, %Result{branch: branch}}} <- Enum.zip(subagent_specs, results),
-          spec.repo_id == parent_repo_id do
-        branch
-      end
+  def build_merge_message(nil, [], _cross_repo_note, _cross_repo_details), do: nil
 
-    Enum.each(same_repo_branches, fn branch ->
-      Git.delete_branch(repo_path, branch)
-    end)
+  def build_merge_message(%Report{status: :no_changes}, _children, _note, _details), do: nil
+
+  def build_merge_message(%Report{} = report, _children, cross_repo_note, _cross_repo_details) do
+    ContextMerge.format_note(report, cross_repo_note)
   end
+
+  def build_merge_message(_report, _children, _cross_repo_note, _cross_repo_details), do: nil
+
+  # Deletes the branches of children whose work is in HEAD (`:merged` /
+  # `:auto_resolved` only). Conflicted / not-attempted children keep their
+  # branches — the failure note already names them, so nothing is repeated here.
+  # A FAILED merge (`:conflict` / `:error`) preserves every branch: the merge was
+  # aborted, so nothing is lost and the parent can retry or merge manually.
+  @doc false
+  @spec delete_merged_branches(Report.t() | nil, String.t()) :: :ok
+  def delete_merged_branches(nil, _repo_path), do: :ok
+
+  def delete_merged_branches(%Report{status: status}, _repo_path)
+      when status in [:conflict, :error],
+      do: :ok
+
+  def delete_merged_branches(%Report{entries: entries}, repo_path) do
+    entries
+    |> Enum.filter(fn entry -> Map.get(entry, :status) in [:merged, :auto_resolved] end)
+    |> Enum.map(&Map.get(&1, :branch))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+    |> Enum.each(fn branch -> Git.delete_branch(repo_path, branch) end)
+
+    :ok
+  end
+
+  def delete_merged_branches(_report, _repo_path), do: :ok
 
   # Formats each subagent result into an indexed result tuple for the LLM context.
   defp build_indexed_results(valid_calls, results, state) do
@@ -554,60 +603,12 @@ defmodule EvoGit.Agent.SubagentProcessing do
     end)
   end
 
-  defp perform_merge(repo_path, successful_shas, parent_commit, cross_repo_note) do
-    case Git.merge_octopus(repo_path, successful_shas) do
-      {:ok, output} ->
-        # Check if any actual changes were made by comparing commits
-        case Git.rev_parse(repo_path) do
-          {:ok, ^parent_commit} ->
-            # No changes - all subagents returned the same commit
-            nil
+  @doc false
+  @spec perform_merge(String.t(), [ContextMerge.child()], String.t()) :: Report.t() | nil
+  def perform_merge(_repo_path, [], _parent_node_path), do: nil
 
-          _ ->
-            """
-            System Note: Successfully auto-merged changes from subagents.#{cross_repo_note}
-            Merge output:
-            #{output}
-            """
-        end
-
-      {:error, {:conflict, output}} ->
-        {:ok, files} = Git.conflict_files(repo_path)
-
-        conflict_files_list = Enum.join(files, "\n")
-
-        """
-        System Note: Auto-merging subagent changes resulted in conflicts.#{cross_repo_note}
-        Merge output:
-        #{output}
-
-        Conflicting files:
-        #{conflict_files_list}
-
-        Normally you have three options to handle this:
-
-        1. **Resolve conflicts manually** — Edit the conflicting files to resolve the merge
-           conflicts, then stage the resolved files with `git add <file>` and complete the
-           merge with `git commit --no-edit` (or `git merge --continue`).
-
-        2. **Abort the merge** — If the conflicts are too complex or not worth resolving,
-           run `git merge --abort` to revert to the pre-merge state. You can then re-plan
-           your approach to avoid the conflicting changes.
-
-        3. **Partially accept changes from key branches** — First, run `git merge --abort`
-           to revert to the pre-merge state. Then identify and merge only the important
-           branches you want to keep with `git merge <branch-name>`. After those are
-           successfully merged, you can re-run the remaining tasks or re-delegate work
-           to subagents.
-        """
-
-      {:error, {code, output}} ->
-        """
-        System Note: Failed to auto-merge subagent changes (exit code #{code}).#{cross_repo_note}
-        Merge output:
-        #{output}
-        """
-    end
+  def perform_merge(repo_path, children, parent_node_path) do
+    ContextMerge.merge_children(repo_path, children, parent_node_path: parent_node_path)
   end
 
   # Builds a PhyloGraphNode for a subagent, validating the commit_id for same-repo
