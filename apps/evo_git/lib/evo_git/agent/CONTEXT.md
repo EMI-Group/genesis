@@ -25,6 +25,7 @@ Contains the `EvoGit.Agent` behaviour module, its LLM tool definitions, data str
 - `./llm_retry_policy.ex` → `EvoGit.Agent.LlmRetryPolicy` — pure model-exhaustion retry-backoff schedule (15 delays, base 60s doubling, 8h cap, total 216,900,000 ms ≥ 2 days; app-env timing seams)
 - `./llm_error.ex` → `EvoGit.Agent.LlmError` — pure fail-fast classification (`non_retryable?/1`) + self-diagnosing one-line messages (`format_failure/1,2`) for deterministic provider rejections (e.g. HTTP 400 code 1210) + the shared name rendering (`parameter_names/1`, `format_parameter_names/1`) used by the message tail and the request-path debug log — detail in "Fail-fast on a non-retryable provider rejection" below
 - `./cost.ex` → `EvoGit.Agent.Cost` — self-computed LLM cost (raw token counts + the `llm_db` pricing catalog with an explicit peak/off_peak period resolved from the model profile's `EvoGit.PeakHours` config); ReqLLM's reported cost is NOT trusted — detail in "Helper Modules" + "Known Issues"
+- `./background_job_notice.ex` → `EvoGit.Agent.BackgroundJobNotice` — pure renderers for the agent's background shell jobs: `section/1` (the `## Background Jobs` `<context>` sub-section) and `notice/1` (the combined `[NOTICE]` message for just-finished jobs); no IO, no config, total over malformed job maps
 
 ## API Surface
 
