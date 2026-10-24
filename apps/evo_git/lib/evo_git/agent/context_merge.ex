@@ -718,7 +718,12 @@ defmodule EvoGit.Agent.ContextMerge do
         note_text(cross_repo_note) <>
         "\nMerge output:\n" <> text(report.merge_output)
 
-    [base, resolution_lines(report.auto_resolutions), dropped_blocks(report.dropped_edits)]
+    [
+      base,
+      resolution_lines(report.auto_resolutions),
+      dropped_blocks(report.dropped_edits),
+      branch_handling(report.status, report.entries)
+    ]
     |> Enum.reject(&blank?/1)
     |> Enum.join("\n")
   end
@@ -736,7 +741,7 @@ defmodule EvoGit.Agent.ContextMerge do
       resolution_lines(report.auto_resolutions),
       dropped_blocks(report.dropped_edits),
       next_steps(report.entries),
-      branch_handling(report.entries)
+      branch_handling(report.status, report.entries)
     ]
     |> Enum.reject(&blank?/1)
     |> Enum.join("\n")
@@ -749,7 +754,7 @@ defmodule EvoGit.Agent.ContextMerge do
         note_text(cross_repo_note) <>
         "\nYour worktree is clean at HEAD #{sha_text(report.head_sha)}."
 
-    [head, child_lines(report.entries), branch_handling(report.entries)]
+    [head, child_lines(report.entries), branch_handling(report.status, report.entries)]
     |> Enum.reject(&blank?/1)
     |> Enum.join("\n")
   end
@@ -872,7 +877,33 @@ defmodule EvoGit.Agent.ContextMerge do
     )
   end
 
-  defp branch_handling(entries) do
+  # The merge did NOT complete (`:conflict` / `:error`): every subagent branch is
+  # preserved, whatever its entry status — never claim a branch was deleted here.
+  defp branch_handling(status, entries) when status in [:conflict, :error] do
+    preserved =
+      entries
+      |> Enum.filter(fn entry -> is_binary(Map.get(entry, :branch)) end)
+      |> Enum.map(fn entry ->
+        "#{Map.get(entry, :branch)} " <>
+          "(node #{text(Map.get(entry, :node_path))}, " <>
+          "#{status_label(Map.get(entry, :status))})"
+      end)
+
+    case preserved do
+      [] ->
+        "Branch handling:\n  Preserved: none."
+
+      _ ->
+        "Branch handling:\n" <>
+          "  Preserved (NOT deleted — the merge did not complete, " <>
+          "so every subagent branch is still available):\n" <>
+          Enum.map_join(preserved, "\n", &("    - " <> &1)) <>
+          "\n" <>
+          "  Delete one yourself with `git branch -D <branch>` once you no longer need it."
+    end
+  end
+
+  defp branch_handling(_status, entries) do
     preserved =
       entries
       |> Enum.filter(fn entry -> Map.get(entry, :status) in [:conflict, :not_attempted] end)

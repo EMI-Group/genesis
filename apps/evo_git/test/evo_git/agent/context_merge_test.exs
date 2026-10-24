@@ -272,7 +272,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert note =~ "theirs: ./src"
       assert note =~ "ours: ./src"
       assert note =~ "unresolved: both sides own this node"
-      assert note =~ "Branches of merged children were deleted"
+      assert note =~ "Preserved (NOT deleted — the merge did not complete"
+      assert note =~ "evogit-agent-T1-A0 (node ./src, merged)"
+      assert note =~ "evogit-agent-T1-A1 (node ./src, conflict)"
+      assert note =~ "git branch -D"
+      refute note =~ "Branches of merged children were deleted"
     end
 
     test "a non-CONTEXT.md conflict is never auto-resolved", %{tmp_dir: tmp_dir} do
@@ -369,6 +373,10 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert note =~ "Dropped out-of-scope edit"
       assert note =~ "child node: ./doc"
       assert note =~ "doc manager src context"
+      assert note =~ "Preserved: none."
+
+      assert note =~
+               "Branches of merged children were deleted (their changes are already in HEAD)."
     end
 
     test "format_note/2 never raises on a partially populated report" do

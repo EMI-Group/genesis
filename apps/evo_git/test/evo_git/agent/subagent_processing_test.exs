@@ -1302,6 +1302,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert note =~ child_two
       assert note =~ "./src"
       assert note =~ "unresolved: both sides own this node"
+      refute note =~ "Branches of merged children were deleted"
       assert porcelain(dir) == ""
 
       assert SubagentProcessing.delete_merged_branches(report, dir) == :ok
@@ -1345,6 +1346,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
       assert note =~ "src/a.ex"
       refute note =~ "Auto-resolutions applied"
+      refute note =~ "Branches of merged children were deleted"
       assert porcelain(dir) == ""
 
       assert SubagentProcessing.delete_merged_branches(report, dir) == :ok
