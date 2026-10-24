@@ -1370,4 +1370,96 @@ defmodule EvoGit.ConfigTest do
       assert is_list(config.llm.models)
     end
   end
+
+  describe "lsp_enabled?/0 ([lsp] tool gate)" do
+    # Each test writes (or deliberately omits) config.toml in an isolated
+    # XDG_CONFIG_HOME, so the predicate is exercised end-to-end from disk and
+    # never reads the developer's own ~/.config/genesis/config.toml.
+    setup do
+      original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_xdg =
+        Path.join(System.tmp_dir!(), "evogit-config-lsp-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_xdg)
+      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+      # config.toml lives at <xdg>/genesis/config.toml.
+      File.mkdir_p!(Config.config_dir())
+
+      on_exit(fn ->
+        if original_xdg do
+          System.put_env("XDG_CONFIG_HOME", original_xdg)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+
+        File.rm_rf!(tmp_xdg)
+      end)
+
+      :ok
+    end
+
+    test "is false when there is no [lsp] section at all" do
+      refute Config.lsp_enabled?()
+    end
+
+    test "is true with enabled = true and a non-empty command" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = true
+      command = "lexical"
+      """)
+
+      assert Config.lsp_enabled?()
+    end
+
+    test "accepts the string form enabled = \"true\"" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = "true"
+      command = "lexical"
+      """)
+
+      assert Config.lsp_enabled?()
+    end
+
+    test "is false when enabled = true but the command is an empty string" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = true
+      command = ""
+      """)
+
+      refute Config.lsp_enabled?()
+    end
+
+    test "is false when enabled = true but the command is blank whitespace" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = true
+      command = "   "
+      """)
+
+      refute Config.lsp_enabled?()
+    end
+
+    test "is false when enabled = true but the command is absent" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = true
+      """)
+
+      refute Config.lsp_enabled?()
+    end
+
+    test "is false when enabled = false even with a command present" do
+      File.write!(Config.config_path(), """
+      [lsp]
+      enabled = false
+      command = "lexical"
+      """)
+
+      refute Config.lsp_enabled?()
+    end
+  end
 end

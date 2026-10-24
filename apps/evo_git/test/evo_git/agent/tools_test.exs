@@ -956,11 +956,16 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "read_only_schemas/0 contents" do
-    test "offers the read-only network / language-intelligence readers" do
-      names = Enum.map(Tools.read_only_schemas(), & &1.name)
+    test "offers the unconditional read-only network reader, but not the config-gated lsp" do
+      with_isolated_config(fn ->
+        names = Enum.map(Tools.read_only_schemas(), & &1.name)
 
-      assert "web_fetch" in names
-      assert "lsp" in names
+        # `web_fetch` is always offered; `lsp` is appended only when
+        # `EvoGit.Config.lsp_enabled?/0` (an enabled `[lsp]` section with a
+        # non-empty command), so it is absent under the stock config.
+        assert "web_fetch" in names
+        refute "lsp" in names
+      end)
     end
 
     test "omits the file-mutating write tools" do

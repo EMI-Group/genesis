@@ -25,6 +25,8 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `job_tools_test.exs` | the background-job tools (`JobOutput`/`JobList`/`JobKill`) + `ShellTool`'s `run_in_background` mode + the classification/guards that mode depends on (`Tools.write_call?/2`, `Tools.background_start?/1`, `Tools.serial_tool?/1`) |
 | `complete_task_test.exs` | `EvoGit.Agent.Tools.CompleteTask` (+ archive records) |
 | `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
+| `lsp_test.exs` | `EvoGit.Agent.Tools.Lsp` (config-gated `lsp` tool, driven with per-call `opts` overrides against the fake language server) |
+| `web_fetch_lsp_registration_test.exs` | the schema-registration / dispatch contract for `web_fetch` and `lsp` |
 | `reflect_tools_test.exs` | the self-reflective task-control command handlers |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
 
@@ -36,11 +38,15 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `reflect_tools_test.exs` (`without_model_profiles/1` rewrites the GLOBAL `EvoGit.AgentScheduler` `model_profiles` config via `AgentScheduler.update_config/1`, a BEAM-global read by every other agent/task module).
 - `async: false` — `complete_task_test.exs` (inserts/deletes rows in the shared `:evogit_sched_meta` / `:evogit_agent_state` tables and DELETES + recreates the global `:evogit_archive_records` table).
 - `async: false` — `job_tools_test.exs` (every test starts its OWN isolated `EvoGit.BackgroundJobs` registry under a unique name, reached through the `:evogit_background_jobs_server` pdict seam with `:evogit_agent_pid` as the job owner, and spawns REAL detached OS children whose `genesis_job_*.log` output files land in the SHARED `EvoGit.Sandbox.resolve_tmpdir/0` scratch dir — an isolated GenServer, real host children and a shared scratch dir all rule out concurrent modules, and its before/after file snapshot cleanup is only sound in the serial phase).
+- `async: false` — `web_fetch_lsp_registration_test.exs` (redirects the process-wide `XDG_CONFIG_HOME` at fresh temp config dirs so the `[lsp]` schema gate is pinned both off and on, independent of the developer's real `~/.config/genesis/config.toml`).
+- `async: false` — `lsp_test.exs` (real OS child processes — the `elixir` fake language server — and the unconfigured cases read the resolved user config).
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
 
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
+- `web_fetch_lsp_registration_test.exs` pins the tool-offering contract: `web_fetch` is always in `Tools.schemas/0` and `Tools.read_only_schemas/0`, while `lsp` is appended to both only when `EvoGit.Config.lsp_enabled?/0` is true (`[lsp] enabled = true` plus a non-empty `command`), so a stock config offers `lsp` to no agent.
+  Its dispatch assertions are deliberately ungated: `Tools.execute/5` still routes `lsp` into `EvoGit.Agent.Tools.Lsp` on an unconfigured server (the tool answers with its own `Error:`), which is how the routing coverage survives the schema gate.
 - `complete_task_test.exs` owns the global `:evogit_archive_records` table for its run (it deletes + recreates it), which is why it must stay `async: false`.
 - `skill_tools_worktree_test.exs` builds a real repo + LINKED WORKTREE per test (`git worktree add`) and drives the skill tools' `execute/N` directly; the worktree must live OUTSIDE `repo_root` (both under `System.tmp_dir!()`) because the sandbox grants write access to the command `cwd` (= `repo_path`) plus `<repo_root>/.git` (where a linked worktree's gitdir lives). Skill-file commits therefore only work when the tool is handed the WORKTREE as `repo_path` and the MAIN repo as `repo_root`.
 - `skill_tools_worktree_test.exs` exercises BOTH `SkillWhere.execute/3` branches: the non-empty one (renders `Skill '<name>' is enabled at the following nodes:` + one `  - <node>` line per node) and the empty one (`Skill '<name>' is not enabled at any node.`).
