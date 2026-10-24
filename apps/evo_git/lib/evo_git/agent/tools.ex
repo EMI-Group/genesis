@@ -637,12 +637,12 @@ defmodule EvoGit.Agent.Tools do
     Context.execute_read(args, repo_path, repo_root)
   end
 
-  defp execute_tool("write_context", args, repo_path, repo_root, _node_path) when is_map(args) do
-    Context.execute_write(args, repo_path, repo_root)
+  defp execute_tool("write_context", args, repo_path, repo_root, node_path) when is_map(args) do
+    Context.execute_write(args, repo_path, repo_root, node_path)
   end
 
-  defp execute_tool("edit_context", args, repo_path, repo_root, _node_path) when is_map(args) do
-    Context.execute_edit(args, repo_path, repo_root)
+  defp execute_tool("edit_context", args, repo_path, repo_root, node_path) when is_map(args) do
+    Context.execute_edit(args, repo_path, repo_root, node_path)
   end
 
   defp execute_tool(@shell_tool_name, args, repo_path, repo_root, _node_path) when is_map(args) do

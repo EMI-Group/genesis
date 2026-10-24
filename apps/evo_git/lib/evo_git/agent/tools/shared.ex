@@ -322,8 +322,23 @@ defmodule EvoGit.Agent.Tools.Shared do
   Also rejects (defense-in-depth, behind the dispatch-level gate in
   `EvoGit.Agent.Tools`) any path that resolves to a READ-ONLY foreign repo —
   read-only foreign repos are for investigation only.
+
+  The optional `formatter` (arity 2: `(target_path, node_path)`) renders the
+  out-of-node rejection message. It defaults to `format_scope_error/2`, which is
+  the wording the file-mutating tools use; a caller whose target is not a plain
+  file (e.g. a DIRECTORY whose CONTEXT.md is being written) passes its own
+  formatter so the rejection teaches the right remedy. The scope math itself
+  lives ONLY here — never duplicate it in a caller.
   """
-  def validate_file_scope(expanded_path, node_path, repo_path) when is_binary(node_path) do
+  def validate_file_scope(
+        expanded_path,
+        node_path,
+        repo_path,
+        formatter \\ &format_scope_error/2
+      )
+
+  def validate_file_scope(expanded_path, node_path, repo_path, formatter)
+      when is_binary(node_path) do
     case read_only_foreign_repo_error(expanded_path) do
       nil ->
         # Get the relative path from repo_path.
@@ -347,7 +362,7 @@ defmodule EvoGit.Agent.Tools.Shared do
               if is_child_or_same_node?(normalized_node, normalized_target) do
                 :ok
               else
-                {:error, format_scope_error(relative_path, node_path)}
+                {:error, formatter.(relative_path, node_path)}
               end
             else
               {:error, _message} = error -> error
@@ -359,7 +374,8 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
-  def validate_file_scope(_expanded_path, node_path, _repo_path) when not is_binary(node_path) do
+  def validate_file_scope(_expanded_path, node_path, _repo_path, _formatter)
+      when not is_binary(node_path) do
     # If no node_path assigned, allow all (backward compatibility)
     :ok
   end
@@ -403,7 +419,11 @@ defmodule EvoGit.Agent.Tools.Shared do
       "(e.g. './src/main.ex'), not absolute."
   end
 
-  defp format_scope_error(target_path, node_path) do
+  @doc """
+  Default out-of-node rejection message for a FILE target
+  (`validate_file_scope/4`'s default formatter).
+  """
+  def format_scope_error(target_path, node_path) do
     """
     Cannot modify '#{target_path}'. You are assigned to work within '#{node_path}' and this path is outside your scope.
 
@@ -413,6 +433,26 @@ defmodule EvoGit.Agent.Tools.Shared do
     2. What work remains at '#{target_path}' that requires attention at a higher level or different scope
 
     This allows the user to make an informed decision about how to proceed.
+    """
+    |> String.trim()
+  end
+
+  @doc """
+  Out-of-node rejection message for a CONTEXT.md DIRECTORY target
+  (`validate_file_scope/4`'s formatter for `write_context`/`edit_context`).
+
+  Teaches the model the correct remedy instead of leaving it to invent one: it
+  must not rewrite another node's CONTEXT.md, the agent that owns that node (or
+  its parent) has to make the update, and the finding belongs in the caller's
+  own report.
+  """
+  def format_context_scope_error(target_path, node_path) do
+    """
+    Cannot modify CONTEXT.md at '#{target_path}'. You are assigned to work within '#{node_path}' and this path is outside your scope.
+
+    The agent that owns '#{target_path}' (or its parent) must make that update — do not write it from here. Put the finding in your report instead, so the agent that owns that node can act on it.
+
+    You can still complete work within your assigned node, and remember you don't need to complete the entire task, do what you can and let the user guide the next steps.
     """
     |> String.trim()
   end
