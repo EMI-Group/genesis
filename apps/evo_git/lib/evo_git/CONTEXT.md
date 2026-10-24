@@ -212,6 +212,14 @@ The ONLY external message-injection point is the drain at the TOP of `Runner.loo
 - **There is NO per-turn runtime-context block** — `ContextBuilder.build_context_block/1` runs only at run start (`Runner.do_run/2`) and on a compression refresh (`ContextCompression` → `build_context_refresh_message/2`). The top-of-turn machinery (`Runner.loop/1` → `continue_loop/1`) appends messages (turn warnings, drained injections) but never re-renders `<context>`, so any per-turn notice must be an APPENDED message, not a context section.
 - **The drain is a non-atomic read-modify-write of the whole `%AgentState{}`** (`AgentScheduler.Store.drain_pending_user_messages/1`: `get_agent_state` → `put_agent_state(%{state | pending_user_messages: []})`, full-struct write). Appends are serialized against EACH OTHER only by routing through the AgentScheduler GenServer (`send_user_message/2`); an append landing between the drain's read and write is silently LOST, as is a concurrent `set_cancel_requested/1`. A notice whose loss is unacceptable must be re-derivable (pulled from its source at the turn top) rather than queue-only.
 
+## Background Job Completion Notices (`announced`)
+
+Every job record carries `announced` — `false` at start and never reset once set.
+`snapshot/1` (`owner_pid:` defaults to `current_owner_pid/0`) is the per-turn read: a pure state snapshot of one owner's jobs, newest first (started_at desc, id tie-break), capped at 20 — no backend reconciliation, no output-file I/O, no cursor advance.
+`claim_finished_notices/1` is the exactly-once completion feed: ONE GenServer call selects that owner's terminal (`:completed | :killed | :failed`) unannounced jobs, marks them `announced: true` and returns `{:ok, jobs}` newest first, so a second call can never return the same job.
+Both answer their empty shapes without raising when the registry is down or the owner is unknown (`[]` / `{:ok, []}`).
+`read/2` and `list/1` mark every TERMINAL job they return as announced (the status was already reported to the caller), while a `:running` job is never marked.
+
 ## ReqLLM Finch Pool (`EvoGit.ReqLLMPool`)
 
 `req_llm_pool.ex` — dynamic, GROW-ONLY runtime reconciliation of ReqLLM's Finch HTTP pool (`ReqLLM.Finch`), fixing the "Finch was unable to provide a connection within the timeout due to excess queuing" RuntimeError that occurs when runtime concurrency outgrows the boot-time pool size.
