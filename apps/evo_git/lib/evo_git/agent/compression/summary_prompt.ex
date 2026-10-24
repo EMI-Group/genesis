@@ -35,7 +35,7 @@ defmodule EvoGit.Agent.Compression.SummaryPrompt do
     "## Errors and Fixes" =>
       "Failures hit, their exact error strings, and the fix that resolved them (or the workaround still standing).",
     "## Pending Jobs" =>
-      "Every background shell job this agent started: its exact job id, its command/label and its status. MUST include each STILL-RUNNING job and never drop one; a finished job needs only its one-line outcome.",
+      "Work started but not finished, one line each. Background shell jobs are tracked automatically by the runtime and re-injected there, so never duplicate them here — no job ids, no statuses.",
     "## Current Work" =>
       "The task in flight right now — what was just being edited, run, or investigated.",
     "## Next Step" => "The single next action to take, with its exact path or command.",
@@ -88,7 +88,6 @@ defmodule EvoGit.Agent.Compression.SummaryPrompt do
 
     RULES
     - Preserve exact file paths, commands, function names and error strings VERBATIM — never paraphrase them.
-    - Every background shell job that is still running MUST be listed under Pending Jobs with its exact job id, its command/label and its status — never drop a running job; a finished job needs only a one-line outcome.
     - Do not mention this summarisation request, the checkpoint mechanism, or that anything was compacted: the summary is read by the same agent that continues the task, so write condensed working notes about the work, never a report about writing notes.
     - Do not reproduce the original objective — it stays verbatim in the first user message, which is retained.
 
