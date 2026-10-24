@@ -97,17 +97,21 @@ defmodule EvoGit.Agent.Tools do
         ListDirectory.schema(),
         SearchContext.schema(),
         SearchHistory.schema(),
-        # Network / language-intelligence READERS — both strictly read-only, so
-        # they are also part of `read_only_schemas/0` and are NEVER write tools
-        # (`web_fetch` performs one HTTP GET and writes nothing; `lsp` spawns the
-        # user's configured language server and only analyses a file). Neither is
-        # config-gated at the schema-list level: `web_fetch` always works, and
-        # `lsp` reports a self-explaining `Error:` when no server is configured
-        # (`[lsp] command` / `enabled` in config.toml), which is what teaches the
-        # model to fall back to `read`/`rg`. Contrast `search_web`, which IS
-        # gated behind `[tools] search_enabled` (see `maybe_append_web_search/1`).
+        # Read-only network READER — strictly read-only, so it is also part of
+        # `read_only_schemas/0` and is NEVER a write tool (`web_fetch` performs
+        # one HTTP GET and writes nothing). It is NOT config-gated at the
+        # schema-list level: `web_fetch` always works.
+        #
+        # `lsp` (the read-only language-intelligence reader) is DIFFERENT: its
+        # schema is offered only when the user configures a server —
+        # `[lsp] enabled = true` plus a non-empty `[lsp] command` — see
+        # `EvoGit.Config.lsp_enabled?/0` and `maybe_append_lsp/1` below. Without
+        # a configured server the tool would be dead weight in every agent's
+        # tool list, so it is appended (last) by config rather than listed here.
+        # The tool's own runtime gate still returns a self-explaining `Error:`
+        # if it is somehow called while unconfigured. Contrast `search_web`,
+        # also gated (`[tools] search_enabled`, `maybe_append_web_search/1`).
         WebFetch.schema(),
-        Lsp.schema(),
         SkillList.schema(),
         SkillRead.schema(),
         SkillAdd.schema(),
@@ -136,7 +140,9 @@ defmodule EvoGit.Agent.Tools do
         # contract of the per-function task-control tools).
       ]
 
-    maybe_append_web_search(schemas)
+    schemas
+    |> maybe_append_web_search()
+    |> maybe_append_lsp()
   end
 
   @doc """
@@ -167,10 +173,10 @@ defmodule EvoGit.Agent.Tools do
         ShellTool.schema(),
         SearchContext.schema(),
         SearchHistory.schema(),
-        # Read-only network / language-intelligence readers, shared with the
-        # full set — see the matching note in `schemas/0` above.
+        # Read-only network reader, shared with the full set — see the matching
+        # note in `schemas/0` above. `web_fetch` is ungated; `lsp` is appended
+        # by `maybe_append_lsp/1` only when a language server is configured.
         WebFetch.schema(),
-        Lsp.schema(),
         # Background-job CONTROL tools, shared with the full set: a read-only
         # agent still owns a worktree and may start + manage detached jobs in
         # it (`job_output`/`job_list`/`job_kill` mutate no file and are never
@@ -180,7 +186,9 @@ defmodule EvoGit.Agent.Tools do
         JobKill.schema()
       ]
 
-    maybe_append_web_search(schemas)
+    schemas
+    |> maybe_append_web_search()
+    |> maybe_append_lsp()
   end
 
   # Web search is gated behind the `[tools] search_enabled` config. Both the
@@ -191,6 +199,22 @@ defmodule EvoGit.Agent.Tools do
   defp maybe_append_web_search(schemas) do
     if EvoGit.Config.tools_search_enabled?() do
       schemas ++ [WebSearch.schema()]
+    else
+      schemas
+    end
+  end
+
+  # The `lsp` tool is gated behind a CONFIGURED language server —
+  # `EvoGit.Config.lsp_enabled?/0` is true only when `[lsp] enabled = true` AND
+  # `[lsp] command` is non-empty. Appended LAST in both schema sets so an agent
+  # only ever sees it when it can actually do something; the dispatch clause
+  # (`execute_tool("lsp", ...)`) stays registered so the tool still works when
+  # enabled (and still self-explains with an `Error:` if called unconfigured).
+  # Evaluated at call time (not a module attribute) because the config can
+  # change at runtime.
+  defp maybe_append_lsp(schemas) do
+    if EvoGit.Config.lsp_enabled?() do
+      schemas ++ [Lsp.schema()]
     else
       schemas
     end

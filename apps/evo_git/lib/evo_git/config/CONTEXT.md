@@ -22,6 +22,7 @@
 | `config_path/0` | Full path to `config.toml` |
 | `config_dir/0` | Platform config dir (XDG/macos/windows). Delegates to `EvoGit.Platform.config_dir("genesis")`. |
 | `credentials_path/0` | Full path to `credentials.toml` |
+| `lsp_enabled?/0` | SINGLE gate for offering the `lsp` tool: `true` only when the resolved `[:lsp]` section is a map whose `:enabled` is `true`/`"true"` AND whose `:command` is a binary with non-empty `String.trim/1`. Never raises (nil/non-map section, other enabled values, nil/non-binary/blank command → `false`). |
 
 ### `EvoGit.Config.LLMCatalog` (provider/model shortcuts)
 | Function | Description |
@@ -153,8 +154,8 @@ mode = "system"                   # Per-task temporary-directory mode: "system" 
 path = "/abs/path/to/tmp"         # Base path for :custom mode; absolute (or ~-relative). Absent/nil = system tmp
 
 [lsp]
-enabled = false                   # Enables the `lsp` tool (Elixir diagnostics/hover/definition). Requires `command`
-command = "lexical"               # Language server executable, e.g. "lexical" or an absolute elixir-ls launcher path; nil/empty keeps the tool disabled
+enabled = false                   # Offers the `lsp` tool (Elixir diagnostics/hover/definition) to agents. While false (default) no agent gets the tool at all
+command = "lexical"               # Language server executable, e.g. "lexical" or an absolute elixir-ls launcher path; `enabled = true` + a non-empty command is what makes the tool appear
 args = ["start"]                  # Arguments passed to the command
 timeout = 30_000                  # Overall per-call budget (ms)
 diagnostics_timeout = 10_000      # How long to wait for publishDiagnostics after opening the file (ms)
@@ -170,9 +171,12 @@ The `[:tmp, :*]` keys carry `category: :data` (NOT a new `:tmp` category): the d
 
 **`[lsp]` — Elixir code intelligence for the `lsp` tool**: the `lsp` tool (`agent/tools/lsp.ex`) never installs, downloads or bundles a language server — it speaks LSP over stdio to whatever this section points at (a user-installed `lexical start` or an elixir-ls launcher), one disposable server process per call.
 Keys (all `category: :tools`, so the dashboard renders them under Tools even though the TOML table is `[lsp]`): `enabled` (`:boolean`, default `false`), `command` (`:string`, default `nil` — the executable, resolved through `EvoGit.Executable.resolve/1` + `System.find_executable/1`), `args` (`:list_of_strings`, default `[]`), `timeout` (`:pos_integer` ms, default `30_000`, `min: 1` — the WHOLE-call budget: spawn, `initialize` handshake and the one analysis request) and `diagnostics_timeout` (`:pos_integer` ms, default `10_000`, `min: 1` — the settle window for `textDocument/publishDiagnostics`, ending earlier once the stream goes quiet).
-The tool is INERT until BOTH `enabled = true` and a non-empty `command` are present: it then returns the self-explaining `Error: no language server configured — set [lsp] command in config.toml`, which is what tells the model to fall back to `read_file`/`rg` — so the section can be absent from `config.toml` entirely and nothing breaks.
-Validation is warning-only at runtime: `EvoGit.Config.resolve/0` logs `Config validation error at [:lsp, ...]` via `Logger.warning` and still returns the merged config (`config.ex:188-204`); only `save_user_config/1` refuses a malformed value (`config.ex:517-521`). The tool then normalizes defensively (non-map section → disabled, non-list `args` → `[]`, invalid timeouts → defaults) and accepts the STRING `"true"` for `enabled` (`agent/tools/lsp.ex:204`) even though the strict `:boolean` type flags it as a validation error.
-The tool reads the whole section in one call (`EvoGit.Config.resolve([:lsp])`, defensively treating a non-map result as `%{}`); no other subsystem consumes these keys.
+The tool is NOT OFFERED AT ALL while `EvoGit.Config.lsp_enabled?/0` is false (the default): no `lsp` schema is built, so no agent — root, subagent or repo-less — sees the tool and no prompt tokens are spent on it.
+`lsp_enabled?/0` is the single gate (resolve `[:lsp]`; `:enabled` must be `true`/`"true"` AND `:command` a binary with non-empty `String.trim/1`; nil/non-map section and every malformed combination → `false`, never raises, no `String.to_atom/1` on config input).
+Re-enable recipe: `[lsp]` with `enabled = true` and `command = "lexical"` (plus `args = ["start"]`) — the tool then appears in every agent's tool list.
+Once offered, a still-unconfigured call returns the self-explaining `Error: no language server configured — set [lsp] command in config.toml`, which tells the model to fall back to `read_file`/`rg` — so the section can be absent from `config.toml` entirely and nothing breaks.
+Validation is warning-only at runtime: `EvoGit.Config.resolve/0` logs `Config validation error at [:lsp, ...]` via `Logger.warning` and still returns the merged config (`config.ex:188-204`); only `save_user_config/1` refuses a malformed value (`config.ex:517-521`). Both `EvoGit.Config.lsp_enabled?/0` and the tool's own settings normalize defensively (non-map section → disabled, non-list `args` → `[]`, invalid timeouts → defaults) and accept the STRING `"true"` for `enabled` (`agent/tools/lsp.ex:204`) even though the strict `:boolean` type flags it as a validation error.
+Two consumers read the section: `EvoGit.Config.lsp_enabled?/0` (the offering gate, via `resolve([:lsp])`) and the tool itself (`EvoGit.Config.resolve([:lsp])`, defensively treating a non-map result as `%{}`); no other subsystem consumes these keys.
 
 **`[[llm.models]]` profile fields**: `id` (required), `model` (required), `concurrency` (per-profile LLM concurrency), `context_window` (optional positive integer, default `200_000` — the model's context window in tokens, used as the context-compression window), plus optional `peak_concurrency`, `peak_hours`, `timezone`, `off_peak_days`:
 ```toml
