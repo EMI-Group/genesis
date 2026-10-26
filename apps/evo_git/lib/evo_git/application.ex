@@ -49,6 +49,18 @@ defmodule EvoGit.Application do
       read_concurrency: true
     ])
 
+    # Registry instance name => its task-store name. Written by
+    # `EvoGit.TaskRegistry.init/1` and read by `TaskRegistry.put_task_archive/1`,
+    # so the archive producer write runs in the CALLING (completing agent)
+    # process instead of in the registry GenServer every dashboard read shares.
+    # App-owned so it survives registry restarts.
+    ensure_ets_table(:evogit_task_registry_stores, [
+      :named_table,
+      :public,
+      :set,
+      read_concurrency: true
+    ])
+
     # Enable distributed Erlang at startup if configured.
     # This must happen before starting RemoteConnection-related children,
     # since RemoteConnection needs the local node in distributed mode to
@@ -94,6 +106,17 @@ defmodule EvoGit.Application do
       # EvoGit.Store so its first tick always finds the store; every tick is
       # total, so a restarting/absent store is skipped, never a crash.
       {EvoGit.Store.Maintenance, []},
+      # Dedicated pool for the TaskRegistry's offloaded READS: a heavy decode
+      # (`list_tasks`, `list_tasks_page`, archives, summaries) runs in one of
+      # these workers and replies to its caller directly, so the decoded term
+      # never enters the registry's heap. Deliberately NOT `EvoGit.TaskSupervisor`
+      # (nested under AgentGroupSupervisor): a scheduler restart must not kill
+      # in-flight dashboard reads, and read workers must not compete with task
+      # wrappers.
+      Supervisor.child_spec(
+        {Task.Supervisor, name: EvoGit.TaskRegistry.ReadSupervisor},
+        id: EvoGit.TaskRegistry.ReadSupervisor
+      ),
       {Registry,
        keys: :unique,
        name: EvoGit.TaskRegistry.ProcessRegistry,
