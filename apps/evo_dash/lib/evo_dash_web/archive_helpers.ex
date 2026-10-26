@@ -2,23 +2,31 @@ defmodule EvoDashWeb.ArchiveHelpers do
   @moduledoc """
   Shared archive tree helpers for building agent hierarchies from archive metadata.
 
-  The builders operate on a PARTIAL page of records: the dashboard reads a task's archive one page at a time, and each record's heavy `"result"` is absent unless results were explicitly requested.
+  The dashboard reads a task's archive ONE PAGE AT A TIME (100 entries per page, `include_results: false`), and each record's heavy `"result"` is absent unless results were explicitly requested, so every builder here operates on a PARTIAL page of records.
   A record whose `parent_id` matches no record in the loaded slice is PROMOTED to a top-level node (after the real roots) instead of being silently dropped, so every record in the slice renders exactly once.
   `result_loaded?/1` distinguishes "result not fetched yet" (key absent) from "fetched and empty" (key present, `nil`/`""`), and `merge_entry/2` folds a lazily fetched full entry back into the already-loaded page.
-  `build_archive_tree/1` / `build_archive_tree_for_review/1` are the unbounded FULL-tree variants (they normalize and group every record) for small, complete record lists.
-  Render sites should use the capped builders instead:
+  Render sites use the capped builders, which normalize and group ONLY the slice they render:
 
     * `build_tree_capped/2` — `%{agent:, children:}` node maps (dashboard shape)
     * `build_review_tree_capped/2` — `{agent, children}` tuple nodes (review shape)
 
   Both cap the record list BEFORE any key normalization / grouping, preferring
   root records so the rendered slice still contains a renderable tree.
+  Accumulated pages are bounded by a RETENTION WINDOW: `max_retained/0` (500 = 5 pages) is the most entries one render keeps, `retain_window/2,3` slides that window over the accumulated list (evicting the OLDEST entries and returning the running dropped count), `retained_page_bounds/3` reports the 1-based span of the RETAINED slice inside the whole loaded span, and `more_pages?/3` is the authoritative "can another page still be fetched" test.
+  `page_bounds/2` is the no-eviction case of `retained_page_bounds/3`.
+  `archive_opt?/1` is the single definition of "this task opted into archiving" (`opts[:archive]`).
   """
 
   # Default cap for the capped tree builders below. Chosen so a single render
   # stays bounded (~100 nodes × a capped preview each) while still showing the
   # whole hierarchy of a normal multi-agent task.
   @default_max_records 100
+
+  # Retention bound for the accumulated archive pages held by one LiveView.
+  # 500 = 5 pages of the 100-entry archive page size: enough for every agent of
+  # a normal (≤500-agent) task to stay scrollable without eviction, while still
+  # bounding the archive heap of a multi-thousand-agent task.
+  @max_retained 500
 
   @known_agent_keys %{
     "agent_id" => :agent_id,
@@ -144,62 +152,119 @@ defmodule EvoDashWeb.ArchiveHelpers do
 
   def merge_entry(entries, _full_entry), do: entries
 
+  # ---------------------------------------------------------------------------
+  # Archive opt-in — the single definition of "this task archived".
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  True iff `opts` opted into archiving: `[archive: true]` (the dashboard) or
+  `[archive: "true"]` (the CLI / task data plane).
+
+  `opts[:archive]` is the ONLY opt-in signal — the summary map cannot say
+  whether records actually exist, so this only decides whether the lazy archive
+  disclosure renders at all. Anything else (non-list, no `:archive` key, another
+  value) is false.
+  """
+  def archive_opt?(opts) when is_list(opts) do
+    Enum.find_value(opts, false, fn
+      {:archive, value} -> value in [true, "true"]
+      _ -> nil
+    end)
+  end
+
+  def archive_opt?(_opts), do: false
+
+  # ---------------------------------------------------------------------------
+  # Retention window — bounded accumulation of paged archive entries.
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  The most accumulated archive entries a single render keeps (`500`, i.e. 5
+  pages of the 100-entry archive page size).
+
+  It bounds a LiveView's archive heap for a multi-thousand-agent task while
+  still letting every agent of a normal (≤500-agent) task stay scrollable
+  without eviction.
+  """
+  def max_retained, do: @max_retained
+
+  @doc """
+  Slides the retention window over an accumulated entry list.
+
+  Returns `{retained, dropped_total}`: when `entries` is a list longer than
+  `max`, keeps the most RECENT `max` entries and adds the evicted (oldest) count
+  to the running `dropped`; otherwise returns the list unchanged with the same
+  `dropped_total`. `max` 0 is legal (keep nothing). TOTAL: a non-list `entries`
+  yields `{[], dropped_total}`, a negative/garbage `dropped` counts as 0, and a
+  negative/garbage `max` falls back to `max_retained/0`.
+  """
+  def retain_window(entries, dropped \\ 0, max \\ @max_retained)
+
+  def retain_window(entries, dropped, max) when is_list(entries) do
+    dropped_total = non_neg_count(dropped)
+    limit = retention_limit(max)
+
+    if length(entries) > limit do
+      evicted = length(entries) - limit
+      {Enum.take(entries, -limit), dropped_total + evicted}
+    else
+      {entries, dropped_total}
+    end
+  end
+
+  def retain_window(_entries, dropped, _max), do: {[], non_neg_count(dropped)}
+
+  @doc """
+  1-based inclusive `{first, last}` bounds of the RETAINED slice inside the
+  whole loaded span, accounting for entries evicted by the retention window.
+
+  `first = dropped + 1` and `last = min(dropped + retained_count, total)`; both
+  are `0` when nothing is retained (`retained_count <= 0`, `total <= 0`) or when
+  `last` would precede `first`. TOTAL — negative/garbage arguments count as 0 and
+  it never raises.
+  """
+  def retained_page_bounds(retained_count, dropped, total) do
+    retained = non_neg_count(retained_count)
+    skipped = non_neg_count(dropped)
+    loaded_total = non_neg_count(total)
+    first = skipped + 1
+    last = min(skipped + retained, loaded_total)
+
+    if retained == 0 or loaded_total == 0 or last < first do
+      {0, 0}
+    else
+      {first, last}
+    end
+  end
+
+  @doc """
+  True iff more archive pages can still be fetched: `dropped + retained_count <
+  total`.
+
+  This is THE formula render sites use for "is a pager needed" — `length(retained)
+  < total` is wrong once entries have been evicted. TOTAL: negative/garbage
+  arguments count as 0.
+  """
+  def more_pages?(retained_count, dropped, total) do
+    non_neg_count(dropped) + non_neg_count(retained_count) < non_neg_count(total)
+  end
+
   @doc """
   1-based inclusive `{first, last}` bounds of the records loaded so far, for a
   "showing 1–100 of 7 149" label.
 
-  `last` is clamped to `total`, so a fully loaded page reports
-  `{1, total}`; nothing loaded (or a negative/garbage count) reports `{0, 0}`.
+  This is `retained_page_bounds/3` with no eviction (`dropped = 0`): `last` is
+  clamped to `total`, so a fully loaded page reports `{1, total}`; nothing loaded
+  (or a negative/garbage count) reports `{0, 0}`.
   Pure — the label text is formatted by the render site.
   """
-  def page_bounds(loaded_count, total)
-      when is_integer(loaded_count) and is_integer(total) do
-    if loaded_count <= 0 or total <= 0 do
-      {0, 0}
-    else
-      {1, min(loaded_count, total)}
-    end
-  end
+  def page_bounds(loaded_count, total), do: retained_page_bounds(loaded_count, 0, total)
 
-  def page_bounds(_loaded_count, _total), do: {0, 0}
+  defp non_neg_count(count) when is_integer(count) and count > 0, do: count
+  defp non_neg_count(_count), do: 0
 
-  @doc """
-  Build nested tree for dashboard components (returns `%{agent:, children:}` maps).
-
-  Unbounded — it normalizes and groups EVERY given record. Records whose parent
-  is absent from the list are promoted to top-level nodes, after the real roots.
-  """
-  def build_archive_tree(agents) when is_list(agents) do
-    agents = Enum.map(agents, &normalize_agent_keys/1)
-    by_parent = Enum.group_by(agents, &parent_key/1)
-
-    roots =
-      by_parent
-      |> Map.get(nil, [])
-      |> Enum.filter(&renderable_agent?/1)
-      |> Enum.map(fn agent -> build_archive_node(agent, by_parent, MapSet.new()) end)
-
-    promote_orphans(agents, roots, by_parent, &build_archive_node/3)
-  end
-
-  @doc """
-  Build nested tree for review components (returns `{agent, children}` tuples).
-
-  Unbounded, with the same orphan promotion as `build_archive_tree/1`.
-  """
-  def build_archive_tree_for_review(agents) do
-    agents = Enum.map(agents, &normalize_agent_keys/1)
-    by_parent = Enum.group_by(agents, &parent_key/1)
-
-    roots =
-      by_parent
-      |> Map.get(nil, [])
-      |> Enum.filter(&renderable_agent?/1)
-      |> Enum.map(fn agent -> build_archive_node(agent, by_parent, MapSet.new()) end)
-
-    nodes = promote_orphans(agents, roots, by_parent, &build_archive_node/3)
-    shape_nodes(nodes, :tuple)
-  end
+  defp retention_limit(limit) when is_integer(limit) and limit >= 0, do: limit
+  defp retention_limit(_limit), do: @max_retained
 
   # ---------------------------------------------------------------------------
   # Capped builders — bounded work per render (normalize/group ONLY the slice)
@@ -373,25 +438,4 @@ defmodule EvoDashWeb.ArchiveHelpers do
     do: max_records
 
   defp max_records_or_default(_max_records), do: @default_max_records
-
-  defp build_archive_node(agent, by_parent, visited) do
-    id = agent_key(agent, :agent_id)
-
-    children =
-      if id in [nil, ""] do
-        []
-      else
-        new_visited = MapSet.put(visited, id)
-
-        by_parent
-        |> Map.get(id, [])
-        |> Enum.filter(fn child ->
-          child_id = agent_key(child, :agent_id)
-          child_id not in [nil, ""] and not MapSet.member?(new_visited, child_id)
-        end)
-        |> Enum.map(fn child -> build_archive_node(child, by_parent, new_visited) end)
-      end
-
-    %{agent: agent, children: children}
-  end
 end

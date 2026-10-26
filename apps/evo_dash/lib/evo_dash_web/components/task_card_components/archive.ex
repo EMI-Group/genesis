@@ -1,12 +1,14 @@
 defmodule EvoDashWeb.TaskCardComponents.Archive do
   @moduledoc """
   Total readers for the lazily-fetched, PAGED archive envelope
-  (`detail.archive`) and the `opts[:archive]` opt-in check that decides whether
-  the card's archive disclosure renders at all.
+  (`detail.archive`).
 
   The envelope is owned by `EvoDashWeb.TasksLive.TaskDetail`; every reader here
   is TOTAL, so a nil/odd shape falls back to the empty/on-demand state instead of
   crashing the card.
+  The `opts[:archive]` opt-in check lives in `EvoDashWeb.ArchiveHelpers` (the
+  single definition, delegated here under its historical name) — this module
+  only reads the envelope.
   """
 
   # ---------------------------------------------------------------------------
@@ -92,16 +94,12 @@ defmodule EvoDashWeb.TaskCardComponents.Archive do
     end
   end
 
-  # `opts[:archive]` is the archive OPT-IN signal (`true` from the dashboard,
-  # `"true"` from the CLI/task data plane). The summary map cannot say whether
-  # records actually exist, so this only decides whether the lazy disclosure
-  # renders at all.
-  def archive_opt?(opts) when is_list(opts) do
-    Enum.find_value(opts, false, fn
-      {:archive, value} -> value in [true, "true"]
-      _ -> nil
-    end)
-  end
+  @doc """
+  True iff the task's `opts` opted into archiving (`[archive: true]` from the
+  dashboard, `[archive: "true"]` from the CLI / task data plane).
 
-  def archive_opt?(_opts), do: false
+  Delegates to the shared `EvoDashWeb.ArchiveHelpers.archive_opt?/1`, which owns
+  that definition; the name is kept here for the task card's import site.
+  """
+  defdelegate archive_opt?(opts), to: EvoDashWeb.ArchiveHelpers
 end
