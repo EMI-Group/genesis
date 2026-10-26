@@ -634,8 +634,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     # one commit per {filename, content, commit_message} triple and returning the
     # SHAs in commit order.
     defp init_repo(template, dir, commits) do
-      File.mkdir_p!(dir)
-      File.cp_r!(Path.join(template, ".git"), Path.join(dir, ".git"))
+      dir = init_repo(template, dir)
 
       Enum.map(commits, fn {file, content, msg} ->
         commit_files(dir, [{file, content}], msg)
