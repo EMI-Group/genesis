@@ -1650,16 +1650,16 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "reconciliation finalizes from a terminal row that carries an archive (lite read)", %{
       conn: conn
     } do
-      # The row carries a heavy archive blob. The terminal path needs only
-      # status/result/error, so the lite read (archive nilled out, result
-      # without :archive_records) must still finalize the transcript.
+      # The result still carries the legacy `archive_records` payload (older
+      # rows); the per-agent archive itself is no longer a task-row column. The
+      # terminal path needs only status/result/error, so the lite read must
+      # still finalize the transcript.
       insert_task_fixture!(
         id: "t_archived",
         type: :reflect,
         status: :completed,
         opts: [mode: "reflect", objective: "New message: archived"],
         project_path: nil,
-        archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}],
         result:
           {:ok,
            %{

@@ -278,7 +278,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "paged lazy archive load" do
     # The review page load is LITE (`NodeContext.get_task_lite/2`): it never
-    # transfers `archive_metadata`. The Archive tab body is a SEPARATE, PAGED
+    # transfers the per-agent archive (its own `task_agent_archives` table).
+    # The Archive tab body is a SEPARATE, PAGED
     # on-demand load (`EvoDashWeb.ReviewLive.ArchiveLoad`): the first page (100
     # entries, `include_results: false`) is fetched when the tab opens, "Load
     # more" appends the next page, and each agent's heavy result is fetched on
@@ -296,7 +297,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "page load is lite and transfers no archive", %{conn: conn} do
-      task_id = seed_archive_task!(archive_records())
+      task_id = seed_archive_task!()
       me = self()
 
       # Spy runner: prove the PAGE LOAD never triggers an archive fetch.
@@ -331,7 +332,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "the first page shows the server total and the loaded range", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
@@ -363,7 +364,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "a complete first page shows no Load more button", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
         %{entries: archive_page_entries(1..2), total: 2}
@@ -384,7 +385,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "load more appends the next page, dedupes and stops at the total", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
@@ -432,7 +433,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "a failed append keeps the loaded page and offers a retry", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
@@ -479,7 +480,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "per-agent result is fetched on demand, capped, cached and re-rendered", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
       big_result = String.duplicate("R", 20_000)
 
@@ -554,7 +555,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     test "a task broadcast invalidates cached agent results but keeps the loaded page", %{
       conn: conn
     } do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
@@ -705,7 +706,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     test "an orphan record (parent on an unloaded page) still renders and keeps the total", %{
       conn: conn
     } do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
 
       entries = [
         %{
@@ -744,7 +745,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     test "opening the Archive tab fetches exactly once and shows the loading state first", %{
       conn: conn
     } do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       # Blocking runner: reports the call, then waits for the test's reply.
@@ -784,7 +785,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "a tab round-trip and a review-data re-apply never refetch the page", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
@@ -826,7 +827,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "an empty archive renders the empty state without a Retry button", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
         %{entries: [], total: 0}
@@ -849,7 +850,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "a failing fetch renders a retry-able error state, then Retry refetches", %{conn: conn} do
-      task_id = seed_archive_task!([])
+      task_id = seed_archive_task!()
       me = self()
 
       Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
@@ -3382,7 +3383,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
         %{"agent_id" => "agent-1", "parent_id" => nil, "objective" => "Root agent", "depth" => 0}
       ]
 
-      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil, archive)
+      {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil)
 
       # The Archive tab reads the archive through the PAGED seam; serve the
       # fixture records as one complete page.
@@ -3477,8 +3478,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
              |> Enum.any?(&String.contains?(&1, "text-error"))
     end
 
-    test "Export JSON is hidden without archive metadata", %{conn: conn} do
-      # A second task WITHOUT archive_metadata — the export entry must not
+    test "Export JSON is hidden without archive data", %{conn: conn} do
+      # A second task with NO archive runner seam — the export entry must not
       # render, while Ignore still does (always-available escape hatch). This
       # also pins the :idle case of the lazy archive: the Archive tab is never
       # visited, so no fetch runs and `export_available?/1` stays false even
@@ -5540,14 +5541,13 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # Creates a temp git repo with the given primary branch (plus an optional
   # secondary branch pointing at the base commit), an agent `task-branch` with
   # a change commit on top of the primary branch, and a completed review task
-  # pointing at it. The optional `archive_metadata` seeds the archive-export
-  # affordances. Returns {repo_path, task_id, change_sha} and registers
+  # pointing at it. Returns {repo_path, task_id, change_sha} and registers
   # on_exit cleanup.
-  defp create_review_task_with_repo!(primary, secondary, archive_metadata \\ nil) do
+  defp create_review_task_with_repo!(primary, secondary) do
     {tmp_dir, change_sha} =
       copy_review_template!("evogit_review_merge_test_", primary, secondary)
 
-    task_id = seed_review_task!(tmp_dir, change_sha, archive_metadata)
+    task_id = seed_review_task!(tmp_dir, change_sha)
 
     on_exit(fn ->
       rm_rf_retry(tmp_dir)
@@ -5686,9 +5686,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Seeds a completed review task pointing at `repo_path` with the agent
-  # branch `task-branch` (which must exist in the repo). The optional
-  # `archive_metadata` seeds the archive-export affordances.
-  defp seed_review_task!(repo_path, change_sha, archive_metadata) do
+  # branch `task-branch` (which must exist in the repo). The per-agent archive
+  # is its own table (`task_agent_archives`) and never rides the task row, so
+  # these tests serve it through the paged archive runner seams instead.
+  defp seed_review_task!(repo_path, change_sha) do
     task_id = "review_test_merge_#{System.unique_integer([:positive])}"
 
     task = %TaskInfo{
@@ -5701,7 +5702,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
       finished_at: DateTime.utc_now(),
       logs: [],
       review_status: nil,
-      archive_metadata: archive_metadata,
       result:
         {:ok,
          %{
@@ -5764,11 +5764,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Seeds a completed task whose result references a branch that does NOT exist
-  # in any real repository, carrying the given STRING-keyed archive records (the
-  # shape a DB round-trip yields). Feeds the lazy-archive describe: the page
-  # load is LITE, so the records are only reachable through the on-demand
-  # fetch. Returns the task id.
-  defp seed_archive_task!(records) do
+  # in any real repository. Feeds the lazy-archive describe: the page load is
+  # LITE and never touches the per-agent archive (its own table, served through
+  # the paged runner seams), so the records are only reachable through the
+  # on-demand fetch. Returns the task id.
+  defp seed_archive_task! do
     task_id = "review_test_lazy_archive_#{System.unique_integer([:positive])}"
 
     task = %TaskInfo{
@@ -5781,7 +5781,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
       finished_at: DateTime.utc_now(),
       logs: [],
       review_status: nil,
-      archive_metadata: records,
       result:
         {:ok,
          %{
@@ -5802,25 +5801,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end)
 
     task_id
-  end
-
-  # The two STRING-keyed archive records the lazy-archive tests hand to the
-  # archive runner (and that the store-seeded fixtures persist).
-  defp archive_records do
-    [
-      %{
-        "agent_id" => "agent-1",
-        "parent_id" => nil,
-        "objective" => "Root agent objective",
-        "depth" => 0
-      },
-      %{
-        "agent_id" => "agent-2",
-        "parent_id" => "agent-1",
-        "objective" => "Child agent objective",
-        "depth" => 1
-      }
-    ]
   end
 
   defp archive_tab_selector do
