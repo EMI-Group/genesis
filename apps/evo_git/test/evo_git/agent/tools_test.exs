@@ -82,14 +82,9 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "run_command shell tool containment" do
-    test "run_command is NOT in Tools.schemas/0" do
-      names = Enum.map(Tools.schemas(), & &1.name)
-      refute "run_command" in names
-    end
-
-    test "run_command is NOT in Tools.read_only_schemas/0" do
-      names = Enum.map(Tools.read_only_schemas(), & &1.name)
-      refute "run_command" in names
+    test "run_command is in NEITHER schemas/0 nor read_only_schemas/0" do
+      refute "run_command" in Enum.map(Tools.schemas(), & &1.name)
+      refute "run_command" in Enum.map(Tools.read_only_schemas(), & &1.name)
     end
 
     test "SelfReflective.available_tools() exposes run_command and none of the 10 old task-control tools" do
@@ -196,28 +191,20 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "execute/4 - read_file" do
-    test "reads an existing file", %{tmp_dir: tmp_dir} do
+    # The read-output shape (File: header, numbered lines, `line_numbers: false`,
+    # footers, clips, size caps, missing-file error) is owned by
+    # `test/evo_git/agent/tools/file_read_test.exs`. This suite owns the DISPATCH
+    # contract for both the internal key and the model-facing name.
+    test "dispatches read_file / read to the file reader", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world")
 
-      result = Tools.execute("read_file", %{"file_path" => "test.txt"}, tmp_dir)
-      assert result =~ "1\thello world"
-    end
+      assert Tools.execute("read_file", %{"file_path" => "test.txt"}, tmp_dir) =~ "hello world"
 
-    test "reads an existing file without line numbers", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "hello world")
+      assert Tools.execute("read", %{"file_path" => "test.txt"}, tmp_dir) =~ "hello world"
 
-      result =
-        Tools.execute("read_file", %{"file_path" => "test.txt", "line_numbers" => false}, tmp_dir)
-
-      refute result =~ "1\thello world"
-      assert result =~ "hello world"
-    end
-
-    test "returns error for missing file", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("read_file", %{"file_path" => "missing.txt"}, tmp_dir)
-      assert result =~ "Error: reading file"
+      assert Tools.execute("read_file", %{"file_path" => "missing.txt"}, tmp_dir) =~
+               "Error: reading file"
     end
   end
 
@@ -237,7 +224,12 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "execute/4 - edit_file" do
-    test "replaces exact text in file", %{tmp_dir: tmp_dir} do
+    # The edit-string semantics (byte-exact replacement, unique-match enforcement,
+    # replace_all, trailing whitespace fidelity, the `Error: ` prefixes) are owned
+    # by `test/evo_git/agent/tools/file_edit_test.exs`, which pins them against the
+    # module directly AND asserts the model-facing `edit` name reaches the same
+    # dispatch key. This suite only owns the internal dispatch-key routing.
+    test "the internal `edit_file` key still dispatches to the edit tool", %{tmp_dir: tmp_dir} do
       file_path = Path.join(tmp_dir, "test.txt")
       File.write!(file_path, "hello world 123")
 
@@ -251,170 +243,31 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "has been updated successfully"
       assert File.read!(file_path) == "hello elixir 123"
     end
-
-    test "replaces all occurrences when replace_all is true", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "hello world hello world")
-
-      result =
-        Tools.execute(
-          "edit_file",
-          %{
-            "file_path" => "test.txt",
-            "old_string" => "hello",
-            "new_string" => "hi",
-            "replace_all" => true
-          },
-          tmp_dir
-        )
-
-      assert result =~ "All occurrences were successfully replaced"
-      assert File.read!(file_path) == "hi world hi world"
-    end
-
-    test "returns error if multiple matches found without replace_all", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "hello world hello world")
-
-      result =
-        Tools.execute(
-          "edit_file",
-          %{"file_path" => "test.txt", "old_string" => "hello", "new_string" => "hi"},
-          tmp_dir
-        )
-
-      assert result =~ "Found 2 matches"
-      assert result =~ "Set replace_all=true"
-      assert File.read!(file_path) == "hello world hello world"
-    end
-
-    test "keeps trailing whitespace in new_string verbatim", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "hello world")
-
-      result =
-        Tools.execute(
-          "edit_file",
-          %{"file_path" => "test.txt", "old_string" => "world", "new_string" => "elixir   \n\n"},
-          tmp_dir
-        )
-
-      assert result =~ "has been updated successfully"
-      assert File.read!(file_path) == "hello elixir   \n\n"
-    end
-
-    test "returns error if old_string not found", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "hello world")
-
-      result =
-        Tools.execute(
-          "edit_file",
-          %{"file_path" => "test.txt", "old_string" => "missing", "new_string" => "elixir"},
-          tmp_dir
-        )
-
-      assert result =~ "old_string not found in file"
-    end
   end
 
   describe "execute/4 - make_dir" do
-    test "creates a single directory with CONTEXT.md by default", %{tmp_dir: tmp_dir} do
+    # The mkdir semantics themselves (CONTEXT.md default, multiple/nested paths,
+    # `keep_file` .gitkeep/none, the `parents: false` error, commit staging) are
+    # pinned by `test/evo_git/agent/tools/make_dir_test.exs` against the module
+    # directly. This suite only owns the DISPATCH contract.
+    test "dispatches through the make_dir key and honors keep_file", %{tmp_dir: tmp_dir} do
       result = Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => false}, tmp_dir)
 
       assert result =~ "Successfully created 1 directory"
       assert result =~ "lib"
-
       assert File.dir?(Path.join(tmp_dir, "lib"))
       assert File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
-    end
 
-    test "creates multiple directories", %{tmp_dir: tmp_dir} do
       result =
         Tools.execute(
           "make_dir",
-          %{"paths" => ["lib", "test", "config"], "commit" => false},
-          tmp_dir
-        )
-
-      assert result =~ "Successfully created 3 directories"
-
-      assert File.dir?(Path.join(tmp_dir, "lib"))
-      assert File.dir?(Path.join(tmp_dir, "test"))
-      assert File.dir?(Path.join(tmp_dir, "config"))
-    end
-
-    test "creates .gitkeep when specified", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute(
-          "make_dir",
-          %{"paths" => ["lib"], "keep_file" => ".gitkeep", "commit" => false},
+          %{"paths" => ["other"], "keep_file" => ".gitkeep", "commit" => false},
           tmp_dir
         )
 
       assert result =~ "Successfully created 1 directory"
-
-      refute File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
-      assert File.exists?(Path.join(tmp_dir, "lib/.gitkeep"))
-    end
-
-    test "creates no placeholder file when keep_file is none", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute(
-          "make_dir",
-          %{"paths" => ["lib"], "keep_file" => "none", "commit" => false},
-          tmp_dir
-        )
-
-      assert result =~ "Successfully created 1 directory"
-
-      refute File.exists?(Path.join(tmp_dir, "lib/CONTEXT.md"))
-      refute File.exists?(Path.join(tmp_dir, "lib/.gitkeep"))
-      assert File.dir?(Path.join(tmp_dir, "lib"))
-    end
-
-    test "creates nested directories by default", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute("make_dir", %{"paths" => ["lib/core/utils"], "commit" => false}, tmp_dir)
-
-      assert result =~ "Successfully created 1 directory"
-
-      assert File.dir?(Path.join(tmp_dir, "lib/core/utils"))
-      assert File.exists?(Path.join(tmp_dir, "lib/core/utils/CONTEXT.md"))
-    end
-
-    test "errors when parents is false and parent does not exist", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute(
-          "make_dir",
-          %{"paths" => ["missing/nested"], "parents" => false, "commit" => false},
-          tmp_dir
-        )
-
-      assert result =~ "Errors:"
-      assert result =~ "missing/nested"
-    end
-
-    test "commits keep files when commit is true", %{tmp_dir: tmp_dir} do
-      # Initialize a git repository
-      System.cmd("git", ["init"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
-
-      # Create an initial commit
-      File.write!(Path.join(tmp_dir, "README.md"), "init")
-      System.cmd("git", ["add", "README.md"], cd: tmp_dir)
-      System.cmd("git", ["commit", "-m", "init commit"], cd: tmp_dir)
-
-      result =
-        Tools.execute("make_dir", %{"paths" => ["lib"], "commit" => true}, tmp_dir, tmp_dir)
-
-      assert result =~ "Successfully created"
-      assert result =~ "Changes committed"
-
-      # Check commit was created
-      {log, 0} = System.cmd("git", ["log", "-1", "--pretty=%s"], cd: tmp_dir)
-      assert log =~ "Create directory"
+      refute File.exists?(Path.join(tmp_dir, "other/CONTEXT.md"))
+      assert File.exists?(Path.join(tmp_dir, "other/.gitkeep"))
     end
   end
 
@@ -428,30 +281,30 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result == "dir context"
     end
 
-    test "returns error if CONTEXT.md missing", %{tmp_dir: tmp_dir} do
-      dir_path = Path.join(tmp_dir, "lib")
-      File.mkdir_p!(dir_path)
+    test "reports each failure branch: no CONTEXT.md, missing dir, path is a file", %{
+      tmp_dir: tmp_dir
+    } do
+      File.mkdir_p!(Path.join(tmp_dir, "lib"))
+      File.write!(Path.join(tmp_dir, "test.txt"), "")
 
-      result = Tools.execute("read_context", %{"dir_path" => "lib"}, tmp_dir)
-      assert result =~ "No CONTEXT.md found"
-    end
+      # CONTEXT.md absent from an existing directory
+      assert Tools.execute("read_context", %{"dir_path" => "lib"}, tmp_dir) =~
+               "No CONTEXT.md found"
 
-    test "returns error if directory is missing", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("read_context", %{"dir_path" => "missing"}, tmp_dir)
-      assert result =~ "does not exist"
-    end
+      # directory absent
+      assert Tools.execute("read_context", %{"dir_path" => "missing"}, tmp_dir) =~
+               "does not exist"
 
-    test "returns error if path is a file", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "")
-
-      result = Tools.execute("read_context", %{"dir_path" => "test.txt"}, tmp_dir)
-      assert result =~ "is a file, not a directory"
+      # path is a regular file
+      assert Tools.execute("read_context", %{"dir_path" => "test.txt"}, tmp_dir) =~
+               "is a file, not a directory"
     end
   end
 
   describe "execute/4 - glob" do
-    test "returns matching paths", %{tmp_dir: tmp_dir} do
+    test "returns matching paths, or the exact no-match shape with the pattern hint", %{
+      tmp_dir: tmp_dir
+    } do
       File.mkdir_p!(Path.join(tmp_dir, "lib"))
       File.write!(Path.join(tmp_dir, "lib/a.ex"), "")
       File.write!(Path.join(tmp_dir, "lib/b.ex"), "")
@@ -460,13 +313,10 @@ defmodule EvoGit.Agent.ToolsTest do
 
       assert result =~ "lib/a.ex"
       assert result =~ "lib/b.ex"
-    end
-
-    test "returns message if no matches", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("glob", %{"pattern" => "missing/*.ex"}, tmp_dir)
 
       # Fixed first line + the pattern echoed as a trailing hint.
-      assert result == "No files found.\n\n[pattern: missing/*.ex]"
+      assert Tools.execute("glob", %{"pattern" => "missing/*.ex"}, tmp_dir) ==
+               "No files found.\n\n[pattern: missing/*.ex]"
     end
   end
 
@@ -678,43 +528,32 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "old_string not found in file"
     end
 
-    test "returns error if CONTEXT.md does not exist", %{tmp_dir: tmp_dir} do
-      dir_path = Path.join(tmp_dir, "lib")
-      File.mkdir_p!(dir_path)
+    test "reports each failure branch: no CONTEXT.md, missing dir, path is a file", %{
+      tmp_dir: tmp_dir
+    } do
+      File.mkdir_p!(Path.join(tmp_dir, "lib"))
+      File.write!(Path.join(tmp_dir, "test.txt"), "")
 
-      result =
-        Tools.execute(
-          "edit_context",
-          %{"dir_path" => "lib", "old_string" => "hello", "new_string" => "world"},
-          tmp_dir
-        )
+      # CONTEXT.md absent from an existing directory
+      assert Tools.execute(
+               "edit_context",
+               %{"dir_path" => "lib", "old_string" => "hello", "new_string" => "world"},
+               tmp_dir
+             ) =~ "No CONTEXT.md found"
 
-      assert result =~ "No CONTEXT.md found"
-    end
+      # directory absent
+      assert Tools.execute(
+               "edit_context",
+               %{"dir_path" => "missing", "old_string" => "hello", "new_string" => "world"},
+               tmp_dir
+             ) =~ "does not exist"
 
-    test "returns error if directory does not exist", %{tmp_dir: tmp_dir} do
-      result =
-        Tools.execute(
-          "edit_context",
-          %{"dir_path" => "missing", "old_string" => "hello", "new_string" => "world"},
-          tmp_dir
-        )
-
-      assert result =~ "does not exist"
-    end
-
-    test "returns error if path is a file", %{tmp_dir: tmp_dir} do
-      file_path = Path.join(tmp_dir, "test.txt")
-      File.write!(file_path, "")
-
-      result =
-        Tools.execute(
-          "edit_context",
-          %{"dir_path" => "test.txt", "old_string" => "hello", "new_string" => "world"},
-          tmp_dir
-        )
-
-      assert result =~ "is a file, not a directory"
+      # path is a regular file
+      assert Tools.execute(
+               "edit_context",
+               %{"dir_path" => "test.txt", "old_string" => "hello", "new_string" => "world"},
+               tmp_dir
+             ) =~ "is a file, not a directory"
     end
 
     test "edits and commits CONTEXT.md", %{tmp_dir: tmp_dir} do
@@ -765,27 +604,6 @@ defmodule EvoGit.Agent.ToolsTest do
       assert result =~ "has been updated successfully"
       refute result =~ "Committed:"
       assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "new context"
-    end
-
-    test "keeps trailing whitespace in new_string verbatim", %{tmp_dir: tmp_dir} do
-      dir_path = Path.join(tmp_dir, "lib")
-      File.mkdir_p!(dir_path)
-      File.write!(Path.join(dir_path, "CONTEXT.md"), "hello world")
-
-      result =
-        Tools.execute(
-          "edit_context",
-          %{
-            "dir_path" => "lib",
-            "old_string" => "world",
-            "new_string" => "elixir   \n\n",
-            "commit" => false
-          },
-          tmp_dir
-        )
-
-      assert result =~ "has been updated successfully"
-      assert File.read!(Path.join(dir_path, "CONTEXT.md")) == "hello elixir   \n\n"
     end
 
     test "edit_context with hostile dir_path (quotes/angle brackets) commits and round-trips", %{
@@ -953,9 +771,11 @@ defmodule EvoGit.Agent.ToolsTest do
       assert last_commit_subject(tmp_dir) =~ "Update CONTEXT.md for ./src/deep"
     end
 
-    test "the 4-arity execute/4 (node_path nil) still allows any directory", %{tmp_dir: tmp_dir} do
+    test "a nil node_path (4-arity dispatch and Context.execute_write/3) allows any directory", %{
+      tmp_dir: tmp_dir
+    } do
       # Backward compatibility: direct callers that pass no node_path are not
-      # scope-checked at all — the pre-existing 4-arity contract.
+      # scope-checked at all — the pre-existing contract, at both layers.
       result =
         Tools.execute(
           "write_context",
@@ -966,11 +786,7 @@ defmodule EvoGit.Agent.ToolsTest do
 
       assert result == "Successfully updated CONTEXT.md for directory './doc'"
       assert File.read!(Path.join(tmp_dir, "doc/CONTEXT.md")) == "doc context"
-    end
 
-    test "Context.execute_write/3 (node_path defaults to nil) still writes anywhere", %{
-      tmp_dir: tmp_dir
-    } do
       assert "Successfully updated CONTEXT.md for directory 'outside/any/node'" =
                EvoGit.Agent.Tools.Context.execute_write(
                  %{
@@ -1210,11 +1026,8 @@ defmodule EvoGit.Agent.ToolsTest do
   end
 
   describe "execute/4 - unknown tool" do
-    test "returns error for unknown tool", %{tmp_dir: tmp_dir} do
-      result = Tools.execute("unknown_tool", %{}, tmp_dir)
-      assert result =~ "Unknown tool"
-    end
-
+    # Both tests below also pin the generic "Unknown tool" shape, so no separate
+    # generic-unknown test is needed.
     test "suggests the closest tool name for a near miss", %{tmp_dir: tmp_dir} do
       result = Tools.execute("read_fil", %{}, tmp_dir)
       assert result =~ "Unknown tool 'read_fil'"
@@ -1300,42 +1113,25 @@ defmodule EvoGit.Agent.ToolsTest do
       refute result =~ "JSON-encoded string"
     end
 
-    test "returns a helpful string error when the string does not decode to a map", %{
-      tmp_dir: tmp_dir
-    } do
-      result = Tools.execute("read_file", "not-json", tmp_dir)
+    test "returns a helpful string error when the string decodes to something that is not an object",
+         %{tmp_dir: tmp_dir} do
+      # Invalid JSON and valid JSON that is not an object (an array) take the same
+      # teaching-error path.
+      for malformed <- ["not-json", Jason.encode!(["not", "an", "object"])] do
+        result = Tools.execute("read_file", malformed, tmp_dir)
 
-      assert is_binary(result)
-      assert result =~ "JSON-encoded string instead of a JSON object"
-      assert result =~ "Pass the arguments as a real JSON object"
-    end
-
-    test "returns a helpful string error when the string decodes to a non-map", %{
-      tmp_dir: tmp_dir
-    } do
-      encoded = Jason.encode!(["not", "an", "object"])
-
-      result = Tools.execute("read_file", encoded, tmp_dir)
-
-      assert is_binary(result)
-      assert result =~ "JSON-encoded string instead of a JSON object"
+        assert is_binary(result)
+        assert result =~ "JSON-encoded string instead of a JSON object"
+        assert result =~ "Pass the arguments as a real JSON object"
+      end
     end
   end
 
   describe "web_search in schemas" do
-    test "web_search is NOT included in schemas/0 by default (config disabled)" do
+    test "web_search is NOT included in schemas/0 or read_only_schemas/0 by default" do
       with_isolated_config(fn ->
-        schemas = Tools.schemas()
-        names = Enum.map(schemas, & &1.name)
-        refute "web_search" in names
-      end)
-    end
-
-    test "web_search is NOT included in read_only_schemas/0 by default (config disabled)" do
-      with_isolated_config(fn ->
-        schemas = Tools.read_only_schemas()
-        names = Enum.map(schemas, & &1.name)
-        refute "web_search" in names
+        refute "web_search" in Enum.map(Tools.schemas(), & &1.name)
+        refute "web_search" in Enum.map(Tools.read_only_schemas(), & &1.name)
       end)
     end
   end
@@ -1410,57 +1206,37 @@ defmodule EvoGit.Agent.ToolsTest do
       end)
     end
 
-    test "allows write tools inside a WRITABLE foreign repo", %{tmp_dir: tmp_dir} do
-      with_foreign_repo(tmp_dir, [writable: true], fn repo_path ->
-        result =
-          Tools.execute(
-            "write_file",
-            %{"file_path" => "sub/file.txt", "content" => "x"},
-            repo_path
-          )
-
-        assert result =~ "Successfully wrote to"
-      end)
-    end
-
-    test "allows write tools in the primary repo even when foreign repos exist", %{
+    test "allows write tools unless the target repo is a READ-ONLY foreign repo", %{
       tmp_dir: tmp_dir
     } do
-      with_primary_repo(tmp_dir, fn repo_path ->
-        result =
-          Tools.execute(
-            "write_file",
-            %{"file_path" => "sub/file.txt", "content" => "x"},
-            repo_path
-          )
+      # Same call under every non-blocking repo role: a writable foreign repo, the
+      # primary repo (with a read-only foreign repo registered), and no foreign
+      # repos at all.
+      write = fn repo_path ->
+        Tools.execute("write_file", %{"file_path" => "sub/file.txt", "content" => "x"}, repo_path)
+      end
 
-        assert result =~ "Successfully wrote to"
+      with_foreign_repo(tmp_dir, [writable: true], fn repo_path ->
+        assert write.(repo_path) =~ "Successfully wrote to"
       end)
-    end
 
-    test "allows write tools when there are no foreign repos at all", %{tmp_dir: tmp_dir} do
+      with_primary_repo(tmp_dir, fn repo_path ->
+        assert write.(repo_path) =~ "Successfully wrote to"
+      end)
+
       with_no_foreign_repos(tmp_dir, fn repo_path ->
-        result =
-          Tools.execute(
-            "write_file",
-            %{"file_path" => "sub/file.txt", "content" => "x"},
-            repo_path
-          )
-
-        assert result =~ "Successfully wrote to"
+        assert write.(repo_path) =~ "Successfully wrote to"
       end)
     end
   end
 
   describe "EvoGit.Config.tools_search_enabled?/0" do
-    test "returns false by default" do
+    test "returns false by default and stays false when only the API key is set" do
       with_isolated_config(fn ->
         refute EvoGit.Config.tools_search_enabled?()
-      end)
-    end
 
-    test "returns false even when TAVILY_API_KEY is set (config still disabled)" do
-      with_isolated_config(fn ->
+        # A provider key alone never enables the tool — the config toggle must
+        # also be on.
         ReqLLM.put_key(:tavily_api_key, "test-key")
 
         try do
