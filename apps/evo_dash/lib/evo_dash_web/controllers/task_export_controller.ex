@@ -148,13 +148,18 @@ defmodule EvoDashWeb.TaskExportController do
         &EvoDash.NodeContext.list_task_archives/3
       )
 
-    # FUTURE: once the store's roster read grows an explicit settings opt, THIS is
-    # the one call that must pass it (the export is the full-fidelity consumer —
-    # it ships whole per-agent archive records, including any settings fields the
-    # lean roster projection drops by default). Do NOT pass it now: the current
-    # core rejects unknown opts. The future opt is `include_settings: true`,
-    # passed to `EvoDash.NodeContext.list_task_archives/3` right here.
-    opts = [offset: offset, limit: @page_limit, include_results: true]
+    # The export is the full-fidelity consumer of the archive: it ships WHOLE
+    # per-agent records, so it opts IN to both projections the lean roster read
+    # drops by default — the agent `result` text and the export-only JSON
+    # settings columns (`llm_settings` / `agent_settings` / `foreign_repos`).
+    # `total` keeps its default (`include_total: true`): the paging loop relies
+    # on the inventory count to stop early.
+    opts = [
+      offset: offset,
+      limit: @page_limit,
+      include_results: true,
+      include_settings: true
+    ]
 
     case SafeCall.run(fn -> runner.(node, task_id, opts) end) do
       # A page WITHOUT a usable `total` is still a GOOD page: the inventory

@@ -57,7 +57,12 @@ defmodule EvoDashWeb.TaskExportControllerTest do
           parent_id: nil,
           objective: "Build the feature",
           role: :manager,
-          status: :completed
+          status: :completed,
+          # The export-only settings columns: requested from the store AND
+          # shipped verbatim in the document.
+          llm_settings: %{model: "test-model"},
+          agent_settings: %{max_turns: 10},
+          foreign_repos: [%{repo_id: "docs", writable: true}]
         },
         %{
           agent_id: "T2_A1",
@@ -107,6 +112,9 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert first["objective"] == "Build the feature"
       assert first["role"] == "manager"
       assert first["parent_id"] == nil
+      assert first["llm_settings"] == %{"model" => "test-model"}
+      assert first["agent_settings"] == %{"max_turns" => 10}
+      assert first["foreign_repos"] == [%{"repo_id" => "docs", "writable" => true}]
 
       second = Enum.find(exported, fn record -> record["agent_id"] == "T2_A1" end)
       assert second["parent_id"] == "T1_A1"
@@ -116,7 +124,8 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert tmp_archive_files(task.id) == []
     end
 
-    test "streams every page in order and asks for results explicitly", %{conn: conn} do
+    test "streams every page in order and asks for the full-fidelity projection",
+         %{conn: conn} do
       task = task_fixture()
 
       page_one = for index <- 1..200, do: %{agent_id: "A#{index}"}
@@ -144,10 +153,16 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert first_opts[:offset] == 0
       assert first_opts[:limit] == 200
       assert first_opts[:include_results] == true
+      # The export is the full-fidelity consumer: the export-only settings
+      # columns are requested too, on EVERY page (not just the first).
+      assert first_opts[:include_settings] == true
+      # The `total` default is kept — the paging loop stops early on it.
+      refute Keyword.has_key?(first_opts, :include_total)
 
       assert_received {:archive_page, second_opts}
       assert second_opts[:offset] == 200
       assert second_opts[:include_results] == true
+      assert second_opts[:include_settings] == true
 
       refute_received {:archive_page, _opts}
       assert tmp_archive_files(task.id) == []
@@ -479,6 +494,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert_received {:archive_page, ^remote_node, archive_task_id, opts}
       assert archive_task_id == task.id
       assert opts[:include_results] == true
+      assert opts[:include_settings] == true
     end
 
     test "?node=local keeps the local path working", %{conn: conn} do

@@ -795,6 +795,13 @@ defmodule EvoDash.NodeContext do
     * `:include_results` — default `false`; when false every entry OMITS its
       `"result"` key, which is why a single agent's result is loaded lazily
       through `get_agent_archive/3`
+    * `:include_settings` — default `false`; when false the export-only JSON
+      columns (`"llm_settings"`, `"agent_settings"`, `"foreign_repos"`) are NOT
+      selected, so their keys are ABSENT (never `nil`) from every entry. The
+      streamed JSON export passes `true`
+    * `:include_total` — default `true`; pass `false` to skip the `count(*)`
+      aggregate when the caller already knows the total — the core read then
+      answers `total: nil`, which the normalization below degrades to `0`
 
   Returns `%{entries: [map()], total: non_neg_integer()}`, where `total` counts
   ALL archive entries of the task (not just this page). Total: a missing task,

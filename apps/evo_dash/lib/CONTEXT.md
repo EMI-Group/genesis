@@ -153,7 +153,7 @@ The SQL boundary lives in `:evo_git` (the store's private SQL WHERE builder `Evo
 - **Retention = tab lifetime**: phoenix_live_view has no `live_disconnect_timeout`; the channel stops the LiveView process (`{:stop, {:shutdown, :closed}}`) on socket close, so retained task data lasts exactly as long as tabs are open (N tabs = N copies). EvoDash's only task-data cache is the boot-created `:evo_dash_active_tasks` ETS table (`EvoDash.ActiveTasks` — sidebar last-known-state hub, owned by the application process, holding only the partitioned summary lists per node context, NOT full task rows); `agents_live.ex` only reads evo_git ETS. `list_task_ids` replies inline on the TaskRegistry GenServer (cheap, no decode); summary/list variants decode on short-lived Tasks — both heaps scale with DB size.
 - **Export memory profile**: `TaskExportController` never materializes an archive — it pages rows (200 at a time, WITH results) and encodes one record at a time into a temp file, so its heap is bounded by one page plus one record.
 Paging stops at a known `total`, an empty page, or a short page; a page without a usable `total` is written in full, so a lean roster read (no per-page `COUNT(*)`) can never truncate an export.
-The export is the full-fidelity consumer: the future lean-roster settings opt (`include_settings: true`) belongs in `TaskExportController.fetch_page/3` and nowhere else.
+The export is the full-fidelity consumer: `TaskExportController.fetch_page/3` passes `include_results: true` + `include_settings: true` (whole per-agent records, settings columns included) and nowhere else.
 
 ## Constraints
 
