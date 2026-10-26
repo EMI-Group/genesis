@@ -531,12 +531,12 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
 
     test "tree builders produce atom-keyed nested usage maps" do
-      [node] = EvoDashWeb.ArchiveHelpers.build_archive_tree(@string_key_usage_archive)
+      %{tree: [node]} = EvoDashWeb.ArchiveHelpers.build_tree_capped(@string_key_usage_archive)
       assert node.agent[:usage][:total_tokens] == 1500
       assert node.agent[:usage][:total_cost] == 0.003
 
-      [{agent, _children}] =
-        EvoDashWeb.ArchiveHelpers.build_archive_tree_for_review(@string_key_usage_archive)
+      %{tree: [{agent, _children}]} =
+        EvoDashWeb.ArchiveHelpers.build_review_tree_capped(@string_key_usage_archive)
 
       assert agent[:usage][:total_tokens] == 1500
       assert agent[:usage][:total_cost] == 0.003
@@ -745,29 +745,6 @@ defmodule EvoDashWeb.ArchiveTreeTest do
 
       assert %{total: 2, shown: 2} = capped
       assert [{%{agent_id: "loop-a"}, [{%{agent_id: "loop-b"}, []}]}] = capped.tree
-    end
-  end
-
-  describe "unbounded builders — orphan-parent promotion" do
-    test "build_archive_tree/1 promotes a record whose parent is absent" do
-      nodes =
-        ArchiveHelpers.build_archive_tree([
-          %{"agent_id" => "lonely", "parent_id" => "gone-page"}
-        ])
-
-      assert [%{agent: %{agent_id: "lonely"}, children: []}] = nodes
-    end
-
-    test "build_archive_tree_for_review/1 renders a parent cycle exactly once" do
-      nodes = ArchiveHelpers.build_archive_tree_for_review(@cyclic_archive)
-
-      assert [{%{agent_id: "agent-1"}, [{%{agent_id: "agent-2"}, []}]}] = nodes
-    end
-
-    test "build_archive_tree_for_review/1 renders a self-parent exactly once" do
-      nodes = ArchiveHelpers.build_archive_tree_for_review(@self_ref_archive)
-
-      assert [{%{agent_id: "agent-1"}, []}] = nodes
     end
   end
 

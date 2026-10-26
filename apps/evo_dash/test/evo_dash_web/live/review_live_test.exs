@@ -5775,7 +5775,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       id: task_id,
       type: :evolve,
       status: :completed,
-      opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+      # The Archive tab is OPT-IN (`opts[:archive]`): a task started without it
+      # renders no tab and never fetches.
+      opts: [path: "/nonexistent/repo/path", objective: "Test objective", archive: true],
       ref: nil,
       started_at: DateTime.utc_now(),
       finished_at: DateTime.utc_now(),
