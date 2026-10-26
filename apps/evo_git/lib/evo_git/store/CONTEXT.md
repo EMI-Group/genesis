@@ -240,6 +240,10 @@ Because `put_task` is delete + full-row insert, every task write maintains all t
 
 ## Known Issues
 
+- **`tasks.id` and `projects.path` are NULLABLE TEXT primary keys**: `PRAGMA table_info` reports `notnull = 0` for both (SQLite only implies NOT NULL for INTEGER primary keys), so the DDL allows a NULL id that every read would then miss (all of them compare ids). Only hand-edited/adopted rows can produce one — `Codec.validate_task/1` and `Operations.Archives.validate_entry/1` reject a missing id before any write.
+- **The same `%EvoGit.Agent.Usage{}` is stored TWICE per task**: embedded in an `{:ok, …}` result's `data.usage` and again in the `usage` column, so one `get_task/2` pays two JSON decodes of the same numbers and one `put_task/2` two encodes (the summary/page projections avoid it by never selecting either).
+- **`put_task/2` rewrites the whole row by design** (delete + full 19-key insert): a single status change through the full-row path re-writes every column and all ten index entries; the targeted `update_task_columns/3` path exists to avoid that.
+
 - **The one-time data migrations cost O(rows)**: migration 6 rewrites every legacy oversized value and migration 8 decodes each archived task's array on a cold page cache — the slowest boots in the product, within the desktop shell's 90 s backend-readiness budget; freed pages return only via `mix store.maintenance --vacuum`.
 - **`evo_dash` still calls the legacy full-row page read** (`safe_select_paginated_tasks/2`); wiring it to `select_tasks_page/2` + `get_task_lite/2` is a later round, and one dashboard test (`apps/evo_dash/test/evo_dash_web/live/tasks_live_test.exs`, "search_tasks handler filters tasks by agent response message") still searches result text.
 - **A multi-megabyte `result` row is decoded IN FULL by `get_task/2`**: nothing bounds the decoded term and `Codec.validate_task/1` checks only `id`/`status`, so a huge `result` is read whole (one `Repo.one/1` fetch, one `Jason.decode`, the `decode_result_data/1` rebuild); use `select_tasks_page/2`/`get_task_lite/2` when blobs are not needed.
