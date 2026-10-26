@@ -78,7 +78,7 @@ All component modules use `use EvoDashWeb, :html` (`use Phoenix.Component` + HTM
 
 ## Blob & Collection Rendering Caps
 
-No component in this subtree may render an unbounded task blob or collection: a task can carry a 100+ MB `result` / `archive_metadata` and every component here re-executes on EVERY LiveView render (nothing memoizes).
+No component in this subtree may render an unbounded task blob or collection: a task can carry a 100+ MB `result` and every component here re-executes on EVERY LiveView render (nothing memoizes).
 
 - The two `EvoDashWeb.Helpers` functions are the SINGLE source of previews — do not write ad-hoc `String.slice` caps in a component:
   - `blob_preview/2` → `%{text:, truncated?:, total_bytes:}` — a UTF-8-safe prefix of at most `limit` BYTES (default `16_384`); TOTAL (non-binary → empty preview; non-integer/negative limit → the default).
@@ -196,7 +196,7 @@ The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` /
 
 Every component here is a pure function component that re-executes on EVERY LiveView render (nothing memoizes), so the sites below repeat their work per render — all bounded by the caps above.
 
-- No `Jason.decode` / base64 / regex-over-a-huge-string work lives in this directory: `result` and `archive_metadata` arrive already decoded from the Store Codec and are only re-rendered here.
+- No `Jason.decode` / base64 / regex-over-a-huge-string work lives in this directory: `result` and the loaded archive page entries arrive already decoded from the Store Codec and are only re-rendered here.
 - Everything else (cost/token/cache formatting, `render_options`, `render_result`, `result_copy_text`, `cost_estimate_notice`, logs, archive) sits INSIDE `if @show_details` and is gated on `detail.state == :ok` — a collapsed card and a loading/errored detail both render in O(1) work. There is no cross-card loop inside the component (TasksLive owns `Enum.with_index(@filtered_tasks)` + `animation_delay_class/1`) — no per-card re-sort/re-group/re-parse.
 - Diff pane re-parses per render: `parse_diff_lines_bounded/1` (≤2000 lines), `build_diff_segments/1`, `build_split_pairs/1`; `file_tree_sidebar/1` rebuilds + sorts the tree and `String.downcase`-filters every path; `split_diff_layout/1` sums stats twice.
 - Commit graph: `commit_list/1` recomputes `Geometry.positions`/`geom`/`lane_chips` per render, each `<.edge_path>` calls `Geometry.edge_geo/3` (a scan of the full edge list — quadratic in edges, bounded by the builder's 100-commit cap), and `lane_header/1` re-filters chips per stagger row.

@@ -37,7 +37,7 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 | Module | Purpose (detail → child CONTEXT.md) |
 |--------|-------------------------------------|
 | `EvoDash.Application` | OTP supervisor: creates the `:evo_dash_active_tasks`/`:evo_dash_accent_cache` ETS tables, calls `ConnectionDiagnostics.attach/0` (idempotent, non-fatal, not a child), then Telemetry → `EvoDash.PubSub` → `EvoDash.TaskSupervisor` → `ChatHistory` → `DirectoryPicker` → `UpdateStatus` → `EvoDashWeb.Endpoint`, appending `DesktopLifetime` only when BOTH `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (`:one_for_one`, 10 restarts / 60 s). → `lib/evo_dash/CONTEXT.md` |
-| `EvoDash.NodeContext` | SSH's single web-layer entry point: wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (lifecycle) and cross-node `:erpc` helpers (agents, config, task summary/lite/archive projections + full read, review ops, custom agents/tools, system control, approvals). Graceful degradation via `with_remote_connection/4`. → `lib/evo_dash/CONTEXT.md` |
+| `EvoDash.NodeContext` | SSH's single web-layer entry point: wraps `EvoGit.RemoteConnections` (target persistence), `EvoGit.RemoteConnection` (lifecycle) and cross-node `:erpc` helpers (agents, config, task summary/lite projections, paged agent archives + one full archive entry, review ops, custom agents/tools, system control, approvals). Graceful degradation via `with_remote_connection/4`. → `lib/evo_dash/CONTEXT.md` |
 | `EvoDash.DirectoryPicker` | GenServer serializing native directory/file dialogs (`osascript` / `zenity` / PowerShell, `:wx` fallback). Never raises; injectable via `config :evo_dash, :directory_picker_wx`. → `lib/evo_dash/CONTEXT.md` |
 | `EvoDash.UpdateStatus` | Auto-update state hub — single source of truth for the Tauri-updater UI state; broadcasts every transition on topic `"updates"`. → `lib/evo_dash/CONTEXT.md` |
 | `EvoDash.DesktopLifetime` | Tauri-shell lifetime watcher (TCP pipe): only a GENUINE peer close (`{:error, :closed}`) stops the VM via `System.stop(0)`; other recv errors are retried boundedly. Gated on both desktop env vars. → `lib/evo_dash/CONTEXT.md` |
@@ -45,7 +45,7 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 | `EvoDashWeb.Endpoint` | Phoenix endpoint (LiveView socket, static files, Plug pipeline) |
 | `EvoDashWeb.Router` | Routes to all LiveViews (see Routes). `/dashboard` = full-bleed `ProjectsLive` iframe of the LiveDashboard; the real one is at `/phoenix/dashboard`. |
 | `EvoDashWeb.Helpers` | Shared UI utilities (status badges, datetime, icons, modals, `truncate_string/2`, `with_node_param/2`, `blob_preview/2`, `list_preview/2`, `tip/1`, `cost_estimate_notice/1`) + legacy tool-call display helpers (do not remove) |
-| `EvoDashWeb.TaskExportController` | JSON download of a task's `archive_metadata` (`GET /tasks/:task_id/export`), node-aware via `?node=`. |
+| `EvoDashWeb.TaskExportController` | Streamed JSON download of a task's agent archive (`GET /tasks/:task_id/export`), read in pages of 200 and written record-by-record into a temp file; node-aware via `?node=`. |
 | `EvoGit.Store` / `EvoGit.TaskRegistry` | evo_git-owned persistence (SQLite store + lease/heartbeat registry) — the dashboard consumes, owns none. → `apps/evo_git/CONTEXT.md` |
 
 ### Mix Tasks
@@ -67,7 +67,7 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 | `GET /system` | `SystemLive :index` | Software Update card, System Self-Check, scheduler charts, System Controls |
 | `GET /review/:task_id` | `ReviewLive :show` | Code review — diffs, merge/reject/resume, GitHub PR, Extract Skills |
 | `GET /review/:task_id/commit/:commit_sha` | `ReviewLive :commit` | Single-commit inspection |
-| `GET /tasks/:task_id/export` | `TaskExportController :export` | JSON export of `archive_metadata` (node-aware) |
+| `GET /tasks/:task_id/export` | `TaskExportController :export` | Streamed JSON export of the task's agent archive, paged from the store (node-aware) |
 | `GET /dashboard` | `ProjectsLive :system_dashboard` | Full-bleed LiveDashboard iframe (no header chrome) |
 | `GET /phoenix/dashboard` | `Phoenix.LiveDashboard` | Built-in metrics/telemetry dashboard |
 
@@ -113,11 +113,12 @@ Key detail + subscriber specifics: `lib/CONTEXT.md` (§ PubSub Topics), `live/sy
 
 ### Task Archive Feature
 
-With the **archive** checkbox the core collects per-agent metadata (`archive_records`) and EvoDash persists it in `EvoGit.TaskInfo.archive_metadata` (`[map()] | nil`, backfill-safe); archived tasks show the agent parent-child tree (objective/return/start-end commits/token usage/archive refs) and offer JSON export. Opt-in only, and the archive NEVER rides a page load — every page reads a lite task row and fetches it on demand (tasks page on an explicit archive disclosure, review page only when its Archive tab opens, both cached per `{task_id, node}`).
+With the **archive** checkbox the core collects per-agent metadata (`archive_records`) and stores one archive row per successfully completed agent; archived tasks show the agent parent-child tree (objective/return/start-end commits/token usage/archive refs) and offer JSON export.
+Opt-in only, and the archive NEVER rides a page load: every page reads a lite task row and the archive arrives in bounded pages (`NodeContext.list_task_archives/3` — 100 entries, `include_results: false`), with one agent's full entry fetched lazily (`NodeContext.get_agent_archive/3`); tasks page on an explicit archive disclosure, review page only when its Archive tab opens, both cached per `{task_id, node}`.
 
-- Threading: the `:archive` opt (built inline in `ProjectsLive.do_task_submit/4`) → core; on completion `archive_records` are extracted from the result map → `update_task_status/4` → persisted.
+- Threading: the `:archive` opt (built inline in `ProjectsLive.do_task_submit/4`) → core; the dashboard writes nothing back.
 - Mode resolution: UI strings `"genesis_new"`/`"genesis_existing"`/`"evolve_simple"`/`"custom_agent"` → `{task_type, core_mode_string}` in `do_task_submit/4` (unknown → `{:evolve, "simple"}`). Core `RuntimeOpts.mode_atom/2` accepts `"custom"`; unknown evolution modes raise `ArgumentError`; `:genesis` + `"custom"` raises "custom mode is evolve-only".
-- Export: `GET /tasks/:task_id/export` → `TaskExportController` (normalizes structs to plain maps). Render sites + gotchas: `lib/evo_dash_web/CONTEXT.md` → "Known Issues — Task Archive Display"; lazy reads: `live/tasks_live/CONTEXT.md` + `live/review_live/CONTEXT.md`.
+- Export: `GET /tasks/:task_id/export` → `TaskExportController` — `?node=` resolution, a LITE task read, then pages of 200 WITH results from offset 0 until the reported `total` or an empty page, each record encoded one at a time into a temp file that is sent with `send_download/3` and deleted afterwards. The envelope stays flat: `task_id, task_type, repo_path, status, started_at, finished_at, agent_count, usage, archive_records`. Render sites + gotchas: `lib/evo_dash_web/CONTEXT.md` → "Known Issues — Task Archive Display"; paged reads: `live/tasks_live/CONTEXT.md` + `live/review_live/CONTEXT.md`.
 
 ### Self-Reflective Task Mode & Guide Overlay
 
@@ -145,7 +146,7 @@ UI: the TasksLive card Cancel button (`[:pending, :running]`) → confirmation m
 - `AgentsLive` — dual-view inspector (segmented control): spatial agent tree vs temporal commit-history graph (commit-centric VERTICAL GitLens-style, one lane per agent plus a neutral pre-task lane 0, globally interleaved rows, dashed spawn/merge-back connectors, no pan/zoom); fully async + push-driven. The temporal view fetches TASK-SCOPED (`NodeContext.list_task_commit_graph/5`) so it covers the whole task via durable refs and retains ended agents in-session (`@retained_agents`); compression % bars use each agent's own `compression_threshold`, else `[:llm, :compression_threshold_tokens]`, else `180_000` (`ThresholdCache.threshold_for_agent/2`). — `live/agents_live/CONTEXT.md`.
 - `SettingsLive` — config GUI editor (LLM = model-profiles editor; `:agents` = custom agents + model-selection script + custom-tools panel; Nix category gating via `PlatformInfo.show_nix_category?/1` with a `:nix_available_override` seam); remote loading/saves ASYNC (`NodeData`), local saves synchronous but `SafeCall`-wrapped. Detail: `live/settings_live/CONTEXT.md`.
 - `SystemLive` — Software Update card (desktop+local only) → System Self-Check (health banner + check grid incl. the local-only Genesis Source card) → scheduler charts → grouped System Controls (System Dashboard, pause/resume, VM restart/stop — the LAST section). Detail: `live/system_live/CONTEXT.md`.
-- `TasksLive` — task history: ONE page load of summary rows, detail + archive fetched lazily, fully push-based, sync per-click mutations. Detail: `live/tasks_live/CONTEXT.md`.
+- `TasksLive` — task history: ONE page load of summary rows, detail + paged archive fetched lazily, fully push-based, sync per-click mutations. Detail: `live/tasks_live/CONTEXT.md`.
 - All LiveViews register `EvoDashWeb.LiveHooks.NodeAware` on_mount (via the `evo_dash_web.ex` macro), call `assign_node/2` in `handle_params/3`, and pass node context to `Layouts.app`.
 
 ### GitHub Issue Integration
@@ -167,11 +168,11 @@ Dashboard-side integration of the Tauri updater (fully implemented on the Elixir
 
 Remote-node tasks are reviewable end-to-end; ALL review operations run in supervised tasks (`ReviewLive.Actions` + `LoadData`), and the LiveView only applies `{:review_data_loaded, ...}` / `{:review_action_result, ...}` with task/node/seq stale guards while rendering in-progress state.
 
-- **Loading**: `ReviewLive.LoadData.load/3` fetches via `NodeContext.get_task_lite(@current_node, task_id)` (result/opts/SHAs/usage, NO archive; nil on RPC failure → error state) with a dedup guard; the Archive tab is a separate cached `get_task_archive/2` load (`ReviewLive.ArchiveLoad`, ONE fetch per `{task_id, node}`); diffs are LAZY (per-file `load_file_diff`).
+- **Loading**: `ReviewLive.LoadData.load/3` fetches via `NodeContext.get_task_lite(@current_node, task_id)` (result/opts/SHAs/usage, NO archive; nil on RPC failure → error state) with a dedup guard; the Archive tab pages its archive on demand (`ReviewLive.ArchiveLoad` — first page cached per `{task_id, node}`, "Load more" appends the next page, each agent's result fetched individually); diffs are LAZY (per-file `load_file_diff`).
 - **Every review op goes through `EvoDash.NodeContext`** (node first): commits/diffs/branches, `default_merge_target`, `merge_branch`, `reject_branch`, `create_github_pr`, `set_review_status`/`set_review_metadata`, `check_merge`, `start_task` (Extract Skills / auto-resolve). `RemoteNode` returns values VERBATIM — only transport failures add `{:error, {kind, reason}}`.
 - **Merge + conflict is PER-REPO**: the conversation tab renders ONE CARD PER REPO (`ReviewComponents.RepoCards.repo_cards/1`), each with its own `merge` form + Reject button scoped to ONE whitelisted repo (no fan-out, no navigation) writing that repo's `resolution` (terminal `:merged`(`target`)/`:rejected`/`:handled`; non-terminal `:error`/`:conflict`(`detail`) rendered on that card, page stays). `ReviewLive.MergeCheck` runs a non-mutating `check_merge/4` dry-run (`git merge-tree --write-tree`) per repo with a `%{state: :checking|:clean|:conflict|:error}` strip (`:error` renders nothing); a `phx-confirm`-gated "Merge all repositories" button folds every unresolved change-bearing repo through the same shared path (no reject-all). `auto_resolve` stays PRIMARY-scoped (core `MergeContext`). Completion requires a terminal resolution on every change-bearing repo.
 - **SHAs / Resume / Export**: base/end commits come from `TaskInfo.base_sha`/`commit_sha` + the result map, persisted via `set_review_metadata`; Resume sets `:continued` and navigates to `/projects?resume_from=<id>&starting_commit=<sha>&project=<path>[&node=]` (core `ResumeContext`); export and the Review button are node-aware.
-- `review_live.ex` is a deliberate page module (~2280 lines: HEEx + LV wiring) with executors in `review_live/actions.ex`, the loader in `review_live/load_data.ex`, the lazy archive in `review_live/archive_load.ex`. Tests + async-patterns inventory: `live/review_live/CONTEXT.md`.
+- `review_live.ex` is a deliberate page module (~2280 lines: HEEx + LV wiring) with executors in `review_live/actions.ex`, the loader in `review_live/load_data.ex`, the paged archive state machine + Archive-tab panel in `review_live/archive_load.ex`. Tests + async-patterns inventory: `live/review_live/CONTEXT.md`.
 
 ### Multi-Repo Read-Write Foreign Repos (dashboard half)
 

@@ -37,7 +37,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 ## The Rule — nothing in the LiveView process blocks
 
 - **Reads** (`list_recent_projects`, `list_task_ids`, `get_task_lite`, `list_tasks_paginated`, `get_resolved_config`, `list_custom_agents`, remote RPCs) never run in `mount/3`, `handle_params/3`, `handle_event/3` or `handle_info/2`. They run inside a `Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> … end)` body, are `EvoDash.SafeCall.run/1`-wrapped there, and `send/2` their result to the LiveView.
-- Store calls can take many seconds (a single live `result`/`archive_metadata` blob in the production DB is ~108 MB) and a `GenServer.call` can EXIT (`:timeout`, dead server) — which `rescue` cannot catch, hence `SafeCall`.
+- Store calls can take many seconds (a production task carried a ~108 MB `result`) and a `GenServer.call` can EXIT (`:timeout`, dead server) — which `rescue` cannot catch, hence `SafeCall`.
 - **Writes** that are part of a click and whose effect must be observable immediately (`start_task`, `clear_finished_tasks`, `delete_task`, `remove_recent_project`, `add_recent_project`, `cancel_task`) stay synchronous in the LiveView process but are `SafeCall`-wrapped; their follow-up reload/scan work is async.
 
 ### Async message inventory (projects_live)
