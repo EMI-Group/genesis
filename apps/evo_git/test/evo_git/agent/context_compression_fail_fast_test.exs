@@ -32,6 +32,14 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   and the non-retryable test acquires/releases a slot from the shared scheduler
   LLM slot pools. All of that is BEAM-global state observable by any
   concurrently running module.
+  `EvoGit.PeakHourEngine` is SUSPENDED for the whole module (`:sys.suspend` in
+  `setup`, `:sys.resume` in `on_exit` AFTER the profile restore), because its
+  "scheduler_config" wakeup re-derives the `model_concurrency` map from
+  `model_profiles` and REPLACES it wholesale: its read and its apply are not
+  atomic, so a profile restore/pin landing between them makes it overwrite the
+  pinned single-profile pool map with one computed from the previous profile
+  set — `@model_id` then vanishes from `get_llm_slot_status/0` and
+  `used_and_waiting/1` reports a falsely clean pool for it.
   """
 
   use ExUnit.Case, async: false
@@ -301,6 +309,18 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
+    # Suspend the peak-hour engine for the whole test (the `cost_test` /
+    # `tool_dispatch_retry_slot_test` idiom). Its "scheduler_config" wakeup
+    # re-derives the `model_concurrency` map from `model_profiles` and replaces
+    # it WHOLESALE, but its read and its apply are not atomic: a profile
+    # restore or pin landing in between makes it overwrite the pinned
+    # single-profile pool map with a map computed from the PREVIOUS profile set
+    # (the operator's ambient profiles, every capacity floored). `@model_id`
+    # then disappears from `get_llm_slot_status/0`, where `used_and_waiting/1`
+    # would report a FALSELY clean `{0, 0}` pool for it.
+    engine = Process.whereis(EvoGit.PeakHourEngine)
+    if engine, do: :sys.suspend(engine)
+
     # A SINGLE-slot "default" pool, so a leaked holder (e.g. a killed test task
     # bypassing `try/after`) or a leaked waiter is observable via the clean-pool
     # assertions.
@@ -311,6 +331,10 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     on_exit(fn ->
       AgentScheduler.resume()
       AgentScheduler.update_config(model_profiles: original_profiles)
+
+      # Resumed only AFTER the profile restore, so the engine's queued
+      # broadcasts are re-derived from the restored config.
+      if engine, do: :sys.resume(engine)
 
       restore_env(:compression_llm_max_attempts, original_max_attempts)
       restore_env(:llm_retry_backoff_base_ms, original_backoff_base)
