@@ -243,19 +243,6 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
               agent_count = Map.get(state.task_agent_counts, meta.task_id, 1)
               result = inject_agent_count(result, agent_count)
 
-              # Collect archive records for this task and inject into result
-              archive_records = collect_archive_records(meta.task_id)
-              result = inject_archive_records(result, archive_records)
-
-              # Per-task collection is consumed at successful root completion;
-              # a later run reusing the same task_id cannot re-collect stale
-              # records. Non-success results retain their records — the
-              # task-start reset covers them later.
-              case result do
-                {:ok, %EvoGit.Agent.Result{}} -> clear_archive_records(meta.task_id)
-                _ -> :ok
-              end
-
               GenServer.reply(meta.from, result)
 
               state = %{
@@ -328,33 +315,6 @@ defmodule EvoGit.AgentScheduler.Lifecycle do
   end
 
   def inject_agent_count(result, _agent_count), do: result
-
-  @doc """
-  Collects all archive records for the given task ID from the
-  `:evogit_archive_records` ETS table.
-  """
-  def collect_archive_records(task_id) do
-    Store.collect_archive_records(task_id)
-  end
-
-  @doc """
-  Resets the per-task archive collection; called at task start (defensive) and
-  after successful collection at root completion.
-  """
-  def clear_archive_records(task_id) do
-    Store.clear_archive_records(task_id)
-  end
-
-  @doc """
-  Injects archive records into a successful `%EvoGit.Agent.Result{}` tuple.
-  Non-success results pass through unchanged.
-  """
-  def inject_archive_records({:ok, %EvoGit.Agent.Result{} = res}, records)
-      when is_list(records) do
-    {:ok, %{res | archive_records: records}}
-  end
-
-  def inject_archive_records(result, _records), do: result
 
   @doc """
   Injects the foreign repo commits map into a successful `%EvoGit.Agent.Result{}`

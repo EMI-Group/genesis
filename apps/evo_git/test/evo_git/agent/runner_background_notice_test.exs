@@ -36,7 +36,6 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   setup %{tmp_dir: _tmp_dir} do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    create_ets_if_missing(:evogit_archive_records)
     clear_ets()
 
     name = :"runner_bg_notice_#{System.unique_integer([:positive])}"
@@ -70,7 +69,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   end
 
   defp clear_ets do
-    [:evogit_agent_state, :evogit_sched_meta, :evogit_archive_records]
+    [:evogit_agent_state, :evogit_sched_meta]
     |> Enum.each(fn name ->
       if :ets.whereis(name) != :undefined, do: :ets.delete_all_objects(name)
     end)

@@ -33,16 +33,6 @@ defmodule EvoGit.Application do
       read_concurrency: true
     ])
 
-    # Archive records keyed by {task_id, agent_id} — at most one record per
-    # agent per task, so re-writes (e.g. crash-retry double completion) are
-    # idempotent overwrites.
-    ensure_ets_table(:evogit_archive_records, [
-      :named_table,
-      :public,
-      :set,
-      read_concurrency: true
-    ])
-
     # Persistent per-repo worktree-init marker: repo_root => init timestamp.
     # Written once the destructive per-repo init (rm_rf workers dir + orphaned
     # evogit-agent-* branch cleanup + git worktree prune) has run. App-owned so
