@@ -13,6 +13,7 @@ task history via `EvoDash.NodeContext` for both the local BEAM node and a remote
 
 - `tasks_live.ex` — the TasksLive LiveView: filters, pagination, task cards, modals, and the user-initiated mutating events.
 - `page_load.ex` — `EvoDashWeb.TasksLive.PageLoad`, the ONE async, exit-safe page-load path (spawn seam, loader task, pure helpers).
+- `task_detail.ex` — `EvoDashWeb.TasksLive.TaskDetail`, the lazy per-card DETAIL + ARCHIVE cache (async fetches, cache/in-flight guards, invalidation, seq/node stale guards).
 
 ## Push-based change detection (no polling)
 
