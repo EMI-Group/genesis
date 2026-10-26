@@ -1593,6 +1593,131 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "read_file"
       assert html =~ "./README.md"
     end
+
+    test "a background shell call renders with its own accent and label", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :assistant,
+          content: [],
+          metadata: %{turn: 1},
+          tool_calls: [
+            %ReqLLM.ToolCall{
+              id: "call_bg",
+              function: %{
+                name: "bash",
+                arguments: ~s({"command":"npm run dev","run_in_background":true})
+              }
+            },
+            %ReqLLM.ToolCall{
+              id: "call_fg",
+              function: %{name: "bash", arguments: ~s({"command":"ls -la"})}
+            }
+          ]
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Background shell call")
+
+      # Distinct label + the command still renders (the row contract is intact).
+      assert panel =~ "Background shell call"
+      assert panel =~ "npm run dev"
+      # The foreground sibling keeps the historical presentation.
+      assert panel =~ "Shell call"
+      assert panel =~ "ls -la"
+
+      rows =
+        panel
+        |> Floki.parse_document!()
+        |> Floki.find("div")
+        |> Enum.filter(&(class_string(&1) =~ "flex items-start gap-2"))
+
+      bg_row = Enum.find(rows, &(Floki.text(&1) =~ "Background shell call"))
+      fg_row = Enum.find(rows, &(Floki.text(&1) =~ "Shell call"))
+
+      assert bg_row
+      assert fg_row
+      # Background accent (`info` chip + clock icon) vs the plain secondary row.
+      assert class_string(bg_row) =~ "bg-info/10"
+      assert Floki.find(bg_row, "span.hero-clock") != []
+      refute class_string(fg_row) =~ "bg-info/10"
+      assert Floki.find(fg_row, "span.hero-clock") == []
+
+      # The full-message modal carries the same distinction.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal = render(view)
+      assert modal =~ "Background shell call"
+      assert modal =~ "border-l-2 border-info/40"
+    end
+
+    test "a subagent report and a top-level tool result render differently", %{conn: conn} do
+      seed_agent(agent_id(), [
+        %ReqLLM.Message{
+          role: :tool,
+          name: "subagent_investigator",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "SUBAGENT_REPORT_BODY"}],
+          metadata: %{turn: 2}
+        },
+        %ReqLLM.Message{
+          role: :tool,
+          name: "read",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "PLAIN_READ_BODY"}],
+          metadata: %{turn: 3}
+        },
+        %ReqLLM.Message{
+          role: :tool,
+          name: "job_output",
+          content: [%ReqLLM.Message.ContentPart{type: :text, text: "JOB_OUTPUT_BODY"}],
+          metadata: %{turn: 4}
+        }
+      ])
+
+      {:ok, view, _html} = live(conn, ~p"/agents")
+      flush_agents_load(view)
+      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      panel = wait_for_text(view, "Subagent Report: subagent_investigator")
+
+      # Distinct headers, one per result kind.
+      assert panel =~ "Subagent Report: subagent_investigator"
+      assert panel =~ "Tool Result: read"
+      assert panel =~ "Background job: job_output"
+
+      doc = Floki.parse_document!(panel)
+
+      subagent_panel =
+        doc
+        |> Floki.find("div")
+        |> Enum.find(
+          &(class_string(&1) =~ "bg-accent/10" and Floki.text(&1) =~ "SUBAGENT_REPORT_BODY")
+        )
+
+      read_panel =
+        doc
+        |> Floki.find("div")
+        |> Enum.find(
+          &(class_string(&1) =~ "bg-success/10" and Floki.text(&1) =~ "PLAIN_READ_BODY")
+        )
+
+      assert subagent_panel
+      assert class_string(subagent_panel) =~ "text-accent"
+      assert class_string(subagent_panel) =~ "border-l-2 border-accent/40"
+      assert Floki.find(doc, "span.hero-user-group") != []
+
+      assert read_panel
+      assert class_string(read_panel) =~ "text-success"
+      refute class_string(read_panel) =~ "border-l-2"
+
+      job_panel =
+        doc
+        |> Floki.find("div")
+        |> Enum.find(&(class_string(&1) =~ "bg-info/10" and Floki.text(&1) =~ "JOB_OUTPUT_BODY"))
+
+      assert job_panel
+      assert class_string(job_panel) =~ "text-info"
+      assert class_string(job_panel) =~ "border-l-2 border-info/40"
+    end
   end
 
   describe "thinking block wrapping" do
@@ -3618,6 +3743,12 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp wait_for_text(view, text, timeout \\ 5000) do
     wait_until(fn -> render(view) =~ text end, timeout)
     render(view)
+  end
+
+  # Joins an element's class attribute(s) into one searchable string (Floki
+  # splits multiple `class` attributes; a well-formed element has exactly one).
+  defp class_string(element) do
+    element |> Floki.attribute("class") |> Enum.join(" ")
   end
 
   # Deletes ALL the AgentsLive env seams (each is resolved at call time inside

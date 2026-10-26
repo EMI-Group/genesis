@@ -833,8 +833,21 @@
                                         <div class="space-y-1">
                                           <%= for call <- entry.data.tool_calls do %>
                                             <% display = ToolCallDisplay.display(call) %>
-                                            <div class="flex items-start gap-2">
-                                              <span class="font-mono font-semibold shrink-0">{display.label}</span>
+                                            <% background? =
+                                              Map.get(display, :variant) == :background_shell %>
+                                            <div class={[
+                                              "flex items-start gap-2",
+                                              background? && "rounded bg-info/10 px-1 py-0.5"
+                                            ]}>
+                                              <span class={[
+                                                "font-mono font-semibold shrink-0 inline-flex items-center gap-1",
+                                                background? && "text-info"
+                                              ]}>
+                                                <%= if background? do %>
+                                                  <.icon name="hero-clock" class="size-3" />
+                                                <% end %>
+                                                {display.label}
+                                              </span>
                                               <%= if display.kind == :structured do %>
                                                 <div class="min-w-0 flex-1 max-h-12 overflow-y-auto space-y-0.5">
                                                   <%= for {key, value} <- display.rows do %>
@@ -860,13 +873,26 @@
                                 <% "tool" -> %>
                                   <div class="mt-1 space-y-2">
                                     <% tool_name = Map.get(entry.data, :tool_name) %>
+                                    <% result = tool_result_presentation(tool_name) %>
                                     <%= if tool_name do %>
-                                      <div class="text-xs bg-success/20 px-2 py-1 rounded font-mono">
-                                        {gettext("Tool Result: %{name}", name: tool_name)}
+                                      <div class={[
+                                        "text-xs px-2 py-1 rounded font-mono inline-flex items-center gap-1",
+                                        result.chip_class,
+                                        result.text_class
+                                      ]}>
+                                        <%= if result.icon do %>
+                                          <.icon name={result.icon} class="size-3" />
+                                        <% end %>
+                                        {result.label}
                                       </div>
                                     <% end %>
                                     <%= if entry.data.content && String.trim(entry.data.content) != "" do %>
-                                      <div class="text-sm bg-success/10 p-2 rounded text-success max-h-48 overflow-y-auto">
+                                      <div class={[
+                                        "text-sm p-2 rounded max-h-48 overflow-y-auto",
+                                        result.panel_class,
+                                        result.text_class,
+                                        result.border_class
+                                      ]}>
                                         <pre class="text-xs whitespace-pre-wrap">{String.slice(entry.data.content, 0, 500)}{if String.length(entry.data.content) > 500, do: "\n...[truncated]"}</pre>
                                       </div>
                                     <% else %>
@@ -979,9 +1005,24 @@
                       <div class="space-y-2">
                         <%= for call <- @selected_history_entry.data.tool_calls do %>
                           <% display = ToolCallDisplay.display(call, mode: :full) %>
-                          <div class="bg-secondary/10 p-3 rounded">
+                          <% background? = Map.get(display, :variant) == :background_shell %>
+                          <div class={[
+                            "p-3 rounded",
+                            if(background?,
+                              do: "bg-info/10 border-l-2 border-info/40",
+                              else: "bg-secondary/10"
+                            )
+                          ]}>
                             <div class="flex items-start gap-2">
-                              <span class="font-mono font-semibold shrink-0">{display.label}</span>
+                              <span class={[
+                                "font-mono font-semibold shrink-0 inline-flex items-center gap-1",
+                                background? && "text-info"
+                              ]}>
+                                <%= if background? do %>
+                                  <.icon name="hero-clock" class="size-3" />
+                                <% end %>
+                                {display.label}
+                              </span>
                               <%= if display.kind == :structured do %>
                                 <div class="min-w-0 flex-1 max-h-[60vh] overflow-y-auto space-y-1">
                                   <%= for {key, value} <- display.rows do %>
@@ -1010,12 +1051,21 @@
               <% "tool" -> %>
                 <div class="space-y-4">
                   <% tool_name = Map.get(@selected_history_entry.data, :tool_name) %>
+                  <% result = tool_result_presentation(tool_name) %>
                   <%= if tool_name do %>
-                    <h4 class="font-semibold text-success">
-                      {gettext("Tool Result: %{name}", name: tool_name)}
+                    <h4 class={["font-semibold inline-flex items-center gap-1", result.text_class]}>
+                      <%= if result.icon do %>
+                        <.icon name={result.icon} class="size-4" />
+                      <% end %>
+                      {result.label}
                     </h4>
                   <% end %>
-                  <pre class="text-sm whitespace-pre-wrap bg-success/10 p-3 rounded max-h-[60vh] overflow-y-auto"><%= safe_text(@selected_history_entry.data.content) %></pre>
+                  <pre class={[
+                    "text-sm whitespace-pre-wrap p-3 rounded max-h-[60vh] overflow-y-auto",
+                    result.panel_class,
+                    result.text_class,
+                    result.border_class
+                  ]}><%= safe_text(@selected_history_entry.data.content) %></pre>
                 </div>
               <% _ -> %>
                 <pre class="text-sm"><%= inspect(@selected_history_entry.data, pretty: true, limit: :infinity) %></pre>

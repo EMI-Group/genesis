@@ -31,6 +31,91 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
   # localized msgid, so match by position rather than by label text).
   defp row_value(%{rows: [{_key, value}]}), do: value
 
+  describe "background shell call detection" do
+    # A `bash` call carrying `run_in_background: true` starts a DETACHED job
+    # (the call returns a job id immediately) — it must be distinguishable from
+    # a foreground shell call, which keeps the plain `Shell call` descriptor.
+    test "a JSON boolean `true` yields the background variant" do
+      descriptor =
+        ToolCallDisplay.display(
+          call("bash", %{"command" => "npm run dev", "run_in_background" => true})
+        )
+
+      assert descriptor.kind == :structured
+      assert descriptor.variant == :background_shell
+      assert descriptor.label == "Background shell call"
+      assert descriptor.rows == [{"Command", "npm run dev"}]
+    end
+
+    test "the string \"true\" is accepted (the core's lenient reading)" do
+      descriptor =
+        ToolCallDisplay.display(
+          call("bash", %{"command" => "npm run dev", "run_in_background" => "true"})
+        )
+
+      assert descriptor.variant == :background_shell
+      assert descriptor.label == "Background shell call"
+      assert row_value(descriptor) == "npm run dev"
+    end
+
+    test "map-shaped arguments (not a JSON string) are detected too" do
+      map_call = %ReqLLM.ToolCall{
+        id: "c",
+        function: %{
+          name: "bash",
+          arguments: %{"command" => "make", "run_in_background" => true}
+        }
+      }
+
+      assert %{variant: :background_shell, label: "Background shell call"} =
+               ToolCallDisplay.display(map_call)
+    end
+
+    test "false, \"false\", absent and junk values all stay a normal Shell call" do
+      for args <- [
+            %{"command" => "ls", "run_in_background" => false},
+            %{"command" => "ls", "run_in_background" => "false"},
+            %{"command" => "ls"},
+            %{"command" => "ls", "run_in_background" => "yes"},
+            %{"command" => "ls", "run_in_background" => 1},
+            %{"command" => "ls", "run_in_background" => nil}
+          ] do
+        descriptor = ToolCallDisplay.display(call("bash", args))
+
+        assert descriptor.label == "Shell call"
+        assert descriptor.kind == :structured
+        assert row_value(descriptor) == "ls"
+        # The historical descriptor shape stays byte-identical (no :variant key).
+        refute Map.has_key?(descriptor, :variant)
+      end
+    end
+
+    test "undecodable arguments fall back to a normal Shell call" do
+      raw_call = %ReqLLM.ToolCall{id: "c", function: %{name: "bash", arguments: "not json"}}
+
+      descriptor = ToolCallDisplay.display(raw_call)
+
+      assert descriptor.label == "Shell call"
+      refute Map.has_key?(descriptor, :variant)
+    end
+
+    test "the flag only affects the shell tool" do
+      descriptor =
+        ToolCallDisplay.display(call("read", %{"path" => "./a.ex", "run_in_background" => true}))
+
+      assert descriptor == %{label: "read_file", kind: :inline, summary: "./a.ex"}
+    end
+
+    test "the background variant keeps the 200-char Command truncation contract" do
+      cmd = String.duplicate("x", 260)
+
+      descriptor =
+        ToolCallDisplay.display(call("bash", %{"command" => cmd, "run_in_background" => true}))
+
+      assert row_value(descriptor) == String.slice(cmd, 0, 200) <> "…"
+    end
+  end
+
   describe "display/1 truncation (compact mode)" do
     test "a shell call's Command row is capped at 200 chars plus a trailing ellipsis" do
       cmd = String.duplicate("x", 260)
