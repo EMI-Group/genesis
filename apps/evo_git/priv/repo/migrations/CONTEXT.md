@@ -19,7 +19,7 @@ Six contiguous versions (1..6); the chain is optimized for a NEW user's FIRST bo
 
 - The `2026081500000N` prefix is a SYNTHETIC fixed epoch, not a date: only the numeric order matters, because `Ecto.Migrator` sorts by the integer version.
 - A shipped version number is an identity — NEVER renumber it (versions 1, 2 and 3 shipped in v0.13.8).
-- A new migration MUST use a version above `202608150000003` and a module name no other file uses (`Ecto.Migrator.ensure_no_duplication!/1` keys on the module for a preloaded source).
+- A new migration MUST take the next FREE version above the highest existing one (`20260815000006`) and a module name no other file uses (`Ecto.Migrator.ensure_no_duplication!/1` keys on the module for a preloaded source).
 - Migrations landing on top of a release are additive: add a new version, never fold new DDL into an already-shipped one.
 
 ## Rules for editing this directory
@@ -65,5 +65,6 @@ Six contiguous versions (1..6); the chain is optimized for a NEW user's FIRST bo
 - `archive_migration_test.exs` — version 5's archive table, fan-out, `archive_records` strip and column drop.
 - `composite_index_test.exs` — version 3's two composites (emitted-SQL plans, DDL shape, post-condition).
 - `covering_index_test.exs` — version 4's two covering indexes (emitted-SQL plans, DDL shape, post-condition).
+- `canonical_schema_test.exs` — the fresh-database canonical schema: six versions, the 19-column `tasks`, the six final indexes, the archive table, and the captured boot SQL proving no create-then-drop.
 - `test/evo_git/migrate_store_test.exs` — the whole chain on fresh and legacy files through `mix migrate.store`.
 - `test/evo_git/store/repo_test.exs` — infra contracts (applied versions, the `tasks`/`projects`/archive shapes, the six `idx_tasks_*` indexes, `run_migrations/1` idempotency).
