@@ -543,7 +543,12 @@ defmodule EvoGit.Sandbox.Background do
         "ExecMainCode"
       ]
 
-      case System.cmd("systemctl", args, stderr_to_stdout: false) do
+      # stderr IS merged: on a host without a reachable systemd user bus
+      # (containers, headless CI) `systemctl` prints its diagnostic there, and
+      # leaking that to the VM's stderr would spam every caller's log. The
+      # captured text is harmless — the exit code alone decides, and
+      # `parse_systemctl_show/1` skips anything that is not a `Key=Value` line.
+      case System.cmd("systemctl", args, stderr_to_stdout: true) do
         {output, 0} -> output |> parse_systemctl_show() |> classify_unit_state()
         {_output, _code} -> {:unknown, nil}
       end
@@ -650,19 +655,21 @@ defmodule EvoGit.Sandbox.Background do
   # both extra and running-together whitespace; the description is the only
   # free-form column, so the remaining columns are re-joined with one space.
   # Lines with fewer than four columns (garbled output, a stray legend/footer)
-  # are skipped. A non-binary input yields `[]`.
+  # are skipped, and so is any line whose UNIT column is not a `*.service` unit
+  # name — that is what keeps a diagnostic line from the merged stderr stream
+  # (e.g. "Failed to connect to user scope bus …", which has enough columns)
+  # out of the table. A non-binary input yields `[]`.
   @spec parse_list_units(term()) ::
           [{String.t(), String.t(), String.t(), String.t(), String.t()}]
   def parse_list_units(output) when is_binary(output) do
     output
     |> String.split("\n")
     |> Enum.flat_map(fn line ->
-      case String.split(line) do
-        [unit, load, active, sub | description] ->
-          [{unit, load, active, sub, Enum.join(description, " ")}]
-
-        _ ->
-          []
+      with [unit, load, active, sub | description] <- String.split(line),
+           true <- String.ends_with?(unit, ".service") do
+        [{unit, load, active, sub, Enum.join(description, " ")}]
+      else
+        _ -> []
       end
     end)
   end
@@ -694,10 +701,13 @@ defmodule EvoGit.Sandbox.Background do
     if System.find_executable("systemctl") do
       args = ["--user", "list-units", "--all", "--plain", "--no-legend", "genesis-job-*"]
 
-      # stderr is NOT merged: a host whose systemd user bus is unreachable
+      # stderr IS merged: a host whose systemd user bus is unreachable
       # (containers, headless CI, a systemd-less distro) prints an error there
-      # and exits non-zero — that must stay out of the parsed table.
-      case System.cmd("systemctl", args, stderr_to_stdout: false) do
+      # and exits non-zero — that path takes the `{_output, _code}` arm and the
+      # table is never parsed. If the call SUCCEEDS while emitting diagnostics,
+      # the merged lines cannot masquerade as rows: `parse_list_units/1` only
+      # accepts a `*.service` UNIT column.
+      case System.cmd("systemctl", args, stderr_to_stdout: true) do
         {output, 0} -> parse_list_units(output)
         {_output, _code} -> []
       end

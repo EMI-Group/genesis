@@ -167,6 +167,18 @@ defmodule EvoGit.Sandbox.BackgroundTest do
              }
     end
 
+    test "ignores a systemd diagnostic merged in from stderr" do
+      # stderr is merged into the captured output (so it cannot leak into the
+      # VM's stderr); the diagnostic has no `Key=Value` shape, so it is skipped
+      # and the classification is unchanged.
+      output =
+        "Failed to connect to user scope bus via local transport: No data available\n" <>
+          "ActiveState=failed\nExecMainCode=1\nExecMainStatus=2\n"
+
+      assert output |> Background.parse_systemctl_show() |> Background.classify_unit_state() ==
+               {:exited, 2}
+    end
+
     test "returns %{} for non-binary input" do
       assert Background.parse_systemctl_show(nil) == %{}
       assert Background.parse_systemctl_show(42) == %{}
@@ -357,6 +369,20 @@ defmodule EvoGit.Sandbox.BackgroundTest do
       assert Background.parse_list_units(output) == [
                {"genesis-job-b1-x.service", "loaded", "active", "running", "ok"},
                {"genesis-job-b2-y.service", "loaded", "inactive", "dead", ""}
+             ]
+    end
+
+    test "skips a diagnostic merged in from stderr even when it has enough columns" do
+      # stderr is merged into the captured output; the diagnostic has four-plus
+      # whitespace-separated columns, so only the `*.service` UNIT check keeps
+      # it out of the table.
+      output = """
+      Failed to connect to user scope bus via local transport: No data available
+      genesis-job-b1-x.service loaded active running ok
+      """
+
+      assert Background.parse_list_units(output) == [
+               {"genesis-job-b1-x.service", "loaded", "active", "running", "ok"}
              ]
     end
 
