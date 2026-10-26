@@ -8,7 +8,7 @@ defmodule EvoGit.Store.RepoTest do
   Pinned contracts:
 
     * `start_dynamic/1` applies exactly the five shipped migration versions
-    * the resulting `tasks` table has the exact 20-column shape (names, ORDER,
+    * the resulting `tasks` table has the exact 19-column shape (names, ORDER,
       DDL types, notnull/pk flags) of the baseline migration, and the physical
       column order matches `TaskRow.columns/0`
     * the 10 named `idx_tasks_*` indexes exist (the baseline 6 + the two
@@ -38,6 +38,7 @@ defmodule EvoGit.Store.RepoTest do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Boot
+  alias EvoGit.Store.Codec
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
   alias EvoGit.Store.Schemas.TaskRow
@@ -45,23 +46,31 @@ defmodule EvoGit.Store.RepoTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @compress_rows_version 20_260_815_000_004
+  @rewrite_rows_version 20_260_815_000_004
   @covering_index_version 20_260_815_000_005
-  # Ascending, exactly as `schema_migrations` reports it: the compression /
-  # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
-  # the index walk never crawls the unrewritten blob overflow chains.
+  # Ascending, exactly as `schema_migrations` reports it: the oversized-row
+  # rewrite (004) runs BEFORE the covering-index build (005) so the index walk
+  # never crawls the unrewritten blob overflow chains.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
-    @compress_rows_version,
+    @rewrite_rows_version,
     @covering_index_version
   ]
+
+  # `tasks` columns that no schema field maps to any more: the per-agent
+  # archive moved to its own relational table, so `archive_metadata` is
+  # RETIRED — no `Codec`/`TaskRow`/read/write path touches it. It is dropped
+  # from the physical table by the archive migration; the shape assertions
+  # below therefore cover the LIVE column set, which is exact either way.
+  @retired_task_columns ["archive_metadata"]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
   # exactly what the baseline migration's CREATE TABLE declares, in order:
   # every column TEXT except `agent_count`/`lease_expires_at` (INTEGER), only
-  # `status` NOT NULL, `id` the TEXT primary key.
+  # `status` NOT NULL, `id` the TEXT primary key. `cid` is compared per live
+  # row POSITION (see the shape tests), not literally.
   @task_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -76,13 +85,12 @@ defmodule EvoGit.Store.RepoTest do
     [10, "agent_count", "INTEGER", 0, nil, 0],
     [11, "base_sha", "TEXT", 0, nil, 0],
     [12, "commit_sha", "TEXT", 0, nil, 0],
-    [13, "archive_metadata", "TEXT", 0, nil, 0],
-    [14, "lease_expires_at", "INTEGER", 0, nil, 0],
-    [15, "model_id", "TEXT", 0, nil, 0],
-    [16, "project_path", "TEXT", 0, nil, 0],
-    [17, "branch_name", "TEXT", 0, nil, 0],
-    [18, "error", "TEXT", 0, nil, 0],
-    [19, "updated_at", "TEXT", 0, nil, 0]
+    [13, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [14, "model_id", "TEXT", 0, nil, 0],
+    [15, "project_path", "TEXT", 0, nil, 0],
+    [16, "branch_name", "TEXT", 0, nil, 0],
+    [17, "error", "TEXT", 0, nil, 0],
+    [18, "updated_at", "TEXT", 0, nil, 0]
   ]
 
   # The 6 named indexes created by the baseline migration (CREATE INDEX IF NOT
@@ -95,7 +103,7 @@ defmodule EvoGit.Store.RepoTest do
     "idx_tasks_updated_at",
     "idx_tasks_started_at",
     # The two COVERING indexes added by `20260815000005_covering_indexes`
-    # (built AFTER the 004 compression rewrite — see that migration's moduledoc).
+    # (built AFTER the 004 oversized-row rewrite — see that migration's moduledoc).
     "idx_tasks_status_updated_at_id",
     "idx_tasks_finished_at_id"
   ]
@@ -168,6 +176,13 @@ defmodule EvoGit.Store.RepoTest do
 
   defp query_rows(pid, sql), do: query!(pid, sql).rows
 
+  # `PRAGMA table_info(tasks)` without the RETIRED columns — the LIVE physical
+  # shape every read/write path and schema field covers.
+  defp live_task_table_info(pid) do
+    query_rows(pid, "PRAGMA table_info(tasks)")
+    |> Enum.reject(fn [_cid, name | _] -> name in @retired_task_columns end)
+  end
+
   defp migration_versions(pid) do
     RepoScope.with_repo(pid, fn ->
       Repo.all(Ecto.Query.from(m in "schema_migrations", select: m.version, order_by: m.version))
@@ -219,28 +234,39 @@ defmodule EvoGit.Store.RepoTest do
   # ── tasks table shape ────────────────────────────────────────────────────
 
   describe "tasks table shape" do
-    test "PRAGMA table_info returns the exact 20 rows: names in order, types, notnull/pk flags" do
+    test "PRAGMA table_info returns the exact 19 live rows: names in order, types, notnull/pk flags" do
       pid = start_repo!(:shape)
 
       result = query!(pid, "PRAGMA table_info(tasks)")
 
       assert result.columns == ["cid", "name", "type", "notnull", "dflt_value", "pk"]
-      assert result.num_rows == 20
-      assert result.rows == @task_table_info_rows
+
+      rows = live_task_table_info(pid)
+      assert length(rows) == 19
+
+      assert Enum.map(rows, fn [_cid | rest] -> rest end) ==
+               Enum.map(@task_table_info_rows, fn [_cid | rest] -> rest end)
     end
 
     test "physical column order matches the TaskRow schema field order" do
       pid = start_repo!(:schema_order)
 
-      assert query_rows(pid, "PRAGMA table_info(tasks)")
+      assert live_task_table_info(pid)
              |> Enum.map(fn [_cid, name | _] -> name end) == TaskRow.columns()
+    end
+
+    test "the retired archive column has no schema field behind it" do
+      for retired <- @retired_task_columns do
+        refute retired in TaskRow.columns()
+        refute retired in Codec.task_columns()
+      end
     end
 
     test "only status is NOT NULL and only id is the primary key" do
       pid = start_repo!(:flags)
 
       # notnull/pk are the PRAGMA's integer 0/1 flags, not booleans.
-      for [_cid, name, _type, notnull, _dflt, pk] <- query_rows(pid, "PRAGMA table_info(tasks)") do
+      for [_cid, name, _type, notnull, _dflt, pk] <- live_task_table_info(pid) do
         assert {notnull, pk} ==
                  {if(name == "status", do: 1, else: 0), if(name == "id", do: 1, else: 0)}
       end
