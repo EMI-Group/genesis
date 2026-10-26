@@ -18,6 +18,33 @@
     <div class="agents-page-layout animate-fade-in-up animation-delay-100">
       <!-- Left Column: Tree + Legend -->
       <div class="agents-left-col">
+        <%!-- Page-load failure: the last good tree stays rendered, plus this
+        retry-able inline banner (no polling, no auto-retry timer). --%>
+        <%= if @agents_error do %>
+          <div
+            id="agents-load-error"
+            class="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-error/30 bg-error/5 px-4 py-3"
+          >
+            <.icon name="hero-exclamation-triangle" class="size-5 shrink-0 text-error" />
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-error">
+                {gettext("Failed to load agents from this node.")}
+              </p>
+              <p class="text-xs text-base-content/70 font-mono break-all">
+                {inspect(@agents_error)}
+              </p>
+            </div>
+            <button
+              id="agents-load-retry"
+              type="button"
+              class="btn btn-sm btn-outline shrink-0"
+              phx-click="retry_agents_load"
+              disabled={@agents_loading}
+            >
+              {gettext("Retry")}
+            </button>
+          </div>
+        <% end %>
         <!-- Agent Tree View -->
         <div class="agents-tree-panel card bg-base-100 shadow-md border border-base-300 rounded-xl">
           <div class="card-body p-4">

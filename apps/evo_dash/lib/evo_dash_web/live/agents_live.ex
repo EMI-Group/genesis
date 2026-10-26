@@ -13,16 +13,23 @@ defmodule EvoDashWeb.AgentsLive do
   ONE shared path for local and remote events — foreign-node events are
   dropped.
 
-  ALL node-aware data loading is ASYNC: the page load (`handle_params`),
-  broadcast-triggered refreshes, and history fetches run in
-  `EvoDash.TaskSupervisor` children — the LiveView process never blocks on a
-  cross-node RPC. Results arrive as tagged messages guarded by monotonic
-  generation/sequence counters (stale results are dropped) and the node
-  currently being viewed. History transfers are gated on the
-  `RemoteAPI.list_agents/0` `:message_count` field: an agent's full history is
+  ALL node-aware data loading is ASYNC: the page load (spawned by
+  `handle_params/3` on the CONNECTED mount only), broadcast-triggered
+  refreshes, and history fetches run in `EvoDash.TaskSupervisor` children —
+  the LiveView process never blocks on a cross-node RPC. Every spawned loader
+  runs its call through `EvoDash.SafeCall.run/1`, so a `GenServer.call`
+  timeout / dead target (an EXIT, not a rescue-able exception) comes back as an
+  error VALUE and the result message is always sent. Results arrive as tagged
+  messages guarded by monotonic generation/sequence counters (stale results are
+  dropped) and the node currently being viewed. History transfers are gated on
+  the `RemoteAPI.list_agents/0` `:message_count` field: an agent's full history is
   re-fetched only when its message count changed (see `HistoryGate`).
+  A failed page load keeps the last good tree, clears the loading flag and
+  records a retry-able `@agents_error` banner.
   """
   use EvoDashWeb, :live_view
+
+  alias EvoDash.SafeCall
 
   alias EvoDashWeb.AgentsLive.{
     CommitGraph,
@@ -90,9 +97,17 @@ defmodule EvoDashWeb.AgentsLive do
         pending_user_messages: %{},
         # Async page-load state: agents_loading gates the tree's loading UI;
         # load_generation is a monotonic counter that stale-guards async load
-        # results (only the newest generation may apply).
+        # results (only the newest generation may apply). The initial value is
+        # TRUE so the dead render paints the loading shell — the load itself is
+        # spawned ONLY by the connected mount (handle_params/3 gates it on
+        # connected?/1), never by the dead render.
         agents_loading: true,
         load_generation: 0,
+        # Last page-load failure (nil = no error). Set alongside
+        # `agents_loading: false` by the {:agents_data_loaded, ...} error
+        # branch and rendered as a retry-able inline banner; cleared whenever a
+        # load starts and on any successful load.
+        agents_error: nil,
         # Monotonic sequence for async refresh tasks (broadcast-triggered
         # fallbacks) — never reset; the newest seq wins (mirrors
         # system_live's chart_seed_seq pattern).
@@ -183,6 +198,7 @@ defmodule EvoDashWeb.AgentsLive do
           pending_user_messages: %{},
           history_gate: %{},
           threshold_cache: nil,
+          agents_error: nil,
           history_loading_agent_id: nil,
           full_message_pending_agent_id: nil,
           # Drop any buffered agent events from the previous node so stale-node
@@ -212,10 +228,12 @@ defmodule EvoDashWeb.AgentsLive do
         assign(socket, :previous_node, current_node)
       end
 
-    # Kick off the async page load (agents + config status + threshold cache).
-    # The generation guard in handle_info({:agents_data_loaded, ...}) drops
-    # stale results, so starting unconditionally here is safe.
-    socket = start_async_load(socket)
+    # Kick off the async page load (agents + config status + threshold cache),
+    # but ONLY on the connected mount: the dead render paints the shell and
+    # must not spawn a load whose result would be sent to a dying process. The
+    # generation guard in handle_info({:agents_data_loaded, ...}) drops stale
+    # results, so the connected load is safe to start unconditionally.
+    socket = if connected?(socket), do: start_async_load(socket), else: socket
 
     {:noreply, socket}
   end
@@ -239,15 +257,18 @@ defmodule EvoDashWeb.AgentsLive do
               config_status: config_status,
               threshold_cache: threshold_cache,
               agents_loading: false,
+              agents_error: nil,
               previous_node: node
             )
 
           {:noreply, socket}
 
-        {:error, _reason} ->
-          # Keep whatever is currently rendered; just clear the loading flag so
-          # the page is usable (the broadcast paths will retry).
-          {:noreply, assign(socket, :agents_loading, false)}
+        {:error, reason} ->
+          # Keep whatever is currently rendered (the last good tree) and clear
+          # the loading flag, recording a retry-able error the template renders
+          # as an inline banner with a Retry button. No polling / auto-retry:
+          # the broadcast paths and the explicit retry event re-run the load.
+          {:noreply, assign(socket, agents_loading: false, agents_error: reason)}
       end
     end
   end
@@ -409,9 +430,10 @@ defmodule EvoDashWeb.AgentsLive do
   def handle_info({:agent_history_loaded, agent_id, node, result, index}, socket) do
     # Stale-guard: only apply history for the currently selected agent on the
     # node being viewed (the user may have selected another agent or switched
-    # nodes while the fetch was in flight).
+    # nodes while the fetch was in flight). A DROPPED same-node result still
+    # releases this agent's loading flags (see handle_dropped_history_result/3).
     if agent_id != socket.assigns.selected_agent_id or node != socket.assigns.current_node do
-      {:noreply, socket}
+      {:noreply, handle_dropped_history_result(socket, agent_id, node)}
     else
       case result do
         {:ok, entries} ->
@@ -670,9 +692,12 @@ defmodule EvoDashWeb.AgentsLive do
     # local path (RemoteNode wraps the RemoteAPI result in {:ok, _}); erpc
     # failures surface as {:error, reason}. Only {:ok, :ok} is a real success —
     # matching the old {:ok, _} falsely reported success for missing agents.
-    # Deliberately synchronous: the user expects immediate feedback (optimistic
-    # display), and this call is a cheap local/remote store append.
-    case EvoDash.NodeContext.send_user_message(node, agent_id, message) do
+    # Deliberately synchronous (the user expects immediate feedback —
+    # optimistic display — and this call is a cheap local/remote store append),
+    # but wrapped in the exit-safe boundary: a GenServer.call timeout / dead
+    # scheduler EXITS its caller, which would crash the page instead of
+    # flashing an error.
+    case send_user_message_safely(node, agent_id, message) do
       {:ok, :ok} ->
         optimistic_messages =
           OptimisticMessages.append(socket.assigns.optimistic_messages, agent_id, message)
@@ -691,6 +716,28 @@ defmodule EvoDashWeb.AgentsLive do
 
       {:error, reason} ->
         {:noreply, send_message_error_flash(socket, reason)}
+
+      other ->
+        {:noreply, send_message_error_flash(socket, other)}
+    end
+  end
+
+  @impl true
+  # Retry button on the page-load error banner: clear the recorded error and
+  # re-run the SAME async load (no polling, no auto-retry timer).
+  def handle_event("retry_agents_load", _params, socket) do
+    {:noreply, socket |> assign(:agents_error, nil) |> start_async_load()}
+  end
+
+  # Sends a user message through the exit-safe boundary and FLATTENS
+  # `EvoDash.SafeCall`'s wrapper, so the result keeps its documented shape:
+  # `{:ok, :ok}` (success), `{:ok, {:error, reason}}` (missing agent) or
+  # `{:error, reason}` (RPC / exit failure — a `GenServer.call` timeout lands
+  # here instead of killing the LiveView).
+  defp send_user_message_safely(node, agent_id, message) do
+    case SafeCall.run(fn -> EvoDash.NodeContext.send_user_message(node, agent_id, message) end) do
+      {:ok, value} -> value
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -708,20 +755,22 @@ defmodule EvoDashWeb.AgentsLive do
     gen = Map.get(socket.assigns, :load_generation, 0) + 1
     threshold_cache = socket.assigns.threshold_cache
 
-    socket = assign(socket, agents_loading: true, load_generation: gen)
+    # A new load supersedes any previous failure: the banner clears as soon as
+    # the retry is in flight.
+    socket = assign(socket, agents_loading: true, load_generation: gen, agents_error: nil)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Node-boundary rescue: the load RPCs to a possibly-dead remote daemon
-      # (or a node that disconnected mid-flight). (1) Do we expect this error?
-      # Yes — the remote daemon can die or the SSH tunnel drop between polls.
-      # (2) Is try/rescue the cleanest approach? Yes — the alternative is the
-      # page wedging at the loading state forever; the stale-guard below drops
-      # late results and an error just clears the loading flag.
+      # Exit-safe boundary: the load RPCs to a possibly-dead remote daemon (or a
+      # node that disconnected mid-flight). `SafeCall.run/1` captures an `exit`
+      # (a GenServer.call timeout / dead target, which `rescue` cannot catch) as
+      # an error VALUE, so the result message is ALWAYS sent and
+      # `agents_loading` can never wedge.
       result =
-        try do
-          EvoDashWeb.AgentsLive.LoadData.load(node, threshold_cache)
-        rescue
-          _ -> {:error, :load_failed}
+        case SafeCall.run(fn -> LoadData.load(node, threshold_cache) end) do
+          {:ok, {:ok, data}} -> {:ok, data}
+          {:ok, {:error, reason}} -> {:error, reason}
+          {:error, reason} -> {:error, reason}
+          {:ok, other} -> {:error, {:unexpected_load_result, other}}
         end
 
       send(parent, {:agents_data_loaded, node, gen, result})
@@ -743,17 +792,15 @@ defmodule EvoDashWeb.AgentsLive do
     socket = assign(socket, :refresh_seq, seq)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Node-boundary rescue: the refresh RPCs to a possibly-dead remote
-      # daemon. (1) Do we expect this error? Yes — the remote node can die or
-      # disconnect mid-flight. (2) Is try/rescue the cleanest approach? Yes —
-      # the seq stale-guard drops late/duplicate results and an error keeps the
-      # last good tree.
+      # Exit-safe boundary: the refresh RPCs to a possibly-dead remote daemon.
+      # `SafeCall.run/1` turns an exit (which `rescue` cannot catch) into an
+      # error value, so the result message is always sent; the seq stale-guard
+      # drops late/duplicate results and an error keeps the last good tree.
       result =
-        try do
-          {agents, cache} = EvoDashWeb.AgentsLive.LoadData.refresh(node, threshold_cache)
-          {:ok, agents, cache}
-        rescue
-          _ -> {:error, :refresh_failed}
+        case SafeCall.run(fn -> LoadData.refresh(node, threshold_cache) end) do
+          {:ok, {agents, cache}} -> {:ok, agents, cache}
+          {:error, reason} -> {:error, reason}
+          {:ok, other} -> {:error, {:unexpected_refresh_result, other}}
         end
 
       send(parent, {:agents_refresh_result, seq, node, result})
@@ -772,30 +819,56 @@ defmodule EvoDashWeb.AgentsLive do
     node = socket.assigns.current_node
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Node-boundary rescue: the history RPC targets a possibly-dead remote
-      # daemon. (1) Do we expect this error? Yes — the remote node can die
-      # mid-flight. (2) Is try/rescue the cleanest approach? Yes — the
-      # stale-guard drops late results and an error just clears the loading
-      # flags.
-      result =
-        try do
-          runner =
-            Application.get_env(
-              :evo_dash,
-              :agents_history_runner,
-              &EvoDash.NodeContext.get_agent_history/2
-            )
+      runner =
+        Application.get_env(
+          :evo_dash,
+          :agents_history_runner,
+          &EvoDash.NodeContext.get_agent_history/2
+        )
 
-          entries = runner.(node, agent_id) |> messages_to_history_entries()
-          {:ok, entries}
-        rescue
-          _ -> {:error, :history_fetch_failed}
-        end
+      # Exit-safe boundary: the history RPC targets a possibly-dead remote
+      # daemon. `SafeCall.run/1` captures an exit (which `rescue` cannot catch)
+      # as an error value, so the result message is always sent and the
+      # history loading flags are always released — by the result handler.
+      result = SafeCall.run(fn -> runner.(node, agent_id) |> messages_to_history_entries() end)
 
       send(parent, {:agent_history_loaded, agent_id, node, result, index})
     end)
 
     socket
+  end
+
+  # Releases the per-agent history loading flags for `agent_id`, but ONLY when
+  # they still name THAT agent — a newer fetch for another agent keeps its own
+  # flags. Called from the stale-guard of {:agent_history_loaded, ...}, so a
+  # dropped result can never leave a spinner running or block every later
+  # fetch through the overlap guard.
+  defp clear_history_loading_flags(socket, agent_id) do
+    socket
+    |> clear_flag_if_agent(:history_loading_agent_id, agent_id)
+    |> clear_flag_if_agent(:full_message_pending_agent_id, agent_id)
+  end
+
+  # A history result dropped by the stale-guard still releases this agent's
+  # loading flags when it came from the CURRENT node (the selection moved on
+  # while the fetch was in flight). A cross-node result touches NOTHING: the
+  # node-switch reset already cleared the flags, so any flag currently set
+  # belongs to the new node's context and must not be cleared by a stale node's
+  # (colliding per-node) agent id.
+  defp handle_dropped_history_result(socket, agent_id, node) do
+    if node == socket.assigns.current_node do
+      clear_history_loading_flags(socket, agent_id)
+    else
+      socket
+    end
+  end
+
+  defp clear_flag_if_agent(socket, key, agent_id) do
+    if Map.get(socket.assigns, key) == agent_id do
+      assign(socket, key, nil)
+    else
+      socket
+    end
   end
 
   # Fetches (or refreshes) the commit graph, but ONLY while the commit-history
@@ -1008,24 +1081,23 @@ defmodule EvoDashWeb.AgentsLive do
       )
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      # Node-boundary rescue: the commit-graph RPC targets a possibly-dead remote
-      # daemon (or a node that disconnected mid-flight). (1) Do we expect this
-      # error? Yes — the remote daemon can die or the SSH tunnel drop between
-      # fetches. (2) Is try/rescue the cleanest approach? Yes — the alternative is
-      # the commit view wedging on a spinner forever; the seq+node stale-guard
-      # drops late results and an error merely keeps the last good graph.
-      result =
-        try do
-          runner =
-            Application.get_env(
-              :evo_dash,
-              :agents_commit_graph_runner,
-              &EvoDash.NodeContext.list_task_commit_graph/5
-            )
+      runner =
+        Application.get_env(
+          :evo_dash,
+          :agents_commit_graph_runner,
+          &EvoDash.NodeContext.list_task_commit_graph/5
+        )
 
-          CommitGraphRefresh.fetch_result(groups, runner, node)
-        rescue
-          _ -> {:error, :commit_graph_fetch_failed}
+      # Exit-safe boundary: the commit-graph RPC targets a possibly-dead remote
+      # daemon (or a node that disconnected mid-flight). `SafeCall.run/1`
+      # captures an exit (which `rescue` cannot catch) as an error value, so the
+      # result message is ALWAYS sent and the commit view can never wedge on a
+      # spinner. A folded per-group `{:error, failure}` passes through verbatim
+      # (the renderer's stale-warning strip / first-load error strip).
+      result =
+        case SafeCall.run(fn -> CommitGraphRefresh.fetch_result(groups, runner, node) end) do
+          {:ok, folded_result} -> folded_result
+          {:error, _reason} -> {:error, :commit_graph_fetch_failed}
         end
 
       send(parent, {:commit_graph_loaded, node, seq, result})
