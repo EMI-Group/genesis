@@ -682,17 +682,23 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
   defp wait_until(fun, timeout \\ 5_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait_until(fun, deadline)
+    do_wait_until(fun, deadline, 1)
   end
 
-  defp do_wait_until(fun, deadline) do
+  # Beat starts at 1ms and doubles up to 15ms. The conditions gate REAL manager
+  # work (an admission, a permit release, a registration drop) that typically
+  # lands in well under a millisecond, so a fixed 15ms beat quantized every wait
+  # to a full beat. Only the POLL INTERVAL shrinks — every condition, deadline
+  # and assertion is unchanged.
+  defp do_wait_until(fun, deadline, interval) do
     cond do
       fun.() ->
         :ok
 
       System.monotonic_time(:millisecond) < deadline ->
-        Process.sleep(15)
-        do_wait_until(fun, deadline)
+        beat = min(interval, 15)
+        Process.sleep(beat)
+        do_wait_until(fun, deadline, beat * 2)
 
       true ->
         flunk("wait_until timed out")

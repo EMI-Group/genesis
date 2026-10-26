@@ -25,7 +25,32 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   setup_all do
     template = git_template!()
     on_exit(fn -> File.rm_rf!(template) end)
-    %{git_template: template}
+
+    # The foreign-repo describes all start from the SAME two repository shapes,
+    # and they only READ them (`build_subagent_specs/3` resolves the foreign
+    # starting commit; nothing in those tests writes, stages or commits). So the
+    # two variants are built ONCE here and COPIED per test — each test still owns
+    # an independent repo (its own path, its own `.git`), it just no longer pays
+    # `git add` + `git commit` for content every test reproduces identically.
+    seed_root = module_scratch_dir!("subagent_processing_fixtures")
+    on_exit(fn -> File.rm_rf!(seed_root) end)
+
+    one_commit = Path.join(seed_root, "one_commit")
+    one_commit_shas = init_repo(template, one_commit, [{"file.txt", "one", "c1"}])
+
+    two_commits = Path.join(seed_root, "two_commits")
+
+    two_commit_shas =
+      init_repo(template, two_commits, [
+        {"file.txt", "one", "c1"},
+        {"file2.txt", "two", "c2"}
+      ])
+
+    %{
+      git_template: template,
+      one_commit_fixture: {one_commit, one_commit_shas},
+      two_commit_fixture: {two_commits, two_commit_shas}
+    }
   end
 
   describe "resolve_subagent_path/3" do
@@ -703,10 +728,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "per-repo base_sha is honored as the foreign phylo starting commit",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, one_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      [sha1] = init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      [sha1] = copy_fixture!(fixture, foreign_root)
 
       state = %LoopState{
         agent_id: agent_id,
@@ -733,15 +757,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "per-repo base_sha takes precedence over the tracked foreign_repo_commits map",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, two_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
 
-      [sha1, sha2] =
-        init_repo(template, foreign_root, [
-          {"file.txt", "one", "c1"},
-          {"file2.txt", "two", "c2"}
-        ])
+      [sha1, sha2] = copy_fixture!(fixture, foreign_root)
 
       refute sha1 == sha2
 
@@ -772,11 +791,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     test "invalid base_sha returns an error tuple", %{
       agent_id: agent_id,
       tmp_dir: tmp_dir,
-      git_template: template
+      one_commit_fixture: fixture
     } do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      copy_fixture!(fixture, foreign_root)
 
       state = %LoopState{
         agent_id: agent_id,
@@ -806,10 +824,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     # `agent_module` / `foreign_repos` wiring fails here instead of passing.
 
     test "absolute path into a writable foreign repo yields an authorized writable-foreign spec",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, one_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      copy_fixture!(fixture, foreign_root)
 
       state = %LoopState{
         agent_id: agent_id,
@@ -836,10 +853,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "relative delegation from a parent inside a writable foreign repo inherits the foreign repo id and is authorized",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, one_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      copy_fixture!(fixture, foreign_root)
 
       # The parent is itself running INSIDE the foreign repo (the NESTED case),
       # so a RELATIVE path targets the parent's own repo root. Its OWN repo_id
@@ -870,10 +886,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "relative delegation from a foreign-repo parent resolves the child's repo id and worktree root to the FOREIGN repo",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, one_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      copy_fixture!(fixture, foreign_root)
 
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
@@ -914,10 +929,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "store_sub_result/4 advances the tracked foreign commit only for the real builder's authorized spec",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, one_commit_fixture: fixture} do
       foreign_root = Path.join(tmp_dir, "foreign")
-      File.mkdir_p!(foreign_root)
-      [sha] = init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
+      [sha] = copy_fixture!(fixture, foreign_root)
 
       writable_parent = 99_001
       primary_parent = 99_002
@@ -1463,8 +1477,25 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   #
   # EVERY repo starts as a copy of the module's `.git` template (built once in
   # `setup_all/1`), so `git init` + the fixture identity config cost 4
-  # subprocesses per MODULE rather than per test.
+  # subprocesses per MODULE rather than per test. The template's identity is
+  # also PRIMED into `EvoGit.GitEnv`'s per-repo memo on every copy
+  # (`prime_identity!/1`) — the first git invocation in a fresh repo would
+  # otherwise spend two extra `git config` subprocesses re-reading the very
+  # values the template already pins.
   # ---------------------------------------------------------------------------
+
+  # A module-wide scratch directory (ExUnit's `:tmp_dir` is per test, and these
+  # fixtures must outlive a single test).
+  defp module_scratch_dir!(prefix) do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+    dir
+  end
 
   # Builds the per-module repository template: `git init` with an EMPTY template
   # dir (no hook samples / description boilerplate), the fixture commit identity
@@ -1502,7 +1533,28 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   defp init_repo(template, dir) do
     File.mkdir_p!(dir)
     File.cp_r!(Path.join(template, ".git"), Path.join(dir, ".git"))
+    prime_identity!(dir)
     dir
+  end
+
+  # Copies a repository PREPARED in `setup_all/1` (already carrying its commits)
+  # into `dir` for one test. `File.cp_r!/2` reproduces the whole tree — `.git`
+  # with its objects and refs plus the checked-out files — so the copy is an
+  # INDEPENDENT repository at the same commit graph, without paying
+  # `git add` + `git commit` for content every test reproduces identically.
+  defp copy_fixture!({source, shas}, dir) do
+    File.mkdir_p!(Path.dirname(dir))
+    File.cp_r!(source, dir)
+    prime_identity!(dir)
+    shas
+  end
+
+  # Seeds `EvoGit.GitEnv`'s per-repo identity memo with the values the template's
+  # config pins, so the repo's first git invocation skips the two `git config`
+  # subprocesses. The resolved env is byte-identical to what a real read
+  # produces (the template config holds exactly these values).
+  defp prime_identity!(dir) do
+    EvoGit.GitEnv.prime_config_identity_cache(dir, "Test User", "test@example.com")
   end
 
   defp commit_files(dir, files, message) do
