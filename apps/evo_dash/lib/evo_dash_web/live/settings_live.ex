@@ -1789,8 +1789,14 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("edit_remote_target", %{"id" => id}, socket) do
+    # Exit-safe lookup: the target registry is a local GenServer whose call can
+    # EXIT (dead/hung process) — `EvoDash.SafeCall` turns that into an error
+    # value, which reads exactly like an unknown target (no edit form).
     form_target =
-      case EvoDash.NodeContext.get_target(id) do
+      case EvoDash.SafeCall.run(
+             fn -> EvoDash.NodeContext.get_target(id) end,
+             {:error, :not_found}
+           ) do
         {:ok, target} ->
           target
           |> Map.put_new(:dist_port, 9000)
@@ -1799,7 +1805,7 @@ defmodule EvoDashWeb.SettingsLive do
           # auto-track the SSH Target (internal marker, never persisted).
           |> Map.put(:auto_name, false)
 
-        {:error, :not_found} ->
+        {:error, _reason} ->
           nil
       end
 
@@ -1870,7 +1876,12 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("save_remote_target", params, socket) do
     target = build_remote_target_from_params(params)
 
-    case EvoDash.NodeContext.save_target(target) do
+    # Exit-safe write: the registry call can EXIT the LiveView (dead/hung
+    # process); the fallback lands on the existing "Failed to save" flash.
+    case EvoDash.SafeCall.run(
+           fn -> EvoDash.NodeContext.save_target(target) end,
+           {:error, :unavailable}
+         ) do
       {:ok, _saved} ->
         socket =
           socket
@@ -1892,7 +1903,11 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("delete_remote_target", %{"id" => id}, socket) do
-    case EvoDash.NodeContext.delete_target(id) do
+    # Exit-safe delete (see save_remote_target/3).
+    case EvoDash.SafeCall.run(
+           fn -> EvoDash.NodeContext.delete_target(id) end,
+           {:error, :unavailable}
+         ) do
       :ok ->
         socket =
           socket
@@ -1903,6 +1918,14 @@ defmodule EvoDashWeb.SettingsLive do
 
       {:error, :not_found} ->
         {:noreply, put_flash(socket, :error, gettext("Connection not found."))}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to delete: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -1989,7 +2012,14 @@ defmodule EvoDashWeb.SettingsLive do
     # <5s) and the Disconnect button renders only when the phase is :connected
     # (no bootstrap can be queued on that manager), so it cannot block the
     # LiveView meaningfully. Its terminal outcome is the sync result below.
-    result = EvoDash.NodeContext.disconnect(id)
+    # EXIT-SAFE: the manager call can still EXIT this LiveView (dead/hung
+    # process), so it runs through `EvoDash.SafeCall`; a failure reads as an
+    # unavailable subsystem for `flash_remote_lifecycle_result/3`.
+    result =
+      EvoDash.SafeCall.run(
+        fn -> EvoDash.NodeContext.disconnect(id) end,
+        {:error, :remote_connection_unavailable}
+      )
 
     socket =
       socket

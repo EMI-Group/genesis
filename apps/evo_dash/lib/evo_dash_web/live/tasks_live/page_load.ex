@@ -14,6 +14,12 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   `start/3` is the only writer of the monotonic `:page_load_seq` assign; the
   caller drops any result whose `seq` is stale or whose `node` no longer matches
   `socket.assigns.current_node`.
+
+  Two app-env seams, both resolved AT SPAWN TIME: `:tasks_page_load_hook`
+  (1-arity, wraps the spawn; default identity) and `:tasks_page_load_runner`
+  (4-arity page-load function; default `&load/4`), so a test can inject an
+  exiting runner and assert the LiveView survives with its loading flag
+  cleared.
   """
   import Phoenix.Component, only: [assign: 3]
 
@@ -50,12 +56,21 @@ defmodule EvoDashWeb.TasksLive.PageLoad do
   @doc """
   Spawns the loader task and reports its result to `parent`.
 
+  The page-load FUNCTION is resolved from the `:tasks_page_load_runner` app-env
+  seam AT SPAWN TIME (the dashboard's runner-seam idiom, resolved inside
+  `run/6` so every caller — including `EvoDash.SafeCall`-wrapped ones — gets the
+  injected runner). Default is `&load/4`, so production behaviour is unchanged;
+  a test may inject e.g. `fn _, _, _, _ -> exit(:boom) end`.
+
   The result message is ALWAYS sent — `SafeCall.run/1` captures exits, raises
-  and throws as values — so the caller's `:tasks_loading` flag can never stick.
+  and throws as values — so the caller's `:tasks_loading` flag can never stick,
+  even when the injected runner exits.
   """
   def run(parent, seq, node, page, page_size, filters) do
+    runner = Application.get_env(:evo_dash, :tasks_page_load_runner, &load/4)
+
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result = SafeCall.run(fn -> load(node, page, page_size, filters) end)
+      result = SafeCall.run(fn -> runner.(node, page, page_size, filters) end)
       send(parent, {:tasks_page_loaded, seq, node, result})
     end)
   end

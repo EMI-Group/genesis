@@ -2709,11 +2709,19 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  defp foreign_repo_path_exists?(node, true, path), do: NodeContext.dir?(node, path)
+  # Both remote probes below run through `EvoDash.SafeCall`: they are cross-node
+  # RPCs whose target can be dead/unreachable, and an exited call would
+  # otherwise crash the LiveView. A failure reads as "not a directory" /
+  # "not a git repository" so the caller renders its normal VALIDATION error
+  # instead of the page dying.
+  defp foreign_repo_path_exists?(node, true, path) do
+    SafeCall.run(fn -> NodeContext.dir?(node, path) end, false)
+  end
+
   defp foreign_repo_path_exists?(_node, false, path), do: File.dir?(path)
 
   defp foreign_repo_is_git_repo?(node, true, path) do
-    case NodeContext.list_branches(node, path) do
+    case SafeCall.run(fn -> NodeContext.list_branches(node, path) end, {:error, :unavailable}) do
       {:ok, _} -> true
       _ -> false
     end
@@ -2964,11 +2972,23 @@ defmodule EvoDashWeb.ProjectsLive do
           opts
         end
 
+      # Exit-safe launch: the store/RPC call is a `GenServer.call` (local) or an
+      # `:erpc` round-trip (remote) whose target can be dead, busy, or slower
+      # than the call timeout — either EXITS this LiveView. `SafeCall.run/1`
+      # turns that into `{:error, reason}`, which lands on the existing
+      # "Failed to start task" flash (the prompt is NOT cleared in that case).
+      # The wrapper is FLATTENED so the result keeps `start_task`'s documented
+      # `{:ok, task} | {:error, reason}` shape.
       start_result =
-        if socket.assigns.remote? do
-          NodeContext.start_task(socket.assigns.current_node, task_type, opts)
-        else
-          TaskRegistry.start_task(task_type, opts)
+        case SafeCall.run(fn ->
+               if socket.assigns.remote? do
+                 NodeContext.start_task(socket.assigns.current_node, task_type, opts)
+               else
+                 TaskRegistry.start_task(task_type, opts)
+               end
+             end) do
+          {:ok, start_result} -> start_result
+          {:error, reason} -> {:error, reason}
         end
 
       case start_result do

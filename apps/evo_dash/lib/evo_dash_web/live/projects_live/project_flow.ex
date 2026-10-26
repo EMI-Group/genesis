@@ -29,6 +29,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   alias EvoGit.TaskRegistry
   alias EvoGit.Core.ForeignRepo
   alias EvoDash.NodeContext
+  alias EvoDash.SafeCall
   alias EvoDashWeb.ProjectsLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -316,11 +317,21 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # Shared success path for create_project: register the path in recent
   # projects, reload the recents, close the palette, reset it to :menu, flash
   # info, and push the URL params to persist the project across navigation.
+  #
+  # The two local store calls run inside `EvoDash.SafeCall`: a `GenServer.call`
+  # to a dead/timed-out store EXITS the LiveView, so a registration failure is
+  # tolerated (the recents reload falls back to the currently shown list).
   defp register_and_open_project(socket, expanded) do
-    TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+    SafeCall.run(
+      fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+      :ok
+    )
 
     recent_projects =
-      TaskRegistry.list_recent_projects()
+      SafeCall.run(
+        fn -> TaskRegistry.list_recent_projects() end,
+        socket.assigns[:recent_projects] || []
+      )
       |> filter_absolute_recent_projects()
 
     socket =
@@ -355,10 +366,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
         {:ok, expanded} ->
           if File.dir?(expanded) do
-            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+            # Exit-safe store calls (see register_and_open_project/2).
+            SafeCall.run(
+              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+              :ok
+            )
 
             recent_projects =
-              TaskRegistry.list_recent_projects()
+              SafeCall.run(
+                fn -> TaskRegistry.list_recent_projects() end,
+                socket.assigns[:recent_projects] || []
+              )
               |> filter_absolute_recent_projects()
 
             socket =
@@ -402,10 +420,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
         {:ok, expanded} ->
           if File.dir?(expanded) do
-            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+            # Exit-safe store calls (see register_and_open_project/2).
+            SafeCall.run(
+              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+              :ok
+            )
 
             recent_projects =
-              TaskRegistry.list_recent_projects()
+              SafeCall.run(
+                fn -> TaskRegistry.list_recent_projects() end,
+                socket.assigns[:recent_projects] || []
+              )
               |> filter_absolute_recent_projects()
 
             socket =

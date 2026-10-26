@@ -25,6 +25,15 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   or active project path no longer matches the current socket) and reports
   whether it applied anything, so the caller only runs post-apply follow-ups
   (auto-activation, GitHub detection) for results that actually landed.
+
+  The batch BODY is resolved from the `:projects_async_load_runner` app-env
+  seam AT SPAWN TIME (a 0-arity fun; default
+  `fn -> default_batch(node, remote?, current_node_id, path, seed_terminal_ids?,
+  auto_activate?) end`) and runs inside `EvoDash.SafeCall.run/1`, so an injected
+  batch that exits/raises (e.g. `fn -> exit(:boom) end`) cannot crash anything.
+  On failure NO message is sent — the page simply keeps the defaults `mount/3`
+  seeded (empty recent projects / notified ids) instead of filling them a frame
+  later.
   """
 
   alias EvoGit.Platform
@@ -72,29 +81,58 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       auto_activate? = socket.assigns[:auto_activate_candidate?] == true
       parent = self()
 
+      # Resolved AT SPAWN TIME (dashboard runner-seam idiom): a test can swap
+      # the whole batch body for an exiting fun and assert the page keeps its
+      # seeded defaults. Default = today's loads (default_batch/6).
+      runner =
+        Application.get_env(:evo_dash, :projects_async_load_runner, fn ->
+          default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?)
+        end)
+
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        {custom_agents, model_selection_enabled} = load_custom_agents(node)
-        {model_profiles, default_selected_model_id} = Project.load_model_profiles(node)
+        # EXIT-SAFE: the batch performs store reads and (for remote nodes)
+        # `:erpc` round-trips whose target can be dead/hung — either EXITS the
+        # task. `EvoDash.SafeCall.run/1` captures that as a value, so a failing
+        # batch sends nothing at all (see the moduledoc) and the LiveView keeps
+        # its seeded defaults instead of crashing.
+        case EvoDash.SafeCall.run(runner) do
+          {:ok, results} ->
+            send(parent, {:async_project_load, node, prev_node_id, path, results})
 
-        results =
-          %{
-            custom_agents: custom_agents,
-            model_selection_enabled: model_selection_enabled,
-            model_profiles: model_profiles,
-            default_selected_model_id: default_selected_model_id,
-            recent_projects: load_recent_projects(remote?, current_node_id, node),
-            terminal_ids: if(seed_terminal_ids?, do: Notifications.load_terminal_ids()),
-            auto_activate?: auto_activate?
-          }
-          |> Map.merge(remote_extras(node, remote?, path))
-
-        send(parent, {:async_project_load, node, prev_node_id, path, results})
+          {:error, _reason} ->
+            :ok
+        end
       end)
 
       socket
     else
       socket
     end
+  end
+
+  @doc """
+  The DEFAULT async batch body — today's grouped node-aware loads.
+
+  Runs OFF the LiveView process (inside the supervised task spawned by
+  `maybe_spawn/2`). Returns the `results` map carried by the
+  `{:async_project_load, node, prev_node_id, path, results}` message. Public so
+  the `:projects_async_load_runner` seam's default can reference it and tests
+  can call it directly.
+  """
+  def default_batch(node, remote?, current_node_id, path, seed_terminal_ids?, auto_activate?) do
+    {custom_agents, model_selection_enabled} = load_custom_agents(node)
+    {model_profiles, default_selected_model_id} = Project.load_model_profiles(node)
+
+    %{
+      custom_agents: custom_agents,
+      model_selection_enabled: model_selection_enabled,
+      model_profiles: model_profiles,
+      default_selected_model_id: default_selected_model_id,
+      recent_projects: load_recent_projects(remote?, current_node_id, node),
+      terminal_ids: if(seed_terminal_ids?, do: Notifications.load_terminal_ids()),
+      auto_activate?: auto_activate?
+    }
+    |> Map.merge(remote_extras(node, remote?, path))
   end
 
   @doc """

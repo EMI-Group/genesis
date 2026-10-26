@@ -150,6 +150,8 @@ defmodule EvoDashWeb.ReviewLive do
                         repos={@review_repos}
                         completion={completion_status(@review_repos, @review_status)}
                         back_url={with_node_param(~p"/projects", @current_node_id)}
+                        review_action={@review_action}
+                        busy_repos={@busy_repos}
                       />
 
                       <EvoDashWeb.ReviewComponents.task_actions
