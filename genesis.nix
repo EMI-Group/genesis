@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-4m7wtFE/U+ELGkE4Sxl3bhWwwTXu/2HiWuhklSu4hoE=";
+    hash = "sha256-J48YMht85nPrv9f2sHFS71bLJhCjPLklcmPnNKoKXlo=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
