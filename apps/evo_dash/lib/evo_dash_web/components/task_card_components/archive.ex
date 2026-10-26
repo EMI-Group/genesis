@@ -22,7 +22,13 @@ defmodule EvoDashWeb.TaskCardComponents.Archive do
   # `%{state: :loading | :ok | :error, entries: [map()], total: non_neg_integer(),
   # next_offset: non_neg_integer(), loading_more?: boolean(),
   # more_error: term() | nil, error: term() | nil, seq: pos_integer(),
-  # agent_results: %{agent_id => %{state:, entry:, error:}}}`.
+  # agent_results: %{agent_id => %{state:, entry:, error:}},
+  # dropped: non_neg_integer(), exhausted?: boolean(),
+  # server_total: non_neg_integer() | nil}`.
+  #
+  # `total`/`server_total` are OPTIONAL: the store's page reads may stop
+  # returning `COUNT(*)`, so every reader below stays TOTAL when they are
+  # absent (`total` falls back to the loaded count, `server_total` to nil).
 
   @doc """
   The archive envelope's first-page state: `:loading`, `:ok`, `:error`, or nil
@@ -61,6 +67,44 @@ defmodule EvoDashWeb.TaskCardComponents.Archive do
       %{total: total} when is_integer(total) and total >= 0 -> total
       %{"total" => total} when is_integer(total) and total >= 0 -> total
       _ -> length(archive_records(archive))
+    end
+  end
+
+  @doc """
+  The number of leading archive rows EVICTED by the retention window (their
+  records are no longer loaded). Non-negative integer; `0` when absent/garbage.
+  """
+  def archive_dropped(archive) do
+    case archive do
+      %{dropped: dropped} when is_integer(dropped) and dropped >= 0 -> dropped
+      %{"dropped" => dropped} when is_integer(dropped) and dropped >= 0 -> dropped
+      _ -> 0
+    end
+  end
+
+  @doc """
+  True iff the archive is EXHAUSTED (a short/empty page arrived), so the pager is
+  replaced by the exhaustion note. Absent/garbage → `false`.
+  """
+  def archive_exhausted?(archive) do
+    case archive do
+      %{exhausted?: true} -> true
+      %{"exhausted?" => true} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  The archive's TRUE size as reported by the server, for the label only.
+
+  `nil` when the envelope carries no usable count (the page reads may stop
+  returning `COUNT(*)`), so the render site falls back to the effective total.
+  """
+  def archive_server_total(archive) do
+    case archive do
+      %{server_total: total} when is_integer(total) and total >= 0 -> total
+      %{"server_total" => total} when is_integer(total) and total >= 0 -> total
+      _ -> nil
     end
   end
 

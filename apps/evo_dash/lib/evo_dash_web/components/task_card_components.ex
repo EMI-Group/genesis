@@ -72,6 +72,9 @@ defmodule EvoDashWeb.TaskCardComponents do
       archive_state: 1,
       archive_records: 1,
       archive_total: 1,
+      archive_dropped: 1,
+      archive_exhausted?: 1,
+      archive_server_total: 1,
       archive_agent_results: 1,
       archive_loading_more?: 1,
       archive_more_error: 1,
@@ -764,6 +767,9 @@ defmodule EvoDashWeb.TaskCardComponents do
                             <EvoDashWeb.ArchiveComponents.archive_details
                               archive_metadata={records}
                               total={archive_total(archive)}
+                              dropped={archive_dropped(archive)}
+                              exhausted?={archive_exhausted?(archive)}
+                              server_total={archive_server_total(archive)}
                               agent_results={archive_agent_results(archive)}
                               loading_more?={archive_loading_more?(archive)}
                               more_error={archive_more_error(archive)}

@@ -6,8 +6,12 @@ defmodule EvoDashWeb.ArchiveComponents do
   The archive arrives as bounded PAGES (`EvoDash.NodeContext.list_task_archives/3`)
   and each entry's heavy `"result"` is fetched separately
   (`NodeContext.get_agent_archive/3`), so the render attributes reflect exactly
-  that: `total` (the true archive size), `loading_more?`/`more_error` (the page
-  append), and `agent_results` (the per-agent lazy result cache).
+  that: `total` (the effective total driving paging), `server_total` (the label's
+  true archive size), `dropped`/`exhausted?` (the retention window and the
+  exhausted archive), `loading_more?`/`more_error` (the page append), and
+  `agent_results` (the per-agent lazy result cache).
+  `archive_count_line/1` is the ONE count/exhaustion line shared with the review
+  page's archive section, so both render sites speak the same numbers.
   """
 
   # zh_CN: Agent → "智能体", Commit → "提交", Branch → "分支", Token → "词元"
@@ -25,11 +29,77 @@ defmodule EvoDashWeb.ArchiveComponents do
   @objective_preview_bytes 4_096
 
   # ---------------------------------------------------------------------------
+  # archive_count_line/1 — THE shared count/exhaustion line for both render sites
+  # ---------------------------------------------------------------------------
+
+  # Both archive render sites (the task card's `archive_details/1` and the
+  # review tab's `archive_review_section/1`) show the SAME count semantics, so
+  # the text lives here instead of being duplicated per site. This component
+  # renders ONLY paragraphs — the parents own the layout/spacing.
+  attr(:total, :integer, required: true)
+  attr(:first, :integer, default: 0)
+  attr(:last, :integer, default: 0)
+  # Records evicted by the retention window (their leading rows are gone).
+  attr(:dropped, :integer, default: 0)
+  # A pager is rendered (more pages can still be fetched).
+  attr(:more?, :boolean, default: false)
+  attr(:exhausted?, :boolean, default: false)
+
+  def archive_count_line(assigns) do
+    ~H"""
+    <%= if @more? or @dropped > 0 do %>
+      <p class="text-xs text-base-content/60">
+        <%= if @dropped > 0 do %>
+          <%!--
+            zh_CN: Agent → “智能体”；“earlier entries omitted” → 较早的记录已省略；
+            export JSON → 导出 JSON 获取完整归档
+          --%>
+          {gettext(
+            "%{total} agents — showing %{first}–%{last} (earlier entries omitted; export JSON for the full archive)",
+            total: format_number(@total),
+            first: format_number(@first),
+            last: format_number(@last)
+          )}
+        <% else %>
+          <%!--
+            zh_CN: Agent → “智能体”；范围写成本次已载入的起止条数，例如
+            “7,149 个智能体 — 显示 1–100”；全部载入后只显示 “7,149 个智能体”
+          --%>
+          {gettext("%{total} agents — showing %{first}–%{last}",
+            total: format_number(@total),
+            first: format_number(@first),
+            last: format_number(@last)
+          )}
+        <% end %>
+      </p>
+    <% else %>
+      <p class="text-xs text-base-content/60">
+        <%!-- zh_CN: Agent → “智能体” --%>
+        {gettext("%{total} agents", total: format_number(@total))}
+      </p>
+    <% end %>
+    <%= if @exhausted? do %>
+      <p class="text-xs text-base-content/60">
+        <%!-- zh_CN: “No more archive entries.” → 没有更多归档记录。 --%>
+        {gettext("No more archive entries.")}
+      </p>
+    <% end %>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # archive_details/1 — Per-agent archive records section (opt-in)
   # ---------------------------------------------------------------------------
 
   attr(:archive_metadata, :list, default: nil)
+  # The EFFECTIVE total (paging decisions), falling back to the loaded count.
   attr(:total, :integer, default: nil)
+  # The archive's TRUE size for the label, independent of clamping.
+  attr(:server_total, :integer, default: nil)
+  # Records evicted by the retention window (older rows are no longer loaded).
+  attr(:dropped, :integer, default: 0)
+  # The archive is exhausted (a short/empty page arrived), so no pager renders.
+  attr(:exhausted?, :boolean, default: false)
   attr(:agent_results, :map, default: %{})
   attr(:loading_more?, :boolean, default: false)
   attr(:more_error, :any, default: nil)
@@ -43,12 +113,25 @@ defmodule EvoDashWeb.ArchiveComponents do
     entries = List.wrap(assigns.archive_metadata)
     loaded = length(entries)
 
+    # `total` drives the PAGING decision and falls back to the loaded count;
+    # `server_total` (when known) is what the LABEL reports, so a clamped page
+    # still shows the archive's true size.
+    effective_total = total_count(assigns.total, loaded)
+    label_total = server_total_count(assigns.server_total, effective_total)
+    {first, last} = ArchiveHelpers.retained_page_bounds(loaded, assigns.dropped, label_total)
+
+    archive_more? =
+      not assigns.exhausted? and
+        ArchiveHelpers.more_pages?(loaded, assigns.dropped, effective_total)
+
     assigns =
       assign(assigns,
         entries: entries,
         loaded: loaded,
-        total: total_count(assigns.total, loaded),
-        bounds: ArchiveHelpers.page_bounds(loaded, total_count(assigns.total, loaded))
+        label_total: label_total,
+        archive_first: first,
+        archive_last: last,
+        archive_more?: archive_more?
       )
 
     ~H"""
@@ -69,27 +152,22 @@ defmodule EvoDashWeb.ArchiveComponents do
             </.link>
           <% end %>
         </div>
-        <%!--
-          zh_CN: “agents” → “智能体”；范围写成本次已载入的起止条数，例如
-          “7,149 个智能体 — 显示 1–100”；全部载入后只显示 “7,149 个智能体”
-        --%>
-        <p class="text-xs text-base-content/60 mb-3">
-          <%= if @loaded < @total do %>
-            {gettext("%{total} agents — showing %{first}–%{last}",
-              total: format_number(@total),
-              first: format_number(elem(@bounds, 0)),
-              last: format_number(elem(@bounds, 1))
-            )}
-          <% else %>
-            {gettext("%{total} agents", total: format_number(@total))}
-          <% end %>
-        </p>
+        <div class="mb-3">
+          <.archive_count_line
+            total={@label_total}
+            first={@archive_first}
+            last={@archive_last}
+            dropped={@dropped}
+            more?={@archive_more?}
+            exhausted?={@exhausted?}
+          />
+        </div>
         <.archive_tree
           agents={@entries}
           agent_results={@agent_results}
           task_id={@task_id}
         />
-        <%= if @loaded < @total do %>
+        <%= if @archive_more? do %>
           <div class="flex items-center gap-2 mt-3">
             <button
               class="btn btn-sm btn-outline rounded-md"
@@ -128,6 +206,14 @@ defmodule EvoDashWeb.ArchiveComponents do
   # unusable) total, so a caller that only has records still renders a label.
   defp total_count(total, _loaded) when is_integer(total) and total >= 0, do: total
   defp total_count(_total, loaded), do: loaded
+
+  # The LABEL total: `server_total` when it is a usable count (the archive's true
+  # size), else the effective total.
+  defp server_total_count(server_total, _fallback)
+       when is_integer(server_total) and server_total >= 0,
+       do: server_total
+
+  defp server_total_count(_server_total, fallback), do: fallback
 
   # ---------------------------------------------------------------------------
   # archive_tree/1 — Renders the nested parent-child agent hierarchy

@@ -38,7 +38,8 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:files_count, :integer, default: 0)
   attr(:commits_count, :integer, default: 0)
   attr(:show_archive, :boolean, default: false)
-  attr(:agents_count, :integer, default: 0)
+  # The archive's TRUE size (not the agent count); 0/unknown renders no badge.
+  attr(:archive_count, :integer, default: 0)
 
   def page_tabs(assigns) do
     ~H"""
@@ -114,8 +115,11 @@ defmodule EvoDashWeb.ReviewComponents do
           <.icon name="hero-archive-box-arrow-down" class="size-4" />
           <%!-- zh_CN: "Archive" → 归档（智能体执行过程存档） --%>
           {gettext("Archive")}
-          <span class="badge badge-sm bg-base-200 text-base-content/70 font-mono ml-0.5">
-            {@agents_count}
+          <span
+            :if={@archive_count > 0}
+            class="badge badge-sm bg-base-200 text-base-content/70 font-mono ml-0.5"
+          >
+            {@archive_count}
           </span>
         </button>
       <% end %>
@@ -141,7 +145,14 @@ defmodule EvoDashWeb.ReviewComponents do
 
   attr(:archive_metadata, :list, required: true)
   attr(:task_id, :string, default: nil)
+  # The EFFECTIVE total (paging decisions), falling back to the loaded count.
   attr(:total, :integer, default: nil)
+  # The archive's TRUE size for the header label, independent of clamping.
+  attr(:server_total, :integer, default: nil)
+  # Records evicted by the retention window (older rows are no longer loaded).
+  attr(:dropped, :integer, default: 0)
+  # The archive is exhausted (a short/empty page arrived), so no pager renders.
+  attr(:exhausted?, :boolean, default: false)
   attr(:loading_more?, :boolean, default: false)
   attr(:more_error, :any, default: nil)
   attr(:agent_results, :map, default: %{})
@@ -158,26 +169,40 @@ defmodule EvoDashWeb.ReviewComponents do
 
     loaded = length(assigns.archive_metadata)
 
-    # `total` is the SERVER's count (the archive is paged): it falls back to
+    # `total` drives the PAGING decision (the archive is paged): it falls back to
     # what is loaded when no total was handed in.
-    total =
+    effective_total =
       case assigns.total do
         total when is_integer(total) and total >= 0 -> total
         _other -> loaded
       end
 
-    {first, last} = ArchiveHelpers.page_bounds(loaded, total)
+    # The header LABEL shows the archive's true size even when the page is
+    # clamped/exhausted, so `server_total` (when known) wins over the effective
+    # total.
+    label_total =
+      case assigns.server_total do
+        total when is_integer(total) and total >= 0 -> total
+        _other -> effective_total
+      end
+
+    {first, last} = ArchiveHelpers.retained_page_bounds(loaded, assigns.dropped, label_total)
+
+    archive_more? =
+      not assigns.exhausted? and
+        ArchiveHelpers.more_pages?(loaded, assigns.dropped, effective_total)
 
     assigns =
       assign(assigns,
         archive_tree: capped.tree,
         archive_shown: capped.shown,
         archive_loaded: loaded,
-        archive_total: total,
+        archive_total: effective_total,
+        archive_label_total: label_total,
         archive_first: first,
         archive_last: last,
         archive_truncated?: capped.truncated?,
-        archive_more?: loaded < total
+        archive_more?: archive_more?
       )
 
     ~H"""
@@ -189,19 +214,16 @@ defmodule EvoDashWeb.ReviewComponents do
           <div>
             <%!-- zh_CN: Agent → "智能体" --%>
             <h3 class="font-semibold text-base">{gettext("Archived Agent Details")}</h3>
-            <p class="text-xs text-base-content/60 mt-0.5">
-              <%= if @archive_more? do %>
-                <%!-- zh_CN: Agent → "智能体"；范围 "showing 1–100" 指已加载的前若干条记录 --%>
-                {gettext("%{total} agents — showing %{first}–%{last}",
-                  total: format_number(@archive_total),
-                  first: format_number(@archive_first),
-                  last: format_number(@archive_last)
-                )}
-              <% else %>
-                <%!-- zh_CN: Agent → "智能体" --%>
-                {gettext("%{total} agents", total: format_number(@archive_total))}
-              <% end %>
-            </p>
+            <div class="mt-0.5">
+              <EvoDashWeb.ArchiveComponents.archive_count_line
+                total={@archive_label_total}
+                first={@archive_first}
+                last={@archive_last}
+                dropped={@dropped}
+                more?={@archive_more?}
+                exhausted?={@exhausted?}
+              />
+            </div>
           </div>
         </div>
         <%= if @task_id do %>

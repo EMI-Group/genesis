@@ -109,12 +109,13 @@ defmodule EvoDashWeb.ReviewLive do
                 />
 
                 <!-- Page tabs (underline bar with count badges) -->
+                <%!-- the archive's true size, once its first page lands (0/unknown renders no badge) --%>
                 <EvoDashWeb.ReviewComponents.page_tabs
                   active_tab={@review_tab}
                   files_count={stats.files_count}
                   commits_count={stats.commits_count}
                   show_archive={true}
-                  agents_count={@agent_count}
+                  archive_count={@archive_total}
                 />
 
                 <%= cond do %>
