@@ -495,9 +495,15 @@ defmodule EvoGit.Store.BootNormalizationTest do
       pid = boot!(path)
 
       # DROP TABLE IF EXISTS — gone, and the surviving inventory is exactly
-      # the three expected tables.
-      assert query_rows(pid, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name") ==
-               [["projects"], ["schema_migrations"], ["tasks"]]
+      # the three expected tables. SQLite's own planner-statistics tables
+      # (`sqlite_stat1`/`sqlite_stat4`) are excluded: the boot path now runs a
+      # best-effort `PRAGMA optimize`, which ANALYZEs whatever SQLite deems
+      # worth it (see `EvoGit.Store.Boot.start_dynamic/2`).
+      assert query_rows(
+               pid,
+               "SELECT name FROM sqlite_master WHERE type = 'table' " <>
+                 "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
+             ) == [["projects"], ["schema_migrations"], ["tasks"]]
     end
   end
 

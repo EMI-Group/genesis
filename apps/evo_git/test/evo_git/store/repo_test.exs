@@ -189,9 +189,13 @@ defmodule EvoGit.Store.RepoTest do
     test "the database carries exactly the three expected tables" do
       pid = start_repo!(:tables)
 
+      # `sqlite_stat%` is excluded: the boot path now runs a best-effort
+      # `PRAGMA optimize`, which may create SQLite's own statistics tables
+      # (see `EvoGit.Store.Boot.start_dynamic/2`).
       assert query_rows(
                pid,
-               "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+               "SELECT name FROM sqlite_master WHERE type = 'table' " <>
+                 "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
              ) == [["projects"], ["schema_migrations"], ["tasks"]]
     end
   end
