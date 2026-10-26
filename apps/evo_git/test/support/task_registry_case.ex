@@ -9,9 +9,10 @@ defmodule EvoGit.TaskRegistryCase do
 
   The store still opens a per-test SQLite FILE (`<root>/tasks.sqlite`), but that
   file starts as a byte copy of a schema-complete TEMPLATE built once per module
-  (`EvoGit.TestSupport.StoreTemplate`): the six migrations' DDL (~12 ms) is paid
-  once per module instead of once per test. Only connection setup and the
-  probe-guarded no-op migration run remain per test.
+  (`EvoGit.TestSupport.StoreTemplate`): the six migrations' DDL is paid once per
+  module instead of once per test (measured ~19 ms → ~2 ms of store boot per
+  test). Only connection setup and the probe-guarded no-op migration run remain
+  per test.
 
   Isolation works through the runtime seam on `EvoGit.TaskRegistry.server/0`:
 
@@ -71,7 +72,8 @@ defmodule EvoGit.TaskRegistryCase do
     File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
 
-    # Fresh, schema-complete DB file in ~0.1 ms instead of a full migration boot.
+    # Fresh, schema-complete DB file in ~0.1 ms of copying instead of paying
+    # the schema DDL again (~17 ms of the per-test store boot).
     copy_template.(sqlite_path)
 
     store_name = :"evogit_test_store_#{unique}"
