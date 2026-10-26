@@ -236,14 +236,22 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
       end)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      # Exit-safe boundary: the check runs a cross-node RPC (`check_merge/4`),
+      # whose target GenServer / remote daemon can be dead, busy, or slower
+      # than the call timeout — and a `GenServer.call` timeout EXITS the
+      # caller, which `rescue` cannot catch. Without the boundary the child
+      # would die BEFORE sending its result, leaving this repo's status stuck
+      # at :checking forever. `EvoDash.SafeCall.run/1` turns every failure mode
+      # (exit, raise, throw) into `{:error, reason}`, so the result message is
+      # ALWAYS sent and a failed check surfaces as the existing
+      # `{:error, :check_failed}` → `%{state: :error}` path (e.g. when the repo
+      # vanishes mid-check, like temp-repo teardown in tests).
       result =
-        try do
-          check_fun.(current_node, repo_path, branch_name, target)
-        rescue
-          # The repo can vanish mid-check (e.g. temp-repo teardown in tests) —
-          # report a failed check instead of crashing silently and leaving the
-          # status stuck at :checking.
-          _ -> {:error, :check_failed}
+        case EvoDash.SafeCall.run(fn ->
+               check_fun.(current_node, repo_path, branch_name, target)
+             end) do
+          {:ok, value} -> value
+          {:error, _reason} -> {:error, :check_failed}
         end
 
       send(parent, {:merge_check_result, task_id, current_node, repo_id, target, result})
