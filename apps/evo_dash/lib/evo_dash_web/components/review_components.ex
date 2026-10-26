@@ -127,13 +127,30 @@ defmodule EvoDashWeb.ReviewComponents do
   # archive_review_section/1 — Archived agent details with recursive tree
   # ---------------------------------------------------------------------------
 
+  # Caps for the archive section. `@archive_max_records` bounds how many records
+  # are normalized/grouped into the tree (the UNCAPPED builder is unbounded);
+  # the two byte limits bound the per-agent text interpolated into the template.
+  # Measured worst case: a single task carried a 108 MB `archive_metadata`.
+  @archive_max_records 100
+  @archive_objective_preview_bytes 4_096
+  @archive_result_preview_bytes 8_192
+
   attr(:archive_metadata, :list, required: true)
   attr(:task_id, :string, default: nil)
 
   def archive_review_section(assigns) do
-    tree = ArchiveHelpers.build_archive_tree_for_review(assigns.archive_metadata)
+    # The record list can be enormous, so cap it BEFORE normalization/grouping
+    # and build the review tree exactly ONCE per render.
+    capped =
+      ArchiveHelpers.build_review_tree_capped(assigns.archive_metadata, @archive_max_records)
 
-    assigns = assign(assigns, :archive_tree, tree)
+    assigns =
+      assign(assigns,
+        archive_tree: capped.tree,
+        archive_shown: capped.shown,
+        archive_total: capped.total,
+        archive_truncated?: capped.truncated?
+      )
 
     ~H"""
     <div class="rounded-xl border border-base-300 bg-base-100 overflow-hidden">
@@ -158,6 +175,15 @@ defmodule EvoDashWeb.ReviewComponents do
 
       <!-- Agent tree -->
       <div class="p-4 sm:p-6 space-y-3">
+        <%= if @archive_truncated? do %>
+          <p class="text-xs text-base-content/60">
+            <%!-- zh_CN: 智能体（agent）记录过多被截断 — 完整归档请通过导出 JSON 查看 --%>
+            {gettext("Showing %{shown} of %{total} agent records — export JSON for the full archive",
+              shown: format_number(@archive_shown),
+              total: format_number(@archive_total)
+            )}
+          </p>
+        <% end %>
         <%= for {agent, children} <- @archive_tree do %>
           <.archive_tree_node agent={agent} children={children} />
         <% end %>
@@ -170,6 +196,17 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:children, :list, default: [])
 
   def archive_tree_node(assigns) do
+    # A single agent's objective/result can be a multi-megabyte blob (a 108 MB
+    # result has been measured), so compute ONE capped preview per field BEFORE
+    # the template — neither value is ever interpolated verbatim.
+    assigns =
+      assign(assigns,
+        objective_preview:
+          blob_preview(node_text(assigns.agent, :objective), @archive_objective_preview_bytes),
+        result_preview:
+          blob_preview(node_text(assigns.agent, :result), @archive_result_preview_bytes)
+      )
+
     ~H"""
     <div class="ml-0">
       <div class="rounded-lg border border-base-200/80 bg-base-200/30 p-4 sm:p-5">
@@ -188,22 +225,40 @@ defmodule EvoDashWeb.ReviewComponents do
         </div>
 
         <!-- Objective -->
-        <%= if @agent[:objective] do %>
+        <%= if @objective_preview.text != "" do %>
           <div class="mb-3">
             <p class="text-xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
               {gettext("Objective")}
             </p>
-            <p class="text-sm text-base-content/80 leading-relaxed">{@agent[:objective]}</p>
+            <p class="text-sm text-base-content/80 leading-relaxed">{@objective_preview.text}</p>
+            <%= if @objective_preview.truncated? do %>
+              <p class="mt-1 text-xs text-base-content/60">
+                <%!-- zh_CN: 字节 — 仅显示前若干字节的截断提示 --%>
+                {gettext("Showing %{shown} of %{total} bytes",
+                  shown: format_number(byte_size(@objective_preview.text)),
+                  total: format_number(@objective_preview.total_bytes)
+                )}
+              </p>
+            <% end %>
           </div>
         <% end %>
 
         <!-- Result -->
-        <%= if @agent[:result] do %>
+        <%= if @result_preview.text != "" do %>
           <div class="mb-3">
             <p class="text-xs font-medium text-base-content/60 uppercase tracking-wide mb-1">
               {gettext("Result")}
             </p>
-            <p class="text-sm text-base-content/80 leading-relaxed">{@agent[:result]}</p>
+            <p class="text-sm text-base-content/80 leading-relaxed">{@result_preview.text}</p>
+            <%= if @result_preview.truncated? do %>
+              <p class="mt-1 text-xs text-base-content/60">
+                <%!-- zh_CN: 字节 — 仅显示前若干字节的截断提示 --%>
+                {gettext("Showing %{shown} of %{total} bytes",
+                  shown: format_number(byte_size(@result_preview.text)),
+                  total: format_number(@result_preview.total_bytes)
+                )}
+              </p>
+            <% end %>
           </div>
         <% end %>
 
@@ -331,4 +386,17 @@ defmodule EvoDashWeb.ReviewComponents do
     </div>
     """
   end
+
+  # Atom-or-string tolerant read of a tree node field. Archived records are
+  # atom-normalized by `ArchiveHelpers`, but a direct caller handing a
+  # string-keyed map must not silently lose the value; a non-map node yields
+  # nil (which `blob_preview/2` turns into an empty preview).
+  defp node_text(agent, key) when is_map(agent) do
+    case Map.fetch(agent, key) do
+      {:ok, value} -> value
+      :error -> Map.get(agent, Atom.to_string(key))
+    end
+  end
+
+  defp node_text(_agent, _key), do: nil
 end
