@@ -9,6 +9,14 @@ defmodule EvoDashWeb.ArchiveComponents do
   use EvoDashWeb, :html
   alias EvoDashWeb.ArchiveHelpers
 
+  # A task can carry a huge archive (100k+ records, result blobs in the tens of
+  # MB). Rendering is capped so a single rerender can never freeze the browser:
+  # at most this many agent records, with each record's `result` / `objective`
+  # text rendered as a byte-bounded preview.
+  @max_agent_records 100
+  @result_preview_bytes 8_192
+  @objective_preview_bytes 4_096
+
   # ---------------------------------------------------------------------------
   # archive_details/1 — Per-agent archive records section (opt-in)
   # ---------------------------------------------------------------------------
@@ -48,12 +56,26 @@ defmodule EvoDashWeb.ArchiveComponents do
   attr(:agents, :list, required: true)
 
   def archive_tree(assigns) do
-    roots = ArchiveHelpers.build_archive_tree(assigns.agents)
-    assigns = assign(assigns, :roots, roots)
+    # Capped BEFORE normalization/grouping, so the per-render cost is bounded by
+    # the cap instead of the archive size. Computed exactly once per render.
+    %{tree: nodes, total: total, shown: shown, truncated?: truncated?} =
+      ArchiveHelpers.build_tree_capped(assigns.agents, @max_agent_records)
+
+    assigns =
+      assign(assigns, nodes: nodes, total: total, shown: shown, truncated?: truncated?)
 
     ~H"""
     <div class="space-y-3">
-      <%= for node <- @roots do %>
+      <%= if @truncated? do %>
+        <p class="text-xs text-base-content/60">
+          <%!-- zh_CN: “records” → “条智能体记录”；export JSON → 导出 JSON 以查看完整归档 --%>
+          {gettext("Showing %{shown} of %{total} agent records — export JSON for the full archive",
+            shown: format_number(@shown),
+            total: format_number(@total)
+          )}
+        </p>
+      <% end %>
+      <%= for node <- @nodes do %>
         <.archive_tree_node agent={node.agent} children={node.children} />
       <% end %>
     </div>
@@ -68,6 +90,14 @@ defmodule EvoDashWeb.ArchiveComponents do
   attr(:children, :list, default: [])
 
   def archive_tree_node(assigns) do
+    assigns =
+      assigns
+      |> assign(
+        :objective_preview,
+        blob_preview(assigns.agent[:objective], @objective_preview_bytes)
+      )
+      |> assign(:result_preview, blob_preview(assigns.agent[:result], @result_preview_bytes))
+
     ~H"""
     <div class="border border-base-200 rounded-xl bg-base-100/60 overflow-hidden">
       <div class="p-4 space-y-3">
@@ -80,22 +110,40 @@ defmodule EvoDashWeb.ArchiveComponents do
         </div>
 
         <!-- Objective -->
-        <%= if @agent[:objective] not in [nil, ""] do %>
+        <%= if @objective_preview.text != "" do %>
           <div>
             <div class="text-xs text-base-content/60 mb-0.5">{gettext("Objective")}</div>
             <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
-              {@agent[:objective]}
+              {@objective_preview.text}
             </div>
+            <%= if @objective_preview.truncated? do %>
+              <p class="text-xs text-base-content/60 mt-1">
+                <%!-- zh_CN: 字节数预览提示（bytes → “字节”） --%>
+                {gettext("Showing %{shown} of %{total} bytes",
+                  shown: format_number(byte_size(@objective_preview.text)),
+                  total: format_number(@objective_preview.total_bytes)
+                )}
+              </p>
+            <% end %>
           </div>
         <% end %>
 
         <!-- Result -->
-        <%= if @agent[:result] not in [nil, ""] do %>
+        <%= if @result_preview.text != "" do %>
           <div>
             <div class="text-xs text-base-content/60 mb-0.5">{gettext("Result")}</div>
             <div class="text-sm text-base-content/90 whitespace-pre-wrap break-words">
-              {@agent[:result]}
+              {@result_preview.text}
             </div>
+            <%= if @result_preview.truncated? do %>
+              <p class="text-xs text-base-content/60 mt-1">
+                <%!-- zh_CN: 字节数预览提示（bytes → “字节”） --%>
+                {gettext("Showing %{shown} of %{total} bytes",
+                  shown: format_number(byte_size(@result_preview.text)),
+                  total: format_number(@result_preview.total_bytes)
+                )}
+              </p>
+            <% end %>
           </div>
         <% end %>
 
