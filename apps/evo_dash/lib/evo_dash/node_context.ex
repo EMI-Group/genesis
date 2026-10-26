@@ -774,7 +774,9 @@ defmodule EvoDash.NodeContext do
   `%EvoGit.TaskInfo{}` or `nil` if the task does not exist (or the remote call
   fails). The struct decodes exactly like `get_task/2` except that
   `archive_metadata` is `nil` and the result data carries no `:archive_records`
-  key — use `get_task_archive/2` for the archive itself.
+  key — the archive itself is read as bounded pages through
+  `list_task_archives/3`, plus one full agent entry through
+  `get_agent_archive/3`.
   """
   @spec get_task_lite(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
   def get_task_lite(node, task_id) do
@@ -782,16 +784,46 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
-  Returns the decoded archive records for a task on the given node.
-  Delegates to `EvoGit.RemoteNode.get_task_archive/2`. Reads ONLY the
-  `archive_metadata` column, so it is the on-demand archive companion to
-  `get_task_lite/2` (which nils the archive out). Returns `[map()]`,
-  degrading to `[]` when the row is missing, the payload is undecodable, or
-  the remote call fails.
+  Lists ONE PAGE of a task's agent-archive entries on the given node.
+
+  Delegates to `EvoGit.RemoteNode.list_task_archives/3`. Entries are
+  STRING-keyed maps ordered by `depth, agent_id` — the root agent first, then
+  each deeper layer of the agent tree. `opts`:
+
+    * `:limit` — page size, default 100, clamped to 1..1000
+    * `:offset` — rows to skip, default 0
+    * `:include_results` — default `false`; when false every entry OMITS its
+      `"result"` key, which is why a single agent's result is loaded lazily
+      through `get_agent_archive/3`
+
+  Returns `%{entries: [map()], total: non_neg_integer()}`, where `total` counts
+  ALL archive entries of the task (not just this page). Total: a missing task,
+  a failed remote call, or any payload that is not a map degrades to
+  `%{entries: [], total: 0}`; a non-list `entries` becomes `[]` and a
+  non-integer/negative `total` becomes `0`, while a well-formed payload is
+  returned untouched (atom- and string-keyed payloads both normalize to atom
+  keys).
   """
-  @spec get_task_archive(node(), String.t()) :: [map()]
-  def get_task_archive(node, task_id) do
-    EvoGit.RemoteNode.get_task_archive(node, task_id)
+  @spec list_task_archives(node(), String.t(), keyword()) ::
+          %{entries: [map()], total: non_neg_integer()}
+  def list_task_archives(node, task_id, opts \\ []) do
+    EvoGit.RemoteNode.list_task_archives(node, task_id, opts)
+    |> normalize_archive_page()
+  end
+
+  @doc """
+  Fetches ONE full agent-archive entry (including its `"result"`) on the given
+  node.
+
+  Delegates to `EvoGit.RemoteNode.get_agent_archive/3`. This is the lazy
+  companion to `list_task_archives/3`, whose default `include_results: false`
+  pages omit `"result"`. Returns the entry map verbatim; anything else (an
+  unknown task/agent id, a failed remote call) degrades to `nil`.
+  """
+  @spec get_agent_archive(node(), String.t(), String.t()) :: map() | nil
+  def get_agent_archive(node, task_id, agent_id) do
+    EvoGit.RemoteNode.get_agent_archive(node, task_id, agent_id)
+    |> normalize_archive_entry()
   end
 
   @doc """
@@ -1154,6 +1186,42 @@ defmodule EvoDash.NodeContext do
       other -> {:error, {:invalid_decision, other}}
     end
   end
+
+  # Normalizes a task-archive page payload into
+  # `%{entries: [map()], total: non_neg_integer()}`.
+  #
+  # Total by construction: both key shapes the core may return are accepted
+  # (atom-keyed `%{entries: ..., total: ...}` and string-keyed
+  # `%{"entries" => ..., "total" => ...}`), a non-list `entries` is coerced to
+  # `[]`, a non-integer or negative `total` is coerced to `0`, and anything
+  # that is not a map (nil, `{:error, reason}`, garbage, a failed remote call)
+  # degrades to the empty page — callers never have to re-validate the shape.
+  # A well-formed payload keeps its values untouched.
+  #
+  # Public (`@doc false`) so the totality is testable without a live core.
+  @doc false
+  @spec normalize_archive_page(term()) :: %{entries: [map()], total: non_neg_integer()}
+  def normalize_archive_page(payload) when is_map(payload) do
+    entries = Map.get(payload, :entries, Map.get(payload, "entries"))
+    total = Map.get(payload, :total, Map.get(payload, "total"))
+
+    %{
+      entries: if(is_list(entries), do: entries, else: []),
+      total: if(is_integer(total) and total >= 0, do: total, else: 0)
+    }
+  end
+
+  def normalize_archive_page(_payload), do: %{entries: [], total: 0}
+
+  # Normalizes a single agent-archive entry: a map rides through VERBATIM
+  # (including its `"result"`), anything else — nil, an error tuple, garbage —
+  # degrades to `nil`. Public (`@doc false`) so the totality is testable
+  # without a live core.
+  @doc false
+  @spec normalize_archive_entry(term()) :: map() | nil
+  def normalize_archive_entry(entry) when is_map(entry), do: entry
+
+  def normalize_archive_entry(_entry), do: nil
 
   # Local/remote dispatch for approval_response/3. Returns `:ok` / the
   # backend's verbatim result, or `{:error, reason}` on any failure.
