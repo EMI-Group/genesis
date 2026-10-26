@@ -39,7 +39,7 @@ defmodule EvoGit.TaskRegistry.ArchiveDedup do
 
   Used by `EvoGit.TaskRegistry` (`handle_update_status/6`,
   `resolve_recheck_task/3` and the two full-struct `put_task` sites) and by the
-  `20260815000005_compress_oversized_rows` migration, which rewrites the rows
+  `20260815000004_compress_oversized_rows` migration, which rewrites the rows
   written before this boundary existed.
   """
 

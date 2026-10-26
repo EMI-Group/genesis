@@ -114,11 +114,15 @@ Model-facing tool names are `read` / `write` / `edit` / `bash` / `web_search` (p
 
 ### SQLite Store — Ecto Persistence Layer
 
-`EvoGit.Store` is a GenServer facade over `Store.Operations.*` on an Ecto/`xqlite_ecto3` dynamic repo; three Ecto migrations run at EVERY boot (legacy user DBs self-heal with no manual steps) and `mix migrate.store` is a thin `Ecto.Migrator` report wrapper over the same run. Summary reads return the 16-key projection (`result` never selected/decoded), `tasks.updated_at` is store-internal bookkeeping (the heartbeat never bumps it, undecodable rows are skipped with a `Logger.warning`), and disk-full-class write errors surface as `{:error, :disk_full}` at the `write_call/2` choke point while every other write error re-raises.
+`EvoGit.Store` is a GenServer facade over `Store.Operations.*` on an Ecto/`xqlite_ecto3` dynamic repo; five Ecto migrations run at EVERY boot in a fixed order (baseline adoption → data normalization → composite indexes → compress oversized rows → covering indexes; migration 4 must precede 5, legacy user DBs self-heal with no manual steps) and `mix migrate.store` is a thin `Ecto.Migrator` report wrapper over the same run.
+Every read is dispatched to a failure-isolated unlinked worker with a 25 s deadline and degrades to its own empty shape (reads never raise/exit/`{:error, _}`), while `EvoGit.TaskRegistry.StoreGuard` gives the registry the same containment (`{:error, :store_unavailable}` on writes, handled like `{:error, :disk_full}`).
+Summary reads return the 16-key projection (`result` never selected/decoded), `tasks.updated_at` is store-internal bookkeeping (the heartbeat never bumps it, undecodable rows are skipped with a `Logger.warning`), and disk-full-class write errors surface as `{:error, :disk_full}` at the `write_call/2` choke point while every other write error re-raises.
 
 - **⚠️ `since` is NOT exposed through RemoteAPI/RemoteNode** (they accept only `statuses`) — remote time-filtered callers must use `list_tasks_changed_since`.
+- **Lightweight reads**: `select_tasks_page/2` (16-key summary rows + `total`), `get_task_lite/2` (no archive decode) and `get_task_archive/2` are the non-blob read path; the search `fragment/1` LIKEs `id`/`opts`/`project_path`/`branch_name` only, never `result`.
+- **Storage model**: `Store.Codec` compresses oversized `result`/`archive_metadata`/`logs` as `"z1:" <> Base64(zlib)` and `ArchiveDedup` keeps exactly one archive copy per row; `mix store.maintenance [--vacuum]` is the only way to reclaim freed pages.
 
-Detail: `./store/CONTEXT.md` (schemas, operations, write offload, indexes, migrations).
+Detail: `./store/CONTEXT.md` (schemas, operations, read fault isolation + write offload, compression/dedup storage model, indexes, migrations, maintenance).
 
 ## Known Issues
 
