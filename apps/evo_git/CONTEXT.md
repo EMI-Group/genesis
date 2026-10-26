@@ -66,7 +66,7 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.Nix` | `nix print-dev-env` caching; `active?/0` |
 | `EvoGit.RemoteConnections` / `RemoteBootstrap` / `RemoteConnection` | SSH target store, pure bootstrap logic, connect lifecycle → `lib/evo_git/CONTEXT.md` |
 | `EvoGit.EpmdDist` / `Distribution` | EPMD-less `erl_epmd` (`register_target/2`) + on-demand distribution |
-| `EvoGit.Store` / `Store.Codec` | Ecto/SQLite facade, eight boot migrations, JSON TEXT columns, isolated reads, page/lite + archive APIs → `store/` |
+| `EvoGit.Store` / `Store.Codec` | Ecto/SQLite facade, six boot migrations, JSON TEXT columns, isolated reads, page/lite + archive APIs → `store/` |
 | `EvoGit.TaskInfo` / `RecentProject` | persisted structs; `opts`/`result["repos"]` STRING-keyed → `core/` |
 | `EvoGit.TaskRegistry` | lifecycle GenServer (`server/0` seam, `StoreGuard`, cancel/kill, `put_task_archive/1`) → `task_registry/` |
 | `EvoGit.RemoteNode` / `AgentScheduler.RemoteAPI` | `:erpc.call/5` wrapper (`:remote_rpc_timeout` 30s) ↔ read-only RPC → `agent_scheduler/` |
@@ -184,7 +184,7 @@ Task status lives ONLY in SQLite (`tasks.status`); scheduler ETS holds live-agen
 
 - **`mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`** (`Mix.Tasks.Changelog`): PR/merge-aware first-parent collection (each merge commit is ONE change carrying its branch commits; `^Bump version to` + mechanical noise filtered; all-filtered → "No commits found..." + exit). **Record gotcha**: `--pretty=format:` joins records with `\n` — split on `@record_sep` (`"\x1e"`) AND trim each record. Two-stage map-reduce via `ReqLLM.stream_object` (default `deepseek:deepseek-v4-flash`) → Keep-a-Changelog section; stage 2 (`build_aggregate_prompt/2`) merges related PR changes into ONE entry. **Docs-only changes never appear** — exclusion is PROMPT-driven: only subjects/bodies are collected; stage 1 replies `__NO_USER_FACING_CHANGES__` (dropped by `summarize_prs/3`), all-docs releases short-circuit via `{:ok, []}` and CHANGELOG.md is untouched. CHANGELOG.md created with `# Changelog` + `## [Unreleased]` when missing, else `## [<version>] - <date>` inserted after the header or the same-version section REPLACED; on LLM error the file is NOT modified; asks to commit that file only. Test seams `:changelog_summarizer` / `:changelog_pr_summarizer` / `:changelog_aggregator`. Detail: `lib/mix/tasks/` + root `./CONTEXT.md`.
 - **`mix bump.version <new-version>`** (`Mix.Tasks.Bump.Version`): updates `VERSION` + syncs `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, `README.md` badge; asks whether to commit (only touched files, never `git add -A`), then optionally delegates to `Mix.Tasks.Changelog.run([version])`. Detail: root `./CONTEXT.md`.
-- **`mix migrate.store`** (`Mix.Tasks.Migrate.Store`): thin `Ecto.Migrator` wrapper over the SAME `Store.Boot.run_migrations/1` (boots a private unnamed dynamic `EvoGit.Repo`, never starts `:evo_git`); reports applied versions; normally a NO-OP. Detail: `store/`.
+- **`mix migrate.store`** (`Mix.Tasks.Migrate.Store`): thin `Ecto.Migrator` wrapper over the SAME `Store.Boot.run_migrations/1` (boots a private unnamed dynamic `EvoGit.Repo` through `EvoGit.Repo.start_opts/0` — the app's real DBConnection budget, so Ecto's 15 s default cannot apply — merged with `pool_size: 1`, never starts `:evo_git`); reports applied versions; normally a NO-OP. Detail: `store/`.
 
 ## Backend Boot Profile (desktop sidecar readiness)
 
