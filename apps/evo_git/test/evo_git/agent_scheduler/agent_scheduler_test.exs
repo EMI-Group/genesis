@@ -21,13 +21,30 @@ defmodule EvoGit.AgentSchedulerTest do
   alias EvoGit.Core.PhyloGraphNode
 
   defmodule DummyAgent do
-    # Sleeps so the in-flight registration is observable. MUST NOT call the
-    # Runner or request a worktree — this test pins the scheduler contract.
-    # 100ms is ample: the observing `wait_until` poll starts immediately after
-    # `Task.async` and re-checks every 15ms, and registration happens before
-    # this sleep begins.
+    # Reports that it is RUNNING (which can only happen after the scheduler
+    # registered the agent) to the test process, then parks until the test
+    # releases it. That makes "the agent is registered while the call is still in
+    # flight" a HAND SHAKE instead of a race against a fixed sleep: registration
+    # precedes `run/2` by construction, so no poll/sleep budget can be missed.
+    # The 5s fallback keeps a crashed test from wedging the scheduled task.
+    # MUST NOT call the Runner or request a worktree — this test pins the
+    # scheduler contract.
     def run(_objective, _ctx) do
-      Process.sleep(100)
+      case Application.get_env(:evo_git, :agent_scheduler_test_observer) do
+        observer when is_pid(observer) ->
+          ref = make_ref()
+          send(observer, {ref, :dummy_started, self()})
+
+          receive do
+            {^ref, :release} -> :ok
+          after
+            5_000 -> :ok
+          end
+
+        _ ->
+          :ok
+      end
+
       {:ok, :done}
     end
   end
@@ -144,17 +161,25 @@ defmodule EvoGit.AgentSchedulerTest do
 
     before_ids = MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end)
 
+    # `DummyAgent.run/2` reports in and then parks; the observer key is
+    # test-scoped and removed on exit.
+    Application.put_env(:evo_git, :agent_scheduler_test_observer, self())
+    on_exit(fn -> Application.delete_env(:evo_git, :agent_scheduler_test_observer) end)
+
     caller = Task.async(fn -> EvoGit.AgentScheduler.run_agent(spec, 30_000) end)
 
-    # The agent must be REGISTERED in ETS while the call is still in flight.
-    # Old code would block inside handle_call doing worktree I/O instead of
-    # replying asynchronously once the agent task completes.
-    wait_until(
-      fn -> MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) != before_ids end,
-      2000
-    )
+    # The agent reports it is RUNNING — the scheduler registers the agent (ETS)
+    # before it invokes the agent module, so this proves the registration landed
+    # while the call is still in flight. Old code would block inside handle_call
+    # doing worktree I/O instead of replying asynchronously once the agent task
+    # completes.
+    assert_receive {ref, :dummy_started, agent_pid}, 30_000
 
-    # The call RETURNS a result — it does not block on worktree creation.
+    assert MapSet.new(Store.list_sched_meta(), fn {id, _} -> id end) != before_ids
+
+    # Release the agent so the call RETURNS — it does not block on worktree
+    # creation.
+    send(agent_pid, {ref, :release})
     assert {:ok, :done} = Task.await(caller, 30_000)
 
     # The strongest observable: no synchronous worktree initialization —
@@ -310,8 +335,19 @@ defmodule EvoGit.AgentSchedulerTest do
       task = Task.async(fn -> AgentScheduler.request_llm_slot(agent_id) end)
 
       try do
-        # Still blocked — the call does not return at 0 capacity.
-        assert Task.yield(task, 200) == nil
+        # Still blocked — the request is ENQUEUED, not rejected: the per-model
+        # slot read reports one waiter and zero holders. Waiting for that state
+        # (instead of burning a fixed window) makes "does not return at 0
+        # capacity" event-driven: a fast-fail implementation would never enqueue
+        # and this wait would flunk.
+        wait_until(
+          fn ->
+            match?(%{"default" => %{used: 0, waiting: 1}}, AgentScheduler.get_llm_slot_status())
+          end,
+          2_000
+        )
+
+        assert Task.yield(task, 50) == nil
 
         # Capacity restored → the end-of-update grant sweep replies :ok.
         assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 1})
@@ -340,8 +376,16 @@ defmodule EvoGit.AgentSchedulerTest do
         Task.async(fn -> AgentScheduler.with_llm_slot(agent_id, fn -> :llm_ran end) end)
 
       try do
-        # No raise on 0-capacity — the request blocks like the paused case.
-        assert Task.yield(task, 200) == nil
+        # No raise on 0-capacity — the request blocks like the paused case: it is
+        # ENQUEUED (one waiter, no holder), never answered.
+        wait_until(
+          fn ->
+            match?(%{"default" => %{used: 0, waiting: 1}}, AgentScheduler.get_llm_slot_status())
+          end,
+          2_000
+        )
+
+        assert Task.yield(task, 50) == nil
 
         assert :ok = AgentScheduler.update_config(model_concurrency: %{"default" => 1})
         assert Task.await(task, 2_000) == :llm_ran
