@@ -22,7 +22,9 @@ defmodule EvoDash.SafeCall do
 
   For async loads prefer `start/4`, which runs the same boundary inside
   `EvoDash.TaskSupervisor` and always sends `{tag, result}` back to the caller —
-  even on exit, so a loading flag can never stick:
+  even on exit, so a loading flag can never stick. `start/4` itself never
+  raises or exits either: a dead/unknown supervisor comes back as
+  `{:error, {:exit, reason}}`:
 
       EvoDash.SafeCall.start(self(), :task_loaded, fn ->
         EvoDash.NodeContext.get_task(node, id)
@@ -94,9 +96,14 @@ defmodule EvoDash.SafeCall do
   Starts `fun` in a supervisor and sends `{tag, run(fun)}` to `parent`.
 
   The result message is ALWAYS sent — including for an exit — so a caller can
-  clear its loading state unconditionally. Returns whatever
-  `Task.Supervisor.start_child/2` returns (`{:ok, pid} | {:error, reason}`;
-  nothing is sent when the child could not be started).
+  clear its loading state unconditionally.
+
+  Returns `{:ok, pid}` when the child started, or an error value — nothing is
+  sent to `parent` in the error case. The error is `{:error, reason}` when
+  `Task.Supervisor.start_child/2` itself returned one, and
+  `{:error, {:exit, reason}}` when the supervisor call EXITED (an unknown or
+  dead supervisor name/pid) — same contract as `run/1`, so a caller never
+  crashes just because the supervisor is gone.
 
   Options:
 
@@ -107,8 +114,18 @@ defmodule EvoDash.SafeCall do
   def start(parent, tag, fun, opts \\ []) do
     supervisor = Keyword.get(opts, :supervisor, @default_supervisor)
 
-    Task.Supervisor.start_child(supervisor, fn ->
-      send(parent, {tag, run(fun)})
-    end)
+    # Same deliberate catch-`exit` boundary as `run/1`: does it expect the
+    # error? YES — `Task.Supervisor.start_child/2` performs a `GenServer.call`
+    # on the supervisor, which EXITS the caller when that name/pid is unknown
+    # or dead (a `rescue` cannot catch it). Is this the cleanest approach? YES —
+    # the callers are LiveViews spawning async loads, and a supervisor hiccup
+    # must surface as a value, not tear the page down.
+    try do
+      Task.Supervisor.start_child(supervisor, fn ->
+        send(parent, {tag, run(fun)})
+      end)
+    catch
+      :exit, reason -> {:error, {:exit, reason}}
+    end
   end
 end

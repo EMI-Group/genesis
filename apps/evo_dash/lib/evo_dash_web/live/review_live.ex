@@ -1263,6 +1263,11 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
+  # Resume/ignore navigate UNCONDITIONALLY: the click expresses user intent and
+  # the review-status write is advisory. A dead/unknown remote node (or any
+  # other write failure) must still take the user to the prepared target, with
+  # an error flash carried across the redirect — the previous hard gate left
+  # the user stranded on the review page.
   defp apply_action_result(socket, action, ref, result) when action in [:resume, :ignore] do
     case result do
       {:ok, :ok} ->
@@ -1272,13 +1277,14 @@ defmodule EvoDashWeb.ReviewLive do
         |> push_navigate(to: ref.to)
 
       other ->
-        put_flash(
-          socket,
+        socket
+        |> put_flash(
           :error,
           gettext("Failed to update review status: %{reason}",
             reason: inspect(unwrap_error(other))
           )
         )
+        |> push_navigate(to: ref.to)
     end
   end
 

@@ -991,8 +991,15 @@ defmodule EvoDashWeb.Helpers do
 
   Returns `%{text: prefix, truncated?: boolean, total_bytes: integer}` where
   `prefix` is a UTF-8-safe prefix of at most `limit` BYTES (a multi-byte
-  character is never cut in half; invalid-UTF-8 input degrades to its last
-  valid prefix) and `truncated?` is true iff bytes were dropped.
+  character is never cut in half) and `truncated?` is true iff bytes were
+  dropped.
+
+  Sanitization applies ONLY to the truncated path: when the blob is longer than
+  `limit`, `text` is its longest valid-UTF-8 prefix (invalid UTF-8 inside the
+  kept bytes degrades to the last valid prefix before it). When the blob is at
+  or under `limit`, `text` is the input binary VERBATIM — an invalid-UTF-8 blob
+  that fits is returned as-is (`truncated?: false`), so callers must not assume
+  `text` is always valid UTF-8.
 
   Total for any term: a non-binary (incl. `nil`) yields
   `%{text: "", truncated?: false, total_bytes: 0}`.
