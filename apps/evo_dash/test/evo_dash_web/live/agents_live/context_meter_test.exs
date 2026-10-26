@@ -32,129 +32,90 @@ defmodule EvoDashWeb.AgentsLive.ContextMeterTest do
 
   describe "build/1 — window-relative fill and threshold tick" do
     test "the canonical fixture renders an empty fill with a 63.1% threshold tick" do
-      meter = ContextMeter.build(agent())
-
-      assert meter.fill_pct === 0.0
-      assert meter.fill_label == "0.0"
-      assert meter.tick_pct === 63.1
-      assert meter.tick_label == "63.1"
-      assert meter.zone == :success
-      assert meter.fill_class == "bg-success"
-      assert meter.tick_class == "bg-base-content"
-      assert meter.current_tokens == 0
-      assert meter.threshold_tokens == @threshold
-      assert meter.window_tokens == @window
-      assert meter.compression_count == 0
+      assert ContextMeter.build(agent()) == %{
+               fill_pct: 0.0,
+               fill_label: "0.0",
+               tick_pct: 63.1,
+               tick_label: "63.1",
+               zone: :success,
+               fill_class: "bg-success",
+               tick_class: "bg-base-content",
+               current_tokens: 0,
+               threshold_tokens: @threshold,
+               window_tokens: @window,
+               compression_count: 0
+             }
     end
 
-    test "fill tracks the context window at every sampled token count" do
-      # {total_tokens, window-relative fill %, zone} — the zone is derived from
-      # CURRENT tokens vs the THRESHOLD (126_272), so 100_000 (< 80%) is still
-      # :success while 110_000 (> 80%, < 100%) is :warning.
-      for {tokens, fill, zone} <- [
-            {0, 0.0, :success},
-            {100_000, 50.0, :success},
-            {110_000, 55.0, :warning},
-            {126_272, 63.1, :error},
-            {300_000, 100.0, :error}
-          ] do
+    test "fill, one-decimal label, zone and fill class track the window at every sampled token count" do
+      # The zone is derived from CURRENT tokens vs the THRESHOLD (126_272), so
+      # 100_000 (< 80%) is still :success while 110_000 (> 80%, < 100%) is
+      # :warning. The tick never moves — it is the threshold's window-relative
+      # position — and the numeric field and the string are derived from the SAME
+      # rounded float, so a CSS width and a data-* attribute can never disagree.
+      rows = [
+        {0, 0.0, "0.0", :success, "bg-success"},
+        {100_000, 50.0, "50.0", :success, "bg-success"},
+        {110_000, 55.0, "55.0", :warning, "bg-warning"},
+        {126_272, 63.1, "63.1", :error, "bg-error"},
+        {300_000, 100.0, "100.0", :error, "bg-error"}
+      ]
+
+      for {tokens, fill, label, zone, class} <- rows do
         meter = ContextMeter.build(agent(total_tokens: tokens))
 
-        assert meter.fill_pct === fill, "fill for #{tokens} tokens"
-        assert meter.current_tokens == tokens
-        # The tick never moves — it is the threshold's window-relative position.
-        assert meter.tick_pct === 63.1
-        assert meter.zone == zone, "zone for #{tokens} tokens"
+        assert {meter.fill_pct, meter.fill_label, to_string(meter.fill_pct), meter.zone,
+                meter.fill_class, meter.tick_pct, meter.current_tokens} ===
+                 {fill, label, label, zone, class, 63.1, tokens},
+               "meter for #{tokens} tokens"
       end
-    end
-
-    test "the fill label always carries exactly one decimal place" do
-      for {tokens, label} <- [
-            {0, "0.0"},
-            {100_000, "50.0"},
-            {110_000, "55.0"},
-            {126_272, "63.1"},
-            {300_000, "100.0"}
-          ] do
-        meter = ContextMeter.build(agent(total_tokens: tokens))
-
-        assert meter.fill_label == label
-        # The numeric field and the string are derived from the SAME rounded
-        # float, so a CSS width and a data-* attribute can never disagree.
-        assert to_string(meter.fill_pct) == label
-      end
-    end
-
-    test "compression_count passes through; nil and negative degrade to 0" do
-      assert ContextMeter.build(agent(compression_count: 3)).compression_count == 3
-      assert ContextMeter.build(agent(compression_count: nil)).compression_count == 0
-      assert ContextMeter.build(agent(compression_count: -1)).compression_count == 0
-    end
-
-    test "fill_class maps each zone to its daisyUI token" do
-      assert ContextMeter.build(agent(total_tokens: 0)).fill_class == "bg-success"
-
-      assert ContextMeter.build(agent(total_tokens: 110_000)).fill_class == "bg-warning"
-
-      assert ContextMeter.build(agent(total_tokens: 126_272)).fill_class == "bg-error"
     end
 
     test "the zone boundaries are exact (80% is :warning, 100% is :error)" do
       # Threshold 100_000 so the boundaries are readable integers.
-      at = fn tokens ->
-        ContextMeter.build(agent(total_tokens: tokens, compression_threshold: 100_000)).zone
-      end
+      for {tokens, zone} <- [
+            {79_999, :success},
+            {80_000, :warning},
+            {99_999, :warning},
+            {100_000, :error},
+            {150_000, :error}
+          ] do
+        meter = ContextMeter.build(agent(total_tokens: tokens, compression_threshold: 100_000))
 
-      assert at.(79_999) == :success
-      assert at.(80_000) == :warning
-      assert at.(99_999) == :warning
-      assert at.(100_000) == :error
-      assert at.(150_000) == :error
+        assert meter.zone == zone, "zone for #{tokens} tokens"
+      end
     end
 
-    test "fill and tick are clamped to 0..100" do
-      # Window smaller than both the total and the threshold → both clamp.
-      meter =
-        ContextMeter.build(
-          agent(total_tokens: 250_000, compression_threshold: 200_000, context_window: 100_000)
-        )
-
-      assert meter.fill_pct === 100.0
-      assert meter.tick_pct === 100.0
-      assert meter.zone == :error
+    test "compression_count passes through; nil and negative degrade to 0" do
+      for {count, expected} <- [{3, 3}, {nil, 0}, {-1, 0}] do
+        assert ContextMeter.build(agent(compression_count: count)).compression_count == expected
+      end
     end
   end
 
   describe "build/1 — tick hidden when the threshold is unknown" do
     test "absent, nil, non-positive and non-integer thresholds hide the tick" do
-      for threshold <- [nil, 0, -1, 12.5, "126272", :unknown] do
-        meter = ContextMeter.build(agent(compression_threshold: threshold, total_tokens: 110_000))
+      # The fill and window are INDEPENDENT of the threshold, and an unknown
+      # threshold is never "close to compression".
+      inputs = [
+        agent(compression_threshold: nil, total_tokens: 110_000),
+        Map.delete(agent(total_tokens: 110_000), :compression_threshold)
+        | for(
+            threshold <- [0, -1, 12.5, "126272", :unknown],
+            do: agent(compression_threshold: threshold, total_tokens: 110_000)
+          )
+      ]
 
-        assert meter.tick_pct == nil, "tick_pct for #{inspect(threshold)}"
-        assert meter.tick_label == nil, "tick_label for #{inspect(threshold)}"
-        assert meter.threshold_tokens == nil
-        # The fill and window are INDEPENDENT of the threshold.
-        assert meter.fill_pct === 55.0
-        assert meter.window_tokens == @window
-        # An unknown threshold is never "close to compression".
-        assert meter.zone == :success
+      for input <- inputs do
+        meter = ContextMeter.build(input)
+
+        assert {meter.tick_pct, meter.tick_label, meter.threshold_tokens, meter.fill_pct,
+                meter.window_tokens, meter.zone} === {nil, nil, nil, 55.0, @window, :success}
       end
-    end
-
-    test "a map with no :compression_threshold key at all hides the tick" do
-      meter =
-        %{total_tokens: 110_000, context_window: @window, compression_count: 0}
-        |> ContextMeter.build()
-
-      assert meter.tick_pct == nil
-      assert meter.tick_label == nil
-      assert meter.threshold_tokens == nil
-      assert meter.fill_label == "55.0"
-      assert meter.zone == :success
     end
   end
 
-  describe "context_window_from/1 and the window fallbacks" do
+  describe "context_window_from/1, window fallbacks and clamping" do
     test "default_context_window/0 is the core's 200_000 default" do
       assert ContextMeter.default_context_window() == 200_000
     end
@@ -165,66 +126,57 @@ defmodule EvoDashWeb.AgentsLive.ContextMeterTest do
                "window for #{inspect(window)}"
       end
 
-      assert ContextMeter.context_window_from(%{}) == 200_000
-      assert ContextMeter.context_window_from(%{context_window: 128_000}) == 128_000
-      assert ContextMeter.context_window_from(%{"context_window" => 64_000}) == 64_000
+      for {input, expected} <- [
+            {%{}, 200_000},
+            {%{context_window: 128_000}, 128_000},
+            {%{"context_window" => 64_000}, 64_000}
+          ] do
+        assert ContextMeter.context_window_from(input) == expected
+      end
     end
 
-    test "the window drives the fill; a custom window is honored" do
-      meter = ContextMeter.build(agent(total_tokens: 64_000, context_window: 128_000))
+    test "the window drives the fill and both percentages clamp to 0..100" do
+      rows = [
+        # A custom window is honored: 64_000 of 128_000 fills half the bar.
+        {[total_tokens: 64_000, context_window: 128_000],
+         {128_000, 50.0, "50.0", 98.7, :success}},
+        # Window smaller than BOTH the total and the threshold → both clamp.
+        {[total_tokens: 250_000, compression_threshold: 200_000, context_window: 100_000],
+         {100_000, 100.0, "100.0", 100.0, :error}},
+        # 25_000 >= the 10_000 threshold; the tick sits at the bar's edge.
+        {[total_tokens: 25_000, compression_threshold: 10_000, context_window: 10_000],
+         {10_000, 100.0, "100.0", 100.0, :error}}
+      ]
 
-      assert meter.window_tokens == 128_000
-      assert meter.fill_pct === 50.0
-      assert meter.tick_pct === 98.7
-    end
+      for {overrides, expected} <- rows do
+        meter = ContextMeter.build(agent(overrides))
 
-    test "a window smaller than the total clamps the fill to 100.0" do
-      meter =
-        ContextMeter.build(
-          agent(total_tokens: 25_000, compression_threshold: 10_000, context_window: 10_000)
-        )
-
-      assert meter.window_tokens == 10_000
-      assert meter.fill_pct === 100.0
-      assert meter.fill_label == "100.0"
-      # 25_000 >= the 10_000 threshold, and the tick sits at the bar's edge.
-      assert meter.tick_pct === 100.0
-      assert meter.zone == :error
+        assert {meter.window_tokens, meter.fill_pct, meter.fill_label, meter.tick_pct, meter.zone} ===
+                 expected
+      end
     end
   end
 
   describe "build/1 — defensive field reads" do
-    test "string-keyed agent maps read the same fields" do
-      meter =
-        ContextMeter.build(%{
-          "total_tokens" => 110_000,
-          "compression_threshold" => @threshold,
-          "context_window" => @window,
-          "compression_count" => 2
-        })
+    test "string-keyed agent maps read the same fields as their atom-keyed twin" do
+      atom = agent(total_tokens: 110_000, compression_count: 2)
+      string = for {key, value} <- atom, into: %{}, do: {Atom.to_string(key), value}
 
-      assert meter.fill_pct === 55.0
-      assert meter.tick_pct === 63.1
-      assert meter.zone == :warning
-      assert meter.compression_count == 2
-      assert meter.current_tokens == 110_000
-      assert meter.threshold_tokens == @threshold
-      assert meter.window_tokens == @window
+      assert ContextMeter.build(string) == ContextMeter.build(atom)
     end
 
     test "the atom key wins when a map carries both key shapes" do
       meter = %{"total_tokens" => 90_000, total_tokens: 10_000} |> ContextMeter.build()
 
-      assert meter.current_tokens == 10_000
-      assert meter.fill_pct === 5.0
+      assert {meter.current_tokens, meter.fill_pct} === {10_000, 5.0}
     end
 
     test "negative and non-integer total_tokens degrade to 0" do
       for tokens <- [-1, -100_000, 12.5, "5000", :many, nil] do
         meter = ContextMeter.build(agent(total_tokens: tokens))
 
-        assert meter.current_tokens == 0, "current_tokens for #{inspect(tokens)}"
-        assert meter.fill_pct === 0.0
+        assert {meter.current_tokens, meter.fill_pct} === {0, 0.0},
+               "current_tokens for #{inspect(tokens)}"
       end
     end
 
@@ -232,15 +184,9 @@ defmodule EvoDashWeb.AgentsLive.ContextMeterTest do
       for input <- [nil, :agent, "agent", 123, []] do
         meter = ContextMeter.build(input)
 
-        assert meter.fill_pct === 0.0
-        assert meter.fill_label == "0.0"
-        assert meter.tick_pct == nil
-        assert meter.tick_label == nil
-        assert meter.zone == :success
-        assert meter.current_tokens == 0
-        assert meter.threshold_tokens == nil
-        assert meter.window_tokens == 200_000
-        assert meter.compression_count == 0
+        assert {meter.fill_pct, meter.fill_label, meter.tick_pct, meter.tick_label, meter.zone,
+                meter.current_tokens, meter.threshold_tokens, meter.window_tokens,
+                meter.compression_count} === {0.0, "0.0", nil, nil, :success, 0, nil, 200_000, 0}
       end
     end
 
