@@ -98,6 +98,12 @@ defmodule EvoGit.Application do
            Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
            "tasks.sqlite"
          )},
+      # Periodic, best-effort SQLite maintenance (`PRAGMA optimize`) for the
+      # task store — one pass every 60 minutes, no tick at boot (the store's
+      # boot path already optimized on the migrated connection). Starts AFTER
+      # EvoGit.Store so its first tick always finds the store; every tick is
+      # total, so a restarting/absent store is skipped, never a crash.
+      {EvoGit.Store.Maintenance, []},
       {Registry,
        keys: :unique,
        name: EvoGit.TaskRegistry.ProcessRegistry,

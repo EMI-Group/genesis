@@ -43,6 +43,8 @@ defmodule EvoGit.Store.Boot do
 
   @repo EvoGit.Repo
 
+  require Logger
+
   # One BEAM-wide memo slot for the pre-loaded `[{version, module}]` source.
   @migration_source_key {__MODULE__, :migration_source}
 
@@ -52,33 +54,40 @@ defmodule EvoGit.Store.Boot do
   # concurrently instead of blocking each other; and this store has exactly ONE
   # writer path — every write goes through the `EvoGit.Store` GenServer (no
   # module outside `lib/evo_git/store/` calls `EvoGit.Repo.*`), which already
-  # serializes them — so extra connections cannot introduce write-write
-  # contention. The 30 s `busy_timeout` (repo.ex) covers any transient lock
-  # window (e.g. a checkpoint). What the extra connections buy is READ
-  # parallelism: with a single connection every offloaded read Task, inline
-  # handler, write and migration queued on the SAME connection, so all store
-  # SQL serialized at the connection level, not just at the GenServer. Measured
-  # head-of-line blocking with one connection: a plain page load 1.4 ms quiet
-  # vs 11.8 ms while a 20 ms sidebar summary was in flight; p99 207 ms with 10
-  # queued search loads.
+  # serializes them (and hands each write to the single `EvoGit.Store.Writer`
+  # process) — so extra connections cannot introduce write-write contention.
+  # The 30 s `busy_timeout` (repo.ex) covers any transient lock window (e.g. a
+  # checkpoint). What the extra connections buy is READ parallelism: with a
+  # single connection every offloaded read Task, inline handler, write and
+  # migration queued on the SAME connection, so all store SQL serialized at the
+  # connection level, not just at the GenServer. Measured head-of-line blocking
+  # with one connection: a plain page load 1.4 ms quiet vs 11.8 ms while a
+  # 20 ms sidebar summary was in flight; p99 207 ms with 10 queued search loads.
   #
-  # 4 is the chosen size: the Store GenServer can hold at most ONE connection
-  # for a write at a time (writes are serialized there), so 4 leaves 3 for
-  # concurrent reads — the measured head-of-line pair (a page load + the
-  # sidebar summary) plus the third read a dashboard page mount issues
-  # (paginated list + summary + changed-since), without queueing behind each
-  # other. Deliberately kept in the low single digits: every connection is a
-  # REAL SQLite handle with its own file descriptor and its own page-cache
-  # budget (`cache_size: -64_000`, i.e. 64 MiB, from the adapter defaults), and
-  # EVERY dynamic store opens this many — including the hundreds of per-test
-  # stores the suite boots.
+  # 6 is the chosen size. Writes are serialized through `EvoGit.Store.Writer`,
+  # so this is purely a READ-parallelism knob, and a dashboard page mount
+  # issues several concurrent reads on top of the once-per-load sidebar
+  # summary: the paginated list + the summary + `changed-since` + the project
+  # count and a review-page diff read can all overlap, and pushing a cold read
+  # (a 400 MB database whose pages are not in cache, ~24 s measured on a cold
+  # copy for a status-filtered id scan) must not stall every other reader. 6
+  # gives 5 concurrent readers beside the single writer slot.
+  #
+  # Memory is bounded by the PAGE CACHE, not the connection count: every
+  # connection is a REAL SQLite handle with its own file descriptor and its own
+  # page-cache budget, so the per-connection `cache_size` from
+  # `EvoGit.Repo.start_opts/0` is `-8_000` (8 MiB, down from the adapter's
+  # 64 MiB default) → 6 × 8 MiB ≈ 47 MiB of page cache per store, instead of
+  # the 375 MiB a 6-connection pool on the adapter default would cost. EVERY
+  # dynamic store opens this many, including the hundreds of per-test stores
+  # the suite boots.
   #
   # Overridable per store via `start_dynamic/2`'s `:pool_size` option (and
   # `EvoGit.Store.start_link/1`'s, which forwards it). A single-connection
   # store is one option away: the disk-full tests pass `pool_size: 1`, because
   # `PRAGMA query_only` is CONNECTION-scoped and only an exactly-one-connection
   # pool guarantees the armed connection is the one every write is handed.
-  @default_pool_size 4
+  @default_pool_size 6
 
   @doc """
   Runs all pending migrations (`:up`, `all: true` — no-op when current).
@@ -139,6 +148,11 @@ defmodule EvoGit.Store.Boot do
   store keeps and which is released (and reopened at the requested size) for
   any larger pool — see `reopen_pool/3` for why the returned pool's
   connections must be created AFTER the schema exists.
+
+  Finally, ONE best-effort `PRAGMA optimize` runs on that boot connection once
+  the migrations have completed (see `optimize_after_migrations/1`) so the
+  query planner gets statistics for the migrated schema; it can never fail the
+  boot.
   """
   @spec start_dynamic(Path.t(), keyword()) :: {:ok, pid()}
   def start_dynamic(database, opts \\ []) do
@@ -146,8 +160,9 @@ defmodule EvoGit.Store.Boot do
     :ok = File.mkdir_p(Path.dirname(database))
     pool_size = resolve_pool_size(opts)
 
-    with {:ok, boot} <- @repo.start_link(database: database, name: nil, pool_size: 1) do
+    with {:ok, boot} <- @repo.start_link(start_opts(database, 1)) do
       run_migrations(boot)
+      optimize_after_migrations(boot)
 
       if pool_size == 1 do
         {:ok, boot}
@@ -155,6 +170,18 @@ defmodule EvoGit.Store.Boot do
         reopen_pool(database, boot, pool_size)
       end
     end
+  end
+
+  # Start opts for a dynamic instance: the per-instance shape FIRST, then the
+  # shared runtime tuning from `EvoGit.Repo.start_opts/0` (timeout, queue
+  # bounds, page cache, temp store) — merged so a future tuning key can never
+  # silently overwrite `:database`/`:name`/`:pool_size`.
+  #
+  # These MUST be start opts, not `EvoGit.Repo.defaults/0`: Ecto's own
+  # `@defaults` (`timeout: 15_000, pool_size: 10`) arrive as start opts and win
+  # over `defaults/0` — see the `EvoGit.Repo` moduledoc.
+  defp start_opts(database, pool_size) do
+    Keyword.merge(@repo.start_opts(), database: database, name: nil, pool_size: pool_size)
   end
 
   # Migrations are deliberately run on the single-connection BOOT instance
@@ -181,7 +208,54 @@ defmodule EvoGit.Store.Boot do
   # connections are all created against the migrated schema.
   defp reopen_pool(database, boot, pool_size) do
     :ok = stop(boot)
-    @repo.start_link(database: database, name: nil, pool_size: pool_size)
+    @repo.start_link(start_opts(database, pool_size))
+  end
+
+  # Planner statistics, ONCE per boot: `PRAGMA optimize` asks SQLite to
+  # ANALYZE whatever it thinks needs it (a no-op on a database whose
+  # statistics are current — SQLite keeps the decision internal, bounded by
+  # its own heuristics). Nothing else in the codebase ever runs it
+  # (`sqlite_stat1` did not exist), so the query planner picked the composite
+  # indexes without statistics.
+  #
+  # WHERE: on the BOOT connection, right after the migration run — that is the
+  # connection which just applied the DDL, so it is the one that definitely
+  # has the migrated schema loaded (a fresh pool connection loads the schema
+  # lazily; see `reopen_pool/3`). For any pool size > 1 the call happens
+  # before the reopen, i.e. before the returned pool exists.
+  #
+  # SAFETY: statistics are an optimization, never a boot requirement —
+  # `EvoGit.Store.Maintenance.optimize/1` is total (try/rescue + catch,
+  # `:warning` log, returns `:ok | {:error, term}`), and this wrapper is
+  # belt-and-braces so even a raise from the seam below cannot fail a boot.
+  # Test seam: the `:store_boot_optimize_fun` app env (defaults to
+  # `&EvoGit.Store.Maintenance.optimize/1`).
+  defp optimize_after_migrations(pid) do
+    fun =
+      Application.get_env(
+        :evo_git,
+        :store_boot_optimize_fun,
+        &EvoGit.Store.Maintenance.optimize/1
+      )
+
+    _ = fun.(pid)
+    :ok
+  rescue
+    error ->
+      Logger.warning(
+        "[Store.Boot] PRAGMA optimize after migrations failed (ignored): " <>
+          Exception.message(error)
+      )
+
+      :ok
+  catch
+    kind, reason ->
+      Logger.warning(
+        "[Store.Boot] PRAGMA optimize after migrations failed (ignored): " <>
+          inspect({kind, reason})
+      )
+
+      :ok
   end
 
   @doc """
