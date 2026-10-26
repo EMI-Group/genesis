@@ -9,9 +9,7 @@ defmodule EvoGit.Store.Codec do
   Encode functions are TOTAL — they never raise. All JSON encoding uses the
   non-crashing `Jason.encode/1` (returns `{:ok, json} | {:error, exception}`)
   with `case`/`with` to choose fallbacks. There are NO `try/rescue` blocks in
-  the encode functions. (The one `try/after` on the encode side,
-  `zlib_compress/1`, is zlib-handle cleanup — it never rescues, so a genuine
-  encode failure still surfaces.)
+  the encode functions.
 
   ## Decode philosophy
 
@@ -28,43 +26,22 @@ defmodule EvoGit.Store.Codec do
   JSON, pair-array opts, invalid JSON) raise `ArgumentError`. Old databases
   must be upgraded with `mix migrate.store` before they can be read.
 
-  ## Transparent compression (large text columns)
+  ## Plain JSON text columns
 
-  The three large text columns — `result`, `archive_metadata` and `logs` —
-  store their JSON text COMPRESSED when it is larger than 4096 bytes, as
+  Every JSON column (`opts`, `logs`, `result`, `usage`, `error`) stores plain
+  UTF-8 JSON TEXT — there is NO compression layer, no prefix-tagged payloads
+  and no zlib anywhere in this module. A value written by an encoder is
+  exactly what SQLite holds, so the column is uniformly readable/queryable as
+  JSON (`json_valid`, `json_extract`, `LIKE`).
 
-      "z1:" <> Base.encode64(:zlib.compress(json, 1))
+  `opts` is a plain JSON object for the same reason: task search is a SQL
+  `LIKE` over the raw `opts` text and several SQL paths
+  (`json_extract(opts, '$.path')`) read it as JSON.
 
-  (OTP `:zlib`, compression level 1 — encode speed matters more than ratio; a
-  live task row can carry ~100 MB of JSON. Level 1 is requested through the
-  deflate API in `zlib_compress/1`: OTP 29's `:zlib` module ships only
-  `compress/1`, which hard-codes the default level.) At or below the
-  threshold the plain JSON text is emitted unchanged, byte-identical to the
-  pre-compression format.
-
-  Decode accepts BOTH forms forever: a `"z1:"`-prefixed value is inflated
-  before JSON decoding, anything else is parsed as plain JSON exactly as
-  today, so legacy rows keep decoding with no migration. The functions keep
-  their existing strictness after inflation — `decode_result/1` raises
-  `ArgumentError` for a corrupt payload **including** a `"z1:"` value whose
-  base64 or zlib data is invalid, while the lenient
-  `decode_logs/1`/`decode_archive/1` degrade exactly like they do for corrupt
-  plain JSON (`[]` and `nil`).
-
-  `opts` is deliberately NEVER compressed: task search is a SQL `LIKE` over
-  the raw `opts` text and several SQL paths (`json_extract(opts, '$.path')`)
-  read it as JSON.
-
-  Two justified `try/rescue` patterns remain on the decode side:
-
-    * `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
-      has no non-crashing variant; an unknown reason string legitimately stays
-      a string (it's a valid alternative representation, not "bad data").
-    * `zlib_uncompress/1` — `:zlib.uncompress/1` raises `ErlangError`
-      (`:data_error`) on a corrupt stream and has no non-raising variant
-      (`:zlib.safeInflate/2` is stateful/streaming). The rescue converts that
-      into the `:error` tag the decode callers handle explicitly; no
-      caller-visible failure is swallowed.
+  One justified `try/rescue` pattern remains on the decode side:
+  `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
+  has no non-crashing variant; an unknown reason string legitimately stays
+  a string (it's a valid alternative representation, not "bad data").
   """
 
   require Logger
@@ -72,15 +49,8 @@ defmodule EvoGit.Store.Codec do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error)
   @project_columns ~w(path name last_opened_at)
-
-  # Transparent compression of the large text columns — see the moduledoc.
-  # A compressed value is `"z1:" <> Base.encode64(:zlib.compress(json, level))`;
-  # values at or below @compress_threshold keep the plain JSON text.
-  @compressed_prefix "z1:"
-  @compress_threshold 4096
-  @compress_level 1
 
   @usage_fields [
     :input_tokens,
@@ -99,7 +69,7 @@ defmodule EvoGit.Store.Codec do
 
   # Known keys inside the {:ok, data} result map. Used for safe atomization
   # during decode (these are application-controlled, not user input).
-  @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count archive_records)a
+  @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count)a
 
   # Precomputed string set for O(1) membership checks in decode_result_data/1.
   @result_data_field_strings MapSet.new(@result_data_fields, &Atom.to_string/1)
@@ -143,7 +113,6 @@ defmodule EvoGit.Store.Codec do
       task.agent_count,
       task.base_sha,
       task.commit_sha,
-      encode_archive(task.archive_metadata),
       task.lease_expires_at,
       task.model_id,
       task.project_path || extract_project_path(task.opts),
@@ -196,7 +165,6 @@ defmodule EvoGit.Store.Codec do
       agent_count,
       base_sha,
       commit_sha,
-      archive_metadata,
       lease_expires_at,
       model_id,
       project_path,
@@ -220,7 +188,6 @@ defmodule EvoGit.Store.Codec do
       agent_count: agent_count,
       base_sha: base_sha,
       commit_sha: commit_sha,
-      archive_metadata: decode_archive(archive_metadata),
       lease_expires_at: lease_expires_at,
       model_id: model_id,
       project_path: project_path,
@@ -249,96 +216,6 @@ defmodule EvoGit.Store.Codec do
   def validate_project(%RecentProject{path: path}) when is_binary(path), do: :ok
   def validate_project(%RecentProject{path: nil}), do: {:error, :missing_project_path}
   def validate_project(%RecentProject{}), do: {:error, :missing_project_path}
-
-  ## Compression (private helpers — see "Transparent compression" above)
-
-  # Compresses the JSON text of a large text column. TOTAL, like every encode
-  # function: nil and values at/below @compress_threshold pass through
-  # unchanged (byte-identical to the legacy plain-JSON format), and deflating a
-  # binary at a fixed level is deterministic and cannot fail.
-  defp maybe_compress_text(nil), do: nil
-
-  defp maybe_compress_text(json) when is_binary(json) do
-    if byte_size(json) > @compress_threshold do
-      @compressed_prefix <> Base.encode64(zlib_compress(json))
-    else
-      json
-    end
-  end
-
-  # zlib stream at @compress_level (1 — encode speed matters more than ratio).
-  # `:zlib.compress/2` is NOT available (OTP 29 ships only `compress/1`, which
-  # hard-codes the default level), so the deflate API is used directly. The
-  # `try/after` is resource cleanup only — it never rescues: every call is
-  # matched-`=`, so a genuine failure still surfaces instead of being masked.
-  defp zlib_compress(json) do
-    z = :zlib.open()
-
-    try do
-      :ok = :zlib.deflateInit(z, @compress_level)
-      compressed = :zlib.deflate(z, json, :finish) |> IO.iodata_to_binary()
-      :ok = :zlib.deflateEnd(z)
-      compressed
-    after
-      :zlib.close(z)
-    end
-  end
-
-  # Inflates a stored column value. Both a compressed value and a legacy
-  # plain-JSON value return `{:ok, json}` (plain values pass through verbatim);
-  # `:error` means a `"z1:"` value's base64/zlib payload is corrupt — the
-  # caller decides whether that is fatal (`decode_result/1` raises) or merely
-  # degrades like corrupt plain JSON (`decode_logs/1`, `decode_archive/1`).
-  #
-  # The prefix is compared against @compressed_prefix rather than an inlined
-  # literal (a bitstring head only accepts its own literal string, and a
-  # duplicated literal would silently drift). JSON text for these columns
-  # always starts with `{` or `[`, so there is no collision with a real payload.
-  defp decompress_text(json) when is_binary(json) do
-    prefix_size = byte_size(@compressed_prefix)
-
-    case json do
-      <<prefix::binary-size(^prefix_size), encoded::binary>> when prefix == @compressed_prefix ->
-        decompress_payload(encoded)
-
-      _ ->
-        {:ok, json}
-    end
-  end
-
-  defp decompress_payload(encoded) do
-    with {:ok, compressed} <- Base.decode64(encoded),
-         {:ok, json} <- zlib_uncompress(compressed) do
-      {:ok, json}
-    else
-      _ -> :error
-    end
-  end
-
-  # Justified try/rescue: `:zlib.uncompress/1` raises `ErlangError`
-  # (`:data_error`) on a corrupt stream and has no non-raising variant. The
-  # rescue turns that into the `:error` tag each caller handles explicitly.
-  defp zlib_uncompress(compressed) do
-    try do
-      {:ok, :zlib.uncompress(compressed)}
-    rescue
-      ErlangError -> :error
-    end
-  end
-
-  # Strict inflation for decode_result/1: a corrupt `"z1:"` payload is bad data
-  # exactly like invalid JSON, so it raises the same ArgumentError family.
-  defp decompress_result_text!(str) do
-    case decompress_text(str) do
-      {:ok, json} ->
-        json
-
-      :error ->
-        raise ArgumentError,
-              "Codec: undecodable compressed result value in DB " <>
-                "(corrupt z1: base64/zlib payload): " <> inspect(str)
-    end
-  end
 
   ## Field encoders/decoders
 
@@ -503,10 +380,9 @@ defmodule EvoGit.Store.Codec do
   end
 
   # --- logs (list of strings) ---
-  # Large arrays are transparently compressed (see "Transparent compression").
   def encode_logs(nil), do: "[]"
 
-  def encode_logs(logs) when is_list(logs), do: maybe_compress_text(encode_logs_json(logs))
+  def encode_logs(logs) when is_list(logs), do: encode_logs_json(logs)
 
   defp encode_logs_json(logs) do
     case Jason.encode(logs) do
@@ -517,14 +393,7 @@ defmodule EvoGit.Store.Codec do
 
   def decode_logs(nil), do: []
 
-  def decode_logs(str) when is_binary(str) do
-    # Lenient: a corrupt compressed payload degrades exactly like corrupt plain
-    # JSON (to []), never raises.
-    case decompress_text(str) do
-      {:ok, json} -> decode_logs_json(json)
-      :error -> []
-    end
-  end
+  def decode_logs(str) when is_binary(str), do: decode_logs_json(str)
 
   defp decode_logs_json(json) do
     case Jason.decode(json) do
@@ -550,12 +419,9 @@ defmodule EvoGit.Store.Codec do
   # result column is valid JSON — this enables future `json_valid`-guarded
   # `json_extract` SQL filters. Decode is strictly canonical: only the tagged
   # forms decode; legacy raw strings/untagged JSON raise (see decode_result/1).
-  #
-  # Large envelopes are transparently compressed (see "Transparent
-  # compression"); small ones keep the byte-identical plain JSON text.
   def encode_result(nil), do: nil
 
-  def encode_result(result), do: maybe_compress_text(encode_result_json(result))
+  def encode_result(result), do: encode_result_json(result)
 
   # Plain strings (crash fallbacks) are JSON-wrapped with a "string" tag so the
   # column is uniformly valid JSON. Jason.encode!/1 of a binary can never fail.
@@ -626,11 +492,9 @@ defmodule EvoGit.Store.Codec do
 
   def decode_result(str) when is_binary(str) do
     # Strictly canonical: only the 4 tagged forms decode. Raw strings, untagged
-    # JSON, invalid JSON, JSON null — and a `"z1:"` value whose base64/zlib
-    # payload is corrupt — raise ArgumentError; legacy rows must be rewritten by
-    # `mix migrate.store` before they can be read. Plain (uncompressed) JSON
-    # always decodes, so legacy rows need no migration for compression.
-    case Jason.decode(decompress_result_text!(str)) do
+    # JSON, invalid JSON and JSON null raise ArgumentError; legacy rows must be
+    # rewritten by `mix migrate.store` before they can be read.
+    case Jason.decode(str) do
       {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
         {:ok, decode_result_data(data)}
 
@@ -748,43 +612,6 @@ defmodule EvoGit.Store.Codec do
     struct(EvoGit.Agent.Usage, atom_usage)
   end
 
-  # --- archive_metadata (list of maps) ---
-  # Large arrays are transparently compressed (see "Transparent compression").
-  def encode_archive(nil), do: nil
-
-  def encode_archive(archive) when is_list(archive) do
-    maybe_compress_text(encode_archive_json(archive))
-  end
-
-  defp encode_archive_json(archive) do
-    case Jason.encode(archive) do
-      {:ok, json} ->
-        json
-
-      {:error, e} ->
-        Logger.warning("Codec: failed to encode archive_metadata: #{Exception.message(e)}")
-        nil
-    end
-  end
-
-  def decode_archive(nil), do: nil
-
-  def decode_archive(str) when is_binary(str) do
-    # Lenient: a corrupt compressed payload degrades exactly like corrupt plain
-    # JSON (to nil), never raises.
-    case decompress_text(str) do
-      {:ok, json} -> decode_archive_json(json)
-      :error -> nil
-    end
-  end
-
-  defp decode_archive_json(json) do
-    case Jason.decode(json) do
-      {:ok, value} when is_list(value) -> value
-      _ -> nil
-    end
-  end
-
   # --- error (canonical failed-task error payload) ---
   # Dedicated informational column recording WHY a task failed. This is NOT the
   # `result` field: force-kill deliberately nils result, startup reconciliation
@@ -797,7 +624,7 @@ defmodule EvoGit.Store.Codec do
   # (String.t(), always present) and `stacktrace` ([String.t()] | nil) — stored
   # as a JSON OBJECT with STRING keys.
   #
-  # Encode is TOTAL (mirrors encode_usage/encode_archive): the map is converted
+  # Encode is TOTAL (mirrors encode_usage): the map is converted
   # to a string-keyed object and Jason-encoded; the closed-set atom values of
   # the `kind`/`source` fields are stringified first (JSON cannot hold atoms —
   # call sites keep the canonical atom form in %TaskInfo{}), and any other

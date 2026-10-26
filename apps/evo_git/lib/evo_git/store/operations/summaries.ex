@@ -17,10 +17,10 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   * `result` is DELIBERATELY NEVER selected — no summary consumer reads it (the
     dashboard's review button uses the denormalized `branch_name` column) and
-    its JSON blob (usage + archive_records) is the heaviest per-row decode.
-    A row with a huge or corrupt `result` column is returned by the summary
-    path completely unaffected.
-  * No other heavy JSON field (`logs`, `usage`, `archive_metadata`) is read.
+    its JSON blob (usage included) is the heaviest per-row decode. A row with a
+    huge or corrupt `result` column is returned by the summary path completely
+    unaffected.
+  * No other heavy JSON field (`logs`, `usage`) is read.
   * `updated_at` is returned as the RAW fixed-precision ISO string stored in
     the DB — byte-identical, NOT decoded to a `%DateTime{}`. Rows are selected
     through `EvoGit.Store.Schemas.TaskRowRaw` (the RAW wire-value twin) so a
@@ -146,8 +146,8 @@ defmodule EvoGit.Store.Operations.Summaries do
 
   # The 16-column summary projection, selected through the RAW wire-value twin
   # so every value comes back as the exact bytes SQLite stored (the raw store's
-  # @summary_columns SELECT). `result`, `logs`, `usage`, and `archive_metadata`
-  # are deliberately not selected.
+  # @summary_columns SELECT). `result`, `logs` and `usage` are deliberately not
+  # selected.
   #
   # Public (but `@doc false`) so the LIGHTWEIGHT paged read
   # (`EvoGit.Store.Operations.Pages.select_tasks_page/2`) reuses THIS canonical
