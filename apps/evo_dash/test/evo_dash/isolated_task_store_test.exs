@@ -68,6 +68,33 @@ defmodule EvoDash.Test.IsolatedTaskStoreTest do
     assert_template_not_mutated(before, template_snapshot())
   end
 
+  test "the isolated pair outlives the test process, so the helper's ordered teardown owns it" do
+    :ok = IsolatedTaskStore.isolate!(@prefix)
+    sup = IsolatedTaskStore.isolated_supervisor()
+    assert is_pid(sup), "isolate!/1 must record the supervisor that owns the isolated pair"
+    assert Process.alive?(sup)
+    # The pair is LIVE and bound to THIS call's private database.
+    assert EvoGit.Store.safe_select_all_tasks(EvoGit.Store) == []
+
+    # ExUnit ends the test process with `exit(:shutdown)` BEFORE any `on_exit`
+    # callback runs. A pair LINKED to the test process is therefore torn down by
+    # the TEST's death — at a moment where nothing can be ordered: a
+    # `TaskRegistry` read worker still blocked in its `GenServer.call(EvoGit.Store, …)`
+    # then logs `TaskRegistry: store operation … FAILED` from its own process
+    # whenever the BEAM schedules it, i.e. typically just OUTSIDE the
+    # between-test log-capture window (a stray console line).
+    #
+    # `isolate!/1` must therefore UNLINK the pair, so its shutdown is performed
+    # by the helper's own ordered teardown (registry → read-worker drain →
+    # store). This check is structural and timing-free — it fails 100 % of the
+    # time if the unlink is removed.
+    {:links, links} = Process.info(sup, :links)
+
+    refute self() in links,
+           "the isolated supervisor is linked to the test process — ExUnit's " <>
+             "`exit(:shutdown)` would tear the pair down unordered, before the helper's teardown"
+  end
+
   test "isolation and the writes through it leave the shared template byte-identical" do
     before = template_snapshot()
 
