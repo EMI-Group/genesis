@@ -1784,7 +1784,7 @@ defmodule EvoDashWeb.SystemLive do
   # `:checking` forever. A failed fetch degrades to a nil config (the banner
   # then shows the config check as unknown rather than crashing the page).
   defp safe_system_checks(node) when node != node() do
-    base = EvoGit.SystemCheck.run_all_checks()
+    base = run_system_checks()
 
     remote_status =
       EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_remote_config_status(node) end, nil)
@@ -1793,7 +1793,18 @@ defmodule EvoDashWeb.SystemLive do
   end
 
   defp safe_system_checks(_node) do
-    EvoGit.SystemCheck.run_all_checks()
+    run_system_checks()
+  end
+
+  # The self-check runner, resolved AT CALL TIME from the `:system_checks_runner`
+  # app-env seam (production default: the real `EvoGit.SystemCheck.run_all_checks/0`,
+  # which shells out to the tool probes). Tests inject a deterministic checks map
+  # so a page mount never pays the real probes' latency.
+  defp run_system_checks do
+    runner =
+      Application.get_env(:evo_dash, :system_checks_runner, &EvoGit.SystemCheck.run_all_checks/0)
+
+    runner.()
   end
 
   # Asynchronously loads the node-dependent values rendered on this page
