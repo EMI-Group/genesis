@@ -12,9 +12,15 @@ defmodule EvoGit.Store.StoreInvariantsTest do
       literal in this file, so adding a status in one place without the others
       fails instead of silently degrading a live task;
     * every opt key a persisted task row carries (`%TaskInfo{opts: [...]}`
-      written through the store and read back) comes back ATOM-keyed and is a
-      member of `Codec.known_opt_keys/0`; a key missing from the whitelist comes
-      back STRING-keyed (the documented failure mode, pinned below);
+      written through the store and read back) is a member of
+      `Codec.known_opt_keys/0`, so a NEW unregistered key cannot slip in; a key
+      missing from the whitelist comes back STRING-keyed (the documented
+      failure mode, pinned below);
+    * the persisted opt keys split into TWO sets: `Codec.known_atomized_opt_keys/0`
+      (⊆ the persisted set, always a strict subset) decodes ATOM-keyed for
+      `Keyword.get(opts, :key)` callers, while the remaining data-plane keys
+      (`model_id`, `agent`, …) decode STRING-keyed ON PURPOSE because the
+      dashboard reads them with `Map.get(Map.new(opts), "key")`;
     * a persisted status this build cannot interpret is `{:unknown, raw}` from
       `Store.get_task_status/2` (never `nil` — the row EXISTS), is masked to a
       LIVE status in the full `%TaskInfo{}` decode, and is classified by
@@ -57,7 +63,11 @@ defmodule EvoGit.Store.StoreInvariantsTest do
   # and the repo-less reflect task). Every value is Jason-encodable, so the
   # `encode_opts/1` essential-keys fallback never kicks in and mask a missing
   # key.
-  @persisted_opts [
+  #
+  # Split by DECODED SHAPE: `@atomized_opts` come back atom-keyed (read with
+  # `Keyword.get/2` inside `evo_git`), `@string_opts` come back STRING-keyed on
+  # purpose (read by the dashboard with `Map.get(Map.new(opts), "key")`).
+  @atomized_opts [
     path: "/repo/project",
     mode: "simple",
     prompt: "build the thing",
@@ -68,6 +78,8 @@ defmodule EvoGit.Store.StoreInvariantsTest do
     archive: true,
     task_id: "task-1",
     repo_path: "/repo/project",
+    concurrency: 3,
+    tool_concurrency: 2,
     resume_from: "task-0",
     attachments: [
       %{
@@ -77,7 +89,10 @@ defmodule EvoGit.Store.StoreInvariantsTest do
         "data" => "iVBORw0KGgo="
       }
     ],
-    quality_level: "fast",
+    quality_level: "fast"
+  ]
+
+  @string_opts [
     model_id: "deepseek-chat",
     model_id_locked: true,
     agent: "code_reviewer",
@@ -85,6 +100,8 @@ defmodule EvoGit.Store.StoreInvariantsTest do
     merge_from: "task-0",
     merge_target: "main"
   ]
+
+  @persisted_opts @atomized_opts ++ @string_opts
 
   # ── Status whitelist ─────────────────────────────────────────────────────
 
@@ -101,7 +118,7 @@ defmodule EvoGit.Store.StoreInvariantsTest do
 
   # ── Opts whitelist ───────────────────────────────────────────────────────
 
-  test "every persisted opt key survives the store round trip ATOM-keyed" do
+  test "every persisted opt key survives the store round trip in its documented shape" do
     store = start_store!()
 
     task = %TaskInfo{
@@ -117,22 +134,88 @@ defmodule EvoGit.Store.StoreInvariantsTest do
 
     assert %TaskInfo{opts: decoded} = Store.get_task(store, "opt-keys")
 
-    keys = Keyword.keys(decoded)
+    # Nothing was dropped by the essential-keys fallback or by an unregistered
+    # key: the decoded set is exactly the persisted set (normalized to strings,
+    # since the two shape families spell keys differently).
+    keys = decode_keys(decoded)
 
-    # Atom-keyed — a caller's `Keyword.get(opts, :key)` finds it.
-    refute Enum.any?(keys, &is_binary/1), "an opt key came back as a STRING: #{inspect(decoded)}"
+    assert Enum.sort(keys) ==
+             Enum.sort(Enum.map(@persisted_opts, fn {key, _value} -> Atom.to_string(key) end))
 
-    # …and the full persisted set is covered (nothing was dropped by the
-    # essential-keys fallback or by an unregistered key).
-    assert Enum.sort(keys) == Enum.sort(Keyword.keys(@persisted_opts))
-
-    # …and every one of them is registered in the Codec whitelist.
-    known = MapSet.new(Codec.known_opt_keys())
+    # …and every one of them is registered in the Codec whitelist (the union of
+    # the atomized and the intentionally string-keyed sets). A NEW data-plane
+    # key that nobody registers fails HERE.
+    known = MapSet.new(Codec.known_opt_keys(), &Atom.to_string/1)
 
     for key <- keys do
       assert MapSet.member?(known, key),
              "#{inspect(key)} is persisted but not in known_opt_keys/0"
     end
+
+    # Atomized keys come back ATOMS — a caller's `Keyword.get(opts, :key)`
+    # finds them…
+    for {key, value} <- @atomized_opts do
+      assert Keyword.has_key?(decoded, key),
+             "#{inspect(key)} came back STRING-keyed but belongs in known_atomized_opt_keys/0"
+
+      assert Keyword.get(decoded, key) == value
+    end
+
+    # …while the data-plane keys the dashboard owns stay STRINGS (its lookups
+    # are `Map.get(Map.new(task.opts || []), "model_id")`).
+    string_decoded = Map.new(decoded)
+
+    for {key, value} <- @string_opts do
+      assert Map.fetch(string_decoded, Atom.to_string(key)) == {:ok, value}
+      refute Keyword.has_key?(decoded, key)
+    end
+  end
+
+  test "the atomized opt-key set is a strict subset of the persisted opt-key set" do
+    atomized = MapSet.new(Codec.known_atomized_opt_keys())
+    persisted = MapSet.new(Codec.known_opt_keys())
+
+    assert MapSet.subset?(atomized, persisted)
+
+    # The two sets are genuinely different: the six dashboard-owned data-plane
+    # keys are registered but deliberately NOT atomized.
+    assert Enum.sort(MapSet.to_list(atomized)) == Enum.sort(Keyword.keys(@atomized_opts))
+
+    assert Enum.sort(MapSet.to_list(MapSet.difference(persisted, atomized))) ==
+             Enum.sort(Keyword.keys(@string_opts))
+  end
+
+  test "a row with data-plane and runtime opts decodes to BOTH key shapes (pinned contract)" do
+    # This is the cross-app contract: `evo_dash` reads `"model_id"`/`"agent"`
+    # by STRING key, `evo_git` reads `:path`/`:objective` by ATOM key. Changing
+    # either half breaks the other app — promote a key to the atomized set only
+    # together with the dashboard lookups.
+    stored =
+      Codec.encode_opts(
+        path: "/repo/project",
+        objective: "build the thing",
+        quality_level: "fast",
+        model_id: "profile-a",
+        agent: "my-agent",
+        build_system: "mix"
+      )
+
+    decoded = Codec.decode_opts(stored)
+    as_map = Map.new(decoded)
+
+    # ATOM-keyed runtime opts.
+    assert decoded[:path] == "/repo/project"
+    assert decoded[:objective] == "build the thing"
+    assert decoded[:quality_level] == "fast"
+
+    # STRING-keyed data-plane opts (the dashboard's form).
+    assert as_map["model_id"] == "profile-a"
+    assert as_map["agent"] == "my-agent"
+    assert as_map["build_system"] == "mix"
+
+    refute Keyword.has_key?(decoded, :model_id)
+    refute Keyword.has_key?(decoded, :agent)
+    refute Keyword.has_key?(decoded, :build_system)
   end
 
   test "an opt key outside known_opt_keys/0 comes back STRING-keyed (the failure mode)" do
@@ -200,6 +283,10 @@ defmodule EvoGit.Store.StoreInvariantsTest do
   end
 
   # ── Helpers ──────────────────────────────────────────────────────────────
+
+  # Decoded opts mix atom keys (runtime opts) with string keys (data-plane
+  # opts), so compare keys in their string spelling.
+  defp decode_keys(decoded), do: Enum.map(decoded, fn {key, _value} -> to_string(key) end)
 
   # Uniquely-named store GenServer on its own tmp SQLite file (the same shape
   # `operations/archives_test.exs` uses for its facade section).

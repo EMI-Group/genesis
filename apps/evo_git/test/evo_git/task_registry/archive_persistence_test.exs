@@ -62,8 +62,14 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
 
       assert :ok = TaskRegistry.put_task_archive(entry)
 
+      # A FULL round-trip of the 22 producer fields, so the roster read opts
+      # into BOTH the lazy `result` and the three settings JSON columns (the
+      # default roster is lean).
       assert %{entries: [stored], total: 1} =
-               TaskRegistry.list_task_archives(task_id, include_results: true)
+               TaskRegistry.list_task_archives(task_id,
+                 include_results: true,
+                 include_settings: true
+               )
 
       assert Enum.all?(Map.keys(stored), &is_binary/1)
       assert stored["task_id"] == task_id
@@ -330,7 +336,10 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       assert length(expected_keys) == 23
 
       assert %{entries: [row], total: 1} =
-               TaskRegistry.list_task_archives(task_id, include_results: true)
+               TaskRegistry.list_task_archives(task_id,
+                 include_results: true,
+                 include_settings: true
+               )
 
       assert Enum.sort(Map.keys(row)) == Enum.sort(expected_keys)
 

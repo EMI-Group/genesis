@@ -376,24 +376,47 @@ defmodule EvoGit.Store.Codec do
   # encoding just the essential keys (path, mode, prompt, objective), or nil.
   #
   # Known opt keys that the application accesses — atomized safely on decode
-  # via the @known_opt_keys whitelist. Unknown keys remain as strings to avoid
-  # blind atomization.
+  # via the @atomized_opt_keys whitelist. Unknown keys remain as strings to
+  # avoid blind atomization.
   # NOTE: :attachments carries base64-encoded file data (ASCII strings by
   # contract — see EvoGit.Attachments), so Jason-encoding the opts map cannot
   # fail on it; the essential-keys fallback below would drop the key for a
   # deliberately non-Jason-safe payload, which is the pinned behavior.
   #
-  # The list is the DATA-PLANE contract: every key a task row can carry (the
-  # CLI flags, the dashboard task form, `EvoGit.TaskRegistry.RuntimeOpts` and
-  # the merge/resume contexts) is here, so a persisted opt always comes back
-  # atom-keyed and `Keyword.get(opts, :key)` finds it. The invariant test
-  # (`test/evo_git/store/store_invariants_test.exs`) pins that set.
-  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level model_id model_id_locked agent build_system merge_from merge_target)a
-  @known_opt_key_strings MapSet.new(@known_opt_keys, &Atom.to_string/1)
+  # The persisted-opts contract is TWO sets:
+  #
+  #   * `@atomized_opt_keys` — every opt key `evo_git` consumers read back with
+  #     `Keyword.get(opts, :key)`, so these come back ATOM-keyed. Adding a key
+  #     here changes the decoded shape callers see.
+  #   * `@string_opt_keys` — data-plane keys that decode STRING-keyed ON
+  #     PURPOSE: the dashboard looks them up by string key (`Map.get(Map.new(
+  #     task.opts), "model_id")`), and `evo_dash` pins that shape in its tests.
+  #     No `evo_git` code reads them from a DECODED row, so atomizing them buys
+  #     nothing and breaks the cross-app contract. Promoting one to
+  #     `@atomized_opt_keys` requires updating the dashboard lookups in the SAME
+  #     change.
+  #
+  # `known_opt_keys/0` is the UNION — the persisted-opts registry the invariant
+  # test (`test/evo_git/store/store_invariants_test.exs`) pins so a NEW
+  # unregistered key cannot slip in unnoticed.
+  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level)a
+  @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target)a
+  @known_opt_keys @atomized_opt_keys ++ @string_opt_keys
+  @atomized_opt_key_strings MapSet.new(@atomized_opt_keys, &Atom.to_string/1)
 
-  @doc "The opt keys the Codec atomizes on decode (the persisted-opts contract)."
+  @doc """
+  The persisted opt keys — the union of the atomized and the intentionally
+  string-keyed sets.
+  """
   @spec known_opt_keys() :: [atom()]
   def known_opt_keys, do: @known_opt_keys
+
+  @doc """
+  The subset of `known_opt_keys/0` that `decode_opts/1` atomizes; every other
+  persisted opt key stays STRING-keyed.
+  """
+  @spec known_atomized_opt_keys() :: [atom()]
+  def known_atomized_opt_keys, do: @atomized_opt_keys
 
   def encode_opts(nil), do: nil
 
@@ -455,12 +478,13 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
-  # Known opt keys are atomized for caller convenience (Keyword.get/2 with atom
-  # keys). Unknown keys stay as strings — they are never pattern-matched by key.
+  # Atomized opt keys are converted for caller convenience (Keyword.get/2 with
+  # atom keys). Everything else — including the intentionally string-keyed
+  # `@string_opt_keys` — stays as a string: they are looked up by string key.
   def decode_opt_key(key) when is_atom(key), do: key
 
   def decode_opt_key(key) when is_binary(key) do
-    if MapSet.member?(@known_opt_key_strings, key) do
+    if MapSet.member?(@atomized_opt_key_strings, key) do
       String.to_atom(key)
     else
       key

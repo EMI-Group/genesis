@@ -18,8 +18,9 @@ defmodule EvoGit.Store.Types.OptsJson do
       essential keys (`path`, `mode`, `prompt`, `objective`), and to `nil` if
       even those fail — encode never raises.
     * **load** (`Codec.decode_opts/1`) is STRICTLY CANONICAL: only JSON
-      objects decode — into a keyword list whose KNOWN keys (the Codec's
-      `@known_opt_keys` whitelist) are atomized; unknown keys stay strings.
+      objects decode — into a keyword list whose ATOMIZED keys (the Codec's
+      `@atomized_opt_keys` whitelist) become atoms; every other key (including
+      the intentionally string-keyed `@string_opt_keys`) stays a string.
       Non-object JSON (legacy positional pair-arrays, scalars, JSON null) and
       invalid JSON RAISE `ArgumentError` — exactly where the Codec raises.
       Legacy rows must be rewritten by `mix migrate.store` before they can be
