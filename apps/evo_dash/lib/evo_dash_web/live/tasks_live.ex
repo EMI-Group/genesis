@@ -9,10 +9,21 @@ defmodule EvoDashWeb.TasksLive do
   `{:task_deleted, task_id, node}` on the `EvoGit.PubSub` "tasks" topic;
   `NodeAware.handle_task_info/2` applies the node filter and schedules a
   debounced `:node_aware_reload_tasks` full-page reload.
+
+  No LiveView process blocks on a store/RPC call: every page load runs in a
+  supervised task (`EvoDashWeb.TasksLive.PageLoad`) behind
+  `EvoDash.SafeCall.run/1`, and its result arrives as
+  `{:tasks_page_loaded, seq, node, result}`. An exit (store timeout / dead
+  store) becomes a retry-able `:tasks_error` state, and the user-initiated
+  mutating events are SafeCall-wrapped so an exit flashes instead of crashing
+  the LiveView.
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
   use EvoDashWeb.ModalHelpers
+
+  alias EvoDash.SafeCall
+  alias EvoDashWeb.TasksLive.PageLoad
 
   @default_page_size 25
 
@@ -204,8 +215,10 @@ defmodule EvoDashWeb.TasksLive do
         </div>
 
         <!-- Task Count (hidden while a load is in flight — otherwise the stale
-           count flashes "0 tasks found" during every filter/navigation) -->
-        <%= if not @tasks_loading do %>
+           count flashes "0 tasks found" during every filter/navigation; also
+           hidden when a failed load left no rows at all, where the count would
+           contradict the error block below) -->
+        <%= if not @tasks_loading and not (@tasks_error != nil and @filtered_tasks == []) do %>
           <div class="flex items-center justify-between mb-4">
             <p class="text-sm text-base-content/60">
               {dngettext(
@@ -215,6 +228,24 @@ defmodule EvoDashWeb.TasksLive do
                 length(@filtered_tasks)
               )}
             </p>
+          </div>
+        <% end %>
+
+        <!-- Background-refresh failure: the already-loaded rows stay on screen,
+           so only a compact retry strip is added above the list. -->
+        <%= if @tasks_error != nil and @filtered_tasks != [] do %>
+          <div
+            id="tasks-refresh-error"
+            role="alert"
+            class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error"
+          >
+            <span class="flex items-center gap-2">
+              <.icon name="hero-exclamation-triangle" class="size-4" />
+              {gettext("Could not refresh tasks.")}
+            </span>
+            <button type="button" class="btn btn-sm btn-ghost text-error" phx-click="retry_load">
+              <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
+            </button>
           </div>
         <% end %>
 
@@ -230,17 +261,34 @@ defmodule EvoDashWeb.TasksLive do
             </div>
           <% else %>
             <%= if @filtered_tasks == [] do %>
-              <div class="text-center py-12 sm:py-16 text-base-content/70">
-                <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
-                <p class="text-lg font-medium">{gettext("No tasks found")}</p>
-                <p class="text-sm mt-1">
-                  <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
-                    {gettext("Try adjusting your filters or search query.")}
-                  <% else %>
-                    {gettext("Tasks will appear here once you start them from the dashboard.")}
-                  <% end %>
-                </p>
-              </div>
+              <%= if @tasks_error != nil do %>
+                <div id="tasks-load-error" class="text-center py-12 sm:py-16 text-base-content/70">
+                  <.icon
+                    name="hero-exclamation-triangle"
+                    class="size-10 mx-auto mb-4 text-error/70"
+                  />
+                  <p class="text-lg font-medium text-error">{gettext("Could not load tasks.")}</p>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost mt-3 text-error"
+                    phx-click="retry_load"
+                  >
+                    <.icon name="hero-arrow-path" class="size-3.5" /> {gettext("Retry")}
+                  </button>
+                </div>
+              <% else %>
+                <div class="text-center py-12 sm:py-16 text-base-content/70">
+                  <.icon name="hero-inbox" class="size-10 mx-auto mb-4 text-base-content/40" />
+                  <p class="text-lg font-medium">{gettext("No tasks found")}</p>
+                  <p class="text-sm mt-1">
+                    <%= if @status_filter != "all" or @project_filter != "all" or @search_query != "" or @review_status_filter != "all" or (@total_count > 0 and not @show_reflect_tasks) do %>
+                      {gettext("Try adjusting your filters or search query.")}
+                    <% else %>
+                      {gettext("Tasks will appear here once you start them from the dashboard.")}
+                    <% end %>
+                  </p>
+                </div>
+              <% end %>
             <% else %>
               <%= for {task, idx} <- Enum.with_index(@filtered_tasks) do %>
                 <div class={[
@@ -465,12 +513,17 @@ defmodule EvoDashWeb.TasksLive do
       socket
       |> assign(
         tasks: [],
+        # The rendered list (@filtered_tasks) is only ever filled by a landed
+        # page load, but the ERROR state reads it before any load has
+        # succeeded — seed it empty so a first-load failure renders the retry
+        # block instead of crashing on a missing assign.
+        filtered_tasks: [],
         # Project paths (the project-filter dropdown's options) are fetched by
-        # the async page load (start_async_page_load/3 → get_unique_paths/1)
-        # and land with its {:tasks_page_loaded, ...} result. Seeding empty
-        # here keeps mount/3 free of a blocking store query — which would
-        # also always run against the LOCAL node, before handle_params/3
-        # resolves the ?node= context.
+        # the async page load (PageLoad.start/3 → PageLoad.load/4, which calls
+        # get_unique_paths/1) and land with its {:tasks_page_loaded, ...}
+        # result. Seeding empty here keeps mount/3 free of a blocking store
+        # query — which would also always run against the LOCAL node, before
+        # handle_params/3 resolves the ?node= context.
         project_paths: [],
         status_filter: "all",
         project_filter: "all",
@@ -497,9 +550,12 @@ defmodule EvoDashWeb.TasksLive do
         # for the sidebar's "Active Tasks" fetch. The debounced reload spawns
         # BOTH loads in the same handler, so a shared counter would make each
         # load's bump invalidate the other's in-flight result.
-        # tasks_loading drives the loading placeholder.
+        # tasks_loading drives the loading placeholder; tasks_error holds the
+        # reason of the LAST failed page load (nil on success). An error keeps
+        # the already-loaded rows untouched and renders a retry affordance.
         page_load_seq: 0,
-        tasks_loading: false
+        tasks_loading: false,
+        tasks_error: nil
       )
 
     {:ok, socket}
@@ -532,7 +588,7 @@ defmodule EvoDashWeb.TasksLive do
         # COUNT + 25-row %TaskInfo{} decode + get_unique_paths) per
         # navigation. The else branch still paints the loading placeholder so
         # the static HTML matches the connected render.
-        start_async_page_load(socket, requested_page, true)
+        PageLoad.start(socket, requested_page, true)
       else
         assign(socket, :tasks_loading, true)
       end
@@ -592,7 +648,7 @@ defmodule EvoDashWeb.TasksLive do
     # :page_load_seq, so a superseded load's result is dropped by the
     # stale-guard in the {:tasks_page_loaded, ...} handler below, and the
     # newest in-flight load always clears :tasks_loading when it applies.
-    socket = start_async_page_load(socket, socket.assigns.current_page, false)
+    socket = PageLoad.start(socket, socket.assigns.current_page, false)
     socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
@@ -603,7 +659,7 @@ defmodule EvoDashWeb.TasksLive do
       # Stale page-load result — a newer page load was started after this one
       # was spawned (or the user switched nodes). Drop it: the newest
       # in-flight load will apply its own result (and clear the loading
-      # state). :page_load_seq is bumped ONLY by start_async_page_load/3 —
+      # state). :page_load_seq is bumped ONLY by PageLoad.start/3 —
       # NodeAware's sidebar fetch keeps its own :tasks_load_seq counter, so
       # the two loads a debounced reload spawns never invalidate each other.
       {:noreply, socket}
@@ -613,8 +669,8 @@ defmodule EvoDashWeb.TasksLive do
       case result do
         {:ok, m} ->
           # :reflect tasks are excluded client-side after load (see
-          # visible_tasks/2) — the SQL WHERE builder cannot express it.
-          visible = visible_tasks(m.tasks, socket.assigns.show_reflect_tasks)
+          # PageLoad.visible_tasks/2) — the SQL WHERE builder cannot express it.
+          visible = PageLoad.visible_tasks(m.tasks, socket.assigns.show_reflect_tasks)
 
           socket =
             socket
@@ -624,11 +680,16 @@ defmodule EvoDashWeb.TasksLive do
             |> assign(:total_pages, m.total_pages)
             |> assign(:project_paths, m.project_paths)
             |> assign(:filtered_tasks, visible)
+            |> assign(:tasks_error, nil)
 
           {:noreply, socket}
 
-        {:error, _reason} ->
-          {:noreply, put_flash(socket, :error, gettext("Failed to load tasks."))}
+        {:error, reason} ->
+          # Never clear already-loaded rows on a failed load: a background
+          # refresh failure must not blank the page. The reason is a value
+          # (SafeCall captured any exit), rendered as a retry-able error state
+          # — deliberately not interpolated into the DOM.
+          {:noreply, assign(socket, :tasks_error, reason)}
       end
     end
   end
@@ -666,7 +727,7 @@ defmodule EvoDashWeb.TasksLive do
      socket
      |> assign(:status_filter, status_filter)
      |> assign(:project_filter, project_filter)
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -674,7 +735,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, filter)
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -682,12 +743,21 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   # Prevents page reload when pressing Enter in the filter/search form
   @impl true
   def handle_event("noop", _params, socket), do: {:noreply, socket}
+
+  # Retry after a failed page load. The loading placeholder is shown only when
+  # there is nothing on screen to keep (a failed background refresh leaves the
+  # previous rows visible while the retry runs).
+  @impl true
+  def handle_event("retry_load", _params, socket) do
+    {:noreply,
+     PageLoad.start(socket, socket.assigns.current_page, socket.assigns[:filtered_tasks] == [])}
+  end
 
   # Reveal toggle for :reflect (repo-less Home-chat) tasks, default OFF. The
   # checkbox carries value="true", so a CHECKED box sends "true" and an
@@ -702,7 +772,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:show_reflect_tasks, show)
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -732,7 +802,7 @@ defmodule EvoDashWeb.TasksLive do
        search_query: "",
        review_status_filter: "all"
      )
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -740,7 +810,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:status_filter, "all")
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -748,7 +818,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:project_filter, "all")
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -756,7 +826,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:search_query, "")
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -764,7 +834,7 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply,
      socket
      |> assign(:review_status_filter, "all")
-     |> start_async_page_load(1, true)}
+     |> PageLoad.start(1, true)}
   end
 
   @impl true
@@ -786,12 +856,26 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("clear_task_history", _params, socket) do
-    EvoDash.NodeContext.clear_finished_tasks(socket.assigns.current_node)
+    # SafeCall captures an exit (store timeout / dead store) as a value, so a
+    # slow clear flashes instead of crashing the LiveView. The reload after a
+    # successful clear stays ASYNC.
+    case SafeCall.run(fn ->
+           EvoDash.NodeContext.clear_finished_tasks(socket.assigns.current_node)
+         end) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(:expanded_task_ids, MapSet.new())
+         |> PageLoad.start(1, true)}
 
-    {:noreply,
-     socket
-     |> assign(:expanded_task_ids, MapSet.new())
-     |> sync_apply_page(1)}
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to clear task history: %{reason}", reason: inspect(reason))
+         )}
+    end
   end
 
   @impl true
@@ -855,7 +939,15 @@ defmodule EvoDashWeb.TasksLive do
         {:noreply, socket}
 
       task_id ->
-        case EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id) do
+        # Synchronous single-row mutation (tests assert the store state right
+        # after the click); SafeCall turns an exit (store timeout / dead store)
+        # into a flash instead of a crashed LiveView.
+        result =
+          SafeCall.run(fn ->
+            EvoDash.NodeContext.cancel_task(socket.assigns.current_node, task_id)
+          end)
+
+        case mutation_result(result) do
           :ok ->
             expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
 
@@ -863,7 +955,7 @@ defmodule EvoDashWeb.TasksLive do
              socket
              |> assign(:expanded_task_ids, expanded)
              |> assign(:confirm_cancel_task_id, nil)
-             |> reload_current_page()}
+             |> PageLoad.start(socket.assigns.current_page, false)}
 
           {:error, reason} ->
             {:noreply,
@@ -900,7 +992,12 @@ defmodule EvoDashWeb.TasksLive do
         {:noreply, socket}
 
       task_id ->
-        case EvoDash.NodeContext.force_kill_task(socket.assigns.current_node, task_id) do
+        result =
+          SafeCall.run(fn ->
+            EvoDash.NodeContext.force_kill_task(socket.assigns.current_node, task_id)
+          end)
+
+        case mutation_result(result) do
           :ok ->
             expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
 
@@ -908,7 +1005,7 @@ defmodule EvoDashWeb.TasksLive do
              socket
              |> assign(:expanded_task_ids, expanded)
              |> assign(:confirm_force_kill_task_id, nil)
-             |> reload_current_page()}
+             |> PageLoad.start(socket.assigns.current_page, false)}
 
           {:error, reason} ->
             {:noreply,
@@ -924,13 +1021,28 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("delete_task", %{"task_id" => task_id}, socket) do
-    EvoDash.NodeContext.delete_task(socket.assigns.current_node, task_id)
-    expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+    result =
+      SafeCall.run(fn ->
+        EvoDash.NodeContext.delete_task(socket.assigns.current_node, task_id)
+      end)
 
-    {:noreply,
-     socket
-     |> assign(:expanded_task_ids, expanded)
-     |> reload_current_page()}
+    case mutation_result(result) do
+      :ok ->
+        expanded = MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+
+        {:noreply,
+         socket
+         |> assign(:expanded_task_ids, expanded)
+         |> PageLoad.start(socket.assigns.current_page, false)}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to delete task: %{reason}", reason: inspect(reason))
+         )}
+    end
   end
 
   # Helpers
@@ -962,45 +1074,6 @@ defmodule EvoDashWeb.TasksLive do
 
   defp parse_page(_), do: 1
 
-  # Fetches one page of tasks (server-side LIMIT/OFFSET). Returns
-  # {tasks, clamped_page, total_count, total_pages}. The requested page is
-  # clamped against the actual total_pages derived from the returned count.
-  # If clamping changes the page, a second fetch is performed for the
-  # clamped page. This is at most one extra fetch and only on edge cases
-  # (e.g. a stale/high page number).
-  defp load_page(node, requested_page, page_size, filters) do
-    offset = (requested_page - 1) * page_size
-
-    {tasks, total_count} =
-      EvoDash.NodeContext.list_tasks_paginated(node,
-        limit: page_size,
-        offset: offset,
-        filters: filters
-      )
-
-    total_pages = total_pages(total_count, page_size)
-    clamped_page = min(max(1, requested_page), total_pages)
-
-    if clamped_page != requested_page do
-      clamped_offset = (clamped_page - 1) * page_size
-
-      {clamped_tasks, ^total_count} =
-        EvoDash.NodeContext.list_tasks_paginated(node,
-          limit: page_size,
-          offset: clamped_offset,
-          filters: filters
-        )
-
-      {clamped_tasks, clamped_page, total_count, total_pages}
-    else
-      {tasks, clamped_page, total_count, total_pages}
-    end
-  end
-
-  defp total_pages(total_count, page_size) when page_size > 0 do
-    max(1, ceil(total_count / page_size))
-  end
-
   # Returns a windowed range of page numbers around the current page for the
   # pagination button group. Shows up to 7 page buttons centered on the
   # current page, clamped to the valid range 1..total_pages.
@@ -1011,130 +1084,13 @@ defmodule EvoDashWeb.TasksLive do
     Enum.to_list(start_page..end_page)
   end
 
-  # Reloads the current page's tasks synchronously (no loading state, no seq
-  # bump). Used ONLY by the user-initiated mutating events (cancel /
-  # force-kill / delete / clear-history): a low-volume one-shot action where
-  # the inline store round-trip buys immediate feedback. The debounced PubSub
-  # reload deliberately does NOT use this — it goes through the async path
-  # (start_async_page_load/3) so task broadcasts never block the LiveView.
-  defp reload_current_page(socket) do
-    sync_apply_page(socket, socket.assigns.current_page)
-  end
-
-  # Synchronous fetch + apply of one page: the page of tasks, the pagination
-  # counters, the project paths, and the filtered view. Deliberately does NOT
-  # touch :tasks_loading or :page_load_seq (the async page-load path owns
-  # those).
-  defp sync_apply_page(socket, page) do
-    node = socket.assigns.current_node
-    filters = build_filters_from_assigns(socket)
-
-    {tasks, current_page, total_count, total_pages} =
-      load_page(node, page, socket.assigns.page_size, filters)
-
-    # :reflect tasks are excluded client-side after load (see visible_tasks/2) —
-    # the SQL WHERE builder cannot express it.
-    visible = visible_tasks(tasks, socket.assigns.show_reflect_tasks)
-
-    socket
-    |> assign(:tasks, visible)
-    |> assign(:current_page, current_page)
-    |> assign(:total_count, total_count)
-    |> assign(:total_pages, total_pages)
-    |> assign(:project_paths, EvoDash.NodeContext.get_unique_paths(node))
-    |> assign(:filtered_tasks, visible)
-  end
-
-  # Spawns one async page load in a supervised Task (same pattern as
-  # review_live's start_async_load/2 and SettingsLive's LLM test) so the
-  # LiveView never blocks on cross-node RPCs. The result arrives later as a
-  # `{:tasks_page_loaded, seq, node, result}` message; `page_load_seq` is
-  # monotonic (incremented per spawn), so stale results from superseded loads
-  # are dropped by the handle_info stale-guard.
-  #
-  # `show_loading?` controls the loading placeholder: user-initiated loads
-  # (handle_params, filters) show it; background refresh reloads — including
-  # the debounced PubSub reload in handle_info(:node_aware_reload_tasks, ...)
-  # — do not (stale data stays until the fresh page arrives).
-  defp start_async_page_load(socket, page, show_loading?) do
-    seq = socket.assigns.page_load_seq + 1
-    socket = assign(socket, :page_load_seq, seq)
-    socket = if show_loading?, do: assign(socket, :tasks_loading, true), else: socket
-
-    parent = self()
-    node = socket.assigns.current_node
-    page_size = socket.assigns.page_size
-    filters = build_filters_from_assigns(socket)
-
-    spawn_page_load(fn -> run_page_load(parent, seq, node, page, page_size, filters) end)
-
-    socket
-  end
-
-  # Runs `fun` (the page-load spawn), wrapped in the :tasks_page_load_hook
-  # app-env seam — a 1-arity function whose default simply runs the spawn.
-  # Tests inject a counting wrapper to prove that exactly ONE load is spawned
-  # per navigation and that the debounced reload takes the async route.
-  # Resolved at spawn time, mirroring EvoDash's other runner seams
-  # (:github_runner, :update_check_runner, ...).
-  defp spawn_page_load(fun) do
-    hook = Application.get_env(:evo_dash, :tasks_page_load_hook, fn inner -> inner.() end)
-    hook.(fun)
-  end
-
-  # The spawned body: fetch one page of tasks plus the distinct project paths,
-  # then report back to the LiveView process.
-  defp run_page_load(parent, seq, node, page, page_size, filters) do
-    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      result =
-        try do
-          {tasks, current_page, total_count, total_pages} =
-            load_page(node, page, page_size, filters)
-
-          paths = EvoDash.NodeContext.get_unique_paths(node)
-
-          {:ok,
-           %{
-             tasks: tasks,
-             current_page: current_page,
-             total_count: total_count,
-             total_pages: total_pages,
-             project_paths: paths
-           }}
-        rescue
-          # (1) Do we expect this error? YES — the load crosses the node
-          #     boundary: the RPC target may be a dead/disappearing remote
-          #     daemon, or the task store may be mid-restart.
-          # (2) Is try/rescue the cleanest approach? YES — without it the page
-          #     would wedge at the loading state forever with no message;
-          #     mirrors the justified rescue in review_live.ex
-          #     start_async_load/2.
-          _ -> {:error, :load_failed}
-        end
-
-      send(parent, {:tasks_page_loaded, seq, node, result})
-    end)
-  end
-
-  defp build_filters_from_assigns(socket) do
-    [
-      status: socket.assigns.status_filter,
-      project_path: socket.assigns.project_filter,
-      review_status: socket.assigns.review_status_filter,
-      search: socket.assigns.search_query
-    ]
-  end
-
-  # :reflect tasks are repo-less Home-chat (self-reflective agent) tasks that
-  # pollute the cross-project list, so they are hidden by default and only
-  # shown when the reveal toggle is on. Applied CLIENT-SIDE at the two choke
-  # points where loaded page rows become the displayed list (async
-  # {:tasks_page_loaded} handler and sync_apply_page/2): the SQL `filters`
-  # keyword built above cannot express "exclude type" (that would require
-  # touching the read-only evo_git WHERE builder). Rows are full %TaskInfo{}
-  # structs, so `type` is already a decoded atom — no atom conversion.
-  defp visible_tasks(tasks, true), do: tasks
-  defp visible_tasks(tasks, false), do: Enum.reject(tasks, &(&1.type == :reflect))
+  # Normalizes a SafeCall-wrapped mutating store call to `:ok | {:error, reason}`.
+  # The `EvoDash.NodeContext` mutating functions return `:ok | {:error, reason}`,
+  # so `SafeCall.run/1` yields `{:ok, :ok}` / `{:ok, {:error, reason}}`, while a
+  # caught exit/raise (store timeout, dead store) arrives as `{:error, reason}`.
+  defp mutation_result({:ok, :ok}), do: :ok
+  defp mutation_result({:ok, {:error, reason}}), do: {:error, reason}
+  defp mutation_result({:error, reason}), do: {:error, reason}
 
   defp animation_delay_class(idx) when idx <= 5, do: "animation-delay-#{div(idx, 1) * 100}"
   defp animation_delay_class(_), do: ""
