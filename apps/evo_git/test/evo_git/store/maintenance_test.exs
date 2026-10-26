@@ -235,7 +235,7 @@ defmodule EvoGit.Store.MaintenanceTest do
 
       assert Maintenance.run(store) == :ok
       # The store is untouched and still serving.
-      assert Store.count_tasks(store) == 0
+      assert Store.select_task_ids(store) == []
     end
 
     test "an absent store is an {:error, _}, not a crash" do

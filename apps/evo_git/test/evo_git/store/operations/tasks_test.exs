@@ -397,7 +397,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
     end
   end
 
-
   describe "clear_tasks/1" do
     test "deletes every row and returns :ok" do
       repo = start_repo!()

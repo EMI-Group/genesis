@@ -96,7 +96,7 @@ defmodule EvoGit.Store.PoolSizeTest do
         File.rm(path <> "-shm")
       end)
 
-      assert Store.count_tasks(store) == 0
+      assert Store.select_task_ids(store) == []
 
       # The facade's repo instance is the one started with the requested size.
       assert {:ok, 1} = await_pool_size(Store.__repo_pid__(store), 1)

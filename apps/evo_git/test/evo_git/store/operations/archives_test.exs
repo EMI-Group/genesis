@@ -467,6 +467,75 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
     assert one["result"] == "second agent"
   end
 
+  # ── Roster projection opt-ins ────────────────────────────────────────────
+  test "the default roster keeps usage and omits the result + the three settings columns" do
+    repo = start_repo!("roster-lean")
+    :ok = Archives.put(repo, full_entry())
+
+    assert {:ok, %{entries: [entry], total: 1}} = Archives.list(repo, "task-a")
+    assert {:ok, full} = Archives.get(repo, "task-a", 7)
+
+    # A lean entry is a STRICT subset of the full row: the same keys with the
+    # same decoded values, minus the opt-in groups — ABSENT, never nil.
+    assert entry ==
+             Map.drop(full, ["result", "llm_settings", "agent_settings", "foreign_repos"])
+
+    for absent <- ["result", "llm_settings", "agent_settings", "foreign_repos"] do
+      refute Map.has_key?(entry, absent), "the lean roster entry must not carry #{absent}"
+    end
+
+    # `usage` is NOT opt-in: every roster view shows the token/cost figures.
+    assert Map.has_key?(entry, "usage")
+
+    assert entry["usage"] == %{
+             "input_tokens" => 1200,
+             "output_tokens" => 340,
+             "total_cost" => 0.42
+           }
+  end
+
+  test "include_settings: true adds exactly the three settings columns, decoded" do
+    repo = start_repo!("roster-settings")
+    :ok = Archives.put(repo, full_entry())
+
+    assert {:ok, %{entries: [entry]}} = Archives.list(repo, "task-a", include_settings: true)
+
+    assert entry["llm_settings"] == %{"model_id" => "deepseek-chat", "temperature" => 0.2}
+    assert entry["agent_settings"] == %{"max_turns" => 40, "delegation_level" => "low"}
+    assert length(entry["foreign_repos"]) == 2
+    assert Enum.at(entry["foreign_repos"], 0)["writable"] == true
+
+    # The settings opt-in does NOT drag the heavy `result` column along.
+    refute Map.has_key?(entry, "result")
+
+    # Both opt-ins together are the FULL row, byte for byte the `get/3` entry.
+    assert {:ok, %{entries: [with_result]}} =
+             Archives.list(repo, "task-a", include_settings: true, include_results: true)
+
+    assert {:ok, full} = Archives.get(repo, "task-a", 7)
+    assert with_result == full
+  end
+
+  test "include_total: false answers total: nil (never 0, never a partial count)" do
+    repo = start_repo!("roster-total")
+    for agent_id <- 1..3, do: seed(repo, "task-a", agent_id, 0)
+
+    assert {:ok, %{entries: [_, _, _], total: 3}} = Archives.list(repo, "task-a")
+
+    assert {:ok, %{entries: entries, total: nil}} =
+             Archives.list(repo, "task-a", include_total: false, limit: 2)
+
+    # The page itself is unchanged; only the aggregate is skipped.
+    assert Enum.map(entries, & &1["agent_id"]) == [1, 2]
+
+    assert {:ok, %{entries: [with_total], total: 3}} = Archives.list(repo, "task-a", limit: 1)
+    assert Map.keys(hd(entries)) |> Enum.sort() == Map.keys(with_total) |> Enum.sort()
+
+    # An EMPTY roster answers `nil` too, not 0 — the caller asked for no count.
+    assert {:ok, %{entries: [], total: nil}} =
+             Archives.list(repo, "no-such-task", include_total: false)
+  end
+
   # ── Deletes ──────────────────────────────────────────────────────────────
 
   test "delete_by_task/2 deletes only that task's rows" do
