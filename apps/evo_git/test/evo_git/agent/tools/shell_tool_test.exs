@@ -227,6 +227,70 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
     end
   end
 
+  describe "detect_manual_background/1" do
+    test "flags a standalone & (manually backgrounded command)" do
+      hint = ShellTool.detect_manual_background("sleep 10 &")
+      assert hint =~ "`&` does not keep a command alive here"
+      assert hint =~ "run_in_background: true"
+      assert hint =~ "job_output"
+      assert hint =~ "job_list"
+      assert hint =~ "job_kill"
+    end
+
+    test "flags a trailing & even after an output redirect" do
+      assert ShellTool.detect_manual_background("cmd 2>&1 &") =~ "`&`"
+      assert ShellTool.detect_manual_background("cmd > out.log &") =~ "`&`"
+    end
+
+    test "flags nohup / setsid / disown as bare words" do
+      assert ShellTool.detect_manual_background("nohup ./server") =~ "`nohup`"
+      assert ShellTool.detect_manual_background("setsid foo &") =~ "`setsid`"
+      assert ShellTool.detect_manual_background("disown -a") =~ "`disown`"
+      # Not only at the start of the command line.
+      assert ShellTool.detect_manual_background("mix test; nohup x") =~ "`nohup`"
+      # A keyword names the more specific cause even when a `&` is present too.
+      assert ShellTool.detect_manual_background("nohup ./server &") =~ "`nohup`"
+    end
+
+    test "flags screen / tmux session launchers" do
+      assert ShellTool.detect_manual_background("tmux new-session -d") =~ "`tmux`"
+      assert ShellTool.detect_manual_background("tmux new -d 'mix test'") =~ "`tmux`"
+      assert ShellTool.detect_manual_background("screen -dmS x y") =~ "`screen`"
+      assert ShellTool.detect_manual_background("screen -S sess cmd") =~ "`screen`"
+    end
+
+    test "does not flag shell operators that merely contain &" do
+      assert ShellTool.detect_manual_background("a && b") == nil
+      assert ShellTool.detect_manual_background("git log && git status") == nil
+      assert ShellTool.detect_manual_background("cmd 2>&1") == nil
+      assert ShellTool.detect_manual_background("cmd &> log") == nil
+      assert ShellTool.detect_manual_background("cmd &>> log") == nil
+      assert ShellTool.detect_manual_background("cmd >&2") == nil
+      assert ShellTool.detect_manual_background("cmd 3>&1") == nil
+    end
+
+    test "does not flag & inside quotes" do
+      assert ShellTool.detect_manual_background(~S{echo "a & b"}) == nil
+      assert ShellTool.detect_manual_background("echo 'a & b'") == nil
+      assert ShellTool.detect_manual_background(~S{grep "a && b" file}) == nil
+    end
+
+    test "does not flag ordinary commands or listing/query forms" do
+      assert ShellTool.detect_manual_background("make test") == nil
+      assert ShellTool.detect_manual_background("mix test") == nil
+      assert ShellTool.detect_manual_background("screen -ls") == nil
+      assert ShellTool.detect_manual_background("screen -list") == nil
+      assert ShellTool.detect_manual_background("tmux ls") == nil
+      # `screen`/`tmux` as an ARGUMENT is not a session launcher.
+      assert ShellTool.detect_manual_background("cat tmux") == nil
+    end
+
+    test "is total — a non-binary command returns nil" do
+      assert ShellTool.detect_manual_background(nil) == nil
+      assert ShellTool.detect_manual_background(42) == nil
+    end
+  end
+
   describe "describe_exit_code/1" do
     test "returns nil for exit code 0" do
       assert ShellTool.describe_exit_code(0) == nil
@@ -382,6 +446,16 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
 
       assert result =~ "You don't need to invoke `/bin/sh -c`"
       assert result =~ "this tool already runs your command in a shell"
+    end
+
+    test "manually backgrounding a command appends the corrective hint", %{tmp_dir: tmp_dir} do
+      # `sleep 10 &` returns at once (exit 0) — the exact false-success shape the
+      # hint exists for. Assert the hint rides the normal result envelope.
+      result = ShellTool.execute(%{"command" => "sleep 10 &"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 0]"
+      assert result =~ "Hint: `&` does not keep a command alive here"
+      assert result =~ "run_in_background: true"
     end
   end
 

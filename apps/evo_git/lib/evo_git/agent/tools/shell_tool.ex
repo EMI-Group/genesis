@@ -91,13 +91,14 @@ defmodule EvoGit.Agent.Tools.ShellTool do
               "Timeout in milliseconds for a FOREGROUND command. Default: #{@default_timeout}. " <>
                 "Maximum: #{@max_timeout} (a larger value is clamped to it). A command still " <>
                 "running when the timeout expires is killed. A background command " <>
-                "(run_in_background: true) has no timeout.",
+                "(`run_in_background: true`) has no timeout — this value is ignored for it.",
             "default" => @default_timeout
           },
           "run_in_background" => %{
             "type" => "boolean",
             "description" =>
-              "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies."
+              "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). " <>
+                "No timeout applies. Use this for long-running work — never `&`/`nohup`."
           },
           "max_bytes" => %{
             "type" => "integer",
@@ -136,7 +137,11 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     """
     Use the bash tool — not shell commands like cat, sed, grep or find — to run a shell command when the dedicated read/write/edit/glob/rg tools cannot do the job.
 
-    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it), and a command still running when the timeout expires is killed. Set `run_in_background: true` to start a long-running command instead: it returns a job id immediately and no timeout applies — read its output with `job_output`, list your jobs with `job_list`, and stop it with `job_kill`. You are notified with a `[NOTICE]` message when a background job finishes.
+    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it), and a command still running when the timeout expires is killed.
+
+    For work that should stay alive — a server, a watcher, a long build — or that you want to poll while you do something else, set `run_in_background: true`: it returns a job id immediately, has NO timeout, and notifies you with a `[NOTICE]` when the job finishes; read its output with `job_output`, list your jobs with `job_list`, and stop it with `job_kill`.
+    NEVER background a command yourself with `&`, `nohup`, `setsid`, `disown`, `screen` or `tmux`: the sandbox kills the process group as soon as this call returns, so the command silently dies — and because the call still reports success (exit 0) with empty output, that failure is invisible (no job id, output discarded, no notification, not killable). Use `run_in_background: true` instead.
+    Do not prefix a command with a shell prompt `$` — the command is already passed to the shell.
 
     The working directory is already the repo path (the current git worktree path) — do not `cd` into it, and never `cd` into the repository root or another agent's worktree. Use relative paths for in-repo operations and absolute paths for external ones, double-quote paths containing spaces, verify parent directories exist before creating files, and use #{tmp_var()} for temporary files#{tmp_suffix}
     Prefer the dedicated tools, not the shell:
@@ -391,13 +396,15 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   end
 
   # Appends non-fatal guidance hints about the command (cd warnings + redundant
-  # nested-shell detection) as a TRAILING block after a blank line following the
-  # payload, regardless of exit code. Rendered through `Failure.notice/1`, so a
-  # hint never carries an emoji/marker prefix and can never read as the failure.
+  # nested-shell detection + manual-backgrounding detection) as a TRAILING block
+  # after a blank line following the payload, regardless of exit code. Rendered
+  # through `Failure.notice/1`, so a hint never carries an emoji/marker prefix
+  # and can never read as the failure.
   defp append_hints(base, command, repo_path, repo_root) do
     [
       detect_cd_warnings(command, repo_path, repo_root),
-      detect_redundant_shell(command)
+      detect_redundant_shell(command),
+      detect_manual_background(command)
     ]
     |> Enum.reject(&is_nil/1)
     |> case do
@@ -612,6 +619,124 @@ defmodule EvoGit.Agent.Tools.ShellTool do
 
   defp absolute_shell_path?(token), do: String.match?(token, @absolute_shell_path_regex)
   defp bare_shell_name?(token), do: String.match?(token, @bare_shell_name_regex)
+
+  # Bare shell WORDS that manually background a command. Matched as whole words
+  # (never as a path segment or a longer word).
+  @manual_background_regexes [
+    {"nohup", ~r/(?<![\w.\/-])nohup(?![\w.\/-])/},
+    {"disown", ~r/(?<![\w.\/-])disown(?![\w.\/-])/},
+    {"setsid", ~r/(?<![\w.\/-])setsid(?![\w.\/-])/}
+  ]
+
+  # A STANDALONE `&` on its own: NOT part of `&&`, `&>`, `&>>`, `>&`, `2>&1` or
+  # `N>&M` — every one of those has `&` or `>` on the neighbouring side.
+  @standalone_ampersand_regex ~r/(?<![&>])&(?![&>])/
+
+  # Shell command separators. Used to split a command line into command
+  # POSITIONS so `screen`/`tmux` are only treated as launchers where a command
+  # actually starts (`cat tmux` is not a launch).
+  @command_separator_regex ~r/[;&|()\n]+/
+
+  # Quoted segments, removed BEFORE detection so `echo "a & b"` never reads as
+  # manual backgrounding. Escaped double quotes are honored; single quotes take
+  # no escapes (bash semantics).
+  @quoted_segment_regex ~r/"(?:[^"\\]|\\.)*"|'[^']*'/
+
+  @doc """
+  Detects MANUAL backgrounding in a command string.
+
+  A foreground `bash` call cannot background work: the sandbox tears the whole
+  process group down when the call returns, so a `&`/`nohup`/`setsid` child dies
+  with its output discarded — while the call still reports success (exit 0) with
+  empty output. This returns a short corrective hint naming the detected
+  construct (`&`, `nohup`, `disown`, `setsid`, `screen`, `tmux`) and the
+  replacement (`run_in_background: true` + the job tools), or `nil` when the
+  command does not background anything.
+
+  Detection is deliberately CONSERVATIVE and quote-aware: a standalone `&` (not
+  `&&`/`&>`/`&>>`/`>&`/`2>&1`/`N>&M`, not inside quotes), the bare words
+  `nohup`/`disown`/`setsid`, `screen` in a command position as a session
+  launcher, and `tmux` in a command position starting/attaching a session.
+
+  Advisory only: never raises, never blocks and never rewrites the command.
+  """
+  @spec detect_manual_background(String.t()) :: String.t() | nil
+  def detect_manual_background(command) when is_binary(command) do
+    command
+    |> strip_quoted_segments()
+    |> manual_background_construct()
+    |> case do
+      nil -> nil
+      construct -> manual_background_hint(construct)
+    end
+  end
+
+  def detect_manual_background(_command), do: nil
+
+  defp strip_quoted_segments(text), do: Regex.replace(@quoted_segment_regex, text, "")
+
+  # The detected construct, rendered for the hint. Keyword constructs win over a
+  # bare `&` (a `nohup cmd &` names the more specific cause).
+  defp manual_background_construct(text) do
+    cond do
+      word = manual_background_word(text) ->
+        "`#{word}`"
+
+      launcher = session_launcher(text) ->
+        "`#{launcher}`"
+
+      String.match?(text, @standalone_ampersand_regex) ->
+        "`&`"
+
+      true ->
+        nil
+    end
+  end
+
+  defp manual_background_word(text) do
+    Enum.find_value(@manual_background_regexes, fn {word, regex} ->
+      if Regex.match?(regex, text), do: word
+    end)
+  end
+
+  defp session_launcher(text) do
+    text
+    |> String.split(@command_separator_regex, trim: true)
+    |> Enum.find_value(fn segment ->
+      case String.split(segment, ~r/\s+/, trim: true) do
+        ["screen" | rest] -> if screen_launch?(rest), do: "screen"
+        ["tmux" | rest] -> if tmux_launch?(rest), do: "tmux"
+        _ -> nil
+      end
+    end)
+  end
+
+  # `screen` launches a session BARE, with a COMMAND argument, or with a
+  # session-launching flag bundle (`-dmS name cmd`, `-S name`, `-dm`). Listing /
+  # query forms (`-ls`, `-list`, `-v`, `-X …`) are not launchers.
+  defp screen_launch?([]), do: true
+
+  defp screen_launch?([token | _rest]) do
+    case token do
+      "-" <> flags -> String.match?(flags, ~r/[dDmS]/)
+      _command -> true
+    end
+  end
+
+  # `tmux` launches a session BARE, or through `new` / `new-session` /
+  # `new-window` / `neww` (optionally behind flags), or by attaching.
+  defp tmux_launch?(rest) do
+    rest
+    |> Enum.drop_while(&String.starts_with?(&1, "-"))
+    |> case do
+      [] -> true
+      [command | _rest] -> command in ["new", "new-session", "new-window", "neww", "attach", "at"]
+    end
+  end
+
+  defp manual_background_hint(construct) do
+    "Hint: #{construct} does not keep a command alive here — the sandbox kills the process group when this call returns, so the work dies and its output is lost. Use bash's `run_in_background: true` and collect the result with `job_output` (ids from `job_list`, stop with `job_kill`)."
+  end
 
   # Extracts the `cd` targets from a command, resolving relative targets
   # against the worktree cwd (`repo_path`) so consumers can compare them with

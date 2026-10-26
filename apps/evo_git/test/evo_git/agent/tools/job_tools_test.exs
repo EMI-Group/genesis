@@ -568,6 +568,17 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert schema.description =~ "job_output"
       assert schema.description =~ "job_list"
       assert schema.description =~ "job_kill"
+
+      # The description pushes the harness's own backgrounding mechanism and
+      # warns against doing it by hand (the sandbox kills the process group, so
+      # a manual `&`/`nohup` silently loses the work).
+      assert schema.description =~ "run_in_background"
+      assert schema.description =~ "NEVER background a command yourself"
+      assert schema.description =~ "`nohup`"
+      assert schema.description =~ "`&`"
+      assert properties["run_in_background"]["description"] =~ "never `&`/`nohup`"
+      # …and it warns that the command is already passed to the shell.
+      assert schema.description =~ "shell prompt `$`"
     end
 
     test "a background start returns the job id and registers the job", %{tmp_dir: cwd} do
