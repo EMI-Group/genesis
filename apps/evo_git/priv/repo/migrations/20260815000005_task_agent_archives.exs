@@ -70,7 +70,8 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
 
     1. decode the JSON array LENIENTLY (`Jason.decode/1`); a corrupt value, or
        a value that is not a list, is logged with `Logger.warning` naming the
-       task id and SKIPPED — one unreadable archive never wedges an upgrade;
+       task id and SKIPPED — one unreadable archive never wedges an upgrade,
+       and the skipped payload is DUMPED before the column goes (below);
     2. `INSERT OR REPLACE` exactly one `task_agent_archives` row per record,
        mapping every record key onto its column (`task_id` comes from the task
        row, `agent_id` from the record; `depth`/`compression_count` default to
@@ -87,6 +88,23 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
 
   `updated_at` (and every other column) is NEVER touched: moving the archive
   is not a task mutation.
+
+  ## 3a. Undecodable archives are dumped, never dropped
+
+  Dropping the column destroys every payload it holds, so a task whose archive
+  cannot be decoded is preserved FIRST, in
+  `<EvoGit.Platform.data_dir()>/migration_dumps/archive_metadata_skipped_20260815000005.json`
+  — one plain JSON object mapping `task_id` to that task's RAW
+  `archive_metadata` text (the value exactly as it sat in the row).
+  The migration version is part of the file name, so this dump can never
+  clobber one written by another version.
+  The absolute path is logged at `:warning`, and the file is written BEFORE
+  the column is dropped, so the operator always has a recoverable copy.
+  A clean upgrade (every archive decodable, or no legacy column at all) writes
+  NOTHING: no dump file, no `migration_dumps/` directory, no extra I/O.
+  If the dump cannot be written the migration RAISES (boot-fatal) instead of
+  dropping the payloads — losing archive data silently is the one outcome this
+  migration refuses.
 
   Then the column goes: `ALTER TABLE tasks DROP COLUMN archive_metadata` runs
   at the very end, and only when the column still exists — SQLite has supported
@@ -107,7 +125,8 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
       so a boot that crashed between them (or one re-running after the column
       is already gone) simply finishes;
     * a still-corrupt archive is skipped again (and logged again), leaving the
-      migration converging without it.
+      migration converging without it — its payload is re-dumped to the SAME
+      file (idempotent: the dump is rebuilt from the current rows).
 
   ## Conventions
 
@@ -172,6 +191,13 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
   # The legacy column this migration consumes and removes.
   @legacy_column "archive_metadata"
 
+  # Where the undecodable payloads of `@legacy_column` are preserved before the
+  # column is dropped: `<data_dir>/migration_dumps/<this name>`. The migration
+  # version is part of the file name so a later version's dump can never
+  # clobber this one.
+  @dump_dir "migration_dumps"
+  @dump_file "archive_metadata_skipped_20260815000005.json"
+
   # The heavy `result` blob is read/written row by row; a user database can
   # hold thousands of multi-MiB rows.
   @statement_timeout 600_000
@@ -211,6 +237,11 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
         "(#{records} agent record(s)); #{length(skipped)} task(s) skipped"
     )
 
+    # An undecodable archive is DATA, not noise: preserve its raw payload
+    # BEFORE the column is dropped, so nothing is lost with only a log line as
+    # a trace. A clean fan-out writes nothing at all.
+    dump_skipped(skipped)
+
     assert_no_archives_left!(skipped)
   end
 
@@ -236,6 +267,70 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
         warn(task_id, "the row could not be read back")
         :error
     end
+  end
+
+  ## Skipped-payload dump
+
+  # `<data_dir>/migration_dumps/archive_metadata_skipped_20260815000005.json` —
+  # a plain JSON object mapping `task_id` to the RAW `@legacy_column` text.
+  #
+  # STRICT no-op when nothing was skipped (the path every fresh database and
+  # every clean upgrade takes): no file, no directory, no I/O.
+  # A dump that cannot be written RAISES — the migration transaction then rolls
+  # back and the column survives, which is the whole point.
+  defp dump_skipped([]), do: :ok
+
+  defp dump_skipped(skipped) do
+    payloads = skipped_payloads(skipped)
+
+    if map_size(payloads) == 0, do: :ok, else: write_dump(payloads)
+  end
+
+  # The raw payloads of the skipped tasks, read in ONE statement (the fan-out
+  # above only kept the ids). A read error RAISES rather than dumping less than
+  # it promised: the column must not go while a payload is unaccounted for.
+  defp skipped_payloads(task_ids) do
+    placeholders = Enum.map_join(task_ids, ", ", fn _id -> "?" end)
+
+    statement =
+      "SELECT id, #{@legacy_column} FROM tasks " <>
+        "WHERE id IN (#{placeholders}) AND #{@legacy_column} IS NOT NULL"
+
+    case repo().query(statement, task_ids, timeout: @statement_timeout, log: false) do
+      {:ok, %{rows: rows}} -> Map.new(rows, fn [task_id, raw] -> {task_id, raw} end)
+      {:error, reason} -> raise_dump_error("<read back the skipped payloads>", reason)
+    end
+  end
+
+  defp write_dump(payloads) do
+    dir = Path.join(EvoGit.Platform.data_dir(), @dump_dir)
+    path = Path.join(dir, @dump_file)
+
+    case File.mkdir_p(dir) do
+      :ok ->
+        case File.write(path, Jason.encode!(payloads, pretty: true)) do
+          :ok ->
+            Logger.warning(
+              "#{inspect(__MODULE__)}: #{map_size(payloads)} undecodable " <>
+                "#{@legacy_column} payload(s) saved to #{path} before the column is dropped"
+            )
+
+            :ok
+
+          {:error, reason} ->
+            raise_dump_error(path, reason)
+        end
+
+      {:error, reason} ->
+        raise_dump_error(path, reason)
+    end
+  end
+
+  defp raise_dump_error(target, reason) do
+    raise Ecto.MigrationError,
+          "task-agent-archives could not write the skipped-#{@legacy_column} dump " <>
+            "(#{target}: #{inspect(reason)}); #{@legacy_column} is NOT dropped, because " <>
+            "those payloads would otherwise be lost — fix the data dir and retry"
   end
 
   defp insert_records(task_id, records) do
@@ -565,7 +660,7 @@ defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
   defp warn(task_id, reason) do
     Logger.warning(
       "#{inspect(__MODULE__)}: skipping task #{task_id} — #{reason} " <>
-        "(the value is left exactly as it was)"
+        "(the value is not migrated into task_agent_archives)"
     )
   end
 end

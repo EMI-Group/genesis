@@ -50,17 +50,28 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       (`list_task_archives/3`, `get_agent_archive/3`);
     * a corrupt archive (not JSON, or not a JSON array) is logged as a WARNING
       naming the task id and SKIPPED — the migration still completes, the other
-      tasks still migrate and the column still goes;
+      tasks still migrate and the column still goes — and its RAW payload is
+      DUMPED to `<data_dir>/migration_dumps/archive_metadata_skipped_20260815000005.json`
+      (`{task_id => raw payload}` JSON, absolute path logged at `:warning`)
+      before the column is dropped, so the payload is recoverable; a clean
+      migration (nothing skipped) writes NO dump file and creates NO dump
+      directory;
     * idempotency: a re-run with the column already gone is a silent no-op, and
       a partial fan-out (some rows written, the column still holding the array)
       resumes through the upsert on `(task_id, agent_id)` without duplicating an
       agent.
 
-  Never writes to the user's real data dir: every database lives under the
-  per-test `System.tmp_dir!()` root.
+  Every database lives under the per-test `System.tmp_dir!()` root.
+  The ONE exception is the skipped-payload dump, which the migration writes to
+  the PLATFORM data dir (not the per-test root), so this module clears that
+  file before and after every test — no dump outlives its test.
   """
 
-  use ExUnit.Case, async: true
+  # NOT async: the skipped-payload dump lives in the PLATFORM data dir, which
+  # every concurrent migration suite shares (other suites seed undecodable
+  # archives too), and the dump-failure test temporarily blocks that path with a
+  # regular file — both would race a concurrently booting suite.
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
 
@@ -163,6 +174,11 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
   @archive_index "task_agent_archives_task_depth_idx"
 
+  # The file `20260815000005_task_agent_archives` writes when it cannot decode
+  # an archive (the migration version is in the name, so another version's
+  # dump can never collide with it).
+  @dump_file "archive_metadata_skipped_20260815000005.json"
+
   # `PRAGMA table_info(task_agent_archives)` rows — [cid, name, type, notnull,
   # dflt, pk] — of the table `…005` creates: TEXT `repo_id`, `task_id`/`agent_id`
   # the composite primary key, DEFAULT 0 on `depth`/`compression_count`.
@@ -206,8 +222,22 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
     root = Path.join(System.tmp_dir!(), "evogit_archive_migration_#{stamp}_#{inspect(self())}")
 
-    on_exit(fn -> File.rm_rf(root) end)
-    {:ok, %{root: root}}
+    # The skipped-payload dump goes to the PLATFORM data dir — a real path, not
+    # the per-test root — so it is cleared around every test and its directory
+    # only removed when this module left it empty. `File.rm/1` removes only a
+    # regular FILE, so it also clears a directory path a previous test blocked.
+    dump = dump_path()
+    File.rm(Path.dirname(dump))
+    File.rm(dump)
+    File.rmdir(Path.dirname(dump))
+
+    on_exit(fn ->
+      File.rm(dump)
+      File.rmdir(Path.dirname(dump))
+      File.rm_rf(root)
+    end)
+
+    {:ok, %{root: root, dump: dump, dump_dir_existed?: File.dir?(Path.dirname(dump))}}
   end
 
   # ── 20260815000005_task_agent_archives ────────────────────────────────────
@@ -409,6 +439,105 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
       # The healthy tasks still migrated alongside.
       assert length(archive_rows(pid, "task-a")) == 3
+    end
+
+    test "dumps an undecodable archive's raw payload before the column is dropped", %{
+      root: root,
+      dump: dump
+    } do
+      path = Path.join(root, "skipped_dump.sqlite")
+      create_db!(path, [@archive_version])
+      seed_archives!(path)
+      before = snapshot!(path)
+
+      {pid, log} = with_log(fn -> start_repo!(path) end)
+
+      # The dump exists under the platform data dir, named after THIS migration
+      # version, and is written before the column goes.
+      assert File.exists?(dump)
+      assert Path.dirname(dump) == Path.join(EvoGit.Platform.data_dir(), "migration_dumps")
+
+      # `{task_id => RAW payload}`: the exact text the row held — never a
+      # re-encoded, truncated or partially migrated version of it.
+      assert dump |> File.read!() |> Jason.decode!() == %{
+               "task-corrupt" => before[{"task-corrupt", "archive_metadata"}],
+               "task-bad-json" => before[{"task-bad-json", "archive_metadata"}]
+             }
+
+      # The operator can find the dump: its ABSOLUTE path is logged.
+      assert log =~ dump
+      assert log =~ "undecodable archive_metadata payload(s) saved to"
+
+      # Nothing else changes: the column is still dropped, the healthy tasks
+      # migrated, and the chain converged.
+      refute "archive_metadata" in column_names(pid)
+      assert length(archive_rows(pid, "task-a")) == 3
+      assert migration_versions(pid) == @migration_versions
+    end
+
+    test "a clean migration creates no skipped-payload dump", %{
+      root: root,
+      dump: dump,
+      dump_dir_existed?: dump_dir_existed?
+    } do
+      # A LEGACY database whose archives ALL decode: nothing is skipped, so the
+      # dump must be a strict no-op — no file, no directory, no extra I/O.
+      path = Path.join(root, "clean_no_dump.sqlite")
+      create_db!(path, [@archive_version])
+
+      insert_rows!(path, [
+        [
+          id: "task-clean",
+          archive_metadata: Jason.encode!([%{"agent_id" => 1, "objective" => "Fine"}])
+        ]
+      ])
+
+      pid = start_repo!(path)
+
+      # The fan-out really ran (and really had a source), it just skipped
+      # nothing.
+      assert length(archive_rows(pid, "task-clean")) == 1
+      refute "archive_metadata" in column_names(pid)
+
+      refute File.exists?(dump)
+      assert File.dir?(Path.dirname(dump)) == dump_dir_existed?
+
+      # The CREATE path (a fresh database that never carried the legacy column)
+      # is the same strict no-op.
+      fresh = Path.join(root, "clean_fresh_no_dump.sqlite")
+      create_db!(fresh, [@archive_version], tasks_ddl: @live_tasks_ddl)
+      start_repo!(fresh)
+
+      refute File.exists?(dump)
+      assert File.dir?(Path.dirname(dump)) == dump_dir_existed?
+    end
+
+    test "raises instead of dropping the column when the dump cannot be written", %{
+      root: root,
+      dump: dump
+    } do
+      path = Path.join(root, "dump_failure.sqlite")
+      create_db!(path, [@archive_version])
+      seed_archives!(path)
+
+      # Block the dump DIRECTORY with a regular file, so `File.mkdir_p/1` fails
+      # and the payload cannot be preserved. Losing it silently is not an
+      # option: the migration must abort, which rolls the transaction back and
+      # keeps `archive_metadata`.
+      blocker = Path.dirname(dump)
+      File.mkdir_p!(Path.dirname(blocker))
+      File.write!(blocker, "not a directory")
+
+      assert_raise Ecto.MigrationError, ~r/archive_metadata is NOT dropped/, fn ->
+        Boot.start_dynamic(path)
+      end
+
+      File.rm!(blocker)
+
+      # The column (and every payload in it) survived, and version 5 is still
+      # PENDING, so the next boot retries it.
+      assert "archive_metadata" in column_names!(path)
+      refute @archive_version in stamped_versions!(path)
     end
 
     test "is idempotent: re-running after the column is gone is a no-op", %{root: root} do
@@ -681,6 +810,13 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     name
   end
 
+  # Where `20260815000005_task_agent_archives` preserves the raw payloads of the
+  # archives it could not decode — the REAL platform data dir, not the per-test
+  # root, so every test clears it.
+  defp dump_path do
+    Path.join([EvoGit.Platform.data_dir(), "migration_dumps", @dump_file])
+  end
+
   defp migration_versions(pid) do
     RepoScope.with_repo(pid, fn ->
       Repo.query!("SELECT version FROM schema_migrations ORDER BY version").rows
@@ -755,6 +891,15 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     {:ok, %{rows: rows}} = XqliteNIF.query(conn, "PRAGMA table_info(tasks)", [])
     :ok = XqliteNIF.close(conn)
     Enum.map(rows, fn [_cid, name | _rest] -> name end)
+  end
+
+  # The versions stamped in `schema_migrations`, read with RAW xqlite — usable
+  # when no repo could be booted (a migration that raised left none).
+  defp stamped_versions!(path) do
+    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, "SELECT version FROM schema_migrations", [])
+    :ok = XqliteNIF.close(conn)
+    Enum.map(rows, &hd/1)
   end
 
   # Raw xqlite read of ONE column of ONE row — the ground truth on disk,
