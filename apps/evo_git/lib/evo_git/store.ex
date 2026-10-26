@@ -105,7 +105,10 @@ defmodule EvoGit.Store do
       worker is NOT linked, so a query/decode raise, an exit or a kill inside
       it arrives here as a `:DOWN` message (or as an internal-deadline
       message) and is answered with the read's degraded value — nothing from an
-      offloaded read ever propagates to this process. The caller's 30s
+      offloaded read ever propagates to this process. A failure is re-raised by
+      the worker body as a `:shutdown`-class exit (`run_offload/2`), so the
+      runtime emits NO second OTP crash report for it: the facade's own log
+      line is the ONLY trace of a degraded read. The caller's 30s
       `@call_timeout` still applies, and the internal deadline is shorter, so
       the degraded reply always beats the caller's own timeout.
     * **Per-row safe decode** — the safe-select/summary Operations skip (and
@@ -123,6 +126,11 @@ defmodule EvoGit.Store do
     * `start_offload_worker/2` — converts a worker-SPAWN failure (e.g.
       `:system_limit`) into the same degraded reply a failed read produces,
       instead of crashing this GenServer.
+    * `run_offload/2` — the fault-isolation boundary INSIDE the read worker: a
+      query/decode failure exits the worker with a `:shutdown`-class reason
+      (carrying kind/reason/stacktrace) instead of propagating an uncaught
+      exception, which would add a duplicate OTP crash report on top of this
+      module's own log line.
     * `handle_info({:DOWN, ...})` / `handle_info({:offload_timeout, ...})` —
       not try/rescue, but the same principle: an offloaded read's failure is
       OBSERVED and DEGRADED, never re-raised.
@@ -1030,7 +1038,10 @@ defmodule EvoGit.Store do
   #     the worker's last statement, so a `:normal` exit can only follow it);
   #     ANY other reason means `fun` raised/exited/was killed before replying,
   #     so the caller gets `degraded_value` and the fault is logged at :error
-  #     with `op_name`.
+  #     with `op_name`. A `fun` fault arrives as the `:shutdown`-class reason
+  #     `{:shutdown, {:offload_failed, kind, reason, stacktrace}}` that
+  #     `run_offload/2` produces — deliberately NOT an uncaught raise, whose
+  #     separate OTP crash report would log every degraded read twice.
   #   * a worker SPAWN failure is handled identically (see
   #     `start_offload_worker/2`).
   #   * a wedged worker (uninterruptible I/O) is killed at `@offload_timeout`
@@ -1074,13 +1085,33 @@ defmodule EvoGit.Store do
   # worker-START guard: `spawn_monitor/1` can fail (e.g. `:system_limit`), and
   # that must degrade the ONE read instead of crashing the facade.
   defp start_offload_worker(from, fun) do
-    {pid, ref} = spawn_monitor(fn -> GenServer.reply(from, fun.()) end)
+    {pid, ref} = spawn_monitor(fn -> run_offload(from, fun) end)
 
     {:ok, pid, ref}
   rescue
     exception -> {:error, exception}
   catch
     kind, reason -> {:error, {kind, reason}}
+  end
+
+  # The worker's OWN body — the fault-isolation boundary of an offloaded read.
+  #
+  # JUSTIFIED try/catch: this is the centralized boundary where a query/decode
+  # failure is converted into a NON-crashing worker exit (the "no try/rescue"
+  # rule's fault-isolation-boundary exception). A bare uncaught raise would also
+  # be degraded correctly by `fail_offload/3` (via the `:DOWN` reason), but the
+  # runtime would ALSO emit an OTP crash report for the worker — asynchronously,
+  # through `:logger_proxy`, without an operation name — so every degraded read
+  # was logged TWICE. Exiting with a `:shutdown`-class reason (`:shutdown` and
+  # `{:shutdown, _}` are NORMAL exit classes for the error logger) suppresses
+  # that report at the source while carrying the identical information to the
+  # facade through the `:DOWN` message, which `format_offload_reason/1` renders
+  # in full (`Exception.format(kind, reason, stacktrace)`).
+  defp run_offload(from, fun) do
+    GenServer.reply(from, fun.())
+  catch
+    kind, reason ->
+      exit({:shutdown, {:offload_failed, kind, reason, __STACKTRACE__}})
   end
 
   # Replies with the degraded value for a failed/timed-out read, logs the fault
@@ -1098,9 +1129,18 @@ defmodule EvoGit.Store do
     {:noreply, state}
   end
 
-  # Rendered reason for the log line: an exception + its stacktrace is formatted
-  # in full (the production incident was a `DBConnection.ConnectionError`), an
-  # exit/kill reason is inspected.
+  # Rendered reason for the log line. A worker fault arrives as the
+  # `:shutdown`-class `{:shutdown, {:offload_failed, kind, reason, stacktrace}}`
+  # exit its body produces (see `run_offload/2`); it is formatted EXACTLY like
+  # the uncaught exception it wraps — the full exception plus stacktrace (the
+  # production incident was a `DBConnection.ConnectionError`) — so the degraded
+  # path loses no detail. A bare `{exception, stacktrace}` reason is kept as a
+  # defensive fallback, an exit/kill reason is inspected.
+  defp format_offload_reason({:shutdown, {:offload_failed, kind, reason, stacktrace}})
+       when is_list(stacktrace) do
+    Exception.format(kind, reason, stacktrace)
+  end
+
   defp format_offload_reason({%{__exception__: true} = exception, stacktrace})
        when is_list(stacktrace) do
     Exception.format(:error, exception, stacktrace)
