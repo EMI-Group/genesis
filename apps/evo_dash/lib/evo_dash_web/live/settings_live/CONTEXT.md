@@ -121,6 +121,8 @@ The result handlers (`{{:config_saved, ...}, result}` and `{{:credentials_saved,
 `test_llm` is exit-safe: the chosen call (`EvoGit.RemoteNode.llm_test/3` remote / `EvoGit.SystemCheck.llm_test/2` local) is `SafeCall.run/1`-wrapped, normalized by `normalize_llm_test_result/1`, and `{:llm_test_result, result}` is ALWAYS sent.
 Every in-progress flag (`config_saving`, `custom_tools_loading`, `llm_test_status`) also clears on the error branch, so no flag can stick.
 `SearchEvents.handle_reset_key/2` persists through `EvoDashWeb.SettingsLive.persist_file_config/3` and owns only its invalid-key-path guard.
+The `:agents`-category mutations (`CustomAgentEvents.save_custom_agent/2` / `delete_custom_agent/2` / `save_model_selection_script/2` / `test_model_selection_script/2`) run every `EvoDash.NodeContext` call through `EvoDash.SafeCall.run/1` and surface failures as their existing error flashes (`error_message/1`, `script_save_error_message/1`, `{:error, reason}` test-result entries), so a dead remote node never crashes the LiveView.
+They stay synchronous-but-exit-safe on the LiveView process for BOTH local and remote nodes (`CustomAgentEvents` has no result-message plumbing), while their follow-up custom-agents / custom-tools refreshes stay async through `SettingsLive.load_custom_agents_data/1` and the supervised `SettingsLive.refresh_custom_tools/1`.
 
 ## Test strategy (async loads)
 
