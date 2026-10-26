@@ -14,17 +14,21 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | File | Module under test |
 |------|-------------------|
 | `shared_test.exs` | `EvoGit.Agent.Tools.Shared` (pure arg/path helpers) |
-| `file_read_test.exs` | `Tools` `"read_file"` |
+| `commit_files_test.exs` | `Tools.Shared.commit_files/4` (the shared stage+commit helper) |
+| `file_read_test.exs` | `Tools` `"read_file"` (incl. its OUTPUT shape) |
+| `file_edit_test.exs` | `Tools` `"edit_file"` (model-facing `edit`; owns the edit OUTPUT shape) |
 | `glob_test.exs` | `Tools` `"glob"` |
 | `ripgrep_test.exs` | `Tools` `"rg"` |
 | `search_context_test.exs` | `Tools` `"search_context"` |
 | `search_history_test.exs` | `Tools` `"search_history"` |
-| `make_dir_test.exs` | `EvoGit.Agent.Tools.MakeDir` |
+| `make_dir_test.exs` | `EvoGit.Agent.Tools.MakeDir` (owns the make_dir OUTPUT shape) |
 | `skill_tools_worktree_test.exs` | the 8 skill tools (`SkillAdd`/`SkillEdit`/`SkillRemove`/`SkillList`/`SkillRead`/`SkillWhere`/`SkillEnable`/`SkillDisable`) — worktree (`repo_path`) read/write routing + self-committing writes via `Shared.maybe_commit_result/6` |
 | `shell_tool_test.exs` | `EvoGit.Agent.Tools.ShellTool` |
 | `job_tools_test.exs` | the background-job tools (`JobOutput`/`JobList`/`JobKill`) + `ShellTool`'s `run_in_background` mode + the classification/guards that mode depends on (`Tools.write_call?/2`, `Tools.background_start?/1`, `Tools.serial_tool?/1`) |
 | `complete_task_test.exs` | `EvoGit.Agent.Tools.CompleteTask` (incl. the streaming archive-row write into `task_agent_archives` at agent completion) |
 | `web_search_test.exs` | `EvoGit.Agent.Tools.WebSearch` + `WebSearchProviders` |
+| `web_fetch_test.exs` | `EvoGit.Agent.Tools.WebFetch` (end-to-end against an in-test HTTP/1.1 server on `127.0.0.1`) |
+| `html_to_markdown_test.exs` | `EvoGit.Agent.Tools.HtmlToMarkdown` |
 | `lsp_test.exs` | `EvoGit.Agent.Tools.Lsp` (config-gated `lsp` tool, driven with per-call `opts` overrides against the fake language server) |
 | `web_fetch_lsp_registration_test.exs` | the schema-registration / dispatch contract for `web_fetch` and `lsp` |
 | `reflect_tools_test.exs` | the self-reflective task-control command handlers |
@@ -35,6 +39,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 Every module carries an `@moduledoc` naming why it is `async: true` / `async: false` — keep it accurate when the forcing state changes.
 
 - `async: false` — `web_search_test.exs` (mutates the `:web_search_http_runner` app-env seam and the shared `:req_llm` API-key store).
+- `async: false` — `web_fetch_test.exs` (mutates the app-env `:web_fetch_allow_private_hosts` key and runs against one fixed repo path, `/tmp/web-fetch-test-repo`).
 - `async: false` — `reflect_tools_test.exs` (`without_model_profiles/1` rewrites the GLOBAL `EvoGit.AgentScheduler` `model_profiles` config via `AgentScheduler.update_config/1`, a BEAM-global read by every other agent/task module).
 - `async: false` — `complete_task_test.exs` (the complete/archive tests insert and delete rows in the shared app-owned `:evogit_sched_meta` / `:evogit_agent_state` ETS tables; each test also gets its own isolated `EvoGit.Store` + `EvoGit.TaskRegistry` pair via `EvoGit.TaskRegistryCase`, so the archive assertions read a real producer's `task_agent_archives` rows out of a real dynamic store).
 - `async: false` — `job_tools_test.exs` (every test starts its OWN isolated `EvoGit.BackgroundJobs` registry under a unique name, reached through the `:evogit_background_jobs_server` pdict seam with `:evogit_agent_pid` as the job owner, and spawns REAL detached OS children whose `genesis_job_*.log` output files land in the SHARED `EvoGit.Sandbox.resolve_tmpdir/0` scratch dir — an isolated GenServer, real host children and a shared scratch dir all rule out concurrent modules, and its before/after file snapshot cleanup is only sound in the serial phase).
@@ -53,5 +58,11 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `skill_tools_worktree_test.exs` also pins `SkillRemove` staging a CASE-DIFFERING filename (the `name` argument differs only in case from the on-disk file, e.g. remove `"deploy"` for `Deploy.md`) — resolution goes through `EvoGit.Skills.CRUD.find_skill_file/2` (exact-then-case-insensitive), so the commit carries the real filename's deletion.
 - `EvoGit.Skills.where_enabled/2` renders a ROOT-level enablement as `"./."` (`Path.relative_to(base, base) == "."`), pinned by `test/evo_git/skills_hierarchical_test.exs`.
 - `job_tools_test.exs` is a CHARACTERISATION suite, not a design: it pins the shipped `job_output`/`job_list`/`job_kill` schemas and result strings (including the `[status: …]` line and the `Error: …` failure shape, plus every `max_bytes`/`timeout_ms`/`wait: true` arm), the shell tool's `run_in_background` contract (`started background job bash-<16 hex>`, the first-line label, "no timeout applies", the main-copy mutation hard block), and the guard surface the mode depends on — `Tools.schemas/0` / `Tools.read_only_schemas/0` membership, `write_call?/2`, `background_start?/1`, `serial_tool?/1`, and the repo-less guard blocking a background start while leaving the `job_*` tools callable.
+- `lsp_test.exs` is 20 tests: 8 execute-level tests over the distinct fixture modes (default, `clean`, `crash`, `silent`, `malformed`) plus the schema/config/validation describes.
+  Each execute-level test pays a full BEAM boot (~300 ms) of `test/support/fake_lsp_server.exs` (unchanged), so the process-hygiene `pgrep -f <fixture>` assertion lives INSIDE the handshake test ("runs the full handshake, renders one line per diagnostic, and reaps the server") — a separate fixture spawn would only duplicate that call.
+  The "server never answers initialize" case uses a 400 ms budget, which the asserted message interpolates (`… within 400 ms`).
+- `job_tools_test.exs` is 29 tests. The live-job kill test also covers the caller-supplied-reason case, so one test pins all three: the default reason, the repeat-kill "had already finished" message, and the custom reason landing on the job's detail.
+  Its `JobList` ordering test uses two SHORT-LIVED jobs awaited to completion (no kill, so no kill grace), and the `wait: true` timeout case passes `timeout_ms: 100` — equal to `EvoGit.BackgroundJobs.poll_interval_ms/0`, the smallest value that still exercises a real timed-out wait.
+  Every kill runs with the call-time `:kill_grace_ms` seam at 0 ms (production default 100 ms); the post-kill assertion is a poll for a genuinely-dead pid, so the shorter grace cannot mask a live child.
 - A `wait: true` `job_output` call legitimately blocks INSIDE the tool up to `EvoGit.BackgroundJobs.wait_max_ms/0` (60 s, default `wait_default_ms/0` 8 s), which is why the dispatcher's `Tools.default_timeout_ms("job_output")` is 65 s (60 s + read headroom) and the suite's `@job_output_default_timeout_ms` mirrors that as a CEILING for the real block, NOT a latency race; every other wait in the module is an event-driven bounded poll.
 - The job tools' extra accepted spellings (`bash_output`/`background_output`/`job_status`, `jobs`/`background_jobs`, `kill_job`/`job_stop`/`stop_job`) are pinned by the `describe "background job aliases"` block in `../tool_names_test.exs` (pure `EvoGit.Agent.ToolNames.normalize/1`, so that module stays `async: true`).
