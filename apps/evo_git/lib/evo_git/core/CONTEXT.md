@@ -33,7 +33,7 @@ Per-directory blocks (`context_node.ex:181-206`) use RELATIVE paths ONLY: header
 So the agent's first prompt ALWAYS carries the absolute repo/worktree path; the assigned node is rendered as the caller's relative `./...` path in the success path.
 `repo_path` at this call site = `Process.get(:repo_path)` = the agent's WORKTREE path (`agent/runner.ex:62` + `:256`), NOT the repo root.
 On the `{:error, _}` path `build_dynamic_context/1` returns `"Current Path: '#{state.node_path}'."` (no repo path at all).
-`ContextNode.load/2,3` (`context_node.ex:93-107`) sets `path: normalize_relpath(relative_path)` (canonical relative `./...`) and `repo: repo_path` VERBATIM (absolute when the caller passes an absolute root — all runtime callers do: `runtime/genesis.ex:219`, `runtime/evolution.ex:97`, `runtime/skill_extraction.ex:21`, `runtime/self_reflective.ex:78`, `task.ex:68`) — but `build_context/2` receives `repo_path` as a SEPARATE argument, not via `node.repo`.
+`ContextNode.load/2,3` (`context_node.ex:93-107`) sets `path: normalize_relpath(relative_path)` (canonical relative `./...`) and `repo: repo_path` VERBATIM (absolute when the caller passes an absolute root — all runtime callers do: `runtime/genesis.ex:219`, `runtime/evolution.ex:97`, `runtime/skill_extraction.ex:21`, `runtime/self_reflective.ex:78`) — but `build_context/2` receives `repo_path` as a SEPARATE argument, not via `node.repo`.
 
 ### `EvoGit.Core.PhyloGraphNode` (`phylo_graph_node.ex`)
 
@@ -41,16 +41,15 @@ Struct: `repo`, `base_commit`, `current_commit`.
 
 | Function | Description |
 |---|---|
-| `new/1,2` | Initializes a node (base and current commit at given ref) — used by `EvoGit.Task` and the runtime phases (genesis, evolution, skill_extraction) |
+| `new/1,2` | Initializes a node (base and current commit at given ref) — used by the runtime phases (genesis, evolution, skill_extraction) |
 | `find_merge_base/2` | Finds common ancestor between two nodes — used by `phylo_graph_node_test.exs` |
-| `add_and_commit/2` | Stages all changes and commits; returns updated node — used by `EvoGit.Task` (`mutate/3` commit path) |
+| `add_and_commit/2` | Stages all changes and commits; returns updated node — used by `phylo_graph_node_test.exs` |
 | `crossover/2` | Merges another node's commit; detects conflicts — used by `phylo_graph_node_test.exs` |
 | `get_conflict_files/1` | Lists currently conflicting files — used by `phylo_graph_node_test.exs` |
 | `current_head/1` | Resolves HEAD SHA for a repo path — used by `Runtime.Helpers`, `Runtime.Genesis`, `Runtime.SkillExtraction` |
-| `list_files/1` | Lists all files at the node's commit — used by `EvoGit.Task` (`diagnose/3` file tree) |
 | `list_immediate_children/2` | Lists direct children of a path at the node's commit — used by `phylo_graph_node_test.exs` |
 
-`base_commit`/`current_commit`/`repo` NEVER reach prompt text: the SHAs live only in scheduler ETS (`AgentState.phylo_node`, updated by `AgentScheduler.update_phylo_node/2`) and are consumed by git operations + the worktree checkout (`Worktrees.create_worktree` uses `spec.phylo_node.current_commit`); `PhyloGraphNode.new/2` (`phylo_graph_node.ex:23-24`) is the only constructor and `repo` is a repo/worktree path used solely for git calls (`Git.merge_base`/`status`/`rev_parse`/`run`). The only place a SHA is interpolated into text is the `mutate/3` commit MESSAGE in `task.ex:35` (`"(base: #{binary_part(phylo_node.base_commit, 0, 7)})"`) — git commit text, not a prompt.
+`base_commit`/`current_commit`/`repo` NEVER reach prompt text: the SHAs live only in scheduler ETS (`AgentState.phylo_node`, updated by `AgentScheduler.update_phylo_node/2`) and are consumed by git operations + the worktree checkout (`Worktrees.create_worktree` uses `spec.phylo_node.current_commit`); `PhyloGraphNode.new/2` (`phylo_graph_node.ex:23-24`) is the only constructor and `repo` is a repo/worktree path used solely for git calls (`Git.merge_base`/`status`/`rev_parse`/`run`). No SHA is ever interpolated into prompt text.
 
 ### `EvoGit.Core.ForeignRepo` (`foreign_repo.ex`)
 
