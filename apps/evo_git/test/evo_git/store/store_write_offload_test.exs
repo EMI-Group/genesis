@@ -97,6 +97,14 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # moduledoc) — so this only has to be "large", not "slow enough to race".
   @slow_result_bytes 2_000_000
 
+  # Allocated ONCE per module (`setup_all/1`) instead of once per test: the
+  # allocation cost ~12 ms of each of the three tests that need it, the binary
+  # is immutable, and a refc binary is shared by reference (never copied into a
+  # test process).
+  setup_all do
+    {:ok, %{slow_payload: String.duplicate("x", @slow_result_bytes)}}
+  end
+
   # Re-start this test's isolated store with an EXPLICIT single connection (see
   # the moduledoc's "Why the store under test is pinned to a single connection"
   # section). Both connection-scoped mechanisms this file relies on need a pool
@@ -190,7 +198,8 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   describe "writes are serialized in arrival order" do
     test "a write issued while another is in flight lands after it", %{
       store: store,
-      sqlite_path: sqlite_path
+      sqlite_path: sqlite_path,
+      slow_payload: slow_payload
     } do
       repo = Store.__repo_pid__(store)
       writer = Store.__writer__(store)
@@ -206,7 +215,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
           # 1. A genuinely slow write (multi-megabyte row) is handed over...
           slow =
             Task.async(fn ->
-              Store.put_task(store, task(id, {:ok, %{result: slow_payload()}}))
+              Store.put_task(store, task(id, {:ok, %{result: slow_payload}}))
             end)
 
           # 2. ...and confirmed IN FLIGHT inside the writer (it holds the pooled
@@ -238,7 +247,11 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       assert_connection_ready!(repo)
     end
 
-    test "a delete queued behind an update wins", %{store: store, sqlite_path: sqlite_path} do
+    test "a delete queued behind an update wins", %{
+      store: store,
+      sqlite_path: sqlite_path,
+      slow_payload: slow_payload
+    } do
       repo = Store.__repo_pid__(store)
       writer = Store.__writer__(store)
       id = "war_order_delete"
@@ -252,7 +265,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
           # the update is still running.
           update =
             Task.async(fn ->
-              Store.put_task(store, task(id, {:ok, %{result: slow_payload()}}))
+              Store.put_task(store, task(id, {:ok, %{result: slow_payload}}))
             end)
 
           assert :ok = wait_for_inflight_write(repo)
@@ -276,7 +289,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
 
   describe "the facade is not blocked by a long-running write" do
     test "inline handlers keep being served while a multi-megabyte write is in flight",
-         %{store: store, sqlite_path: sqlite_path} do
+         %{store: store, sqlite_path: sqlite_path, slow_payload: slow_payload} do
       repo = Store.__repo_pid__(store)
 
       assert :ok = Store.put_task(store, task("war_seed", {:ok, %{result: "seed"}}))
@@ -289,7 +302,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
         try do
           slow =
             Task.async(fn ->
-              Store.put_task(store, task("war_slow", {:ok, %{result: slow_payload()}}))
+              Store.put_task(store, task("war_slow", {:ok, %{result: slow_payload}}))
             end)
 
           assert :ok = wait_for_inflight_write(repo)
@@ -420,8 +433,6 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       result: result
     }
   end
-
-  defp slow_payload, do: String.duplicate("x", @slow_result_bytes)
 
   # ── deterministic in-flight window ───────────────────────────────────
 

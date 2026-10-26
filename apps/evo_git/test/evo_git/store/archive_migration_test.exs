@@ -702,11 +702,18 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   # version EXCEPT `pending` — so exactly the migration(s) under test are
   # pending. `:tasks_ddl` selects the fixture's `tasks` shape (the pre-release
   # 20-column one by default).
+  #
+  # The FIXTURE connection runs `journal_mode: :memory` + `synchronous: :off`:
+  # durability is meaningless for a throwaway fixture, while the default WAL +
+  # fsync-per-statement shape cost ~12 ms per test (measured) against ~0.8 ms
+  # here. `journal_mode` for the rollback-journal modes is a CONNECTION setting
+  # that is never recorded in the file, so the resulting database is an ordinary
+  # one that the boot later upgrades to WAL exactly as before.
   defp create_db!(path, pending, opts \\ []) do
     tasks_ddl = Keyword.get(opts, :tasks_ddl, @tasks_ddl)
 
     File.mkdir_p!(Path.dirname(path))
-    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+    {:ok, conn} = Xqlite.open(path, fixture_open_opts())
 
     for ddl <- [tasks_ddl, @projects_ddl] do
       {:ok, _} = XqliteNIF.query(conn, ddl, [])
@@ -736,7 +743,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   # table does not carry (the LIVE shape has no `archive_metadata`) is dropped
   # from the INSERT, so one helper serves both fixture shapes.
   defp insert_rows!(path, rows) do
-    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+    {:ok, conn} = Xqlite.open(path, fixture_open_opts())
 
     defaults = [
       type: "genesis",
@@ -760,7 +767,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       updated_at: @updated_at
     ]
 
-    existing = column_names!(path)
+    # Same connection as the INSERTs (one open, not two — see `create_db!/3`).
+    {:ok, %{rows: info}} = XqliteNIF.query(conn, "PRAGMA table_info(tasks)", [])
+    existing = Enum.map(info, fn [_cid, name | _rest] -> name end)
 
     columns =
       [:id | Keyword.keys(defaults)]
@@ -784,10 +793,18 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
   # ── Helpers ───────────────────────────────────────────────────────────────
 
+  # Fixtures are throwaway files: no durability, no journal file (see
+  # `create_db!/3`).
+  defp fixture_open_opts, do: [journal_mode: :memory, synchronous: :off]
+
   # Boots a dynamic repo (running the pending migration(s)) and unlinks it:
   # the `on_exit` guard runs after the test process is gone.
+  #
+  # ONE pooled connection: these repos are driven strictly serially from the
+  # test process, so the other five connections of the production default would
+  # only be opened (and torn down) per test for nothing (~4 ms measured).
   defp start_repo!(path) do
-    {:ok, pid} = Boot.start_dynamic(path)
+    {:ok, pid} = Boot.start_dynamic(path, pool_size: 1)
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid

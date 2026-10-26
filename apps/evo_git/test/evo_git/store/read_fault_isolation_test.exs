@@ -43,10 +43,19 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   ONLY trace: it is logged synchronously from the store process while it
   handles the worker's `:DOWN`, so `capture_log/2` alone captures everything —
   no counter handler, no awaiting, and nothing leaking between tests. The
-  `refute log =~ "raised an exception"` pins that contract: a crash report
-  would be delivered ~10-200 ms after the death through OTP's `:logger_proxy`,
-  so the window deliberately stays open a little longer than that before it
-  closes.
+  `refute log =~ "raised an exception"` pins that contract.
+
+  ## Waiting for the async crash-report path (no fixed sleep)
+
+  A crash report — which a `:shutdown`-class exit must NOT produce — travels an
+  ASYNCHRONOUS path after the death: exit → `:logger_proxy` (async) → `Logger`
+  → the `ExUnit.CaptureServer` handler → the capture device (async `send`).
+  `drain_pending_crash_reports!/0` walks every hop that HAS a synchronous hook
+  (`:sys.get_state/1` on `:logger_proxy`, `Logger.flush/0`; the capture's own
+  teardown drains the handler → device hops) and puts a 25 ms tail on the ONE
+  hop that has none (the emulator's own delivery), which is a ~7× margin over
+  the worst of 40 measured samples (16 µs – 3.5 ms). That replaces the old
+  fixed 250 ms sleep per test.
   """
 
   # `async: false`: the fault arm stops the store's own repo instance and the
@@ -57,10 +66,10 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
 
   alias EvoGit.Store
 
-  # A worker's crash report (if the `:shutdown`-class contract regressed) is
-  # delivered by `:logger_proxy` 10-200 ms after the death; keep the capture
-  # window open past that so a stray report would land INSIDE it.
-  @report_grace_ms 250
+  # The report path's ONE hop without a synchronous hook is the emulator's own
+  # delivery to `:logger_proxy`; measured here at 16 µs – 3.5 ms after the death
+  # (40 samples of a raising worker), so this tail is a ~7× margin.
+  @report_tail_ms 25
 
   describe "a failing read never kills the store" do
     test "every read degrades to its own empty shape and the store stays alive",
@@ -110,9 +119,10 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           assert Store.count_projects(store) == 0
           assert Store.size(store) == 0
 
-          # See the moduledoc's "Console hygiene": a would-be crash report for
-          # any worker above would arrive inside this grace period.
-          Process.sleep(@report_grace_ms)
+          # See the moduledoc's "Waiting for the async crash-report path": drain
+          # it, so a would-be report for ANY worker above would already be in
+          # this capture.
+          drain_pending_crash_reports!()
         end)
 
       # The store process itself survived every one of those reads …
@@ -150,7 +160,7 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       log =
         capture_log(fn ->
           assert Store.get_task(store, %{}) == nil
-          Process.sleep(@report_grace_ms)
+          drain_pending_crash_reports!()
         end)
 
       # The facade still logs the exception AND its stacktrace in full.
@@ -178,7 +188,7 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       # A raising read …
       capture_log(fn ->
         assert Store.get_task(store, %{}) == nil
-        Process.sleep(@report_grace_ms)
+        drain_pending_crash_reports!()
       end)
 
       # … leaves the very next read of the SAME function intact.
@@ -189,6 +199,24 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
+
+  # Walks the async crash-report path up to the capture (see the moduledoc):
+  # `:sys.get_state/1` on `:logger_proxy` makes it forward everything already in
+  # its mailbox to `Logger`, `Logger.flush/0` makes `Logger` hand it to the
+  # capture handler, and the capture's own teardown (`Logger.flush/0` +
+  # `ExUnit.CaptureServer.log_capture_off/1` + `StringIO.close/1`, see
+  # `ExUnit.CaptureLog.with_log/2`) drains the handler → device hop. The 25 ms
+  # tail covers the one hop with no synchronous hook (emulator → proxy).
+  # MUST be called INSIDE the `capture_log/2` fun.
+  defp drain_pending_crash_reports! do
+    case Process.whereis(:logger_proxy) do
+      nil -> :ok
+      proxy -> _state = :sys.get_state(proxy)
+    end
+
+    :ok = Logger.flush()
+    Process.sleep(@report_tail_ms)
+  end
 
   defp task(id) do
     %TaskInfo{
