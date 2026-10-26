@@ -5,8 +5,7 @@ defmodule EvoGit.Store.Operations.Archives do
 
   One row per `(task_id, agent_id)` — the archived agent's identity, spawn
   position, commits/refs, repo, settings and final `result`. The row-per-agent
-  shape replaces the old single `tasks.archive_metadata` JSON array so a
-  reader can:
+  shape lets a reader:
 
     * page the task's agent roster WITHOUT the `result` blob
       (`list/3` with `include_results: false` — the column is never selected),
