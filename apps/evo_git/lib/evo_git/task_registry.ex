@@ -14,6 +14,7 @@ defmodule EvoGit.TaskRegistry do
 
   alias EvoGit.TaskInfo
 
+  alias EvoGit.TaskRegistry.ArchiveDedup
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
@@ -1045,7 +1046,12 @@ defmodule EvoGit.TaskRegistry do
             update_cols =
               [
                 status: status,
-                result: result,
+                # Archive dedup: the runtime result carries the per-agent
+                # archive under `data.archive_records`, and the SAME list is
+                # persisted into the dedicated `archive_metadata` column below.
+                # Store it ONCE — strip it from the persisted result copy only
+                # (the in-flight `result` keeps it for the rest of the handler).
+                result: ArchiveDedup.strip_archive_records(result),
                 finished_at: finished_at,
                 lease_expires_at: lease_expires_at,
                 project_path: project_path,
@@ -1331,7 +1337,9 @@ defmodule EvoGit.TaskRegistry do
     update_cols =
       [
         status: final_status,
-        result: final_result,
+        # Same persistence-boundary archive dedup as handle_update_status/6 —
+        # `archive_metadata` is the single stored copy of the per-agent archive.
+        result: ArchiveDedup.strip_archive_records(final_result),
         finished_at: finished_at,
         lease_expires_at: nil
       ] ++ if(branch_name, do: [branch_name: branch_name], else: [])
@@ -1542,7 +1550,13 @@ defmodule EvoGit.TaskRegistry do
             # :finalizing is NON-terminal — finished_at and the lease stay as
             # they are; the final terminal mapping happens at result time in
             # handle_update_status/6.
-            updated = %{task | status: :finalizing}
+            # Archive dedup at the put_task boundary too: this is a FULL-row
+            # re-write of a DECODED task, so a row written before the dedup
+            # rule still carries `data.archive_records` in its result and would
+            # be re-persisted (compressed) as a duplicate of archive_metadata.
+            updated =
+              %{task | status: :finalizing}
+              |> ArchiveDedup.strip_task_archive_records()
 
             # On disk-full the persisted row keeps its old status — log and
             # continue.

@@ -697,6 +697,142 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.status == :completed
       assert fetched.archive_metadata == archive_records
     end
+
+    test "a result carrying archive_records is stored ONCE (stripped result + archive_metadata)" do
+      task_id = "archive_dedup_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoGit.Store.put_task(store(), task)
+
+      archive_records = [
+        %{
+          "agent_id" => "T1_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        },
+        %{
+          "agent_id" => "T2_A1",
+          "parent_id" => "T1_A1",
+          "objective" => "Implement",
+          "role" => "executor"
+        }
+      ]
+
+      # The in-flight runtime result — exactly what the wrapper hands to
+      # TaskRegistry — carries the per-agent archive under `archive_records`.
+      in_flight = %{
+        commit_sha: "abc123",
+        result: "All done",
+        branch_name: "genesis/agent_abc123",
+        tag: nil,
+        archive_records: archive_records
+      }
+
+      TaskRegistry.update_task_status(task_id, :completed, {:ok, in_flight},
+        archive_records: archive_records
+      )
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert {:ok, stored_data} = fetched.result
+
+      # The PERSISTED result no longer carries the archive — exactly one copy is
+      # stored, in the dedicated `archive_metadata` column.
+      refute Map.has_key?(stored_data, :archive_records)
+      assert stored_data[:commit_sha] == "abc123"
+      assert stored_data[:result] == "All done"
+      assert stored_data[:branch_name] == "genesis/agent_abc123"
+      assert fetched.archive_metadata == archive_records
+
+      # The in-flight value itself is untouched (stripping happens only on the
+      # persisted copy, so parents/scheduler still see the archive in memory).
+      assert Map.has_key?(in_flight, :archive_records)
+      assert in_flight.archive_records == archive_records
+    end
+
+    test "a struct result carrying archive_records is stripped at the persistence boundary only" do
+      task_id = "archive_dedup_struct_#{System.unique_integer([:positive])}"
+
+      task = %TaskInfo{
+        id: task_id,
+        type: :evolve,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      }
+
+      EvoGit.Store.put_task(store(), task)
+
+      archive_records = [
+        %{"agent_id" => "T3_A1", "parent_id" => nil, "objective" => "Evolve", "role" => "manager"}
+      ]
+
+      struct_result = %EvoGit.Agent.Result{
+        result: "Evolved",
+        commit_sha: "def456",
+        branch: "genesis/agent_def456",
+        archive_records: archive_records
+      }
+
+      TaskRegistry.update_task_status(task_id, :completed, {:ok, struct_result},
+        archive_records: archive_records
+      )
+
+      TaskRegistry.list_tasks()
+
+      fetched = TaskRegistry.get_task(task_id)
+      assert {:ok, stored_data} = fetched.result
+
+      refute Map.has_key?(stored_data, :archive_records)
+      assert stored_data[:commit_sha] == "def456"
+      assert stored_data[:result] == "Evolved"
+      assert fetched.archive_metadata == archive_records
+
+      # The struct in memory still has the archive.
+      assert struct_result.archive_records == archive_records
+    end
+
+    test "the Codec still round-trips archive_records when called directly" do
+      # Dedup lives at the persistence boundary, NOT in the Codec: encoding and
+      # decoding an in-memory result directly must preserve every key (this is
+      # the `store/types_test.exs` oracle's contract).
+      archive_records = [
+        %{
+          "agent_id" => "T4_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        }
+      ]
+
+      in_flight = %{
+        commit_sha: "abc123",
+        result: "All done",
+        archive_records: archive_records
+      }
+
+      encoded = EvoGit.Store.Codec.encode_result({:ok, in_flight})
+      assert {:ok, decoded} = EvoGit.Store.Codec.decode_result(encoded)
+      assert decoded[:archive_records] == archive_records
+      assert decoded[:commit_sha] == "abc123"
+    end
   end
 
   describe "status recovery from spurious :failed" do

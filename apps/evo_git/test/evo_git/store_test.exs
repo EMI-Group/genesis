@@ -1981,7 +1981,13 @@ defmodule EvoGit.StoreTest do
     )
     """
 
-    @migration_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
+    @migration_versions [
+      20_260_815_000_001,
+      20_260_815_000_002,
+      20_260_815_000_003,
+      20_260_815_000_004,
+      20_260_815_000_005
+    ]
 
     test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
          %{root: root} do
