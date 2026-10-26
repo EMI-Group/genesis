@@ -1043,6 +1043,15 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     Git.rev_parse(tmp_dir, "HEAD")
   end
 
+  # Creates `name` at `base_sha` AND checks it out in ONE git subprocess
+  # (`git checkout -b`) instead of `Git.create_branch/3` + `Git.checkout/2` —
+  # every review-delegate test starts this way, and a git spawn is the most
+  # expensive thing in those test bodies.
+  defp checkout_new_branch(tmp_dir, name, base_sha) do
+    {:ok, _} = Git.run(["checkout", "-b", name, base_sha], tmp_dir)
+    :ok
+  end
+
   # Renames the current branch to `new_name` (no-op if it already has that
   # name), so tests don't depend on the machine's `init.defaultBranch`.
   defp rename_current_branch(tmp_dir, new_name) do
@@ -1077,8 +1086,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     } do
       {tmp_dir, base_sha} = review_repo(tpl.base)
 
-      Git.create_branch(tmp_dir, "feature", base_sha)
-      Git.checkout(tmp_dir, "feature")
+      checkout_new_branch(tmp_dir, "feature", base_sha)
       commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
       Git.checkout(tmp_dir, base_sha)
 
@@ -1093,8 +1101,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     } do
       {tmp_dir, base_sha} = review_repo(tpl.base)
 
-      Git.create_branch(tmp_dir, "agent_branch", base_sha)
-      Git.checkout(tmp_dir, "agent_branch")
+      checkout_new_branch(tmp_dir, "agent_branch", base_sha)
       {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
       Git.checkout(tmp_dir, "main")
 
@@ -1106,8 +1113,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
       {tmp_dir, base_sha} = review_repo(tpl.base)
       System.cmd("git", ["branch", "dev"], cd: tmp_dir)
 
-      Git.create_branch(tmp_dir, "agent_branch", base_sha)
-      Git.checkout(tmp_dir, "agent_branch")
+      checkout_new_branch(tmp_dir, "agent_branch", base_sha)
       {:ok, feature_sha} = commit_file(tmp_dir, "feature.txt", "feature\n", "Feature commit")
       Git.checkout(tmp_dir, "main")
 
@@ -1126,8 +1132,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     test "list_commits/2 and load_file_diff/4 delegate to Review", %{review_templates: tpl} do
       {tmp_dir, base_sha} = review_repo(tpl.lines)
 
-      Git.create_branch(tmp_dir, "feature", base_sha)
-      Git.checkout(tmp_dir, "feature")
+      checkout_new_branch(tmp_dir, "feature", base_sha)
       commit_file(tmp_dir, "file.txt", "line1\nCHANGED\n", "Feature commit")
       {:ok, feature_tip} = Git.rev_parse(tmp_dir, "feature")
       Git.checkout(tmp_dir, base_sha)

@@ -14,6 +14,14 @@ defmodule EvoGit.Adapters.GitHubTest do
   The fake `gh` is a POSIX shell script on `PATH` and cannot emulate `gh.exe`
   on Windows, so the gh-dependent tests are wrapped in
   `if not match?({:win32, _}, :os.type())`.
+
+  Fixture repositories are `File.cp_r!` copies of two per-module git TEMPLATES
+  built in `setup_all` — one bare `git init` and one that already carries the
+  common `origin` remote — instead of a fresh `git init` + `git remote add` per
+  test. `EvoGit.GitEnv`'s per-path identity memo is primed for every copy (the
+  template config holds exactly that identity), which removes the two
+  `git config` subprocesses the first git call in a new directory would spawn.
+  No assertion depends on any of it.
   """
 
   use ExUnit.Case, async: false
@@ -22,15 +30,40 @@ defmodule EvoGit.Adapters.GitHubTest do
   alias EvoGit.Adapters.GitHub
   alias EvoGit.FakeGh
 
-  setup do
-    tmp_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit-test-github-" <> to_string(System.unique_integer([:positive]))
-      )
+  @default_origin "https://github.com/octocat/hello-world.git"
 
-    File.mkdir_p!(tmp_dir)
-    {:ok, _} = Git.init(tmp_dir)
+  # Identity pinned in the fixture template's repo-local config (also primed
+  # into GitEnv's per-path memo — byte-identical to a `git config` read).
+  @identity_name "Test User"
+  @identity_email "test@example.com"
+
+  # The per-module templates are published here by `setup_all` so the setup
+  # block can copy one without re-deriving the paths.
+  @templates_key {__MODULE__, :repo_templates}
+
+  setup_all do
+    plain =
+      git_template!([])
+
+    with_origin =
+      git_template!([["remote", "add", "origin", @default_origin]])
+
+    :persistent_term.put(@templates_key, %{plain: plain, with_origin: with_origin})
+
+    on_exit(fn -> :persistent_term.erase(@templates_key) end)
+
+    :ok
+  end
+
+  setup context do
+    # `@tag :no_origin` selects the template WITHOUT an `origin` remote —
+    # `github_upstream/1`'s "no origin" contract.
+    template =
+      if Map.get(context, :no_origin),
+        do: templates!().plain,
+        else: templates!().with_origin
+
+    tmp_dir = new_repo!(template)
 
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
@@ -39,9 +72,82 @@ defmodule EvoGit.Adapters.GitHubTest do
     {:ok, %{tmp_dir: tmp_dir}}
   end
 
+  # Resets the fixture repo's `origin` URL. The template shipped by `setup`
+  # already carries `@default_origin`, so asking for exactly that URL is a
+  # no-op (a `git config` write would cost a subprocess for nothing); any other
+  # URL overwrites the template's `[remote "origin"]` url key in place.
+  defp add_origin(_tmp_dir, @default_origin), do: :ok
+
   defp add_origin(tmp_dir, url) do
-    {:ok, _} = Git.run(["remote", "add", "origin", url], tmp_dir)
+    {:ok, _} = Git.run(["config", "remote.origin.url", url], tmp_dir)
     :ok
+  end
+
+  # -------------------------------------------------------------------------
+  # Fixtures
+  # -------------------------------------------------------------------------
+
+  defp templates! do
+    case :persistent_term.get(@templates_key, nil) do
+      nil -> raise "#{inspect(__MODULE__)}: fixture templates missing (setup_all has not run)"
+      templates -> templates
+    end
+  end
+
+  # Builds ONE repository template (`setup_all`): a bare `git init` (EMPTY
+  # template dir → no hook samples), a repo-local identity, `commit.gpgsign`
+  # neutralized and full-length abbreviations, plus any `extra_args` commands
+  # (e.g. adding the common `origin` remote).
+  defp git_template!(extra_args) do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-test-github-tpl-#{System.pid()}-#{System.unique_integer([:positive])}"
+      )
+
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    seed = Path.join(root, "seed")
+
+    git!(["init", "-q", "--template=#{empty_template}", "-b", "main", seed], root)
+
+    for {key, value} <- [
+          {"user.name", @identity_name},
+          {"user.email", @identity_email},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
+        ] do
+      git!(["config", key, value], seed)
+    end
+
+    Enum.each(extra_args, &git!(&1, seed))
+
+    on_exit(fn -> File.rm_rf!(root) end)
+    seed
+  end
+
+  defp git!(args, cd) do
+    case System.cmd(EvoGit.Executable.resolve("git"), args, cd: cd, stderr_to_stdout: true) do
+      {_output, 0} ->
+        :ok
+
+      {output, code} ->
+        raise "git #{Enum.join(args, " ")} failed with exit #{code} in #{cd}: #{output}"
+    end
+  end
+
+  # Copies the template into a fresh, uniquely-named directory — an isolated
+  # repository whose remote config and identity are exactly the template's.
+  defp new_repo!(template) do
+    tmp_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-test-github-" <> to_string(System.unique_integer([:positive]))
+      )
+
+    File.cp_r!(template, tmp_dir)
+    EvoGit.GitEnv.prime_config_identity_cache(tmp_dir, @identity_name, @identity_email)
+    tmp_dir
   end
 
   # Ungated: upstream parsing needs no `gh` binary and works on all platforms.
@@ -94,6 +200,9 @@ defmodule EvoGit.Adapters.GitHubTest do
       assert GitHub.github_upstream(tmp_dir) == {:error, :no_github_upstream}
     end
 
+    # `:no_origin` copies the template WITHOUT the common `origin` remote the
+    # other tests rely on.
+    @tag :no_origin
     test "rejects a repo with no origin remote", %{tmp_dir: tmp_dir} do
       assert GitHub.github_upstream(tmp_dir) == {:error, :no_github_upstream}
     end
