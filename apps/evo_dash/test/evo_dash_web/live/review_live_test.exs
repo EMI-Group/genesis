@@ -440,15 +440,15 @@ defmodule EvoDashWeb.ReviewLiveTest do
         send(me, {:archive_fetch, self(), node, tid, opts})
 
         case Keyword.fetch!(opts, :offset) do
-          0 -> %{entries: archive_page_entries(1..2), total: 4}
-          2 -> raise "boom"
+          0 -> %{entries: archive_page_entries(1..100), total: 150}
+          _ -> raise "boom"
         end
       end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
       view |> element(archive_tab_selector()) |> render_click()
-      wait_until(fn -> length(assigns(view).archive_records) == 2 end)
+      wait_until(fn -> length(assigns(view).archive_records) == 100 end)
 
       view |> element("button[phx-click='load_more_archive']") |> render_click()
       wait_until(fn -> assigns(view).archive_more_error != nil end)
@@ -456,27 +456,31 @@ defmodule EvoDashWeb.ReviewLiveTest do
       html = render(view)
       # The append failure never blanks the already-loaded page.
       assert assigns(view).archive_state == :loaded
-      assert length(assigns(view).archive_records) == 2
+      assert length(assigns(view).archive_records) == 100
       assert assigns(view).archive_loading_more? == false
       assert assigns(view).archive_more_error == "Failed to load archive data."
       assert html =~ "agent-1"
-      assert html =~ "agent-2"
+      assert html =~ "agent-100"
       assert html =~ "Could not load more archive records."
       refute html =~ "Loading…"
 
       # Retry fires the SAME append event.
       Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
         send(me, {:archive_fetch, self(), node, tid, opts})
-        %{entries: archive_page_entries(3..4), total: 4}
+
+        case Keyword.fetch!(opts, :offset) do
+          0 -> %{entries: archive_page_entries(1..100), total: 150}
+          _ -> %{entries: archive_page_entries(101..150), total: 150}
+        end
       end)
 
       view |> element("button[phx-click='load_more_archive']") |> render_click()
-      wait_until(fn -> length(assigns(view).archive_records) == 4 end)
+      wait_until(fn -> length(assigns(view).archive_records) == 150 end)
 
       assert assigns(view).archive_more_error == nil
       assert assigns(view).archive_loading_more? == false
       ids = Enum.map(assigns(view).archive_records, & &1["agent_id"])
-      assert ids == ["agent-1", "agent-2", "agent-3", "agent-4"]
+      assert ids == archive_page_ids(1..150)
     end
 
     test "per-agent result is fetched on demand, capped, cached and re-rendered", %{conn: conn} do
@@ -724,7 +728,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       ]
 
       Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
-        %{entries: entries, total: 400}
+        %{entries: entries, total: 2}
       end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
@@ -737,9 +741,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "agent-1"
       assert html =~ "agent-orphan"
       assert html =~ "Orphan agent objective"
-      # The server total is never silently reduced to the page size.
-      assert assigns(view).archive_total == 400
-      assert html =~ "400 agents — showing 1–2"
+      # A short page means the archive is exhausted, so the effective total is
+      # the loaded count (the clamped-total policy has its own test).
+      assert assigns(view).archive_total == 2
+      assert html =~ "2 agents"
     end
 
     test "opening the Archive tab fetches exactly once and shows the loading state first", %{
