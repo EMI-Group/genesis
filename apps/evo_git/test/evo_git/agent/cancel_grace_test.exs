@@ -15,8 +15,8 @@ defmodule EvoGit.Agent.CancelGraceTest do
       (the grace dirty-check skip).
 
   `async: false` — the ETS-based tests mutate the global named
-  `:evogit_agent_state` / `:evogit_sched_meta` / `:evogit_archive_records`
-  tables by calling `:ets.delete_all_objects/1` on them, and several tests use
+  `:evogit_agent_state` / `:evogit_sched_meta` tables by calling
+  `:ets.delete_all_objects/1` on them, and several tests use
   the fixed `agent_id = 1` (a process-shared key); both make these tests
   unsafe to run concurrently with other modules touching those tables (same
   convention as `agent_scheduler/store_test.exs`).
@@ -75,7 +75,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   defp clear_ets do
-    [:evogit_agent_state, :evogit_sched_meta, :evogit_archive_records]
+    [:evogit_agent_state, :evogit_sched_meta]
     |> Enum.each(fn name ->
       if :ets.whereis(name) != :undefined, do: :ets.delete_all_objects(name)
     end)
@@ -84,7 +84,6 @@ defmodule EvoGit.Agent.CancelGraceTest do
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    create_ets_if_missing(:evogit_archive_records)
     clear_ets()
     on_exit(fn -> clear_ets() end)
     :ok

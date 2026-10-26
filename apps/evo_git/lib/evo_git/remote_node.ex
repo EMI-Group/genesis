@@ -403,8 +403,9 @@ defmodule EvoGit.RemoteNode do
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.select_tasks_page/1`
   directly. On a remote node, routes the call through `:erpc` via
-  `call_remote/4`. The heavy JSON blobs (`result`, `archive_metadata`, `logs`,
-  `usage`) are never transferred — each row is the 16-key summary projection.
+  `call_remote/4`. The heavy JSON blobs (`result`, `logs`, `usage`) are never
+  transferred — each row is the 16-key summary projection — and the per-agent
+  archive lives in its own table (see `list_task_archives/3`).
 
   Returns `%{rows: [map()], total: non_neg_integer}`; `%{rows: [], total: 0}`
   when the remote call fails.
@@ -594,12 +595,12 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
-  Returns a single task by id WITHOUT the archive payload on the given node.
+  Returns a single task by id WITHOUT the heavy payload on the given node.
 
   On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.get_task_lite/1`
   directly. On a remote node, routes the call through `:erpc` via
-  `call_remote/4`. `archive_metadata` is `nil` and the result carries no
-  `:archive_records` key (see `get_task_archive/2` for the archive itself).
+  `call_remote/4`. The per-agent archive is a separate table — see
+  `list_task_archives/3` and `get_agent_archive/3`.
 
   Returns `%TaskInfo{}` or `nil` (absent task, or a failed remote call).
   """
@@ -616,24 +617,65 @@ defmodule EvoGit.RemoteNode do
   end
 
   @doc """
-  Returns the decoded archive records for a task on the given node.
+  Returns one page of a task's archived agents plus that task's total archive
+  row count on the given node.
 
-  On the local node, calls `EvoGit.AgentScheduler.RemoteAPI.get_task_archive/1`
-  directly. On a remote node, routes the call through `:erpc` via
-  `call_remote/4`. Only the `archive_metadata` column is read.
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.list_task_archives/2` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`. Entries are
+  STRING-KEYED maps ordered `depth ASC, agent_id ASC`; `opts` accepts `:limit`,
+  `:offset` and `:include_results` (default `false` — the heavy `result` column
+  is then not selected and the `"result"` key is ABSENT).
 
-  Returns `[map()]`; `[]` when the row is missing, the payload is undecodable,
-  or the remote call fails.
+  Returns `%{entries: [map()], total: non_neg_integer}`; degraded to
+  `%{entries: [], total: 0}` when the remote call fails.
   """
-  @spec get_task_archive(node(), String.t()) :: [map()]
-  def get_task_archive(node, task_id) do
+  @spec list_task_archives(node(), String.t(), keyword()) ::
+          %{entries: [map()], total: non_neg_integer()}
+  def list_task_archives(node, task_id, opts \\ []) do
     if node == node() do
-      EvoGit.AgentScheduler.RemoteAPI.get_task_archive(task_id)
+      EvoGit.AgentScheduler.RemoteAPI.list_task_archives(task_id, opts)
     else
-      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_task_archive, [task_id]) do
-        {:ok, list} when is_list(list) -> list
-        {:ok, _other} -> []
-        {:error, _reason} -> []
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :list_task_archives, [
+             task_id,
+             opts
+           ]) do
+        {:ok, %{entries: entries, total: total} = page}
+        when is_list(entries) and is_integer(total) ->
+          page
+
+        {:ok, _other} ->
+          %{entries: [], total: 0}
+
+        {:error, _reason} ->
+          %{entries: [], total: 0}
+      end
+    end
+  end
+
+  @doc """
+  Returns ONE archived agent's full entry (including `"result"`) on the given
+  node, or `nil`.
+
+  On the local node, calls
+  `EvoGit.AgentScheduler.RemoteAPI.get_agent_archive/2` directly. On a remote
+  node, routes the call through `:erpc` via `call_remote/4`.
+
+  Returns a STRING-KEYED `map()`, or `nil` (no such archived agent, or a failed
+  remote call).
+  """
+  @spec get_agent_archive(node(), String.t(), integer()) :: map() | nil
+  def get_agent_archive(node, task_id, agent_id) do
+    if node == node() do
+      EvoGit.AgentScheduler.RemoteAPI.get_agent_archive(task_id, agent_id)
+    else
+      case call_remote(node, EvoGit.AgentScheduler.RemoteAPI, :get_agent_archive, [
+             task_id,
+             agent_id
+           ]) do
+        {:ok, entry} when is_map(entry) -> entry
+        {:ok, _other} -> nil
+        {:error, _reason} -> nil
       end
     end
   end

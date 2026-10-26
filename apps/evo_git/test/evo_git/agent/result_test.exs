@@ -26,7 +26,6 @@ defmodule EvoGit.Agent.ResultTest do
       assert result.repo_id == nil
       assert result.usage == nil
       assert result.agent_count == nil
-      assert result.archive_records == nil
     end
 
     test "foreign_repo_commits defaults to %{}" do
@@ -70,15 +69,8 @@ defmodule EvoGit.Agent.ResultTest do
       assert result.agent_count == 5
     end
 
-    test "accepts archive_records option" do
-      records = [%{path: "test.exs", summary: "added tests"}]
-      result = Result.new("Fixed", "sha", archive_records: records)
-      assert result.archive_records == records
-    end
-
     test "accepts all options at once" do
       usage = Usage.zero()
-      records = [%{path: "a", summary: "b"}]
 
       result =
         Result.new("Result text", "commit_sha",
@@ -88,7 +80,6 @@ defmodule EvoGit.Agent.ResultTest do
           repo_id: "primary",
           usage: usage,
           agent_count: 3,
-          archive_records: records,
           foreign_repo_commits: %{"orig" => "abc"}
         )
 
@@ -100,7 +91,6 @@ defmodule EvoGit.Agent.ResultTest do
       assert result.repo_id == "primary"
       assert result.usage == usage
       assert result.agent_count == 3
-      assert result.archive_records == records
       assert result.foreign_repo_commits == %{"orig" => "abc"}
     end
 

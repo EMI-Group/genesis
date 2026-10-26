@@ -2,8 +2,8 @@ defmodule EvoGit.ApplicationTest do
   @moduledoc """
   Regression tests for ETS table ownership.
 
-  The three global ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`,
-  `:evogit_archive_records`) must be created by `EvoGit.Application.start/2`
+  The two global ETS tables (`:evogit_agent_state`, `:evogit_sched_meta`)
+  must be created by `EvoGit.Application.start/2`
   (owned by the application process) — NOT by `AgentScheduler.init/1`. This
   ensures they survive an `AgentScheduler` crash/restart.
 
@@ -20,32 +20,28 @@ defmodule EvoGit.ApplicationTest do
 
   @agent_table :evogit_agent_state
   @sched_table :evogit_sched_meta
-  @archive_table :evogit_archive_records
-  @tables [@agent_table, @sched_table, @archive_table]
+  @tables [@agent_table, @sched_table]
   # A key unlikely to collide with real agent IDs (positive integers).
   @sentinel_key 9_999_999
 
   # Table type per create spec (mirrors EvoGit.Application.ensure_ets_table/2).
   @table_specs %{
     @agent_table => [:named_table, :public, :set, read_concurrency: true],
-    @sched_table => [:named_table, :public, :set, read_concurrency: true],
-    @archive_table => [:named_table, :public, :set, read_concurrency: true]
+    @sched_table => [:named_table, :public, :set, read_concurrency: true]
   }
 
   setup do
-    # EvoGit.Application.start/2 creates these three :public named ETS tables at
-    # boot (owned by the application process), and the :evo_git app plus its
+    # EvoGit.Application.start/2 creates these :public named ETS tables at boot
+    # (owned by the application process), and the :evo_git app plus its
     # supervision tree are started by Mix before the suite runs. A :public table,
-    # however, can be destroyed by ANY process, and another test module does
-    # destroy one: EvoGit.Agent.Tools.CompleteTaskTest deletes
-    # :evogit_archive_records outright and replaces it with a table owned by its
-    # own per-test process, which dies when that test ends. ExUnit gives no
-    # ordering guarantee between `async: false` modules (the run order follows
-    # test-file registration, not path order), so this module can start with a
-    # table already missing. Recreate any missing table so the assertions below
-    # exercise boot-time creation + crash/restart survival instead of failing on
-    # unrelated pollution from another module. (The recreated table belongs to
-    # this test process, so ensure_tables/0 runs again for every test here.)
+    # however, can be destroyed by ANY process, and other test modules may do so.
+    # ExUnit gives no ordering guarantee between `async: false` modules (the run
+    # order follows test-file registration, not path order), so this module can
+    # start with a table already missing. Recreate any missing table so the
+    # assertions below exercise boot-time creation + crash/restart survival
+    # instead of failing on unrelated pollution from another module. (The
+    # recreated table belongs to this test process, so ensure_tables/0 runs again
+    # for every test here.)
     ensure_tables()
 
     on_exit(fn ->
@@ -58,7 +54,7 @@ defmodule EvoGit.ApplicationTest do
   end
 
   describe "ETS table creation" do
-    test "all three tables exist after Application.start/2" do
+    test "both tables exist after Application.start/2" do
       for table <- @tables do
         assert :ets.whereis(table) != :undefined,
                "ETS table #{inspect(table)} should be created by EvoGit.Application.start/2"
@@ -68,7 +64,7 @@ defmodule EvoGit.ApplicationTest do
 
   describe "ETS table survival across AgentScheduler crash/restart" do
     test "tables and their contents survive a scheduler terminate/restart" do
-      # 1. All three tables must exist before the crash.
+      # 1. Both tables must exist before the crash.
       for table <- @tables do
         assert :ets.whereis(table) != :undefined
       end
@@ -94,7 +90,7 @@ defmodule EvoGit.ApplicationTest do
       assert is_pid(new_pid)
       assert new_pid != old_pid, "scheduler should be a new process after restart"
 
-      # 6. All three tables must STILL exist after the restart.
+      # 6. Both tables must STILL exist after the restart.
       for table <- @tables do
         assert :ets.whereis(table) != :undefined,
                "ETS table #{inspect(table)} should survive a scheduler restart"

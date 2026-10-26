@@ -14,7 +14,6 @@ defmodule EvoGit.TaskRegistry do
 
   alias EvoGit.TaskInfo
 
-  alias EvoGit.TaskRegistry.ArchiveDedup
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
@@ -104,9 +103,10 @@ defmodule EvoGit.TaskRegistry do
   plus the filtered total, `%{rows: [summary_map], total: non_neg_integer}`.
 
   Delegates to `EvoGit.Store.select_tasks_page/2` — the heavy JSON blobs
-  (`result`, `archive_metadata`, `logs`, `usage`) are never selected. `opts`
-  accepts `:limit` (default 25, capped at 50), `:offset` and the filter keys
-  `:status`, `:project_path`, `:review_status`, `:search`.
+  (`result`, `logs`, `usage`) are never selected and the per-agent archive
+  lives in its own table (see `list_task_archives/2`). `opts` accepts `:limit`
+  (default 25, capped at 50), `:offset` and the filter keys `:status`,
+  `:project_path`, `:review_status`, `:search`.
 
   Degrades to `%{rows: [], total: 0}` when the store call fails.
   """
@@ -116,8 +116,8 @@ defmodule EvoGit.TaskRegistry do
 
   @doc """
   LIGHTWEIGHT single-task read for detail views: decodes like `get_task/1` but
-  never reads the archive (`archive_metadata: nil`, no `:archive_records` in the
-  result data).
+  through an explicit column projection (the per-agent archive is a separate
+  table and is never read here — see `list_task_archives/2`).
 
   Delegates to `EvoGit.Store.get_task_lite/2`. Returns `%TaskInfo{}` or `nil`
   (also `nil` when the store call fails).
@@ -127,14 +127,81 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @doc """
-  Returns the decoded archive records for a task (`[]` when the task is absent,
-  the column is NULL, or the payload is undecodable).
+  Persists ONE archived agent record into the relational per-agent archive
+  table (`task_agent_archives`) — the STREAMING producer write.
 
-  Delegates to `EvoGit.Store.get_task_archive/2` — only that column is read.
-  Degrades to `[]` when the store call fails.
+  Called by `EvoGit.Agent.Tools.CompleteTask` the moment an agent completes, so
+  each agent's archive is persisted on its own (ONE row per
+  `{task_id, agent_id}`) instead of being buffered in memory and collected at
+  task end. `entry` may be atom-keyed (the producer's shape, carrying
+  `:task_id`) or string-keyed; the underlying write is an idempotent upsert, so
+  a crash-retry completing twice replaces the row instead of duplicating it.
+
+  Persistence is BEST-EFFORT and never raises or exits into the caller: a
+  dead/restarting store degrades to `{:error, :store_unavailable}` (logged by
+  `EvoGit.TaskRegistry.StoreGuard`), and a dead registry or a raise inside the
+  handler is caught here and logged. An agent's completion must never fail
+  because its archive could not be stored.
+
+  Returns `:ok` on success or `{:error, reason}` otherwise.
   """
-  def get_task_archive(task_id) do
-    GenServer.call(server(), {:get_task_archive, task_id}, @call_timeout)
+  @spec put_task_archive(map()) :: :ok | {:error, term()}
+  def put_task_archive(entry) do
+    GenServer.call(server(), {:put_task_archive, entry}, @call_timeout)
+  rescue
+    exception ->
+      Logger.error(
+        "TaskRegistry: put_task_archive FAILED — the archive row was not persisted: " <>
+          Exception.format(:error, exception, __STACKTRACE__)
+      )
+
+      {:error, {:exception, exception}}
+  catch
+    kind, reason ->
+      Logger.error(
+        "TaskRegistry: put_task_archive FAILED (#{kind}: #{inspect(reason)}) — " <>
+          "the archive row was not persisted (the registry may be down)"
+      )
+
+      {:error, {kind, reason}}
+  end
+
+  @doc """
+  Returns ONE page of a task's archived agents plus the task's TOTAL archive
+  row count: `%{entries: [map()], total: non_neg_integer}`.
+
+  Delegates to `EvoGit.Store.list_task_archives/3`. Entries are STRING-KEYED
+  and ordered `depth ASC, agent_id ASC` (the spawn tree, root first). `opts`
+  accepts:
+
+    * `:limit` — page size, default 100, clamped to 1..1000;
+    * `:offset` — rows to skip, default 0;
+    * `:include_results` — default `false`; when false the heavy `result`
+      column is NOT selected, so the `"result"` key is ABSENT (not `nil`) from
+      every entry. The opened agent's full conversation comes from
+      `get_agent_archive/2`.
+
+  `total` is the task's whole archive row count, independent of
+  `:limit`/`:offset`. Degrades to `%{entries: [], total: 0}` when the store
+  read fails.
+  """
+  @spec list_task_archives(String.t(), keyword()) ::
+          %{entries: [map()], total: non_neg_integer()}
+  def list_task_archives(task_id, opts \\ []) do
+    GenServer.call(server(), {:list_task_archives, task_id, opts}, @call_timeout)
+  end
+
+  @doc """
+  Returns ONE archived agent's full entry (including `"result"`), or `nil`
+  when the task has no such archived agent.
+
+  Delegates to `EvoGit.Store.get_agent_archive/3` — the lazy detail read that
+  pairs with the `list_task_archives/2` roster page. Entries are STRING-KEYED.
+  Degrades to `nil` (the "no such agent" shape) when the store read fails.
+  """
+  @spec get_agent_archive(String.t(), integer()) :: map() | nil
+  def get_agent_archive(task_id, agent_id) do
+    GenServer.call(server(), {:get_agent_archive, task_id, agent_id}, @call_timeout)
   end
 
   @doc """
@@ -508,12 +575,34 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_call({:get_task_archive, task_id}, from, state) do
+  def handle_call({:list_task_archives, task_id, opts}, from, state) do
     offload(from, state, fn ->
-      safe_store_read("get_task_archive", [], fn ->
-        EvoGit.Store.get_task_archive(state.task_store, task_id)
+      safe_store_read("list_task_archives", %{entries: [], total: 0}, fn ->
+        EvoGit.Store.list_task_archives(state.task_store, task_id, opts)
       end)
     end)
+  end
+
+  @impl true
+  def handle_call({:get_agent_archive, task_id, agent_id}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("get_agent_archive", nil, fn ->
+        EvoGit.Store.get_agent_archive(state.task_store, task_id, agent_id)
+      end)
+    end)
+  end
+
+  # The archive producer's streaming write. Handled through `safe_store_write/2`
+  # like every other registry write, so a dead/restarting store degrades to
+  # `{:error, :store_unavailable}` instead of killing the registry.
+  @impl true
+  def handle_call({:put_task_archive, entry}, _from, state) do
+    reply =
+      safe_store_write("put_task_archive", fn ->
+        EvoGit.Store.put_task_archive(state.task_store, entry)
+      end)
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -1036,7 +1125,6 @@ defmodule EvoGit.TaskRegistry do
     usage = Keyword.get(opts, :usage)
     agent_count = Keyword.get(opts, :agent_count)
     commit_sha = Keyword.get(opts, :commit_sha)
-    archive_records = Keyword.get(opts, :archive_records)
     error = Keyword.get(opts, :error)
 
     # Narrow-column read: only status, opts, finished_at, lease_expires_at are
@@ -1056,7 +1144,7 @@ defmodule EvoGit.TaskRegistry do
           # CURRENT stored status is :cancelling that reaches a terminal phase
           # (the wrapper completed/failed during the grace period) must always
           # be persisted as :cancelled — never :completed/:failed. Everything
-          # else (result/usage/archive write, terminal bookkeeping) flows
+          # else (result/usage write, terminal bookkeeping) flows
           # through untouched, so intermediate result data is PRESERVED.
           status =
             if task_status == :cancelling and status in [:completed, :failed],
@@ -1111,12 +1199,7 @@ defmodule EvoGit.TaskRegistry do
             update_cols =
               [
                 status: status,
-                # Archive dedup: the runtime result carries the per-agent
-                # archive under `data.archive_records`, and the SAME list is
-                # persisted into the dedicated `archive_metadata` column below.
-                # Store it ONCE — strip it from the persisted result copy only
-                # (the in-flight `result` keeps it for the rest of the handler).
-                result: ArchiveDedup.strip_archive_records(result),
+                result: result,
                 finished_at: finished_at,
                 lease_expires_at: lease_expires_at,
                 project_path: project_path,
@@ -1125,8 +1208,7 @@ defmodule EvoGit.TaskRegistry do
                 if(status == :failed and error != nil, do: [error: error], else: []) ++
                 if(usage, do: [usage: usage], else: []) ++
                 if(agent_count, do: [agent_count: agent_count], else: []) ++
-                if(commit_sha, do: [commit_sha: commit_sha], else: []) ++
-                if(archive_records, do: [archive_metadata: archive_records], else: [])
+                if(commit_sha, do: [commit_sha: commit_sha], else: [])
 
             case safe_store_write("handle_update_status update_task_columns", fn ->
                    EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
@@ -1402,9 +1484,7 @@ defmodule EvoGit.TaskRegistry do
     update_cols =
       [
         status: final_status,
-        # Same persistence-boundary archive dedup as handle_update_status/6 —
-        # `archive_metadata` is the single stored copy of the per-agent archive.
-        result: ArchiveDedup.strip_archive_records(final_result),
+        result: final_result,
         finished_at: finished_at,
         lease_expires_at: nil
       ] ++ if(branch_name, do: [branch_name: branch_name], else: [])
@@ -1615,13 +1695,7 @@ defmodule EvoGit.TaskRegistry do
             # :finalizing is NON-terminal — finished_at and the lease stay as
             # they are; the final terminal mapping happens at result time in
             # handle_update_status/6.
-            # Archive dedup at the put_task boundary too: this is a FULL-row
-            # re-write of a DECODED task, so a row written before the dedup
-            # rule still carries `data.archive_records` in its result and would
-            # be re-persisted (compressed) as a duplicate of archive_metadata.
-            updated =
-              %{task | status: :finalizing}
-              |> ArchiveDedup.strip_task_archive_records()
+            updated = %{task | status: :finalizing}
 
             # On disk-full the persisted row keeps its old status — log and
             # continue.
@@ -1724,7 +1798,6 @@ defmodule EvoGit.TaskRegistry do
         usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
         agent_count: result_field(result, :agent_count, &is_integer/1),
         commit_sha: result_field(result, :commit_sha, &is_binary/1),
-        archive_records: result_field(result, :archive_records, &is_list/1),
         error: error
       )
     else

@@ -1,15 +1,18 @@
 defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
   @moduledoc """
   Mirror coverage for the LIGHTWEIGHT task read API
-  (`EvoGit.Store.select_tasks_page/2`, `get_task_lite/2`, `get_task_archive/2`)
-  through its reporting layers:
+  (`EvoGit.Store.select_tasks_page/2`, `get_task_lite/2`,
+  `list_task_archives/3`, `get_agent_archive/3`) through its reporting layers:
 
     * `EvoGit.TaskRegistry` — `list_tasks_page/1`, `get_task_lite/1`,
-      `get_task_archive/1` (offloaded through `Task.start` + `StoreGuard.read/3`);
+      `list_task_archives/2`, `get_agent_archive/2` (offloaded through
+      `Task.start` + `StoreGuard.read/3`);
     * `EvoGit.AgentScheduler.RemoteAPI` — `select_tasks_page/1`,
-      `get_task_lite/1`, `get_task_archive/1` (pure delegates);
+      `get_task_lite/1`, `list_task_archives/2`, `get_agent_archive/2` (pure
+      delegates);
     * `EvoGit.RemoteNode` — `list_tasks_page/2`, `get_task_lite/2`,
-      `get_task_archive/2` (local-direct / remote-`:erpc`).
+      `list_task_archives/3`, `get_agent_archive/3` (local-direct /
+      remote-`:erpc`, degraded on failure).
 
   Each test runs against its OWN isolated store + registry
   (`EvoGit.TaskRegistryCase`), so nothing global is touched.
@@ -23,8 +26,7 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
   alias EvoGit.RemoteNode
   alias EvoGit.TaskInfo
 
-  @archive_a [%{"role" => "user", "content" => "archived a"}]
-  @archive_b [%{"role" => "user", "content" => "archived b"}]
+  @empty_page %{entries: [], total: 0}
 
   describe "EvoGit.TaskRegistry mirrors" do
     setup %{store: store} do
@@ -39,31 +41,70 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
       assert Enum.map(rows, & &1.id) == ["mirror-c-run", "mirror-b-new", "mirror-a-old"]
 
       # The heavy blobs are never part of a page row.
-      for row <- rows, absent <- [:result, :archive_metadata, :logs, :usage] do
+      for row <- rows, absent <- [:result, :logs, :usage] do
         refute Map.has_key?(row, absent)
       end
 
       assert hd(rows).status == :running
     end
 
-    test "get_task_lite/1 drops the archive but decodes everything else" do
+    test "get_task_lite/1 decodes the task without touching the archive table" do
       assert %TaskInfo{id: "mirror-a-old"} = lite = TaskRegistry.get_task_lite("mirror-a-old")
-      assert lite.archive_metadata == nil
       assert lite.branch_name == "genesis/agent_alpha"
 
       assert {:ok, data} = lite.result
-      refute Map.has_key?(data, :archive_records)
       assert data.commit_sha == "sha-a"
 
       # Missing rows keep the read's documented empty shape.
       assert TaskRegistry.get_task_lite("no-such-task") == nil
     end
 
-    test "get_task_archive/1 returns the archive records on demand" do
-      assert TaskRegistry.get_task_archive("mirror-a-old") == @archive_a
-      assert TaskRegistry.get_task_archive("mirror-b-new") == @archive_b
-      assert TaskRegistry.get_task_archive("mirror-c-run") == []
-      assert TaskRegistry.get_task_archive("no-such-task") == []
+    test "list_task_archives/2 pages the roster and counts the task's whole archive" do
+      # Roster order is depth ASC, agent_id ASC — root first.
+      assert %{entries: [root, child], total: 2} =
+               TaskRegistry.list_task_archives("mirror-a-old")
+
+      assert root["agent_id"] == 1
+      assert root["depth"] == 0
+      assert child["agent_id"] == 2
+      assert child["depth"] == 1
+
+      # `include_results: false` (default) never selects the heavy column: the
+      # `"result"` key is ABSENT, not nil.
+      refute Map.has_key?(root, "result")
+      refute Map.has_key?(child, "result")
+
+      # Opting in carries each agent's own result text.
+      assert %{entries: [with_result], total: 2} =
+               TaskRegistry.list_task_archives("mirror-a-old",
+                 limit: 1,
+                 include_results: true
+               )
+
+      assert with_result["result"] == "archived a root"
+
+      # `total` is the task's whole archive count, independent of the page.
+      assert %{entries: [only], total: 1} =
+               TaskRegistry.list_task_archives("mirror-b-new", limit: 1)
+
+      assert only["agent_id"] == 1
+
+      # A task with no archive rows (and an unknown task) keep the empty page.
+      assert TaskRegistry.list_task_archives("mirror-c-run") == @empty_page
+      assert TaskRegistry.list_task_archives("no-such-task") == @empty_page
+    end
+
+    test "get_agent_archive/2 returns ONE agent's full entry (with its result)" do
+      assert %{"agent_id" => 2, "depth" => 1} =
+               child =
+               TaskRegistry.get_agent_archive("mirror-a-old", 2)
+
+      assert child["result"] == "archived a child"
+      assert child["objective"] == "beta objective"
+
+      # Absent agent / absent task keep the "no such row" shape.
+      assert TaskRegistry.get_agent_archive("mirror-a-old", 99) == nil
+      assert TaskRegistry.get_agent_archive("no-such-task", 1) == nil
     end
 
     test "filters and pagination pass straight through to the store read" do
@@ -95,7 +136,10 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
       # Sanity: the live store answers these reads.
       assert %{rows: [_, _, _], total: 3} = TaskRegistry.list_tasks_page(limit: 10)
       assert %TaskInfo{id: "mirror-a-old"} = TaskRegistry.get_task_lite("mirror-a-old")
-      assert TaskRegistry.get_task_archive("mirror-a-old") == @archive_a
+
+      assert %{entries: [_, _], total: 2} = TaskRegistry.list_task_archives("mirror-a-old")
+
+      assert %{"agent_id" => 1} = TaskRegistry.get_agent_archive("mirror-a-old", 1)
 
       stop_store!(store)
 
@@ -103,7 +147,8 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
         capture_log(fn ->
           assert TaskRegistry.list_tasks_page(limit: 10) == %{rows: [], total: 0}
           assert TaskRegistry.get_task_lite("mirror-a-old") == nil
-          assert TaskRegistry.get_task_archive("mirror-a-old") == []
+          assert TaskRegistry.list_task_archives("mirror-a-old") == @empty_page
+          assert TaskRegistry.get_agent_archive("mirror-a-old", 1) == nil
         end)
 
       assert log =~ "TaskRegistry: store operation"
@@ -124,8 +169,14 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
       assert RemoteAPI.get_task_lite("mirror-a-old") ==
                EvoGit.Store.get_task_lite(store, "mirror-a-old")
 
-      assert RemoteAPI.get_task_archive("mirror-a-old") ==
-               EvoGit.Store.get_task_archive(store, "mirror-a-old")
+      assert RemoteAPI.list_task_archives("mirror-a-old") ==
+               EvoGit.Store.list_task_archives(store, "mirror-a-old")
+
+      assert RemoteAPI.list_task_archives("mirror-a-old", include_results: true) ==
+               EvoGit.Store.list_task_archives(store, "mirror-a-old", include_results: true)
+
+      assert RemoteAPI.get_agent_archive("mirror-a-old", 2) ==
+               EvoGit.Store.get_agent_archive(store, "mirror-a-old", 2)
     end
   end
 
@@ -142,8 +193,14 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
       assert RemoteNode.get_task_lite(node(), "mirror-a-old") ==
                EvoGit.Store.get_task_lite(store, "mirror-a-old")
 
-      assert RemoteNode.get_task_archive(node(), "mirror-a-old") ==
-               EvoGit.Store.get_task_archive(store, "mirror-a-old")
+      assert RemoteNode.list_task_archives(node(), "mirror-a-old") ==
+               EvoGit.Store.list_task_archives(store, "mirror-a-old")
+
+      assert RemoteNode.list_task_archives(node(), "mirror-a-old", include_results: true) ==
+               EvoGit.Store.list_task_archives(store, "mirror-a-old", include_results: true)
+
+      assert RemoteNode.get_agent_archive(node(), "mirror-a-old", 2) ==
+               EvoGit.Store.get_agent_archive(store, "mirror-a-old", 2)
     end
   end
 
@@ -152,8 +209,10 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
   # ---------------------------------------------------------------------------
 
   # Seeds three tasks into the isolated store: a completed row with a large
-  # result + archive, a second completed row with its own archive, and a running
-  # row with neither. `started_at` ascends so the list order is deterministic.
+  # result, a second completed row, and a running row. `started_at` ascends so
+  # the list order is deterministic. The per-agent archive lives in its OWN
+  # table (`task_agent_archives`), seeded separately below: `mirror-a-old` gets
+  # a two-agent tree, `mirror-b-new` one agent, `mirror-c-run` none.
   defp seed!(store) do
     base = ~U[2026-03-01 00:00:00.000Z]
 
@@ -168,10 +227,8 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
              %{
                commit_sha: "sha-a",
                branch_name: "genesis/agent_alpha",
-               archive_records: [%{"role" => "assistant", "content" => "big archive"}],
                payload: String.duplicate("x", 150_000)
-             }},
-          archive_metadata: @archive_a
+             }}
         )
       )
 
@@ -181,8 +238,7 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
         task("mirror-b-new", DateTime.add(base, 10, :second),
           opts: [path: "/mirror/b", objective: "beta objective"],
           branch_name: "genesis/agent_beta",
-          result: {:ok, %{commit_sha: "sha-b", branch_name: "genesis/agent_beta"}},
-          archive_metadata: @archive_b
+          result: {:ok, %{commit_sha: "sha-b", branch_name: "genesis/agent_beta"}}
         )
       )
 
@@ -192,9 +248,26 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
         task("mirror-c-run", DateTime.add(base, 20, :second),
           status: :running,
           opts: [path: "/mirror/a", objective: "gamma objective"],
-          result: nil,
-          archive_metadata: nil
+          result: nil
         )
+      )
+
+    :ok =
+      EvoGit.Store.put_task_archive(
+        store,
+        archive_entry("mirror-a-old", 1, 0, "archived a root", "alpha objective")
+      )
+
+    :ok =
+      EvoGit.Store.put_task_archive(
+        store,
+        archive_entry("mirror-a-old", 2, 1, "archived a child", "beta objective")
+      )
+
+    :ok =
+      EvoGit.Store.put_task_archive(
+        store,
+        archive_entry("mirror-b-new", 1, 0, "archived b root", "beta objective")
       )
   end
 
@@ -215,6 +288,17 @@ defmodule EvoGit.TaskRegistry.LightweightReadMirrorTest do
         overrides
       )
     )
+  end
+
+  defp archive_entry(task_id, agent_id, depth, result, objective) do
+    %{
+      task_id: task_id,
+      agent_id: agent_id,
+      depth: depth,
+      objective: objective,
+      result: result,
+      completed_at: "2026-03-01T00:00:00Z"
+    }
   end
 
   # Stops the isolated store AND removes its child spec, so its registered name
