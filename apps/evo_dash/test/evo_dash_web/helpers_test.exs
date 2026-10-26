@@ -12,10 +12,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_color(:ready) == "text-info"
     end
 
-    test "blocked presents identically to pending" do
-      assert agent_status_color(:blocked) == agent_status_color(:pending)
-    end
-
     test "falls back to default for unknown status" do
       assert agent_status_color(:unknown) == "text-base-content/80"
     end
@@ -28,10 +24,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_bg(:waiting) == "bg-warning/10"
       assert agent_status_bg(:blocked) == "bg-base-200/60"
       assert agent_status_bg(:ready) == "bg-info/10"
-    end
-
-    test "blocked presents identically to pending" do
-      assert agent_status_bg(:blocked) == agent_status_bg(:pending)
     end
 
     test "falls back to default for unknown status" do
@@ -48,10 +40,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_border(:ready) == "border-info/30"
     end
 
-    test "blocked presents identically to pending" do
-      assert agent_status_border(:blocked) == agent_status_border(:pending)
-    end
-
     test "falls back to default for unknown status" do
       assert agent_status_border(:unknown) == "border-base-content/20"
     end
@@ -64,10 +52,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert agent_status_icon(:waiting) == "hero-pause-circle"
       assert agent_status_icon(:blocked) == "hero-clock"
       assert agent_status_icon(:ready) == "hero-arrow-path"
-    end
-
-    test "blocked presents identically to pending" do
-      assert agent_status_icon(:blocked) == agent_status_icon(:pending)
     end
 
     test "falls back to question mark for unknown status" do
@@ -131,12 +115,6 @@ defmodule EvoDashWeb.HelpersTest do
                "bg-base-content/10 text-base-content/60 rounded-full flex items-center justify-center"
     end
 
-    test "all badges have rounded-full" do
-      for status <- [:running, :completed, :failed, :cancelled, :cancelling, :unknown] do
-        assert task_status_badge(status) =~ "rounded-full"
-      end
-    end
-
     test "cancelling badge differs from the unknown-status fallback" do
       refute task_status_badge(:cancelling) =~ "bg-base-200"
       refute task_status_badge(:cancelling) == task_status_badge(:unknown)
@@ -146,6 +124,8 @@ defmodule EvoDashWeb.HelpersTest do
       badge = task_status_badge(:unknown)
       assert badge =~ "bg-base-200"
       assert badge =~ "text-base-content/70"
+      # Every badge variant (known statuses above) carries the shared shape.
+      assert badge =~ "rounded-full"
     end
   end
 
@@ -158,15 +138,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_dot_class(:failed) == "bg-error"
       assert task_status_dot_class(:pending) == "bg-base-content/40"
       assert task_status_dot_class(:cancelled) == "bg-base-content/40"
-    end
-
-    test "transitional/busy statuses share the warning dot" do
-      assert task_status_dot_class(:running) == task_status_dot_class(:cancelling)
-      assert task_status_dot_class(:finalizing) == task_status_dot_class(:cancelling)
-    end
-
-    test "pending and cancelled share the neutral dim dot" do
-      assert task_status_dot_class(:pending) == task_status_dot_class(:cancelled)
     end
 
     test "falls back to a dim neutral gray for unknown statuses" do
@@ -183,11 +154,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_status_tint(:cancelling) == "bg-warning/5 shadow-warning/10 border-warning/20"
       assert task_status_tint(:completed) == "bg-success/5 shadow-success/10 border-success/20"
       assert task_status_tint(:failed) == "bg-error/5 shadow-error/10 border-error/20"
-    end
-
-    test "transitional/busy statuses share the warning tint" do
-      assert task_status_tint(:running) == task_status_tint(:cancelling)
-      assert task_status_tint(:finalizing) == task_status_tint(:cancelling)
     end
 
     test "falls back to the neutral tint for pending/cancelled/unknown" do
@@ -209,10 +175,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert task_error_kind_label(:restart) == "Runtime restarted"
       assert task_error_kind_label(:lease_expired) == "Lease expired"
       assert task_error_kind_label(:recheck) == "Recheck"
-    end
-
-    test "error and exit share the generic Failed label" do
-      assert task_error_kind_label(:error) == task_error_kind_label(:exit)
     end
 
     test "falls back to Unknown for unknown atoms, nil, and non-atoms" do
@@ -251,11 +213,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert connection_status_dot_class(:error) == "bg-error"
     end
 
-    test "connecting and disconnecting share the warning dot" do
-      assert connection_status_dot_class(:connecting) ==
-               connection_status_dot_class(:disconnecting)
-    end
-
     test "falls back to a dim neutral gray for disconnected/unknown phases" do
       assert connection_status_dot_class(:disconnected) == "bg-base-content/40"
       assert connection_status_dot_class(:unknown) == "bg-base-content/40"
@@ -271,11 +228,6 @@ defmodule EvoDashWeb.HelpersTest do
       assert connection_status_badge_class(:connecting) == "badge-warning"
       assert connection_status_badge_class(:disconnecting) == "badge-warning"
       assert connection_status_badge_class(:error) == "badge-error"
-    end
-
-    test "connecting and disconnecting share the warning modifier" do
-      assert connection_status_badge_class(:connecting) ==
-               connection_status_badge_class(:disconnecting)
     end
 
     test "falls back to the neutral ghost modifier for disconnected/unknown phases" do
@@ -296,14 +248,11 @@ defmodule EvoDashWeb.HelpersTest do
   describe "format_number/1" do
     test "formats integer with comma separators" do
       assert format_number(1_234_567) == "1,234,567"
+      assert format_number(999) == "999"
     end
 
     test "formats binary string with comma separators" do
       assert format_number("1000000") == "1,000,000"
-    end
-
-    test "formats small numbers without commas" do
-      assert format_number(999) == "999"
     end
 
     test "falls back to 0 for invalid input" do
@@ -415,19 +364,14 @@ defmodule EvoDashWeb.HelpersTest do
   end
 
   describe "tool_call_arguments/1" do
-    test "extracts arguments from :function atom-key map" do
-      result = tool_call_arguments(%{function: %{arguments: "{}"}})
-      assert result == "{}"
+    test "extracts arguments from :function atom-key and string-key maps" do
+      assert tool_call_arguments(%{function: %{arguments: "{}"}}) == "{}"
+      assert tool_call_arguments(%{"function" => %{"arguments" => "{}"}}) == "{}"
     end
 
     test "extracts arguments_json from :function atom-key map" do
       result = tool_call_arguments(%{function: %{arguments_json: "{\"a\": 1}"}})
       assert result == "{\"a\": 1}"
-    end
-
-    test "extracts arguments from function string-key map" do
-      result = tool_call_arguments(%{"function" => %{"arguments" => "{}"}})
-      assert result == "{}"
     end
 
     test "extracts from :arguments key directly" do
@@ -470,16 +414,13 @@ defmodule EvoDashWeb.HelpersTest do
       assert tool_call_is_shell?(%{function: %{name: "Run_Bash"}})
     end
 
-    test "returns false for non-shell model-facing names and unknown/custom tools" do
+    test "returns false for other tools and unknown shapes" do
       refute tool_call_is_shell?(%{function: %{name: "read"}})
       refute tool_call_is_shell?(%{function: %{name: "edit"}})
       refute tool_call_is_shell?(%{function: %{name: "write"}})
       refute tool_call_is_shell?(%{function: %{name: "rg"}})
       refute tool_call_is_shell?(%{function: %{name: "web_search"}})
       refute tool_call_is_shell?(%{function: %{name: "bogus_tool"}})
-    end
-
-    test "returns false for other tools and unknown shapes" do
       refute tool_call_is_shell?(%{function: %{name: "read_file"}})
       refute tool_call_is_shell?(%{"function" => %{"name" => "search"}})
       refute tool_call_is_shell?(%{})
@@ -611,16 +552,10 @@ defmodule EvoDashWeb.HelpersTest do
   end
 
   describe "mode_description/1" do
-    test "returns description for genesis_new" do
-      assert mode_description("genesis_new") =~ "codebase"
-    end
-
-    test "returns description for genesis_existing" do
-      assert mode_description("genesis_existing") =~ "codebase"
-    end
-
-    test "returns description for evolve_simple" do
-      assert mode_description("evolve_simple") =~ "codebase"
+    test "every task mode has a description" do
+      for mode <- ["genesis_new", "genesis_existing", "evolve_simple"] do
+        assert mode_description(mode) =~ "codebase"
+      end
     end
 
     test "returns description for custom_agent" do
@@ -634,20 +569,16 @@ defmodule EvoDashWeb.HelpersTest do
   end
 
   describe "mode_info_message/1" do
-    test "returns message for genesis_new" do
-      assert mode_info_message("genesis_new") =~ "Empty directory"
-    end
+    test "every task mode has its info message" do
+      for {mode, fragment} <- [
+            {"genesis_new", "Empty directory"},
+            {"genesis_existing", "CONTEXT.md"},
+            {"evolve_simple", "Evolution mode"},
+            {"custom_agent", "Custom Agent"}
+          ] do
+        assert mode_info_message(mode) =~ fragment
+      end
 
-    test "returns message for genesis_existing" do
-      assert mode_info_message("genesis_existing") =~ "CONTEXT.md"
-    end
-
-    test "returns message for evolve_simple" do
-      assert mode_info_message("evolve_simple") =~ "Evolution mode"
-    end
-
-    test "returns message for custom_agent" do
-      assert mode_info_message("custom_agent") =~ "Custom Agent"
       assert mode_info_message("custom_agent") =~ "requires picking a custom agent"
     end
 

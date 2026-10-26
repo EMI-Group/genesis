@@ -226,53 +226,28 @@ defmodule EvoDashWeb.TaskFormComponentsTest do
       refute html =~ ~s(name="model_id")
     end
 
-    test "disabled state renders the welcome overlay" do
-      html =
-        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: "",
-          disabled: true
-        )
-
-      assert html =~ "Open a project to get started"
-    end
-
-    test "disabled state suppresses the task-launch placeholder (genesis_new default)" do
+    test "disabled state renders the welcome overlay and suppresses every task-launch placeholder" do
       # Regression: with no project open (@disabled) the mode-dependent
       # task-launch hint is an empty placeholder — the centered welcome overlay
-      # is the only hint. Covers the genesis_new branch's creation hint.
-      html =
-        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: "",
-          disabled: true
-        )
+      # is the only hint. Covers the genesis_new default branch AND the
+      # evolve-family branch (the reported leak).
+      for mode <- [nil, "evolve_simple"] do
+        html =
+          render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
+            prompt: "",
+            disabled: true,
+            mode: mode
+          )
 
-      refute html =~ ~s(placeholder="Describe what you want to change or improve...")
-      refute html =~ ~s(placeholder="Describe the codebase you want to create...")
+        refute html =~ ~s(placeholder="Describe what you want to change or improve...")
 
-      refute html =~
-               ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
+        refute html =~ ~s(placeholder="Describe the codebase you want to create...")
 
-      assert html =~ "Open a project to get started"
-    end
+        refute html =~
+                 ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
 
-    test "disabled state suppresses the evolve placeholder (evolve_simple)" do
-      # Regression for the reported bug: the evolve-family placeholder
-      # ("Describe what you want to change or improve...") must NOT leak into
-      # the disabled (no-project) state either.
-      html =
-        render_component(&EvoDashWeb.TaskFormComponents.task_form/1,
-          prompt: "",
-          disabled: true,
-          mode: "evolve_simple"
-        )
-
-      refute html =~ ~s(placeholder="Describe what you want to change or improve...")
-      refute html =~ ~s(placeholder="Describe the codebase you want to create...")
-
-      refute html =~
-               ~s(placeholder="Optional — leave empty and click Launch to initialize an existing codebase")
-
-      assert html =~ "Open a project to get started"
+        assert html =~ "Open a project to get started"
+      end
     end
 
     test "evolve_simple placeholder renders when a project is open (not disabled)" do

@@ -82,54 +82,35 @@ defmodule EvoDashWeb.ProjectComponentsTest do
   # crashing the LiveView in the desktop app. The buttons must keep the hook and
   # have NO phx-click binding.
   describe "directory picker browse buttons" do
-    test "open-path browse button keeps the hook but has no phx-click binding" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :open_path,
-          tauri_detected: true
-        )
+    test "every browse button keeps the hook but has no phx-click binding" do
+      browse_buttons = [
+        {&ProjectComponents.project_omnibox/1,
+         [palette_open: true, palette_mode: :open_path, tauri_detected: true],
+         "#project-path-browse-button"},
+        {&ProjectComponents.project_omnibox/1,
+         [palette_open: true, palette_mode: :new_project, tauri_detected: true],
+         "#new-project-location-browse-button"},
+        {&ProjectComponents.project_settings_tab/1,
+         [
+           active_project: "/home/user/project",
+           project_config: nil,
+           worktree_script: nil,
+           commands: %{},
+           foreign_repos: [],
+           show_add_foreign_repo: true,
+           new_repo_id: "",
+           new_repo_path: "",
+           new_repo_description: "",
+           tauri_detected: true,
+           platform: "linux"
+         ], "#foreign-repo-path-browse-button"}
+      ]
 
-      assert attribute(html, "#project-path-browse-button", "phx-hook") == ["DirectoryPicker"]
-      assert attribute(html, "#project-path-browse-button", "phx-click") == []
-    end
-
-    test "new-project browse button keeps the hook but has no phx-click binding" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :new_project,
-          tauri_detected: true
-        )
-
-      assert attribute(html, "#new-project-location-browse-button", "phx-hook") == [
-               "DirectoryPicker"
-             ]
-
-      assert attribute(html, "#new-project-location-browse-button", "phx-click") == []
-    end
-
-    test "foreign-repo browse button keeps the hook but has no phx-click binding" do
-      html =
-        render_component(&ProjectComponents.project_settings_tab/1,
-          active_project: "/home/user/project",
-          project_config: nil,
-          worktree_script: nil,
-          commands: %{},
-          foreign_repos: [],
-          show_add_foreign_repo: true,
-          new_repo_id: "",
-          new_repo_path: "",
-          new_repo_description: "",
-          tauri_detected: true,
-          platform: "linux"
-        )
-
-      assert attribute(html, "#foreign-repo-path-browse-button", "phx-hook") == [
-               "DirectoryPicker"
-             ]
-
-      assert attribute(html, "#foreign-repo-path-browse-button", "phx-click") == []
+      for {render, opts, selector} <- browse_buttons do
+        html = render_component(render, opts)
+        assert attribute(html, selector, "phx-hook") == ["DirectoryPicker"]
+        assert attribute(html, selector, "phx-click") == []
+      end
     end
   end
 
@@ -139,102 +120,56 @@ defmodule EvoDashWeb.ProjectComponentsTest do
   # even when the dashboard itself runs inside the Tauri desktop shell. The
   # manual path inputs stay rendered in both contexts.
   describe "browse buttons in remote contexts" do
-    test "open-path palette hides the browse button on a remote node but keeps the input" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :open_path,
-          tauri_detected: true,
-          remote: true
-        )
+    test "every browse button is gated on tauri_detected and !remote" do
+      cases = [
+        {"#project-path-browse-button", "#project-path-input", "placeholder", "Project path",
+         fn remote ->
+           render_component(&ProjectComponents.project_omnibox/1,
+             palette_open: true,
+             palette_mode: :open_path,
+             tauri_detected: true,
+             remote: remote
+           )
+         end},
+        {"#new-project-location-browse-button", "#new-project-path-input", "placeholder",
+         "Project path",
+         fn remote ->
+           render_component(&ProjectComponents.project_omnibox/1,
+             palette_open: true,
+             palette_mode: :new_project,
+             tauri_detected: true,
+             remote: remote
+           )
+         end},
+        {"#foreign-repo-path-browse-button", "#foreign-repo-path-input", "phx-hook",
+         "PathAutocomplete",
+         fn remote ->
+           render_component(&ProjectComponents.project_settings_tab/1,
+             active_project: "/home/user/project",
+             project_config: nil,
+             worktree_script: nil,
+             commands: %{},
+             foreign_repos: [],
+             show_add_foreign_repo: true,
+             new_repo_id: "",
+             new_repo_path: "",
+             new_repo_description: "",
+             tauri_detected: true,
+             remote: remote,
+             platform: "linux"
+           )
+         end}
+      ]
 
-      assert Floki.find(parse(html), "#project-path-browse-button") == []
-      assert attribute(html, "#project-path-input", "placeholder") == ["Project path"]
-    end
+      for {browse, input, input_attr, input_value, render} <- cases do
+        remote_html = render.(true)
+        assert Floki.find(parse(remote_html), browse) == []
+        assert attribute(remote_html, input, input_attr) == [input_value]
 
-    test "open-path palette keeps the browse button on the local node" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :open_path,
-          tauri_detected: true,
-          remote: false
-        )
-
-      assert attribute(html, "#project-path-browse-button", "phx-hook") == ["DirectoryPicker"]
-      assert attribute(html, "#project-path-input", "placeholder") == ["Project path"]
-    end
-
-    test "new-project palette hides the browse button on a remote node but keeps the input" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :new_project,
-          tauri_detected: true,
-          remote: true
-        )
-
-      assert Floki.find(parse(html), "#new-project-location-browse-button") == []
-      assert attribute(html, "#new-project-path-input", "placeholder") == ["Project path"]
-    end
-
-    test "new-project palette keeps the browse button on the local node" do
-      html =
-        render_component(&ProjectComponents.project_omnibox/1,
-          palette_open: true,
-          palette_mode: :new_project,
-          tauri_detected: true,
-          remote: false
-        )
-
-      assert attribute(html, "#new-project-location-browse-button", "phx-hook") == [
-               "DirectoryPicker"
-             ]
-
-      assert attribute(html, "#new-project-path-input", "placeholder") == ["Project path"]
-    end
-
-    test "foreign-repo form hides the browse button on a remote node but keeps the input" do
-      html =
-        render_component(&ProjectComponents.project_settings_tab/1,
-          active_project: "/home/user/project",
-          project_config: nil,
-          worktree_script: nil,
-          commands: %{},
-          foreign_repos: [],
-          show_add_foreign_repo: true,
-          new_repo_id: "",
-          new_repo_path: "",
-          new_repo_description: "",
-          tauri_detected: true,
-          remote: true,
-          platform: "linux"
-        )
-
-      assert Floki.find(parse(html), "#foreign-repo-path-browse-button") == []
-      assert attribute(html, "#foreign-repo-path-input", "phx-hook") == ["PathAutocomplete"]
-    end
-
-    test "foreign-repo form keeps the browse button on the local node" do
-      html =
-        render_component(&ProjectComponents.project_settings_tab/1,
-          active_project: "/home/user/project",
-          project_config: nil,
-          worktree_script: nil,
-          commands: %{},
-          foreign_repos: [],
-          show_add_foreign_repo: true,
-          new_repo_id: "",
-          new_repo_path: "",
-          new_repo_description: "",
-          tauri_detected: true,
-          remote: false,
-          platform: "linux"
-        )
-
-      assert attribute(html, "#foreign-repo-path-browse-button", "phx-hook") == [
-               "DirectoryPicker"
-             ]
+        local_html = render.(false)
+        assert attribute(local_html, browse, "phx-hook") == ["DirectoryPicker"]
+        assert attribute(local_html, input, input_attr) == [input_value]
+      end
     end
   end
 

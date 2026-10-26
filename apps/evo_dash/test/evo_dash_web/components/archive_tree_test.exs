@@ -80,7 +80,7 @@ defmodule EvoDashWeb.ArchiveTreeTest do
   ]
 
   describe "ReviewComponents.archive_review_section with string keys" do
-    test "renders without hanging and shows agent ids" do
+    test "renders the parent/child hierarchy from string- and atom-keyed records" do
       html =
         render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
           archive_metadata: @string_key_archive,
@@ -89,37 +89,23 @@ defmodule EvoDashWeb.ArchiveTreeTest do
         |> rendered_to_string()
 
       # Both agent ids are present — proving the tree was built correctly
-      # from string-keyed data (not silently dropped to nil).
+      # from string-keyed data (not silently dropped to nil) — and the
+      # objective text proves the nested agent maps were read, not nil.
       assert html =~ "agent-1"
       assert html =~ "agent-2"
-    end
-
-    test "renders nested parent/child hierarchy correctly" do
-      html =
-        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
-          archive_metadata: @string_key_archive,
-          task_id: "test-task"
-        )
-        |> rendered_to_string()
-
-      # The objective text should render (proving the agent maps were read
-      # correctly, not silently nil).
       assert html =~ "Root agent objective"
       assert html =~ "Child agent objective"
-    end
-  end
 
-  describe "ReviewComponents.archive_review_section with atom keys" do
-    test "still works (regression — atom keys must not break)" do
-      html =
+      # Regression: atom-keyed (in-memory) records must keep rendering.
+      atom_html =
         render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
           archive_metadata: @atom_key_archive,
           task_id: "test-task"
         )
         |> rendered_to_string()
 
-      assert html =~ "agent-1"
-      assert html =~ "agent-2"
+      assert atom_html =~ "agent-1"
+      assert atom_html =~ "agent-2"
     end
   end
 
@@ -131,36 +117,27 @@ defmodule EvoDashWeb.ArchiveTreeTest do
       %{"agent_id" => "agent-2", "parent_id" => "agent-1", "objective" => "Cyclic 2"}
     ]
 
-    test "terminates on cyclic data without infinite recursion" do
-      # This must not hang. If the guard is broken it will OOM.
-      html =
-        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
-          archive_metadata: @cyclic_archive,
-          task_id: "test-task"
-        )
-        |> rendered_to_string()
-
-      # It renders without error. Both records sit in a cycle with no root, so
-      # neither is reachable from a root — orphan promotion renders each of them
-      # exactly once as its own top-level node (the key assertion is
-      # termination, not the shape).
-      assert is_binary(html)
-    end
-
     # A self-referencing agent: its own parent.
     @self_ref_archive [
       %{"agent_id" => "agent-1", "parent_id" => "agent-1", "objective" => "Self ref"}
     ]
 
-    test "terminates on self-referencing data" do
-      html =
-        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
-          archive_metadata: @self_ref_archive,
-          task_id: "test-task"
-        )
-        |> rendered_to_string()
+    test "terminates on cyclic and self-referencing data" do
+      # These must not hang. If the guard is broken they OOM.
+      for archive <- [@cyclic_archive, @self_ref_archive] do
+        html =
+          render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
+            archive_metadata: archive,
+            task_id: "test-task"
+          )
+          |> rendered_to_string()
 
-      assert is_binary(html)
+        # It renders without error. The cyclic records sit in a cycle with no
+        # root, so neither is reachable from a root — orphan promotion renders
+        # each of them exactly once as its own top-level node (the key
+        # assertion is termination, not the shape).
+        assert is_binary(html)
+      end
     end
   end
 
@@ -419,51 +396,31 @@ defmodule EvoDashWeb.ArchiveTreeTest do
   # `export_url` that already carries `?node=<target_id>` on a remote node, and
   # a nil `export_url` keeps the bare task export path (local node).
   describe "archive export link (node-aware)" do
-    test "archive_details/1 uses an explicit export_url" do
-      html =
-        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
-          archive_metadata: @string_key_archive,
-          task_id: "task-42",
-          export_url: "/tasks/task-42/export?node=remote-1"
-        )
+    test "both archive sections honor an explicit export_url and fall back to the bare path" do
+      for render <- [
+            &EvoDashWeb.ArchiveComponents.archive_details/1,
+            &EvoDashWeb.ReviewComponents.archive_review_section/1
+          ] do
+        explicit =
+          render_component(render,
+            archive_metadata: @string_key_archive,
+            task_id: "task-42",
+            export_url: "/tasks/task-42/export?node=remote-1"
+          )
 
-      [link] = export_links(html)
-      assert Floki.attribute(link, "href") == ["/tasks/task-42/export?node=remote-1"]
-      # The download affordance is untouched by the node-aware href.
-      assert Floki.attribute(link, "download") == ["download"]
-    end
+        [link] = export_links(explicit)
+        assert Floki.attribute(link, "href") == ["/tasks/task-42/export?node=remote-1"]
+        # The download affordance is untouched by the node-aware href.
+        assert Floki.attribute(link, "download") == ["download"]
 
-    test "archive_details/1 falls back to the bare task export path" do
-      html =
-        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
-          archive_metadata: @string_key_archive,
-          task_id: "task-42"
-        )
+        fallback =
+          render_component(render,
+            archive_metadata: @string_key_archive,
+            task_id: "task-42"
+          )
 
-      assert export_hrefs(html) == ["/tasks/task-42/export"]
-    end
-
-    test "archive_review_section/1 uses an explicit export_url" do
-      html =
-        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
-          archive_metadata: @string_key_archive,
-          task_id: "task-42",
-          export_url: "/tasks/task-42/export?node=remote-1"
-        )
-
-      [link] = export_links(html)
-      assert Floki.attribute(link, "href") == ["/tasks/task-42/export?node=remote-1"]
-      assert Floki.attribute(link, "download") == ["download"]
-    end
-
-    test "archive_review_section/1 falls back to the bare task export path" do
-      html =
-        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
-          archive_metadata: @string_key_archive,
-          task_id: "task-42"
-        )
-
-      assert export_hrefs(html) == ["/tasks/task-42/export"]
+        assert export_hrefs(fallback) == ["/tasks/task-42/export"]
+      end
     end
   end
 

@@ -963,16 +963,20 @@ defmodule EvoDashWeb.DiffViewerTest do
   describe "diff_viewer/1 — rendered-line cap" do
     test "a diff beyond 2000 lines renders the capped prefix plus a remainder note" do
       html = render_diff_viewer([file_fixture("big.txt", big_diff(5_000))])
-      text = html |> parse() |> Floki.text()
 
+      # Assert on the rendered HTML directly: the diff rows carry NO payload
+      # attributes (the only data attribute in this component is
+      # `data-language`), and parsing the 2000 rendered rows with Floki costs
+      # ~80 ms — the single most expensive assertion in this file.
+      #
       # The cap covers 2000 diff lines: 5 header lines + the hunk header + 1994
       # added lines — so additions 00001..01995 render and 01996+ do not.
-      assert text =~ "added line 00001"
-      assert text =~ "added line 01995"
-      refute text =~ "added line 01996"
-      refute text =~ "added line 05000"
+      assert html =~ "added line 00001"
+      assert html =~ "added line 01995"
+      refute html =~ "added line 01996"
+      refute html =~ "added line 05000"
 
-      assert text =~ "3,005 more lines not shown"
+      assert html =~ "3,005 more lines not shown"
     end
 
     test "a diff under the cap renders no remainder note" do
