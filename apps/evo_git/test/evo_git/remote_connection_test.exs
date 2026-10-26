@@ -29,12 +29,20 @@ defmodule EvoGit.RemoteConnectionTest do
     # Speed up the post-launch daemon-health polling (`verify_daemon_healthy/3`
     # → `wait_daemon_active/5`, whose first act is a sleep BEFORE its initial
     # check): the production default is 1000ms, but these tests only care about
-    # the poll ordering, not the wall-clock delay. 5ms still paces every poll
-    # (so a `:daemon_active_after` counter sees distinct attempts) while costing
-    # the ~15 bootstrap tests 5ms per attempt instead of 20. `async: false`, so
-    # the BEAM-global app-env write is safe.
-    original_health_delay = Application.get_env(:evo_git, :remote_daemon_health_delay_ms)
-    Application.put_env(:evo_git, :remote_daemon_health_delay_ms, 5)
+    # the poll ordering, not the wall-clock delay. 0ms keeps every poll a
+    # distinct attempt (`Process.sleep/1` still yields, so a
+    # `:daemon_active_after` counter sees separate invocations) while costing
+    # the ~15 bootstrap tests nothing. `async: false`, so the BEAM-global
+    # app-env write is safe.
+    test_envs =
+      put_test_env(
+        remote_daemon_health_delay_ms: 0,
+        # Same rationale for the connect worker's tunnel-readiness poll: the
+        # production cadence is 100ms, which a test that only needs one extra
+        # probe (its fake ssh publishes the forwarded port a few ms after the
+        # first probe fails) would otherwise pay in full.
+        remote_tunnel_poll_interval_ms: 5
+      )
 
     on_exit(fn ->
       # Terminate any connection managers started during this test so they
@@ -51,11 +59,7 @@ defmodule EvoGit.RemoteConnectionTest do
 
       File.rm_rf!(tmp_xdg)
 
-      if original_health_delay do
-        Application.put_env(:evo_git, :remote_daemon_health_delay_ms, original_health_delay)
-      else
-        Application.delete_env(:evo_git, :remote_daemon_health_delay_ms)
-      end
+      restore_test_env(test_envs)
     end)
 
     :ok
@@ -790,9 +794,9 @@ defmodule EvoGit.RemoteConnectionTest do
         # Reserve a free port, then close it again — the real listener only
         # appears after a short delay, so the helper's first probes must fail
         # and the poll loop is actually exercised. The delay only has to outlast
-        # ONE probe (the first probe happens immediately, so a 60ms delay makes
-        # three probes fail against a 20ms interval) — it is not a timing
-        # assertion, just a guarantee that the loop iterates before readiness.
+        # ONE probe (the first probe happens immediately), so a 20ms delay over
+        # a 5ms interval makes several probes fail before readiness — it is not
+        # a timing assertion, just a guarantee that the loop iterates.
         {:ok, probe} = :gen_tcp.listen(0, [:inet, {:ip, {127, 0, 0, 1}}, {:reuseaddr, true}])
         {:ok, local_port} = :inet.port(probe)
         :gen_tcp.close(probe)
@@ -805,7 +809,7 @@ defmodule EvoGit.RemoteConnectionTest do
         # Task.await/2 is forbidden — the listener must not be a Task).
         listener_pid =
           spawn_link(fn ->
-            Process.sleep(60)
+            Process.sleep(20)
             {:ok, listener} = listen_with_retry(local_port)
             send(test_pid, {:listener_up, listener})
 
@@ -820,7 +824,7 @@ defmodule EvoGit.RemoteConnectionTest do
 
         assert :ok =
                  EvoGit.RemoteConnection.wait_for_tunnel(port, local_port, 2_000,
-                   poll_interval: 20
+                   poll_interval: 5
                  )
       end
 
@@ -828,12 +832,12 @@ defmodule EvoGit.RemoteConnectionTest do
         port = open_live_dummy_port()
         {:ok, free_port} = EvoGit.RemoteConnection.find_free_port()
 
-        # A 50ms budget over a 20ms poll interval still runs >= 3 failed
+        # A 20ms budget over a 5ms poll interval still runs >= 3 failed
         # `tcp_ready?` probes before expiring (the helper's own
         # `min(poll_interval, remaining)` clamp keeps the last wait short), so
         # the timeout arm is reached by the real loop, not by a single probe.
         assert {:error, {:timeout, output}} =
-                 EvoGit.RemoteConnection.wait_for_tunnel(port, free_port, 50, poll_interval: 20)
+                 EvoGit.RemoteConnection.wait_for_tunnel(port, free_port, 20, poll_interval: 5)
 
         # The dummy `sleep` process prints nothing, so the drained ssh output
         # (surfaced for diagnosability) is empty.
@@ -1079,14 +1083,29 @@ defmodule EvoGit.RemoteConnectionTest do
         # ({:spawn, "scp ..."} → /bin/sh -c) — a fake scp on PATH intercepts it.
         # It also copies the uploaded source into the shared tmp dir, named by
         # the DESTINATION basename, so tests can inspect what was uploaded.
+        # `exec cp` + POSIX `${2##*/}` (instead of a `basename` subprocess)
+        # keeps the fake to the fewest possible child processes — this runs
+        # once per upload in ~10 bootstrap tests. The `scp_exit` variant needs
+        # a real `exit N` after the copy, so it keeps the plain form.
+        scp_exit = Keyword.get(opts, :scp_exit, 0)
+
         scp_script =
-          ~S"""
-          #!/bin/sh
-          cp "$1" "__SCP_DIR__/$(basename "$2")"
-          exit __SCP_EXIT__
-          """
+          case scp_exit do
+            0 ->
+              ~S"""
+              #!/bin/sh
+              exec cp "$1" "__SCP_DIR__/${2##*/}"
+              """
+
+            status ->
+              ~S"""
+              #!/bin/sh
+              cp "$1" "__SCP_DIR__/${2##*/}"
+              exit __SCP_EXIT__
+              """
+              |> String.replace("__SCP_EXIT__", Integer.to_string(status))
+          end
           |> String.replace("__SCP_DIR__", tmp)
-          |> String.replace("__SCP_EXIT__", Integer.to_string(Keyword.get(opts, :scp_exit, 0)))
 
         File.write!(scp_path, scp_script)
         File.chmod!(scp_path, 0o755)
@@ -1662,6 +1681,21 @@ defmodule EvoGit.RemoteConnectionTest do
   defp restore_env(app, key, nil), do: Application.delete_env(app, key)
   defp restore_env(app, key, value), do: Application.put_env(app, key, value)
 
+  # Sets the given `:evo_git` app-env seams (BEAM-global — this module is
+  # `async: false`) and returns the previous values as `[{key, old | nil}]`,
+  # ready for `restore_test_env/1` in `on_exit`. Test-only seams documented on
+  # `EvoGit.RemoteConnection`; production keeps its own defaults.
+  defp put_test_env(kv) do
+    Enum.map(kv, fn {key, value} ->
+      previous = Application.get_env(:evo_git, key)
+      Application.put_env(:evo_git, key, value)
+      {key, previous}
+    end)
+  end
+
+  defp restore_test_env(envs),
+    do: Enum.each(envs, fn {key, old} -> restore_env(:evo_git, key, old) end)
+
   # ── Async-connect test helpers ─────────────────────────────────────
 
   # Puts a fake `ssh` executable first on PATH that emulates the connect
@@ -1882,8 +1916,13 @@ defmodule EvoGit.RemoteConnectionTest do
     )
   end
 
-  # Polls `fun` every 20ms until it returns {:ok, value} (returned as value) or
-  # the timeout elapses (flunk with `label`).
+  # Polls `fun` every @poll_interval_ms until it returns {:ok, value} (returned
+  # as value) or the timeout elapses (flunk with `label`). The poll is a plain
+  # file/registry read, so a 2ms cadence costs nothing measurable while making
+  # the wait latency-bound (the fake tools write their log/port files within a
+  # few ms) instead of cadence-bound.
+  @poll_interval_ms 2
+
   defp wait_until(fun, timeout, label) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline, timeout, label)
@@ -1898,7 +1937,7 @@ defmodule EvoGit.RemoteConnectionTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("#{label} (timed out after #{timeout}ms)")
         else
-          Process.sleep(20)
+          Process.sleep(@poll_interval_ms)
           do_wait_until(fun, deadline, timeout, label)
         end
     end

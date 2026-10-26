@@ -26,15 +26,37 @@ defmodule EvoGit.RemoteNodeGitHubTest do
   # node fails immediately with {:erpc, :noconnection} — no TCP timeout wait.
   @fake_remote :"nonexistent@127.0.0.1"
 
-  setup do
+  # A `git init` per test costs one git subprocess (~5ms) and every test starts
+  # from the same empty repository, so the repository is created ONCE here and
+  # each test gets a private copy via `File.cp_r/2` (pure BEAM, no subprocess).
+  setup_all do
+    template_dir =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-test-remote-node-gh-tpl-" <> to_string(System.unique_integer([:positive]))
+      )
+
+    File.mkdir_p!(template_dir)
+    {:ok, _} = Git.init(template_dir)
+
+    # The sample hooks and the reflog are never exercised by these tests; git
+    # recreates them on demand. Dropping them keeps each per-test copy tiny.
+    File.rm_rf!(Path.join(template_dir, ".git/hooks"))
+    File.rm_rf!(Path.join(template_dir, ".git/logs"))
+
+    on_exit(fn -> File.rm_rf!(template_dir) end)
+
+    {:ok, %{gh_repo_template: template_dir}}
+  end
+
+  setup %{gh_repo_template: template_dir} do
     tmp_dir =
       Path.join(
         System.tmp_dir!(),
         "evogit-test-remote-node-gh-" <> to_string(System.unique_integer([:positive]))
       )
 
-    File.mkdir_p!(tmp_dir)
-    {:ok, _} = Git.init(tmp_dir)
+    {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
     on_exit(fn ->
       File.rm_rf!(tmp_dir)

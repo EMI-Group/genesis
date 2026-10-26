@@ -155,6 +155,12 @@ defmodule EvoGit.RemoteConnection do
   # long to start listening on the local port); a fixed 500ms sleep made
   # Node.connect fail instantly with econnrefused on slower tunnels.
   @tunnel_wait_timeout_ms 10_000
+  # Poll interval of the tunnel-readiness wait (`wait_for_tunnel/4`) in the
+  # connect worker. Overridable at runtime via the app-env seam
+  # :remote_tunnel_poll_interval_ms (read per call) — production keeps the
+  # 100ms cadence, while a test whose fake ssh opens its forwarded port a few
+  # milliseconds late does not have to pay a full production poll interval
+  # before `Node.connect` runs.
   @tunnel_poll_interval_ms 100
   # SSH's own connection-establishment timeout (-o ConnectTimeout), kept
   # consistent with (slightly under) the @tunnel_wait_timeout_ms tunnel budget
@@ -708,7 +714,7 @@ defmodule EvoGit.RemoteConnection do
         # take well over a second to start listening, and a too-early
         # Node.connect fails instantly with econnrefused.
         case wait_for_tunnel(port, local_port, @tunnel_wait_timeout_ms,
-               poll_interval: @tunnel_poll_interval_ms
+               poll_interval: tunnel_poll_interval_ms()
              ) do
           :ok ->
             # Register the SSH tunnel's local port with our EPMD-less module so
@@ -1753,6 +1759,12 @@ defmodule EvoGit.RemoteConnection do
 
   defp daemon_health_delay_ms do
     Application.get_env(:evo_git, :remote_daemon_health_delay_ms, @default_daemon_health_delay_ms)
+  end
+
+  # Tunnel-readiness poll cadence of the connect worker. Read per call from the
+  # app-env seam :remote_tunnel_poll_interval_ms (default = production 100ms).
+  defp tunnel_poll_interval_ms do
+    Application.get_env(:evo_git, :remote_tunnel_poll_interval_ms, @tunnel_poll_interval_ms)
   end
 
   defp wait_daemon_active(_ssh_target, _os, 0, _delay, _target), do: :not_active
