@@ -3,10 +3,10 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
   Unit tests for the jog-staggering of concurrent cross-lane edges in
   `EvoDashWeb.AgentsComponents.CommitGraphView.Geometry`.
 
-  Hand-built node/edge maps per the input contract documented in
-  `apps/evo_dash/lib/evo_dash_web/components/agents_components/CONTEXT.md`:
-  nodes `%{sha, column, row, ...}` + edges `%{from_sha, to_sha, from_column,
-  from_row, to_column, to_row, kind}`.
+  Nodes are `%{sha, column, row, ...}` and edges `%{from_sha, to_sha,
+  from_column, from_row, to_column, to_row, kind}`. `positions/1` derives each
+  row from the node's INDEX, so node-list order IS the rendered row order;
+  edges whose sha is absent from the nodes take their own grid pair instead.
   """
 
   use ExUnit.Case, async: true
@@ -21,8 +21,8 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
   @sha_e1 "e1000000"
 
   # The canonical cross-lane route between lane 1 row 1 and lane 0 row 0
-  # (fy 66 → ty 22, midpoint jog y 44) — the shape the renderer's existing
-  # pins assert byte-for-byte; a lone edge must keep it EXACTLY.
+  # (fy 66 → ty 22, midpoint jog y 44) — a lone edge (and a lane-pair group's
+  # FIRST member) must keep it byte-for-byte.
   @canonical "M 48 66 L 48 51 Q 48 44 41 44 L 31 44 Q 24 44 24 37 L 24 22"
 
   defp node(sha, column, row) do
@@ -41,18 +41,21 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
     }
   end
 
-  # The base fixture: a two-lane graph. Lane 1 carries b1 (row 1) and c1
-  # (row 2); lane 0 carries p1 (row 0). Both b1→p1 and c1→p1 cross the same
-  # UNORDERED lane pair {0, 1}.
-  defp base_nodes do
-    [node(@sha_p1, 0, 0), node(@sha_b1, 1, 1), node(@sha_c1, 1, 2)]
+  # N :parent edges from lane 1 rows 1..n onto p1 (lane 0 row 0): they all
+  # share the UNORDERED lane pair {0, 1}.
+  defp pair_fixture(n) do
+    shas = Enum.take([@sha_b1, @sha_c1, @sha_d1, @sha_e1], n)
+
+    nodes =
+      [node(@sha_p1, 0, 0) | Enum.map(Enum.with_index(shas, 1), fn {s, r} -> node(s, 1, r) end)]
+
+    edges =
+      Enum.map(Enum.with_index(shas, 1), fn {s, r} -> edge(s, @sha_p1, 1, r, 0, 0, :parent) end)
+
+    {nodes, edges}
   end
 
-  defp base_pair_edges do
-    [edge(@sha_b1, @sha_p1, 1, 1, 0, 0, :parent), edge(@sha_c1, @sha_p1, 1, 2, 0, 0, :parent)]
-  end
-
-  # The jog y of a routed path = the y shared by its two Q control points.
+  # The routed jog y = the y shared by both Q control points.
   defp jog_y(d) do
     [q1, q2] = Regex.scan(~r/Q \S+ (\S+) /, d, capture: :all_but_first)
     [jog] = q1
@@ -61,195 +64,106 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
     y
   end
 
-  describe "single edge between a lane pair (canonical route)" do
-    test "edge_geo/2 keeps the exact canonical midpoint route" do
-      positions = Geometry.positions(base_nodes())
-
-      assert Geometry.edge_geo(hd(base_pair_edges()), positions).d == @canonical
-    end
-
-    test "edge_geo/3 is pixel-identical to edge_geo/2 for a lone pair edge" do
-      positions = Geometry.positions(base_nodes())
-      edge = hd(base_pair_edges())
-
-      assert Geometry.edge_geo(edge, positions, [edge]).d ==
-               Geometry.edge_geo(edge, positions).d
-    end
-
-    test "a group's FIRST edge (in list order) is never staggered" do
-      edges = base_pair_edges()
-
-      assert Geometry.edge_geo(hd(edges), Geometry.positions(base_nodes()), edges).d ==
-               @canonical
-    end
+  defp assert_rounded(d) do
+    assert String.contains?(d, "Q")
+    refute Regex.match?(~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, d), "sharp corner in #{d}"
   end
 
-  describe "two concurrent edges sharing a lane pair" do
-    test "produce distinct d paths" do
-      edges = base_pair_edges()
-      positions = Geometry.positions(base_nodes())
-      [first, second] = edges
+  defp routes(edges, positions), do: Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
 
-      d_first = Geometry.edge_geo(first, positions, edges).d
-      d_second = Geometry.edge_geo(second, positions, edges).d
-
-      assert d_first != d_second
-      assert d_first == @canonical
-    end
-
-    test "the staggered edge keeps the rounded two-Q-corner shape" do
-      edges = base_pair_edges()
-      positions = Geometry.positions(base_nodes())
-      d = Geometry.edge_geo(Enum.at(edges, 1), positions, edges).d
-
-      assert String.contains?(d, "Q")
-      # Never a sharp L..L..L double-corner signature.
-      refute Regex.match?(~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, d)
-    end
-
-    test "the staggered jog stays inside the from/to span" do
-      edges = base_pair_edges()
-      positions = Geometry.positions(base_nodes())
-      second = Enum.at(edges, 1)
-      %{from: from, to: to, d: d} = Geometry.edge_geo(second, positions, edges)
-
-      jog = jog_y(d)
-      assert jog > min(from.y, to.y)
-      assert jog < max(from.y, to.y)
-    end
-
-    test "placement is deterministic from the edge list order" do
-      edges = base_pair_edges()
-      positions = Geometry.positions(base_nodes())
-      second = Enum.at(edges, 1)
-
-      assert Geometry.edge_geo(second, positions, edges).d ==
-               Geometry.edge_geo(second, positions, edges).d
-
-      # Reversing the list flips WHICH edge carries the stagger: `second`
-      # becomes the pair's first member → its own canonical (arity-2) route.
-      reversed = Enum.reverse(edges)
-
-      assert Geometry.edge_geo(second, positions, reversed).d ==
-               Geometry.edge_geo(second, positions).d
-    end
-
-    test "four concurrent edges get four distinct routes" do
-      nodes = [
-        node(@sha_p1, 0, 0),
-        node(@sha_b1, 1, 1),
-        node(@sha_c1, 1, 2),
-        node(@sha_d1, 1, 3),
-        node(@sha_e1, 1, 4)
-      ]
-
-      edges = [
-        edge(@sha_b1, @sha_p1, 1, 1, 0, 0, :parent),
-        edge(@sha_c1, @sha_p1, 1, 2, 0, 0, :parent),
-        edge(@sha_d1, @sha_p1, 1, 3, 0, 0, :parent),
-        edge(@sha_e1, @sha_p1, 1, 4, 0, 0, :parent)
-      ]
-
+  describe "canonical route (lone edge, group's first edge, no batch)" do
+    test "every call shape keeps the exact canonical midpoint route" do
+      {nodes, edges} = pair_fixture(2)
       positions = Geometry.positions(nodes)
-      ds = Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
+      [edge | _] = edges
 
-      assert length(Enum.uniq(ds)) == 4
-      assert Enum.all?(ds, &String.contains?(&1, "Q"))
+      assert Geometry.edge_geo(edge, positions).d == @canonical
+      assert Geometry.edge_geo(edge, positions, [edge]).d == @canonical
+      assert Geometry.edge_geo(edge, positions, edges).d == @canonical
+      # A non-list batch falls back to the per-edge (canonical) route.
+      assert Geometry.edge_geo(edge, positions, :not_a_list).d == @canonical
     end
   end
 
-  describe "span clamping (short span, multiple edges)" do
-    test "a staggered jog on a one-row span stays inside the span" do
-      # fy = 66, ty = 22 (one row apart): jog zone [30, 58], midpoint 44.
-      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 1), node(@sha_c1, 1, 1)]
+  describe "concurrent edges sharing a lane pair" do
+    test "n concurrent edges get n distinct routes, all rounded, the first canonical" do
+      for n <- [1, 2, 4] do
+        {nodes, edges} = pair_fixture(n)
+        ds = routes(edges, Geometry.positions(nodes))
 
-      edges = [
+        assert length(Enum.uniq(ds)) == n
+        assert hd(ds) == @canonical
+        Enum.each(ds, &assert_rounded/1)
+      end
+    end
+
+    test "the staggered jog stays strictly inside its own from/to span" do
+      # The second fixture is a genuine ONE-ROW span: c1 is absent from the
+      # nodes, so its edge falls back to its own grid pair (also row 1).
+      one_row = [
+        node(@sha_p1, 0, 0),
+        node(@sha_b1, 1, 1)
+      ]
+
+      one_row_edges = [
         edge(@sha_b1, @sha_p1, 1, 1, 0, 0, :parent),
         edge(@sha_c1, @sha_p1, 1, 1, 0, 0, :parent)
       ]
 
-      positions = Geometry.positions(nodes)
-      ds = Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
+      for {nodes, edges} <- [pair_fixture(2), {one_row, one_row_edges}] do
+        positions = Geometry.positions(nodes)
+        assert length(Enum.uniq(routes(edges, positions))) == 2
 
-      assert length(Enum.uniq(ds)) == 2
-
-      for d <- ds do
-        jog = jog_y(d)
-        assert jog > 22 and jog < 66
+        for e <- edges do
+          %{from: from, to: to, d: d} = Geometry.edge_geo(e, positions, edges)
+          jog = jog_y(d)
+          assert jog > min(from.y, to.y) and jog < max(from.y, to.y)
+        end
       end
     end
 
-    test "identical-endpoint edges never emit a sharp corner" do
-      # Both edges resolve onto the SAME node endpoints (same span); the
-      # stagger either finds room or clamps to canonical — never a sharp
-      # L..L..L corner, and both stay well-formed routes.
-      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 0)]
-
-      edges = [
-        edge(@sha_b1, @sha_p1, 1, 0, 0, 0, :parent),
-        edge(@sha_b1, @sha_p1, 1, 0, 0, 0, :merge)
-      ]
-
-      positions = Geometry.positions(nodes)
-      ds = Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
-
-      assert Enum.all?(ds, &is_binary/1)
-
-      for d <- ds do
-        assert String.contains?(d, "Q")
-        refute Regex.match?(~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, d)
-      end
-    end
-
-    test "a staggered jog never crosses into an interior row's dot band" do
-      # Long span: lane 1 row 4 → lane 0 row 0. Interior rows 1..3 have dot
-      # centers at y 66, 110, 154; a staggered jog keeps @jog_clear (8) away.
-      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 4), node(@sha_c1, 1, 4)]
-
-      edges = [
-        edge(@sha_b1, @sha_p1, 1, 4, 0, 0, :parent),
-        edge(@sha_c1, @sha_p1, 1, 4, 0, 0, :parent)
-      ]
-
+    test "placement is deterministic from the edge list order" do
+      {nodes, edges} = pair_fixture(2)
       positions = Geometry.positions(nodes)
       second = Enum.at(edges, 1)
-      d = Geometry.edge_geo(second, positions, edges).d
-      jog = jog_y(d)
+      staggered = Geometry.edge_geo(second, positions, edges).d
 
-      for dot_y <- [66, 110, 154] do
-        assert abs(jog - dot_y) >= 8
-      end
-
-      assert jog > 22 and jog < 198
+      assert staggered == Geometry.edge_geo(second, positions, edges).d
+      assert staggered != Geometry.edge_geo(second, positions).d
+      # Reversed, `second` becomes the group's first member → canonical again.
+      assert Geometry.edge_geo(second, positions, Enum.reverse(edges)).d ==
+               Geometry.edge_geo(second, positions).d
     end
 
     test "a virtual landing (to_sha nil) participates in the stagger" do
       # A :merge_back whose to_sha is nil resolves via its own grid pair —
       # the fallback path — and still staggers against a same-lane-pair edge.
-      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 1), node(@sha_c1, 1, 2)]
-
-      edges = [
-        edge(@sha_b1, @sha_p1, 1, 1, 0, 0, :parent),
-        %{
-          from_sha: @sha_c1,
-          to_sha: nil,
-          from_column: 1,
-          from_row: 2,
-          to_column: 0,
-          to_row: 0,
-          kind: :merge_back
-        }
-      ]
-
-      positions = Geometry.positions(nodes)
-      [first, second] = edges
-
-      d_first = Geometry.edge_geo(first, positions, edges).d
-      d_second = Geometry.edge_geo(second, positions, edges).d
+      {nodes, [first | _]} = pair_fixture(1)
+      edges = [first, edge(@sha_c1, nil, 1, 2, 0, 0, :merge_back)]
+      [d_first, d_second] = routes(edges, Geometry.positions(nodes))
 
       assert d_first == @canonical
       assert d_second != d_first
-      assert String.contains?(d_second, "Q")
+      assert_rounded(d_second)
+    end
+
+    test "a staggered jog never enters an interior row's dot band" do
+      # lane 1 row 4 → lane 0 row 0: interior rows 1..3 have dots at 66, 110,
+      # 154; a staggered jog keeps @jog_clear (8) clear of each (and lands on
+      # 102 here — exactly 8 from the row-2 dot).
+      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 1)]
+
+      edges = [
+        edge(@sha_b1, @sha_p1, 1, 1, 0, 0, :parent),
+        edge(@sha_c1, @sha_p1, 1, 4, 0, 0, :parent)
+      ]
+
+      [d_first, d_second] = routes(edges, Geometry.positions(nodes))
+      jog = jog_y(d_second)
+
+      assert d_first == @canonical
+      for dot_y <- [66, 110, 154], do: assert(abs(jog - dot_y) >= 8, "dot row at #{dot_y}")
+      assert jog > 22 and jog < 198
     end
   end
 
@@ -262,18 +176,23 @@ defmodule EvoDashWeb.CommitGraphGeometryTest do
         edge(@sha_b1, @sha_c1, 1, 1, 1, 2, :merge)
       ]
 
-      positions = Geometry.positions(nodes)
-      ds = Enum.map(edges, &Geometry.edge_geo(&1, positions, edges).d)
-
-      assert ds == ["M 48 22 L 48 66", "M 48 22 L 48 66"]
+      assert routes(edges, Geometry.positions(nodes)) == ["M 48 22 L 48 66", "M 48 22 L 48 66"]
     end
 
-    test "a non-list edges arg falls back to the canonical route" do
-      positions = Geometry.positions(base_nodes())
-      edge = hd(base_pair_edges())
+    test "edges resolving onto the SAME endpoints never emit a sharp corner" do
+      # Either finds another jog or clamps back to canonical — never a sharp
+      # L..L..L corner, and both stay well-formed rounded routes.
+      nodes = [node(@sha_p1, 0, 0), node(@sha_b1, 1, 0)]
 
-      assert Geometry.edge_geo(edge, positions, :not_a_list).d ==
-               Geometry.edge_geo(edge, positions).d
+      edges = [
+        edge(@sha_b1, @sha_p1, 1, 0, 0, 0, :parent),
+        edge(@sha_b1, @sha_p1, 1, 0, 0, 0, :merge)
+      ]
+
+      ds = routes(edges, Geometry.positions(nodes))
+
+      assert Enum.all?(ds, &is_binary/1)
+      Enum.each(ds, &assert_rounded/1)
     end
   end
 end
