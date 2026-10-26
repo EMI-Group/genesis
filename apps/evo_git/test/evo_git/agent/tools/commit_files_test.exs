@@ -18,11 +18,15 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
   (read LIVE by `EvoGit.Config.config_path/0` → `EvoGit.Platform.config_dir/1`,
   with no app-env seam) and write config.toml through `EvoGit.Config`, which
   serializes this module against every other config reader.
+
+  Repository fixtures come from ONE per-module git TEMPLATE built in
+  `setup_all` and copied per test with `File.cp_r!`: ~2 ms per test versus the
+  five `git` subprocesses (`init` + two `config` + `add` + `commit`) the
+  per-test `new_repo!/0` used to pay. Every assertion is unchanged.
   """
 
   use ExUnit.Case, async: false
 
-  alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.Shared
 
   setup_all do
@@ -48,13 +52,17 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
       File.rm_rf!(tmp_xdg)
     end)
 
-    :ok
+    {:ok, repo_template: git_template!()}
   end
 
-  setup do
-    repo = new_repo!()
-    on_exit(fn -> File.rm_rf!(repo) end)
-    {:ok, repo: repo}
+  setup %{repo_template: template} = context do
+    if Map.get(context, :no_repo) do
+      :ok
+    else
+      repo = new_repo!(template)
+      on_exit(fn -> File.rm_rf!(repo) end)
+      {:ok, %{repo: repo}}
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -201,6 +209,7 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
   # ---------------------------------------------------------------------------
 
   describe "commit_message_file_path/0" do
+    @tag :no_repo
     test "embeds the OS pid so concurrent BEAMs sharing one tmpdir cannot collide" do
       # `System.unique_integer/1` is unique only WITHIN one BEAM: a fresh VM
       # restarts the monotonic counter at 1, while `resolve_tmpdir/0` resolves to
@@ -219,6 +228,7 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
       refute basename =~ ~r/\Agenesis_git_commit_msg_\d+\.txt\z/
     end
 
+    @tag :no_repo
     test "is unique per call and keeps the .txt extension" do
       paths = for _ <- 1..50, do: Shared.commit_message_file_path()
 
@@ -249,19 +259,60 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
-  # Fresh temp git repo with one committed README.md and a deterministic commit
-  # identity (repo-local, so it also works inside the test sandbox path).
-  defp new_repo! do
-    repo =
-      Path.join(System.tmp_dir!(), "evogit-commit-files-#{System.unique_integer([:positive])}")
+  # Builds the per-module repository TEMPLATE once (`setup_all`): a temp git
+  # repo with one committed README.md and a deterministic commit identity
+  # (repo-local, so it also works inside the test sandbox path). `git init`
+  # uses an EMPTY template dir (no hook samples), `commit.gpgsign=false` keeps
+  # commits non-interactive and `core.abbrev=40` keeps any parsed sha complete.
+  defp git_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-commit-files-tpl-#{System.pid()}-#{System.unique_integer([:positive])}"
+      )
 
-    File.mkdir_p!(repo)
-    {:ok, _} = Git.init(repo)
-    {:ok, _} = Git.run(["config", "user.email", "test@example.com"], repo)
-    {:ok, _} = Git.run(["config", "user.name", "Test User"], repo)
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    repo = Path.join(root, "seed")
+
+    {_out, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", repo],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test User"},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
+        ] do
+      {_out, 0} = System.cmd("git", ["config", key, value], cd: repo, stderr_to_stdout: true)
+    end
+
     File.write!(Path.join(repo, "README.md"), "hello\n")
-    {:ok, _} = Git.add(repo, "README.md")
-    {:ok, _} = Git.commit(repo, "Initial commit")
+    {_out, 0} = System.cmd("git", ["add", "README.md"], cd: repo, stderr_to_stdout: true)
+
+    {_out, 0} =
+      System.cmd("git", ["commit", "-q", "-m", "Initial commit"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    on_exit(fn -> File.rm_rf!(root) end)
+    repo
+  end
+
+  # Copies the template into a fresh, uniquely-named directory — an isolated
+  # repository whose commits, refs and worktree state are exactly the
+  # template's.
+  defp new_repo!(template) do
+    repo =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit-commit-files-#{System.pid()}-#{System.unique_integer([:positive])}"
+      )
+
+    File.cp_r!(template, repo)
     repo
   end
 

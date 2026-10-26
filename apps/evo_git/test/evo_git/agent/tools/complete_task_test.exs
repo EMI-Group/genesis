@@ -8,12 +8,22 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   `EvoGit.TaskRegistry` pair (`EvoGit.TaskRegistryCase`), so the archive
   assertions read the REAL producer's writes out of a real dynamic store
   without touching the app-global one.
+
+  Repository fixtures come from ONE per-module git TEMPLATE SET built in
+  `setup_all` (a repo with no commits, one with a single commit and one with
+  two) and copied per test with `File.cp_r!` — a copy costs ~2 ms, where the
+  previous per-test `git init` + two `git config` + commit chain cost ~25-40 ms
+  of `git` subprocesses. Every assertion is unchanged.
   """
 
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.CompleteTask
+
+  setup_all do
+    {:ok, repos: git_templates!()}
+  end
 
   describe "schema/0" do
     test "returns a valid tool schema with correct name and description" do
@@ -38,41 +48,20 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   end
 
   describe "check_workspace_dirty/1" do
-    setup do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "complete_task_dirty_test_" <> to_string(System.unique_integer())
-        )
-
-      File.mkdir_p!(tmp_dir)
-      Git.init(tmp_dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
-
-      on_exit(fn ->
-        File.rm_rf!(tmp_dir)
-      end)
-
-      {:ok, %{tmp_dir: tmp_dir}}
+    # The template provides the repo shape each test previously built by hand:
+    # by default a repository with one commit that already tracks `test.txt`
+    # (tag `template: :empty` for the no-commit case).
+    setup %{repos: repos} = context do
+      {:ok, %{tmp_dir: copy_repo!(repos, Map.get(context, :template, :one))}}
     end
 
     test "returns clean when workspace has no changes", %{tmp_dir: tmp_dir} do
-      # Create and commit a file so the repo has history
-      File.write!(Path.join(tmp_dir, "test.txt"), "content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-
+      # The template's one commit left the worktree clean.
       assert {:clean, nil} = CompleteTask.check_workspace_dirty(tmp_dir)
     end
 
     test "returns dirty when workspace has uncommitted modifications", %{tmp_dir: tmp_dir} do
-      # Create and commit a file
-      File.write!(Path.join(tmp_dir, "test.txt"), "content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-
-      # Modify the file without committing
+      # Modify the already-committed file without committing.
       File.write!(Path.join(tmp_dir, "test.txt"), "modified content")
 
       assert {:dirty, warning_msg} = CompleteTask.check_workspace_dirty(tmp_dir)
@@ -81,11 +70,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     end
 
     test "returns dirty when workspace has untracked files", %{tmp_dir: tmp_dir} do
-      # Create and commit a file
-      File.write!(Path.join(tmp_dir, "test.txt"), "content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-
       # Create an untracked file
       File.write!(Path.join(tmp_dir, "untracked.txt"), "new file")
 
@@ -96,11 +80,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     end
 
     test "returns dirty when workspace has staged changes", %{tmp_dir: tmp_dir} do
-      # Create and commit a file
-      File.write!(Path.join(tmp_dir, "test.txt"), "content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-
       # Stage a new file
       File.write!(Path.join(tmp_dir, "staged.txt"), "staged content")
       {:ok, _} = Git.add(tmp_dir, "staged.txt")
@@ -110,6 +89,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert warning_msg =~ "staged.txt"
     end
 
+    @tag template: :empty
     test "returns clean for an empty repo with no commits", %{tmp_dir: tmp_dir} do
       # A freshly initialized repo with nothing staged should be clean
       assert {:clean, nil} = CompleteTask.check_workspace_dirty(tmp_dir)
@@ -187,36 +167,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   end
 
   describe "complete/5" do
-    setup do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "complete_task_complete_test_" <> to_string(System.unique_integer())
-        )
-
-      File.mkdir_p!(tmp_dir)
-      Git.init(tmp_dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
-
-      # Create an initial commit
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-      {:ok, base_commit} = Git.rev_parse(tmp_dir, "HEAD")
+    setup %{repos: repos} do
+      tmp_dir = copy_repo!(repos, :one)
+      base_commit = repos.base_commit
 
       # Ensure ETS tables exist for task-scoped naming lookups (create if not exist)
-      unless :ets.whereis(:evogit_sched_meta) != :undefined do
-        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
-      end
-
-      unless :ets.whereis(:evogit_agent_state) != :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
-      end
-
-      on_exit(fn ->
-        File.rm_rf!(tmp_dir)
-      end)
+      ensure_task_tables!()
 
       {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit}}
     end
@@ -407,29 +363,8 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   end
 
   describe "get_agent_metadata/2" do
-    setup do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "complete_task_metadata_test_" <> to_string(System.unique_integer())
-        )
-
-      File.mkdir_p!(tmp_dir)
-      Git.init(tmp_dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
-
-      # Create an initial commit
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-      {:ok, commit_sha} = Git.rev_parse(tmp_dir, "HEAD")
-
-      on_exit(fn ->
-        File.rm_rf!(tmp_dir)
-      end)
-
-      {:ok, %{tmp_dir: tmp_dir, commit_sha: commit_sha}}
+    setup %{repos: repos} do
+      {:ok, %{tmp_dir: copy_repo!(repos, :one), commit_sha: repos.base_commit}}
     end
 
     test "returns ok with metadata map when a note exists", %{
@@ -473,44 +408,18 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   end
 
   describe "archive functionality" do
-    setup do
-      tmp_dir =
-        Path.join(
-          System.tmp_dir!(),
-          "complete_task_archive_test_" <> to_string(System.unique_integer())
-        )
-
-      File.mkdir_p!(tmp_dir)
-      Git.init(tmp_dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: tmp_dir)
-
-      # Create an initial commit
-      File.write!(Path.join(tmp_dir, "test.txt"), "initial content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Initial commit")
-      {:ok, base_commit} = Git.rev_parse(tmp_dir, "HEAD")
-
-      # Make a second commit so we have a distinct final commit
-      File.write!(Path.join(tmp_dir, "test.txt"), "updated content")
-      {:ok, _} = Git.add(tmp_dir, "test.txt")
-      {:ok, _} = Git.commit(tmp_dir, "Updated commit")
-      {:ok, final_commit} = Git.rev_parse(tmp_dir, "HEAD")
+    setup %{repos: repos} do
+      tmp_dir = copy_repo!(repos, :two)
 
       # Ensure ETS tables exist for task-scoped naming lookups
-      unless :ets.whereis(:evogit_sched_meta) != :undefined do
-        :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
-      end
+      ensure_task_tables!()
 
-      unless :ets.whereis(:evogit_agent_state) != :undefined do
-        :ets.new(:evogit_agent_state, [:set, :public, :named_table])
-      end
-
-      on_exit(fn ->
-        File.rm_rf!(tmp_dir)
-      end)
-
-      {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit, final_commit: final_commit}}
+      {:ok,
+       %{
+         tmp_dir: tmp_dir,
+         base_commit: repos.base_commit,
+         final_commit: repos.final_commit
+       }}
     end
 
     test "creates archive refs and persists exactly ONE archive row when archive is enabled", %{
@@ -841,6 +750,110 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         :ets.delete(:evogit_sched_meta, agent_id)
         :ets.delete(:evogit_agent_state, agent_id)
       end)
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Fixtures
+  # ---------------------------------------------------------------------------
+
+  # Builds the per-module repository TEMPLATE SET once (`setup_all`): every
+  # `git` subprocess below is paid once per module instead of once per test.
+  #
+  #   * `:empty` — an initialized repo with NO commits;
+  #   * `:one`   — one commit tracking `test.txt` ("initial content") — the sha
+  #                is `base_commit`;
+  #   * `:two`   — `:one` plus a second commit rewriting `test.txt` ("updated
+  #                content") — its sha is `final_commit`.
+  #
+  # `git init` uses an EMPTY template dir (no hook samples / boilerplate), the
+  # fixture identity + `commit.gpgsign=false` are repo-local, and
+  # `core.abbrev=40` keeps any parsed commit sha complete. A per-test
+  # `File.cp_r!` of a snapshot is a fully isolated repository (~2 ms) versus
+  # ~25-40 ms of `git init` + `git config` + commit chain.
+  defp git_templates! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_complete_task_tpl_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+
+    repo = Path.join(root, "repo")
+
+    {_, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", repo],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test User"},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
+        ] do
+      {_, 0} = System.cmd("git", ["config", key, value], cd: repo, stderr_to_stdout: true)
+    end
+
+    empty = Path.join(root, "snapshot_empty")
+    File.cp_r!(repo, empty)
+
+    base_commit = commit_file!(repo, "test.txt", "initial content", "Initial commit")
+    one = Path.join(root, "snapshot_one")
+    File.cp_r!(repo, one)
+
+    final_commit = commit_file!(repo, "test.txt", "updated content", "Updated commit")
+    two = Path.join(root, "snapshot_two")
+    File.cp_r!(repo, two)
+
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    %{
+      empty: empty,
+      one: one,
+      two: two,
+      base_commit: base_commit,
+      final_commit: final_commit
+    }
+  end
+
+  # Writes `relative_path`, stages EVERYTHING and commits; returns the new HEAD
+  # sha (`core.abbrev=40` is not needed here — an explicit `rev-parse` is one
+  # subprocess, paid once per template).
+  defp commit_file!(repo, relative_path, content, message) do
+    File.write!(Path.join(repo, relative_path), content)
+    {_, 0} = System.cmd("git", ["add", "--", relative_path], cd: repo, stderr_to_stdout: true)
+    {_, 0} = System.cmd("git", ["commit", "-q", "-m", message], cd: repo, stderr_to_stdout: true)
+    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: repo, stderr_to_stdout: true)
+    String.trim(sha)
+  end
+
+  # Copies a template snapshot into a fresh, uniquely-named directory: an
+  # isolated repository whose commits, refs and worktree state are exactly the
+  # snapshot's. Cleaned up on exit.
+  defp copy_repo!(repos, kind) do
+    dest =
+      Path.join(
+        System.tmp_dir!(),
+        "complete_task_repo_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.cp_r!(Map.fetch!(repos, kind), dest)
+    on_exit(fn -> File.rm_rf!(dest) end)
+    dest
+  end
+
+  # The task-scoped naming lookups read these NAMED tables; the app owns them,
+  # so this is a no-op unless the app is not running.
+  defp ensure_task_tables! do
+    unless :ets.whereis(:evogit_sched_meta) != :undefined do
+      :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
+    end
+
+    unless :ets.whereis(:evogit_agent_state) != :undefined do
+      :ets.new(:evogit_agent_state, [:set, :public, :named_table])
     end
   end
 end

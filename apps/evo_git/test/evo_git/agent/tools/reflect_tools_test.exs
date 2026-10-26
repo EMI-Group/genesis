@@ -10,6 +10,10 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   `EvoGit.AgentScheduler.update_config/1`), a BEAM-global read by every other
   agent/task test. The registry/store are per-test isolated instances provided
   by `EvoGit.TaskRegistryCase`, so they no longer force serialization.
+
+  The SpawnInvestigator git fixture is built ONCE per module (`setup_all`) and
+  copied per test with `File.cp_r!`, instead of paying `git init` + two
+  `git config` + `git add`/`git commit` per test. Assertions are unchanged.
   """
 
   use EvoGit.TaskRegistryCase, async: false
@@ -26,6 +30,10 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
   alias EvoGit.Agent.Tools.SpawnInvestigator
   alias EvoGit.Agent.Tools.StartTask
   alias EvoGit.Agent.Tools.SystemInfo
+
+  setup_all do
+    {:ok, fixture_template: git_fixture_template!()}
+  end
 
   describe "ListTasks" do
     test "lists seeded tasks with id, status, type, project path, and objective" do
@@ -226,8 +234,8 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
   describe "SpawnInvestigator" do
     test "runs a bounded read-only investigation over a git repo and returns a report",
-         %{tmp_dir: tmp_dir} do
-      repo = create_git_repo_fixture!(tmp_dir)
+         %{tmp_dir: tmp_dir, fixture_template: template} do
+      repo = create_git_repo_fixture!(template, tmp_dir)
 
       output =
         SpawnInvestigator.execute(
@@ -446,16 +454,34 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
   # --- Helpers -------------------------------------------------------------
 
-  # Creates a real git repo fixture under tmp_root with an initial commit, a
-  # CONTEXT.md, and a source file whose content matches an objective keyword.
-  # Returns the repo path.
-  defp create_git_repo_fixture!(tmp_root) do
-    repo = Path.join(tmp_root, "fixture_repo_#{System.unique_integer([:positive])}")
-    File.mkdir_p!(repo)
-    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
-    {_, 0} = System.cmd("git", ["config", "user.email", "test@example.com"], cd: repo)
-    {_, 0} = System.cmd("git", ["config", "user.name", "Test User"], cd: repo)
-    {_, 0} = System.cmd("git", ["config", "commit.gpgsign", "false"], cd: repo)
+  # Builds the git repo fixture ONCE per module: a real repository with an
+  # initial commit, a CONTEXT.md, and a source file whose content matches an
+  # objective keyword. `git init` uses an EMPTY template dir (no hook samples)
+  # and `core.abbrev=40` keeps any parsed sha complete.
+  defp git_fixture_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_reflect_fixture_tpl_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    repo = Path.join(root, "repo")
+
+    {_, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", repo],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test User"},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
+        ] do
+      {_, 0} = System.cmd("git", ["config", key, value], cd: repo, stderr_to_stdout: true)
+    end
 
     File.write!(Path.join(repo, "CONTEXT.md"), """
     # Fixture Repo
@@ -470,8 +496,23 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       "defmodule Frobnicator do\n  def run, do: :ok\nend\n"
     )
 
-    {_, 0} = System.cmd("git", ["add", "."], cd: repo)
-    {_, 0} = System.cmd("git", ["commit", "-q", "-m", "initial commit"], cd: repo)
+    {_, 0} = System.cmd("git", ["add", "."], cd: repo, stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd("git", ["commit", "-q", "-m", "initial commit"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    on_exit(fn -> File.rm_rf!(root) end)
+    repo
+  end
+
+  # Copies the fixture template into `tmp_root` (an isolated repository per
+  # test) and returns its path.
+  defp create_git_repo_fixture!(template, tmp_root) do
+    repo = Path.join(tmp_root, "fixture_repo_#{System.unique_integer([:positive])}")
+    File.cp_r!(template, repo)
     repo
   end
 
