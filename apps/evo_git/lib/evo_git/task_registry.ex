@@ -193,7 +193,7 @@ defmodule EvoGit.TaskRegistry do
   `%{entries: [], total: 0}` when the store read fails.
   """
   @spec list_task_archives(String.t(), keyword()) ::
-          %{entries: [map()], total: non_neg_integer()}
+          %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(task_id, opts \\ []) do
     GenServer.call(server(), {:list_task_archives, task_id, opts}, @call_timeout)
   end
