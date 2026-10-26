@@ -189,6 +189,20 @@ defmodule EvoDashWeb.TasksLiveTest do
     on_exit(fn -> Application.delete_env(:evo_dash, :tasks_page_load_hook) end)
   end
 
+  # Installs the page-load RUNNER seam, resolved AT SPAWN TIME inside
+  # `PageLoad.run/6`. The runner is invoked inside `EvoDash.SafeCall.run/1` and
+  # `{:tasks_page_loaded, seq, node, result}` is ALWAYS sent (with
+  # `{:error, reason}` on failure), so an exiting/raising runner can never
+  # crash the LiveView or wedge `:tasks_loading`. Restored in on_exit so one
+  # test's broken loader never leaks into the next.
+  defp install_tasks_page_load_runner(fun) do
+    Application.put_env(:evo_dash, :tasks_page_load_runner, fun)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+    end)
+  end
+
   # The page reload is ASYNC, so its result arrives on a later
   # {:tasks_page_loaded, ...} message: poll the task-list container (each
   # render is a synchronous round-trip that drains the mailbox) until `needle`
@@ -1143,6 +1157,92 @@ defmodule EvoDashWeb.TasksLiveTest do
       list = render_tasks_list(view)
       assert list =~ "delete visible task"
       refute list =~ "delete me task"
+    end
+  end
+
+  describe "async page-load exit safety" do
+    test "an exiting page-load runner renders a retry-able error state and recovers on retry", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "recover me"])
+      install_tasks_page_load_runner(fn _, _, _, _ -> exit(:boom) end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # `SafeCall.run/1` turned the loader's exit into an error VALUE: the
+      # LiveView survives and the loading flag is cleared.
+      assert Process.alive?(view.pid)
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+
+      # Nothing was ever loaded, so the full load-error state renders.
+      list = render_tasks_list(view)
+      assert list =~ "tasks-load-error"
+      assert list =~ "Could not load tasks."
+      refute list =~ "recover me"
+      refute render(view) =~ "tasks-refresh-error"
+
+      # Restoring the real loader and clicking Retry loads the page.
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      html = flush_tasks_load(view)
+
+      assert html =~ "recover me"
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil
+      refute html =~ "tasks-load-error"
+    end
+
+    test "a raising page-load runner fails the same way, without crashing", %{conn: conn} do
+      install_tasks_page_load_runner(fn _, _, _, _ -> raise "boom" end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      assert Process.alive?(view.pid)
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+      assert render_tasks_list(view) =~ "tasks-load-error"
+
+      # Retry with the real runner recovers to the empty state (no fixtures).
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+      flush_tasks_load(view)
+
+      refute render(view) =~ "tasks-load-error"
+      assert render(view) =~ "No tasks found"
+    end
+
+    test "a failed background reload keeps the loaded rows and shows the refresh-error strip", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "keep me"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      assert render_tasks_list(view) =~ "keep me"
+
+      # Break the loader AFTER the initial load, then trigger the debounced
+      # background reload (show_loading? false — the rows stay on screen).
+      install_tasks_page_load_runner(fn _, _, _, _ -> exit(:boom) end)
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil end)
+
+      # The previous rows survive; the compact retry strip sits above them and
+      # the full-page load-error state is NOT used.
+      assert render_tasks_list(view) =~ "keep me"
+      html = render(view)
+      assert html =~ "tasks-refresh-error"
+      assert html =~ "Could not refresh tasks."
+      refute html =~ "tasks-load-error"
+
+      # Restoring the loader and clicking Retry clears the error.
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+
+      refute render(view) =~ "tasks-refresh-error"
+      assert render_tasks_list(view) =~ "keep me"
+      flush_tasks_load(view)
     end
   end
 

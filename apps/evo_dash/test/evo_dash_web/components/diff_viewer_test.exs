@@ -952,6 +952,48 @@ defmodule EvoDashWeb.DiffViewerTest do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # Rendered-content caps
+  #
+  # A single file's diff can be arbitrarily long; one row per line would freeze
+  # the page. At most 2000 leading diff lines are parsed/rendered per file and
+  # the remainder is COUNTED only, reported by one dim "N more lines not shown"
+  # note. The file sidebar is likewise capped at 500 rendered entries.
+  # ---------------------------------------------------------------------------
+  describe "diff_viewer/1 — rendered-line cap" do
+    test "a diff beyond 2000 lines renders the capped prefix plus a remainder note" do
+      html = render_diff_viewer([file_fixture("big.txt", big_diff(5_000))])
+      text = html |> parse() |> Floki.text()
+
+      # The cap covers 2000 diff lines: 5 header lines + the hunk header + 1994
+      # added lines — so additions 00001..01995 render and 01996+ do not.
+      assert text =~ "added line 00001"
+      assert text =~ "added line 01995"
+      refute text =~ "added line 01996"
+      refute text =~ "added line 05000"
+
+      assert text =~ "3,005 more lines not shown"
+    end
+
+    test "a diff under the cap renders no remainder note" do
+      html = render_diff_viewer([file_fixture("lib/foo.ex", @basic_diff)])
+      refute html =~ "more lines not shown"
+    end
+  end
+
+  describe "file_tree_sidebar/1 — rendered-entry cap" do
+    test "caps at 500 entries and shows the true total" do
+      files = for i <- 1..501, do: file_fixture("file-#{pad(i)}.txt", @basic_diff)
+      html = render_sidebar(files)
+      paths = html |> parse() |> file_paths()
+
+      assert html =~ "Showing 500 of 501 files"
+      assert length(paths) == 500
+      assert "file-0500.txt" in paths
+      refute "file-0501.txt" in paths
+    end
+  end
+
   # --- fixtures & helpers ---
 
   # Helper: build a file map in the shape of %EvoGit.Review.FileInfo{} that
@@ -1029,6 +1071,26 @@ defmodule EvoDashWeb.DiffViewerTest do
     |> Enum.map(&List.first/1)
   end
 
+  # A synthetic diff with `added_lines` added lines (used by the render-cap
+  # test): 5 header lines + the hunk header + the additions.
+  defp big_diff(added_lines) do
+    body =
+      Enum.map_join(1..added_lines, "\n", fn i ->
+        "+added line #{String.pad_leading(Integer.to_string(i), 5, "0")}"
+      end)
+
+    """
+    diff --git a/big.txt b/big.txt
+    index 1111111..2222222 100644
+    --- a/big.txt
+    +++ b/big.txt
+    @@ -1,#{added_lines} +1,#{added_lines} @@
+    #{body}
+    """
+  end
+
+  # Zero-padded file index so the synthetic sidebar fixture sorts naturally.
+  defp pad(i), do: i |> Integer.to_string() |> String.pad_leading(4, "0")
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)
 end
