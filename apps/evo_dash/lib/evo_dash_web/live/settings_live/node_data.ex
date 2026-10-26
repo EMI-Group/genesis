@@ -9,15 +9,22 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   schema filtering + nix gating), resolved config, config status, the
   custom-agents list, and the custom-tools status — in a supervised task
   OUTSIDE the LiveView process and reports the result back as
-  `{tag, requested_node, category_param, results}`.
+
+      {tag, requested_node, category_param, {:ok, results} | {:error, reason}}
+
+  The task body runs under `EvoDash.SafeCall.run/1`, so EVERY failure mode —
+  including a `GenServer.call` timeout or a dead target, which EXITS the
+  caller and is not rescue-able — arrives as `{:error, reason}` instead of
+  killing the task before it sends anything (which would leave the page on
+  stale mount data forever). The LiveView turns `{:error, reason}` into the
+  degraded results map via `error_results/3`.
 
   Local and remote nodes share ONE code path: `EvoDash.NodeContext` already
   unifies local-direct calls with `:erpc`-routed remote calls, so the same
-  task body serves both. The task never crashes the LiveView: a failed remote
-  fetch (or any unexpected error in the load) is funneled into the results map
-  as `:remote_config_error` (and conservative platform degrade values) so the
-  LiveView can render the error banner instead of silently keeping stale mount
-  data.
+  task body serves both. A failed remote fetch (or any unexpected error in the
+  load) is funneled into the results map as `:remote_config_error` (and
+  conservative platform degrade values) so the LiveView can render the error
+  banner instead of silently keeping stale mount data.
 
   The LiveView applies the results in `handle_info/3` with a stale-guard:
   results are dropped when `requested_node` no longer matches the currently
@@ -46,28 +53,22 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   # socket, capturing the `?category=` URL param so the LiveView can re-resolve
   # the active category against the platform-filtered schemas when the result
   # arrives. Returns `:ok` (fire-and-forget); the result message carries the
-  # requested node so the LiveView can stale-guard it.
+  # requested node so the LiveView can stale-guard it, and ALWAYS reaches the
+  # LiveView (`EvoDash.SafeCall.run/1` inside the task converts exits/raises
+  # into a value).
   def start(socket, tag, category_param) do
     parent = self()
     node = socket.assigns.current_node
     all_schemas = socket.assigns.all_schemas_by_category
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      results =
-        try do
-          load(node, all_schemas)
-        rescue
-          # The load crosses an RPC boundary on remote nodes (and touches the
-          # user's config files locally). Any unexpected failure — an erpc
-          # exit, a raise in config parsing — must surface via the error
-          # banner instead of silently leaving mount's stale data on screen.
-          # Expected: unreachable nodes; the rescue is the cleanest funnel for
-          # every failure mode into the results map.
-          e ->
-            error_results(node, all_schemas, e)
+      result =
+        case EvoDash.SafeCall.run(fn -> load(node, all_schemas) end) do
+          {:ok, results} -> {:ok, results}
+          {:error, reason} -> {:error, reason}
         end
 
-      send(parent, {tag, node, category_param, results})
+      send(parent, {tag, node, category_param, result})
     end)
 
     :ok
@@ -105,7 +106,12 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   # Platform degrades mirror `PlatformInfo`'s own stance when detection fails:
   # `:unknown` OS (drops `:sandbox` via filter_schemas_by_category) plus the
   # nix filter (nix hidden when undeterminable).
-  defp error_results(node, all_schemas, reason) do
+  #
+  # Public because the LiveView calls it for the `{:error, reason}` result
+  # message shape (see `start/3`).
+  @doc false
+  @spec error_results(node(), map(), term()) :: map()
+  def error_results(node, all_schemas, reason) do
     %{
       platform_os: :unknown,
       filtered_schemas_by_category:
@@ -121,12 +127,29 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
     }
   end
 
+  @doc """
+  The degraded `config_status` shape used when the status itself cannot be
+  read (mirrors the core's own `degraded_config_status/0` in
+  `EvoGit.RemoteNode`): `ok?: false` with no warning lines, so the LiveView's
+  "Missing Configuration" box renders without inventing warnings.
+  """
+  @spec degraded_config_status() :: map()
+  def degraded_config_status do
+    %{ok?: false, missing: [], warnings: [], validation_errors: []}
+  end
+
+  # Exit-safe: the local status read touches config files, the remote one is an
+  # RPC; this runs on the degraded error path, so it must never raise/crash
+  # the caller that already reported a failure.
   defp config_status(node) do
-    if node == node() do
-      EvoGit.Config.config_status()
-    else
-      EvoDash.NodeContext.get_remote_config_status(node)
-    end
+    fun =
+      if node == node() do
+        fn -> EvoGit.Config.config_status() end
+      else
+        fn -> EvoDash.NodeContext.get_remote_config_status(node) end
+      end
+
+    EvoDash.SafeCall.run(fun, degraded_config_status())
   end
 
   # Fetches the config to display for the given node. Local: loaded from disk
@@ -171,8 +194,8 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   # shape degrades to the empty defaults (the LiveView's synchronous
   # `load_custom_agents_data/1` keeps its strict match for the save flows).
   defp fetch_custom_agents(node) do
-    case EvoDash.NodeContext.list_custom_agents(node) do
-      {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}} ->
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_custom_agents(node) end) do
+      {:ok, {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}}} ->
         %{agents: agents, model_selection_script: script || "", script_status: script_status}
 
       _ ->
@@ -196,12 +219,15 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   """
   @spec fetch_custom_tools_status(node()) :: %{ok: [map()], errors: [map()]} | {:error, term()}
   def fetch_custom_tools_status(node) do
-    case EvoDash.NodeContext.custom_tools_status(node) do
-      {:error, reason} ->
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.custom_tools_status(node) end) do
+      {:ok, {:error, reason}} ->
         {:error, reason}
 
-      %{} = status ->
+      {:ok, %{} = status} ->
         %{ok: status_list(status, :ok), errors: status_list(status, :errors)}
+
+      {:error, reason} ->
+        {:error, reason}
 
       _other ->
         %{ok: [], errors: []}
