@@ -92,29 +92,26 @@ defmodule EvoGit.TaskRegistry.UnknownStatusLivenessTest do
   end
 
   describe "cancel / force kill guards" do
-    test "cancel_task/1 refuses without marking the unrecognized-status row" do
+    test "cancel_task/1 and force_kill_task/1 both refuse without marking the unrecognized-status row" do
       unique = System.unique_integer([:positive])
-      task_id = "unknown_cancel_#{unique}"
+      future_lease = System.system_time(:second) + 300
 
-      put_task!(task_id, :running, System.system_time(:second) + 300)
-      write_raw_status!(task_id, @raw_status)
+      cancel_id = "unknown_cancel_#{unique}"
+      put_task!(cancel_id, :running, future_lease)
+      write_raw_status!(cancel_id, @raw_status)
 
-      assert TaskRegistry.cancel_task(task_id) == {:error, :not_running}
-      assert Store.get_task_status(store(), task_id) == {:unknown, @raw_status}
-      assert %{lease_expires_at: lease} = Store.select_task_update_info(store(), task_id)
+      assert TaskRegistry.cancel_task(cancel_id) == {:error, :not_running}
+      assert Store.get_task_status(store(), cancel_id) == {:unknown, @raw_status}
+      assert %{lease_expires_at: lease} = Store.select_task_update_info(store(), cancel_id)
       assert is_integer(lease), "the lease must be left as-is (nothing was marked)"
-    end
 
-    test "force_kill_task/1 refuses without marking the unrecognized-status row" do
-      unique = System.unique_integer([:positive])
-      task_id = "unknown_force_kill_#{unique}"
+      kill_id = "unknown_force_kill_#{unique}"
+      put_task!(kill_id, :running, future_lease)
+      write_raw_status!(kill_id, @raw_status)
 
-      put_task!(task_id, :running, System.system_time(:second) + 300)
-      write_raw_status!(task_id, @raw_status)
-
-      assert TaskRegistry.force_kill_task(task_id) == {:error, :not_running}
-      assert Store.get_task_status(store(), task_id) == {:unknown, @raw_status}
-      task = Store.get_task(store(), task_id)
+      assert TaskRegistry.force_kill_task(kill_id) == {:error, :not_running}
+      assert Store.get_task_status(store(), kill_id) == {:unknown, @raw_status}
+      task = Store.get_task(store(), kill_id)
       assert {task.status, task.finished_at, task.result} == {:pending, nil, nil}
     end
   end
