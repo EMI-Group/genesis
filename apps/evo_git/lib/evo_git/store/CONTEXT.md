@@ -86,11 +86,19 @@ Fans the legacy archive JSON array out of the task row into the relational archi
 Per task row with a non-empty archive: decode LENIENTLY (`Jason.decode/1`; a corrupt or non-list value is logged with the task id and SKIPPED, so one unreadable archive never wedges an upgrade), `INSERT OR REPLACE` exactly ONE `task_agent_archives` row per record (`task_id` from the row, `agent_id` from the record, `depth`/`compression_count` defaulting to 0, the four JSON columns re-encoded with `Jason.encode!` — plain JSON, SQL NULL for a missing value, `repo_id` copied VERBATIM and never cast), strip the duplicated archive list from `result` ONLY when present (an archive-free result stays byte-identical), then NULL that task's archive column.
 The column is then dropped (`ALTER TABLE tasks DROP COLUMN`, guarded by a `PRAGMA table_info` probe) — nothing references it, so it is an O(1) schema-header edit; `updated_at` is NEVER touched. Idempotent/resumable: the composite-PK upsert cannot duplicate an agent and each step converges on a re-run.
 
+### Migration 9 — `20260815000009_normalize_task_agent_archives`
+
+Canonical-SHAPE repair of `task_agent_archives` for databases whose table was created by a pre-release variant of migration 7 that declared `repo_id INTEGER`: INTEGER affinity coerces a numeric-looking TEXT value (`"123"`) to an integer, so the Ecto `:string` field fails to load and every archive read degrades to its empty shape.
+Probe `PRAGMA table_info(task_agent_archives)`; the table absent → NO-OP, `repo_id` already `TEXT` (case-insensitive) → NO-OP, table present without a `repo_id` column → `Ecto.MigrationError`.
+Otherwise ONE rebuild inside the migrator's per-migration transaction: `CREATE TABLE task_agent_archives_canonical` (the exact 23-column canonical DDL of migration 7), `INSERT … SELECT` every row with `CAST(repo_id AS TEXT)`, compare row counts (mismatch raises BEFORE the drop), `DROP TABLE`, `ALTER TABLE … RENAME`, recreate `task_agent_archives_task_depth_idx`; a `Logger.warning` names the rebuild and its row count.
+Post-condition: `repo_id` is TEXT and the roster index reports exactly `(task_id, depth, agent_id)`; a re-run short-circuits on the first probe, so it is idempotent and can never lose a row.
+
 ### Migration versions & ordering
 
-The shipped versions are 1, 2, 3, 5, 6, 7 and 8; there is no version 4, so a FRESH database never carries a 004 `schema_migrations` row while an upgraded one may still list it (harmless — already applied).
+The shipped versions are 1, 2, 3, 5, 6, 7, 8 and 9; there is no version 4, so a FRESH database never carries a 004 `schema_migrations` row while an upgraded one may still list it (harmless — already applied).
 Migration 6 MUST stay ABOVE migration 5: an index build WALKS the table, and on rows still carrying compressed blobs the `updated_at`/`id` columns sit after the overflow chains, so the walk crawls those pages.
-Give any future index migration a version ABOVE `20260815000008`.
+Give any future index migration a version ABOVE `20260815000009`.
+Migration 9 MUST stay ABOVE migration 8: it rebuilds the table migration 7 creates and migration 8 fills, so it must run after both.
 
 ### Migration source & concurrent-boot serialization
 
