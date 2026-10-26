@@ -87,6 +87,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 ## Foreign-repo resume restore
 
 `start_foreign_repos_restore/2` replaces the old synchronous `maybe_restore_foreign_repos_from_task/2`: it marks `foreign_repos_restoring_from: task_id` and spawns a `SafeCall.run(TaskRegistry.get_task(task_id))` whose only consumed field is `opts[:foreign_repos]`, arriving as `{:foreign_repos_restored, task_id, node, result}`. The handler drops the message unless the task is still the resume target on the same node. Marker: `# the upcoming TaskRegistry.get_task_lite/1 replaces this full-row fetch`.
+The lookup is deliberately the LOCAL `TaskRegistry.get_task/1` (unchanged semantics from the previous implementation) — the node-aware foreign-repo restore for a remote activation lives in `ProjectFlow.task_foreign_repos_for_resume/2`, inside the supervised remote-activation task.
 
 ## RPC / I/O audit (per module)
 
