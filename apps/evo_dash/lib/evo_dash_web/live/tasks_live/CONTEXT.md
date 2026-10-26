@@ -92,6 +92,7 @@ For the archive, `{:ok, records}` with a list → `:ok` (the empty list is a val
 
 ### Public API (total — a missing assign reads as an empty cache)
 
+- `toggle/2` — collapse drops the id from `:expanded_task_ids` and keeps the cached entry (a re-expand renders instantly); open adds the id and `ensure/2`s, so this is the `toggle_task_details` entry point.
 - `ensure/2` — fetch when no entry exists; an entry in ANY state (including `:error`) is a no-op, so this is both the cache guard and the in-flight guard.
 - `retry/2` — drop the entry, then `ensure/2` (backs the error strip's Retry).
 - `load_archive/2` — no-op unless the detail entry is `:ok`; fetches when `archive` is `nil` or an `:error` archive, and never while `:loading`/`:ok`.
@@ -102,7 +103,7 @@ For the archive, `{:ok, records}` with a list → `:ok` (the empty list is a val
 
 ### TasksLive wiring
 
-- `toggle_task_details` calls `TaskDetail.ensure/2` ONLY when OPENING; collapse just drops the id from `:expanded_task_ids` and keeps the cached entry, so a re-expand renders instantly and fetches nothing.
+- `toggle_task_details` (`%{"task_id" => id}`) → `TaskDetail.toggle/2`, which `ensure/2`s ONLY when OPENING; collapse just drops the id from `:expanded_task_ids` and keeps the cached entry, so a re-expand renders instantly and fetches nothing.
 - `retry_task_detail` (`%{"task_id" => id}`) → `TaskDetail.retry/2`; `load_task_archive` (`%{"task_id" => id}`) → `TaskDetail.load_archive/2`.
 - `{:task_updated, ...}` / `{:task_deleted, ...}` invalidate that id (only when `NodeAware.event_from_current_node?/2`) BEFORE delegating to `NodeAware.handle_task_info/2`.
 - A node-context change in `handle_params/3` resets `:task_details` to `%{}` (cached entries belong to the old node; in-flight results are then rejected by the node + entry guards).

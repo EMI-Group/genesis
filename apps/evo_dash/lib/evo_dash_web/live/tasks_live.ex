@@ -959,23 +959,7 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
-      # COLLAPSE: only drop the id from the expanded set. The cached detail is
-      # kept (a re-expand renders instantly) and nothing is fetched.
-      {:noreply,
-       assign(
-         socket,
-         :expanded_task_ids,
-         MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-       )}
-    else
-      # OPEN: kick off the ONE lazy detail fetch for this card (TaskDetail is
-      # the in-flight/cache guard — a second expand while loading is a no-op).
-      {:noreply,
-       socket
-       |> assign(:expanded_task_ids, MapSet.put(socket.assigns.expanded_task_ids, task_id))
-       |> TaskDetail.ensure(task_id)}
-    end
+    {:noreply, TaskDetail.toggle(socket, task_id)}
   end
 
   # Inline "could not load this task" strip → force a refetch of that card's
