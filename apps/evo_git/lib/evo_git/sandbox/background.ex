@@ -390,11 +390,34 @@ defmodule EvoGit.Sandbox.Background do
 
   defp stop_unit_async(%{unit: unit}) do
     # Spawned so the registry is never blocked by systemctl — the same rule the
-    # `:DOWN` path of `EvoGit.SandboxProcessRegistry` follows.
-    Task.start(fn -> stop_unit(unit) end)
+    # `:DOWN` path of `EvoGit.SandboxProcessRegistry` follows. `stop_unit/1` is
+    # total, so the completion report always follows the systemctl calls.
+    Task.start(fn ->
+      stop_unit(unit)
+      notify_unit_stop(unit)
+    end)
+
     :ok
   rescue
     _ -> :ok
+  end
+
+  # Test-only CALL-TIME seam (`:background_unit_stop_notify`): the `:unit` stop is
+  # deliberately fire-and-forget, so a caller has no handle to await. When the app
+  # env holds a pid it receives `{:background_unit_stop_finished, unit}` once the
+  # `systemctl --user stop` / `reset-failed` pair has finished — which is also
+  # after that path's `[warning] … failed to stop unit …` line has been emitted,
+  # because the log handler runs synchronously in this process. A 1-arity fun is
+  # called with the unit instead. Unset (production) = no-op; a caller that
+  # overrides it reads a message the production code never sends.
+  defp notify_unit_stop(unit) do
+    case Application.get_env(:evo_git, :background_unit_stop_notify) do
+      pid when is_pid(pid) -> send(pid, {:background_unit_stop_finished, unit})
+      fun when is_function(fun, 1) -> fun.(unit)
+      _other -> :ok
+    end
+
+    :ok
   end
 
   defp stop_unit(unit) do

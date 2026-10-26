@@ -181,6 +181,7 @@ Every job record carries `announced` — "the owner already knows this job's out
 ## Background Job Timers (test seam)
 
 The periodic `:reconcile_tick` arm and the public `tick_interval_ms/0` BOTH read `EvoGit.BackgroundJobs.resolved_tick_interval_ms/0`, a CALL-TIME `Application.get_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms)` lookup whose production default stays `@tick_interval_ms` = 1_000 ms (any non-integer/negative override falls back to it).
+`poll_interval_ms/0` (the caller-side `wait: true` cadence) is the SAME shape: `Application.get_env(:evo_git, :background_poll_interval_ms, @poll_interval_ms)`, production default `@poll_interval_ms` = 100 ms, read on every sleep of `Agent.Tools.JobOutput`'s wait loop.
 The timer is armed only while at least one live job uses a `:unit` handle and disarms/re-arms on every change, so a test can await the re-armed `tick_timer` ref instead of sleeping; a module that overrides the key must be `async: false` and restore it in `on_exit`.
 
 ## ReqLLM Finch Pool (`EvoGit.ReqLLMPool`)

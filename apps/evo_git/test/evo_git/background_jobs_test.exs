@@ -32,12 +32,12 @@ defmodule EvoGit.BackgroundJobsTest do
   # not spin. The deadline above stays the only bound.
   @poll_first_ms 2
   @poll_max_ms 20
-  # Containment-only settle for `quiet_kill/1` (see its comment): the `:unit`
-  # kill path's `systemctl --user stop` runs in a fire-and-forget Task with no
-  # handle to await, so the console-noise capture window has to outlive it by a
-  # bounded margin. It never bounds an assertion — the waits that assert all use
-  # `wait_until/3` above.
-  @unit_stop_settle_ms 300
+  # The `unit` kill path's `systemctl --user stop` runs in a fire-and-forget Task
+  # with no handle to await (`EvoGit.Sandbox.Background.stop_unit_async/1`), so
+  # `quiet_kill/1`'s console-noise capture window waits for the
+  # `:background_unit_stop_notify` seam's completion message — sent AFTER the
+  # systemctl calls, i.e. after that path's warning line — instead of sleeping a
+  # fixed settle margin.
   @quiet_kill_result :background_jobs_test_quiet_kill_result
 
   # Test-only CALL-TIME seams (production defaults stay 1_000 ms for the periodic
@@ -53,6 +53,10 @@ defmodule EvoGit.BackgroundJobsTest do
 
     put_test_env(:background_tick_interval_ms, @tick_interval_ms_override)
     put_test_env(:kill_grace_ms, @kill_grace_ms_override)
+    # Reports the completion of the registry's fire-and-forget systemd stop Task
+    # (`EvoGit.Sandbox.Background.stop_unit_async/1`) to THIS process, so
+    # `quiet_kill/1` can await the stop instead of sleeping a fixed margin.
+    put_test_env(:background_unit_stop_notify, self())
 
     # An ISOLATED registry per test: the test supervisor guarantees a graceful
     # shutdown, whose `terminate/2` kills every job still live.
@@ -521,7 +525,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, %{text: _}} = BackgroundJobs.read(job.id, owner_pid: owner)
       assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
 
-      assert {:ok, %{status: :killed}} = quiet_kill(job.id)
+      assert {:ok, %{status: :killed}} = quiet_kill(job)
       Process.exit(owner, :kill)
     end
   end
@@ -551,7 +555,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert message =~ "10"
 
       Enum.each(jobs, fn job ->
-        assert {:ok, %{status: :killed}} = quiet_kill(job.id)
+        assert {:ok, %{status: :killed}} = quiet_kill(job)
       end)
 
       # The one real detached child is really gone (the `:unit` records carry no
@@ -570,7 +574,7 @@ defmodule EvoGit.BackgroundJobsTest do
       # Left live on purpose up to this point; killed here (captured) so the
       # registry's own `terminate/2` sweep at test teardown — which runs OUTSIDE
       # any capture window — has no `:unit` job left to stop.
-      assert {:ok, %{status: :killed}} = quiet_kill(job.id)
+      assert {:ok, %{status: :killed}} = quiet_kill(job)
     end
   end
 
@@ -695,7 +699,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, kept_job} = BackgroundJobs.job(kept.id)
       assert kept_job.status == :running
 
-      assert {:ok, %{status: :killed}} = quiet_kill(kept.id)
+      assert {:ok, %{status: :killed}} = quiet_kill(kept)
     end
 
     test "is :ok even when no job matches the prefix", %{tmp_dir: tmp_dir} do
@@ -740,7 +744,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert Enum.sort(Enum.map(BackgroundJobs.list(), & &1.id)) ==
                Enum.sort([mine.id, theirs.id])
 
-      assert {:ok, _} = quiet_kill(theirs.id)
+      assert {:ok, _} = quiet_kill(theirs)
       Process.exit(owner, :kill)
     end
   end
@@ -779,7 +783,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: self()), & &1.id) == [mine.id]
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: owner), & &1.id) == [theirs.id]
 
-      assert {:ok, _} = quiet_kill(theirs.id)
+      assert {:ok, _} = quiet_kill(theirs)
       Process.exit(owner, :kill)
     end
 
@@ -821,7 +825,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, %{announced: true}} = BackgroundJobs.job(finished.id)
 
-      assert {:ok, _} = quiet_kill(running.id)
+      assert {:ok, _} = quiet_kill(running)
     end
 
     test "returns multiple terminal jobs newest first", %{tmp_dir: tmp_dir} do
@@ -841,7 +845,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
 
-      assert {:ok, _} = quiet_kill(job.id)
+      assert {:ok, _} = quiet_kill(job)
     end
 
     test "read/2 on a terminal job marks it announced, so a following claim is empty", %{
@@ -876,7 +880,7 @@ defmodule EvoGit.BackgroundJobsTest do
       refute listed.announced
 
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
-      assert {:ok, _} = quiet_kill(job.id)
+      assert {:ok, _} = quiet_kill(job)
     end
 
     test "kill/3 on a live job suppresses the notice", %{tmp_dir: tmp_dir} do
@@ -1049,22 +1053,53 @@ defmodule EvoGit.BackgroundJobsTest do
   # gone and the line would leak to the console.
   #
   # The spawned task is discarded on purpose in production, so there is no handle
-  # to await: the window below outlives it by `@unit_stop_settle_ms` instead
-  # (containment only, never an assertion bound). `capture_log/2` is WINDOW-based
-  # and catches logs from ANY process; this module is `async: false`, so the
-  # window cannot swallow a sibling module's lines.
-  defp quiet_kill(id) do
+  # to await; instead the window WAITS for the `:background_unit_stop_notify` seam
+  # installed in `setup`, whose completion message the stop task sends AFTER its
+  # systemctl calls — i.e. after the warning line has been handed to the capture
+  # handler (which runs synchronously in that task's process, so there is no
+  # race). Event-driven: the window lasts exactly as long as the stop, with no
+  # fixed margin. `capture_log/2` is WINDOW-based and catches logs from ANY
+  # process; this module is `async: false`, so the window cannot swallow a
+  # sibling module's lines.
+  defp quiet_kill(%{id: id, handle: handle}) do
     _log =
       ExUnit.CaptureLog.capture_log([level: :warning], fn ->
         # `capture_log/2` returns the LOG, not the function's value, and the fun
         # runs in this process — so the kill's reply travels via the dictionary
         # and the callers keep asserting on the REAL result.
-        Process.put(@quiet_kill_result, BackgroundJobs.kill(id))
-        Process.sleep(@unit_stop_settle_ms)
+        reply = BackgroundJobs.kill(id)
+        Process.put(@quiet_kill_result, reply)
+        await_unit_stop(reply, handle)
       end)
 
     Process.delete(@quiet_kill_result)
   end
+
+  # A `:unit` stop is asynchronous, so wait for the seam's report — matched on the
+  # handle's OWN unit name, so a report left over from an earlier kill in the same
+  # test can never be mistaken for this one. A `:port` child is killed
+  # synchronously (nothing to await), and a kill that never reached the backend
+  # requested no stop.
+  defp await_unit_stop(reply, %{kind: :unit, unit: unit}) do
+    if stop_requested?(reply) do
+      receive do
+        {:background_unit_stop_finished, ^unit} -> :ok
+      after
+        @deadline_ms ->
+          flunk("the registry's systemd stop task for #{unit} never reported back")
+      end
+    else
+      :ok
+    end
+  end
+
+  defp await_unit_stop(_reply, _handle), do: :ok
+
+  # `kill/3` reaches the backend only for a LIVE job; the terminal branches answer
+  # `{:error, {:already_finished, job}}`, `{:error, :not_found}` or `:not_owner`.
+  defp stop_requested?({:ok, _job}), do: true
+  defp stop_requested?({:error, message}) when is_binary(message), do: true
+  defp stop_requested?(_reply), do: false
 
   # Registers a job with the SYSTEMD backend's handle shape (`kind: :unit`, plus
   # the still-open `systemd-run --wait` client port) through the registry's real
