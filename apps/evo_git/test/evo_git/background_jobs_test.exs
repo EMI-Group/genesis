@@ -4,11 +4,13 @@ defmodule EvoGit.BackgroundJobsTest do
   # the platform shell; where only registry bookkeeping is under test, a job is
   # registered through the same production start path with a systemd `:unit`
   # stand-in handle instead) and they all share the ONE process-wide scratch
-  # directory `<sandbox tmpdir>/genesis`, where each job writes
-  # `genesis_job_<id>.log`. The file-hygiene snapshot/restore below is only sound
-  # because the sync phase runs one module at a time, so no other module can
-  # create a `genesis_job_*.log` between the snapshot and the cleanup; and the
-  # liveness probes (`kill -0`, real `sleep` children) are host-process global.
+  # directory (`<sandbox tmpdir>`), where each job writes `genesis_job_<id>.log`.
+  # File hygiene is per JOB, not per directory window: the registry returns the
+  # exact `:output_path` it created, so every job start registers an `on_exit`
+  # that removes that ONE file — never a `File.ls` of a scratch directory the
+  # whole host shares (thousands of entries = milliseconds per listing). The
+  # liveness probes (`kill -0`, real `sleep` children) are host-process global,
+  # which is why this module must stay in the sync phase.
   #
   # The suite is POSIX-oriented by construction: `pid_alive?/1` probes with
   # `kill -0` and the fixtures are `sh` command lines (`sleep`, `seq`, `echo`),
@@ -29,8 +31,10 @@ defmodule EvoGit.BackgroundJobsTest do
   # Poll cadence for every wait: tight at first — most conditions are either
   # already true or become true within a few ms (a shell child's port exit message
   # lands almost immediately) — then relaxed so a genuinely slow condition does
-  # not spin. The deadline above stays the only bound.
-  @poll_first_ms 2
+  # not spin. The floor is 1 ms because each poll is a ~30 µs registry read (or a
+  # `Port.info/1` BIF), while the condition itself is the cost. The deadline
+  # above stays the only bound.
+  @poll_first_ms 1
   @poll_max_ms 20
   # The `unit` kill path's `systemctl --user stop` runs in a fire-and-forget Task
   # with no handle to await (`EvoGit.Sandbox.Background.stop_unit_async/1`), so
@@ -38,20 +42,26 @@ defmodule EvoGit.BackgroundJobsTest do
   # `:background_unit_stop_notify` seam's completion message — sent AFTER the
   # systemctl calls, i.e. after that path's warning line — instead of sleeping a
   # fixed settle margin.
-  @quiet_kill_result :background_jobs_test_quiet_kill_result
+  @quiet_kill_results :background_jobs_test_quiet_kill_results
 
   # Test-only CALL-TIME seams (production defaults stay 1_000 ms for the periodic
-  # reconcile tick and 100 ms for the SIGTERM→SIGKILL grace). The tick is
-  # shortened so `await_reconcile_tick!/1` still proves a REAL timer fired, but in
-  # tens of milliseconds; the kill grace is shortened because every liveness
-  # assertion below polls until the child is genuinely gone.
+  # reconcile tick and 100 ms for the SIGTERM→SIGKILL grace).
+  #
+  # The module default DISARMS the tick for every test that does not wait on it:
+  # while a live `:unit` job exists the tick reconciles it through
+  # `systemctl --user show`, i.e. ONE fork per live unit job per tick, and the
+  # per-owner-cap test deliberately holds ten of them. `await_reconcile_tick!/1`'s
+  # own test arms a real (short) timer instead, which is what proves the timer
+  # fires. The kill grace is zero because every liveness assertion below polls
+  # until the child is genuinely gone, so the TERM→KILL margin buys nothing.
+  @no_tick_interval_ms 3_600_000
   @tick_interval_ms_override 25
-  @kill_grace_ms_override 10
+  @kill_grace_ms_override 0
 
   setup %{tmp_dir: tmp_dir} do
     name = :"bg_jobs_test_#{System.unique_integer([:positive])}"
 
-    put_test_env(:background_tick_interval_ms, @tick_interval_ms_override)
+    put_test_env(:background_tick_interval_ms, @no_tick_interval_ms)
     put_test_env(:kill_grace_ms, @kill_grace_ms_override)
     # Reports the completion of the registry's fire-and-forget systemd stop Task
     # (`EvoGit.Sandbox.Background.stop_unit_async/1`) to THIS process, so
@@ -65,22 +75,15 @@ defmodule EvoGit.BackgroundJobsTest do
     Process.put(:evogit_background_jobs_server, name)
     Process.put(:evogit_agent_pid, self())
 
-    jobs_dir = Path.join(EvoGit.Sandbox.resolve_tmpdir(), "genesis")
-    logs_before = job_log_files(jobs_dir)
-
     on_exit(fn ->
       # `on_exit` runs in a DIFFERENT process, so the process dictionary these
       # deletes touch is not the test process's — the test process's own keys die
       # with it. Kept as belt-and-braces for the seam contract.
       Process.delete(:evogit_agent_pid)
       Process.delete(:evogit_background_jobs_server)
-
-      # Safe because this module is `async: false`: no other module can be
-      # creating job logs while we hold the sync phase.
-      remove_new_job_logs(jobs_dir, logs_before)
     end)
 
-    %{jobs_dir: jobs_dir, registry: name, tmp_dir: tmp_dir}
+    %{registry: name, tmp_dir: tmp_dir}
   end
 
   describe "start_job/1" do
@@ -359,6 +362,9 @@ defmodule EvoGit.BackgroundJobsTest do
       tmp_dir: tmp_dir
     } do
       put_unknown_grace(0)
+      # `setup` DISARMS the periodic tick (see `@no_tick_interval_ms`); this test
+      # arms a real one, which is what `await_reconcile_tick!/1` proves fired.
+      put_test_env(:background_tick_interval_ms, @tick_interval_ms_override)
 
       {job, port} = start_observed_unit_job!(tmp_dir)
 
@@ -414,7 +420,7 @@ defmodule EvoGit.BackgroundJobsTest do
       first_chunk = String.replace_suffix(first, @pending_marker, "")
       assert byte_size(first_chunk) == 10
 
-      {chunks, last} = drain(job.id, [first_chunk], 1_000)
+      {chunks, last} = drain(job.id, [first_chunk], 1_000, 500)
       assert Enum.join(chunks) == full
       assert last.cursor == byte_size(full)
     end
@@ -554,8 +560,10 @@ defmodule EvoGit.BackgroundJobsTest do
       assert message =~ "job_kill"
       assert message =~ "10"
 
+      replies = quiet_kill_all(jobs)
+
       Enum.each(jobs, fn job ->
-        assert {:ok, %{status: :killed}} = quiet_kill(job)
+        assert {:ok, %{status: :killed}} = Map.fetch!(replies, job.id)
       end)
 
       # The one real detached child is really gone (the `:unit` records carry no
@@ -940,7 +948,7 @@ defmodule EvoGit.BackgroundJobsTest do
       Application.delete_env(:evo_git, :background_tick_interval_ms)
 
       on_exit(fn ->
-        Application.put_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms_override)
+        Application.put_env(:evo_git, :background_tick_interval_ms, @no_tick_interval_ms)
       end)
 
       assert BackgroundJobs.tick_interval_ms() == 1_000
@@ -1033,8 +1041,12 @@ defmodule EvoGit.BackgroundJobsTest do
 
   defp start_job!(spec) do
     case BackgroundJobs.start_job(spec) do
-      {:ok, job} -> job
-      {:error, message} -> flunk("start_job/1 failed: #{inspect(message)}")
+      {:ok, job} ->
+        track_log!(job)
+        job
+
+      {:error, message} ->
+        flunk("start_job/1 failed: #{inspect(message)}")
     end
   end
 
@@ -1061,18 +1073,31 @@ defmodule EvoGit.BackgroundJobsTest do
   # fixed margin. `capture_log/2` is WINDOW-based and catches logs from ANY
   # process; this module is `async: false`, so the window cannot swallow a
   # sibling module's lines.
-  defp quiet_kill(%{id: id, handle: handle}) do
+  defp quiet_kill(%{id: id} = job) do
+    replies = quiet_kill_all([job])
+    Map.fetch!(replies, id)
+  end
+
+  # Kills SEVERAL `:unit`-shaped jobs inside ONE console-noise window. Every stop
+  # is a fire-and-forget `systemctl --user stop` Task, so issuing them together
+  # overlays those round trips instead of paying one full stop per job — which is
+  # what filling and draining ten slots costs otherwise. Returns `%{id => reply}`
+  # so each caller keeps asserting on the REAL kill result.
+  defp quiet_kill_all(jobs) do
     _log =
       ExUnit.CaptureLog.capture_log([level: :warning], fn ->
         # `capture_log/2` returns the LOG, not the function's value, and the fun
-        # runs in this process — so the kill's reply travels via the dictionary
-        # and the callers keep asserting on the REAL result.
-        reply = BackgroundJobs.kill(id)
-        Process.put(@quiet_kill_result, reply)
-        await_unit_stop(reply, handle)
+        # runs in this process — so the replies travel via the dictionary and the
+        # callers keep asserting on the REAL results.
+        replies = Enum.map(jobs, fn %{id: id} = job -> {job, BackgroundJobs.kill(id)} end)
+        Process.put(@quiet_kill_results, replies)
+        Enum.each(replies, fn {job, reply} -> await_unit_stop(reply, job.handle) end)
       end)
 
-    Process.delete(@quiet_kill_result)
+    replies = Process.get(@quiet_kill_results) || []
+    Process.delete(@quiet_kill_results)
+
+    Map.new(replies, fn {%{id: id}, reply} -> {id, reply} end)
   end
 
   # A `:unit` stop is asynchronous, so wait for the seam's report — matched on the
@@ -1159,8 +1184,12 @@ defmodule EvoGit.BackgroundJobsTest do
       Map.merge(%{command: "echo ignored-by-the-stand-in-handle", cwd: cwd}, spec)
 
     case BackgroundJobs.start_job_with_handle(spec, handle) do
-      {:ok, job} -> job
-      {:error, message} -> flunk("start_job_with_handle/2 failed: #{inspect(message)}")
+      {:ok, job} ->
+        track_log!(job)
+        job
+
+      {:error, message} ->
+        flunk("start_job_with_handle/2 failed: #{inspect(message)}")
     end
   end
 
@@ -1241,13 +1270,15 @@ defmodule EvoGit.BackgroundJobsTest do
 
   # Reads the whole remaining output `max_reads` calls at a time, stripping the
   # pending marker from every capped chunk. Returns the ordered chunks plus the
-  # final job record.
-  defp drain(id, acc, 0) do
+  # final job record. `max_bytes` is the per-call cap: the EXACT cap contract is
+  # asserted separately (one 10-byte read), so the drain itself only has to prove
+  # nothing is lost — a 10-byte chunk there would mean ~900 registry calls.
+  defp drain(id, acc, 0, _max_bytes) do
     flunk("draining #{id} exhausted the read budget; accumulated #{length(acc)} chunks")
   end
 
-  defp drain(id, acc, max_reads) do
-    case BackgroundJobs.read(id, max_bytes: 10) do
+  defp drain(id, acc, max_reads, max_bytes \\ 10) do
+    case BackgroundJobs.read(id, max_bytes: max_bytes) do
       {:ok, %{text: text, job: job}} ->
         cond do
           String.ends_with?(text, @pending_marker) ->
@@ -1295,27 +1326,13 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
-  defp job_log_files(dir) do
-    case File.ls(dir) do
-      {:ok, files} ->
-        files
-        |> Enum.filter(&String.starts_with?(&1, "genesis_job_"))
-        |> MapSet.new()
-
-      {:error, _reason} ->
-        # The scratch dir may not exist yet (no job has ever run on this host).
-        MapSet.new()
-    end
-  end
-
-  defp remove_new_job_logs(dir, before) do
-    dir
-    |> job_log_files()
-    |> MapSet.difference(before)
-    |> Enum.each(fn file ->
-      # Best effort: the file may already be gone (the registry never recreates it).
-      _ = File.rm(Path.join(dir, file))
-      :ok
-    end)
+  # Per-JOB output-file hygiene: the registry decides `output_path` at spawn time
+  # and returns it on the record, so the cleanup is EXACT (one `File.rm`) and
+  # never lists the scratch directory, which the whole host shares. Registered
+  # when the job starts, so it also covers a test that flunks before its own
+  # final assertions.
+  defp track_log!(%{output_path: path}) when is_binary(path) do
+    on_exit(fn -> _ = File.rm(path) end)
+    :ok
   end
 end

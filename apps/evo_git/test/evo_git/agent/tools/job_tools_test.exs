@@ -23,9 +23,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   Hygiene: no test may hang or leak. Every wait is event-driven (bounded poll,
   never a fixed sleep used as the assertion), every long job is killed and its
-  OS pid reaped before the test ends, and `on_exit` removes exactly the
-  `genesis_job_*.log` files this test created (safe because the module is
-  `async: false`: the sync phase runs one module at a time).
+  OS pid reaped before the test ends, and every job start registers an `on_exit`
+  that removes that job's OWN `genesis_job_*.log` — the path the registry
+  returns on the record, so the cleanup is exact and never lists the scratch
+  directory (which can hold thousands of unrelated entries on a busy host).
   """
   use ExUnit.Case, async: false
 
@@ -48,8 +49,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   # Poll cadence for every wait below (see `wait_until/2`): tight at first, then
   # relaxed so a genuinely slow condition does not spin. The wait's own deadline
-  # stays the only bound.
-  @poll_first_ms 2
+  # stays the only bound. The floor is 1 ms because each poll is a 30 µs registry
+  # read, while the condition itself (a shell child's ~3 ms lifetime) is the cost.
+  @poll_first_ms 1
   @poll_max_ms 20
 
   # Test-only CALL-TIME seam (`EvoGit.BackgroundJobs.poll_interval_ms/0`): the
@@ -57,7 +59,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   # production 100 ms would make every settled wait pay a full interval. The
   # production default is unchanged; the wait's own `timeout_ms` budget is what
   # the timed-out case exercises.
-  @poll_interval_ms_override 10
+  @poll_interval_ms_override 5
 
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
@@ -79,8 +81,6 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     Process.put(:evogit_background_jobs_server, registry)
     Process.put(:evogit_agent_pid, self())
 
-    before = scratch_logs()
-
     on_exit(fn ->
       # Belt and braces: this callback runs in a DIFFERENT process, so the test
       # process's own dictionary already dies with it. Clear the three keys the
@@ -88,8 +88,6 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       Process.delete(:evogit_agent_pid)
       Process.delete(:evogit_background_jobs_server)
       Process.delete(:repo_less)
-
-      remove_new_scratch_logs(before)
     end)
 
     %{registry: registry}
@@ -114,42 +112,18 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   ## Scratch-directory hygiene
 
   # A job's output file is `<scratch dir>/genesis_job_<job_id>.log`
-  # (`BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`). The
-  # scratch dir is shared with the whole host, so record what is there first and
-  # remove ONLY the logs that appeared during this test.
-  #
-  # Why a window and not the job ids: the isolated registry is already terminated
-  # by the time `on_exit` callbacks run (ExUnit stops `start_supervised!` children
-  # first), so its job list cannot be read there. The window is safe within this
-  # BEAM because the module is `async: false` — the sync phase runs one module at
-  # a time — and removing a log file only ever affects a job this module's OWN
-  # tests left behind (every long job is killed and reaped before its test ends).
-  defp scratch_logs do
-    for dir <- scratch_dirs(),
-        name <- ls(dir),
-        String.starts_with?(name, "genesis_job_"),
-        into: MapSet.new(),
-        do: Path.join(dir, name)
-  end
-
-  defp scratch_dirs do
-    root = EvoGit.Sandbox.resolve_tmpdir()
-
-    [root, Path.join(root, "genesis")]
-    |> Enum.filter(&File.dir?/1)
-  end
-
-  defp ls(dir) do
-    case File.ls(dir) do
-      {:ok, names} -> names
-      {:error, _reason} -> []
-    end
-  end
-
-  defp remove_new_scratch_logs(before) do
-    scratch_logs()
-    |> MapSet.difference(before)
-    |> Enum.each(&File.rm/1)
+  # (`EvoGit.BackgroundJobs.scratch_dir/0` = `EvoGit.Sandbox.resolve_tmpdir/0`).
+  # The scratch dir is shared with the whole host, so a window-style
+  # snapshot/restore would have to `File.ls` it — a directory that legitimately
+  # holds thousands of unrelated entries, i.e. milliseconds per listing, twice
+  # per test. Instead every job start registers the EXACT path the registry
+  # returned on the record, so the cleanup is one `File.rm` per job this test
+  # created and can never touch another test's (or the host's) files.
+  defp track_log!(%{output_path: path}) when is_binary(path) do
+    # Registered when the job STARTS, so the cleanup also covers a test that
+    # flunks before reaching its own final assertions.
+    on_exit(fn -> _ = File.rm(path) end)
+    :ok
   end
 
   ## Event-driven waits (never a fixed sleep as the assertion)
@@ -181,8 +155,26 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     spec = Map.merge(%{command: command, cwd: cwd, owner_pid: self()}, extra)
 
     case BackgroundJobs.start_job(spec) do
-      {:ok, job} -> job
-      {:error, message} -> flunk("could not start the background job: #{message}")
+      {:ok, job} ->
+        track_log!(job)
+        job
+
+      {:error, message} ->
+        flunk("could not start the background job: #{message}")
+    end
+  end
+
+  # The three `BackgroundJobs.start_job/1` call sites that pass an EXPLICIT
+  # foreign `:owner_pid` (the ownership-fence tests) bypass `start_job/3`
+  # because they assert on the `{:ok, job}` tuple; they clean up the same way.
+  defp start_foreign_job!(command, cwd, owner_pid) do
+    case BackgroundJobs.start_job(%{command: command, cwd: cwd, owner_pid: owner_pid}) do
+      {:ok, job} ->
+        track_log!(job)
+        job
+
+      {:error, message} ->
+        flunk("could not start the foreign background job: #{message}")
     end
   end
 
@@ -371,7 +363,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       text =
         JobOutput.execute(
-          %{"job_id" => job.id, "wait" => true, "timeout_ms" => 100},
+          %{"job_id" => job.id, "wait" => true, "timeout_ms" => 30},
           cwd,
           cwd
         )
@@ -396,8 +388,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       other = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(other, :kill) end)
 
-      {:ok, foreign_job} =
-        BackgroundJobs.start_job(%{command: "sleep 30", cwd: cwd, owner_pid: other})
+      foreign_job = start_foreign_job!("sleep 30", cwd, other)
 
       # The tool fences on the CALLING agent (the pdict owner), not on the job.
       assert Process.get(:evogit_agent_pid) == self()
@@ -457,10 +448,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       # on its own (no kill, and therefore no kill grace, is needed). The pinned
       # contract here is the rendered line shape and the ordering — the status is
       # deliberately not asserted, and a finished job stays listed.
-      first = start_job("sleep 0.05", cwd)
+      first = start_job("sleep 0.02", cwd)
       wait_until(fn -> length(BackgroundJobs.list()) == 1 end)
 
-      second = start_job("sleep 0.05", cwd)
+      second = start_job("sleep 0.02", cwd)
       wait_until(fn -> length(BackgroundJobs.list()) == 2 end)
 
       text = JobList.execute(%{}, cwd, cwd)
@@ -474,7 +465,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         # The separator is the EM DASH (U+2014), not a hyphen.
         assert line =~ "—"
         # The label is the command's first line.
-        assert line =~ "sleep 0.05"
+        assert line =~ "sleep 0.02"
       end
 
       assert hd(lines) =~ second.id
@@ -490,8 +481,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       other = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(other, :kill) end)
 
-      {:ok, foreign_job} =
-        BackgroundJobs.start_job(%{command: "sleep 30", cwd: cwd, owner_pid: other})
+      foreign_job = start_foreign_job!("sleep 30", cwd, other)
 
       assert Process.get(:evogit_agent_pid) == self()
       assert JobList.execute(%{}, cwd, cwd) == "(no background jobs)"
@@ -551,8 +541,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       other = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(other, :kill) end)
 
-      {:ok, foreign_job} =
-        BackgroundJobs.start_job(%{command: "sleep 30", cwd: cwd, owner_pid: other})
+      foreign_job = start_foreign_job!("sleep 30", cwd, other)
 
       assert Process.get(:evogit_agent_pid) == self()
 
@@ -641,6 +630,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert job.id == id
       assert job.status == :running
       assert job.label == "echo bg-hi"
+      track_log!(job)
 
       # The job it started is killable through the tool.
       refute String.starts_with?(JobKill.execute(%{"job_id" => id}, cwd, cwd), "Error: ")
@@ -662,6 +652,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       id = String.replace_prefix(result, "started background job ", "")
       job = await_job_status(id, :running)
+      track_log!(job)
       pid = job_os_pid(job)
 
       assert JobKill.execute(%{"job_id" => id}, cwd, cwd) == "requested cancellation of job #{id}"
