@@ -4353,7 +4353,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       refute_received {:reject_started, _, _}
 
       send(task_pid, :release)
-      html = await_review_action_settled(view)
+      await_review_action_settled(view)
 
       assert repo_resolution(view, "original") == %{state: :rejected}
       assert assigns(view)[:flash]["success"] =~ "Changes rejected"
@@ -4390,7 +4390,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert_receive {:batch_call, _path}
       refute_received {:batch_call, _path}
 
-      html = await_review_action_settled(view)
+      await_review_action_settled(view)
 
       assert assigns(view)[:flash]["error"] =~ "Could not merge"
     end
@@ -4459,6 +4459,37 @@ defmodule EvoDashWeb.ReviewLiveTest do
       send(view.pid, {:task_updated, task_id, nil, node()})
       assert wait_until(fn -> assigns(view)[:load_generation] == gen + 1 end)
       flush_review_load(view)
+    end
+
+    test "create_pr disables the task actions while the request is in flight", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      # Shadow the real `gh` CLI with a stub that always fails, so the PR
+      # attempt resolves deterministically to the "no PR created" outcome with
+      # NO network side effect (a real `gh repo create` would hit GitHub).
+      install_failing_gh_cli()
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        html = render_click(view, "create_pr")
+
+        # In flight: the shared task-level `loading` disables the task actions
+        # and the action marker names the request.
+        assert task_action_state(html, "resume").disabled?
+        assert assigns(view)[:review_action].kind == :create_pr
+
+        await_review_action_settled(view)
+      end)
+
+      # The result landed: the in-flight state is cleared and the outcome
+      # (a failure flash — the stubbed `gh` cannot create a remote) renders.
+      assert is_nil(assigns(view)[:review_action])
+      assert assigns(view)[:has_pr] == false
+      assert assigns(view)[:flash]["error"] =~ "Failed to create pull request"
     end
   end
 
@@ -4533,6 +4564,25 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end)
 
     on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+  end
+
+  # Prepends a temp dir holding a `gh` stub that always fails to PATH, so a PR
+  # attempt resolves to the "not created" outcome with NO network call (a real
+  # `gh repo create` would hit GitHub). `git` still resolves from the rest of
+  # PATH. PATH is restored (and the stub removed) on exit.
+  defp install_failing_gh_cli do
+    dir = Path.join(System.tmp_dir!(), "no-gh-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    stub = Path.join(dir, "gh")
+    File.write!(stub, "#!/bin/sh\nexit 1\n")
+    File.chmod!(stub, 0o755)
+    original = System.get_env("PATH") || ""
+    System.put_env("PATH", dir <> ":" <> original)
+
+    on_exit(fn ->
+      System.put_env("PATH", original)
+      File.rm_rf(dir)
+    end)
   end
 
   # --- Helpers for the merge-target selector tests ---
