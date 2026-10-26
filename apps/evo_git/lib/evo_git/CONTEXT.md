@@ -119,10 +119,11 @@ Every read is dispatched to a failure-isolated unlinked worker with a 25 s deadl
 Summary reads return the 16-key projection (`result` never selected/decoded), `tasks.updated_at` is store-internal bookkeeping (the heartbeat never bumps it, undecodable rows are skipped with a `Logger.warning`), and disk-full-class write errors surface as `{:error, :disk_full}` at the `write_call/2` choke point while every other write error re-raises.
 
 - **⚠️ `since` is NOT exposed through RemoteAPI/RemoteNode** (they accept only `statuses`) — remote time-filtered callers must use `list_tasks_changed_since`.
-- **Lightweight reads**: `select_tasks_page/2` (16-key summary rows + `total`), `get_task_lite/2` (no archive decode) and `get_task_archive/2` are the non-blob read path; the search `fragment/1` LIKEs `id`/`opts`/`project_path`/`branch_name` only, never `result`.
-- **Storage model**: `Store.Codec` compresses oversized `result`/`archive_metadata`/`logs` as `"z1:" <> Base64(zlib)` and `ArchiveDedup` keeps exactly one archive copy per row; `mix store.maintenance [--vacuum]` is the only way to reclaim freed pages.
+- **Lightweight reads**: `select_tasks_page/2` (16-key summary rows + `total`) and `get_task_lite/2` (the same struct from a blob-free projection) are the non-blob read path; the search `fragment/1` LIKEs `id`/`opts`/`project_path`/`branch_name` only, never `result`.
+- **Per-agent archive reads**: the archive lives in its own `task_agent_archives` table, so it is read separately — `list_task_archives/2` pages a task's agent roster WITHOUT the `result` column and `get_agent_archive/2` fetches ONE agent's full row.
+- **Storage model**: every JSON column (`opts`/`logs`/`result`/`usage`/`error`) is plain UTF-8 JSON TEXT with no compression layer, and the per-agent archive is a side table (`task_agent_archives`, one row per `(task_id, agent_id)`) rather than a column on the task row; `mix store.maintenance [--vacuum]` is the only way to reclaim freed pages.
 
-Detail: `./store/CONTEXT.md` (schemas, operations, read fault isolation + write offload, compression/dedup storage model, indexes, migrations, maintenance).
+Detail: `./store/CONTEXT.md` (schemas, operations incl. `Archives`, read fault isolation + write offload, the plain-JSON storage model + the per-agent archive table, indexes, migrations, maintenance).
 
 ## Known Issues
 
