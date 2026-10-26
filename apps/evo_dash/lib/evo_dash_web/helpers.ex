@@ -589,6 +589,99 @@ defmodule EvoDashWeb.Helpers do
     end
   end
 
+  # Background-job CONTROL tool names — the model-facing schema name and the
+  # internal dispatch key are the SAME for all three; the extra accepted
+  # spellings (`jobs`, `kill_job`, `bash_output`, …) resolve onto one of them
+  # through `EvoGit.Agent.ToolNames`.
+  @background_job_tools ["job_output", "job_list", "job_kill"]
+
+  @doc """
+  Classifies a tool-RESULT history entry by its tool name into the kind of
+  panel it renders as:
+
+    * `:subagent` — a `subagent_*` delegation result, i.e. a subagent's
+      returned report. The accepted alias spellings `task`/`subagent`
+      normalize into it.
+    * `:background_job` — a `job_output` / `job_list` / `job_kill` background
+      job control result.
+    * `:default` — every other tool result (the historical success palette).
+
+  The name passed in is the RAW model-emitted one, so it is normalized through
+  `EvoGit.Agent.ToolNames.normalize/1` first. Total: a nil/non-binary name is
+  `:default`.
+  """
+  @spec tool_result_kind(term()) :: :subagent | :background_job | :default
+  def tool_result_kind(tool_name) do
+    key = EvoGit.Agent.ToolNames.normalize(tool_name)
+
+    cond do
+      is_binary(key) and String.starts_with?(key, "subagent_") -> :subagent
+      key in @background_job_tools -> :background_job
+      true -> :default
+    end
+  end
+
+  @doc """
+  Returns the presentation of a tool-RESULT history entry:
+
+      %{
+        kind: :subagent | :background_job | :default,
+        label: String.t(),
+        icon: String.t() | nil,
+        text_class: String.t(),
+        chip_class: String.t(),
+        panel_class: String.t(),
+        border_class: String.t() | nil
+      }
+
+  The `*_class` tokens are SEMANTIC accent classes meant to be composed with
+  each call site's own BOX GEOMETRY (padding / rounding / max-height), which
+  differs per site — the `/agents` inline panel, the `/agents` full-message
+  modal and the `/help` "Thought process". They live here so every site shares
+  ONE palette instead of re-deriving class strings in templates (Tailwind only
+  emits statically written classes, so they must NOT be interpolated).
+  """
+  def tool_result_presentation(tool_name) do
+    name = if is_binary(tool_name), do: tool_name, else: ""
+
+    case tool_result_kind(tool_name) do
+      :subagent ->
+        %{
+          kind: :subagent,
+          # 子智能体返回报告面板的标题；%{name} 是工具名（如 subagent_investigator）
+          label: gettext("Subagent Report: %{name}", name: name),
+          icon: "hero-user-group",
+          text_class: "text-accent",
+          chip_class: "bg-accent/20",
+          panel_class: "bg-accent/10",
+          border_class: "border-l-2 border-accent/40"
+        }
+
+      :background_job ->
+        %{
+          kind: :background_job,
+          # 后台任务控制工具（job_output/job_list/job_kill）返回结果面板的标题
+          label: gettext("Background job: %{name}", name: name),
+          icon: "hero-clock",
+          text_class: "text-info",
+          chip_class: "bg-info/20",
+          panel_class: "bg-info/10",
+          border_class: "border-l-2 border-info/40"
+        }
+
+      :default ->
+        %{
+          kind: :default,
+          label: gettext("Tool Result: %{name}", name: name),
+          icon: nil,
+          text_class: "text-success",
+          chip_class: "bg-success/20",
+          panel_class: "bg-success/10",
+          border_class: nil
+        }
+    end
+  end
+
   @doc """
   Extracts and joins reasoning text from a list of ReasoningDetails structs.
   Returns `nil` if the list is empty or contains no text.

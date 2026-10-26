@@ -12,6 +12,22 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
     - `%{label: String.t(), kind: :inline, summary: String.t()}`
       — all other calls: a single one-line arguments summary.
 
+  ## The `:variant` key (background shell calls)
+
+  A `:variant` key is added ONLY to the descriptors that need a distinct
+  presentation, so every other descriptor keeps the historical shape
+  (`%{label:, kind:, rows:/summary:}`) byte-identical — read it with
+  `Map.get(display, :variant)`, never with dot access.
+
+  `:variant => :background_shell` marks the shell tool called with a truthy
+  `run_in_background` argument (the "detached job" mode: the call returns a job
+  id immediately and the command keeps running). Its label becomes
+  `"Background shell call"` and the `Command` row / 200-char truncation
+  contract is unchanged. Detection is deliberately as lenient as the core
+  (`EvoGit.Agent.Tools.background_start?/1`): the JSON boolean `true` or the
+  string `"true"` — anything else (absent, `false`, `"false"`, junk) is a
+  FOREGROUND shell call.
+
   ## Alias-aware naming
 
   The MODEL-FACING tool names (`read`, `write`, `edit`, `bash`, `web_search`)
@@ -120,11 +136,35 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplay do
   end
 
   defp display_shell(call, mode) do
-    %{
+    descriptor = %{
       label: gettext("Shell call"),
       kind: :structured,
       rows: [{gettext("Command"), truncate(shell_command(call), 200, mode)}]
     }
+
+    if background_start?(call) do
+      # A detached job start is a DIFFERENT thing from a foreground command —
+      # it returns a job id right away and keeps running. The `:variant` key is
+      # present ONLY on this descriptor (see the moduledoc), so the markup can
+      # give it its own accent without touching any other call's presentation.
+      descriptor
+      |> Map.put(:label, gettext("Background shell call"))
+      |> Map.put(:variant, :background_shell)
+    else
+      descriptor
+    end
+  end
+
+  # Lenient truthy check of the shell tool's `run_in_background` argument,
+  # mirroring the core (`EvoGit.Agent.Tools.background_start?/1`): the model may
+  # emit a real JSON boolean `true` or the string `"true"`; anything else
+  # (absent, `false`, `"false"`, junk, undecodable arguments) is NOT a
+  # background start.
+  defp background_start?(call) do
+    case decode_arguments(call) do
+      {:ok, decoded} -> Map.get(decoded, "run_in_background") in [true, "true"]
+      :error -> false
+    end
   end
 
   defp build_inline(call, label, mode) do

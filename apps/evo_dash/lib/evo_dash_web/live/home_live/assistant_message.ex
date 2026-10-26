@@ -230,13 +230,22 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
         <% end %>
       <% end %>
       <%= if Map.get(@entry, :type) == "tool" do %>
+        <% result = tool_result_presentation(tool_name) %>
         <%= if tool_name do %>
-          <div class="mt-1 font-mono text-xs text-success">
-            {gettext("Tool Result: %{name}", name: tool_name)}
+          <div class={["mt-1 inline-flex items-center gap-1 font-mono text-xs", result.text_class]}>
+            <%= if result.icon do %>
+              <.icon name={result.icon} class="size-3" />
+            <% end %>
+            {result.label}
           </div>
         <% end %>
         <%= if content != "" do %>
-          <div class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded bg-success/10 px-2 py-1 text-xs text-success">
+          <div class={[
+            "mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap rounded px-2 py-1 text-xs",
+            result.panel_class,
+            result.text_class,
+            result.border_class
+          ]}>
             {content}
           </div>
         <% end %>
@@ -251,8 +260,17 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
         <div class="mt-1.5 space-y-1">
           <%= for call <- tool_calls do %>
             <% display = ToolCallDisplay.display(call) %>
-            <div class="flex items-start gap-2">
-              <span class="shrink-0 font-mono text-xs font-semibold text-secondary">{display.label}</span>
+            <% background? = Map.get(display, :variant) == :background_shell %>
+            <div class={["flex items-start gap-2", background? && "rounded bg-info/10 px-1 py-0.5"]}>
+              <span class={[
+                "shrink-0 font-mono text-xs font-semibold inline-flex items-center gap-1",
+                if(background?, do: "text-info", else: "text-secondary")
+              ]}>
+                <%= if background? do %>
+                  <.icon name="hero-clock" class="size-3" />
+                <% end %>
+                {display.label}
+              </span>
               <%= if display.kind == :structured do %>
                 <div class="min-w-0 flex-1 space-y-0.5">
                   <%= for {key, value} <- display.rows do %>
