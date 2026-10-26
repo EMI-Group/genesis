@@ -1,7 +1,26 @@
 defmodule EvoDashWeb.TaskCardComponents do
   @moduledoc """
-  Task card components for the dashboard — status display, metatags,
-  expandable details, result rendering, and option rendering helpers.
+  The dashboard's task card — the `task_card/1` HEEx template plus its
+  presentation helpers (status/tint/accent mapping, bounded in-card previews,
+  review candidacy).
+
+  ## Where the rest of the card helpers live
+
+  The cohesive helper families behind the card live in
+  `EvoDashWeb.TaskCardComponents.*` submodules:
+
+    * `TaskCardComponents.Options` — `objective_text/1`, `render_options/1,2`,
+      `render_options_full/1`;
+    * `TaskCardComponents.ResultRender` — `render_result/1,2`,
+      `render_result_full/1`, `result_copy_text/1`;
+    * `TaskCardComponents.Repos` — `result_repos/1`, `task_repos/2`,
+      `result_repos_badges/1`;
+    * `TaskCardComponents.Archive` — the lazy archive-envelope readers;
+    * `TaskCardComponents.Errors` — the structured failure-record readers.
+
+  Every public function of those submodules is re-exported here through
+  `defdelegate`, so call sites keep using `EvoDashWeb.TaskCardComponents.<fun>`;
+  the submodule readers this template calls directly are imported below.
 
   ## Card inputs — summary map + lazily-fetched detail
 
@@ -28,17 +47,34 @@ defmodule EvoDashWeb.TaskCardComponents do
   `commit_sha`/`branch_name` + `opts[:foreign_repos]`, enriched by the detail
   result's `repos` map when it has landed).
 
-  ## Why this stays ONE file
+  ## Why the preview helpers stay HERE
 
   The card template and its bounded-preview helpers (`text_preview/2`,
   `log_preview/1`, `copy_payload/1`, the byte/row caps) are one contract: the
   caps exist precisely because this template interpolates the payloads, so
-  they live together instead of being spread across modules.
+  they live together instead of being spread across modules. The moved
+  result/option renderers reuse them through this module (see below).
   """
 
   # zh_CN: Agent → "智能体", Token → "词元"
 
   use EvoDashWeb, :html
+
+  alias EvoDashWeb.TaskCardComponents.{Options, Repos, ResultRender}
+
+  # Card readers implemented in the submodules and called directly by the
+  # template below.
+  import EvoDashWeb.TaskCardComponents.Archive,
+    only: [archive_state: 1, archive_records: 1, archive_opt?: 1]
+
+  import EvoDashWeb.TaskCardComponents.Errors,
+    only: [
+      task_error: 1,
+      error_field: 2,
+      error_message: 1,
+      error_stacktrace: 1,
+      collapsed_error_text: 1
+    ]
 
   # ---------------------------------------------------------------------------
   # task_card/1 — Compact card with accent bar, relative timestamps
@@ -729,113 +765,6 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # Private helpers — structured failure record (`error`) guarded reads
-  # ---------------------------------------------------------------------------
-  #
-  # Failed tasks persist a structured error record on the decoded TaskInfo
-  # `error` field: `%{kind:, source:, message:, stacktrace:}` — ATOM keys after
-  # the lenient Store Codec decode (`Codec.decode_error/1`, applied to BOTH the
-  # full `%TaskInfo{}` path and the 16-key summary projection); nil unless
-  # `status == :failed`. This is a NEW record SEPARATE from the legacy
-  # `{:error, _}` task RESULT rendered by render_result/2 — a failed task may
-  # carry either, both, or neither. Every read below is guarded and
-  # atom/string-key tolerant: legacy failed rows (`error` nil/non-map) and all
-  # non-failed statuses return nil, so every render site stays byte-identical
-  # to the pre-feature behavior for them.
-
-  # Returns the structured error map only when the task is failed AND the
-  # `error` value is a map; nil otherwise (legacy rows, non-failed statuses,
-  # bad shapes — summary maps and full structs both safe).
-  defp task_error(task) do
-    with true <- is_map(task),
-         true <- Map.get(task, :status) in [:failed, "failed"],
-         error when is_map(error) <- Map.get(task, :error) do
-      error
-    else
-      _ -> nil
-    end
-  end
-
-  # Atom/string-key tolerant read of one error-record field (the Codec emits
-  # atom keys, but some consumer paths may hand string-keyed maps).
-  defp error_field(error, key) do
-    Map.get(error, key) || Map.get(error, to_string(key))
-  end
-
-  # `message` is a String.t() by contract, but decoded data is untrusted —
-  # only non-empty binaries are usable; nil otherwise (graceful fallback).
-  defp error_message(error) do
-    case error_field(error, :message) do
-      message when is_binary(message) and message != "" -> message
-      _ -> nil
-    end
-  end
-
-  # `stacktrace` is [String.t()] by contract; defensively keep only binary
-  # frames and show the LAST ≤8 (most recent) frames in the expanded block.
-  defp error_stacktrace(error) do
-    case error_field(error, :stacktrace) do
-      frames when is_list(frames) ->
-        case Enum.filter(frames, &is_binary/1) do
-          [] -> nil
-          frames -> Enum.take(frames, -8)
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  # Collapsed-line text: the truncated error.message (~160 chars); when the
-  # message is not a usable binary, fall back to the kind label so a failed
-  # card without a message still communicates why it failed.
-  defp collapsed_error_text(error) do
-    case error_message(error) do
-      nil -> task_error_kind_label(error_field(error, :kind))
-      message -> truncate_string(message, 160)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Private helpers — lazy archive envelope (`detail.archive`)
-  # ---------------------------------------------------------------------------
-  #
-  # Archive records are NOT on the summary map: they are fetched on demand via
-  # the `load_task_archive` event. The envelope is
-  # `%{state: :loading | :ok | :error, records: [map()], error: term(), seq:
-  # pos_integer()}`. Every read below is TOTAL, so an odd shape falls back to
-  # the empty/on-demand state instead of crashing the card.
-
-  defp archive_state(archive) do
-    case archive do
-      %{state: state} -> state
-      %{"state" => state} -> state
-      _ -> nil
-    end
-  end
-
-  defp archive_records(archive) do
-    case archive do
-      %{records: records} when is_list(records) -> records
-      %{"records" => records} when is_list(records) -> records
-      _ -> []
-    end
-  end
-
-  # `opts[:archive]` is the archive OPT-IN signal (`true` from the dashboard,
-  # `"true"` from the CLI/task data plane). The summary map cannot say whether
-  # records actually exist, so this only decides whether the lazy disclosure
-  # renders at all.
-  defp archive_opt?(opts) when is_list(opts) do
-    Enum.find_value(opts, false, fn
-      {:archive, value} -> value in [true, "true"]
-      _ -> nil
-    end)
-  end
-
-  defp archive_opt?(_opts), do: false
-
-  # ---------------------------------------------------------------------------
   # Private helpers — accent color for task_card status bar
   # ---------------------------------------------------------------------------
 
@@ -890,13 +819,15 @@ defmodule EvoDashWeb.TaskCardComponents do
   @copy_payload_limit 1_048_576
 
   # Text preview for an in-card payload; `text` is already stringified by the
-  # caller (a binary result, or `inspect/2` of a non-binary term).
-  defp text_preview(text, true), do: blob_preview(text, @in_card_blob_limit)
+  # caller (a binary result, or `inspect/2` of a non-binary term). Public
+  # because the moved renderers (`render_options/2`, `render_result/2`) cap
+  # their bodies through it — one cap, one implementation.
+  def text_preview(text, true), do: blob_preview(text, @in_card_blob_limit)
 
-  defp text_preview(text, false) when is_binary(text),
+  def text_preview(text, false) when is_binary(text),
     do: %{text: text, truncated?: false, total_bytes: byte_size(text)}
 
-  defp text_preview(_text, false), do: %{text: "", truncated?: false, total_bytes: 0}
+  def text_preview(_text, false), do: %{text: "", truncated?: false, total_bytes: 0}
 
   # Newest-first capped view of the task's logs: one reverse pass, then
   # `Helpers.list_preview/2` (also yields the total, so no extra `length/1`).
@@ -932,10 +863,11 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp copy_payload_title(_payload), do: nil
 
   # Dim "showing X of Y" note — rendered ONLY when a preview actually dropped
-  # bytes (a complete payload renders no note at all).
+  # bytes (a complete payload renders no note at all). Public because the moved
+  # renderers render it after their own previews.
   attr(:preview, :map, required: true)
 
-  defp preview_limit_note(assigns) do
+  def preview_limit_note(assigns) do
     ~H"""
     <p :if={@preview.truncated?} class="text-xs text-base-content/60 mt-2">
       <%!-- zh_CN: bytes → "字节"（预览被截断时的说明） --%>{gettext(
@@ -948,676 +880,25 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   # ---------------------------------------------------------------------------
-  # Public helpers — render_options/2
+  # Public API re-exported from the `task_card_components/` submodules
   # ---------------------------------------------------------------------------
-
-  @doc """
-  Returns the objective text for a task's opts (the `:prompt`, falling back to
-  `:objective`), trimmed of surrounding whitespace. Shared by the collapsed-card
-  preview, the expanded Objective card (including its copy button), and
-  `render_options/2`.
-
-  Deliberately returns the COMPLETE text — the card's Copy button bounds it at
-  render time (`copy_payload/1`, 1 MiB cap on the HTML-materialized
-  `data-content`), while the in-card RENDERING path (`render_options/2` with
-  `truncate: true`) caps it to a preview.
-  """
-  def objective_text(opts) do
-    (opts[:prompt] || opts[:objective] || "") |> String.trim()
-  end
-
-  def render_options(opts, render_opts \\ []) do
-    # `truncate: true` = the expanded-card body (scrollable, CAPPED preview);
-    # `truncate: false` = the zoomed Full Objective modal (own container
-    # scrolls, full text).
-    truncate = Keyword.get(render_opts, :truncate, true)
-    primary_text = objective_text(opts)
-    mode = opts[:mode] || ""
-    path = opts[:path] || ""
-
-    assigns = %{
-      primary_text: text_preview(primary_text, truncate),
-      mode: mode,
-      path: path,
-      truncate: truncate
-    }
-
-    ~H"""
-    <div class="space-y-3">
-      <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-        <div class={[
-          "text-sm whitespace-pre-wrap break-words",
-          if(@truncate, do: "max-h-48 overflow-y-auto", else: "")
-        ]}>
-          {@primary_text.text}
-        </div>
-        <.preview_limit_note preview={@primary_text} />
-      </div>
-      <div class="flex flex-wrap gap-2 text-xs">
-        <%= if @mode != "" do %>
-          <span class="badge badge-primary font-mono">
-            <.icon name="hero-cog-6-tooth" class="size-3 mr-1" />
-            {@mode}
-          </span>
-        <% end %>
-        <%= if @path != "" do %>
-          <span class="badge badge-ghost font-mono">
-            <.icon name="hero-folder" class="size-3 mr-1" />
-            {@path}
-          </span>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public API — render_options_full/1 renders task options without truncation
-  # ---------------------------------------------------------------------------
-
-  # `truncate: false` = the Full Objective MODAL body: the complete, uncapped
-  # objective text — reached only by an explicit user action
-  # (`view_full_options`) and scrolled by the modal's own container.
-  def render_options_full(opts) do
-    render_options(opts, truncate: false)
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public helpers — result_repos/1 (multi-repo "repos" result key)
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Normalizes the `repos` result key into a deterministic list of per-repo
-  entries `%{id:, commit_sha:, branch_name:}` — the `"primary"` repo first,
-  then writable foreign repos sorted by id. Returns `nil` when the result
-  carries no usable `repos` map (legacy results, error/crash results, summary
-  maps) so callers can guard with `if repos = result_repos(...) do` and render
-  nothing — legacy behavior stays byte-identical.
-
-  Shape notes (see `EvoGit.Runtime.Helpers.report_map/5` + the Store Codec):
-  the `repos` value is `%{repo_id => %{"commit_sha" => sha, "branch_name" =>
-  branch | nil}}` with STRING keys — after the `EvoGit.Store.Codec` round trip
-  the top-level `"repos"` key is NOT in `@result_data_fields`, so it stays a
-  string key with string-keyed inner maps (unknown keys are never atomized).
-  Both atom and string keys are read defensively so in-memory (pre-encode)
-  results work identically. Non-map entries are dropped; `branch_name` nil
-  means "no changes" for the primary repo (or a failed branch creation for a
-  foreign repo).
-  """
-  def result_repos({:ok, data}) when is_map(data), do: result_repos(data)
-
-  def result_repos(data) when is_map(data) do
-    case Map.get(data, :repos) || Map.get(data, "repos") do
-      repos when is_map(repos) and map_size(repos) > 0 ->
-        entries =
-          Enum.flat_map(repos, fn
-            {id, entry} when is_map(entry) ->
-              [
-                %{
-                  id: to_string(id),
-                  commit_sha: Map.get(entry, :commit_sha) || Map.get(entry, "commit_sha"),
-                  branch_name: Map.get(entry, :branch_name) || Map.get(entry, "branch_name")
-                }
-              ]
-
-            _ ->
-              []
-          end)
-
-        case entries do
-          [] -> nil
-          entries -> primary_first(entries)
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  def result_repos(_), do: nil
-
-  # `"primary"` first (contract: always present), then foreign repos sorted by
-  # id for deterministic rendering.
-  defp primary_first(entries) do
-    {primary, foreign} = Enum.split_with(entries, &(&1.id == "primary"))
-    primary ++ Enum.sort_by(foreign, & &1.id)
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public helpers — task_repos/2 (COLLAPSED card multi-repo indicator)
-  # ---------------------------------------------------------------------------
-
-  @doc """
-  Derives the collapsed card's per-repo indicator from the task SUMMARY map,
-  enriched by the lazily-fetched `detail` once it has landed.
-
-  Sources, in order:
-
-    1. the primary repo, straight from the summary —
-       `%{id: "primary", commit_sha: task.commit_sha, branch_name: task.branch_name}`;
-    2. one entry per foreign repo in `opts[:foreign_repos]` (structs or maps) —
-       `%{id:, path:, description:, writable:, commit_sha: nil, branch_name: nil}`.
-       Entries without a usable string id, and any entry whose id is
-       `"primary"`, are skipped;
-    3. enrichment from `detail.task`'s result `repos` map (see
-       `result_repos/1`): a NON-nil detail `commit_sha`/`branch_name` overrides
-       the summary value, and detail-only repo ids absent from
-       `opts[:foreign_repos]` are added as badge-only entries.
-
-  Returns `nil` — so the caller renders NOTHING (legacy behaviour) — unless the
-  task is genuinely multi-repo: at least one foreign repo is configured, or the
-  detail result carries more than the primary repo. Otherwise the entries are
-  ordered primary-first, foreign repos sorted by id.
-
-  TOTAL: `task` may be odd, `opts` nil or not a keyword list, entries may be
-  non-maps, `detail` may be nil or `:loading`/`:error` — none of it raises.
-  """
-  def task_repos(task, detail) do
-    task = if is_map(task), do: task, else: %{}
-
-    summary_primary = %{
-      id: "primary",
-      commit_sha: Map.get(task, :commit_sha),
-      branch_name: Map.get(task, :branch_name),
-      path: nil,
-      description: nil,
-      writable: false
-    }
-
-    foreign = foreign_repo_entries(Map.get(task, :opts))
-    detail_repos = detail_result_repos(detail)
-
-    if foreign == [] and not more_than_primary?(detail_repos) do
-      nil
-    else
-      [summary_primary | foreign]
-      |> merge_detail_repos(detail_repos)
-      |> primary_first()
-    end
-  end
-
-  # `detail.task`'s result `repos` entries — nil while the detail is missing,
-  # still loading, or errored out (all treated identically: no enrichment).
-  defp detail_result_repos(%{state: :ok, task: lite}) when is_map(lite),
-    do: result_repos(Map.get(lite, :result))
-
-  defp detail_result_repos(_detail), do: nil
-
-  defp more_than_primary?(repos) when is_list(repos), do: length(repos) > 1
-  defp more_than_primary?(_repos), do: false
-
-  # Merge the detail result's per-repo entries into the summary-derived ones:
-  # a non-nil detail value wins, a nil detail value keeps the summary value,
-  # and detail-only ids are appended (badge-only entries, no path/description).
-  defp merge_detail_repos(entries, detail_repos) when is_list(detail_repos) do
-    Enum.reduce(detail_repos, entries, fn %{id: id} = detail_entry, acc ->
-      case Enum.find_index(acc, &(&1.id == id)) do
-        nil ->
-          [
-            %{
-              id: id,
-              commit_sha: detail_entry.commit_sha,
-              branch_name: detail_entry.branch_name,
-              path: nil,
-              description: nil,
-              writable: false
-            }
-            | acc
-          ]
-
-        index ->
-          List.update_at(acc, index, fn entry ->
-            %{
-              entry
-              | commit_sha: detail_entry.commit_sha || entry.commit_sha,
-                branch_name: detail_entry.branch_name || entry.branch_name
-            }
-          end)
-      end
-    end)
-  end
-
-  defp merge_detail_repos(entries, _detail_repos), do: entries
-
-  # `opts[:foreign_repos]` → normalized badge entries. Tolerant of a nil /
-  # non-keyword `opts` and of non-list / non-map entries.
-  defp foreign_repo_entries(opts) when is_list(opts) do
-    opts
-    |> foreign_repos_list()
-    |> Enum.flat_map(fn entry ->
-      case foreign_repo_entry(entry) do
-        nil -> []
-        entry -> [entry]
-      end
-    end)
-  end
-
-  defp foreign_repo_entries(_opts), do: []
-
-  defp foreign_repos_list(opts) do
-    Enum.find_value(opts, [], fn
-      {:foreign_repos, repos} when is_list(repos) -> repos
-      _ -> nil
-    end)
-  end
-
-  # `%EvoGit.Core.ForeignRepo{}` structs AND plain atom/string-keyed maps are
-  # accepted (settings round-trips hand either shape).
-  defp foreign_repo_entry(entry) when is_map(entry) do
-    case Map.get(entry, :id) || Map.get(entry, "id") do
-      id when is_binary(id) and id != "" and id != "primary" ->
-        %{
-          id: id,
-          commit_sha: nil,
-          branch_name: nil,
-          path:
-            Map.get(entry, :root) || Map.get(entry, "root") || Map.get(entry, :path) ||
-              Map.get(entry, "path"),
-          description: Map.get(entry, :description) || Map.get(entry, "description"),
-          writable: (Map.get(entry, :writable) || Map.get(entry, "writable")) == true
-        }
-
-      _ ->
-        nil
-    end
-  end
-
-  defp foreign_repo_entry(_entry), do: nil
-
-  attr(:repos, :list, required: true)
-  attr(:size_class, :string, default: "text-xs")
-
-  @doc """
-  Renders the per-repo commit/branch badges for a task result carrying the
-  `repos` key (see `result_repos/1`): one compact row per repo —
-  `id: <short_sha> (<branch>)` — primary first, foreign repos sorted by id.
-  A nil branch renders just the short sha, plus a muted "no changes" hint for
-  the primary repo (its nil branch means the primary produced no commits).
-  """
-  def result_repos_badges(assigns) do
-    ~H"""
-    <div class={["flex flex-wrap items-center gap-x-3 gap-y-1.5", @size_class]}>
-      <%= for repo <- @repos do %>
-        <span class="inline-flex items-center gap-1.5 min-w-0">
-          <span class="badge badge-ghost font-mono font-medium">
-            {repo.id}:
-          </span>
-          <%= if repo.commit_sha do %>
-            <span class="badge badge-ghost font-mono">
-              <.icon name="hero-code-bracket" class="size-3 mr-1 opacity-60" />
-              {String.slice(repo.commit_sha, 0..6)}
-            </span>
-          <% end %>
-          <%= if repo.branch_name do %>
-            <span class={branch_badge_class()}>
-              <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
-              <span class="truncate min-w-0">{repo.branch_name}</span>
-            </span>
-          <% else %>
-            <%= if repo.id == "primary" do %>
-              <span class="badge badge-ghost font-mono opacity-60">
-                <%!-- zh_CN: 主仓库本次无改动 --%>{gettext("no changes")}
-              </span>
-            <% end %>
-          <% end %>
-        </span>
-      <% end %>
-    </div>
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public helpers — render_result/2
-  # ---------------------------------------------------------------------------
-
-  def render_result(data) do
-    render_result(data, [])
-  end
-
-  def render_result({:ok, %{result: result} = data}, opts) when is_binary(result) do
-    render_result(data, opts)
-  end
-
-  def render_result({:error, reason}, opts) do
-    # `truncate: true` = expanded-card body (capped preview of the inspected
-    # reason); `truncate: false` = zoomed view (the modal's own container
-    # scrolls, full text).
-    truncate = Keyword.get(opts, :truncate, true)
-    size_class = if truncate, do: "text-xs", else: "text-sm"
-    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
-
-    wrapper_class =
-      if truncate,
-        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
-
-    assigns = %{
-      reason: text_preview(inspect(reason, limit: :infinity), truncate),
-      size_class: size_class,
-      wrapper_class: wrapper_class,
-      scroll_class: scroll_class
-    }
-
-    ~H"""
-    <div class={@wrapper_class}>
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
-      </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
-      <.preview_limit_note preview={@reason} />
-    </div>
-    """
-  end
-
-  def render_result({:exit, reason}, opts) do
-    # `truncate: true` = expanded-card body (capped preview of the inspected
-    # reason); `truncate: false` = zoomed view (the modal's own container
-    # scrolls, full text).
-    truncate = Keyword.get(opts, :truncate, true)
-    size_class = if truncate, do: "text-xs", else: "text-sm"
-    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
-
-    wrapper_class =
-      if truncate,
-        do: "bg-error/10 border border-error/20 p-3 rounded-lg",
-        else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
-
-    assigns = %{
-      reason: text_preview(inspect(reason, limit: :infinity), truncate),
-      size_class: size_class,
-      wrapper_class: wrapper_class,
-      scroll_class: scroll_class
-    }
-
-    ~H"""
-    <div class={@wrapper_class}>
-      <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
-        <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
-      </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
-      <.preview_limit_note preview={@reason} />
-    </div>
-    """
-  end
-
-  def render_result(%{result: result, no_changes: true} = data, opts) when is_binary(result) do
-    truncate = Keyword.get(opts, :truncate, true)
-
-    assigns = %{
-      result: text_preview(result, truncate),
-      repos: result_repos(data),
-      truncate: truncate
-    }
-
-    ~H"""
-    <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
-      <%= if @truncate do %>
-        <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
-          <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-            {@result.text}
-          </div>
-          <.preview_limit_note preview={@result} />
-        </div>
-        <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
-          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
-          </h5>
-          <p class="text-sm text-warning">
-            <%!-- zh_CN: agent → "智能体" --%>{gettext(
-              "The agent completed without making any changes to the codebase."
-            )}
-          </p>
-        </div>
-      <% else %>
-        <div class="bg-warning/10 border border-warning/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-          <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-information-circle" class="size-3" /> {gettext("No Changes")}
-          </h5>
-          <p class="text-sm text-warning">
-            <%!-- zh_CN: agent → "智能体" --%>{gettext(
-              "The agent completed without making any changes to the codebase."
-            )}
-          </p>
-        </div>
-        <div class="bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto">
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
-            <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
-          </h5>
-          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result.text %></pre>
-        </div>
-      <% end %>
-      <%= if @repos do %>
-        <div>
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-server-stack" class="size-3" />
-            <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
-              "Repositories"
-            )}
-          </h5>
-          <EvoDashWeb.TaskCardComponents.result_repos_badges
-            repos={@repos}
-            size_class={if @truncate, do: "text-xs", else: "text-sm"}
-          />
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  def render_result(%{result: result, commit_sha: commit_sha} = data, opts)
-      when is_binary(result) do
-    truncate = Keyword.get(opts, :truncate, true)
-
-    assigns = %{
-      result: text_preview(result, truncate),
-      commit_sha: commit_sha,
-      tag: Map.get(data, :tag),
-      branch_name: Map.get(data, :branch_name),
-      pr_url: Map.get(data, :pr_url),
-      repos: result_repos(data),
-      truncate: truncate
-    }
-
-    ~H"""
-    <div class={if @truncate, do: "space-y-3", else: "space-y-4"}>
-      <%= if !@truncate do %>
-        <div class="flex flex-wrap gap-2 mb-4">
-          <%= if @branch_name do %>
-            <span class={[branch_badge_class(), "text-sm"]}>
-              <.icon name="hero-code-bracket-square" class="size-4 mr-1 shrink-0" />
-              <span class="truncate min-w-0">{@branch_name}</span>
-            </span>
-          <% end %>
-          <%= if @commit_sha do %>
-            <span class="badge badge-ghost font-mono text-sm">
-              <.icon name="hero-code-bracket" class="size-4 mr-1" />
-              {String.slice(@commit_sha, 0..7)}
-            </span>
-          <% end %>
-          <%= if @tag do %>
-            <span class="badge badge-ghost font-mono text-sm">
-              <.icon name="hero-tag" class="size-4 mr-1" />
-              {@tag}
-            </span>
-          <% end %>
-          <%= if @pr_url do %>
-            <a
-              href={@pr_url}
-              target="_blank"
-              class="badge badge-success font-mono text-sm hover:opacity-80 transition-opacity"
-            >
-              <.icon name="hero-arrow-top-right-on-square" class="size-4 mr-1" />
-              {gettext("View PR")}
-            </a>
-          <% end %>
-        </div>
-        <%= if @repos do %>
-          <div class="mb-4">
-            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-              <.icon name="hero-server-stack" class="size-3" />
-              <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
-                "Repositories"
-              )}
-            </h5>
-            <EvoDashWeb.TaskCardComponents.result_repos_badges repos={@repos} size_class="text-sm" />
-          </div>
-        <% end %>
-      <% end %>
-      <div class={
-        if @truncate,
-          do: "bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner",
-          else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
-      }>
-        <%= if !@truncate do %>
-          <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-            <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" /> {gettext("Agent Message")}
-          </h5>
-        <% end %>
-        <%= if @truncate do %>
-          <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-            {@result.text}
-          </div>
-          <.preview_limit_note preview={@result} />
-        <% else %>
-          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result.text %></pre>
-        <% end %>
-      </div>
-      <%= if @truncate do %>
-        <div class="flex flex-wrap gap-2 text-xs">
-          <%= if @commit_sha do %>
-            <span class="badge badge-ghost font-mono">
-              <.icon name="hero-code-bracket" class="size-3 mr-1" />
-              {String.slice(@commit_sha, 0..7)}
-            </span>
-          <% end %>
-          <%= if @tag do %>
-            <span class="badge badge-ghost font-mono">
-              <.icon name="hero-tag" class="size-3 mr-1" />
-              {@tag}
-            </span>
-          <% end %>
-          <%= if @branch_name do %>
-            <span class={branch_badge_class()}>
-              <.icon name="hero-code-bracket-square" class="size-3 mr-1 shrink-0" />
-              <span class="truncate min-w-0">{@branch_name}</span>
-            </span>
-          <% end %>
-          <%= if @pr_url do %>
-            <a
-              href={@pr_url}
-              target="_blank"
-              class="badge badge-success font-mono hover:opacity-80 transition-opacity"
-            >
-              <.icon name="hero-arrow-top-right-on-square" class="size-3 mr-1" />
-              {gettext("View PR")}
-            </a>
-          <% end %>
-        </div>
-        <%= if @repos do %>
-          <div>
-            <h5 class="text-xs font-bold text-base-content/70 mb-2 uppercase tracking-wide flex items-center gap-1.5">
-              <.icon name="hero-server-stack" class="size-3" />
-              <%!-- zh_CN: 各仓库（主仓库与可写外部仓库）的提交与分支 --%>{gettext(
-                "Repositories"
-              )}
-            </h5>
-            <EvoDashWeb.TaskCardComponents.result_repos_badges repos={@repos} />
-          </div>
-        <% end %>
-      <% end %>
-    </div>
-    """
-  end
-
-  def render_result(%{result: result}, opts) do
-    truncate = Keyword.get(opts, :truncate, true)
-    size_class = if truncate, do: "text-xs", else: "text-sm"
-    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
-
-    wrapper_class =
-      if truncate,
-        do: "bg-base-100 p-3 rounded-lg border border-base-200",
-        else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
-
-    assigns = %{
-      result: text_preview(inspect(result, pretty: true, limit: :infinity), truncate),
-      size_class: size_class,
-      wrapper_class: wrapper_class,
-      scroll_class: scroll_class
-    }
-
-    ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result.text %></pre>
-    <.preview_limit_note preview={@result} />
-    """
-  end
-
-  def render_result(result, opts) do
-    truncate = Keyword.get(opts, :truncate, true)
-    size_class = if truncate, do: "text-xs", else: "text-sm"
-    scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
-
-    wrapper_class =
-      if truncate,
-        do: "bg-base-100 p-3 rounded-lg border border-base-200 overflow-x-auto shadow-inner",
-        else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
-
-    assigns = %{
-      result: text_preview(inspect(result, pretty: true, limit: :infinity), truncate),
-      size_class: size_class,
-      wrapper_class: wrapper_class,
-      scroll_class: scroll_class
-    }
-
-    ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result.text %></pre>
-    <.preview_limit_note preview={@result} />
-    """
-  end
-
-  # ---------------------------------------------------------------------------
-  # Public API — render_result_full/1 renders full task result without truncation
-  # ---------------------------------------------------------------------------
-
-  # `truncate: false` = the Full Result MODAL body: THE complete, uncapped text
-  # (no byte cap, no limit note) — reached only by an explicit user action
-  # (`view_full_result`) and scrolled by the modal's own container.
-  def render_result_full(assigns) do
-    render_result(assigns, truncate: false)
-  end
-
-  @doc """
-  Returns the copyable plain-text representation of a task result value.
-
-  Used by both the unzoomed "Agent Message" card copy button and the zoomed
-  Full Result modal copy button (`tasks_live.ex`). Success/no-changes results
-  copy the raw agent message; error/crash results copy the inspected reason
-  (unlimited); anything else falls back to a pretty-inspected representation.
-
-  Deliberately returns the COMPLETE text — this function itself never truncates
-  so the Full Result modal (`tasks_live.ex`) can copy the whole thing. The
-  in-card copy button deliberately does NOT use the raw value: it bounds its
-  HTML-materialized `data-content` through `copy_payload/1` (1 MiB) and renders
-  only a preview in the body (`render_result/2` with `truncate: true`).
-  """
-  def result_copy_text({:ok, %{result: result}}) when is_binary(result), do: result
-  def result_copy_text({:error, reason}), do: inspect(reason, limit: :infinity)
-  def result_copy_text({:exit, reason}), do: inspect(reason, limit: :infinity)
-  def result_copy_text(%{result: result}) when is_binary(result), do: result
-  def result_copy_text(result), do: inspect(result, pretty: true, limit: :infinity)
-
-  # Shared truncation classes for branch-name badges (all 3 render sites).
-  # daisyUI `.badge` is `display: inline-flex; width: fit-content` with no
-  # wrapping, so a long unbreakable branch name (`genesis/agent_<id>`) would
-  # force the badge wider than the card. `min-w-0` lets the badge (a flex
-  # item) shrink below its content width, the responsive `max-w-*` caps it at
-  # narrow widths only (`md:max-w-none` = full name on desktop), and the text
-  # itself is wrapped in a `truncate` span — text-overflow ellipsis does NOT
-  # apply on the flex badge container itself, only on a block container.
-  defp branch_badge_class do
-    "badge badge-primary font-mono min-w-0 max-w-[10rem] sm:max-w-[14rem] md:max-w-none"
-  end
+  #
+  # Call sites (`tasks_live.ex`, tests, the card template) keep calling these
+  # through `EvoDashWeb.TaskCardComponents`; only the implementations moved.
+
+  defdelegate objective_text(opts), to: Options
+  defdelegate render_options(opts), to: Options
+  defdelegate render_options(opts, render_opts), to: Options
+  defdelegate render_options_full(opts), to: Options
+
+  defdelegate result_repos(data), to: Repos
+  defdelegate task_repos(task, detail), to: Repos
+  defdelegate result_repos_badges(assigns), to: Repos
+
+  defdelegate render_result(data), to: ResultRender
+  defdelegate render_result(data, opts), to: ResultRender
+  defdelegate render_result_full(assigns), to: ResultRender
+  defdelegate result_copy_text(result), to: ResultRender
 
   # Review candidacy is deliberately RESULT-AGNOSTIC: EVERY completed/cancelled
   # task is reviewable. A task may have made no changes in its PRIMARY repo but

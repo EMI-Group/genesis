@@ -80,6 +80,25 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
         }
 
   @doc """
+  Toggles one card's expanded state, fetching its detail when it opens.
+
+  COLLAPSE only drops the id from `:expanded_task_ids`: the cached detail is
+  kept (a re-expand renders instantly) and nothing is fetched. OPEN adds the id
+  and kicks off that card's ONE lazy detail fetch — `ensure/2` is the
+  in-flight/cache guard, so a second expand while loading is a no-op.
+  """
+  @spec toggle(Phoenix.LiveView.Socket.t(), String.t()) :: Phoenix.LiveView.Socket.t()
+  def toggle(socket, task_id) do
+    if MapSet.member?(expanded_ids(socket), task_id) do
+      assign(socket, :expanded_task_ids, MapSet.delete(expanded_ids(socket), task_id))
+    else
+      socket
+      |> assign(:expanded_task_ids, MapSet.put(expanded_ids(socket), task_id))
+      |> ensure(task_id)
+    end
+  end
+
+  @doc """
   Ensures a detail entry exists for `task_id`, fetching it when it does not.
 
   This is the per-card in-flight AND cache guard: an entry in ANY state
