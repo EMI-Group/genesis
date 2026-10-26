@@ -1,13 +1,18 @@
 defmodule EvoGit.Agent.Tools.LspTest do
   @moduledoc """
-  `async: false` — every execute-level test here spawns real OS processes (an
-  `elixir` fake language server) and the unconfigured cases read the resolved user
-  config, so keeping the module serial keeps process/pid accounting honest.
+  `async: false` — every execute-level test here spawns real OS processes (a fake
+  language server) and the unconfigured cases read the resolved user config, so
+  keeping the module serial keeps process/pid accounting honest.
 
-  No real language server, no network, no compilation: the fixture at
-  `test/support/fake_lsp_server.exs` speaks the LSP base protocol over stdio with
-  canned answers, so these tests cover the WHOLE pipeline (spawn → initialize →
-  didOpen → request → teardown → SIGKILL).
+  No real language server, no network, no compilation: the fixture
+  `EvoGit.FakeLspServer` (`test/support/fake_lsp_server.ex`) speaks the LSP base
+  protocol over stdio with canned answers, so these tests cover the WHOLE pipeline
+  (spawn → initialize → didOpen → request → teardown → SIGKILL).
+
+  The fixture runs as a REAL OS child in every execute-level test — the module
+  packs its compiled BEAM into one throwaway `escript` in `setup_all`, which puts
+  the interpreter bill at `escript` boot (~120 ms) instead of `elixir <script>.exs`
+  (an Elixir boot plus a script compile, ~300 ms) on EVERY spawn.
   """
 
   use ExUnit.Case, async: false
@@ -17,7 +22,11 @@ defmodule EvoGit.Agent.Tools.LspTest do
 
   @exact_unconfigured "Error: no language server configured — set [lsp] command in config.toml"
 
-  @fixture Path.expand("../../../support/fake_lsp_server.exs", __DIR__)
+  @fixture_script "fake_lsp_server"
+
+  setup_all do
+    {:ok, fake_lsp: build_fake_lsp_escript()}
+  end
 
   setup do
     repo = tmp_dir!("repo")
@@ -42,17 +51,40 @@ defmodule EvoGit.Agent.Tools.LspTest do
     path
   end
 
-  # Config for the fake language server: `command` must be an executable, so the
-  # `elixir` binary itself is the command and the fixture script is its argument.
-  defp fake_server(mode, opts \\ []) do
-    elixir = System.find_executable("elixir") || flunk("the `elixir` binary is not on PATH")
+  # Packs the COMPILED fixture module into a standalone `escript` once per module
+  # run: `escript <script> <elixir_ebin> [mode]`.
+  #
+  # An escript boots a bare Erlang node (no Elixir application), so the fixture
+  # adds the Elixir `ebin` directory — handed to it as the first argument — to its
+  # code path before calling any Elixir function. Writing it to disk once and
+  # letting the OS exec it keeps the coverage real (every handshake below is a
+  # genuine child process with real stdio pipes) while dropping the ~300 ms
+  # `elixir` + script-compile boot that dominated this module.
+  defp build_fake_lsp_escript do
+    escript = System.find_executable("escript") || flunk("the `escript` binary is not on PATH")
 
-    args = [@fixture] ++ if(mode, do: [mode], else: [])
+    {:module, EvoGit.FakeLspServer} = Code.ensure_loaded(EvoGit.FakeLspServer)
+    beam = File.read!(:code.which(EvoGit.FakeLspServer))
+
+    dir = tmp_dir!("fixture")
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    script = Path.join(dir, @fixture_script)
+    :ok = :escript.create(String.to_charlist(script), beam: beam)
+
+    %{escript: escript, script: script, ebin: Application.app_dir(:elixir, "ebin")}
+  end
+
+  # Config for the fake language server: `command` must be an executable, so the
+  # `escript` binary itself is the command, followed by the packed fixture script,
+  # the Elixir code path the fixture needs on its bare node, and the mode.
+  defp fake_server(fake_lsp, mode, opts \\ []) do
+    args = [fake_lsp.script, fake_lsp.ebin] ++ if(mode, do: [mode], else: [])
 
     Keyword.merge(
       [
         enabled: true,
-        command: elixir,
+        command: fake_lsp.escript,
         args: args,
         timeout: 60_000,
         diagnostics_timeout: 20_000,
@@ -159,21 +191,31 @@ defmodule EvoGit.Agent.Tools.LspTest do
   # ── Argument validation ───────────────────────────────────────────────────
 
   describe "argument validation" do
-    test "rejects an unknown action", %{repo: repo, source: source} do
+    test "rejects an unknown action", %{repo: repo, source: source, fake_lsp: fake_lsp} do
       output =
-        Lsp.execute(%{"action" => "rename", "path" => source}, repo, repo, fake_server(nil))
+        Lsp.execute(
+          %{"action" => "rename", "path" => source},
+          repo,
+          repo,
+          fake_server(fake_lsp, nil)
+        )
 
       assert output =~ "Error: argument 'action' must be one of diagnostics, hover, definition"
     end
 
-    test "requires line and column for hover", %{repo: repo, source: source} do
+    test "requires line and column for hover", %{repo: repo, source: source, fake_lsp: fake_lsp} do
       output =
-        Lsp.execute(%{"action" => "hover", "path" => source}, repo, repo, fake_server(nil))
+        Lsp.execute(
+          %{"action" => "hover", "path" => source},
+          repo,
+          repo,
+          fake_server(fake_lsp, nil)
+        )
 
       assert output =~ "Error: argument 'line' must be a 1-based integer"
     end
 
-    test "rejects a path outside the repository", %{repo: repo} do
+    test "rejects a path outside the repository", %{repo: repo, fake_lsp: fake_lsp} do
       outside = tmp_dir!("outside")
       File.write!(Path.join(outside, "other.ex"), "defmodule Other, do: nil\n")
       on_exit(fn -> File.rm_rf(outside) end)
@@ -183,25 +225,26 @@ defmodule EvoGit.Agent.Tools.LspTest do
           diagnostics_args(Path.join(outside, "other.ex")),
           repo,
           repo,
-          fake_server(nil)
+          fake_server(fake_lsp, nil)
         )
 
       assert output =~ "Error: path"
       assert output =~ "is outside the repository"
     end
 
-    test "reports a missing file clearly", %{repo: repo} do
+    test "reports a missing file clearly", %{repo: repo, fake_lsp: fake_lsp} do
       output =
-        Lsp.execute(diagnostics_args("lib/nope.ex"), repo, repo, fake_server(nil))
+        Lsp.execute(diagnostics_args("lib/nope.ex"), repo, repo, fake_server(fake_lsp, nil))
 
       assert output =~ "Error: could not open lib/nope.ex"
     end
 
-    test "rejects a file above the 2 MB analysis limit", %{repo: repo} do
+    test "rejects a file above the 2 MB analysis limit",
+         %{repo: repo, fake_lsp: fake_lsp} do
       big = Path.join(repo, "lib/big.ex")
       File.write!(big, String.duplicate("x", 2 * 1024 * 1024 + 1))
 
-      output = Lsp.execute(diagnostics_args(big), repo, repo, fake_server(nil))
+      output = Lsp.execute(diagnostics_args(big), repo, repo, fake_server(fake_lsp, nil))
 
       assert output =~ "Error: file is too large to analyse"
     end
@@ -211,8 +254,8 @@ defmodule EvoGit.Agent.Tools.LspTest do
 
   describe "diagnostics" do
     test "runs the full handshake, renders one line per diagnostic, and reaps the server",
-         %{repo: repo, source: source} do
-      output = Lsp.execute(diagnostics_args(source), repo, repo, fake_server(nil))
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
+      output = Lsp.execute(diagnostics_args(source), repo, repo, fake_server(fake_lsp, nil))
 
       assert output =~ "lib/sample.ex"
       assert output =~ "2 diagnostic(s)"
@@ -232,21 +275,28 @@ defmodule EvoGit.Agent.Tools.LspTest do
           :ok
 
         pgrep ->
-          {out, _status} = System.cmd(pgrep, ["-f", @fixture], stderr_to_stdout: true)
+          pattern = fake_lsp.script |> Regex.escape()
+
+          {out, _status} =
+            System.cmd(pgrep, ["-f", pattern], stderr_to_stdout: true)
+
           assert String.trim(out) == ""
       end
     end
 
-    test "renders `No diagnostics` for a clean file", %{repo: repo, source: source} do
-      output = Lsp.execute(diagnostics_args(source), repo, repo, fake_server("clean"))
+    test "renders `No diagnostics` for a clean file",
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
+      output = Lsp.execute(diagnostics_args(source), repo, repo, fake_server(fake_lsp, "clean"))
 
       assert output == "No diagnostics for lib/sample.ex."
     end
   end
 
   describe "hover" do
-    test "renders the server's markup contents", %{repo: repo, source: source} do
-      output = Lsp.execute(position_args("hover", source, 2, 3), repo, repo, fake_server(nil))
+    test "renders the server's markup contents",
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
+      output =
+        Lsp.execute(position_args("hover", source, 2, 3), repo, repo, fake_server(fake_lsp, nil))
 
       assert output =~ "Hover at lib/sample.ex:2:3"
       assert output =~ "fake hover from the fixture"
@@ -254,9 +304,15 @@ defmodule EvoGit.Agent.Tools.LspTest do
   end
 
   describe "definition" do
-    test "renders one <path>:<line>:<col> line per location", %{repo: repo, source: source} do
+    test "renders one <path>:<line>:<col> line per location",
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
       output =
-        Lsp.execute(position_args("definition", source, 2, 3), repo, repo, fake_server(nil))
+        Lsp.execute(
+          position_args("definition", source, 2, 3),
+          repo,
+          repo,
+          fake_server(fake_lsp, nil)
+        )
 
       # The fixture answers with a Location at 0-based 9:2 in a percent-clean
       # file:// URI; it must come back as a filesystem path at 1-based 10:3.
@@ -264,9 +320,14 @@ defmodule EvoGit.Agent.Tools.LspTest do
     end
 
     test "renders the empty-result message when the server returns null",
-         %{repo: repo, source: source} do
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
       output =
-        Lsp.execute(position_args("definition", source, 1, 1), repo, repo, fake_server(nil))
+        Lsp.execute(
+          position_args("definition", source, 1, 1),
+          repo,
+          repo,
+          fake_server(fake_lsp, nil)
+        )
 
       assert output == "No definition found at lib/sample.ex:1:1."
     end
@@ -276,10 +337,10 @@ defmodule EvoGit.Agent.Tools.LspTest do
 
   describe "failing servers" do
     test "reports an immediate exit with the captured stderr excerpt",
-         %{repo: repo, source: source} do
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
       {micros, output} =
         :timer.tc(fn ->
-          Lsp.execute(diagnostics_args(source), repo, repo, fake_server("crash"))
+          Lsp.execute(diagnostics_args(source), repo, repo, fake_server(fake_lsp, "crash"))
         end)
 
       assert output =~ "Error: the language server exited unexpectedly"
@@ -290,7 +351,8 @@ defmodule EvoGit.Agent.Tools.LspTest do
       assert div(micros, 1000) < 60_000
     end
 
-    test "times out when the server never answers initialize", %{repo: repo, source: source} do
+    test "times out when the server never answers initialize",
+         %{repo: repo, source: source, fake_lsp: fake_lsp} do
       # A short (but still real) initialize budget: the `silent` fixture NEVER
       # answers, so only the configured budget elapses — nothing here races a
       # wall clock, and the message interpolates the budget under test.
@@ -299,19 +361,19 @@ defmodule EvoGit.Agent.Tools.LspTest do
           diagnostics_args(source),
           repo,
           repo,
-          fake_server("silent", timeout: 400)
+          fake_server(fake_lsp, "silent", timeout: 400)
         )
 
       assert output =~ "Error: the language server did not answer initialize within 400 ms"
     end
 
-    test "reports a malformed frame", %{repo: repo, source: source} do
+    test "reports a malformed frame", %{repo: repo, source: source, fake_lsp: fake_lsp} do
       output =
         Lsp.execute(
           diagnostics_args(source),
           repo,
           repo,
-          fake_server("malformed", timeout: 20_000)
+          fake_server(fake_lsp, "malformed", timeout: 20_000)
         )
 
       assert output =~ "Error: malformed LSP frame"

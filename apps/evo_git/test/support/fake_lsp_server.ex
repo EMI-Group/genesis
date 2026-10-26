@@ -1,46 +1,82 @@
-#!/usr/bin/env elixir
-# Fake language server fixture for `EvoGit.Agent.Tools.Lsp` tests.
-#
-# Speaks the LSP base protocol over stdio with CANNED answers, so the `lsp` tool
-# can be exercised end-to-end (spawn → initialize → didOpen → request → teardown)
-# without any real language server, project compilation, or network:
-#
-#   initialize                       → capabilities {}
-#   textDocument/didOpen             → textDocument/publishDiagnostics for the URI
-#   textDocument/hover               → MarkupContent with HOVER_TEXT
-#   textDocument/definition          → one Location (and a JSON null when asked at
-#                                      line 1, column 1 → the "no definition" path)
-#   shutdown                         → result null
-#   exit (notification)              → halt 0
-#
-# Modes (first CLI argument):
-#
-#   (none)      normal canned behaviour
-#   clean       same as normal, but publishDiagnostics carries an EMPTY list
-#               (the "No diagnostics for <path>." path)
-#   crash       write a line to stderr and exit 3 IMMEDIATELY, before reading
-#               anything (the "server exits immediately" error path)
-#   silent      never answer initialize (the initialize-timeout path)
-#   malformed   answer initialize with a frame that has no Content-Length header
-#
-# Launched by the tests as `elixir fake_lsp_server.exs [mode]`. Deliberately
-# dependency-free: a bare `elixir <script>` has no Mix deps on its code path, so
-# JSON comes from OTP's stdlib `:json` module (OTP 27+).
-defmodule FakeLspServer do
-  @moduledoc false
+defmodule EvoGit.FakeLspServer do
+  @moduledoc """
+  Fake language server fixture for `EvoGit.Agent.Tools.Lsp` tests.
+
+  Speaks the LSP base protocol over stdio with CANNED answers, so the `lsp` tool
+  can be exercised end-to-end (spawn → initialize → didOpen → request → teardown)
+  without any real language server, project compilation, or network:
+
+    initialize                       → capabilities {}
+    textDocument/didOpen             → textDocument/publishDiagnostics for the URI
+    textDocument/hover               → MarkupContent with HOVER_TEXT
+    textDocument/definition          → one Location (and a JSON null when asked at
+                                       line 1, column 1 → the "no definition" path)
+    shutdown                         → result null
+    exit (notification)              → halt 0
+
+  Modes (first CLI argument after the Elixir code path):
+
+    (none)      normal canned behaviour
+    clean       same as normal, but publishDiagnostics carries an EMPTY list
+                (the "No diagnostics for <path>." path)
+    crash       write a line to stderr and exit 3 IMMEDIATELY, before reading
+                anything (the "server exits immediately" error path)
+    silent      never answer initialize (the initialize-timeout path)
+    malformed   answer initialize with a frame that has no Content-Length header
+
+  ## How the tests launch it
+
+  This module is COMPILED (`mix.exs` adds `test/support` to
+  `elixirc_paths(:test)`), and `lsp_test.exs` packs its BEAM into a throwaway
+  `escript` ONCE per module (`setup_all`). Every execute-level test then forks a
+  REAL OS child that speaks raw LSP over its stdio pipes — the only thing that
+  changed is the interpreter bill: `escript` boots a bare Erlang node (~120 ms)
+  instead of `elixir <script>.exs` (an Elixir boot PLUS a script compile, ~300 ms
+  per test).
+
+  escript contract: `escript <script> <elixir_ebin> [mode]`.
+
+  The FIRST argument is the Elixir installation's `ebin` directory, because an
+  escript boots a BARE Erlang node: the Elixir application is not started, so the
+  module must put Elixir's modules on the code path before calling any of them
+  (`:code.add_patha/1` is an Erlang function, so it is safe as the very first
+  statement). Passing it as an argv element — rather than in the escript's `%%!`
+  emulator-argument line — keeps paths with spaces working.
+
+  Deliberately dependency-free: the code path has no Mix deps, so JSON comes from
+  OTP's stdlib `:json` module (OTP 27+).
+  """
 
   @hover_text "**def** hello_world() — fake hover from the fixture"
   @diagnostic_message "undefined function foo/0 (fake diagnostic from the fixture)"
   @definition_path "/fake/lib/definition.ex"
 
-  def main do
+  @doc """
+  escript entry point — `args` are the command line arguments as charlists.
+  """
+  def main([ebin | rest]) do
+    # Bare Erlang node: make Elixir's modules loadable before touching any of them.
+    _ = :code.add_patha(ebin)
+
+    rest
+    |> Enum.map(&normalize_arg/1)
+    |> List.first()
+    |> run()
+  end
+
+  defp normalize_arg(arg) when is_binary(arg), do: arg
+  defp normalize_arg(arg) when is_list(arg), do: List.to_string(arg)
+
+  defp run(mode) do
     # Raw-byte stdio (what a real language server does). The default stdio device
     # is in `:unicode` encoding mode, so `IO.binwrite/2` would re-encode non-ASCII
     # UTF-8 (e.g. an em dash: E2 80 94 → C3 A2 C2 80 C2 94) and the frame's
-    # `Content-Length` would no longer match the bytes on the wire.
-    _ = :io.setopts(:standard_io, encoding: :latin1)
+    # `Content-Length` would no longer match the bytes on the wire. `binary: true`
+    # keeps `IO.binread/2` returning binaries even on a bare node, where the stdio
+    # device has not been put in binary mode by the Elixir application.
+    _ = :io.setopts(:standard_io, encoding: :latin1, binary: true)
 
-    case List.first(System.argv()) do
+    case mode do
       "crash" -> crash()
       "silent" -> never_reply()
       "malformed" -> wait_for_initialize(fn _message -> send_malformed() end, :normal)
@@ -282,5 +318,3 @@ defmodule FakeLspServer do
     end
   end
 end
-
-FakeLspServer.main()
