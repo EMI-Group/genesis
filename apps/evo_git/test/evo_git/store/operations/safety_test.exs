@@ -16,10 +16,11 @@ defmodule EvoGit.Store.Operations.SafetyTest do
 
   Every test boots its OWN unnamed dynamic `EvoGit.Repo` instance
   (`EvoGit.Store.Boot.start_dynamic/1` — globally lock-safe, no boot lock
-  needed) on a unique tmp database. Good rows are seeded through the TYPED
-  schemas (canonical Codec wire dumps); corrupt rows through the RAW twins
-  (raw TEXT the typed dump could never produce). Self-contained by design
-  (R4b unit contract): no shared helper files.
+  needed) on a unique tmp database, starting from a byte copy of the module's
+  schema-complete template (`EvoGit.TestSupport.StoreTemplate`) so the six
+  migrations' DDL is paid once per module instead of once per test. Good rows
+  are seeded through the TYPED schemas (canonical Codec wire dumps); corrupt
+  rows through the RAW twins (raw TEXT the typed dump could never produce).
   """
 
   use ExUnit.Case, async: true
@@ -34,6 +35,18 @@ defmodule EvoGit.Store.Operations.SafetyTest do
   alias EvoGit.Store.Schemas.ProjectRowRaw
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -49,6 +62,11 @@ defmodule EvoGit.Store.Operations.SafetyTest do
         "evogit_r4b_#{tag}_#{:os.getpid()}_#{System.system_time(:millisecond)}_" <>
           "#{System.unique_integer([:positive])}.sqlite"
       )
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)

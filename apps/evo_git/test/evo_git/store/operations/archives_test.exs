@@ -27,7 +27,10 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
 
   Every test boots its own UNNAMED dynamic repo on a unique tmp SQLite file
   (`async: true` is safe — `EvoGit.Store.Boot` serializes migration runs with
-  a `:global` lock), mirroring `operations/pages_test.exs`. The facade section
+  a `:global` lock), mirroring `operations/pages_test.exs`. The file starts as
+  a byte copy of the module's schema-complete template
+  (`EvoGit.TestSupport.StoreTemplate`), so the six migrations' DDL is paid once
+  per module instead of once per test. The facade section
   starts its own uniquely-named `EvoGit.Store` GenServer instead, so it never
   touches the shared application store.
   """
@@ -40,8 +43,25 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
   alias EvoGit.Store.Operations.Archives
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskAgentArchiveRow
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # ── Helpers ──────────────────────────────────────────────────────────────
+
+  # The module's template copy function, put in the test's process dictionary
+  # by `setup/1` (a `setup_all` value cannot reach a helper called from a test
+  # body). Boot then only has to run the probe-guarded no-op migrations.
+  defp copy_schema!(path), do: Process.get(:store_template_copy).(path)
 
   # Unique-per-call database file, then an UNNAMED dynamic repo (the same shape
   # `EvoGit.Store` boots in production).
@@ -52,6 +72,8 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
         "evogit_archives_#{tag}_#{System.pid()}_#{System.system_time(:millisecond)}_" <>
           "#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}.sqlite"
       )
+
+    copy_schema!(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
@@ -74,6 +96,8 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
 
     data_dir = Path.join(System.tmp_dir!(), "evogit_archives_api_#{unique}.sqlite")
     name = :"archives_api_store_#{unique}"
+
+    copy_schema!(data_dir)
 
     {:ok, pid} = Store.start_link(data_dir: data_dir, name: name, pool_size: 1)
     Process.unlink(pid)

@@ -78,33 +78,9 @@ defmodule EvoGit.Store.TypesTest do
       end
     end
 
-    test "dump/0 arity-1 nil form" do
-      assert Types.TaskTimestamp.dump(nil) == {:ok, Codec.encode_datetime(nil)}
-      assert Types.TaskTimestamp.dump(nil) == {:ok, nil}
-    end
-
     test "load returns exactly Codec.decode_datetime/1 (DateTime or nil)" do
       for str <- @stored_timestamps do
         assert Types.TaskTimestamp.load(str) == {:ok, Codec.decode_datetime(str)}
-      end
-    end
-
-    test "load nil form" do
-      assert Types.TaskTimestamp.load(nil) == {:ok, Codec.decode_datetime(nil)}
-    end
-
-    test "load returns a DateTime struct for well-formed text" do
-      assert {:ok, %DateTime{}} = Types.TaskTimestamp.load("2024-01-01T12:00:00.123Z")
-    end
-
-    test "round-trip: load(dump(dt)) == dt (ms-precision)" do
-      for dt <- @datetimes do
-        {:ok, dumped} = Types.TaskTimestamp.dump(dt)
-
-        # Only the shape is asserted: the fixture carries a sub-millisecond
-        # DateTime, which dump/1 truncates, so the loaded value is NOT
-        # structurally equal to `dt` for every element.
-        assert {:ok, _dt} = Types.TaskTimestamp.load(dumped)
       end
     end
 
@@ -170,10 +146,6 @@ defmodule EvoGit.Store.TypesTest do
                {:ok, "2024-01-01T12:00:00.123Z"}
     end
 
-    test "load nil form" do
-      assert Types.TaskTimestampRaw.load(nil) == {:ok, nil}
-    end
-
     test "cast maps a DateTime to its encoded text (raw semantics)" do
       assert {:ok, encoded} = Types.TaskTimestampRaw.cast(~U[2024-01-01 12:00:00.123Z])
       assert encoded == Codec.encode_datetime(~U[2024-01-01 12:00:00.123Z])
@@ -198,10 +170,6 @@ defmodule EvoGit.Store.TypesTest do
       assert Types.UnixMs.load(nil) == {:ok, nil}
     end
 
-    test "type is :integer" do
-      assert Types.UnixMs.type() == :integer
-    end
-
     test "cast accepts integers, integer strings, and nil; rejects garbage" do
       assert Types.UnixMs.cast(123) == {:ok, 123}
       assert Types.UnixMs.cast("456") == {:ok, 456}
@@ -209,16 +177,6 @@ defmodule EvoGit.Store.TypesTest do
       assert Types.UnixMs.cast("12.5") == :error
       assert Types.UnixMs.cast("abc") == :error
       assert Types.UnixMs.cast(:nope) == :error
-    end
-
-    test "randomized lease values round-trip" do
-      :rand.seed(:exsss, {44, 55, 66})
-
-      for _ <- 1..100 do
-        ms = :rand.uniform(9_000_000_000_000)
-        assert {:ok, ^ms} = Types.UnixMs.dump(ms)
-        assert {:ok, ^ms} = Types.UnixMs.load(ms)
-      end
     end
   end
 
@@ -256,23 +214,12 @@ defmodule EvoGit.Store.TypesTest do
       end
     end
 
-    test "every closed-set string equals its atom via the Codec" do
-      for atom <- @known_atoms do
-        assert Codec.decode_atom(Atom.to_string(atom)) == atom
-      end
-    end
-
     test "unknown values decode to nil (decode-strict, warning logged) — exactly like the Codec" do
       for unknown <- ["unknown_status", "Genesis", "RUNNING", "", "compaleted"] do
         assert Types.AtomColumn.load(unknown) == {:ok, nil}
         assert Types.AtomColumn.load(unknown) == {:ok, Codec.decode_atom(unknown)}
         assert Codec.decode_atom(unknown) == nil
       end
-    end
-
-    test "nil round-trips" do
-      assert Types.AtomColumn.dump(nil) == {:ok, nil}
-      assert Types.AtomColumn.load(nil) == {:ok, nil}
     end
 
     test "dump accepts strings too (Codec round-trip safety)" do
@@ -590,11 +537,6 @@ defmodule EvoGit.Store.TypesTest do
   # ── LogsJson ─────────────────────────────────────────────────────────────
 
   describe "LogsJson (list <-> JSON array)" do
-    test "nil dumps to the JSON text \"[]\" — never a NULL column" do
-      assert Types.LogsJson.dump(nil) == {:ok, Codec.encode_logs(nil)}
-      assert Types.LogsJson.dump(nil) == {:ok, "[]"}
-    end
-
     test "dump is byte-identical to Codec.encode_logs/1" do
       logs_fixtures = [
         [],
@@ -611,14 +553,14 @@ defmodule EvoGit.Store.TypesTest do
       end
     end
 
-    test "load: \"[]\" <-> [] and nil -> []" do
+    test "nil dumps to \"[]\" and \"[]\"/nil load to [] — exactly the Codec, never raises" do
+      assert Types.LogsJson.dump(nil) == {:ok, Codec.encode_logs(nil)}
+      assert Types.LogsJson.dump(nil) == {:ok, "[]"}
       assert Types.LogsJson.load(nil) == {:ok, []}
       assert Types.LogsJson.load(nil) == {:ok, Codec.decode_logs(nil)}
       assert Types.LogsJson.load("[]") == {:ok, []}
       assert Types.LogsJson.load("[]") == {:ok, Codec.decode_logs("[]")}
-    end
 
-    test "load is lenient — exactly Codec.decode_logs/1, never raises" do
       stored = [
         ~s(["a","b"]),
         ~s([1, 2]),

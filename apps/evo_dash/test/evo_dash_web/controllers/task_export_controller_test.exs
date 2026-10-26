@@ -21,8 +21,8 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   @task_runner :task_export_task_runner
 
   describe "GET /tasks/:task_id/export" do
-    test "returns 404 when the task does not exist", %{conn: conn} do
-      # The task runner keeps its DEFAULT (the real lite read) here: a
+    test "returns 404 when the task is missing or its archive is empty", %{conn: conn} do
+      # Case 1: the task runner keeps its DEFAULT (the real lite read) here — a
       # nonexistent id must resolve to nil through the real store path, and the
       # archive must never be paged.
       stub_archive_runner(fn node, task_id, opts ->
@@ -34,13 +34,10 @@ defmodule EvoDashWeb.TaskExportControllerTest do
 
       assert response(conn, 404) =~ "Task not found"
       refute_received {:archive_page, _, _, _}
-    end
 
-    test "returns 404 when the task has no archive entries", %{conn: conn} do
+      # Case 2: the task exists but has no archive entries.
       task = task_fixture()
-
       stub_task_runner(fn _node, _task_id -> task end)
-      stub_archive_runner(fn _node, _task_id, _opts -> %{entries: [], total: 0} end)
 
       conn = get(conn, ~p"/tasks/#{task.id}/export")
 
@@ -168,104 +165,46 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert tmp_archive_files(task.id) == []
     end
 
-    test "stops paging once the reported total is reached", %{conn: conn} do
-      task = task_fixture()
+    test "paging stops on the reported total, a short page or an empty page", %{conn: conn} do
+      full = for index <- 1..200, do: %{agent_id: "A#{index}"}
+      short = for index <- 201..260, do: %{agent_id: "A#{index}"}
 
-      stub_task_runner(fn _node, _task_id -> task end)
+      cases = [
+        # A page source that would return a FULL page forever: only the
+        # reported `total` (350) can stop the loop.
+        {:total, fn _offset -> %{entries: full, total: 350} end, 350, [0, 200]},
+        # A lean roster projection reports NO per-page COUNT(*): the short
+        # second page is complete data — nothing truncated, no third RPC.
+        {:short_second, fn offset -> %{entries: if(offset == 0, do: full, else: short)} end, 260,
+         [0, 200]},
+        # An empty page ends the loop — it can never spin without a total.
+        {:empty_second, fn offset -> %{entries: if(offset == 0, do: full, else: [])} end, 200,
+         [0, 200]},
+        # A short FIRST page is already complete.
+        {:short_first, fn _offset -> %{entries: short} end, 60, [0]}
+      ]
 
-      # A page source that would return a FULL page forever: only the reported
-      # `total` (350) can stop the loop.
-      stub_archive_runner(fn _node, _task_id, opts ->
-        send(self(), {:archive_page, opts})
-        %{entries: for(index <- 1..200, do: %{agent_id: "A#{index}"}), total: 350}
-      end)
+      for {label, page_fun, expected_count, expected_offsets} <- cases do
+        task = task_fixture()
+        stub_task_runner(fn _node, _task_id -> task end)
 
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
+        stub_archive_runner(fn _node, _task_id, opts ->
+          send(self(), {:archive_page, opts[:offset]})
+          page_fun.(opts[:offset])
+        end)
 
-      decoded = Jason.decode!(response(conn, 200))
-      assert length(decoded["archive_records"]) == 350
+        decoded = Jason.decode!(response(get(conn, ~p"/tasks/#{task.id}/export"), 200))
+        assert length(decoded["archive_records"]) == expected_count, inspect(label)
 
-      assert_received {:archive_page, first_opts}
-      assert first_opts[:offset] == 0
-
-      assert_received {:archive_page, second_opts}
-      assert second_opts[:offset] == 200
-
-      # Exactly two pages: offset 0 and offset 200 — no third call.
-      refute_received {:archive_page, _opts}
-    end
-
-    test "tolerates a page that reports no total", %{conn: conn} do
-      task = task_fixture()
-      page_one = for index <- 1..200, do: %{agent_id: "A#{index}"}
-      page_two = for index <- 201..260, do: %{agent_id: "A#{index}"}
-      stub_task_runner(fn _node, _task_id -> task end)
-      # A lean roster projection reports NO per-page COUNT(*): the loop must
-      # still write every record of both pages.
-      stub_archive_runner(fn _node, _task_id, opts ->
-        send(self(), {:archive_page, opts})
-
-        case opts[:offset] do
-          0 -> %{entries: page_one}
-          200 -> %{entries: page_two}
+        for expected_offset <- expected_offsets do
+          assert_received {:archive_page, offset}
+          assert offset == expected_offset, inspect(label)
         end
-      end)
 
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-      decoded = Jason.decode!(response(conn, 200))
-
-      assert Enum.map(decoded["archive_records"], & &1["agent_id"]) ==
-               Enum.map(page_one ++ page_two, & &1.agent_id)
-
-      assert_received {:archive_page, first_opts}
-      assert first_opts[:offset] == 0
-      assert_received {:archive_page, second_opts}
-      assert second_opts[:offset] == 200
-      # The short second page is complete data: no third RPC, nothing truncated.
-      refute_received {:archive_page, _opts}
-      assert tmp_archive_files(task.id) == []
-    end
-
-    test "stops on an empty page when no page reports a total", %{conn: conn} do
-      task = task_fixture()
-      page_one = for index <- 1..200, do: %{agent_id: "A#{index}"}
-      stub_task_runner(fn _node, _task_id -> task end)
-
-      stub_archive_runner(fn _node, _task_id, opts ->
-        send(self(), {:archive_page, opts})
-        if opts[:offset] == 0, do: %{entries: page_one}, else: %{entries: []}
-      end)
-
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-      decoded = Jason.decode!(response(conn, 200))
-      assert length(decoded["archive_records"]) == 200
-      assert_received {:archive_page, first_opts}
-      assert first_opts[:offset] == 0
-      assert_received {:archive_page, second_opts}
-      assert second_opts[:offset] == 200
-      # An empty page ends the loop — it can never spin without a total.
-      refute_received {:archive_page, _opts}
-    end
-
-    test "a short first page ends the export without another request", %{conn: conn} do
-      task = task_fixture()
-      records = for index <- 1..5, do: %{agent_id: "A#{index}"}
-      stub_task_runner(fn _node, _task_id -> task end)
-
-      stub_archive_runner(fn _node, _task_id, opts ->
-        send(self(), {:archive_page, opts})
-        %{entries: records}
-      end)
-
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-      decoded = Jason.decode!(response(conn, 200))
-
-      assert Enum.map(decoded["archive_records"], & &1["agent_id"]) ==
-               Enum.map(records, & &1.agent_id)
-
-      assert_received {:archive_page, first_opts}
-      assert first_opts[:offset] == 0
-      refute_received {:archive_page, _opts}
+        # Exactly these pages — never one more.
+        refute_received {:archive_page, _}, inspect(label)
+        assert tmp_archive_files(task.id) == []
+      end
     end
 
     test "normalizes non-JSON terms inside archive records", %{conn: conn} do
@@ -300,7 +239,8 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert record["agent_id"] == "T1_A1"
     end
 
-    test "a failing page mid-pagination degrades to a truncated but valid document", %{conn: conn} do
+    test "a failing page mid-pagination degrades to a truncated but valid document",
+         %{conn: conn} do
       task = task_fixture()
 
       stub_task_runner(fn _node, _task_id -> task end)
@@ -323,57 +263,37 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       assert tmp_archive_files(task.id) == []
     end
 
-    test "a failing FIRST page degrades to the empty-archive 404", %{conn: conn} do
+    test "a failing first page or an unexpected page shape yields the empty-archive 404",
+         %{conn: conn} do
       task = task_fixture()
-
       stub_task_runner(fn _node, _task_id -> task end)
-      stub_archive_runner(fn _node, _task_id, _opts -> raise "store went away" end)
 
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
+      for page_fun <- [fn _opts -> raise "store went away" end, fn _opts -> :not_a_page end] do
+        stub_archive_runner(fn _node, _task_id, opts -> page_fun.(opts) end)
 
-      assert response(conn, 404) =~ "No archive data"
-      assert tmp_archive_files(task.id) == []
+        conn = get(conn, ~p"/tasks/#{task.id}/export")
+
+        assert response(conn, 404) =~ "No archive data"
+        assert tmp_archive_files(task.id) == []
+      end
     end
 
-    test "an unexpected page shape stops the paging loop", %{conn: conn} do
-      task = task_fixture()
+    test "an unencodable record or head field yields a 500 and leaves no temp file",
+         %{conn: conn} do
+      # Invalid UTF-8 cannot be encoded by Jason. Two shapes: inside a record,
+      # and in the document head (`repo_path` from the task's `:path` opt).
+      for {task, entries} <- [
+            {task_fixture(), [%{agent_id: <<0xFF>>}]},
+            {task_fixture(opts: [path: <<0xFF>>]), [%{agent_id: "T1_A1"}]}
+          ] do
+        stub_task_runner(fn _node, _task_id -> task end)
+        stub_archive_runner(fn _node, _task_id, _opts -> %{entries: entries, total: 1} end)
 
-      stub_task_runner(fn _node, _task_id -> task end)
-      stub_archive_runner(fn _node, _task_id, _opts -> :not_a_page end)
+        conn = get(conn, ~p"/tasks/#{task.id}/export")
 
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-
-      assert response(conn, 404) =~ "No archive data"
-    end
-
-    test "an unencodable record yields a 500 and leaves no temp file", %{conn: conn} do
-      task = task_fixture()
-
-      stub_task_runner(fn _node, _task_id -> task end)
-      # Invalid UTF-8 cannot be encoded by Jason.
-      stub_archive_runner(fn _node, _task_id, _opts ->
-        %{entries: [%{agent_id: <<0xFF>>}], total: 1}
-      end)
-
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-
-      assert response(conn, 500) =~ "Archive export failed"
-      assert tmp_archive_files(task.id) == []
-    end
-
-    test "an unencodable head field yields a 500 and leaves no temp file", %{conn: conn} do
-      task = task_fixture(opts: [path: <<0xFF>>])
-
-      stub_task_runner(fn _node, _task_id -> task end)
-
-      stub_archive_runner(fn _node, _task_id, _opts ->
-        %{entries: [%{agent_id: "T1_A1"}], total: 1}
-      end)
-
-      conn = get(conn, ~p"/tasks/#{task.id}/export")
-
-      assert response(conn, 500) =~ "Archive export failed"
-      assert tmp_archive_files(task.id) == []
+        assert response(conn, 500) =~ "Archive export failed"
+        assert tmp_archive_files(task.id) == []
+      end
     end
   end
 
@@ -406,7 +326,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       :ok
     end
 
-    test "returns 404 for an unknown node param without calling the runners", %{conn: conn} do
+    test "returns 404 without any read for an unknown or disconnected node", %{conn: conn} do
       stub_task_runner(fn node, task_id ->
         send(self(), {:task_read, node, task_id})
         nil
@@ -417,14 +337,16 @@ defmodule EvoDashWeb.TaskExportControllerTest do
         %{entries: [], total: 0}
       end)
 
+      # Case 1: the target id is not configured at all.
       conn = get(conn, "/tasks/nonexistent-task-id/export?node=unknown-target-id")
 
       assert response(conn, 404) =~ "Task not found"
       refute_received {:task_read, _, _}
       refute_received {:archive_page, _, _, _}
-    end
 
-    test "returns 404 for a known but disconnected target", %{conn: conn} do
+      # Case 2: the target exists but no connection manager is registered for
+      # it, so connection_status/1 degrades to :disconnected → the export must
+      # 404 exactly like the local not-found path, without any read.
       id = "export-test-target-#{System.unique_integer([:positive])}"
 
       {:ok, _target} =
@@ -434,19 +356,6 @@ defmodule EvoDashWeb.TaskExportControllerTest do
           name: "Export Test Target"
         })
 
-      stub_task_runner(fn node, task_id ->
-        send(self(), {:task_read, node, task_id})
-        nil
-      end)
-
-      stub_archive_runner(fn node, task_id, opts ->
-        send(self(), {:archive_page, node, task_id, opts})
-        %{entries: [], total: 0}
-      end)
-
-      # No connection manager is registered for the target, so
-      # connection_status/1 degrades to :disconnected → the export must 404
-      # exactly like the local not-found path, without any read.
       conn = get(conn, "/tasks/nonexistent-task-id/export?node=" <> id)
 
       assert response(conn, 404) =~ "Task not found"

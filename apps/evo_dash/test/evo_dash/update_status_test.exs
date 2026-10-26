@@ -26,13 +26,14 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "initial state" do
-    test "is :idle with notify_only computed from the override seam" do
+    test "is :idle with the documented field defaults, notify_only from the override seam" do
       Application.put_env(:evo_dash, :update_notify_only_override, true)
       UpdateStatus.reset()
       state = UpdateStatus.get()
 
       assert state.phase == :idle
       assert state.notify_only == true
+      assert UpdateStatus.notify_only?() == true
       assert state.current_version == app_version()
       assert state.latest_version == nil
       assert state.notes == nil
@@ -44,13 +45,6 @@ defmodule EvoDash.UpdateStatusTest do
       Application.put_env(:evo_dash, :update_notify_only_override, false)
       UpdateStatus.reset()
       assert UpdateStatus.get().notify_only == false
-    end
-
-    test "notify_only?/0 reads the override seam" do
-      Application.put_env(:evo_dash, :update_notify_only_override, true)
-      assert UpdateStatus.notify_only?() == true
-
-      Application.put_env(:evo_dash, :update_notify_only_override, false)
       assert UpdateStatus.notify_only?() == false
     end
 
@@ -61,21 +55,19 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "check_started/0" do
-    test "transitions to :checking from :idle" do
+    test "transitions to :checking from :idle, :error (retryable) and :ready" do
       UpdateStatus.check_started()
       assert UpdateStatus.get().phase == :checking
-    end
-
-    test "transitions to :checking from :error (retryable)" do
+      # A successful result from the :error phase really re-arms the machine.
       UpdateStatus.check_failed("boom")
       assert UpdateStatus.get().phase == :error
 
       UpdateStatus.check_started()
       assert UpdateStatus.get().phase == :checking
-    end
-
-    test "transitions to :checking from :ready" do
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
+      assert UpdateStatus.get().phase == :available
+      assert UpdateStatus.get().error == nil
+
       UpdateStatus.handle_download_result(%{"status" => "ready", "version" => "1.0.0"})
       assert UpdateStatus.get().phase == :ready
 
@@ -85,7 +77,7 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "handle_check_result/1" do
-    test "\"available\" populates all fields and sets last_checked_at" do
+    test "\"available\" populates all fields, stamps last_checked_at and recomputes notify_only" do
       UpdateStatus.handle_check_result(%{
         "status" => "available",
         "current_version" => "0.1.0",
@@ -103,16 +95,11 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.error == nil
       assert %DateTime{} = state.last_checked_at
       assert state.notify_only == false
-    end
 
-    test "\"available\" recomputes notify_only from the seam" do
+      # notify_only is recomputed from the seam on every check result.
       Application.put_env(:evo_dash, :update_notify_only_override, true)
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       assert UpdateStatus.get().notify_only == true
-
-      Application.put_env(:evo_dash, :update_notify_only_override, false)
-      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
-      assert UpdateStatus.get().notify_only == false
     end
 
     test "\"up_to_date\" sets current_version, keeps versions/notes/date" do
@@ -136,26 +123,14 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.date == "2026-08-01T00:00:00Z"
     end
 
-    test "\"not_configured\" sets the error sentinel" do
+    test "\"not_configured\"/\"not_available\" set the error sentinel while keeping the feed data" do
       UpdateStatus.handle_check_result(%{"status" => "not_configured"})
       state = UpdateStatus.get()
       assert state.phase == :error
       assert state.error == "not_configured"
-    end
 
-    test "\"not_available\" sets the error sentinel and stores current_version" do
-      UpdateStatus.handle_check_result(%{
-        "status" => "not_available",
-        "current_version" => "0.1.0"
-      })
+      UpdateStatus.reset()
 
-      state = UpdateStatus.get()
-      assert state.phase == :error
-      assert state.error == "not_available"
-      assert state.current_version == "0.1.0"
-    end
-
-    test "\"not_available\" keeps the feed's version/body/date so the card can show them" do
       UpdateStatus.handle_check_result(%{
         "status" => "not_available",
         "current_version" => "0.1.0",
@@ -168,81 +143,56 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.phase == :error
       assert state.error == "not_available"
       assert state.current_version == "0.1.0"
+      # Keep the feed's version/body/date so the card can show them.
       assert state.latest_version == "1.2.3"
       assert state.notes == "Release notes"
       assert state.date == "2026-08-01T00:00:00Z"
-    end
 
-    test "\"not_available\" without a version falls back to the previous latest_version" do
-      # Fresh hub: no previous value → nil
+      # Without a version the previous latest_version is preserved.
       UpdateStatus.handle_check_result(%{"status" => "not_available"})
-      assert UpdateStatus.get().latest_version == nil
-
-      # After an "available" check the previous latest_version is preserved
-      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.2.3"})
-      UpdateStatus.handle_check_result(%{"status" => "not_available"})
-
-      state = UpdateStatus.get()
-      assert state.phase == :error
-      assert state.error == "not_available"
-      assert state.latest_version == "1.2.3"
+      assert UpdateStatus.get().latest_version == "1.2.3"
     end
 
-    test "error paths store current_version so the version stays populated" do
-      # not_configured
-      UpdateStatus.handle_check_result(%{
-        "status" => "not_configured",
-        "current_version" => "0.2.0"
-      })
+    test "error paths store current_version when present and keep the seeded one otherwise" do
+      for payload <- [
+            %{"status" => "not_configured", "current_version" => "0.2.0"},
+            %{"status" => "not_available", "current_version" => "0.2.0"},
+            %{"status" => "error", "error" => "boom", "current_version" => "0.2.0"}
+          ] do
+        UpdateStatus.reset()
+        UpdateStatus.handle_check_result(payload)
+        assert UpdateStatus.get().current_version == "0.2.0", inspect(payload)
+      end
 
-      state = UpdateStatus.get()
-      assert state.phase == :error
-      assert state.error == "not_configured"
-      assert state.current_version == "0.2.0"
-
-      # not_available
-      UpdateStatus.handle_check_result(%{
-        "status" => "not_available",
-        "current_version" => "0.2.0"
-      })
-
-      assert UpdateStatus.get().current_version == "0.2.0"
-
-      # generic error
-      UpdateStatus.handle_check_result(%{
-        "status" => "error",
-        "error" => "boom",
-        "current_version" => "0.2.0"
-      })
-
-      assert UpdateStatus.get().current_version == "0.2.0"
+      # Without current_version the seeded version survives every error path.
+      for payload <- [
+            %{"status" => "not_configured"},
+            %{"status" => "not_available"},
+            %{"status" => "error", "error" => "boom"}
+          ] do
+        UpdateStatus.reset()
+        UpdateStatus.handle_check_result(payload)
+        assert UpdateStatus.get().current_version == app_version(), inspect(payload)
+      end
     end
 
-    test "error paths without current_version keep the seeded version" do
-      UpdateStatus.handle_check_result(%{"status" => "not_configured"})
-      assert UpdateStatus.get().current_version == app_version()
-
-      UpdateStatus.handle_check_result(%{"status" => "not_available"})
-      assert UpdateStatus.get().current_version == app_version()
-
-      UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
-      assert UpdateStatus.get().current_version == app_version()
-    end
-
-    test "\"error\" uses the payload error" do
+    test "\"error\" uses the payload error, falls back to check_failed, and tracks versions" do
       UpdateStatus.handle_check_result(%{"status" => "error", "error" => "network down"})
       state = UpdateStatus.get()
       assert state.phase == :error
       assert state.error == "network down"
-    end
 
-    test "\"error\" with no error key falls back to check_failed" do
+      UpdateStatus.reset()
+
+      # No error key → the check_failed default.
       UpdateStatus.handle_check_result(%{"status" => "error"})
       assert UpdateStatus.get().phase == :error
       assert UpdateStatus.get().error == "check_failed"
-    end
 
-    test "\"error\" with a version stores it as latest_version" do
+      UpdateStatus.reset()
+
+      # A version in the payload becomes latest_version; a later error without
+      # one keeps the previous value.
       UpdateStatus.handle_check_result(%{
         "status" => "error",
         "error" => "Update check failed: network unreachable",
@@ -253,35 +203,26 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.phase == :error
       assert state.error == "Update check failed: network unreachable"
       assert state.latest_version == "1.2.3"
-    end
 
-    test "\"error\" without a version keeps the previous latest_version" do
-      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.2.3"})
       UpdateStatus.handle_check_result(%{"status" => "error", "error" => "boom"})
-
-      state = UpdateStatus.get()
-      assert state.phase == :error
-      assert state.error == "boom"
-      assert state.latest_version == "1.2.3"
+      assert UpdateStatus.get().error == "boom"
+      assert UpdateStatus.get().latest_version == "1.2.3"
     end
 
-    test "missing or unknown status normalizes to :error check_failed" do
-      UpdateStatus.handle_check_result(%{})
-      state = UpdateStatus.get()
-      assert state.phase == :error
-      assert state.error == "check_failed"
-
-      UpdateStatus.handle_check_result(%{"status" => "weird_status"})
-      assert UpdateStatus.get().phase == :error
-      assert UpdateStatus.get().error == "check_failed"
-    end
-
-    test "garbage payloads never raise and normalize to :error check_failed" do
-      for payload <- [:not_a_map, nil, "string", 42, [1, 2]] do
+    test "unknown or garbage payloads normalize to :error check_failed without raising" do
+      for payload <- [
+            %{},
+            %{"status" => "weird_status"},
+            :not_a_map,
+            nil,
+            "string",
+            42,
+            [1, 2]
+          ] do
         UpdateStatus.handle_check_result(payload)
         state = UpdateStatus.get()
-        assert state.phase == :error
-        assert state.error == "check_failed"
+        assert state.phase == :error, inspect(payload)
+        assert state.error == "check_failed", inspect(payload)
       end
     end
 
@@ -303,15 +244,6 @@ defmodule EvoDash.UpdateStatusTest do
         UpdateStatus.handle_check_result(payload)
         refute UpdateStatus.get().phase == :checking
       end
-    end
-
-    test "works from :error (retryable)" do
-      UpdateStatus.check_failed("boom")
-      assert UpdateStatus.get().phase == :error
-
-      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
-      assert UpdateStatus.get().phase == :available
-      assert UpdateStatus.get().error == nil
     end
   end
 
@@ -337,7 +269,7 @@ defmodule EvoDash.UpdateStatusTest do
       assert UpdateStatus.get().download_requested_version == "2.0.0"
     end
 
-    test "false when the phase is not :available" do
+    test "false outside :available, when notify_only, and when latest_version is nil" do
       refute UpdateStatus.request_download?()
 
       UpdateStatus.handle_check_result(%{"status" => "up_to_date"})
@@ -345,16 +277,14 @@ defmodule EvoDash.UpdateStatusTest do
 
       UpdateStatus.check_started()
       refute UpdateStatus.request_download?()
-    end
 
-    test "false when notify_only is true" do
       Application.put_env(:evo_dash, :update_notify_only_override, true)
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       assert UpdateStatus.get().notify_only == true
       refute UpdateStatus.request_download?()
-    end
 
-    test "false when latest_version is nil" do
+      Application.put_env(:evo_dash, :update_notify_only_override, false)
+      UpdateStatus.reset()
       UpdateStatus.handle_check_result(%{"status" => "available"})
       assert UpdateStatus.get().phase == :available
       assert UpdateStatus.get().latest_version == nil
@@ -363,7 +293,7 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "handle_download_result/1" do
-    test "\"ready\" transitions to :ready with the version" do
+    test "\"ready\" transitions to :ready, keeping the existing latest_version when absent" do
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       UpdateStatus.handle_download_result(%{"status" => "ready", "version" => "1.0.0"})
 
@@ -371,26 +301,19 @@ defmodule EvoDash.UpdateStatusTest do
       assert state.phase == :ready
       assert state.latest_version == "1.0.0"
       assert state.error == nil
-    end
 
-    test "\"ready\" without a version keeps the existing latest_version" do
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       UpdateStatus.handle_download_result(%{"status" => "ready"})
       assert UpdateStatus.get().phase == :ready
       assert UpdateStatus.get().latest_version == "1.0.0"
     end
 
-    test "\"error\" from :available returns to :available with the error set" do
+    test "\"error\" returns to :available from :available/:checking/:ready and to :error from :idle" do
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       UpdateStatus.handle_download_result(%{"status" => "error", "error" => "disk full"})
 
-      state = UpdateStatus.get()
-      assert state.phase == :available
-      assert state.error == "disk full"
-    end
-
-    test "\"error\" from :checking and :ready returns to :available" do
-      UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
+      assert UpdateStatus.get().phase == :available
+      assert UpdateStatus.get().error == "disk full"
 
       UpdateStatus.check_started()
       UpdateStatus.handle_download_result(%{"status" => "error", "error" => "boom"})
@@ -401,9 +324,9 @@ defmodule EvoDash.UpdateStatusTest do
       UpdateStatus.handle_download_result(%{"status" => "error", "error" => "boom"})
       assert UpdateStatus.get().phase == :available
       assert UpdateStatus.get().error == "boom"
-    end
 
-    test "\"error\" from :idle transitions to :error" do
+      # From :idle there is nothing to return to → :error.
+      UpdateStatus.reset()
       UpdateStatus.handle_download_result(%{"status" => "error", "error" => "boom"})
       state = UpdateStatus.get()
       assert state.phase == :error
@@ -421,16 +344,12 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "applying/0 and apply_failed/1" do
-    test "applying transitions to :applying from :ready" do
+    test "applying transitions from :ready; apply_failed reverts to :error (never wedge)" do
       UpdateStatus.handle_check_result(%{"status" => "available", "version" => "1.0.0"})
       UpdateStatus.handle_download_result(%{"status" => "ready"})
       UpdateStatus.applying()
       assert UpdateStatus.get().phase == :applying
-    end
 
-    test "apply_failed reverts :applying to :error with the message (never wedge)" do
-      UpdateStatus.applying()
-      assert UpdateStatus.get().phase == :applying
       UpdateStatus.apply_failed("installer crashed")
       state = UpdateStatus.get()
       assert state.phase == :error
@@ -445,16 +364,14 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "check_failed/1" do
-    test "terminates :checking (never wedge) with the given message" do
+    test "terminates :checking with the given message, defaulting to check_failed" do
       UpdateStatus.check_started()
       assert UpdateStatus.get().phase == :checking
       UpdateStatus.check_failed("timeout")
       state = UpdateStatus.get()
       assert state.phase == :error
       assert state.error == "timeout"
-    end
 
-    test "defaults the message to check_failed" do
       UpdateStatus.check_failed(nil)
       assert UpdateStatus.get().phase == :error
       assert UpdateStatus.get().error == "check_failed"
@@ -462,7 +379,7 @@ defmodule EvoDash.UpdateStatusTest do
   end
 
   describe "desktop?/0 and visible?/1" do
-    test "desktop? reflects the :desktop_release env and EVOGIT_DESKTOP" do
+    test "desktop? reflects the :desktop_release env and EVOGIT_DESKTOP; visible? is local-only" do
       original_app_env = Application.get_env(:evo_dash, :desktop_release)
       original_sys_env = System.get_env("EVOGIT_DESKTOP")
 
@@ -474,9 +391,14 @@ defmodule EvoDash.UpdateStatusTest do
       Application.delete_env(:evo_dash, :desktop_release)
       System.delete_env("EVOGIT_DESKTOP")
       refute UpdateStatus.desktop?()
+      refute UpdateStatus.visible?(nil)
+      refute UpdateStatus.visible?(node())
 
       Application.put_env(:evo_dash, :desktop_release, true)
       assert UpdateStatus.desktop?()
+      assert UpdateStatus.visible?(nil)
+      assert UpdateStatus.visible?(node())
+      refute UpdateStatus.visible?(:some_remote_node)
 
       Application.delete_env(:evo_dash, :desktop_release)
       System.put_env("EVOGIT_DESKTOP", "1")
@@ -484,26 +406,6 @@ defmodule EvoDash.UpdateStatusTest do
 
       System.put_env("EVOGIT_DESKTOP", "0")
       refute UpdateStatus.desktop?()
-    end
-
-    test "visible? is true only on the local node in desktop mode" do
-      original_app_env = Application.get_env(:evo_dash, :desktop_release)
-      original_sys_env = System.get_env("EVOGIT_DESKTOP")
-
-      on_exit(fn ->
-        restore_env_value(:desktop_release, original_app_env)
-        restore_sys_env("EVOGIT_DESKTOP", original_sys_env)
-      end)
-
-      Application.delete_env(:evo_dash, :desktop_release)
-      System.delete_env("EVOGIT_DESKTOP")
-      refute UpdateStatus.visible?(nil)
-      refute UpdateStatus.visible?(node())
-
-      Application.put_env(:evo_dash, :desktop_release, true)
-      assert UpdateStatus.visible?(nil)
-      assert UpdateStatus.visible?(node())
-      refute UpdateStatus.visible?(:some_remote_node)
     end
   end
 

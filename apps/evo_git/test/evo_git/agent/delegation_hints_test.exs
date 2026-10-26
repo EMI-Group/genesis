@@ -32,36 +32,18 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # ── Config schema tests ──────────────────────────────────────────────────
 
   describe "delegation_hint_threshold config schema" do
-    test "is present in all_schemas" do
-      schemas = Schema.all_schemas()
-      keys = Enum.map(schemas, & &1.key_path)
-      assert [:scheduler, :delegation_hint_threshold] in keys
-    end
-
-    test "defaults to 5" do
-      defaults = Schema.defaults()
-      assert defaults.scheduler.delegation_hint_threshold == 5
-    end
-
-    test "has correct type and validation" do
+    test "is registered in the scheduler category as a positive integer defaulting to 5" do
       schema =
         Enum.find(
           Schema.all_schemas(),
           &(&1.key_path == [:scheduler, :delegation_hint_threshold])
         )
 
+      assert schema, "expected [:scheduler, :delegation_hint_threshold] in all_schemas/0"
       assert schema.type == :pos_integer
       assert schema.validation == [min: 1]
-    end
-
-    test "is in scheduler category" do
-      schema =
-        Enum.find(
-          Schema.all_schemas(),
-          &(&1.key_path == [:scheduler, :delegation_hint_threshold])
-        )
-
       assert schema.category == :scheduler
+      assert Schema.defaults().scheduler.delegation_hint_threshold == 5
     end
   end
 
@@ -70,84 +52,41 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # The delegation hinting feature counts write-tool calls per child directory
   # and emits a hint when the threshold is reached. The core path logic that
   # determines "is this path in a child node?" lives in
-  # Shared.is_child_or_same_node?/2.
+  # Shared.is_child_or_same_node?/2. The base cases are also pinned in
+  # `tools/shared_test.exs`; the prefix look-alikes below are this suite's own.
 
   describe "child directory detection for delegation hinting" do
-    test "root node recognizes first-level child" do
-      # Agent at root, child directory ./src
-      assert Shared.is_child_or_same_node?("./", "./src") == true
-    end
+    test "classifies child / same / sibling / parent nodes, including prefix look-alikes" do
+      cases = [
+        # Agent at root, child directory ./src
+        {"./", "./src", true},
+        # Root node recognizes a nested child (deepest path wins)
+        {"./", "./src/utils/helpers.ex", true},
+        # Non-root node recognizes direct child + nested descendant
+        {"./src", "./src/utils", true},
+        {"./src", "./src/utils/helpers.ex", true},
+        # Sibling directory is NOT a child
+        {"./src", "./lib", false},
+        # Parent directory is NOT a child
+        {"./src/utils", "./src", false},
+        # Same directory is recognized as same node
+        {"./src", "./src", true},
+        # Trailing slash is still a child
+        {"./src", "./src/utils/", true},
+        # Deeply nested node recognizes its children ...
+        {"./apps/evo_git/lib", "./apps/evo_git/lib/evo_git", true},
+        # ... and rejects siblings at the same depth
+        {"./apps/evo_git/lib", "./apps/evo_git/test", false},
+        # Partial prefix match does not false-positive: "./src" must NOT match
+        # "./src_backup" — they share a prefix but are siblings.
+        {"./src", "./src_backup", false},
+        {"./lib", "./lib_test", false}
+      ]
 
-    test "root node recognizes nested child" do
-      assert Shared.is_child_or_same_node?("./", "./src/utils/helpers.ex") == true
-    end
-
-    test "non-root node recognizes direct child" do
-      assert Shared.is_child_or_same_node?("./src", "./src/utils") == true
-    end
-
-    test "non-root node recognizes nested descendant" do
-      assert Shared.is_child_or_same_node?("./src", "./src/utils/helpers.ex") == true
-    end
-
-    test "sibling directory is NOT a child" do
-      assert Shared.is_child_or_same_node?("./src", "./lib") == false
-    end
-
-    test "parent directory is NOT a child" do
-      assert Shared.is_child_or_same_node?("./src/utils", "./src") == false
-    end
-
-    test "same directory is recognized as same node" do
-      assert Shared.is_child_or_same_node?("./src", "./src") == true
-    end
-
-    test "child path with trailing slash is still a child" do
-      assert Shared.is_child_or_same_node?("./src", "./src/utils/") == true
-    end
-
-    test "deeply nested non-root node recognizes its children" do
-      assert Shared.is_child_or_same_node?("./apps/evo_git/lib", "./apps/evo_git/lib/evo_git") ==
-               true
-    end
-
-    test "deeply nested non-root node rejects siblings at same depth" do
-      assert Shared.is_child_or_same_node?("./apps/evo_git/lib", "./apps/evo_git/test") == false
-    end
-
-    test "partial prefix match does not false-positive" do
-      # "./src" should NOT match "./src_backup" — they share a prefix but are siblings
-      assert Shared.is_child_or_same_node?("./src", "./src_backup") == false
-    end
-
-    test "partial prefix match does not false-positive with similar names" do
-      assert Shared.is_child_or_same_node?("./lib", "./lib_test") == false
-    end
-  end
-
-  # ── Path normalization for delegation detection ──────────────────────────
-  #
-  # The hint logic normalizes extracted file paths before grouping them by
-  # child directory. normalize_relpath/1 must produce consistent results so
-  # that "./src", "src", and "src/" all map to the same key.
-
-  describe "path normalization consistency for delegation detection" do
-    test "various formats of the same path normalize identically" do
-      paths = ["src", "./src", "src/", "./src/"]
-      normalized = Enum.map(paths, &Shared.normalize_relpath/1)
-      assert Enum.uniq(normalized) == ["./src"]
-    end
-
-    test "root path normalizes consistently" do
-      assert Shared.normalize_relpath("./") == "./"
-      assert Shared.normalize_relpath("") == "./"
-      assert Shared.normalize_relpath(".") == "./"
-    end
-
-    test "multi-segment path normalizes consistently" do
-      paths = ["apps/evo_git/lib", "./apps/evo_git/lib", "apps/evo_git/lib/"]
-      normalized = Enum.map(paths, &Shared.normalize_relpath/1)
-      assert Enum.uniq(normalized) == ["./apps/evo_git/lib"]
+      for {node, path, expected} <- cases do
+        assert Shared.is_child_or_same_node?(node, path) == expected,
+               "expected is_child_or_same_node?(#{inspect(node)}, #{inspect(path)}) to be #{expected}"
+      end
     end
   end
 
@@ -158,46 +97,33 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # hinting flows. When an LLM passes an absolute path (e.g. "/tmp/foo"),
   # normalize_relpath/1 returns {:error, _} instead of a string. The hinting
   # code runs in the MAIN agent process (not the guarded tool-execution Task),
-  # so a crash here would crash the entire agent. These tests verify the hinting
+  # so a crash here would crash the entire agent. These cases verify the hinting
   # path returns [] (no hint) instead of raising.
 
   describe "absolute path resilience in path_to_child_dir/3" do
     @repo_path "/home/user/project"
 
-    test "absolute dir path returns [] instead of raising (root node)" do
-      assert [] = HintAgent.test_path_to_child_dir("/tmp/foo", "./", @repo_path)
-    end
+    test "absolute / out-of-repo paths return [] while relative paths still hint" do
+      for {path, node} <- [{"/tmp/foo", "./"}, {"/tmp/foo", "./src"}, {"/etc/passwd", "./"}] do
+        assert [] = HintAgent.test_path_to_child_dir(path, node, @repo_path),
+               "expected no hint for dir path #{inspect(path)} under node #{inspect(node)}"
+      end
 
-    test "absolute dir path returns [] instead of raising (non-root node)" do
-      assert [] = HintAgent.test_path_to_child_dir("/tmp/foo", "./src", @repo_path)
-    end
+      for {path, node} <- [{"/tmp/foo/bar.ex", "./"}, {"/tmp/foo/bar.ex", "./src"}] do
+        assert [] = HintAgent.test_file_path_to_child_dir(path, node, @repo_path),
+               "expected no hint for file path #{inspect(path)} under node #{inspect(node)}"
+      end
 
-    test "absolute file path returns [] instead of raising (root node)" do
-      assert [] = HintAgent.test_file_path_to_child_dir("/tmp/foo/bar.ex", "./", @repo_path)
-    end
-
-    test "absolute file path returns [] instead of raising (non-root node)" do
-      assert [] = HintAgent.test_file_path_to_child_dir("/tmp/foo/bar.ex", "./src", @repo_path)
-    end
-
-    test "path outside repo returns [] instead of raising" do
-      assert [] = HintAgent.test_path_to_child_dir("/etc/passwd", "./", @repo_path)
-    end
-
-    test "valid relative dir path still produces a hint target (regression)" do
+      # Regression: a valid relative dir/file path still produces a hint target.
       assert ["./src"] = HintAgent.test_path_to_child_dir("./src/components", "./", @repo_path)
-    end
 
-    test "valid relative file path still produces a hint target (regression)" do
       assert ["./src"] =
                HintAgent.test_file_path_to_child_dir(
                  "./src/components/button.tsx",
                  "./",
                  @repo_path
                )
-    end
 
-    test "valid relative path under non-root node still produces a hint target" do
       assert ["./src/components"] =
                HintAgent.test_path_to_child_dir(
                  "./src/components/widget.tsx",
@@ -216,45 +142,37 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # path like "./tests/backends/." (trailing "/.").
 
   describe "own-node files produce no delegation hint" do
-    test "dir equal to own node returns [] (non-root)" do
+    test "own-node dirs/files yield [] while a nested child still yields a hint" do
+      # dir equal to own node
       assert [] =
                HintAgent.test_path_to_child_dir(
                  "./tests/backends",
                  "./tests/backends",
                  @repo_path
                )
-    end
 
-    test "file directly inside own node returns [] (reported scenario)" do
+      # file directly inside own node (reported scenario)
       assert [] =
                HintAgent.test_file_path_to_child_dir(
                  "./tests/backends/test_iree_random_algorithms_parity.py",
                  "./tests/backends",
                  @repo_path
                )
-    end
 
-    test "extract_child_paths with write_file inside own node returns []" do
-      args = %{"file_path" => "./tests/backends/foo.py"}
-
+      # same thing through the write-tool entry point
       assert [] =
                DelegationHints.extract_child_paths(
                  "write_file",
-                 args,
+                 %{"file_path" => "./tests/backends/foo.py"},
                  "./tests/backends",
                  @repo_path
                )
-    end
 
-    test "extract_first_segment('./.') returns [] (no malformed root child)" do
+      # no malformed root child ("/.") is ever rendered
       assert [] = DelegationHints.extract_first_segment("./.")
-    end
-
-    test "extract_first_segment_from_remainder('.', node) returns []" do
       assert [] = DelegationHints.extract_first_segment_from_remainder(".", "./tests/backends")
-    end
 
-    test "nested child under own node still produces a hint (regression)" do
+      # Regression: a nested child under the own node still produces a hint.
       assert ["./tests/backends/sub"] =
                HintAgent.test_file_path_to_child_dir(
                  "./tests/backends/sub/foo.py",
@@ -267,80 +185,46 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # ── extract_child_paths/4 — write-tool dispatcher ─────────────────────────
   #
   # extract_child_paths/4 is the public entry point: it dispatches to
-  # do_extract_child_paths/4 only for write tools (write_file, edit_file) and
-  # returns [] for everything else.
+  # do_extract_child_paths/4 only for write tools and returns [] for everything
+  # else. The dispatcher passes the RAW tool-call name — the model-facing schema
+  # name (`write`, `edit`, …), not the internal dispatch key — so the entry
+  # points normalise through `EvoGit.Agent.ToolNames.normalize/1` before the
+  # membership test. Without that, no delegation nudge ever fires.
 
   describe "extract_child_paths/4 write-tool dispatcher" do
-    test "non-write tool returns []" do
-      assert [] = DelegationHints.extract_child_paths("run_bash", %{}, "./", @repo_path)
-      assert [] = DelegationHints.extract_child_paths("read_file", %{}, "./", @repo_path)
-      assert [] = DelegationHints.extract_child_paths("glob", %{}, "./", @repo_path)
-    end
-
-    test "write_file dispatches and extracts child dir" do
+    test "extracts a child dir for write/edit under every accepted spelling" do
       args = %{"file_path" => "./src/utils/foo.ex"}
 
+      # model-facing names, case-insensitively
+      assert ["./src"] = DelegationHints.extract_child_paths("write", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_child_paths("edit", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_child_paths("WRITE", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_child_paths("Edit", args, "./", @repo_path)
+
+      # legacy internal-key spellings keep working (regression)
       assert ["./src"] = DelegationHints.extract_child_paths("write_file", args, "./", @repo_path)
-    end
-
-    test "edit_file dispatches and extracts child dir" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
       assert ["./src"] = DelegationHints.extract_child_paths("edit_file", args, "./", @repo_path)
     end
 
-    test "write_file under non-root node extracts nested child" do
+    test "extracts the nested child under a non-root node" do
       args = %{"file_path" => "./src/components/button.tsx"}
 
       assert ["./src/components"] =
                DelegationHints.extract_child_paths("write_file", args, "./src", @repo_path)
-    end
-  end
-
-  # ── Alias awareness: the MODEL-FACING names must work too ─────────────────
-  #
-  # The dispatcher passes the RAW tool-call name — the model-facing schema name
-  # (`write`, `edit`, `read`, …), not the internal dispatch key — so the entry
-  # points normalise through `EvoGit.Agent.ToolNames.normalize/1` before the
-  # membership test. Without that, no delegation nudge ever fires.
-
-  describe "extract_child_paths/4 alias normalisation (model-facing names)" do
-    test "model-facing `write` extracts the child dir" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] = DelegationHints.extract_child_paths("write", args, "./", @repo_path)
-    end
-
-    test "model-facing `edit` extracts the child dir" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] = DelegationHints.extract_child_paths("edit", args, "./", @repo_path)
-    end
-
-    test "`write` under a non-root node extracts the nested child" do
-      args = %{"file_path" => "./src/components/button.tsx"}
 
       assert ["./src/components"] =
                DelegationHints.extract_child_paths("write", args, "./src", @repo_path)
     end
 
-    test "matching is case-insensitive" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] = DelegationHints.extract_child_paths("WRITE", args, "./", @repo_path)
-      assert ["./src"] = DelegationHints.extract_child_paths("Edit", args, "./", @repo_path)
-    end
-
-    test "legacy internal-key spellings keep working (regression)" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] = DelegationHints.extract_child_paths("write_file", args, "./", @repo_path)
-      assert ["./src"] = DelegationHints.extract_child_paths("edit_file", args, "./", @repo_path)
-    end
-
-    test "non-write tools still return [] after normalisation" do
+    test "non-write tools return [] under every spelling" do
       args = %{"file_path" => "./src/foo.ex"}
 
+      # internal dispatch keys
+      assert [] = DelegationHints.extract_child_paths("run_bash", %{}, "./", @repo_path)
+      assert [] = DelegationHints.extract_child_paths("read_file", %{}, "./", @repo_path)
+      assert [] = DelegationHints.extract_child_paths("glob", %{}, "./", @repo_path)
+
+      # model-facing names + a non-tool name
       assert [] = DelegationHints.extract_child_paths("read", args, "./", @repo_path)
       assert [] = DelegationHints.extract_child_paths("bash", args, "./", @repo_path)
       assert [] = DelegationHints.extract_child_paths(nil, args, "./", @repo_path)
@@ -350,160 +234,123 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # ── do_extract_child_paths/4 — per-write-tool clause variants ─────────────
 
   describe "do_extract_child_paths/4 tool clauses" do
-    test "create_files extracts only child paths under the node" do
-      args = %{"paths" => ["./src/a.ex", "./lib/b.ex"]}
-
-      # Only ./src/a.ex is under node ./src; ./lib/b.ex is a sibling and yields [].
+    test "each write-tool clause extracts its child target; missing args yield []" do
+      # create_files only tracks paths under the node; ./lib/b.ex is a sibling.
       assert ["./src/a.ex"] =
-               DelegationHints.do_extract_child_paths("create_files", args, "./src", @repo_path)
-    end
+               DelegationHints.do_extract_child_paths(
+                 "create_files",
+                 %{"paths" => ["./src/a.ex", "./lib/b.ex"]},
+                 "./src",
+                 @repo_path
+               )
 
-    test "create_files at root node extracts first segment of each path" do
-      args = %{"paths" => ["./src/a.ex", "./lib/b.ex"]}
-
+      # ... and at the root node it takes the first segment of each path.
       assert ["./src", "./lib"] =
-               DelegationHints.do_extract_child_paths("create_files", args, "./", @repo_path)
-    end
+               DelegationHints.do_extract_child_paths(
+                 "create_files",
+                 %{"paths" => ["./src/a.ex", "./lib/b.ex"]},
+                 "./",
+                 @repo_path
+               )
 
-    test "make_dir extracts child dir" do
-      args = %{"paths" => ["./src/components"]}
+      for {tool, args} <- [
+            {"make_dir", %{"paths" => ["./src/components"]}},
+            {"write_context", %{"dir_path" => "./src/components"}},
+            {"edit_context", %{"dir_path" => "./src/components"}},
+            # catch-all clause reads file_path
+            {"write_file", %{"file_path" => "./src/utils/foo.ex"}}
+          ] do
+        assert ["./src"] =
+                 DelegationHints.do_extract_child_paths(tool, args, "./", @repo_path),
+               "expected #{inspect(tool)} to extract ./src"
+      end
 
-      assert ["./src"] =
-               DelegationHints.do_extract_child_paths("make_dir", args, "./", @repo_path)
-    end
-
-    test "write_context extracts child dir" do
-      args = %{"dir_path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_child_paths("write_context", args, "./", @repo_path)
-    end
-
-    test "edit_context extracts child dir" do
-      args = %{"dir_path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_child_paths("edit_context", args, "./", @repo_path)
-    end
-
-    test "catch-all clause (write_file) extracts child dir from file_path" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_child_paths("write_file", args, "./", @repo_path)
-    end
-
-    test "missing args return []" do
-      assert [] = DelegationHints.do_extract_child_paths("write_file", %{}, "./", @repo_path)
-      assert [] = DelegationHints.do_extract_child_paths("create_files", %{}, "./", @repo_path)
-      assert [] = DelegationHints.do_extract_child_paths("write_context", %{}, "./", @repo_path)
+      for tool <- ["write_file", "create_files", "write_context"] do
+        assert [] = DelegationHints.do_extract_child_paths(tool, %{}, "./", @repo_path),
+               "expected missing args for #{inspect(tool)} to yield no child path"
+      end
     end
   end
 
   # ── extract_first_segment/1 ───────────────────────────────────────────────
 
   describe "extract_first_segment/1" do
-    test "single segment returns itself" do
+    test "returns the first segment, or [] for a root/empty path" do
       assert ["./src"] = DelegationHints.extract_first_segment("./src")
-    end
-
-    test "multi-segment path returns only first segment" do
       assert ["./src"] = DelegationHints.extract_first_segment("./src/utils")
-    end
-
-    test "root path returns []" do
-      assert [] = DelegationHints.extract_first_segment("./")
-    end
-
-    test "empty string returns []" do
-      assert [] = DelegationHints.extract_first_segment("")
-    end
-
-    test "different single segment" do
       assert ["./components"] = DelegationHints.extract_first_segment("./components/button")
+      assert [] = DelegationHints.extract_first_segment("./")
+      assert [] = DelegationHints.extract_first_segment("")
     end
   end
 
   # ── extract_first_segment_from_remainder/2 ────────────────────────────────
 
   describe "extract_first_segment_from_remainder/2" do
-    test "single segment appended to node path" do
+    test "appends only the first remainder segment to the node path" do
       assert ["./src/utils"] =
                DelegationHints.extract_first_segment_from_remainder("utils", "./src")
-    end
 
-    test "multi-segment remainder returns only first segment" do
       assert ["./src/utils"] =
                DelegationHints.extract_first_segment_from_remainder("utils/helpers", "./src")
-    end
 
-    test "empty remainder returns []" do
-      assert [] = DelegationHints.extract_first_segment_from_remainder("", "./src")
-    end
-
-    test "different node path" do
       assert ["./foo/bar"] =
                DelegationHints.extract_first_segment_from_remainder("bar", "./foo")
+
+      assert [] = DelegationHints.extract_first_segment_from_remainder("", "./src")
     end
   end
 
-  # ── update_delegation_hints/2 ─────────────────────────────────────────────
+  # ── update_delegation_hints/2 + update_read_delegation_hints/2 ───────────
+  #
+  # Both entry points are the SAME counter (`update_hints/3` with `:count`), so
+  # one table drives both names.
 
-  describe "update_delegation_hints/2" do
-    test "empty hints + single path creates entry with count 1" do
-      assert %{"./src" => %{count: 1, hint_shown: false}} =
-               DelegationHints.update_delegation_hints(%{}, ["./src"])
-    end
+  describe "update_delegation_hints/2 and update_read_delegation_hints/2" do
+    test "create, increment, multi-path, and empty-path semantics are identical" do
+      for update <- [
+            &DelegationHints.update_delegation_hints/2,
+            &DelegationHints.update_read_delegation_hints/2
+          ] do
+        # empty hints + single path creates an entry with count 1
+        assert %{"./src" => %{count: 1, hint_shown: false}} = update.(%{}, ["./src"])
 
-    test "existing entry increments count" do
-      hints = %{"./src" => %{count: 1, hint_shown: false}}
+        # an existing entry increments its count
+        hints = %{"./src" => %{count: 1, hint_shown: false}}
+        assert %{"./src" => %{count: 2, hint_shown: false}} = update.(hints, ["./src"])
 
-      assert %{"./src" => %{count: 2, hint_shown: false}} =
-               DelegationHints.update_delegation_hints(hints, ["./src"])
-    end
+        # the hint_shown flag is preserved when incrementing
+        shown = %{"./src" => %{count: 3, hint_shown: true}}
+        assert %{"./src" => %{count: 4, hint_shown: true}} = update.(shown, ["./src"])
 
-    test "multiple paths each get an entry" do
-      result = DelegationHints.update_delegation_hints(%{}, ["./src", "./lib"])
+        # multiple paths each get an entry
+        result = update.(%{}, ["./src", "./lib"])
+        assert %{"./src" => %{count: 1, hint_shown: false}} = result
+        assert %{"./lib" => %{count: 1, hint_shown: false}} = result
 
-      assert %{"./src" => %{count: 1, hint_shown: false}} = result
-      assert %{"./lib" => %{count: 1, hint_shown: false}} = result
-    end
-
-    test "empty child_paths list leaves hints unchanged" do
-      hints = %{"./src" => %{count: 5, hint_shown: true}}
-
-      assert ^hints = DelegationHints.update_delegation_hints(hints, [])
-    end
-
-    test "preserves hint_shown flag when incrementing" do
-      hints = %{"./src" => %{count: 3, hint_shown: true}}
-
-      assert %{"./src" => %{count: 4, hint_shown: true}} =
-               DelegationHints.update_delegation_hints(hints, ["./src"])
+        # an empty child_paths list leaves the hints map untouched
+        unchanged = %{"./src" => %{count: 5, hint_shown: true}}
+        assert ^unchanged = update.(unchanged, [])
+      end
     end
   end
 
   # ── filter_child_paths_if_conflicts/2 ─────────────────────────────────────
 
   describe "filter_child_paths_if_conflicts/2" do
-    test "empty conflict list is a passthrough" do
+    test "passes paths through only while no conflict files are present" do
+      # Merge conflict in progress: the agent must edit directly, so every
+      # nudge is suppressed.
       assert ["./src", "./lib"] =
                DelegationHints.filter_child_paths_if_conflicts(["./src", "./lib"], [])
-    end
 
-    test "non-empty conflict list suppresses all child paths" do
       assert [] =
                DelegationHints.filter_child_paths_if_conflicts(
                  ["./src", "./lib"],
                  ["conflict_file.txt"]
                )
-    end
 
-    test "empty child paths with conflicts still returns []" do
       assert [] = DelegationHints.filter_child_paths_if_conflicts([], ["conflict_file.txt"])
-    end
-
-    test "empty child paths with empty conflicts returns []" do
       assert [] = DelegationHints.filter_child_paths_if_conflicts([], [])
     end
   end
@@ -524,6 +371,7 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       {output, hints} = DelegationHints.maybe_append_delegation_hint("output", %{}, ["./src"], 1)
 
       assert String.contains?(output, "Delegation Hint")
+      assert String.contains?(output, "./src")
       assert %{"./src" => %{count: 1, hint_shown: true}} = hints
     end
 
@@ -536,14 +384,6 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       # count incremented to 2, but no hint appended (once-only)
       assert output == "output"
       assert %{"./src" => %{count: 2, hint_shown: true}} = hints
-    end
-
-    test "hint message contains the child path and threshold number" do
-      {output, _hints} = DelegationHints.maybe_append_delegation_hint("output", %{}, ["./src"], 1)
-
-      assert String.contains?(output, "Delegation Hint")
-      assert String.contains?(output, "./src")
-      assert String.contains?(output, "1")
     end
 
     test "empty child_paths list: output unchanged, hints unchanged" do
@@ -567,173 +407,86 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # ── entry_count/2 ─────────────────────────────────────────────────────────
 
   describe "entry_count/2" do
-    test "returns count for existing path" do
-      hints = %{"./src" => %{count: 3, hint_shown: false}}
-      assert 3 = DelegationHints.entry_count(hints, "./src")
-    end
+    test "returns the stored count, or 0 for a missing/zero entry" do
+      assert 3 =
+               DelegationHints.entry_count(%{"./src" => %{count: 3, hint_shown: false}}, "./src")
 
-    test "returns 0 for missing path" do
       assert 0 = DelegationHints.entry_count(%{}, "./src")
-    end
 
-    test "returns 0 when count is 0" do
-      hints = %{"./src" => %{count: 0, hint_shown: false}}
-      assert 0 = DelegationHints.entry_count(hints, "./src")
+      assert 0 =
+               DelegationHints.entry_count(%{"./src" => %{count: 0, hint_shown: false}}, "./src")
     end
   end
 
   # ── Read-tool extraction: extract_read_child_paths/4 ──────────────────────
+  #
+  # Same dispatcher contract as the write side: RAW tool-call name (model-facing
+  # `read` or the internal `read_file`), normalised before the membership test.
 
-  describe "extract_read_child_paths/4 read-tool dispatcher" do
-    test "non-read tool returns []" do
+  describe "extract_read_child_paths/4" do
+    test "each read-tool clause extracts its child target from its own arg key" do
+      for {tool, args} <- [
+            {"read_file", %{"file_path" => "./src/utils/foo.ex"}},
+            {"list_dir", %{"dir_path" => "./src/components"}},
+            {"rg", %{"path" => "./src/components"}},
+            {"glob", %{"path" => "./src/components"}}
+          ] do
+        # the public dispatcher ...
+        assert ["./src"] = DelegationHints.extract_read_child_paths(tool, args, "./", @repo_path),
+               "expected #{inspect(tool)} to extract ./src"
+
+        # ... and the clause it dispatches to
+        assert ["./src"] =
+                 DelegationHints.do_extract_read_child_paths(tool, args, "./", @repo_path),
+               "expected the #{inspect(tool)} clause to extract ./src"
+      end
+
+      assert ["./src/components"] =
+               DelegationHints.do_extract_read_child_paths(
+                 "read_file",
+                 %{"file_path" => "./src/components/button.tsx"},
+                 "./src",
+                 @repo_path
+               )
+    end
+
+    test "model-facing / case-variant / legacy spellings all reach the same clause" do
+      args = %{"file_path" => "./src/utils/foo.ex"}
+
+      assert ["./src"] = DelegationHints.extract_read_child_paths("read", args, "./", @repo_path)
+      assert ["./src"] = DelegationHints.extract_read_child_paths("READ", args, "./", @repo_path)
+
+      assert ["./src"] =
+               DelegationHints.extract_read_child_paths("read_file", args, "./", @repo_path)
+
+      assert ["./src/components"] =
+               DelegationHints.extract_read_child_paths(
+                 "read",
+                 %{"file_path" => "./src/components/button.tsx"},
+                 "./src",
+                 @repo_path
+               )
+    end
+
+    test "non-read tools return [] under every spelling" do
       args = %{"file_path" => "./src/foo.ex"}
 
+      # internal dispatch keys
       assert [] = DelegationHints.extract_read_child_paths("write_file", args, "./", @repo_path)
       assert [] = DelegationHints.extract_read_child_paths("edit_file", args, "./", @repo_path)
       assert [] = DelegationHints.extract_read_child_paths("run_bash", %{}, "./", @repo_path)
-    end
 
-    test "read_file dispatches and extracts child dir" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("read_file", args, "./", @repo_path)
-    end
-
-    test "list_dir dispatches and extracts child dir" do
-      args = %{"dir_path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("list_dir", args, "./", @repo_path)
-    end
-
-    test "rg dispatches and extracts child dir" do
-      args = %{"path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("rg", args, "./", @repo_path)
-    end
-
-    test "glob dispatches and extracts child dir" do
-      args = %{"path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("glob", args, "./", @repo_path)
-    end
-  end
-
-  # ── Read-tool alias normalisation (model-facing names) ────────────────────
-
-  describe "extract_read_child_paths/4 alias normalisation" do
-    test "model-facing `read` extracts the child dir" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("read", args, "./", @repo_path)
-    end
-
-    test "model-facing `read` under a non-root node extracts the nested child" do
-      args = %{"file_path" => "./src/components/button.tsx"}
-
-      assert ["./src/components"] =
-               DelegationHints.extract_read_child_paths("read", args, "./src", @repo_path)
-    end
-
-    test "matching is case-insensitive" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("READ", args, "./", @repo_path)
-    end
-
-    test "legacy internal-key spelling keeps working (regression)" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.extract_read_child_paths("read_file", args, "./", @repo_path)
-    end
-
-    test "non-read tools still return [] after normalisation" do
-      args = %{"file_path" => "./src/foo.ex"}
-
+      # model-facing names + a non-tool name
       assert [] = DelegationHints.extract_read_child_paths("write", args, "./", @repo_path)
       assert [] = DelegationHints.extract_read_child_paths("bash", args, "./", @repo_path)
       assert [] = DelegationHints.extract_read_child_paths(nil, args, "./", @repo_path)
     end
-  end
 
-  # ── do_extract_read_child_paths tool clauses ──────────────────────────────
-
-  describe "do_extract_read_child_paths tool clauses" do
-    test "read_file extracts child dir from file_path" do
-      args = %{"file_path" => "./src/utils/foo.ex"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_read_child_paths("read_file", args, "./", @repo_path)
-    end
-
-    test "list_dir extracts child dir from dir_path" do
-      args = %{"dir_path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_read_child_paths("list_dir", args, "./", @repo_path)
-    end
-
-    test "rg extracts child dir from path" do
-      args = %{"path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_read_child_paths("rg", args, "./", @repo_path)
-    end
-
-    test "glob extracts child dir from path" do
-      args = %{"path" => "./src/components"}
-
-      assert ["./src"] =
-               DelegationHints.do_extract_read_child_paths("glob", args, "./", @repo_path)
-    end
-
-    test "missing args return []" do
-      assert [] = DelegationHints.do_extract_read_child_paths("read_file", %{}, "./", @repo_path)
-      assert [] = DelegationHints.do_extract_read_child_paths("list_dir", %{}, "./", @repo_path)
-      assert [] = DelegationHints.do_extract_read_child_paths("rg", %{}, "./", @repo_path)
-      assert [] = DelegationHints.do_extract_read_child_paths("glob", %{}, "./", @repo_path)
-    end
-
-    test "read_file under non-root node extracts nested child" do
-      args = %{"file_path" => "./src/components/button.tsx"}
-
-      assert ["./src/components"] =
-               DelegationHints.do_extract_read_child_paths("read_file", args, "./src", @repo_path)
-    end
-  end
-
-  # ── update_read_delegation_hints/2 ────────────────────────────────────────
-
-  describe "update_read_delegation_hints/2" do
-    test "empty hints + single path creates entry with count 1" do
-      assert %{"./src" => %{count: 1, hint_shown: false}} =
-               DelegationHints.update_read_delegation_hints(%{}, ["./src"])
-    end
-
-    test "existing entry increments count" do
-      hints = %{"./src" => %{count: 2, hint_shown: false}}
-
-      assert %{"./src" => %{count: 3, hint_shown: false}} =
-               DelegationHints.update_read_delegation_hints(hints, ["./src"])
-    end
-
-    test "multiple paths each get an entry" do
-      result = DelegationHints.update_read_delegation_hints(%{}, ["./src", "./lib"])
-
-      assert %{"./src" => %{count: 1, hint_shown: false}} = result
-      assert %{"./lib" => %{count: 1, hint_shown: false}} = result
-    end
-
-    test "empty child_paths list leaves hints unchanged" do
-      hints = %{"./src" => %{count: 4, hint_shown: true}}
-
-      assert ^hints = DelegationHints.update_read_delegation_hints(hints, [])
+    test "missing args return [] for every read-tool clause" do
+      for tool <- ["read_file", "list_dir", "rg", "glob"] do
+        assert [] = DelegationHints.do_extract_read_child_paths(tool, %{}, "./", @repo_path),
+               "expected missing args for #{inspect(tool)} to yield no child path"
+      end
     end
   end
 
@@ -744,10 +497,12 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       {output, hints} =
         DelegationHints.maybe_append_read_delegation_hint("output", %{}, ["./src"], 1, :high)
 
-      # Message references subagent_investigator / investigation.
+      # Message references subagent_investigator / investigation and embeds the
+      # count that triggered it.
       assert String.contains?(output, "investigat")
       assert String.contains?(output, "subagent_investigator")
       assert String.contains?(output, "./src")
+      assert String.contains?(output, "1 turns")
       assert %{"./src" => %{count: 1, hint_shown: true}} = hints
     end
 
@@ -775,16 +530,6 @@ defmodule EvoGit.Agent.DelegationHintsTest do
 
       assert output == "output"
       assert %{"./src" => %{count: 1, hint_shown: false}} = hints
-    end
-
-    test "hint message contains child path and count" do
-      {output, _hints} =
-        DelegationHints.maybe_append_read_delegation_hint("output", %{}, ["./src"], 1, :high)
-
-      assert String.contains?(output, "Delegation Hint")
-      assert String.contains?(output, "./src")
-      # read hint message embeds the count (1)
-      assert String.contains?(output, "1 turns")
     end
   end
 
@@ -835,82 +580,34 @@ defmodule EvoGit.Agent.DelegationHintsTest do
       assert output =~ "./src"
     end
 
-    test "an unknown role (nil) keeps the historical both-names wording" do
-      {output, _hints} =
+    test "an unknown or subagent-less role produces no hint (total, no raise)" do
+      # `nil` = role unknown (direct/unit-test callers): keep the historical
+      # both-names wording.
+      {nil_output, _hints} =
         DelegationHints.maybe_append_read_delegation_hint("output", %{}, ["./src"], 1, :high, nil)
 
-      assert output =~ "subagent_investigator"
-      assert output =~ "subagent_manager"
-    end
+      assert nil_output =~ "subagent_investigator"
+      assert nil_output =~ "subagent_manager"
 
-    test "a role with neither suggestable tool produces no hint (total, no raise)" do
-      # SelfReflective has NO subagents at all — no hint, no crash, counters
-      # untouched.
+      # Every role that resolves to NO suggestable tool yields the output
+      # unchanged and the counters untouched — whatever its `subagent_modules/0`
+      # looks like (empty, entries without `subagent_tool_name/0`, or no callback
+      # at all).
       assert EvoGit.Agents.SelfReflective.subagent_modules() == []
-
-      {output, hints} =
-        DelegationHints.maybe_append_read_delegation_hint(
-          "output",
-          %{},
-          ["./src"],
-          1,
-          :high,
-          EvoGit.Agents.SelfReflective
-        )
-
-      assert output == "output"
-      assert hints == %{}
-    end
-
-    test "a role whose subagent modules lack subagent_tool_name/0 is total" do
-      # `subagent_modules/0` entries without a `subagent_tool_name/0` callback
-      # (or returning nil / a non-module) contribute no name at all — the hint
-      # path must stay total instead of raising.
-      assert {output, hints} =
-               DelegationHints.maybe_append_read_delegation_hint(
-                 "output",
-                 %{},
-                 ["./src"],
-                 1,
-                 :high,
-                 RoleWithUntitledSubagents
-               )
-
-      assert output == "output"
-      assert hints == %{}
-    end
-
-    test "a role with no subagent_modules/0 callback at all is total" do
-      assert {output, hints} =
-               DelegationHints.maybe_append_read_delegation_hint(
-                 "output",
-                 %{},
-                 ["./src"],
-                 1,
-                 :high,
-                 String
-               )
-
-      assert output == "output"
-      assert hints == %{}
-    end
-
-    test "the behaviour default (empty subagent_modules/0) produces no hint" do
-      # `HintAgent` adopts `EvoGit.Agent` without overriding `subagent_modules/0`
-      # — the behaviour default is `[]`.
       assert HintAgent.subagent_modules() == []
 
-      assert {output, %{}} =
-               DelegationHints.maybe_append_read_delegation_hint(
-                 "output",
-                 %{},
-                 ["./src"],
-                 1,
-                 :high,
-                 HintAgent
-               )
-
-      assert output == "output"
+      for role <- [EvoGit.Agents.SelfReflective, RoleWithUntitledSubagents, String, HintAgent] do
+        assert {"output", %{}} =
+                 DelegationHints.maybe_append_read_delegation_hint(
+                   "output",
+                   %{},
+                   ["./src"],
+                   1,
+                   :high,
+                   role
+                 ),
+               "expected no hint for role #{inspect(role)}"
+      end
     end
   end
 
@@ -920,28 +617,19 @@ defmodule EvoGit.Agent.DelegationHintsTest do
   # (the schema declares them :pos_integer with validation [min: 1]).
 
   describe "config accessors" do
-    test "delegation_hint_threshold/0 returns a positive integer" do
-      value = DelegationHints.delegation_hint_threshold()
-      assert is_integer(value)
-      assert value > 0
-    end
+    test "every accessor returns a positive integer" do
+      accessors = [
+        {:delegation_hint_threshold, &DelegationHints.delegation_hint_threshold/0},
+        {:read_delegation_hint_threshold, &DelegationHints.read_delegation_hint_threshold/0},
+        {:max_tool_timeout, &DelegationHints.max_tool_timeout/0},
+        {:default_tool_timeout, &DelegationHints.default_tool_timeout/0}
+      ]
 
-    test "read_delegation_hint_threshold/0 returns a positive integer" do
-      value = DelegationHints.read_delegation_hint_threshold()
-      assert is_integer(value)
-      assert value > 0
-    end
-
-    test "max_tool_timeout/0 returns a positive integer" do
-      value = DelegationHints.max_tool_timeout()
-      assert is_integer(value)
-      assert value > 0
-    end
-
-    test "default_tool_timeout/0 returns a positive integer" do
-      value = DelegationHints.default_tool_timeout()
-      assert is_integer(value)
-      assert value > 0
+      for {name, fun} <- accessors do
+        value = fun.()
+        assert is_integer(value), "expected #{name} to be an integer, got: #{inspect(value)}"
+        assert value > 0, "expected #{name} to be positive, got: #{inspect(value)}"
+      end
     end
 
     test "max_tool_timeout is greater than default_tool_timeout" do

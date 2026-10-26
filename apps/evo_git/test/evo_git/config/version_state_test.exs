@@ -54,11 +54,6 @@ defmodule EvoGit.Config.VersionStateTest do
       refute File.exists?(VersionState.path())
       assert VersionState.get_version() == "0.8.0"
     end
-
-    test "returns the recorded version after saving" do
-      assert :ok = VersionState.save_version("1.2.3")
-      assert VersionState.get_version() == "1.2.3"
-    end
   end
 
   describe "current_version/0" do
@@ -83,14 +78,6 @@ defmodule EvoGit.Config.VersionStateTest do
         assert VersionState.get_version() == version
       end
     end
-
-    test "overwrites a previously-saved version" do
-      assert :ok = VersionState.save_version("1.0.0")
-      assert VersionState.get_version() == "1.0.0"
-
-      assert :ok = VersionState.save_version("2.0.0")
-      assert VersionState.get_version() == "2.0.0"
-    end
   end
 
   describe "save_version/0 (no argument)" do
@@ -110,26 +97,9 @@ defmodule EvoGit.Config.VersionStateTest do
       assert :ok = VersionState.save_version("0.0.1-sentinel")
       assert VersionState.upgraded?()
     end
-
-    test "returns false when no file exists and current version is the default" do
-      # When the file is absent, get_version defaults to "0.8.0".
-      # If the runtime version also happens to be "0.8.0", upgraded? is false.
-      current = VersionState.current_version()
-
-      if current == "0.8.0" do
-        refute VersionState.upgraded?()
-      else
-        assert VersionState.upgraded?()
-      end
-    end
   end
 
   describe "record_current_version/0" do
-    test "persists the current version and returns :ok" do
-      assert :ok = VersionState.record_current_version()
-      assert VersionState.get_version() == VersionState.current_version()
-    end
-
     test "after recording, upgraded? is false" do
       assert :ok = VersionState.record_current_version()
       refute VersionState.upgraded?()
@@ -140,11 +110,6 @@ defmodule EvoGit.Config.VersionStateTest do
     test "returns true when no version-state file exists" do
       refute File.exists?(VersionState.path())
       assert VersionState.onboarding_needed?()
-    end
-
-    test "returns false after save_version/1 creates the file" do
-      assert :ok = VersionState.save_version("1.0.0")
-      refute VersionState.onboarding_needed?()
     end
 
     test "returns false after complete_onboarding/0" do

@@ -111,6 +111,10 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
 
       assert {profiles, "profile-a"} = Project.load_model_profiles()
       assert [%{id: "profile-a"} | _] = profiles
+
+      # `nil` (no node given) delegates to the local node — the same resolution.
+      assert Project.load_model_profiles(nil) == Project.load_model_profiles(node())
+      assert {[_profile], "profile-a"} = Project.load_model_profiles(nil)
     end
 
     test "a configured model-selection script yields the \"\" sentinel (Auto by rules)" do
@@ -119,13 +123,6 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
       EvoGit.CustomAgents.reload()
 
       assert {[_profile], ""} = Project.load_model_profiles()
-    end
-
-    test "load_model_profiles(nil) delegates to the local node" do
-      write_model_profile_config()
-
-      assert Project.load_model_profiles(nil) == Project.load_model_profiles(node())
-      assert {[_profile], "profile-a"} = Project.load_model_profiles(nil)
     end
 
     test "the :memo_config_resolve Process-dict memo is honored on the local node" do

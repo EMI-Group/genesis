@@ -178,6 +178,11 @@ Every job record carries `announced` — "the owner already knows this job's out
 **Consumer**: `Runner.inject_background_job_notices/1` (in `continue_loop/2`, right after the pending-user-message drain, before the cancel-grace check and the LLM call) makes ONE `claim_finished_notices(owner_pid: self())` call and appends exactly ONE turn-tagged `:user` message rendered by `Agent.BackgroundJobNotice.notice/1` (`[NOTICE] N background shell job(s) finished:` + `- id — status (detail) — label` per job + a `job_output`/`job_list` hint), syncing the context to ETS; it is notification-only (never job output) and exactly-once, so polling `job_output`/`job_list` never duplicates. The claim is SKIPPED during a grace period (cancel / turn-limit wrap-up), leaving the job for the next non-grace turn.
 **Compression contract**: the runtime-context refresh message is appended on every compression event, but the live job snapshot rides ONLY the summarising (stage-2) path — `ContextCompression.refresh_messages/2` injects `snapshot(owner_pid: self())` when its `include_background_jobs?` flag is true and `ContextBuilder.build_context_block/1` renders `## Background Jobs`; every summarising outcome drops earlier job-carrying refresh messages (`drop_stale_background_job_refreshes/1`) before appending the new one, so exactly ONE current section survives; stage 1 injects no snapshot and does no cleanup, and the summariser does NOT list job ids/statuses under `## Pending Jobs`.
 
+## Background Job Timers (test seam)
+
+The periodic `:reconcile_tick` arm and the public `tick_interval_ms/0` BOTH read `EvoGit.BackgroundJobs.resolved_tick_interval_ms/0`, a CALL-TIME `Application.get_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms)` lookup whose production default stays `@tick_interval_ms` = 1_000 ms (any non-integer/negative override falls back to it).
+The timer is armed only while at least one live job uses a `:unit` handle and disarms/re-arms on every change, so a test can await the re-armed `tick_timer` ref instead of sleeping; a module that overrides the key must be `async: false` and restore it in `on_exit`.
+
 ## ReqLLM Finch Pool (`EvoGit.ReqLLMPool`)
 
 `req_llm_pool.ex` — dynamic, GROW-ONLY runtime reconciliation of ReqLLM's Finch pool (`ReqLLM.Finch`).

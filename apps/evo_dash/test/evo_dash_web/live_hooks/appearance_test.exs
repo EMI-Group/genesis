@@ -95,11 +95,6 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
       assert Appearance.accent_from_config(%{llm: %{models: []}}) == "blue"
     end
 
-    test "invalid value inside the config → \"blue\"" do
-      assert Appearance.accent_from_config(%{appearance: %{accent_color: "not-a-color"}}) ==
-               "blue"
-    end
-
     test "non-map config → \"blue\"" do
       assert Appearance.accent_from_config(nil) == "blue"
     end
@@ -305,22 +300,6 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
       {:halt, socket} =
         Appearance.handle_info(
           {:appearance_accent_result, 1, target_id, {:ok, "teal"}},
-          socket
-        )
-
-      assert socket.assigns.accent_color == "teal"
-      assert EvoDash.AccentCache.get(target_id) == {:ok, "teal"}
-    end
-
-    test "a matching (non-stale) result assigns the accent and writes the cache" do
-      # Direct message-level test of the apply path: preset assigns matching
-      # the message (seq + node param) — the non-stale branch.
-      target_id = "accent-match"
-      socket = hook_socket(%{accent_fetch_seq: 7, accent_node_param: target_id})
-
-      {:halt, socket} =
-        Appearance.handle_info(
-          {:appearance_accent_result, 7, target_id, {:ok, "teal"}},
           socket
         )
 

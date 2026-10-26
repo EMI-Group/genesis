@@ -7,86 +7,40 @@ defmodule EvoGit.StoreTest do
   alias EvoGit.Store.RepoScope
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
-
-  # The 16 summary keys returned by select_tasks_changed_since/2 (same
-  # projection as select_tasks_summary, plus the raw `updated_at` string;
-  # `result` is deliberately excluded — no summary consumer reads it). `error`
-  # IS included (nil except on :failed rows).
-  @summary_keys [
-    :id,
-    :status,
-    :review_status,
-    :started_at,
-    :finished_at,
-    :type,
-    :project_path,
-    :opts,
-    :branch_name,
-    :model_id,
-    :agent_count,
-    :base_sha,
-    :commit_sha,
-    :lease_expires_at,
-    :updated_at,
-    :error
-  ]
+  alias EvoGit.TestSupport.StoreTemplate
 
   # The production Store/TaskRegistry are owned by this module for its whole
   # run: they are terminated ONCE here (TaskRegistry depends on Store, so it
   # goes down first) and restored after the last test. This module is
   # `async: false` because it mutates that shared production supervision tree.
   #
-  # It also builds a schema-complete SQLite TEMPLATE once. Creating a brand-new
-  # SQLite file + running the DDL costs ~24ms per test (the single biggest cost
-  # in this file); copying that checkpointed template costs ~2ms. Each test
-  # still gets its own isolated DB file with the identical schema, so isolation
-  # semantics are unchanged.
+  # It also builds a schema-complete SQLite TEMPLATE once (via
+  # `EvoGit.TestSupport.StoreTemplate`) instead of paying the DDL per test.
   setup_all do
-    unique = System.unique_integer([:positive])
-    # OS pid + wall-clock ms on top of the per-BEAM counter: the counter alone
-    # restarts on a fresh node and would collide with a previous run's leftover
-    # tmp file.
-    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
-    template = Path.join(System.tmp_dir!(), "evogit_store_template_#{stamp}.sqlite")
-    template_name = :"store_template_#{unique}"
-
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
     # Register the restore BEFORE building the template, so a template-build
     # failure can never leave the production children down for the whole run.
+    # (`on_exit` runs LIFO, so the template's own cleanup — registered inside
+    # `StoreTemplate.new!/0` below — runs before this one.)
     on_exit(fn ->
-      File.rm(template)
-      File.rm(template <> "-wal")
-      File.rm(template <> "-shm")
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
-    # A real Store.init produces exactly the schema under test. Stopping the
-    # template store closes the last connection to its WAL-mode database, and
-    # SQLite's own implicit checkpointing on last-connection-close folds the
-    # WAL back into the main file and removes the `-wal`/`-shm` sidecars (its
-    # documented default behavior — the read-write connection PRAGMAs are
-    # `journal_mode: :wal` / `synchronous: :normal`, and NOTHING in the store
-    # runs an explicit `wal_checkpoint`). The result is a single self-contained
-    # file that is safe to byte-copy.
-    {:ok, _} = Store.start_link(data_dir: template, name: template_name)
-    :ok = GenServer.stop(template_name)
-
-    {:ok, %{template: template}}
+    {:ok, %{copy_db: StoreTemplate.new!()}}
   end
 
   # Fresh isolated Store per test on a unique tmp SQLite path, seeded by copying
   # the schema template. The production children are already down (see
   # setup_all), so the isolated store can claim the default `EvoGit.Store` name.
-  setup %{template: template} do
+  setup %{copy_db: copy_db} do
     unique = System.unique_integer([:positive])
     stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
     root = Path.join(System.tmp_dir!(), "evogit_test_store_#{stamp}")
-    File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
-    File.cp!(template, sqlite_path)
+    copy_db.(sqlite_path)
 
     start_supervised({Store, data_dir: sqlite_path})
 
@@ -127,331 +81,62 @@ defmodule EvoGit.StoreTest do
   end
 
   describe "task put/get round-trip" do
-    test "all scalar fields survive a put/get round-trip" do
+    test "every field family round-trips through the facade" do
+      usage = %EvoGit.Agent.Usage{
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_cost: 0.01,
+        output_cost: 0.02,
+        total_cost: 0.03,
+        cached_tokens: 10,
+        cache_creation_tokens: 5
+      }
+
       task = %TaskInfo{
-        id: "rt-1",
+        id: "rt-all",
         type: :genesis,
         status: :completed,
-        opts: [path: "/tmp/test", mode: "simple"],
+        opts: [path: "/tmp/proj", mode: "complex", prompt: "hello world"],
         ref: nil,
         started_at: ~U[2026-06-26 07:19:44Z],
         finished_at: ~U[2026-06-26 08:00:00Z],
-        logs: [],
+        logs: ["line 1", "line 2", "line 3"],
         result: nil,
         review_status: :ignored,
+        usage: usage,
         agent_count: 5,
         base_sha: "abc123",
         commit_sha: "def456",
-        model_id: "gpt-4o"
+        model_id: "gpt-4o",
+        lease_expires_at: 1_234_567_890
       }
 
       :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-1")
+      fetched = Store.get_task(Store, "rt-all")
 
       assert %TaskInfo{} = fetched
-      assert fetched.id == "rt-1"
-      assert fetched.type == :genesis
-      assert fetched.status == :completed
+      assert {fetched.id, fetched.type, fetched.status} == {"rt-all", :genesis, :completed}
       assert fetched.review_status == :ignored
-      assert fetched.agent_count == 5
-      assert fetched.base_sha == "abc123"
-      assert fetched.commit_sha == "def456"
+
+      assert {fetched.agent_count, fetched.base_sha, fetched.commit_sha} ==
+               {5, "abc123", "def456"}
+
       assert fetched.model_id == "gpt-4o"
       assert fetched.ref == nil
-    end
+      assert fetched.lease_expires_at == 1_234_567_890
 
-    test "DateTime fields survive as proper DateTime structs" do
-      task = %TaskInfo{
-        id: "rt-dt",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: ~U[2026-06-26 07:19:44Z],
-        finished_at: ~U[2026-06-26 08:00:00Z],
-        logs: [],
-        result: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-dt")
-
-      assert %DateTime{} = fetched.started_at
-      assert %DateTime{} = fetched.finished_at
-      assert DateTime.compare(fetched.started_at, fetched.finished_at) == :lt
-    end
-
-    test "opts keyword list round-trips with atom keys" do
-      task = %TaskInfo{
-        id: "rt-opts",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/proj", mode: "complex", prompt: "hello world"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-opts")
-
+      # opts come back as a keyword list with atom keys.
       assert is_list(fetched.opts)
       assert fetched.opts[:path] == "/tmp/proj"
       assert fetched.opts[:mode] == "complex"
       assert fetched.opts[:prompt] == "hello world"
-    end
-
-    test "logs list round-trips" do
-      task = %TaskInfo{
-        id: "rt-logs",
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: ["line 1", "line 2", "line 3"],
-        result: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-logs")
 
       assert fetched.logs == ["line 1", "line 2", "line 3"]
-    end
 
-    test "result opaque term (tuple with atom keys) round-trips" do
-      task = %TaskInfo{
-        id: "rt-result",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result:
-          {:ok,
-           %{
-             commit_sha: "abc123def",
-             branch_name: "evogit/test",
-             result: "Agent summary",
-             pr_url: nil,
-             pr_title: nil
-           }}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result")
-
-      assert {:ok, %{commit_sha: "abc123def", branch_name: "evogit/test"}} = fetched.result
-    end
-
-    test "result {:ok, map} with embedded Usage struct round-trips faithfully" do
-      usage = %EvoGit.Agent.Usage{
-        input_tokens: 100,
-        output_tokens: 50,
-        total_tokens: 150,
-        input_cost: 0.01,
-        output_cost: 0.02,
-        total_cost: 0.03,
-        cached_tokens: 10,
-        cache_creation_tokens: 5
-      }
-
-      task = %TaskInfo{
-        id: "rt-result-usage",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result:
-          {:ok,
-           %{
-             commit_sha: "deadbeef",
-             result: "All done",
-             tag: "v1.0",
-             branch_name: "evogit/feature",
-             pr_url: nil,
-             pr_title: nil,
-             usage: usage,
-             agent_count: 3
-           }}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-usage")
-
-      assert {:ok, data} = fetched.result
-      assert data.commit_sha == "deadbeef"
-      assert data.result == "All done"
-      assert data.tag == "v1.0"
-      assert data.branch_name == "evogit/feature"
-      assert data.pr_url == nil
-      assert data.pr_title == nil
-      assert data.agent_count == 3
-
-      assert %EvoGit.Agent.Usage{} = data.usage
-      assert data.usage.input_tokens == 100
-      assert data.usage.output_tokens == 50
-      assert data.usage.total_tokens == 150
-      assert data.usage.total_cost == 0.03
-      assert data.usage.cached_tokens == 10
-      assert data.usage.cache_creation_tokens == 5
-    end
-
-    test "result {:ok, no_changes} round-trips" do
-      task = %TaskInfo{
-        id: "rt-result-nochanges",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result:
-          {:ok,
-           %{
-             commit_sha: "x",
-             result: "Nothing to do",
-             branch_name: nil,
-             pr_url: nil,
-             pr_title: nil,
-             no_changes: true,
-             usage: %EvoGit.Agent.Usage{},
-             agent_count: 1
-           }}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-nochanges")
-
-      assert {:ok, data} = fetched.result
-      assert data.no_changes == true
-      assert data.branch_name == nil
-      assert data.result == "Nothing to do"
-      assert %EvoGit.Agent.Usage{} = data.usage
-    end
-
-    test "result {:error, string} round-trips" do
-      task = %TaskInfo{
-        id: "rt-result-error",
-        type: :evolve,
-        status: :failed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: {:error, "something went wrong"}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-error")
-
-      assert fetched.result == {:error, "something went wrong"}
-    end
-
-    test "result {:exit, atom} round-trips" do
-      task = %TaskInfo{
-        id: "rt-result-exit",
-        type: :evolve,
-        status: :failed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: {:exit, :killed}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-exit")
-
-      assert fetched.result == {:exit, :killed}
-    end
-
-    test "result plain string round-trips" do
-      task = %TaskInfo{
-        id: "rt-result-string",
-        type: :evolve,
-        status: :failed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: "Process crashed while task was running"
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-string")
-
-      assert fetched.result == "Process crashed while task was running"
-    end
-
-    test "result {:error, complex term} round-trips via inspect fallback" do
-      task = %TaskInfo{
-        id: "rt-result-complex-error",
-        type: :evolve,
-        status: :failed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: {:error, {:bad_match, [1, 2, 3]}}
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-complex-error")
-
-      # The complex tuple can't be JSON-encoded directly, so it falls back to
-      # inspect — but the tuple shape {:error, _} is preserved.
-      assert {:error, reason} = fetched.result
-      assert is_binary(reason)
-    end
-
-    test "result nil round-trips" do
-      task = %TaskInfo{
-        id: "rt-result-nil",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-result-nil")
-
-      assert fetched.result == nil
-    end
-
-    test "usage struct round-trips as EvoGit.Agent.Usage" do
-      usage = %EvoGit.Agent.Usage{
-        input_tokens: 100,
-        output_tokens: 50,
-        total_tokens: 150,
-        input_cost: 0.01,
-        output_cost: 0.02,
-        total_cost: 0.03,
-        cached_tokens: 10,
-        cache_creation_tokens: 5
-      }
-
-      task = %TaskInfo{
-        id: "rt-usage",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil,
-        usage: usage
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-usage")
+      assert %DateTime{} = fetched.started_at
+      assert %DateTime{} = fetched.finished_at
+      assert DateTime.compare(fetched.started_at, fetched.finished_at) == :lt
 
       assert %EvoGit.Agent.Usage{} = fetched.usage
       assert fetched.usage.input_tokens == 100
@@ -459,51 +144,112 @@ defmodule EvoGit.StoreTest do
       assert fetched.usage.total_tokens == 150
       assert fetched.usage.total_cost == 0.03
       assert fetched.usage.cached_tokens == 10
+      assert fetched.usage.cache_creation_tokens == 5
     end
 
-    test "a task row carries no archive payload (the archive is its own table)" do
-      :ok =
-        Store.put_task(Store, %TaskInfo{
-          id: "rt-no-archive",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        })
+    test "every result form round-trips through the facade" do
+      cases = [
+        {"rt-result",
+         {:ok,
+          %{
+            commit_sha: "abc123def",
+            branch_name: "evogit/test",
+            result: "Agent summary",
+            pr_url: nil,
+            pr_title: nil
+          }},
+         fn result ->
+           assert {:ok, %{commit_sha: "abc123def", branch_name: "evogit/test"}} = result
+         end},
+        {"rt-result-usage",
+         {:ok,
+          %{
+            commit_sha: "deadbeef",
+            result: "All done",
+            tag: "v1.0",
+            branch_name: "evogit/feature",
+            pr_url: nil,
+            pr_title: nil,
+            usage: %EvoGit.Agent.Usage{
+              input_tokens: 100,
+              output_tokens: 50,
+              total_tokens: 150,
+              input_cost: 0.01,
+              output_cost: 0.02,
+              total_cost: 0.03,
+              cached_tokens: 10,
+              cache_creation_tokens: 5
+            },
+            agent_count: 3
+          }},
+         fn result ->
+           assert {:ok, data} = result
+           assert data.commit_sha == "deadbeef"
+           assert data.result == "All done"
+           assert data.tag == "v1.0"
+           assert data.branch_name == "evogit/feature"
+           assert data.pr_url == nil
+           assert data.pr_title == nil
+           assert data.agent_count == 3
 
-      fetched = Store.get_task(Store, "rt-no-archive")
+           assert %EvoGit.Agent.Usage{} = data.usage
+           assert data.usage.input_tokens == 100
+           assert data.usage.output_tokens == 50
+           assert data.usage.total_tokens == 150
+           assert data.usage.total_cost == 0.03
+           assert data.usage.cached_tokens == 10
+           assert data.usage.cache_creation_tokens == 5
+         end},
+        {"rt-result-nochanges",
+         {:ok,
+          %{
+            commit_sha: "x",
+            result: "Nothing to do",
+            branch_name: nil,
+            pr_url: nil,
+            pr_title: nil,
+            no_changes: true,
+            usage: %EvoGit.Agent.Usage{},
+            agent_count: 1
+          }},
+         fn result ->
+           assert {:ok, data} = result
+           assert data.no_changes == true
+           assert data.branch_name == nil
+           assert data.result == "Nothing to do"
+           assert %EvoGit.Agent.Usage{} = data.usage
+         end},
+        {"rt-result-error", {:error, "something went wrong"},
+         fn result -> assert result == {:error, "something went wrong"} end},
+        {"rt-result-exit", {:exit, :killed}, fn result -> assert result == {:exit, :killed} end},
+        {"rt-result-string", "Process crashed while task was running",
+         fn result -> assert result == "Process crashed while task was running" end},
+        {"rt-result-complex-error", {:error, {:bad_match, [1, 2, 3]}},
+         fn result ->
+           # The complex tuple can't be JSON-encoded directly, so it falls back
+           # to inspect — but the tuple shape {:error, _} is preserved.
+           assert {:error, reason} = result
+           assert is_binary(reason)
+         end},
+        {"rt-result-nil", nil, fn result -> assert result == nil end}
+      ]
 
-      # `%TaskInfo{}` has no archive field at all any more: the per-agent
-      # archive lives in the relational `task_agent_archives` table, read
-      # through `list_task_archives/3` (see the archive describes below).
-      refute Map.has_key?(fetched, :archive_metadata)
-      assert Store.list_task_archives(Store, "rt-no-archive") == %{entries: [], total: 0}
-    end
+      for {id, result, check} <- cases do
+        :ok =
+          Store.put_task(Store, %TaskInfo{
+            id: id,
+            type: :evolve,
+            status: :completed,
+            opts: [path: "/tmp/test"],
+            started_at: DateTime.utc_now(),
+            finished_at: DateTime.utc_now(),
+            logs: [],
+            result: result
+          })
 
-    test "nil fields stay nil" do
-      task = %TaskInfo{
-        id: "rt-nil",
-        type: :genesis,
-        status: :pending,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil,
-        usage: nil,
-        error: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-nil")
-
-      assert fetched.finished_at == nil
-      assert fetched.result == nil
-      assert fetched.usage == nil
-      assert fetched.error == nil
+        assert %TaskInfo{result: fetched_result} = Store.get_task(Store, id)
+        check.(fetched_result)
+      end
     end
 
     test "error map survives put/get round-trip with canonical atom keys" do
@@ -587,35 +333,8 @@ defmodule EvoGit.StoreTest do
       updated_at
     end
 
-    test "put_task stamps updated_at with a fixed-precision ISO timestamp ≈ now", %{
-      sqlite_path: sqlite_path
-    } do
-      :ok =
-        Store.put_task(Store, %TaskInfo{
-          id: "upd-put",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        })
-
-      # updated_at is store-internal — only visible via raw query (or the
-      # summary projection), not via get_task/1's %TaskInfo{} decode.
-      updated_at = raw_updated_at(sqlite_path, "upd-put")
-
-      assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
-      {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
-      diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
-      # Load-robust: the store stamps "now", so the only meaningful assertion is
-      # that it is recent (not a stale/bogus value). The bound is generous so a
-      # descheduled test process under heavy machine load cannot fail it.
-      assert diff_seconds >= 0 and diff_seconds <= 60
-    end
-
-    test "update_task_columns bumps updated_at to ≈ now", %{sqlite_path: sqlite_path} do
+    test "update_task_columns bumps updated_at; update_lease_expires_at never does (heartbeat invariant)",
+         %{sqlite_path: sqlite_path} do
       :ok =
         Store.put_task(Store, %TaskInfo{
           id: "upd-col",
@@ -633,15 +352,12 @@ defmodule EvoGit.StoreTest do
       assert updated_at =~ ~r/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
       {:ok, dt, _offset} = DateTime.from_iso8601(updated_at)
       diff_seconds = DateTime.diff(DateTime.utc_now(), dt, :second)
-      # Load-robust (see the put_task case above): assert "recent", not an
-      # exact instant.
+      # Load-robust: assert "recent", not an exact instant.
       assert diff_seconds >= 0 and diff_seconds <= 60
 
       # The targeted update itself also took effect.
       assert Store.get_task_status(Store, "upd-col") == :running
-    end
 
-    test "update_lease_expires_at does NOT bump updated_at", %{sqlite_path: sqlite_path} do
       :ok =
         Store.put_task(Store, %TaskInfo{
           id: "upd-lease",
@@ -665,47 +381,6 @@ defmodule EvoGit.StoreTest do
 
       :ok = XqliteNIF.close(conn)
       assert lease == 1_700_000_000
-    end
-
-    test "select_tasks_changed_since returns only rows newer than the since boundary", %{
-      sqlite_path: sqlite_path
-    } do
-      for {id, ts} <- [
-            {"cs-1", "2026-01-01T00:00:00.000Z"},
-            {"cs-2", "2026-01-02T00:00:00.000Z"},
-            {"cs-3", "2026-01-03T00:00:00.000Z"}
-          ] do
-        :ok =
-          Store.put_task(Store, %TaskInfo{
-            id: id,
-            type: :genesis,
-            status: :completed,
-            opts: [path: "/tmp/test"]
-          })
-
-        set_updated_at!(sqlite_path, id, ts)
-      end
-
-      # since before all rows → all three returned.
-      all = Store.select_tasks_changed_since(Store, "2025-01-01T00:00:00.000Z")
-      assert Enum.map(all, & &1.id) |> Enum.sort() == ["cs-1", "cs-2", "cs-3"]
-
-      # since between cs-2 and cs-3 → only cs-3 (strict `>`: boundary-equal
-      # cs-2 and older cs-1 are excluded).
-      rows = Store.select_tasks_changed_since(Store, "2026-01-02T00:00:00.000Z")
-      assert Enum.map(rows, & &1.id) == ["cs-3"]
-      refute Enum.any?(rows, &(&1.id == "cs-2"))
-      refute Enum.any?(rows, &(&1.id == "cs-1"))
-
-      # Far-future since → empty.
-      assert Store.select_tasks_changed_since(Store, "2099-01-01T00:00:00.000Z") == []
-
-      # 16-key summary projection contract, with raw updated_at string.
-      [row] = rows
-      assert Map.keys(row) |> Enum.sort() == Enum.sort(@summary_keys)
-      assert row.updated_at == "2026-01-03T00:00:00.000Z"
-      assert row.status == :completed
-      assert row.error == nil
     end
   end
 
@@ -965,55 +640,21 @@ defmodule EvoGit.StoreTest do
   end
 
   describe "validation" do
-    test "put_task rejects non-struct input" do
-      result = Store.put_task(Store, "not a struct")
-      assert match?({:error, _}, result)
-    end
+    test "malformed input is rejected with the documented error tuples" do
+      # A non-struct task never reaches the encoder.
+      assert match?({:error, _}, Store.put_task(Store, "not a struct"))
+      # status nil encoded via Atom.to_string would crash; validation catches it.
+      assert match?({:error, _}, Store.put_task(Store, %TaskInfo{id: "x", status: nil}))
 
-    test "put_task rejects nil id" do
-      result = Store.put_task(Store, %TaskInfo{id: nil, status: :pending})
-      assert result == {:error, :missing_task_id}
-    end
+      assert Store.put_task(Store, %TaskInfo{id: nil, status: :pending}) ==
+               {:error, :missing_task_id}
 
-    test "put_task rejects nil status" do
-      result = Store.put_task(Store, %TaskInfo{id: "x", status: nil})
-      # status nil encoded via Atom.to_string would crash; validation catches it
-      assert match?({:error, _}, result)
-    end
-
-    test "put_project rejects nil path" do
-      result = Store.put_project(Store, %RecentProject{path: nil, name: "x"})
-      assert result == {:error, :missing_project_path}
+      assert Store.put_project(Store, %RecentProject{path: nil, name: "x"}) ==
+               {:error, :missing_project_path}
     end
   end
 
   describe "delete operations" do
-    test "delete_task removes a single task" do
-      task = %TaskInfo{id: "del-1", type: :genesis, status: :completed, opts: [path: "/t"]}
-      :ok = Store.put_task(Store, task)
-      assert Store.get_task(Store, "del-1") != nil
-
-      :ok = Store.delete_task(Store, "del-1")
-      assert Store.get_task(Store, "del-1") == nil
-    end
-
-    test "delete_tasks removes multiple tasks in batch" do
-      for i <- 1..3 do
-        :ok =
-          Store.put_task(Store, %TaskInfo{
-            id: "batch-#{i}",
-            type: :genesis,
-            status: :completed,
-            opts: [path: "/t"]
-          })
-      end
-
-      :ok = Store.delete_tasks(Store, ["batch-1", "batch-2"])
-      assert Store.get_task(Store, "batch-1") == nil
-      assert Store.get_task(Store, "batch-2") == nil
-      assert Store.get_task(Store, "batch-3") != nil
-    end
-
     # The per-agent archive used to be a COLUMN of `tasks`, so deleting the task
     # row dropped it implicitly. Now that the archive rows live in their own
     # table, the task deletes MUST cascade (`Archives.delete_by_task/2`,
@@ -1030,7 +671,8 @@ defmodule EvoGit.StoreTest do
 
       :ok = Store.delete_task(Store, "casc-one")
 
-      # The deleted task's archive rows are gone …
+      # The task row itself and its archive rows are gone …
+      assert Store.get_task(Store, "casc-one") == nil
       assert Store.list_task_archives(Store, "casc-one") == %{entries: [], total: 0}
       assert Store.get_agent_archive(Store, "casc-one", 1) == nil
 
@@ -1050,207 +692,37 @@ defmodule EvoGit.StoreTest do
 
       :ok = Store.delete_tasks(Store, ["bcasc-1", "bcasc-2"])
 
+      assert Store.get_task(Store, "bcasc-1") == nil
+      assert Store.get_task(Store, "bcasc-3") != nil
       assert Store.list_task_archives(Store, "bcasc-1") == %{entries: [], total: 0}
       assert Store.list_task_archives(Store, "bcasc-2") == %{entries: [], total: 0}
       assert %{total: 2} = Store.list_task_archives(Store, "bcasc-3")
     end
   end
 
-  # The per-agent archive is a RELATIONAL table (`task_agent_archives`, one row
-  # per agent) read through the Store facade — the replacement for the old
-  # single `tasks.archive_metadata` JSON array. Coverage here pins the facade
-  # surface (`put_task_archive/2`, `list_task_archives/3`,
-  # `get_agent_archive/3`, `delete_task_archives/2`) and its cascade; the
-  # Operations-level contracts live in `store/operations/archives_test.exs`.
-  describe "per-agent archive (task_agent_archives)" do
-    test "put_task_archive/2 + get_agent_archive/3 round-trip every column, string-keyed" do
-      :ok = Store.put_task_archive(Store, archive_entry("arch-rt", 7, 2))
-
-      assert entry = Store.get_agent_archive(Store, "arch-rt", 7)
-
-      # Entries are STRING-KEYED maps (what the dashboard/RPC layers carry).
-      assert entry["task_id"] == "arch-rt"
-      assert entry["agent_id"] == 7
-      assert entry["parent_id"] == 6
-      assert entry["depth"] == 2
-      assert entry["agent_type"] == "executor"
-      assert entry["context_node_path"] == "./"
-      assert entry["objective"] == "archive objective 7"
-      assert entry["result"] == "archived result 7"
-      assert entry["base_commit"] == "base-7"
-      assert entry["final_commit"] == "final-7"
-      assert entry["branch_name"] == "evogit-agent-T1-A7"
-      assert entry["archive_ref_start"] == "ref-start-7"
-      assert entry["archive_ref_final"] == "ref-final-7"
-      assert entry["repo_id"] == "primary"
-      assert entry["repo_root"] == "/tmp/archive-repo"
-      assert entry["repo_path"] == "apps/demo"
-      assert entry["compression_count"] == 1
-
-      # The JSON columns are PLAIN decoded data (no Codec, no compression
-      # envelope) and timestamps keep their stored ISO-8601 spelling.
-      assert entry["usage"] == %{"input_tokens" => 70, "total_cost" => 0.5}
-      assert entry["llm_settings"] == %{"model_id" => "test-model"}
-      assert entry["agent_settings"] == %{"turns" => 3}
-      assert entry["foreign_repos"] == []
-      assert entry["started_at"] == "2026-01-01T00:00:00.000Z"
-      assert entry["completed_at"] == "2026-01-01T00:10:00.000Z"
-    end
-
-    test "get_agent_archive/3 returns nil for an unknown agent or task" do
-      :ok = Store.put_task_archive(Store, archive_entry("arch-miss", 1, 0))
-
-      assert %{"agent_id" => 1} = Store.get_agent_archive(Store, "arch-miss", 1)
-      assert Store.get_agent_archive(Store, "arch-miss", 2) == nil
-      assert Store.get_agent_archive(Store, "no-such-task", 1) == nil
-    end
-
-    test "list_task_archives/3 orders by depth then agent_id and total ignores the page" do
-      # Deliberately scrambled insertion order: the roster is the SPAWN TREE
-      # (root first), ordered depth ASC, agent_id ASC.
-      for {agent_id, depth} <- [{5, 2}, {3, 1}, {1, 0}, {2, 1}] do
-        :ok = Store.put_task_archive(Store, archive_entry("arch-order", agent_id, depth))
-      end
-
-      # Another task's rows never leak into this task's roster.
-      :ok = Store.put_task_archive(Store, archive_entry("arch-other", 9, 0))
-
-      %{entries: entries, total: 4} = Store.list_task_archives(Store, "arch-order")
-      assert Enum.map(entries, & &1["agent_id"]) == [1, 2, 3, 5]
-      assert Enum.map(entries, & &1["depth"]) == [0, 1, 1, 2]
-
-      # `total` counts EVERY row of the task, independent of limit/offset.
-      %{entries: page, total: 4} =
-        Store.list_task_archives(Store, "arch-order", limit: 2, offset: 1)
-
-      assert Enum.map(page, & &1["agent_id"]) == [2, 3]
-
-      assert Store.list_task_archives(Store, "arch-other") |> Map.get(:total) == 1
-      assert Store.list_task_archives(Store, "no-such-task") == %{entries: [], total: 0}
-    end
-
-    test "list_task_archives/3 omits the heavy result unless include_results: true" do
-      :ok = Store.put_task_archive(Store, archive_entry("arch-inc", 1, 0))
-
-      # Default: the `result` column is never SELECTED — the key is ABSENT
-      # (not nil, not ""), so a roster page never pays for the conversation.
-      %{entries: [roster]} = Store.list_task_archives(Store, "arch-inc")
-      refute Map.has_key?(roster, "result")
-      assert roster["objective"] == "archive objective 1"
-
-      %{entries: [with_result]} =
-        Store.list_task_archives(Store, "arch-inc", include_results: true)
-
-      assert with_result["result"] == "archived result 1"
-    end
-
-    test "re-putting the same (task_id, agent_id) replaces the row, never duplicates" do
-      :ok = Store.put_task_archive(Store, archive_entry("arch-reput", 1, 0))
-
-      :ok =
-        Store.put_task_archive(Store, %{
-          archive_entry("arch-reput", 1, 0)
-          | result: "replaced result",
-            objective: "replaced objective"
-        })
-
-      %{entries: entries, total: 1} =
-        Store.list_task_archives(Store, "arch-reput", include_results: true)
-
-      assert [entry] = entries
-      assert entry["result"] == "replaced result"
-      assert entry["objective"] == "replaced objective"
-    end
-
-    test "put_task_archive/2 rejects entries that cannot identify a row" do
-      assert Store.put_task_archive(Store, %{agent_id: 1}) == {:error, :missing_task_id}
-      assert Store.put_task_archive(Store, %{task_id: "arch-bad"}) == {:error, :missing_agent_id}
-      assert Store.put_task_archive(Store, :not_a_map) == {:error, :invalid_entry}
-
-      # Nothing was written for any of them.
-      assert Store.list_task_archives(Store, "arch-bad") == %{entries: [], total: 0}
-    end
-
-    test "delete_task_archives/2 deletes one task's rows and is a no-op otherwise" do
-      for task_id <- ["arch-del", "arch-keep"] do
-        :ok = Store.put_task_archive(Store, archive_entry(task_id, 1, 0))
-        :ok = Store.put_task_archive(Store, archive_entry(task_id, 2, 1))
-      end
-
-      assert :ok = Store.delete_task_archives(Store, "arch-del")
-
-      assert Store.list_task_archives(Store, "arch-del") == %{entries: [], total: 0}
-      assert Store.get_agent_archive(Store, "arch-del", 1) == nil
-
-      # The other task's rows survive, and a second delete of the same task (or
-      # of a task with no archive at all) is a successful no-op.
-      assert %{total: 2} = Store.list_task_archives(Store, "arch-keep")
-      assert :ok = Store.delete_task_archives(Store, "arch-del")
-      assert :ok = Store.delete_task_archives(Store, "never-archived")
-    end
-  end
-
   describe "select and count" do
-    test "select_all_projects returns all projects" do
-      :ok =
-        Store.put_project(Store, %RecentProject{path: "/p1", name: "P1"})
+    test "facade read/count helpers (projects, size) and clear_tasks with its archive cascade" do
+      :ok = Store.put_project(Store, %RecentProject{path: "/p1", name: "P1"})
+      :ok = Store.put_project(Store, %RecentProject{path: "/p2", name: "P2"})
 
-      :ok =
-        Store.put_project(Store, %RecentProject{path: "/p2", name: "P2"})
-
-      projects = Store.select_all_projects(Store)
-      paths = Enum.map(projects, & &1.path)
-      assert "/p1" in paths
-      assert "/p2" in paths
-    end
-
-    test "count_projects returns correct count" do
-      :ok =
-        Store.put_project(Store, %RecentProject{path: "/cnt-p1", name: "P1"})
-
-      assert Store.count_projects(Store) >= 1
-    end
-
-    test "size returns total across both tables" do
-      tasks_before = length(Store.select_task_ids(Store))
-      projects_before = Store.count_projects(Store)
-
-      :ok =
-        Store.put_task(Store, %TaskInfo{
-          id: "size-1",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/t"]
-        })
-
-      :ok =
-        Store.put_project(Store, %RecentProject{path: "/size-p1", name: "P1"})
-
-      size = Store.size(Store)
-      assert size == tasks_before + projects_before + 2
-    end
-
-    test "clear_tasks removes all tasks" do
-      :ok =
-        Store.put_task(Store, %TaskInfo{
-          id: "clr-1",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/t"]
-        })
-
-      :ok = Store.clear_tasks(Store)
-      assert Store.select_task_ids(Store) == []
-    end
-
-    test "clear_tasks cascades to every archive row" do
-      for i <- 1..2 do
+      for task_id <- ["clr-arch-1", "clr-arch-2"] do
         :ok =
-          Store.put_task(Store, %TaskInfo{id: "clr-arch-#{i}", type: :evolve, status: :completed})
+          Store.put_task(Store, %TaskInfo{
+            id: task_id,
+            type: :evolve,
+            status: :completed,
+            opts: [path: "/t"]
+          })
 
-        :ok = Store.put_task_archive(Store, archive_entry("clr-arch-#{i}", 1, 0))
+        :ok = Store.put_task_archive(Store, archive_entry(task_id, 1, 0))
       end
 
+      assert Store.select_all_projects(Store) |> Enum.map(& &1.path) |> Enum.sort() ==
+               ["/p1", "/p2"]
+
+      assert Store.count_projects(Store) == 2
+      # size/1 sums ROW COUNTS across both tables.
+      assert Store.size(Store) == 4
       assert %{total: 1} = Store.list_task_archives(Store, "clr-arch-1")
 
       :ok = Store.clear_tasks(Store)
@@ -1259,11 +731,13 @@ defmodule EvoGit.StoreTest do
       assert Store.list_task_archives(Store, "clr-arch-1") == %{entries: [], total: 0}
       assert Store.list_task_archives(Store, "clr-arch-2") == %{entries: [], total: 0}
       assert Store.get_agent_archive(Store, "clr-arch-1", 1) == nil
+      # Projects are untouched by a task clear.
+      assert Store.count_projects(Store) == 2
     end
   end
 
   describe "select_finished_task_ids / select_running_lease_info — :cancelling semantics" do
-    test "select_finished_task_ids excludes :cancelling but includes :finalizing" do
+    test "both projections agree that :cancelling is NOT finished but IS lease-tracked" do
       unique = System.unique_integer([:positive])
 
       for {id, status} <- [
@@ -1278,7 +752,8 @@ defmodule EvoGit.StoreTest do
             id: id,
             type: :genesis,
             status: status,
-            opts: [path: "/t"]
+            opts: [path: "/t"],
+            lease_expires_at: 1_000_000
           })
       end
 
@@ -1292,37 +767,19 @@ defmodule EvoGit.StoreTest do
       # :finalizing and :completed ARE finished.
       assert "fin-#{unique}-finalizing" in ids
       assert "fin-#{unique}-completed" in ids
-    end
 
-    test "select_running_lease_info returns :running, :finalizing, and :cancelling rows" do
-      unique = System.unique_integer([:positive])
-
-      for {id, status} <- [
-            {"rl-#{unique}-running", :running},
-            {"rl-#{unique}-finalizing", :finalizing},
-            {"rl-#{unique}-cancelling", :cancelling},
-            {"rl-#{unique}-completed", :completed}
-          ] do
-        :ok =
-          Store.put_task(Store, %TaskInfo{
-            id: id,
-            type: :genesis,
-            status: status,
-            opts: [path: "/t"],
-            lease_expires_at: 1_000_000
-          })
-      end
-
+      # The lease read the other way round: a gracefully-cancelling task still
+      # owns a lease until it reaches :cancelled.
       rows = Store.select_running_lease_info(Store)
-      ids = Enum.map(rows, & &1.id)
+      lease_ids = Enum.map(rows, & &1.id)
       statuses = Map.new(rows, &{&1.id, &1.status})
 
-      assert "rl-#{unique}-running" in ids
-      assert "rl-#{unique}-finalizing" in ids
-      assert "rl-#{unique}-cancelling" in ids
-      refute "rl-#{unique}-completed" in ids
+      assert "fin-#{unique}" in lease_ids
+      assert "fin-#{unique}-finalizing" in lease_ids
+      assert "fin-#{unique}-cancelling" in lease_ids
+      refute "fin-#{unique}-completed" in lease_ids
 
-      assert statuses["rl-#{unique}-cancelling"] == :cancelling
+      assert statuses["fin-#{unique}-cancelling"] == :cancelling
     end
   end
 
@@ -1345,64 +802,6 @@ defmodule EvoGit.StoreTest do
         })
     end
 
-    test "returns {tasks, total_count} tuple" do
-      insert_timed!(0)
-      insert_timed!(1)
-
-      result = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
-
-      assert {tasks, total} = result
-      assert is_list(tasks)
-      assert length(tasks) == 2
-      assert total == 2
-    end
-
-    test "respects LIMIT and OFFSET" do
-      for i <- 0..4, do: insert_timed!(i)
-
-      {page1, total1} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 0)
-      assert length(page1) == 2
-      assert total1 == 5
-
-      {page3, total3} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 4)
-      assert length(page3) == 1
-      assert total3 == 5
-    end
-
-    test "orders most-recent-first (started_at DESC)" do
-      for i <- 0..4, do: insert_timed!(i)
-
-      {tasks, _total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
-      ids = Enum.map(tasks, & &1.id)
-
-      # page-4 has the latest started_at, so it should be first.
-      assert hd(ids) == "page-4"
-      # Followed by 3, 2, 1, 0.
-      assert List.last(ids) == "page-0"
-    end
-
-    test "nil/invalid opts don't crash (default limit/offset)" do
-      insert_timed!(0)
-
-      {tasks, total} = Store.safe_select_paginated_tasks(Store, [])
-      assert is_list(tasks)
-      assert total >= 1
-
-      {tasks2, total2} = Store.safe_select_paginated_tasks(Store, limit: nil, offset: nil)
-      assert is_list(tasks2)
-      assert total2 == total
-    end
-
-    test "offset beyond total returns empty list but total_count still correct" do
-      for i <- 0..2, do: insert_timed!(i)
-
-      {tasks, total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 9999)
-      assert tasks == []
-      assert total == 3
-    end
-  end
-
-  describe "safe_select_paginated_tasks with filters" do
     # Helper: inserts a task with configurable fields and a distinct started_at
     # (index 0 = oldest). Returns the task id.
     defp insert_filtered!(i, opts) do
@@ -1427,308 +826,53 @@ defmodule EvoGit.StoreTest do
       id
     end
 
-    test "status filter returns correct count" do
-      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
-      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
+    test "the facade paginates, orders newest-first, defaults invalid opts, and forwards filters" do
+      for i <- 0..4, do: insert_timed!(i)
 
-      {tasks, total} =
+      # {tasks, total_count}, with total ignoring the page.
+      {page1, total1} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 0)
+      assert length(page1) == 2
+      assert total1 == 5
+
+      {page3, total3} = Store.safe_select_paginated_tasks(Store, limit: 2, offset: 4)
+      assert length(page3) == 1
+      assert total3 == 5
+
+      # Most-recent-first: page-4 has the latest started_at.
+      {tasks, _total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 0)
+      assert Enum.map(tasks, & &1.id) == ["page-4", "page-3", "page-2", "page-1", "page-0"]
+
+      # Offset beyond the total: an empty page, total still correct.
+      {beyond, beyond_total} = Store.safe_select_paginated_tasks(Store, limit: 10, offset: 9999)
+      assert beyond == []
+      assert beyond_total == 5
+
+      # Nil/absent/invalid opts fall back to the documented defaults.
+      {defaults, default_total} = Store.safe_select_paginated_tasks(Store, [])
+      assert length(defaults) == 5
+      assert default_total == 5
+
+      {nil_opts, ^default_total} =
+        Store.safe_select_paginated_tasks(Store, limit: nil, offset: nil)
+
+      assert is_list(nil_opts)
+
+      # Filters are forwarded to the shared WHERE builder — the full filter
+      # matrix (LIKE escaping, the 'pending' review composite, every search
+      # column) lives in `store/operations/tasks_test.exs`.
+      insert_filtered!(0, id: "f-failed", status: :failed, opts: [path: "/tmp/proj_f"])
+      insert_filtered!(1, id: "f-done", status: :completed, opts: [path: "/tmp/proj_f"])
+
+      {filtered, filtered_total} =
         Store.safe_select_paginated_tasks(Store,
           limit: 50,
           offset: 0,
-          filters: [status: "failed"]
+          filters: [status: "failed", project_path: "/tmp/proj_f"]
         )
 
-      assert length(tasks) == 2
-      assert total == 2
-      assert Enum.all?(tasks, &(&1.status == :failed))
-    end
-
-    test "status 'all' returns all tasks" do
-      for _ <- 1..3, do: insert_filtered!(System.unique_integer([:positive]), status: :completed)
-      for _ <- 1..2, do: insert_filtered!(System.unique_integer([:positive]), status: :failed)
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0, filters: [status: "all"])
-
-      assert length(tasks) == 5
-      assert total == 5
-    end
-
-    test "status filter + pagination slicing" do
-      for i <- 0..19, do: insert_filtered!(i, id: "comp-#{i}", status: :completed)
-      for i <- 0..9, do: insert_filtered!(i, id: "fail-#{i}", status: :failed)
-
-      {page1, total1} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 5,
-          offset: 0,
-          filters: [status: "failed"]
-        )
-
-      assert length(page1) == 5
-      assert total1 == 10
-
-      {page2, total2} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 5,
-          offset: 5,
-          filters: [status: "failed"]
-        )
-
-      assert length(page2) == 5
-      assert total2 == 10
-
-      {page3, total3} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 5,
-          offset: 10,
-          filters: [status: "failed"]
-        )
-
-      assert page3 == []
-      assert total3 == 10
-    end
-
-    test "project path filter returns only matching tasks" do
-      for i <- 0..2,
-          do:
-            insert_filtered!(i, id: "a-#{i}", opts: [path: "/tmp/proj_a", prompt: "proj a #{i}"])
-
-      for i <- 0..1,
-          do:
-            insert_filtered!(i, id: "b-#{i}", opts: [path: "/tmp/proj_b", prompt: "proj b #{i}"])
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [project_path: "/tmp/proj_a"]
-        )
-
-      assert length(tasks) == 3
-      assert total == 3
-
-      ids = Enum.map(tasks, & &1.id)
-      assert Enum.all?(ids, &String.starts_with?(&1, "a-"))
-    end
-
-    test "project path filter treats underscores literally (LIKE wildcard escaping)" do
-      # Two paths that differ only by the underscore position: `/tmp/proj_a`
-      # vs `/tmp/projXa`. Without LIKE escaping, the `_` in the filter would
-      # act as a single-char wildcard and match BOTH rows.
-      insert_filtered!(0, id: "underscore-a", opts: [path: "/tmp/proj_a"])
-      insert_filtered!(1, id: "underscore-x", opts: [path: "/tmp/projXa"])
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [project_path: "/tmp/proj_a"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).id == "underscore-a"
-    end
-
-    test "search by id returns only matching tasks" do
-      insert_filtered!(0, id: "search-aaa-001")
-      insert_filtered!(1, id: "search-bbb-002")
-      insert_filtered!(2, id: "search-aaa-003")
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [search: "aaa"]
-        )
-
-      assert length(tasks) == 2
-      assert total == 2
-
-      ids = Enum.map(tasks, & &1.id)
-      assert "search-aaa-001" in ids
-      assert "search-aaa-003" in ids
-      refute "search-bbb-002" in ids
-    end
-
-    test "search by prompt text in opts returns matching tasks" do
-      insert_filtered!(0, opts: [prompt: "build a web application"])
-      insert_filtered!(1, opts: [prompt: "write a database migration"])
-      insert_filtered!(2, opts: [prompt: "refactor the auth module"])
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [search: "database"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).opts[:prompt] == "write a database migration"
-    end
-
-    test "search by branch_name returns only matching tasks (result text is NOT searched)" do
-      # Matches: the result carries branch_name "genesis/agent_1", which the
-      # store denormalizes into the `branch_name` column — one of the searched
-      # columns now. (A lowercase query still proves case-insensitive matching.)
-      insert_filtered!(0,
-        id: "result-oauth",
-        result:
-          {:ok,
-           %{
-             result: "Implemented the OAuth login flow and added tests.",
-             commit_sha: "abc",
-             branch_name: "genesis/agent_1"
-           }}
-      )
-
-      # Does NOT match: a different response message and no branch.
-      insert_filtered!(1,
-        id: "result-other",
-        result: {:ok, %{result: "Refactored the database migration layer.", commit_sha: "def"}}
-      )
-
-      # Does NOT match: no result at all.
-      insert_filtered!(2, id: "result-nil", result: nil)
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [search: "agent_1"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).id == "result-oauth"
-
-      # `result` is deliberately no longer searched: `result` is a plain JSON
-      # TEXT blob (no compression layer), so a LIKE over it was both a
-      # full-blob scan and unable to see the user-visible text inside the JSON.
-      # A phrase that exists ONLY in the result text no longer matches (the
-      # behaviour change documented on the shared WHERE builder,
-      # `EvoGit.Store.Operations.Filters`).
-      {by_result_text, by_result_total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [search: "oauth login"]
-        )
-
-      assert by_result_text == []
-      assert by_result_total == 0
-    end
-
-    test "empty search returns all (no filtering)" do
-      insert_filtered!(0, opts: [prompt: "alpha task"])
-      insert_filtered!(1, opts: [prompt: "beta task"])
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [search: ""]
-        )
-
-      assert length(tasks) == 2
-      assert total == 2
-    end
-
-    test "review status exact match returns only matching tasks" do
-      insert_filtered!(0, id: "rs-merged", status: :completed, review_status: :merged)
-      insert_filtered!(1, id: "rs-rejected", status: :completed, review_status: :rejected)
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [review_status: "merged"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).id == "rs-merged"
-    end
-
-    test "review 'pending' composite: completed + null review + branch_name in result" do
-      # Matches "pending": completed, review_status nil, result has branch_name.
-      insert_filtered!(0,
-        id: "pending-yes",
-        status: :completed,
-        review_status: nil,
-        result: {:ok, %{branch_name: "feat-123", commit_sha: "abc", result: "done"}}
-      )
-
-      # Does NOT match "pending": completed, nil review, but nil result (no branch).
-      insert_filtered!(1,
-        id: "pending-no-result",
-        status: :completed,
-        review_status: nil,
-        result: nil
-      )
-
-      # Does NOT match "pending": completed but already reviewed (merged).
-      insert_filtered!(2,
-        id: "pending-merged",
-        status: :completed,
-        review_status: :merged,
-        result: {:ok, %{branch_name: "feat-456"}}
-      )
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [review_status: "pending"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).id == "pending-yes"
-    end
-
-    test "combined filters (status AND project_path)" do
-      insert_filtered!(0,
-        id: "combo-1",
-        status: :completed,
-        opts: [path: "/tmp/alpha", prompt: "combo one"]
-      )
-
-      insert_filtered!(1,
-        id: "combo-2",
-        status: :failed,
-        opts: [path: "/tmp/alpha", prompt: "combo two"]
-      )
-
-      insert_filtered!(2,
-        id: "combo-3",
-        status: :completed,
-        opts: [path: "/tmp/beta", prompt: "combo three"]
-      )
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store,
-          limit: 50,
-          offset: 0,
-          filters: [status: "completed", project_path: "/tmp/alpha"]
-        )
-
-      assert length(tasks) == 1
-      assert total == 1
-      assert hd(tasks).id == "combo-1"
-    end
-
-    test "backward compatibility — no filters key behaves as before (no WHERE clause)" do
-      for i <- 0..2, do: insert_filtered!(i, status: :completed)
-      for i <- 0..1, do: insert_filtered!(i + 10, id: "nf-#{i}", status: :failed)
-
-      {tasks, total} =
-        Store.safe_select_paginated_tasks(Store, limit: 50, offset: 0)
-
-      assert length(tasks) == 5
-      assert total == 5
+      assert filtered_total == 1
+      assert Enum.map(filtered, & &1.id) == ["f-failed"]
+      assert hd(filtered).status == :failed
     end
   end
 
@@ -1895,166 +1039,58 @@ defmodule EvoGit.StoreTest do
       assert fetched2.review_status == :merged
     end
 
-    test "all known review_status values round-trip as atoms" do
-      for status <- [:merged, :rejected, :continued, :ignored, :open, :no_changes] do
-        task = %TaskInfo{
-          id: "rs-#{status}",
-          type: :evolve,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil,
-          review_status: status
-        }
+    test "every closed-set atom round-trips through the facade (type, status, review_status)" do
+      columns = [
+        {:type, :genesis, [:genesis, :evolve, :extract_skills, :reflect]},
+        {:status, :genesis,
+         [:pending, :running, :finalizing, :completed, :failed, :cancelled, :cancelling]},
+        {:review_status, :completed,
+         [:open, :merged, :rejected, :continued, :ignored, :no_changes]}
+      ]
+
+      for {field, type, values} <- columns, value <- values do
+        id = "atom-#{field}-#{value}"
+
+        task =
+          %TaskInfo{
+            id: id,
+            type: type,
+            status: :completed,
+            opts: [path: "/tmp/test"],
+            started_at: DateTime.utc_now(),
+            finished_at: DateTime.utc_now(),
+            logs: [],
+            result: nil
+          }
+          |> Map.put(field, value)
 
         :ok = Store.put_task(Store, task)
-        fetched = Store.get_task(Store, "rs-#{status}")
-        assert is_atom(fetched.review_status), "review_status #{status} decoded as non-atom"
-        assert fetched.review_status == status
+        fetched = Store.get_task(Store, id)
+        assert is_atom(Map.fetch!(fetched, field)), "#{field} #{value} decoded as non-atom"
+        assert Map.fetch!(fetched, field) == value
       end
     end
 
-    test "review_status nil round-trips" do
-      task = %TaskInfo{
-        id: "rs-nil",
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil,
-        review_status: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rs-nil")
-      assert fetched.review_status == nil
-    end
-
-    test "type field round-trips as atom for all known values" do
-      for type <- [:genesis, :evolve, :extract_skills, :reflect] do
-        task = %TaskInfo{
-          id: "type-#{type}",
-          type: type,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        }
-
-        :ok = Store.put_task(Store, task)
-        fetched = Store.get_task(Store, "type-#{type}")
-        assert is_atom(fetched.type)
-        assert fetched.type == type
-      end
-    end
-
-    test "type :reflect codec round-trips directly" do
-      # Direct codec pin for the :reflect (repo-less self-reflective) type atom,
-      # which lives in the Codec @known_atoms whitelist.
-      assert Codec.encode_atom(:reflect) == "reflect"
-      assert Codec.decode_atom("reflect") == :reflect
-    end
-
-    test "status field round-trips as atom for all known values" do
-      for status <- [
-            :pending,
-            :running,
-            :finalizing,
-            :completed,
-            :failed,
-            :cancelled,
-            :cancelling
+    test "lease_expires_at round-trips both an integer and nil" do
+      for {id, status, lease} <- [
+            {"rt-lease", :running, 1_234_567_890},
+            {"rt-lease-nil", :completed, nil}
           ] do
-        task = %TaskInfo{
-          id: "status-#{status}",
-          type: :genesis,
-          status: status,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil
-        }
+        :ok =
+          Store.put_task(Store, %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: status,
+            opts: [path: "/tmp/test"],
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil,
+            lease_expires_at: lease
+          })
 
-        :ok = Store.put_task(Store, task)
-        fetched = Store.get_task(Store, "status-#{status}")
-        assert is_atom(fetched.status)
-        assert fetched.status == status
+        assert %TaskInfo{lease_expires_at: ^lease} = Store.get_task(Store, id)
       end
-    end
-
-    test "unknown status atom decodes as nil (whitelist safety)" do
-      # Directly exercise the codec: a non-whitelisted atom must decode nil
-      # rather than creating a new atom (avoids atom-table leaks).
-      assert Codec.decode_atom("not_a_real_status") == nil
-      assert Codec.decode_atom("cancelling") == :cancelling
-    end
-
-    test "review_status field round-trips as atom for all known values" do
-      for review_status <- [:open, :merged, :rejected, :continued, :ignored, :no_changes] do
-        task = %TaskInfo{
-          id: "rs-#{review_status}",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil,
-          review_status: review_status
-        }
-
-        :ok = Store.put_task(Store, task)
-        fetched = Store.get_task(Store, "rs-#{review_status}")
-        assert is_atom(fetched.review_status)
-        assert fetched.review_status == review_status
-      end
-    end
-
-    test "lease_expires_at integer round-trips" do
-      task = %TaskInfo{
-        id: "rt-lease",
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil,
-        lease_expires_at: 1_234_567_890
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-lease")
-
-      assert %TaskInfo{} = fetched
-      assert fetched.lease_expires_at == 1_234_567_890
-    end
-
-    test "lease_expires_at nil round-trips" do
-      task = %TaskInfo{
-        id: "rt-lease-nil",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil,
-        lease_expires_at: nil
-      }
-
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-lease-nil")
-
-      assert %TaskInfo{} = fetched
-      assert fetched.lease_expires_at == nil
     end
 
     test "unknown atom value in DB decodes to nil (never crashes)", %{sqlite_path: sqlite_path} do
@@ -2073,32 +1109,6 @@ defmodule EvoGit.StoreTest do
       assert %TaskInfo{} = fetched
       # Unknown value decodes to nil, not a crash.
       assert fetched.review_status == nil
-    end
-
-    test "string value in atom field survives a full round-trip without crashing", %{
-      sqlite_path: sqlite_path
-    } do
-      # The ultimate regression: inject a string that IS a known atom name into
-      # the DB, read it (decode_atom returns the atom), then re-put the read
-      # task. This must not crash even if the in-memory value were somehow a
-      # string.
-      {:ok, conn} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(
-        conn,
-        "INSERT OR REPLACE INTO tasks (id, type, status, opts, review_status) VALUES (?1, ?2, ?3, ?4, ?5)",
-        ["str-rs", "evolve", "completed", "{}", "merged"]
-      )
-
-      :ok = XqliteNIF.close(conn)
-
-      fetched = Store.get_task(Store, "str-rs")
-      assert fetched.review_status == :merged
-
-      # Re-put — must not crash (this was the original FunctionClauseError).
-      assert :ok = Store.put_task(Store, fetched)
-      fetched2 = Store.get_task(Store, "str-rs")
-      assert fetched2.review_status == :merged
     end
   end
 

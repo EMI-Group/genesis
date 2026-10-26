@@ -22,6 +22,12 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
   alias EvoGit.Agent.Usage
 
+  setup_all do
+    template = git_template!()
+    on_exit(fn -> File.rm_rf!(template) end)
+    %{git_template: template}
+  end
+
   describe "resolve_subagent_path/3" do
     setup do
       foreign_repos = [
@@ -623,21 +629,15 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       %{agent_id: agent_id}
     end
 
-    # Initializes a real git repository in `dir`, creating one commit per
-    # {filename, content, commit_message} triple and returning the SHAs in
-    # commit order.
-    defp init_repo(dir, commits) do
-      System.cmd("git", ["init", "-q"], cd: dir)
-      System.cmd("git", ["config", "user.email", "test@example.com"], cd: dir)
-      System.cmd("git", ["config", "user.name", "Test User"], cd: dir)
-      System.cmd("git", ["config", "commit.gpgsign", "false"], cd: dir)
+    # Initializes a real git repository in `dir` from the module's `.git`
+    # template (no `git init` / identity-config subprocesses per test), creating
+    # one commit per {filename, content, commit_message} triple and returning the
+    # SHAs in commit order.
+    defp init_repo(template, dir, commits) do
+      dir = init_repo(template, dir)
 
       Enum.map(commits, fn {file, content, msg} ->
-        File.write!(Path.join(dir, file), content)
-        {:ok, _} = Git.add(dir, ".")
-        {:ok, _} = Git.commit(dir, msg)
-        {:ok, sha} = Git.rev_parse(dir)
-        sha
+        commit_files(dir, [{file, content}], msg)
       end)
     end
 
@@ -680,7 +680,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "missing foreign repo root returns an error tuple, no crash",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: _template} do
       missing_root = Path.join(tmp_dir, "does_not_exist")
 
       state = %LoopState{
@@ -703,10 +703,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "per-repo base_sha is honored as the foreign phylo starting commit",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      [sha1] = init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      [sha1] = init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       state = %LoopState{
         agent_id: agent_id,
@@ -733,12 +733,12 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "per-repo base_sha takes precedence over the tracked foreign_repo_commits map",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
 
       [sha1, sha2] =
-        init_repo(foreign_root, [
+        init_repo(template, foreign_root, [
           {"file.txt", "one", "c1"},
           {"file2.txt", "two", "c2"}
         ])
@@ -769,10 +769,14 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
              ] = SubagentProcessing.build_subagent_specs([{call, 0}], state, %{"orig" => sha2})
     end
 
-    test "invalid base_sha returns an error tuple", %{agent_id: agent_id, tmp_dir: tmp_dir} do
+    test "invalid base_sha returns an error tuple", %{
+      agent_id: agent_id,
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       state = %LoopState{
         agent_id: agent_id,
@@ -802,10 +806,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     # `agent_module` / `foreign_repos` wiring fails here instead of passing.
 
     test "absolute path into a writable foreign repo yields an authorized writable-foreign spec",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       state = %LoopState{
         agent_id: agent_id,
@@ -832,10 +836,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "relative delegation from a parent inside a writable foreign repo inherits the foreign repo id and is authorized",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       # The parent is itself running INSIDE the foreign repo (the NESTED case),
       # so a RELATIVE path targets the parent's own repo root. Its OWN repo_id
@@ -866,10 +870,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "relative delegation from a foreign-repo parent resolves the child's repo id and worktree root to the FOREIGN repo",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       Process.put(:repo_path, foreign_root)
       {:ok, agent_state} = EvoGit.AgentScheduler.get_agent_state(agent_id)
@@ -910,10 +914,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "store_sub_result/4 advances the tracked foreign commit only for the real builder's authorized spec",
-         %{agent_id: agent_id, tmp_dir: tmp_dir} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
       foreign_root = Path.join(tmp_dir, "foreign")
       File.mkdir_p!(foreign_root)
-      [sha] = init_repo(foreign_root, [{"file.txt", "one", "c1"}])
+      [sha] = init_repo(template, foreign_root, [{"file.txt", "one", "c1"}])
 
       writable_parent = 99_001
       primary_parent = 99_002
@@ -1152,8 +1156,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   end
 
   describe "subagent result merging (ContextMerge wiring)" do
-    test "clean multi-child merge: success note and merged branches deleted", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "clean_merge"))
+    test "clean multi-child merge: success note and merged branches deleted", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "clean_merge"))
 
       base =
         commit_files(
@@ -1196,8 +1203,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       refute Git.branch_exists?(dir, "evogit-agent-T1-A1")
     end
 
-    test "out-of-scope CONTEXT.md edit is dropped in favour of the parent", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "out_of_scope"))
+    test "out-of-scope CONTEXT.md edit is dropped in favour of the parent", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "out_of_scope"))
 
       base =
         commit_files(
@@ -1239,8 +1249,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert clean_worktree?(dir)
     end
 
-    test "in-scope child beats an ancestor-level parent edit", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "in_scope"))
+    test "in-scope child beats an ancestor-level parent edit", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "in_scope"))
 
       base = commit_files(dir, [{"src/CONTEXT.md", "base src context\n"}], "base")
 
@@ -1267,8 +1280,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "same-node CONTEXT.md conflict: reported, worktree clean, no branch deleted",
-         %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "same_node"))
+         %{tmp_dir: tmp_dir, git_template: template} do
+      dir = init_repo(template, Path.join(tmp_dir, "same_node"))
 
       base =
         commit_files(
@@ -1312,8 +1325,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "non-CONTEXT.md conflict is never auto-resolved and keeps both branches",
-         %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "source_conflict"))
+         %{tmp_dir: tmp_dir, git_template: template} do
+      dir = init_repo(template, Path.join(tmp_dir, "source_conflict"))
 
       base =
         commit_files(
@@ -1355,8 +1368,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       assert Git.branch_exists?(dir, "evogit-agent-T1-A1")
     end
 
-    test "cross-repo results only: the cross-repo note is the whole message", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "cross_repo_only"))
+    test "cross-repo results only: the cross-repo note is the whole message", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "cross_repo_only"))
       commit_files(dir, [{"CONTEXT.md", "# Root\n"}], "base")
 
       specs = [{0, subagent_spec(0, "./", repo_id: "original")}]
@@ -1444,20 +1460,48 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
   # ---------------------------------------------------------------------------
   # Merge-test helpers — real git repos under the ExUnit tmp dir.
+  #
+  # EVERY repo starts as a copy of the module's `.git` template (built once in
+  # `setup_all/1`), so `git init` + the fixture identity config cost 4
+  # subprocesses per MODULE rather than per test.
   # ---------------------------------------------------------------------------
 
-  defp init_repo(dir) do
-    File.mkdir_p!(dir)
+  # Builds the per-module repository template: `git init` with an EMPTY template
+  # dir (no hook samples / description boilerplate), the fixture commit identity
+  # + `commit.gpgsign=false`, and `core.abbrev=40` so `git commit` prints the new
+  # commit's FULL sha (see `commit_files/3`).
+  defp git_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_git_template_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
 
-    for args <- [
-          ["init", "-q"],
-          ["config", "user.email", "test@example.com"],
-          ["config", "user.name", "Test User"],
-          ["config", "commit.gpgsign", "false"]
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    seed = Path.join(root, "seed")
+
+    {_output, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", seed],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test User"},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
         ] do
-      {_output, 0} = System.cmd("git", args, cd: dir, stderr_to_stdout: true)
+      {_output, 0} =
+        System.cmd("git", ["config", key, value], cd: seed, stderr_to_stdout: true)
     end
 
+    seed
+  end
+
+  defp init_repo(template, dir) do
+    File.mkdir_p!(dir)
+    File.cp_r!(Path.join(template, ".git"), Path.join(dir, ".git"))
     dir
   end
 
@@ -1469,7 +1513,22 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end)
 
     {:ok, _output} = Git.add(dir, ".")
-    {:ok, _output} = Git.commit(dir, message)
+    {:ok, output} = Git.commit(dir, message)
+    committed_sha(dir, output)
+  end
+
+  # `git commit` prints "[<branch> <sha>] <subject>" — the template pins
+  # `core.abbrev=40`, so that sha is complete and usable as a merge target
+  # without an extra `rev-parse` spawn. If the output shape ever changes, fall
+  # back to resolving HEAD (correct, only slower).
+  defp committed_sha(dir, commit_output) do
+    case Regex.run(~r/^\[[^\]]* ([0-9a-f]{40})\]/m, commit_output) do
+      [_, sha] -> sha
+      _ -> rev_parse!(dir)
+    end
+  end
+
+  defp rev_parse!(dir) do
     {:ok, sha} = Git.rev_parse(dir)
     sha
   end

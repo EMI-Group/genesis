@@ -576,10 +576,12 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     # The user-bubble markup is identical on the typed and chip send routes
-    # (both share do_send_chat/2's optimistic-transcript assign), so the
-    # classes are asserted against a SEEDED transcript materialized by a real
+    # (both share do_send_chat/2's optimistic-transcript assign), so ONE test
+    # pins the classes against a SEEDED transcript materialized by a real
     # assign path (the matching {:task_updated, ...} event runs
-    # handle_task_event's assign/persist path) — no task needs to start.
+    # handle_task_event's assign/persist path) — no task needs to start. The
+    # chip ROUTE itself (send_suggestion -> do_send_chat) is covered by the
+    # "model selector" chip tests below.
     test "typed send renders the right-aligned soft user bubble", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
 
@@ -604,31 +606,6 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # The DaisyUI theme-token bubble (bg-base-300/text-base-content read
       # correctly in both light and dark themes), text left-aligned inside.
-      assert bubble_class =~ "w-fit"
-      assert bubble_class =~ "bg-base-300"
-      assert bubble_class =~ "text-left"
-      refute bubble_class =~ "bg-primary"
-    end
-
-    test "suggestion-chip send renders the same user bubble classes", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/help")
-
-      seed_chat_state(view, %{
-        chat_task_id: "t1",
-        chat_status: :running,
-        transcript: [
-          %{id: "1", role: :user, text: "Explain the Genesis architecture", streaming: false}
-        ]
-      })
-
-      # Materialize via the real assign path, same as the typed-send test.
-      send(view.pid, {:task_updated, "t1", :running, node()})
-      html = render(view)
-
-      assert html =~ "Explain the Genesis architecture"
-
-      {wrapper_class, bubble_class} = first_user_bubble(html)
-      assert wrapper_class =~ "flex justify-end"
       assert bubble_class =~ "w-fit"
       assert bubble_class =~ "bg-base-300"
       assert bubble_class =~ "text-left"

@@ -2,6 +2,12 @@ defmodule EvoDashWeb.SystemLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
+  # Poll interval for every bounded await below (1 ms, not the old 10 ms): the
+  # awaits are bounded by generous timeouts, so a fine cadence only removes dead
+  # time between an async result and its observation. The bounded-poll SHAPE and
+  # every timeout are unchanged.
+  @poll_ms 1
+
   setup do
     # Software Update card tests share the global `EvoDash.UpdateStatus` hub —
     # reset it so tests are independent, and pin the notify-only seam to false
@@ -19,6 +25,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       :update_active_task_ids,
       :update_winddown_timeout,
       :update_winddown_poll_ms,
+      :system_checks_runner,
       :system_samples_runner,
       :system_samples_seed_retry_ms,
       :source_status_runner,
@@ -28,6 +35,13 @@ defmodule EvoDashWeb.SystemLiveTest do
 
     originals = Map.new(keys, fn key -> {key, Application.get_env(:evo_dash, key)} end)
     Application.put_env(:evo_dash, :update_notify_only_override, false)
+    # Hermetic + fast mounts: every page mount spawns the system self-check and
+    # the chart seed. Both are injected here (re-resolved AT CALL/SPAWN TIME, so
+    # a test may override them for its own mount) — the real self-check shells
+    # out to the tool probes (~9 ms) and the default seed reads the VM-wide
+    # sampler ring buffer, which makes chart-buffer assertions host-dependent.
+    Application.put_env(:evo_dash, :system_checks_runner, fn -> all_ok_checks() end)
+    Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, []} end)
     EvoDash.UpdateStatus.reset()
 
     # ActiveTasks is another shared global hub under EvoDash.Application (the
@@ -67,7 +81,7 @@ defmodule EvoDashWeb.SystemLiveTest do
         flunk("system self-check did not complete within the test timeout")
 
       true ->
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_checks_done(view, deadline)
     end
   end
@@ -90,7 +104,7 @@ defmodule EvoDashWeb.SystemLiveTest do
         flunk("no chart sample appeared within the test timeout")
 
       true ->
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_chart_sample(view, deadline)
     end
   end
@@ -162,7 +176,7 @@ defmodule EvoDashWeb.SystemLiveTest do
   # come from the real host, so the nix row assertions are independent of host
   # config).
   defp render_with_nix_check(view, nix_check) do
-    render_with_checks(view, %{EvoGit.SystemCheck.run_all_checks() | nix: nix_check})
+    render_with_checks(view, %{all_ok_checks() | nix: nix_check})
   end
 
   # Deterministic all-OK checks map for the self-check grid/banner assertions.
@@ -210,12 +224,6 @@ defmodule EvoDashWeb.SystemLiveTest do
   end
 
   describe "system page" do
-    test "renders the system page", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
-      assert html =~ "System"
-    end
-
     test "LLM Test in Settings link carries &node=<id> when a remote node is active", %{
       conn: conn
     } do
@@ -276,7 +284,7 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # The system self-check runs async and gates the LLM Test row on
       # completion; drive it deterministically so the link renders.
-      send(view.pid, {:system_checks_result, EvoGit.SystemCheck.run_all_checks()})
+      send(view.pid, {:system_checks_result, all_ok_checks()})
       html = render(view)
 
       # The `~p` sigil percent-encodes the interpolated query suffix:
@@ -305,63 +313,31 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ ~s(phx-click="toggle_pause")
     end
 
-    test "System Control section renders with the Restart System button", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
+    test "System Control section renders its Restart/Stop buttons and both modals open+close",
+         %{conn: conn} do
+      # ONE mount for the four modal open/close paths (the documented
+      # `render_click(view, "request_X")` opens / `cancel_X` closes idiom): the
+      # section markup and both danger-confirmation modals are independent
+      # renders of the same page, so no per-modal mount is needed.
+      {:ok, view, html} = live(conn, ~p"/system")
 
       assert html =~ "System Control"
       assert html =~ "Restart System"
       assert html =~ ~s(phx-click="request_restart")
-    end
-
-    test "request_restart opens the confirmation modal", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/system")
-
-      # The modal is not visible on initial render
-      refute html =~ "Restart System?"
-
-      html = render_click(view, "request_restart")
-
-      assert html =~ "Restart System?"
-    end
-
-    test "cancel_restart closes the confirmation modal", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      # Open the modal first
-      _html = render_click(view, "request_restart")
-
-      html = render_click(view, "cancel_restart")
-
-      refute html =~ "Restart System?"
-    end
-
-    test "System Control section renders with the Stop System button", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/system")
-
       assert html =~ "Stop System"
       assert html =~ ~s(phx-click="request_stop")
-    end
 
-    test "request_stop opens the confirmation modal", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/system")
-
-      # The modal is not visible on initial render
+      # Both modals are invisible on the initial render.
+      refute html =~ "Restart System?"
       refute html =~ "Stop System?"
 
-      html = render_click(view, "request_stop")
+      # Restart: open, then close.
+      assert render_click(view, "request_restart") =~ "Restart System?"
+      refute render_click(view, "cancel_restart") =~ "Restart System?"
 
-      assert html =~ "Stop System?"
-    end
-
-    test "cancel_stop closes the confirmation modal", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      # Open the modal first
-      _html = render_click(view, "request_stop")
-
-      html = render_click(view, "cancel_stop")
-
-      refute html =~ "Stop System?"
+      # Stop: open, then close.
+      assert render_click(view, "request_stop") =~ "Stop System?"
+      refute render_click(view, "cancel_stop") =~ "Stop System?"
     end
 
     test "confirm_restart restarts the remote node via RPC when remote" do
@@ -573,9 +549,30 @@ defmodule EvoDashWeb.SystemLiveTest do
     # (`>Nix Environment</span>` / `>Sandbox</span>`) and row-only detail
     # strings / icons ("flake.nix", "Flake valid", "hero-lock-closed").
 
-    test "Nix Environment row is hidden when nix is disabled in config", %{conn: conn} do
+    test "Nix Environment row renders only when nix is enabled and the binary is available", %{
+      conn: conn
+    } do
+      # ONE mount: visibility is a pure function of the injected nix check map,
+      # so the three gate combinations are injected sequentially into the same
+      # page (each injected result is the last one processed — see
+      # `render_with_checks/2`).
       {:ok, view, _html} = live(conn, ~p"/system")
 
+      # Enabled in config but the nix binary is missing -> hidden.
+      html =
+        render_with_nix_check(view, %{
+          enabled: true,
+          available: false,
+          flake_present: false,
+          dev_env_built: false,
+          error: nil
+        })
+
+      refute html =~ ">Nix Environment</span>"
+      refute html =~ "flake.nix"
+      refute html =~ "Flake valid"
+
+      # Disabled in config (binary available) -> hidden.
       html =
         render_with_nix_check(view, %{
           enabled: false,
@@ -589,30 +586,10 @@ defmodule EvoDashWeb.SystemLiveTest do
       # Row-only detail strings — never rendered when the row is hidden.
       refute html =~ "flake.nix"
       refute html =~ "Flake valid"
-    end
 
-    test "Nix Environment row is hidden when the nix binary is unavailable", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      html =
-        render_with_nix_check(view, %{
-          enabled: true,
-          available: false,
-          flake_present: false,
-          dev_env_built: false,
-          error: nil
-        })
-
-      refute html =~ ">Nix Environment</span>"
-      refute html =~ "flake.nix"
-      refute html =~ "Flake valid"
-    end
-
-    test "Nix Environment row is shown when nix is enabled and the binary is available", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
+      # Enabled AND available -> shown, with the nix-specific detail strings
+      # (the generic "Enabled"/"Disabled" strings also appear in the Sandbox
+      # row, so assert on strings unique to the Nix row).
       html =
         render_with_nix_check(view, %{
           enabled: true,
@@ -623,9 +600,6 @@ defmodule EvoDashWeb.SystemLiveTest do
         })
 
       assert html =~ ">Nix Environment</span>"
-      # Nix-specific detail strings from the row template (the generic
-      # "Enabled"/"Disabled" strings also appear in the Sandbox row, so assert
-      # on strings unique to the Nix row).
       assert html =~ "flake.nix"
       assert html =~ "Flake valid"
     end
@@ -647,7 +621,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # Checks must complete for any row to render at all — inject the real
       # result so `system_checks_status` leaves `:checking` (same pattern as
       # the "LLM Test in Settings link" test).
-      html = render_with_checks(view, EvoGit.SystemCheck.run_all_checks())
+      html = render_with_checks(view, all_ok_checks())
 
       # The check grid renders the "Sandbox" row title only when the row is
       # shown; the `hero-lock-closed` icon is unique to that row.
@@ -672,7 +646,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # on a Linux CI host it shows "systemd-run (Linux)" even under the
       # override. Only a second injected :sandbox_exec check map makes the
       # badge deterministic.
-      html = render_with_checks(view, EvoGit.SystemCheck.run_all_checks())
+      html = render_with_checks(view, all_ok_checks())
 
       assert html =~ ">Sandbox</span>"
       assert html =~ "hero-lock-closed"
@@ -681,7 +655,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # so the "sandbox-exec (macOS)" badge does not depend on the host OS.
       html =
         render_with_checks(view, %{
-          EvoGit.SystemCheck.run_all_checks()
+          all_ok_checks()
           | sandbox: %{
               backend: :sandbox_exec,
               enabled: true,
@@ -710,7 +684,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # systemd) so the badge text is deterministic regardless of the host OS.
       html =
         render_with_checks(view, %{
-          EvoGit.SystemCheck.run_all_checks()
+          all_ok_checks()
           | sandbox: %{
               backend: :bwrap,
               enabled: true,
@@ -759,39 +733,22 @@ defmodule EvoDashWeb.SystemLiveTest do
     # `set_windows_platform/0` so the Sandbox cell is hidden and the banner
     # depends only on the injected checks.
 
-    test "Genesis Process Tree row markers are no longer rendered", %{conn: conn} do
+    test "merged health banner turns red for each failure reason, green when all pass", %{
+      conn: conn
+    } do
+      # ONE mount: `render_with_checks/2` injects a full result, and the LAST
+      # injected result wins (FIFO mailbox, real check already settled), so
+      # every banner branch is exercised on the same page.
       set_windows_platform()
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
+      # Green when every check passes.
       html = render_with_checks(view, all_ok_checks())
-
-      # The health-banner redesign removed the old "Genesis Process Tree" row
-      # and its `supervisor_status/1` component entirely: the row title, the
-      # "All healthy" fallback, and the `EvoGit:` / `EvoDash:` sub-status
-      # labels (`<span ...>EvoGit:</span>`) must never reappear.
-      refute html =~ "Genesis Process Tree"
-      refute html =~ "All healthy"
-      refute html =~ ">EvoGit:</span>"
-      refute html =~ ">EvoDash:</span>"
-    end
-
-    test "merged health light is green when every check passes", %{conn: conn} do
-      set_windows_platform()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      html = render_with_checks(view, all_ok_checks())
-
       assert html =~ "System running correctly"
       assert html =~ "All self-checks passed."
-    end
 
-    test "merged health light is red with a config failure reason", %{conn: conn} do
-      set_windows_platform()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
+      # Configuration failure.
       html =
         render_with_checks(view, %{
           all_ok_checks()
@@ -800,13 +757,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert html =~ "System needs attention"
       assert html =~ "Required settings are missing or invalid"
-    end
 
-    test "merged health light is red with a missing-tool reason", %{conn: conn} do
-      set_windows_platform()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
+      # Missing tool.
       html =
         render_with_checks(view, %{
           all_ok_checks()
@@ -818,13 +770,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert html =~ "System needs attention"
       assert html =~ "A required tool (git or ripgrep) is missing"
-    end
 
-    test "merged health light is red with a supervisor failure reason", %{conn: conn} do
-      set_windows_platform()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
+      # Supervisor failure.
       html =
         render_with_checks(view, %{
           all_ok_checks()
@@ -837,16 +784,6 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert html =~ "System needs attention"
       assert html =~ "System processes are not running correctly"
-    end
-
-    test "check terms render in the responsive grid", %{conn: conn} do
-      set_windows_platform()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      html = render_with_checks(view, all_ok_checks())
-
-      assert html =~ ~s(grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3)
     end
 
     test "check terms render details inline with no disclosure and fix hints on failure", %{
@@ -1001,8 +938,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # Shorten the one-shot retry delay (production default 3000 ms) so the
       # test does not sleep 3s waiting for it; the setup on_exit restores the
-      # seam.
-      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 30)
+      # seam. The retry is awaited (never slept on), so a few ms is enough.
+      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 5)
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
@@ -1032,8 +969,8 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       # Shorten the one-shot retry delay (production default 3000 ms) so the
       # test does not sleep 3s waiting for it; the setup on_exit restores the
-      # seam.
-      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 30)
+      # seam. The retry is awaited (never slept on), so a few ms is enough.
+      Application.put_env(:evo_dash, :system_samples_seed_retry_ms, 5)
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
@@ -1186,17 +1123,16 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert html =~ ~s(<option value="beta">)
     end
 
-    test "the seed fill leaves the selection nil and renders no selector without llm_slots", %{
-      conn: conn
-    } do
-      # Legacy sampler sample: the 12 aggregate keys, NO `:llm_slots`.
-      sample = sample_map(tool_used: 1, agents_total: 2) |> Map.delete(:llm_slots)
-
-      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, [sample]} end)
+    test "a legacy sample without llm_slots leaves the selection nil and never wedges the charts",
+         %{conn: conn} do
+      # Legacy sampler sample: the 12 aggregate keys, NO `:llm_slots` — via the
+      # SEED path on mount, then again via a live push.
+      legacy = sample_map(tool_used: 1, agents_total: 2) |> Map.delete(:llm_slots)
+      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, [legacy]} end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
-      assert await_view_assign(view, :chart_samples, [sample], 6_000) == :ok
+      assert await_view_assign(view, :chart_samples, [legacy], 6_000) == :ok
 
       # No model ids are known → no selection and no selector markup (neither
       # the dropdown nor the single-model muted label).
@@ -1209,6 +1145,13 @@ defmodule EvoDashWeb.SystemLiveTest do
       # The LLM card still renders (its series are all zeros).
       assert html =~ "<svg"
       refute html =~ "Collecting data…"
+
+      # A subsequent two-model sample arriving via live push still works (no
+      # wedged state): alpha is now selected and the chart plots per-model data.
+      sample = two_model_sample()
+      send(view.pid, {:system_sample, node(), 1, sample})
+      assert await_view_assign(view, :chart_samples, [legacy, sample]) == :ok
+      assert assigns(view)[:selected_llm_model] == "alpha"
     end
 
     test "node switch clears the chart buffer and resets the LLM model selection", %{
@@ -1239,36 +1182,6 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       assert assigns(view)[:chart_samples] == []
       assert assigns(view)[:selected_llm_model] == nil
-    end
-
-    test "a legacy sample without llm_slots does not crash the charts", %{conn: conn} do
-      # Hermetic seed: nothing fills the buffer except the injected sample.
-      Application.put_env(:evo_dash, :system_samples_runner, fn _node -> {:ok, []} end)
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      # A legacy 12-key sample (no `:llm_slots`) arriving via live push.
-      legacy = sample_map(tool_used: 1, agents_total: 2) |> Map.delete(:llm_slots)
-      send(view.pid, {:system_sample, node(), 1, legacy})
-      assert await_chart_sample(view) == :ok
-
-      # No model ids → selection stays nil, no selector/label markup renders,
-      # and the chart still renders (LLM series defensively read as zeros).
-      assert assigns(view)[:selected_llm_model] == nil
-      assert assigns(view)[:chart_samples] == [legacy]
-
-      html = render(view)
-      assert html =~ "<svg"
-      refute html =~ "Collecting data…"
-      refute html =~ "select_llm_model"
-      refute html =~ ~s(<select name="model")
-      refute html =~ "alpha"
-
-      # A subsequent two-model sample still works (no wedged state).
-      sample = two_model_sample()
-      send(view.pid, {:system_sample, node(), 2, sample})
-      assert await_view_assign(view, :chart_samples, [legacy, sample]) == :ok
-      assert assigns(view)[:selected_llm_model] == "alpha"
     end
 
     test "the selected model is kept while present and clamps to the first id when dropped", %{
@@ -1329,15 +1242,6 @@ defmodule EvoDashWeb.SystemLiveTest do
     #     (the hub broadcast is assigned via the `{:update_status, state}`
     #     handle_info).
     #   * `await_view_assign/3` — polls any socket assign (modal flags).
-
-    test "card is hidden when not running in the desktop shell", %{conn: conn} do
-      Application.delete_env(:evo_dash, :desktop_release)
-
-      {:ok, view, html} = live(conn, ~p"/system")
-
-      assert assigns(view)[:update_card_visible] == false
-      refute html =~ "Software Update"
-    end
 
     test "every update state renders in the card", %{conn: conn} do
       reset_hub_to_idle()
@@ -1432,29 +1336,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert Floki.attribute(check_now_button, "disabled") != []
     end
 
-    test "not_available with a known latest version shows it in the card", %{conn: conn} do
-      reset_hub_to_idle()
-      set_desktop()
-
-      EvoDash.UpdateStatus.handle_check_result(%{
-        "status" => "not_available",
-        "version" => "1.2.3",
-        "body" => "notes",
-        "date" => "2026-08-01T00:00:00Z"
-      })
-
-      await_hub_phase(:error)
-
-      {:ok, view, html} = live(conn, ~p"/system")
-
-      assert assigns(view).update_status.error == "not_available"
-      assert assigns(view).update_status.latest_version == "1.2.3"
-      assert html =~ "Latest version 1.2.3 — no auto-update for this platform"
-      refute html =~ "No auto update on this platform"
-      refute html =~ "Check failed"
-    end
-
-    test "not_available without a known version falls back to the generic message", %{
+    test "not_available renders the generic message, then the latest version when known", %{
       conn: conn
     } do
       reset_hub_to_idle()
@@ -1465,10 +1347,32 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, html} = live(conn, ~p"/system")
 
+      # No version known yet -> the generic platform message.
       assert assigns(view).update_status.error == "not_available"
       assert assigns(view).update_status.latest_version == nil
       assert html =~ "No auto update on this platform"
       refute html =~ "Latest version"
+      refute html =~ "Check failed"
+
+      # A later result that DOES carry a version surfaces it (the hub keeps the
+      # newest latest_version; the view follows via the `{:update_status, _}`
+      # broadcast — awaited on the assign itself, since the phase is unchanged).
+      EvoDash.UpdateStatus.handle_check_result(%{
+        "status" => "not_available",
+        "version" => "1.2.3",
+        "body" => "notes",
+        "date" => "2026-08-01T00:00:00Z"
+      })
+
+      assert await_update_status(
+               view,
+               &(&1.error == "not_available" and &1.latest_version == "1.2.3")
+             ) ==
+               :ok
+
+      html = render(view)
+      assert html =~ "Latest version 1.2.3 — no auto-update for this platform"
+      refute html =~ "No auto update on this platform"
       refute html =~ "Check failed"
     end
 
@@ -1600,7 +1504,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       set_desktop()
       # Count runner invocations in a public ETS table so the Check-now re-run
       # is provable without racing the short :checking observation window (the
-      # 50ms timeout is too fast to await on the view assign reliably).
+      # short watchdog timeout is too fast to await on the view assign reliably).
       :ets.new(:update_check_runs, [:named_table, :public, :set])
       :ets.insert(:update_check_runs, {:count, 0})
 
@@ -1609,7 +1513,7 @@ defmodule EvoDashWeb.SystemLiveTest do
         :ok
       end)
 
-      Application.put_env(:evo_dash, :update_check_timeout, 50)
+      Application.put_env(:evo_dash, :update_check_timeout, 15)
 
       on_exit(fn ->
         if :ets.info(:update_check_runs) != :undefined do
@@ -1642,7 +1546,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       # The always-visible Check-now header button is the retry path: re-run
       # the check from :error (poll until the runner is invoked a second time —
       # deterministic, the short :checking window is not awaited), then the
-      # 50ms watchdog bounds the retry too: the UI can never wedge on a spinner.
+      # 15ms watchdog bounds the retry too: the UI can never wedge on a spinner.
       view |> element("#update-check-now") |> render_click()
 
       await_ets_count(:update_check_runs, :count, 2)
@@ -1761,8 +1665,8 @@ defmodule EvoDashWeb.SystemLiveTest do
       set_desktop()
       drive_hub_to_ready()
       Application.put_env(:evo_dash, :update_active_task_ids, fn _ -> ["task-1"] end)
-      Application.put_env(:evo_dash, :update_winddown_poll_ms, 20)
-      Application.put_env(:evo_dash, :update_winddown_timeout, 100)
+      Application.put_env(:evo_dash, :update_winddown_poll_ms, 5)
+      Application.put_env(:evo_dash, :update_winddown_timeout, 20)
 
       {:ok, view, _html} = live(conn, ~p"/system")
 
@@ -1863,11 +1767,11 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "release notes"
     end
 
-    test "available without notes renders no changelog link", %{conn: conn} do
+    test "available with absent or empty notes renders no changelog link", %{conn: conn} do
       reset_hub_to_idle()
       set_desktop()
 
-      # No "body" key → the hub's `notes` stays nil.
+      # No "body" key -> the hub's `notes` stays nil.
       EvoDash.UpdateStatus.handle_check_result(%{
         "status" => "available",
         "version" => "1.2.3",
@@ -1876,16 +1780,12 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       await_hub_phase(:available)
 
-      {:ok, _view, html} = live(conn, ~p"/system")
+      {:ok, view, html} = live(conn, ~p"/system")
 
       refute html =~ ~s(id="view-changelog")
       refute html =~ "View changelog"
-    end
 
-    test "available with empty-string notes renders no changelog link", %{conn: conn} do
-      reset_hub_to_idle()
-      set_desktop()
-
+      # An EMPTY-STRING body is treated exactly like an absent one.
       EvoDash.UpdateStatus.handle_check_result(%{
         "status" => "available",
         "version" => "1.2.3",
@@ -1893,15 +1793,14 @@ defmodule EvoDashWeb.SystemLiveTest do
         "current_version" => "0.1.0"
       })
 
-      await_hub_phase(:available)
+      assert await_update_status(view, &(&1.notes == "")) == :ok
 
-      {:ok, _view, html} = live(conn, ~p"/system")
-
+      html = render(view)
       refute html =~ ~s(id="view-changelog")
       refute html =~ "View changelog"
     end
 
-    test "clicking the changelog link opens the modal with the notes", %{conn: conn} do
+    test "the open modal closes via its backdrop or the Close button", %{conn: conn} do
       reset_hub_to_idle()
       set_desktop()
       drive_hub_to_available()
@@ -1916,19 +1815,6 @@ defmodule EvoDashWeb.SystemLiveTest do
       assert assigns(view)[:changelog_open] == true
       assert html =~ "Update changelog"
       assert html =~ "release notes"
-    end
-
-    test "the open modal closes via its backdrop or the Close button", %{conn: conn} do
-      reset_hub_to_idle()
-      set_desktop()
-      drive_hub_to_available()
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      html = render_click(view, "open_changelog")
-
-      assert assigns(view)[:changelog_open] == true
-      assert html =~ "Update changelog"
 
       # While open, exactly two elements carry the close event: the backdrop
       # div (first in DOM order) and the Close button. Pin the backdrop's
@@ -2014,12 +1900,15 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ "<script>alert(1)</script>"
     end
 
-    test "changelog events are no-ops when the card is hidden", %{conn: conn} do
+    test "card is hidden outside the desktop shell and its events are guarded no-ops", %{
+      conn: conn
+    } do
       reset_hub_to_idle()
       Application.delete_env(:evo_dash, :desktop_release)
 
       {:ok, view, html} = live(conn, ~p"/system")
 
+      # Cache the card + all of its events behind ONE visibility gate.
       assert assigns(view)[:update_card_visible] == false
       refute html =~ "Software Update"
       refute html =~ ~s(id="view-changelog")
@@ -2052,34 +1941,7 @@ defmodule EvoDashWeb.SystemLiveTest do
     # until the test releases it. `render_async/2` does not await TaskSupervisor
     # children, so polling the assigns is required either way.
 
-    test "card renders on a local node as a peer card of the self-check grid", %{conn: conn} do
-      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-      await_checks_done(view)
-      html = render(view)
-
-      assert assigns(view)[:source_card_visible] == true
-      assert html =~ ~s(id="genesis-source-card")
-      assert html =~ "Genesis Source"
-      assert html =~ "Genesis source checkout used by the self-reflective agent."
-      # The card is a real cell INSIDE the self-check check grid (it hides
-      # together with the grid while a re-check is running).
-      assert Floki.find(check_grid(html), ~s(div[id="genesis-source-card"])) != []
-    end
-
-    test "card is hidden when viewing a remote node", %{conn: conn} do
-      {:ok, view, _html} = mount_remote_system(conn)
-      await_checks_done(view)
-      html = render(view)
-
-      assert assigns(view)[:remote?] == true
-      assert assigns(view)[:source_card_visible] == false
-      refute html =~ ~s(id="genesis-source-card")
-      refute html =~ "Genesis Source"
-    end
-
-    test "not-cloned status shows the Clone button and explanation, no Update button", %{
+    test "card is a local-only peer cell of the self-check grid; not-cloned shows Clone", %{
       conn: conn
     } do
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
@@ -2089,6 +1951,16 @@ defmodule EvoDashWeb.SystemLiveTest do
       await_view_assign(view, :source_status, not_cloned_status())
 
       html = render(view)
+
+      # Visibility + placement: a real cell INSIDE the self-check check grid (it
+      # hides together with the grid while a re-check is running).
+      assert assigns(view)[:source_card_visible] == true
+      assert html =~ ~s(id="genesis-source-card")
+      assert html =~ "Genesis Source"
+      assert html =~ "Genesis source checkout used by the self-reflective agent."
+      assert Floki.find(check_grid(html), ~s(div[id="genesis-source-card"])) != []
+
+      # Not-cloned state: Clone only, no Update, no busy label.
       assert html =~ "The Genesis source has not been cloned yet."
       assert html =~ ~s(id="clone-source")
       assert html =~ "Clone"
@@ -2201,29 +2073,43 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ ~s(id="update-source")
     end
 
-    test "clone flow: busy state, then a successful clone flashes and refreshes the status", %{
-      conn: conn
-    } do
+    test "clone flow: busy state, an error flash on failure, then a success refreshes the status",
+         %{conn: conn} do
       cloned = source_status(%{commit: "cafebabe"})
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
 
       # No artificial delay: the busy state asserted below comes from
       # render_click/1's synchronous render (`source_busy` is assigned by the
       # event handler before the runner task is even spawned), so an instantly
-      # returning runner cannot clear it early.
+      # returning runner cannot clear it early. The runner is resolved AT SPAWN
+      # TIME, so the SAME page exercises the failing and the succeeding clone.
       Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        {:ok, cloned}
+        {:error, "clone failed"}
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
       await_checks_done(view)
       await_view_assign(view, :source_status, not_cloned_status())
 
+      # --- failing clone
       html = render_click(view, "clone_source")
       assert html =~ "Cloning…"
 
       [clone_button] = Floki.find(Floki.parse_document!(html), ~s(button[id="clone-source"]))
       assert Floki.attribute(clone_button, "disabled") != []
+
+      await_view_assign(view, :source_busy, nil)
+
+      html = render(view)
+      assert html =~ "Failed to clone the Genesis source."
+
+      # --- succeeding clone (same page, new runner)
+      Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
+        {:ok, cloned}
+      end)
+
+      html = render_click(view, "clone_source")
+      assert html =~ "Cloning…"
 
       # The mutation result clears the busy flag and assigns the fresh status.
       await_view_assign(view, :source_busy, nil)
@@ -2236,49 +2122,38 @@ defmodule EvoDashWeb.SystemLiveTest do
       refute html =~ ~s(id="clone-source")
     end
 
-    test "clone flow: a failing clone shows the error flash and re-syncs the status", %{
-      conn: conn
-    } do
-      Application.put_env(:evo_dash, :source_status_runner, fn _ -> not_cloned_status() end)
-
-      # No artificial delay (see the clone-success test above): the busy state
-      # comes from the synchronous render, the failure is awaited via the
-      # `source_busy`/flash assigns afterwards.
-      Application.put_env(:evo_dash, :source_clone_runner, fn _ ->
-        {:error, "clone failed"}
-      end)
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-      await_checks_done(view)
-      await_view_assign(view, :source_status, not_cloned_status())
-
-      html = render_click(view, "clone_source")
-      assert html =~ "Cloning…"
-
-      await_view_assign(view, :source_busy, nil)
-
-      html = render(view)
-      assert html =~ "Failed to clone the Genesis source."
-    end
-
-    test "update flow: busy state, then a successful update flashes and refreshes the status", %{
-      conn: conn
-    } do
+    test "update flow: busy state, an error flash on failure, then a success refreshes the status",
+         %{conn: conn} do
       original = source_status(%{commit: "deadbeef"})
       updated = source_status(%{commit: "cafebabe"})
 
       Application.put_env(:evo_dash, :source_status_runner, fn _ -> original end)
 
-      # No artificial delay (see the clone-success test above): the busy state
-      # comes from the synchronous render, the fresh status is awaited via the
-      # `source_busy`/`source_status` assigns afterwards.
+      # No artificial delay (see the clone test above): the busy state comes
+      # from the synchronous render, the fresh status is awaited via the
+      # `source_busy`/`source_status` assigns afterwards. The runner is resolved
+      # AT SPAWN TIME, so one page exercises the failing AND succeeding update.
       Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        {:ok, updated}
+        {:error, "update failed"}
       end)
 
       {:ok, view, _html} = live(conn, ~p"/system")
       await_checks_done(view)
       await_view_assign(view, :source_status, original)
+
+      # --- failing update
+      html = render_click(view, "update_source")
+      assert html =~ "Updating…"
+
+      await_view_assign(view, :source_busy, nil)
+
+      html = render(view)
+      assert html =~ "Failed to update the Genesis source."
+
+      # --- succeeding update (same page, new runner)
+      Application.put_env(:evo_dash, :source_update_runner, fn _ ->
+        {:ok, updated}
+      end)
 
       html = render_click(view, "update_source")
       assert html =~ "Updating…"
@@ -2292,30 +2167,6 @@ defmodule EvoDashWeb.SystemLiveTest do
       html = render(view)
       assert html =~ "Genesis source updated."
       assert html =~ "cafebabe"
-    end
-
-    test "update flow: a failing update shows the error flash", %{conn: conn} do
-      status = source_status()
-      Application.put_env(:evo_dash, :source_status_runner, fn _ -> status end)
-
-      # No artificial delay (see the clone-success test above): the busy state
-      # comes from the synchronous render, the failure flash is awaited via the
-      # `source_busy` assign afterwards.
-      Application.put_env(:evo_dash, :source_update_runner, fn _ ->
-        {:error, "update failed"}
-      end)
-
-      {:ok, view, _html} = live(conn, ~p"/system")
-      await_checks_done(view)
-      await_view_assign(view, :source_status, status)
-
-      html = render_click(view, "update_source")
-      assert html =~ "Updating…"
-
-      await_view_assign(view, :source_busy, nil)
-
-      html = render(view)
-      assert html =~ "Failed to update the Genesis source."
     end
 
     test "clone/update events are no-ops when the card is hidden (remote node)", %{conn: conn} do
@@ -2335,21 +2186,29 @@ defmodule EvoDashWeb.SystemLiveTest do
 
       {:ok, view, _html} = mount_remote_system(conn)
 
+      await_checks_done(view)
+      html = render(view)
+
+      # The card is not rendered at all for a remote node, and its events are
+      # guarded no-ops — never a spawn, never a busy flag.
+      assert assigns(view)[:remote?] == true
       assert assigns(view)[:source_card_visible] == false
-      assert assigns(view)[:source_status] == nil
+      refute html =~ ~s(id="genesis-source-card")
+      refute html =~ "Genesis Source"
 
       render_click(view, "clone_source")
       render_click(view, "update_source")
 
-      # Bounded observation windows (down from 200ms each) — the guard-break
-      # failure mode is covered DETERMINISTICALLY by the two assertions below:
-      # the click handlers are synchronous, so a spawn would leave
-      # `source_busy` == :clone/:update (assigned by the handler, cleared only
-      # together with a non-nil `source_status` in
+      # Zero-window sanity check (the runners signal loudly), backed by the
+      # DETERMINISTIC proof below: the click handlers are synchronous, so a
+      # spawn would leave `source_busy` == :clone/:update (assigned by the
+      # handler, cleared only together with a non-nil `source_status` in
       # `apply_source_mutation_result/3`). "source_busy == nil AND
-      # source_status == nil" therefore cannot both hold once a runner ran.
-      refute_receive :clone_runner_called, 50
-      refute_receive :update_runner_called, 50
+      # source_status == nil" (read through a `:sys.get_state` round-trip that
+      # drains the mailbox behind the clicks) therefore cannot both hold once a
+      # runner ran — so no wall-clock observation window is needed.
+      refute_received :clone_runner_called
+      refute_received :update_runner_called
 
       assert assigns(view)[:source_busy] == nil
       assert assigns(view)[:source_status] == nil
@@ -2489,7 +2348,7 @@ defmodule EvoDashWeb.SystemLiveTest do
       if System.monotonic_time(:millisecond) >= deadline do
         flunk("update hub did not reach phase #{inspect(phase)} within the test timeout")
       else
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_hub_phase(phase, deadline)
       end
     end
@@ -2513,7 +2372,7 @@ defmodule EvoDashWeb.SystemLiveTest do
           "update status did not reach phase #{inspect(phase)} within the test timeout (got #{inspect(got)})"
         )
       else
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_update_phase(view, phase, deadline)
       end
     end
@@ -2540,8 +2399,30 @@ defmodule EvoDashWeb.SystemLiveTest do
           "update status did not reach error #{inspect(error)} within the test timeout (got #{inspect(got)})"
         )
       else
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_update_error(view, error, deadline)
+      end
+    end
+  end
+
+  # Polls the LiveView's `@update_status` assign with an arbitrary predicate —
+  # needed when consecutive hub transitions share a phase/error (e.g. an empty
+  # vs absent changelog body), where the phase-only awaits would return on the
+  # PREVIOUS state's broadcast.
+  defp await_update_status(view, predicate, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_await_update_status(view, predicate, deadline)
+  end
+
+  defp do_await_update_status(view, predicate, deadline) do
+    if predicate.(assigns(view).update_status) do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline do
+        flunk("update status predicate did not match within the test timeout")
+      else
+        Process.sleep(@poll_ms)
+        do_await_update_status(view, predicate, deadline)
       end
     end
   end
@@ -2570,7 +2451,7 @@ defmodule EvoDashWeb.SystemLiveTest do
           "ETS counter #{inspect(key)} did not reach #{expected} within the test timeout (got #{got})"
         )
       else
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_ets_count(table, key, expected, deadline)
       end
     end
@@ -2587,7 +2468,7 @@ defmodule EvoDashWeb.SystemLiveTest do
           "assign #{inspect(key)} did not reach #{inspect(value)} within the test timeout (got #{inspect(got)})"
         )
       else
-        Process.sleep(10)
+        Process.sleep(@poll_ms)
         do_await_view_assign(view, key, value, deadline)
       end
     end

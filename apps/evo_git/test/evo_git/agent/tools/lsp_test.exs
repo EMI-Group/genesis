@@ -210,7 +210,7 @@ defmodule EvoGit.Agent.Tools.LspTest do
   # ── Live handshake against the fake server ────────────────────────────────
 
   describe "diagnostics" do
-    test "runs the full handshake and renders one line per diagnostic",
+    test "runs the full handshake, renders one line per diagnostic, and reaps the server",
          %{repo: repo, source: source} do
       output = Lsp.execute(diagnostics_args(source), repo, repo, fake_server(nil))
 
@@ -222,6 +222,19 @@ defmodule EvoGit.Agent.Tools.LspTest do
                "lib/sample.ex:3:5 error undefined function foo/0 (fake diagnostic from the fixture)"
 
       assert output =~ "lib/sample.ex:7:1 warning unused variable"
+
+      # Process hygiene, asserted on THIS handshake's own server (a separate
+      # fixture spawn for the same check would only duplicate this call): the
+      # teardown (didClose → shutdown → exit → SIGKILL) leaves no child behind.
+      case System.find_executable("pgrep") do
+        nil ->
+          # No pgrep on this host: the handshake assertions above still hold.
+          :ok
+
+        pgrep ->
+          {out, _status} = System.cmd(pgrep, ["-f", @fixture], stderr_to_stdout: true)
+          assert String.trim(out) == ""
+      end
     end
 
     test "renders `No diagnostics` for a clean file", %{repo: repo, source: source} do
@@ -278,15 +291,18 @@ defmodule EvoGit.Agent.Tools.LspTest do
     end
 
     test "times out when the server never answers initialize", %{repo: repo, source: source} do
+      # A short (but still real) initialize budget: the `silent` fixture NEVER
+      # answers, so only the configured budget elapses — nothing here races a
+      # wall clock, and the message interpolates the budget under test.
       output =
         Lsp.execute(
           diagnostics_args(source),
           repo,
           repo,
-          fake_server("silent", timeout: 1_500)
+          fake_server("silent", timeout: 400)
         )
 
-      assert output =~ "Error: the language server did not answer initialize within 1500 ms"
+      assert output =~ "Error: the language server did not answer initialize within 400 ms"
     end
 
     test "reports a malformed frame", %{repo: repo, source: source} do
@@ -300,25 +316,6 @@ defmodule EvoGit.Agent.Tools.LspTest do
 
       assert output =~ "Error: malformed LSP frame"
       assert output =~ "no Content-Length header"
-    end
-  end
-
-  # ── Process hygiene ───────────────────────────────────────────────────────
-
-  describe "orphan prevention" do
-    @tag :slow
-    test "leaves no fake language server process behind", %{repo: repo, source: source} do
-      Lsp.execute(diagnostics_args(source), repo, repo, fake_server(nil))
-
-      case System.find_executable("pgrep") do
-        nil ->
-          # No pgrep on this host: the bounded-return assertion above still holds.
-          :ok
-
-        pgrep ->
-          {out, _status} = System.cmd(pgrep, ["-f", @fixture], stderr_to_stdout: true)
-          assert String.trim(out) == ""
-      end
     end
   end
 end

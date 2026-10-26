@@ -17,6 +17,8 @@ defmodule EvoGit.Sandbox.Helpers do
 
   # Grace period between SIGTERM and SIGKILL in `kill_process_tree/1` — time
   # for a well-behaved process to flush and exit before the hard kill.
+  # Overridable for tests via the app env `:kill_grace_ms` (a test-only
+  # CALL-TIME seam; the production default below is unchanged).
   @kill_grace_ms 100
   # ---------------------------------------------------------------------------
   # Shell escaping
@@ -563,16 +565,25 @@ defmodule EvoGit.Sandbox.Helpers do
   defp posix_kill_tree(pid) do
     case run_kill("kill", ["-TERM", "--", "-" <> pid]) do
       :ok ->
-        Process.sleep(@kill_grace_ms)
+        Process.sleep(kill_grace_ms())
         run_kill("kill", ["-KILL", "--", "-" <> pid])
 
       :error ->
         run_kill("kill", ["-TERM", "--", pid])
-        Process.sleep(@kill_grace_ms)
+        Process.sleep(kill_grace_ms())
         run_kill("kill", ["-KILL", "--", pid])
     end
 
     :ok
+  end
+
+  # Test-only CALL-TIME override (`:kill_grace_ms`); the production default
+  # `@kill_grace_ms` is unchanged.
+  defp kill_grace_ms do
+    case Application.get_env(:evo_git, :kill_grace_ms, @kill_grace_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _other -> @kill_grace_ms
+    end
   end
 
   # Runs a kill primitive and reports only whether the exit code was 0. The

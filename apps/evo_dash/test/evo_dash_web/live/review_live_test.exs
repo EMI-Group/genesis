@@ -52,13 +52,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert html =~ "Review Not Available"
       assert html =~ "Task not found"
-    end
 
-    test "renders back to dashboard link", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/review/nonexistent-task-id")
-
-      html = flush_review_load(view)
-
+      # The error state's escape hatch (absorbed from the former
+      # "renders back to dashboard link" sibling, which mounted the SAME page
+      # and only re-asserted this markup).
       assert html =~ "Back to Dashboard"
       assert html =~ "href=\"/\""
     end
@@ -1238,79 +1235,28 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, repo_path: repo_path, task_id: task_id, change_sha: change_sha}
     end
 
-    test "starts a merge check on mount", %{conn: conn, task_id: task_id} do
+    # ONE mount drives the whole state machine (every scenario below used to
+    # mount the identical real-repo fixture on its own): a mount costs a full
+    # git-backed review load, so the sequential scenarios share it.
+    test "one mount drives the merge-check state machine end to end", %{
+      conn: conn,
+      task_id: task_id
+    } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
 
       # The merge check is only started AFTER the async review-data load
       # completes (MergeCheck.maybe_start runs from the load's handle_info,
-      # never from handle_params) — flush the load first.
+      # never from handle_params) — flush the load first, then drain the
+      # mount-time reload (armed by the load's set_review_metadata broadcast)
+      # so every state read below is the settled one, never a reload's
+      # transient loading state.
       flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so the :checking state read below is the settled one, never
-      # a reload's transient loading state.
       settle_debounced_task_reload(view)
 
+      # --- starts a merge check on mount -------------------------------
       assert %{state: :checking, target: "main", files: []} = assigns(view)[:merge_status]
-    end
 
-    test "renders the clean state and keeps the merge form", %{conn: conn, task_id: task_id} do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so no reload can land around the injected result below and
-      # render the loading page for the DOM assertions.
-      settle_debounced_task_reload(view)
-
-      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
-      html = render(view)
-
-      assert html =~ "Merge check passed"
-      assert assigns(view)[:merge_status] == %{state: :clean, target: "main", files: []}
-
-      # The manual merge form/selector is untouched.
-      assert html =~ "Merge into"
-      assert target_branch_select(html) != ""
-    end
-
-    test "renders conflicting file names and the auto-resolve button", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) before injecting the conflict result — a reload landing
-      # afterwards would re-project the repos and render the loading page.
-      settle_debounced_task_reload(view)
-
-      send(
-        view.pid,
-        {:merge_check_result, task_id, node(), "primary", "main",
-         {:ok, {:conflict, ["src/app.ex", "lib/util.ex"]}}}
-      )
-
-      html = render(view)
-
-      assert html =~ "src/app.ex"
-      assert html =~ "lib/util.ex"
-      assert html =~ "Auto-resolve conflict"
-      assert assigns(view)[:merge_status].state == :conflict
-    end
-
-    test "ignores stale results (wrong target or wrong task id)", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so the :checking state stays the settled one while the stale
-      # injections below are asserted.
-      settle_debounced_task_reload(view)
-
+      # --- ignores stale results (wrong target or wrong task id) -------
       # Wrong target — the running check targets "main".
       send(
         view.pid,
@@ -1332,21 +1278,19 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert assigns(view)[:merge_status].state == :checking
       refute html =~ "Merge check passed"
-    end
 
-    test "changing the target branch re-checks and ignores old-target results", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      # --- renders the clean state and keeps the merge form ------------
+      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
+      html = render(view)
 
-      flush_review_load(view)
+      assert html =~ "Merge check passed"
+      assert assigns(view)[:merge_status] == %{state: :clean, target: "main", files: []}
 
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so it cannot fire around the change event below and render
-      # the loading page for the injected-result assertions.
-      settle_debounced_task_reload(view)
+      # The manual merge form/selector is untouched.
+      assert html =~ "Merge into"
+      assert target_branch_select(html) != ""
 
+      # --- changing the target branch re-checks, ignores old-target results
       render_change(view, "merge_target_change", %{"target_branch" => "dev"})
 
       assert assigns(view)[:default_merge_target] == "dev"
@@ -1369,6 +1313,20 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert assigns(view)[:merge_status].state == :clean
       refute html =~ "old.txt"
+
+      # --- renders conflicting file names and the auto-resolve button --
+      send(
+        view.pid,
+        {:merge_check_result, task_id, node(), "primary", "dev",
+         {:ok, {:conflict, ["src/app.ex", "lib/util.ex"]}}}
+      )
+
+      html = render(view)
+
+      assert html =~ "src/app.ex"
+      assert html =~ "lib/util.ex"
+      assert html =~ "Auto-resolve conflict"
+      assert assigns(view)[:merge_status].state == :conflict
     end
   end
 
@@ -1455,6 +1413,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           render_click(view, "auto_resolve")
+          # The action runs off-process: settle it so the push_navigate has been
+          # applied before assert_redirect polls (and so the spawned task has
+          # certainly been started before await_merge_task_terminal looks for it).
+          await_review_action_settled(view)
           await_merge_task_terminal(task_id)
         end)
 
@@ -2261,7 +2223,12 @@ defmodule EvoDashWeb.ReviewLiveTest do
        foreign_sha: foreign_sha}
     end
 
-    test "merges each review repo into its own target and marks the task merged", %{
+    # One mount / one fixture drives BOTH directions of the per-repo contract:
+    # the foreign card first (its own target validated against its own
+    # merge_targets, the primary untouched), then the primary — and the second
+    # merge completes the review. The two halves used to be two tests each
+    # mounting the same fixture.
+    test "each card merges only its own repo into its own target, and together they complete", %{
       conn: conn,
       task_id: task_id,
       primary_dir: primary_dir,
@@ -2292,18 +2259,18 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # this test pins (branch_exists is re-derived from real git state).
       settle_debounced_task_reload(view)
 
-      # The PRIMARY card's form submits for the primary repo ONLY — the runner
-      # runs exactly once, for that repo's path/branch/target, never a fan-out.
-      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      # --- the FOREIGN card first: it submits with the form target "dev"
+      # (validated against ITS merge_targets); the primary stays untouched.
+      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
 
       assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
       assert call_node == node()
-      assert call_path == primary_dir
+      assert call_path == foreign_dir
       # The runner call is issued from the action task; an immediate
       # zero-window refute already proves there was no fan-out call.
       refute_received {:merged_call, _, _, _, _}
 
-      # One repo resolved, the other pending — the page STAYS (no navigation).
+      # Apply the action result before reading the per-repo resolutions.
       await_review_action_settled(view)
       refute_redirected(view)
 
@@ -2311,28 +2278,42 @@ defmodule EvoDashWeb.ReviewLiveTest do
       primary = Enum.find(repos, &(&1.repo_id == "primary"))
       foreign = Enum.find(repos, &(&1.repo_id == "original"))
 
-      assert primary.resolution == %{state: :merged, target: "dev"}
-      assert primary.branch_exists == false
-      assert foreign.resolution == nil
-      assert foreign.branch_exists == true
+      assert foreign.resolution == %{state: :merged, target: "dev"}
+      assert foreign.branch_exists == false
+      assert primary.resolution == nil
+      assert primary.branch_exists == true
+
+      # Still one repo pending → the review is not complete yet.
+      assert TaskRegistry.get_task(task_id).review_status == nil
 
       # Drain any reload still pending before driving the SECOND mutation, so
       # its pre-reload state is read as deterministically as the first one's.
       settle_debounced_task_reload(view)
 
-      # Resolving the LAST repo completes the review: the aggregate status is
-      # persisted, the completion banner renders, the hub snapshot is
-      # invalidated — and the page STILL does not navigate.
-      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
+      # --- then the PRIMARY card: its form submits for the primary repo ONLY
+      # — the runner runs exactly once, for that repo's path/branch/target,
+      # never a fan-out. Resolving the LAST repo completes the review: the
+      # aggregate status is persisted, the completion banner renders, the hub
+      # snapshot is invalidated — and the page STILL does not navigate.
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
 
       assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
       assert call_node == node()
-      assert call_path == foreign_dir
+      assert call_path == primary_dir
       refute_received {:merged_call, _, _, _, _}
+
+      # The runner signal fires when the action STARTS; the per-repo
+      # resolution/completion are applied one {:review_action_result, ...}
+      # frame later — settle it before reading that state.
+      await_review_action_settled(view)
 
       refute_redirected(view)
 
-      assert TaskRegistry.get_task(task_id).review_status == :merged
+      primary = Enum.find(assigns(view)[:review_repos], &(&1.repo_id == "primary"))
+      assert primary.resolution == %{state: :merged, target: "dev"}
+      assert primary.branch_exists == false
+
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
       # The persisted status/terminal resolutions/banner are DURABLE: settle the
       # completion's own debounced reload (it re-projects @review_repos from a
@@ -2352,53 +2333,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # page run its own debounced sidebar reload, which legitimately re-warms
       # the key with a filtered snapshot.
       assert_hub_excludes_task(task_id)
-    end
-
-    test "merging from the foreign card targets the foreign repo's chosen branch", %{
-      conn: conn,
-      task_id: task_id,
-      foreign_dir: foreign_dir
-    } do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :review_merge_runner, fn node, repo_path, branch, target ->
-        send(test_pid, {:merged_call, node, repo_path, branch, target})
-        {:ok, "deadbeef"}
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
-
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-
-      # Drain the mount-time reload armed by the load's own set_review_metadata
-      # broadcast BEFORE the click: at the suite's 10 ms debounce window it would
-      # otherwise land right after the action and revert the transient
-      # branch_exists == false state asserted below.
-      settle_debounced_task_reload(view)
-
-      # Explicit repo_id: the foreign repo submits with the form target "dev"
-      # (validated against ITS merge_targets); the primary is untouched.
-      render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
-
-      assert_receive {:merged_call, call_node, call_path, "task-branch", "dev"}
-      assert call_node == node()
-      assert call_path == foreign_dir
-      refute_received {:merged_call, _, _, _, _}
-
-      refute_redirected(view)
-
-      repos = assigns(view)[:review_repos]
-      primary = Enum.find(repos, &(&1.repo_id == "primary"))
-      foreign = Enum.find(repos, &(&1.repo_id == "original"))
-
-      assert foreign.resolution == %{state: :merged, target: "dev"}
-      assert foreign.branch_exists == false
-      assert primary.resolution == nil
-      assert primary.branch_exists == true
-
-      # Still one repo pending → the review is not complete yet.
-      assert TaskRegistry.get_task(task_id).review_status == nil
     end
   end
 
@@ -2488,79 +2422,18 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
 
-    test "rejects each repo's branch and marks the task rejected once all resolve", %{
-      conn: conn,
-      task_id: task_id,
-      primary_dir: primary_dir,
-      foreign_dir: foreign_dir
-    } do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :review_reject_runner, fn node, repo_path, branch ->
-        send(test_pid, {:reject_call, node, repo_path, branch})
-        :ok
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
-
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-
-      # Wait for the hub snapshot so the post-action invalidate assertion is
-      # non-vacuous (same mechanism as the merge completion test).
-      wait_hub_warm()
-      # Drain the mount-time reload the load's set_review_metadata broadcast
-      # armed before driving the actions (its timer fires at the suite's 10 ms
-      # debounce window, so it would otherwise land mid-sequence).
-      settle_debounced_task_reload(view)
-
-      # One repo per click — the runner runs exactly once for that repo, never
-      # a fan-out.
-      render_click(view, "reject", %{"repo_id" => "primary"})
-
-      assert_receive {:reject_call, call_node, call_path, "task-branch"}
-      assert call_node == node()
-      assert call_path == primary_dir
-      refute_received {:reject_call, _, _, _}
-
-      # One repo rejected, the other pending — the page STAYS.
-      refute_redirected(view)
-
-      # Settle before the second mutation so it starts from the same stable
-      # state as the first one.
-      settle_debounced_task_reload(view)
-
-      render_click(view, "reject", %{"repo_id" => "original"})
-
-      assert_receive {:reject_call, call_node, call_path, "task-branch"}
-      assert call_node == node()
-      assert call_path == foreign_dir
-      refute_received {:reject_call, _, _, _}
-
-      # All repos rejected → review complete: persisted, completion banner,
-      # hub invalidated — and STILL no navigation.
-      refute_redirected(view)
-
-      assert TaskRegistry.get_task(task_id).review_status == :rejected
-      # Durable state: settle the completion's own debounced reload and render
-      # the settled page (a render taken from the click itself could still be
-      # the transient loading page).
-      settle_debounced_task_reload(view)
-      html = render(view)
-
-      assert html =~ "All repositories rejected."
-      assert html =~ ~s(id="review-completion-banner")
-      assert assigns(view)[:flash]["success"] =~ "Changes rejected"
-      # The settled task must be absent (the debounced sidebar reload this
-      # completion's broadcast triggers may legitimately re-warm the key).
-      assert_hub_excludes_task(task_id)
-    end
-
-    test "reports the failure on the failing repo's card and stays", %{
-      conn: conn,
-      task_id: task_id,
-      foreign_dir: foreign_dir
-    } do
+    # One mount walks the whole reject contract: each click rejects exactly one
+    # repo (no fan-out), a failing repo keeps the review open with the error on
+    # ITS card (and stays retryable), and the retried last repo completes the
+    # review as :rejected. The failure and the completion used to be two tests
+    # each mounting the same fixture.
+    test "rejects one repo per click, keeps a failure on its card, then completes as rejected",
+         %{
+           conn: conn,
+           task_id: task_id,
+           primary_dir: primary_dir,
+           foreign_dir: foreign_dir
+         } do
       test_pid = self()
 
       Application.put_env(:evo_dash, :review_reject_runner, fn node, repo_path, branch ->
@@ -2579,19 +2452,43 @@ defmodule EvoDashWeb.ReviewLiveTest do
       flush_review_load(view)
 
       # Wait for the hub snapshot, then capture it: the partial-failure branch
-      # must NOT invalidate (the page stays mounted).
+      # must NOT invalidate (the page stays mounted), so the snapshot has to
+      # survive the clicks byte-for-byte.
       wait_hub_warm()
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) before capturing the snapshot — otherwise the fresh load
-      # re-warms the hub key with rewritten SHAs after the capture and the
-      # unchanged-snapshot comparison below fails for unrelated reasons.
+      # Drain the mount-time reload the load's set_review_metadata broadcast
+      # armed before driving the actions (its timer fires at the suite's 10 ms
+      # debounce window, so it would otherwise land mid-sequence — and a fresh
+      # load landing after the capture below re-warms the hub key with rewritten
+      # SHAs, breaking the unchanged-snapshot comparison for unrelated reasons).
       settle_debounced_task_reload(view)
       assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
 
+      # One repo per click — the runner runs exactly once for that repo, never
+      # a fan-out.
       render_click(view, "reject", %{"repo_id" => "primary"})
-      await_review_action_settled(view)
 
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert call_node == node()
+      assert call_path == primary_dir
+      refute_received {:reject_call, _, _, _}
+
+      # One repo rejected, the other pending — the page STAYS.
+      await_review_action_settled(view)
+      refute_redirected(view)
+
+      # Settle before the second mutation so it starts from the same stable
+      # state as the first one.
+      settle_debounced_task_reload(view)
+
+      # The foreign repo's reject FAILS: the outcome lands on its own card and
+      # the review stays open with the hub snapshot untouched.
       render_click(view, "reject", %{"repo_id" => "original"})
+
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert call_node == node()
+      assert call_path == foreign_dir
+      refute_received {:reject_call, _, _, _}
+
       html = await_review_action_settled(view)
 
       # Each repo card carries its OWN outcome: the primary rejected, the
@@ -2613,6 +2510,41 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # complete and the hub snapshot is unchanged.
       assert TaskRegistry.get_task(task_id).review_status == nil
       assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
+
+      # A failing repo keeps its card RETRYABLE: a second successful attempt
+      # resolves it, and that LAST repo completes the review (persisted
+      # :rejected, completion banner, hub invalidated — and STILL no
+      # navigation).
+      Application.put_env(:evo_dash, :review_reject_runner, fn node, repo_path, branch ->
+        send(test_pid, {:reject_call, node, repo_path, branch})
+        :ok
+      end)
+
+      settle_debounced_task_reload(view)
+
+      render_click(view, "reject", %{"repo_id" => "original"})
+
+      assert_receive {:reject_call, call_node, call_path, "task-branch"}
+      assert call_node == node()
+      assert call_path == foreign_dir
+      refute_received {:reject_call, _, _, _}
+
+      await_review_action_settled(view)
+      refute_redirected(view)
+
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :rejected end)
+      # Durable state: settle the completion's own debounced reload and render
+      # the settled page (a render taken from the click itself could still be
+      # the transient loading page).
+      settle_debounced_task_reload(view)
+      html = render(view)
+
+      assert html =~ "All repositories rejected."
+      assert html =~ ~s(id="review-completion-banner")
+      assert assigns(view)[:flash]["success"] =~ "Changes rejected"
+      # The settled task must be absent (the debounced sidebar reload this
+      # completion's broadcast triggers may legitimately re-warm the key).
+      assert_hub_excludes_task(task_id)
     end
   end
 
@@ -2660,6 +2592,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
 
+      # The action runs off-process: its result (which records the earned
+      # resolution) is applied one message later — settle it before reading it.
+      await_review_action_settled(view)
+
       # The action tail EARNED the resolution and recorded it in the dedicated
       # assign — never derived from @review_repos (whose entries the load and
       # the fixtures also seed).
@@ -2704,6 +2640,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
 
+      # Settle the off-process action before reading the state it earned.
+      await_review_action_settled(view)
+
       assert assigns(view)[:local_repo_resolutions]["primary"] == %{
                state: :merged,
                target: "main"
@@ -2742,6 +2681,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       view = mount_with_repos(conn, task_id, [primary, foreign])
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+
+      # Settle the off-process action before reading the overlay it wrote.
+      await_review_action_settled(view)
 
       assert assigns(view)[:local_repo_resolutions] == %{
                "primary" => %{state: :merged, target: "main"}
@@ -2801,10 +2743,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
 
-    test "applies per-repo results and drops unknown-repo / wrong-task / wrong-node results", %{
-      conn: conn,
-      task_id: task_id
-    } do
+    # One mount covers both the stale-guard math and the per-card / per-tab
+    # rendering of the results: they inject the SAME per-repo results into the
+    # same real-repo fixture, so a second git-backed mount bought nothing.
+    test "applies per-repo results, drops stale ones and renders each repo's own status",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
       # Drain the mount-time reload armed by the load's set_review_metadata
@@ -2859,38 +2805,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # the conflict + file.
       html = render(view)
 
-      assert repo_card_html(html, "primary") =~ "Merge check passed"
-      refute repo_card_html(html, "primary") =~ "foreign.txt"
-      assert repo_card_html(html, "original") =~ "foreign.txt"
-      assert repo_card_html(html, "original") =~ "Merge conflict"
-    end
-
-    test "each repo card renders its own merge status and conflict files", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so the page is settled — never stranded in its loading state,
-      # which would leave the per-repo cards (and the tab toolbars) unrendered
-      # for the DOM assertions and element clicks below.
-      settle_debounced_task_reload(view)
-
-      # Resolve the primary's check clean, inject a conflict for the foreign
-      # repo only.
-      send(view.pid, {:merge_check_result, task_id, node(), "primary", "main", {:ok, :clean}})
-
-      send(
-        view.pid,
-        {:merge_check_result, task_id, node(), "original", "main",
-         {:ok, {:conflict, ["foreign.txt"]}}}
-      )
-
-      html = render(view)
-
-      # The per-repo cards render each repo's status independently: the primary
-      # stays clean, the foreign card shows the conflict file.
       assert repo_card_html(html, "primary") =~ "Merge check passed"
       refute repo_card_html(html, "primary") =~ "foreign.txt"
       assert repo_card_html(html, "original") =~ "foreign.txt"
@@ -3223,6 +3137,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       log =
         ExUnit.CaptureLog.capture_log(fn ->
           render_click(view, "auto_resolve")
+          await_review_action_settled(view)
           await_merge_task_terminal(task_id)
         end)
 
@@ -3295,6 +3210,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       render_click(view, "resume")
 
+      # The resume action runs off-process; settle it (the view STOPS on its
+      # push_navigate, which this helper tolerates) so the redirect below is
+      # already in the proxy mailbox instead of racing assert_redirect's window.
+      await_review_action_settled(view)
+
       # The resume URL carries resume_from/starting_commit/project for the
       # PRIMARY repo. The handler builds the query with Keyword.put/3, which
       # PREPENDS keys — so the actual order is
@@ -3333,6 +3253,9 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert assigns(view)[:active_repo_id] == "original"
 
       render_click(view, "resume")
+
+      # Settle the off-process action (the view stops on its push_navigate).
+      await_review_action_settled(view)
 
       # Same key order as the handler's Keyword.put/3-built query (project
       # FIRST — see the sibling test above).
@@ -3798,12 +3721,17 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # Merge the primary (one merged entry), then reject the foreign repo:
       # every repo is terminal, and the ≥1-merged rule beats all-rejected.
+      # Each action is settled first: the handlers REJECT a second action while
+      # one is in flight (`review_action` gate), so an un-settled second click
+      # would be silently dropped and the review would never complete.
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      await_review_action_settled(view)
       render_click(view, "reject", %{"repo_id" => "original"})
+      await_review_action_settled(view)
 
       refute_redirected(view)
 
-      assert TaskRegistry.get_task(task_id).review_status == :merged
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
       # The persisted status + banner are DURABLE: settle the completion's own
       # debounced reload and render the settled page before the DOM assertions
@@ -3843,12 +3771,17 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert assigns(view)[:review_status] == :merged
 
+      # Settle between the two clicks — a second action while one is in flight
+      # is gated to a no-op, and the completion write is a separate background
+      # action, so both are awaited here rather than raced.
       render_click(view, "reject", %{"repo_id" => "primary"})
+      await_review_action_settled(view)
       render_click(view, "reject", %{"repo_id" => "original"})
+      await_review_action_settled(view)
 
       refute_redirected(view)
 
-      assert TaskRegistry.get_task(task_id).review_status == :merged
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
       # Durable state: settle the completion's own debounced reload, then render
       # the settled page for the banner assertions.
@@ -3874,7 +3807,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
           review_repo("original", "/nonexistent/foreign/path", [])
         ])
 
-      html = render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      # Settle the action so the "no banner / no status" probes below run
+      # against the APPLIED state (an unsettled click could not have written
+      # either, which would make them vacuous).
+      html = await_review_action_settled(view)
 
       # The primary resolved, the foreign repo is still `resolution: nil` — NOT
       # all terminal, so no aggregate status is written and no banner renders.
@@ -3906,7 +3843,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
           conflict
         ])
 
-      html = render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      html = await_review_action_settled(view)
 
       refute_redirected(view)
       refute html =~ ~s(id="review-completion-banner")
@@ -3938,28 +3876,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, task_id: task_id}
     end
 
-    test "a partial resolution leaves the hub snapshot unchanged", %{conn: conn, task_id: task_id} do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-
-      wait_hub_warm()
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) BEFORE capturing the snapshot, so the reload's own sidebar
-      # refetch cannot rewrite the key after the capture and break the
-      # unchanged-snapshot comparison below.
-      settle_debounced_task_reload(view)
-      assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
-
-      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
-
-      # One repo resolved, the other pending → no completion → NO invalidation.
-      assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
-    end
-
-    test "the final terminal resolution invalidates the hub snapshot", %{
-      conn: conn,
-      task_id: task_id
-    } do
+    # One mount walks both halves of the contract (a partial resolution must NOT
+    # invalidate; the terminal one must), which used to mount the same fixture
+    # twice.
+    test "a partial resolution leaves the hub snapshot unchanged, the terminal one invalidates it",
+         %{
+           conn: conn,
+           task_id: task_id
+         } do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
@@ -3970,15 +3894,21 @@ defmodule EvoDashWeb.ReviewLiveTest do
       settle_debounced_task_reload(view)
       assert {:ok, {_running, _pending}} = pre_hub = EvoDash.ActiveTasks.get(nil, node())
 
-      # Partial resolution (merge) → the snapshot survives untouched.
+      # Partial resolution (merge) → the snapshot survives untouched (settling
+      # the action keeps the comparison a REAL assertion: an unsettled click
+      # leaves the hub untouched by construction).
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      await_review_action_settled(view)
       assert EvoDash.ActiveTasks.get(nil, node()) == pre_hub
 
       # The LAST repo reaching a terminal state completes the review → the
       # snapshot is invalidated so a later /projects mount comes up cold. The
       # settled task must be absent (a broadcast-driven sidebar reload may
-      # re-warm the key with a filtered snapshot).
+      # re-warm the key with a filtered snapshot). The invalidation runs in the
+      # action-result handler, so awaiting the action is what makes the probe
+      # meaningful (and keeps it from passing/failing on timing).
       render_click(view, "reject", %{"repo_id" => "original"})
+      await_review_action_settled(view)
       assert_hub_excludes_task(task_id)
     end
   end
@@ -4060,58 +3990,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
 
-    test "merge with an unknown repo_id never calls the runner", %{conn: conn, task_id: task_id} do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
-        send(test_pid, {:merged_call, n, p, b, t})
-        {:ok, "deadbeef"}
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
-
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so the whitelist-miss assertions below read the settled page
-      # and its settled @review_repos projection.
-      settle_debounced_task_reload(view)
-
-      html = render_click(view, "merge", %{"repo_id" => "ghost", "target_branch" => "dev"})
-
-      # Whitelist miss → no runner call, no state change, no navigation.
-      refute_received {:merged_call, _, _, _, _}
-      refute_redirected(view)
-      refute html =~ "Changes merged successfully"
-
-      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
-      assert TaskRegistry.get_task(task_id).review_status == nil
-    end
-
-    test "reject with an unknown repo_id never calls the runner", %{conn: conn, task_id: task_id} do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :review_reject_runner, fn n, p, b ->
-        send(test_pid, {:reject_call, n, p, b})
-        :ok
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
-
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) so the whitelist-miss assertions below read the settled page.
-      settle_debounced_task_reload(view)
-
-      render_click(view, "reject", %{"repo_id" => "ghost"})
-
-      refute_received {:reject_call, _, _, _}
-      refute_redirected(view)
-      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
-    end
-
-    test "merge/reject on an already-terminal repo are no-ops", %{conn: conn, task_id: task_id} do
+    # One mount per guard FAMILY: the whitelist misses (merge + reject) and the
+    # terminal guard all assert "the runner is never called" on the same
+    # real-repo fixture, so they share a mount and run in dependency order
+    # (everything unresolved → resolve the primary → the terminal guard).
+    test "unknown or already-terminal repos never reach the runner", %{
+      conn: conn,
+      task_id: task_id
+    } do
       test_pid = self()
 
       Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
@@ -4132,14 +4018,42 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
       # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) before driving the anchors: a reload landing mid-sequence
+      # broadcast) so the whitelist-miss assertions below read the settled page
+      # and its settled @review_repos projection — a reload landing mid-sequence
       # would re-derive branch_exists from real git state and revert the
-      # transient branch_exists == false assertion below.
+      # transient branch_exists == false assertion at the end.
       settle_debounced_task_reload(view)
 
+      # --- whitelist miss (merge) --------------------------------------
+      html = render_click(view, "merge", %{"repo_id" => "ghost", "target_branch" => "dev"})
+
+      # Whitelist miss → no runner call, no state change, no navigation.
+      refute_received {:merged_call, _, _, _, _}
+      refute_redirected(view)
+      refute html =~ "Changes merged successfully"
+
+      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
+      assert TaskRegistry.get_task(task_id).review_status == nil
+
+      # --- whitelist miss (reject) -------------------------------------
+      render_click(view, "reject", %{"repo_id" => "ghost"})
+
+      refute_received {:reject_call, _, _, _}
+      refute_redirected(view)
+      assert Enum.all?(assigns(view)[:review_repos], &(&1.resolution == nil))
+      assert TaskRegistry.get_task(task_id).review_status == nil
+
+      # --- terminal guard ---------------------------------------------
       # Resolve the primary, then act on it again — the terminal guard must
-      # short-circuit BEFORE the runner.
+      # short-circuit BEFORE the runner. The runner signal fires when the
+      # action starts; the repo only becomes TERMINAL once its result is
+      # applied, so settle it first (otherwise the clicks below are gated by
+      # the in-flight marker rather than by the terminal guard this pins).
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      # The seam runs INSIDE the spawned action task, so the signal may not be
+      # in the mailbox when render_click returns: settle the action first (it
+      # can only be settled after the runner returned), then probe the mailbox.
+      await_review_action_settled(view)
       assert_received {:merged_call, _, _, "task-branch", "dev"}
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
@@ -4213,12 +4127,16 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       # Blank target → the repo's default ("main" here).
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => ""})
+      # Settle first: the runner seam runs inside the action task, and the next
+      # click is gated while this action is in flight.
+      await_review_action_settled(view)
 
       assert_received {:merged_call, _, call_path, "task-branch", "main"}
       assert call_path == primary_dir
 
       # Unknown target (not a member of this repo's merge_targets) → the default.
       render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "no-such-branch"})
+      await_review_action_settled(view)
 
       assert_received {:merged_call, _, call_path, "task-branch", "main"}
       assert call_path == foreign_dir
@@ -4299,17 +4217,30 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, primary_dir: primary_dir, foreign_dir: foreign_dir, task_id: task_id}
     end
 
-    test "merge_target_change updates only the changed repo's selected target", %{
+    # One mount: the select-move assertions and the "merge reads each repo's own
+    # select" run both move the FOREIGN repo's select to "dev" on the same
+    # real-repo fixture, so they share it.
+    test "each card owns its target select and merges into it", %{
       conn: conn,
       task_id: task_id
     } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
+        send(test_pid, {:merged_call, n, p, b, t})
+        {:ok, "deadbeef"}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
 
       # Drain the mount-time reload (armed by the load's set_review_metadata
       # broadcast) so the asserted html is the settled, non-loading page — a
       # pending reload would otherwise fire around the change event and render
-      # the loading state (no repo cards).
+      # the loading state (no repo cards), and later re-derive the per-repo
+      # selects mid-sequence.
       settle_debounced_task_reload(view)
       html = render(view)
 
@@ -4328,38 +4259,18 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # default target is untouched (never a shared, page-level target).
       assert repo_target_selection(html, "original") == "dev"
       assert repo_target_selection(html, "primary") == "main"
-    end
 
-    test "merge reads the per-repo select value", %{conn: conn, task_id: task_id} do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :review_merge_runner, fn n, p, b, t ->
-        send(test_pid, {:merged_call, n, p, b, t})
-        {:ok, "deadbeef"}
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
-
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      # Drain the mount-time reload (armed by the load's set_review_metadata
-      # broadcast) before the change + merge clicks: a reload landing
-      # mid-sequence would re-derive the per-repo selects and render the
-      # loading page, breaking both the reads and the runner assertions.
-      settle_debounced_task_reload(view)
-
-      # Move the FOREIGN repo's select to "dev" through its own per-repo form...
-      render_change(view, "merge_target_change", %{
-        "repo_id" => "original",
-        "target_branch" => "dev"
-      })
-
-      # ...then merge each repo into ITS OWN select value: the primary stays on
-      # "main", the foreign repo on "dev".
+      # Merge each repo into ITS OWN select value: the primary stays on "main",
+      # the foreign repo on "dev". The seam runs INSIDE the spawned action task,
+      # so the message may not be in the mailbox when render_click returns:
+      # settle the action (which also clears the in-flight gate for the second
+      # click), then probe the mailbox.
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "main"})
+      await_review_action_settled(view)
       assert_received {:merged_call, _, primary_path, "task-branch", "main"}
 
       render_click(view, "merge", %{"repo_id" => "original", "target_branch" => "dev"})
+      await_review_action_settled(view)
       assert_received {:merged_call, _, foreign_path, "task-branch", "dev"}
 
       refute primary_path == foreign_path
@@ -4368,9 +4279,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "multi-repo review — merge all (accept-all shortcut)" do
     # The batch shortcut (#merge-all-repositories, phx-click="merge_all", NO
-    # params) folds EVERY unresolved repo through the SHARED merge_one_repo/3
-    # path (the exact same path as the per-repo "merge" event), best-effort per
-    # repo. It is gated on >= 2 repos AND >= 2 still unresolved.
+    # params) spawns ONE off-process action — spawn_action(socket, :merge_all, …)
+    # → ReviewLive.Actions.merge_all/2 — whose entries fold through the SAME
+    # per-repo merge path as the "merge" event, best-effort per repo; results are
+    # applied in handle_info({:review_action_result, …}). It is gated on >= 2
+    # repos AND >= 2 still unresolved.
 
     test "is hidden for a single-repo task", %{conn: conn} do
       task_id = seed_orphaned_review_task!()
@@ -4538,6 +4451,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # refute already proves ONE call per repo (never a fan-out).
       refute_received {:merged_call, _, _, _, _}
 
+      # The batch's result must be applied before the per-repo resolutions are
+      # read (they are written by the action-result handler, not the click).
+      await_review_action_settled(view)
+
       # Both repos settled :merged into their own target; branches cleared.
       # Read the IMMEDIATE post-action snapshot: branch_exists is re-derived from
       # real git state, so it is only false until a reload lands.
@@ -4553,7 +4470,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # The last repo reaching terminal completes the review (no navigation).
       refute_redirected(view)
 
-      assert TaskRegistry.get_task(task_id).review_status == :merged
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
       # The persisted status + banner are DURABLE: settle the completion's own
       # debounced reload, then render the settled page.
@@ -4669,13 +4586,17 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert {:ok, {_running, _pending}} = EvoDash.ActiveTasks.get(nil, node())
 
       render_click(view, "merge_all")
+      # Settle the batch: the aggregate status/banner below are written by the
+      # action-result handler, and the status itself by a background completion
+      # action spawned from it.
+      await_review_action_settled(view)
 
       refute_redirected(view)
 
       # The aggregate review status is written through the shared settle path
       # (set_review_status/3 — :merged since both landed); completion is the
       # ONLY path that invalidates the sidebar hub snapshot.
-      assert TaskRegistry.get_task(task_id).review_status == :merged
+      wait_until(fn -> TaskRegistry.get_task(task_id).review_status == :merged end)
 
       html = render(view)
       assert html =~ ~s(id="review-completion-banner")
@@ -4995,11 +4916,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       {:ok, primary_dir: primary_dir, task_id: task_id, primary_sha: primary_sha}
     end
 
-    test "merge shows Merging… on that repo only until its result lands", %{
+    # One mount: the in-flight assertions and the "a click after the settled
+    # result runs again" re-click both drive the same per-repo merge form.
+    test "merge shows Merging… on that repo only until its result lands, then runs again", %{
       conn: conn,
       task_id: task_id,
       primary_dir: primary_dir
     } do
+      test_pid = self()
       install_blocking_merge_runner(:merge_started, {:error, :boom})
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
@@ -5051,30 +4975,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert repo_card_html(html, "primary") =~ "Merge failed"
       assert assigns(view)[:flash]["error"] =~ "Merge failed"
       assert merge_submit_state(html, "original").text == "Merge"
-    end
 
-    test "a merge click after the settled result invokes the runner again", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      test_pid = self()
-
+      # The CLEARED state lets the next click run the runner again — exactly
+      # once (a non-blocking seam reports each invocation).
       Application.put_env(:evo_dash, :review_merge_runner, fn _node, repo_path, _branch, target ->
         send(test_pid, {:merge_call, repo_path, target})
         {:error, :boom}
       end)
 
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-      flush_review_load(view)
-      settle_debounced_task_reload(view)
-
-      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
-      assert_receive {:merge_call, _path, "dev"}
-      await_review_action_settled(view)
-      refute_received {:merge_call, _, _}
-
-      # The cleared state lets the next click run again — exactly once.
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
       assert_receive {:merge_call, _path, "dev"}
       await_review_action_settled(view)
@@ -5628,8 +5536,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
             "evogit_review_template_" <> to_string(System.unique_integer([:positive]))
           )
 
-        {change_sha, _primary} = build_repo_with_task_branch!(dir, primary, secondary)
-        {{primary, secondary}, %{dir: dir, change_sha: change_sha}}
+        {change_sha, _primary, base_sha} = build_repo_with_task_branch!(dir, primary, secondary)
+        {{primary, secondary}, %{dir: dir, change_sha: change_sha, base_sha: base_sha}}
       end
 
     :persistent_term.put({__MODULE__, :review_templates}, templates)
@@ -5643,17 +5551,18 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   # Hands out a FRESH, independent copy of the pre-built template for the given
-  # (primary, secondary) branch shape. Returns {copy_dir, change_sha}; the SHA is
-  # the template's (the copy is byte-identical). The copy is never hard-linked,
-  # so it is always safe to mutate.
+  # (primary, secondary) branch shape. Returns {copy_dir, change_sha, base_sha};
+  # the SHAs are the template's (the copy is byte-identical). The copy is never
+  # hard-linked, so it is always safe to mutate.
   defp copy_review_template!(prefix, primary, secondary) do
-    %{dir: template_dir, change_sha: change_sha} = review_template!(primary, secondary)
+    %{dir: template_dir, change_sha: change_sha, base_sha: base_sha} =
+      review_template!(primary, secondary)
 
     copy_dir =
       Path.join(System.tmp_dir!(), prefix <> to_string(System.unique_integer([:positive])))
 
     File.cp_r!(template_dir, copy_dir)
-    {copy_dir, change_sha}
+    {copy_dir, change_sha, base_sha}
   end
 
   # Fails loudly (never silently falls back to a from-scratch build) when a new
@@ -5677,10 +5586,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # pointing at it. Returns {repo_path, task_id, change_sha} and registers
   # on_exit cleanup.
   defp create_review_task_with_repo!(primary, secondary) do
-    {tmp_dir, change_sha} =
+    {tmp_dir, change_sha, base_sha} =
       copy_review_template!("evogit_review_merge_test_", primary, secondary)
 
-    task_id = seed_review_task!(tmp_dir, change_sha)
+    task_id = seed_review_task!(tmp_dir, change_sha, base_sha)
 
     on_exit(fn ->
       rm_rf_retry(tmp_dir)
@@ -5692,7 +5601,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # Builds a temp git repo at `tmp_dir` with the given primary branch (plus an
   # optional secondary branch at the base commit), an agent `task-branch` with
   # a change commit on top of the primary branch, checked back out to the
-  # primary branch. Returns {change_sha, primary_branch}.
+  # primary branch. Returns {change_sha, primary_branch, base_sha}.
   defp build_repo_with_task_branch!(tmp_dir, primary, secondary) do
     File.mkdir_p!(tmp_dir)
     git!(tmp_dir, ["init"])
@@ -5720,9 +5629,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
     git!(tmp_dir, ["add", "feature.txt"])
     git!(tmp_dir, ["commit", "-m", "Agent change commit"])
     {change_sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: tmp_dir)
+    {base_sha, 0} = System.cmd("git", ["rev-parse", primary], cd: tmp_dir)
     git!(tmp_dir, ["checkout", primary])
 
-    {String.trim(change_sha), primary}
+    {String.trim(change_sha), primary, String.trim(base_sha)}
   end
 
   # Multi-repo variant of create_review_task_with_repo!: hands out a PRIMARY
@@ -5734,10 +5644,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # shared template or any other test.
   # Returns {primary_dir, foreign_dir, task_id, primary_sha, foreign_sha}.
   defp create_multi_repo_review_task!(primary, secondary) do
-    {primary_dir, primary_sha} =
+    {primary_dir, primary_sha, primary_base_sha} =
       copy_review_template!("evogit_review_multi_primary_", primary, secondary)
 
-    {foreign_dir, foreign_sha} =
+    {foreign_dir, foreign_sha, _foreign_base_sha} =
       copy_review_template!("evogit_review_multi_foreign_", primary, secondary)
 
     task_id =
@@ -5750,7 +5660,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
         %{
           "primary" => %{"commit_sha" => primary_sha, "branch_name" => "task-branch"},
           "original" => %{"commit_sha" => foreign_sha, "branch_name" => "task-branch"}
-        }
+        },
+        primary_base_sha
       )
 
     on_exit(fn ->
@@ -5765,13 +5676,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # reads) in opts and a top-level `repos` map (string keys) in the result.
   # The `repos` key is NOT in the Store codec's known result fields, so it
   # round-trips as a STRING key — matching what the page actually reads.
-  defp seed_multi_repo_task!(repo_path, change_sha, foreign_repos, repos_map) do
+  defp seed_multi_repo_task!(repo_path, change_sha, foreign_repos, repos_map, base_sha \\ nil) do
     task_id = "review_test_multi_#{System.unique_integer([:positive])}"
 
     task = %TaskInfo{
       id: task_id,
       type: :evolve,
       status: :completed,
+      base_sha: base_sha,
       opts: [path: repo_path, objective: "Test objective", foreign_repos: foreign_repos],
       ref: nil,
       started_at: DateTime.utc_now(),
@@ -5822,13 +5734,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # branch `task-branch` (which must exist in the repo). The per-agent archive
   # is its own table (`task_agent_archives`) and never rides the task row, so
   # these tests serve it through the paged archive runner seams instead.
-  defp seed_review_task!(repo_path, change_sha) do
+  defp seed_review_task!(repo_path, change_sha, base_sha) do
     task_id = "review_test_merge_#{System.unique_integer([:positive])}"
 
     task = %TaskInfo{
       id: task_id,
       type: :evolve,
       status: :completed,
+      base_sha: base_sha,
       opts: [path: repo_path, objective: "Test objective", archive: true],
       ref: nil,
       started_at: DateTime.utc_now(),
@@ -6046,6 +5959,13 @@ defmodule EvoDashWeb.ReviewLiveTest do
     )
   end
 
+  # Poll cadence for the bounded-poll helpers below. A poll is a `:sys.get_state`
+  # round-trip (tens of microseconds), not a render, so a 2 ms cadence — the same
+  # one `tasks_live_test.exs` uses via `@wait_poll_ms` — is both deterministic
+  # (the loop still observes every intermediate state) and ~5× tighter than the
+  # old 10 ms sleep, which dominated short waits.
+  @wait_poll_ms 2
+
   # Delegates to the shared flush helper (EvoDashWeb.TestHelpers.flush_loading/4).
   defp flush_review_load(view, timeout \\ 5000) do
     # Settle the mount-time async load BEFORE polling the loading marker: the
@@ -6099,19 +6019,30 @@ defmodule EvoDashWeb.ReviewLiveTest do
     # delivered before we read the debounce flag below.
     _ = TaskRegistry.list_tasks()
 
-    # Reading assigns/1 drains any queued broadcast that arms the debounce.
-    if Map.get(assigns(view), :tasks_reload_pending, false) do
+    # Reading assigns/1 drains any queued broadcast that arms the debounce (a
+    # `:sys.get_state` round-trip processes every earlier message, and with it
+    # any diff/render work the queued broadcasts imply).
+    snapshot = assigns(view)
+    pending? = Map.get(snapshot, :tasks_reload_pending, false)
+
+    if pending? do
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end, timeout)
     end
 
-    # Whatever the timing, the reload leaves the page loading until its async
-    # review-data result applies. Wait that marker out (no-op when not loading).
-    EvoDashWeb.TestHelpers.flush_loading(
-      view,
-      "Loading review data...",
-      "timed out settling the debounced review reload",
-      timeout
-    )
+    # Whatever the timing, a landing reload leaves the page loading until its
+    # async review-data result applies — wait that marker out. When nothing was
+    # pending and the page is not loading, there is nothing to settle and the
+    # flush's render would be pure overhead (the common case now that the
+    # fixtures pre-seed `base_sha`, so the mount no longer persists metadata
+    # and arms a self-triggered reload).
+    if pending? or Map.get(snapshot, :loading, false) do
+      EvoDashWeb.TestHelpers.flush_loading(
+        view,
+        "Loading review data...",
+        "timed out settling the debounced review reload",
+        timeout
+      )
+    end
 
     :ok
   end
@@ -6138,7 +6069,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       end
     end)
 
-    _ = render(view)
+    # No render here: `flush_review_load/2` — the single caller — immediately
+    # runs `EvoDashWeb.TestHelpers.flush_loading/4`, whose first iteration is a
+    # FORCED render (a synchronous round-trip that applies every queued result
+    # message), so a render here would only duplicate it.
     :ok
   end
 
@@ -6186,7 +6120,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
                 "hub assertions in this test would be vacuous"
             )
           else
-            Process.sleep(10)
+            Process.sleep(@wait_poll_ms)
             wait_loop.(wait_loop)
           end
       end
@@ -6268,7 +6202,7 @@ defmodule EvoDashWeb.ReviewLiveTest do
         if System.monotonic_time(:millisecond) >= deadline do
           flunk("timed out waiting for condition after #{timeout}ms")
         else
-          Process.sleep(10)
+          Process.sleep(@wait_poll_ms)
           wait_loop.(wait_loop)
         end
       end

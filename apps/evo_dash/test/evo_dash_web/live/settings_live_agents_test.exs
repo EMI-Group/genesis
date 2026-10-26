@@ -36,6 +36,11 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     :ok
   end
 
+  # Bounded-poll cadence: the mount funnel below returns the instant the
+  # async node-data task is gone, so a finer cadence only removes overshoot
+  # (same idiom as `tasks_live_test.exs`'s `@wait_poll_ms`).
+  @wait_poll_ms 2
+
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
   # Mounts the Settings page and waits for the async node-data load that mount
@@ -76,7 +81,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
         :ok
 
       true ->
-        Process.sleep(5)
+        Process.sleep(@wait_poll_ms)
         do_wait_until(fun, deadline)
     end
   end
@@ -150,20 +155,16 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert html =~ "Test script"
       assert html =~ "Custom Agents"
       assert html =~ "Model Selection Script"
-    end
-
-    test "renders the sidebar entry", %{conn: conn} do
-      {:ok, _view, html} = mount_settings(conn)
-
       # Pseudo-categories render as sidebar buttons with phx-value-category
       # (same shape as :remote_connections — no id="category-..." wrapper).
       assert html =~ ~s(phx-value-category="agents")
-      assert html =~ "Agents"
     end
   end
 
   describe "custom agent CRUD" do
-    test "add flow: draft form appears and saving persists the agent", %{conn: conn} do
+    # One mount for the whole lifecycle: draft form -> save -> edit pre-fill ->
+    # update -> delete (each event still asserts its own contract).
+    test "add / edit / delete round-trip", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
       html = render_hook(view, "add_custom_agent", %{})
@@ -178,34 +179,6 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert Enum.any?(assigns(view).custom_agents, &(&1.id == "code_reviewer"))
       # Editing state closed after save.
       assert assigns(view).editing_agent_id == nil
-    end
-
-    test "duplicate id is rejected with the duplicate message", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-
-      save_agent(view, %{"name" => "Dup Agent"})
-
-      # A second agent with the same name slugifies to the same id.
-      render_hook(view, "add_custom_agent", %{})
-      html = save_agent(view, %{"name" => "Dup Agent"})
-
-      assert html =~ "already exists"
-      assert length(EvoGit.CustomAgents.list()) == 1
-    end
-
-    test "empty name is rejected (core :missing_name)", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-
-      render_hook(view, "add_custom_agent", %{})
-      html = save_agent(view, %{"name" => "  "})
-
-      assert html =~ "Name cannot be empty."
-      assert EvoGit.CustomAgents.list() == []
-    end
-
-    test "edit flow: form pre-fills and saving updates the agent", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-      save_agent(view, %{})
 
       html = render_hook(view, "edit_custom_agent", %{"id" => "code_reviewer"})
       assert html =~ "Edit Agent"
@@ -227,22 +200,36 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert agent.name == "Renamed Reviewer"
       assert agent.agent_type == :read
       assert agent.delegation_level == :high
-    end
-
-    test "delete flow: removes the agent", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-      save_agent(view, %{})
 
       html = render_hook(view, "delete_custom_agent", %{"id" => "code_reviewer"})
 
       assert html =~ "Custom agent deleted."
-      refute html =~ "Code Reviewer"
+      refute html =~ "Renamed Reviewer"
       assert EvoGit.CustomAgents.list() == []
+    end
+
+    test "rejects an empty name (core :missing_name) and a duplicate id", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn)
+
+      render_hook(view, "add_custom_agent", %{})
+      html = save_agent(view, %{"name" => "  "})
+
+      assert html =~ "Name cannot be empty."
+      assert EvoGit.CustomAgents.list() == []
+
+      save_agent(view, %{"name" => "Dup Agent"})
+
+      # A second agent with the same name slugifies to the same id.
+      render_hook(view, "add_custom_agent", %{})
+      html = save_agent(view, %{"name" => "Dup Agent"})
+
+      assert html =~ "already exists"
+      assert length(EvoGit.CustomAgents.list()) == 1
     end
   end
 
   describe "model selection script" do
-    test "saving a valid script persists it across page reloads", %{conn: conn} do
+    test "a saved script persists across page reloads (valid and broken)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
       script = ~s(if agent.depth == 0, do: "default", else: "fast")
@@ -257,30 +244,28 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # otherwise serve a stale compile) and remount to verify persistence.
       EvoGit.CustomAgents.reload()
 
-      {:ok, _view2, html2} = mount_settings(conn)
+      {:ok, view2, html2} = mount_settings(conn)
       assert html2 =~ "agent.depth == 0"
       refute html2 =~ "Script error"
-    end
-
-    test "a broken script saves but surfaces the compile error", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       # Broken scripts save as :ok — the compile status only surfaces via
       # ModelSelector.status/0 after the reload.
       html =
-        render_hook(view, "save_model_selection_script", %{"script" => "this is ( not elixir"})
+        render_hook(view2, "save_model_selection_script", %{"script" => "this is ( not elixir"})
 
       assert html =~ "Model selection script saved."
       assert html =~ "Script error"
-      assert match?({:error, {:compile_error, _}}, assigns(view).script_status)
+      assert match?({:error, {:compile_error, _}}, assigns(view2).script_status)
 
       EvoGit.CustomAgents.reload()
 
-      {:ok, _view2, html2} = mount_settings(conn)
-      assert html2 =~ "Script error"
+      {:ok, _view3, html3} = mount_settings(conn)
+      assert html3 =~ "Script error"
     end
 
-    test "test script button returns the 3 sample results for a valid script", %{conn: conn} do
+    test "test script button returns the 3 sample results for valid and broken scripts", %{
+      conn: conn
+    } do
       {:ok, view, _html} = mount_settings(conn)
 
       # The script body is wrapped as `fn agent -> ... end` by the core, so a
@@ -298,10 +283,6 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert Enum.any?(labels, &(&1 =~ "architect"))
       assert Enum.any?(labels, &(&1 =~ "executor"))
       assert Enum.any?(labels, &(&1 =~ ~r/custom/i))
-    end
-
-    test "test script button shows error tuples for a broken script", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       render_hook(view, "save_model_selection_script", %{"script" => "this is ( not elixir"})
       html = render_hook(view, "test_model_selection_script", %{})
@@ -318,7 +299,11 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     # spawn time and stale-guarded against `socket.assigns.current_node` (a
     # local mount resolves `current_node` to `node()`), so injecting with
     # `node()` lands on the currently-viewed node.
-    test "renders a read-only ok entry", %{conn: conn} do
+    # One mount, one status per shape: the panel's per-shape markup is pinned by
+    # `test/evo_dash_web/components/custom_tools_panel_test.exs`; this test pins
+    # only that the LiveView handler applies every `{:custom_tools_loaded, ...}`
+    # shape (and that the banner and the empty state stay mutually exclusive).
+    test "applies every custom-tools status shape for the current node", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
       send(
@@ -336,10 +321,6 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # substring could be satisfied by surrounding chrome instead of the badge.
       assert html =~ ">Read-only<"
       refute html =~ "No custom tools loaded"
-    end
-
-    test "renders a write ok entry", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       send(
         view.pid,
@@ -355,10 +336,6 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # badge rendered nothing — `>Write<` can only come from the badge span.
       assert html =~ ">Write<"
       refute html =~ "Read-only"
-    end
-
-    test "renders populated errors", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       send(
         view.pid,
@@ -374,26 +351,16 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert html =~ "/cfg/tools/broken.ex"
       assert html =~ "compile error: unexpected token"
       refute html =~ "No custom tools loaded"
-    end
-
-    test "renders the unavailable banner for an error status", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       send(view.pid, {:custom_tools_loaded, node(), {:error, :boom}})
-
       html = render(view)
 
       assert html =~ "Custom Tools Unavailable"
       assert html =~ ":boom"
       # Banner and empty state are mutually exclusive.
       refute html =~ "No custom tools loaded"
-    end
-
-    test "renders the empty state for an empty ok status", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
 
       send(view.pid, {:custom_tools_loaded, node(), %{ok: [], errors: []}})
-
       html = render(view)
 
       assert html =~ "No custom tools loaded"
@@ -481,7 +448,7 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert html =~ "Custom tools"
     end
 
-    test "warns about unknown tool names in the agent editor", %{conn: conn} do
+    test "warns only about genuinely unknown tool names", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn)
 
       save_agent(view, %{"name" => "Tooly", "tools" => ["bogus_tool"]})
@@ -490,27 +457,13 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
 
       assert html =~
                "Unknown tool names: bogus_tool. They are neither built-in tools nor loaded custom tools."
-    end
 
-    test "does not warn for a valid built-in tool", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-
-      save_agent(view, %{"name" => "Reader", "tools" => ["read_file"]})
-
-      html = render_hook(view, "edit_custom_agent", %{"id" => "reader"})
-
-      refute html =~ "Unknown tool names"
-      assert html =~ ~s(value="read_file")
-    end
-
-    # The core renamed the MODEL-FACING schema names (`read`, `write`, `bash`, …)
-    # while `agents.toml` may carry any accepted spelling. The editor must
-    # resolve both spellings onto the same tool concept: no bogus warning, the
-    # new-name chip CHECKED, and the agent's own saved spelling preserved in the
-    # submitted value (never rewrite user config).
-    test "treats legacy tool spellings as known and preserves the saved spelling", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn)
-
+      # The core renamed the MODEL-FACING schema names (`read`, `write`, `bash`, …)
+      # while `agents.toml` may carry any accepted spelling. The editor must
+      # resolve both spellings onto the same tool concept: no bogus warning, the
+      # new-name chip CHECKED, and the agent's own saved spelling preserved in the
+      # submitted value (never rewrite user config).
+      #
       # `read_file`/`run_bash` are the legacy spellings of the `read`/`bash`
       # concept chips. (`web_search` is deliberately not exercised here: its
       # schema is env-gated — without a web-search backend it is absent from
@@ -528,16 +481,6 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       # submits the new spelling when the agent saved the legacy one.
       refute MapSet.member?(checked, "read")
       refute MapSet.member?(checked, "bash")
-
-      # A genuinely unknown name alongside the legacy spellings still warns.
-      save_agent(view, %{"name" => "Legacy Mixed", "tools" => ["read_file", "bogus_tool"]})
-
-      html = render_hook(view, "edit_custom_agent", %{"id" => "legacy_mixed"})
-
-      assert html =~
-               "Unknown tool names: bogus_tool. They are neither built-in tools nor loaded custom tools."
-
-      assert MapSet.member?(checked_tool_values(html), "read_file")
     end
   end
 

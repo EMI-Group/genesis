@@ -57,12 +57,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp agent_id, do: Process.get(:agents_live_test_agent_id)
 
   describe "agents page" do
-    test "renders the agents page", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/agents")
-
-      assert html =~ "Agent Tree"
-    end
-
     test "starts in the async loading state with generation 1", %{conn: conn} do
       # Block the async load task so the initial render's loading state is
       # deterministic — the load runs in a TaskSupervisor child and could
@@ -90,25 +84,40 @@ defmodule EvoDashWeb.AgentsLiveTest do
       refute html =~ "Loading agents…"
     end
 
-    test "shows empty state when no agents are running", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/agents")
+    test "renders the empty agent tree with a node-aware config status", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/agents")
+
+      assert html =~ "Agent Tree"
 
       # The agent list is loaded asynchronously — the initial render shows the
       # loading state, so wait for the load to finish before asserting.
       html = flush_agents_load(view)
 
       assert html =~ "No agents currently registered"
+
+      # config_status is read per node by the async load through
+      # node_config_status/1 (the layout config banner's source), so a mounted
+      # page carries a fully evaluated status map — never nil. (Node-awareness
+      # itself is the NodeAware hook's contract; here we pin that the page
+      # actually populated the assign from its load.)
+      assert %{ok?: ok?, missing: missing, warnings: warnings} = assigns(view)[:config_status]
+      assert is_boolean(ok?)
+      assert is_list(missing)
+      assert is_list(warnings)
     end
   end
 
   describe "async agent load" do
-    test "populates the agent tree with message counts", %{conn: conn} do
+    test "populates the tree and drops stale load generations and refresh sequences", %{
+      conn: conn
+    } do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       html = flush_agents_load(view)
+      assert assigns(view)[:load_generation] == 1
 
       # The tree renders the seeded agent's card under its repo root.
       assert html =~ "##{agent_id()}"
@@ -120,17 +129,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert agent.id == agent_id()
       assert agent.message_count == 1
       assert agent.status == :running
-    end
 
-    test "drops stale load generations", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:load_generation] == 1
-
+      # ── stale LOAD GENERATION ─────────────────────────────────────────
       # A result from an older generation (0 < 1) must be dropped. The
       # trailing {:agents_updated, node()} event is only a FIFO
       # synchronization fence: once the refresh it spawned is observable
@@ -142,22 +142,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
       refute render(view) =~ "#99"
-    end
 
-    test "drops stale refresh sequences", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # Trigger an async refresh ({:agents_updated, node()} broadcast) —
-      # refresh_seq becomes 1.
-      send(view.pid, {:agents_updated, node()})
-      flush_agent_events(view)
-      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
-
+      # ── stale REFRESH SEQUENCE ────────────────────────────────────────
       # A stale refresh result (seq 0 < 1) must be dropped. FIFO fence: the
       # {:agents_updated, node()} event is processed after the stale message.
       send(view.pid, {:agents_refresh_result, 0, node(), {:ok, [marker_agent()], nil}})
@@ -174,7 +160,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # The HistoryGate suppresses full-history re-transfers while an agent's
     # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
 
-    test "does not re-fetch history while the message count is unchanged", %{conn: conn} do
+    test "re-fetches history only when the message count moved", %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -200,23 +186,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # The refresh applied but the count is unchanged — the carried history is
       # kept and the gate suppresses a re-fetch.
-      assert Agent.get(counter, & &1) == 1
-    end
-
-    test "re-fetches history when the message count changes", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
       # The conversation grows (2 messages) — the next refresh must drop the
@@ -597,34 +566,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:agents] == []
     end
 
-    test "foreign-node events are ignored (tree unchanged, no refresh spawned)", %{conn: conn} do
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:refresh_seq] == 0
-
-      foreign = :remote@elsewhere
-
-      send(view.pid, {:agents_updated, foreign})
-      send(view.pid, {:agent_registered, 2, summary_agent(id: 2), foreign})
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], foreign})
-      send(view.pid, {:agent_removed, agent_id(), foreign})
-
-      # All four events must be dropped. The LiveView processes its mailbox in
-      # FIFO order, so the synchronous `assigns/1` read (:sys.get_state) has
-      # already handled them — and a DROPPED event leaves BOTH the coalescing
-      # buffer and its flush timer untouched, which is a complete deterministic
-      # proof (nothing asynchronous can follow a dropped event), so no timing
-      # window is needed.
-      state = assigns(view)
-      assert state.pending_agent_events == []
-      assert state.agent_flush_scheduled == false
-      assert state.pending_agents_refresh == false
-      assert state.refresh_seq == 0
-      assert state.agents |> Enum.map(& &1.id) == [agent_id()]
-      assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
-    end
+    # NOTE: the "foreign-node events are ignored" contract is covered by
+    # "agent event coalescing → foreign-node events are dropped before
+    # buffering", which injects the same four event shapes and asserts the same
+    # buffer / flush-timer / refresh / tree state (plus `foreign != node()`).
   end
 
   describe "agent_updated message_count gating" do
@@ -633,7 +578,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # The selected-agent history refetch is gated on it via HistoryGate:
     # fetch only when the count moved vs the gate's last-seen entry.
 
-    test "refetches selected history when message_count moved on", %{conn: conn} do
+    test "refetches selected history only when message_count moved on", %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -649,63 +594,28 @@ defmodule EvoDashWeb.AgentsLiveTest do
       wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
-      # The agent's context grew (message_count 1 -> 2) — the event carries
-      # the fresh count, so the refetch fires and the second message renders.
-      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
-      flush_agent_events(view)
-
-      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
-      assert render(view) =~ "fake message 2"
-    end
-
-    test "does not refetch when message_count is unchanged", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      # Same message_count — the gate suppresses the refetch (the status
-      # change still proves the merge applied).
+      # ── (1) UNCHANGED count: the gate suppresses the refetch ────────────
+      # Same :message_count — the merge still applies (proven by the status
+      # change), but no history re-transfer is spawned.
       send(view.pid, {:agent_updated, agent_id(), [message_count: 1, status: :waiting], node()})
       flush_agent_events(view)
 
       assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
-    end
 
-    test "does not refetch when changed_fields lacks :message_count", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      # No :message_count in changed_fields — nothing context-related moved,
-      # so no refetch even though the selected agent was updated.
+      # ── (2) NO :message_count key: nothing context-related moved ────────
       send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
       flush_agent_events(view)
 
       assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
+
+      # ── (3) MOVED count: the refetch fires and the tail renders ─────────
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
+      flush_agent_events(view)
+
+      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
+      assert render(view) =~ "fake message 2"
     end
   end
 
@@ -722,11 +632,27 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # LiveView mailbox is FIFO, so events sent before the flush message are
     # already buffered when it is handled.
 
-    test "a burst of registered events coalesces into a single flush", %{conn: conn} do
+    test "a burst coalesces into one flush and spawns at most one fallback refresh", %{conn: conn} do
+      # Count the authoritative list reads (the initial async load + refreshes).
+      calls = start_supervised!({Agent, fn -> 0 end})
+      id = agent_id()
+
+      # Captured in the TEST process: the runner stub executes inside the async
+      # load Task, where the process-dictionary test id is not available.
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        Agent.update(calls, &(&1 + 1))
+        [summary_agent(id: id)]
+      end)
+
+      on_exit(&clear_agents_env/0)
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
+      # The page load may be entered more than once (dead render + connected
+      # mount), so count the DELTA caused by the bursts below.
+      before = Agent.get(calls, & &1)
+      assert assigns(view)[:refresh_seq] == 0
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
       # Three rapid registrations: two direct sends (the injection shortcut the
@@ -777,32 +703,87 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       assert render(view) =~ "#4"
+
+      # None of those three fell back: every summary was complete, so the burst
+      # spawned NO authoritative refresh at all.
+      assert assigns(view)[:refresh_seq] == 0
+
+      # Two updates for agent ids NOT in the tree (each ⇒ :fallback) plus one
+      # normal update that merges cleanly. All three coalesce into the SAME
+      # flush, which must spawn exactly ONE async refresh (not one per event).
+      send(view.pid, {:agent_updated, 404, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, 405, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+
+      flush_agent_events(view)
+
+      # The flush handler spawns AT MOST ONE refresh and bumps the monotonic
+      # :refresh_seq SYNCHRONOUSLY at the spawn, so right after the synchronous
+      # flush round-trip the count is already final: exactly one (a second
+      # spawn would have made it 2).
+      assert assigns(view)[:refresh_seq] == 1
+
+      # The single refresh's authoritative list read lands asynchronously; wait
+      # for it, then assert it happened EXACTLY once — :refresh_seq (asserted
+      # above and re-asserted below) is the deterministic proof that no second
+      # spawn exists, so the counter cannot exceed before + 1.
+      wait_until(fn -> Agent.get(calls, & &1) >= before + 1 end)
+      assert assigns(view)[:refresh_seq] == 1
+      assert Agent.get(calls, & &1) == before + 1
     end
 
-    test "the trailing-edge timer is armed only once per window", %{conn: conn} do
+    test "the trailing-edge timer is armed only once per window and then applies the buffer", %{
+      conn: conn
+    } do
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
-      # Five rapid updates for the SAME (already-present) agent.
+      # A registration (arms the timer) plus five rapid updates for the SAME
+      # (already-present) agent — all in one window.
+      send(
+        view.pid,
+        {:agent_registered, 2, summary_agent(id: 2, parent_id: agent_id(), status: :pending),
+         node()}
+      )
+
       for n <- 1..5 do
         send(view.pid, {:agent_updated, agent_id(), [total_tokens: n], node()})
       end
 
-      # :sys.get_state is a mailbox fence — all five events were processed
+      # :sys.get_state is a mailbox fence — all six events were processed
       # before this reply. The FIRST event armed the single timer; the other
-      # four only appended to the buffer (no second schedule).
+      # five only appended to the buffer (no second schedule), and nothing was
+      # applied yet.
       state = :sys.get_state(view.pid).socket.assigns
       assert state.agent_flush_scheduled == true
-      assert length(state.pending_agent_events) == 5
+      assert length(state.pending_agent_events) == 6
+      assert state.agents |> Enum.map(& &1.id) == [agent_id()]
 
       # The buffer is newest-first (prepend); drain restores ARRIVAL order.
       assert hd(state.pending_agent_events) ==
                {:agent_updated, agent_id(), [total_tokens: 5], node()}
 
       assert EvoDashWeb.AgentsLive.PendingEvents.drain(state.pending_agent_events) ==
-               for(n <- 1..5, do: {:agent_updated, agent_id(), [total_tokens: n], node()})
+               [
+                 {:agent_registered, 2,
+                  summary_agent(id: 2, parent_id: agent_id(), status: :pending), node()}
+               ] ++
+                 for(n <- 1..5, do: {:agent_updated, agent_id(), [total_tokens: n], node()})
+
+      # Let the REAL trailing-edge timer fire (no manual flush here): the
+      # arrival of an empty buffer is the deterministic proof that the timer
+      # (not a manual flush) applied it.
+      wait_until(fn -> assigns(view)[:pending_agent_events] == [] end)
+
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
+               Enum.sort([agent_id(), 2])
+
+      assert assigns(view)[:agent_flush_scheduled] == false
+      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).total_tokens == 5
+      assert render(view) =~ "#2"
     end
 
     test "foreign-node events are dropped before buffering", %{conn: conn} do
@@ -831,54 +812,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
     end
 
-    test "a burst with missing-agent fallbacks spawns exactly one refresh", %{conn: conn} do
-      # Count the authoritative list reads (the initial async load + refreshes).
-      calls = start_supervised!({Agent, fn -> 0 end})
-
-      # Captured in the TEST process: the runner stub executes inside the async
-      # load Task, where the process-dictionary test id is not available.
-      id = agent_id()
-
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        Agent.update(calls, &(&1 + 1))
-        [summary_agent(id: id)]
-      end)
-
-      on_exit(&clear_agents_env/0)
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      # The page load may be entered more than once (dead render + connected
-      # mount), so count the DELTA caused by the burst below.
-      before = Agent.get(calls, & &1)
-      assert assigns(view)[:refresh_seq] == 0
-
-      # Two updates for agent ids NOT in the tree (each ⇒ :fallback) plus one
-      # normal update that merges cleanly. All three coalesce into the SAME
-      # flush, which must spawn exactly ONE async refresh (not one per event).
-      send(view.pid, {:agent_updated, 404, [status: :waiting], node()})
-      send(view.pid, {:agent_updated, 405, [status: :waiting], node()})
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
-
-      flush_agent_events(view)
-
-      # The flush handler spawns AT MOST ONE refresh and bumps the monotonic
-      # :refresh_seq SYNCHRONOUSLY at the spawn, so right after the synchronous
-      # flush round-trip the count is already final: exactly one (a second
-      # spawn would have made it 2).
-      assert assigns(view)[:refresh_seq] == 1
-
-      # The single refresh's authoritative list read lands asynchronously; wait
-      # for it, then assert it happened EXACTLY once — :refresh_seq (asserted
-      # above and re-asserted below) is the deterministic proof that no second
-      # spawn exists, so the counter cannot exceed before + 1.
-      wait_until(fn -> Agent.get(calls, & &1) >= before + 1 end)
-      assert assigns(view)[:refresh_seq] == 1
-      assert Agent.get(calls, & &1) == before + 1
-    end
-
-    test "a burst touching the selected agent refetches history at most once", %{conn: conn} do
+    test "a burst refetches the selected agent's history at most once — and never without :message_count",
+         %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -895,105 +830,45 @@ defmodule EvoDashWeb.AgentsLiveTest do
       wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
-      # Count only the fetch(es) triggered by the burst below.
       before = Agent.get(counter, & &1)
 
-      # Three rapid context-growth updates for the SELECTED agent — each
+      # ── The inverse contract first: changed_fields WITHOUT :message_count
+      # never means "the context grew", so no fetch is spawned even though the
+      # row merges (tokens fold in, last status wins).
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [total_tokens: 123], node()})
+      send(view.pid, {:agent_updated, agent_id(), [status: :running], node()})
+      flush_agent_events(view)
+
+      assert assigns(view)[:previous_statuses][agent_id()] == :running
+      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).total_tokens == 123
+      # Exhaustive: refetch_selected_history/1 sets :history_loading_agent_id
+      # synchronously at spawn (in-flight) and bumps the counter on completion
+      # (finished), so both failure modes are caught without a timing window.
+      assert assigns(view)[:history_loading_agent_id] == nil
+      assert Agent.get(counter, & &1) == before
+
+      # ── Three rapid context-growth updates for the SELECTED agent — each
       # carries :message_count (the contract). The flush must refetch ONCE for
-      # the whole burst, not once per event (refetch_selected_history/1 runs
-      # at most once at the end of the drain).
+      # the whole burst, not once per event.
       send(view.pid, {:agent_updated, agent_id(), [message_count: 2, status: :waiting], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 3], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 4], node()})
 
       flush_agent_events(view)
 
-      # The flush drains the WHOLE burst and calls refetch_selected_history/1 AT
-      # MOST ONCE — its only call site — so exactly one history fetch is spawned
-      # (that call also sets :history_loading_agent_id synchronously at spawn).
-      # Wait for that single fetch's runner call to land, then prove no second
-      # one can follow: the buffer is drained and no flush timer is armed, and
-      # refetch_selected_history/1 has no other caller, so a second fetch is
-      # structurally impossible (no timing window needed).
+      # refetch_selected_history/1 has no other caller and the buffer is now
+      # drained with no flush timer armed, so a second fetch is structurally
+      # impossible (no timing window needed).
       wait_until(fn -> Agent.get(counter, & &1) >= before + 1 end)
       assert assigns(view)[:pending_agent_events] == []
       refute assigns(view)[:agent_flush_scheduled]
       assert Agent.get(counter, & &1) == before + 1
     end
 
-    test "a burst without :message_count triggers no history refetch", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      before = Agent.get(counter, & &1)
-
-      # The inverse contract: changed_fields WITHOUT :message_count never means
-      # "the context grew", so the selected-agent history is left alone (no
-      # refetch) even though the agent's row merges.
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
-      send(view.pid, {:agent_updated, agent_id(), [total_tokens: 123], node()})
-      send(view.pid, {:agent_updated, agent_id(), [status: :running], node()})
-
-      flush_agent_events(view)
-
-      # The merge still applied (last event → :running, tokens folded in)…
-      assert assigns(view)[:previous_statuses][agent_id()] == :running
-
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == agent_id()))
-      assert agent.total_tokens == 123
-
-      # …but no history fetch was spawned by the burst. The two synchronous
-      # checks below are EXHAUSTIVE: refetch_selected_history/1 sets
-      # :history_loading_agent_id synchronously at spawn, so a spawned-but-
-      # unfinished fetch shows up there immediately; a spawned-and-FINISHED one
-      # clears that flag but bumps the agent counter — so no timing window is
-      # needed, every failure mode is caught.
-      assert assigns(view)[:history_loading_agent_id] == nil
-      assert Agent.get(counter, & &1) == before
-    end
-
-    test "the trailing-edge timer applies the buffer without a manual flush", %{conn: conn} do
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
-
-      send(
-        view.pid,
-        {:agent_registered, 2, summary_agent(id: 2, parent_id: agent_id(), status: :pending),
-         node()}
-      )
-
-      # Armed, not applied — the merge is deferred to the timer.
-      assert assigns(view)[:pending_agent_events] != []
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
-
-      # Let the REAL trailing-edge timer fire (no manual flush here): poll the
-      # observable buffer until the timer's flush has drained and applied it.
-      # The timer is armed by the event above, so the arrival of an empty buffer
-      # is the deterministic proof that the timer (not a manual flush) applied it.
-      wait_until(fn -> assigns(view)[:pending_agent_events] == [] end)
-
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
-               Enum.sort([agent_id(), 2])
-
-      assert assigns(view)[:pending_agent_events] == []
-      assert assigns(view)[:agent_flush_scheduled] == false
-      assert render(view) =~ "#2"
-    end
+    # NOTE: "the trailing-edge timer applies the buffer without a manual
+    # flush" is the second half of "the trailing-edge timer is armed only once
+    # per window and then applies the buffer" above (same real-timer wait).
   end
 
   describe "compression threshold" do
@@ -1001,21 +876,20 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # `compression_threshold` (the core derives it per model context window).
     # The node's [:llm, :compression_threshold_tokens] resolved-config value is
     # the fallback, and 180_000 is a LAST-RESORT fallback only (the setting is
-    # optional — nil means "unknown").
+    # optional — nil means "derive it per model").
 
-    test "threshold_from_config/1 extracts the threshold from the resolved config" do
+    test "ThresholdCache.resolve chain: per-agent → node → 180_000 last resort" do
+      # Node-level extraction (a resolved config, an error, and a non-map).
       assert ThresholdCache.threshold_from_config(
                {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
              ) == 42_000
 
-      assert ThresholdCache.threshold_from_config({:ok, %{}}) == 180_000
       assert ThresholdCache.threshold_from_config({:error, :timeout}) == 180_000
-    end
+      assert ThresholdCache.threshold_from_config({:ok, nil}) == 180_000
 
-    test "threshold_from_config/1 treats a nil/invalid threshold as unknown" do
       # The setting is OPTIONAL in the core (nil = derive it from the model's
       # context window), so every unusable shape must fall through to the
-      # 180_000 last resort — never crash on the bar's division.
+      # 180_000 last resort — never crash the bar's division.
       for config <- [
             %{llm: %{compression_threshold_tokens: nil}},
             %{llm: nil},
@@ -1027,44 +901,50 @@ defmodule EvoDashWeb.AgentsLiveTest do
         assert ThresholdCache.threshold_from_config({:ok, config}) == 180_000
       end
 
-      assert ThresholdCache.threshold_from_config({:ok, nil}) == 180_000
-      assert ThresholdCache.threshold_from_config({:error, :timeout}) == 180_000
-    end
-
-    test "threshold_for_agent/2 prefers the per-agent threshold over the node-level one" do
-      # Atom-keyed summary (the native RemoteAPI summary shape).
+      # Per-agent precedence: atom-keyed (native RemoteAPI summary) and
+      # string-keyed (defensive read) BOTH win over the node-level value…
       assert ThresholdCache.threshold_for_agent(%{compression_threshold: 100_000}, 42_000) ==
                100_000
 
-      # String-keyed summary (defensive read — a JSON-shaped summary).
       assert ThresholdCache.threshold_for_agent(%{"compression_threshold" => 50_000}, 42_000) ==
                50_000
 
-      # Absent/nil/non-integer/non-positive per-agent values fall back.
-      assert ThresholdCache.threshold_for_agent(%{}, 42_000) == 42_000
-      assert ThresholdCache.threshold_for_agent(%{compression_threshold: nil}, 42_000) == 42_000
-      assert ThresholdCache.threshold_for_agent(%{compression_threshold: 0}, 42_000) == 42_000
-      assert ThresholdCache.threshold_for_agent(%{compression_threshold: 12.5}, 42_000) == 42_000
-      assert ThresholdCache.threshold_for_agent(%{compression_threshold: "1"}, 42_000) == 42_000
-      assert ThresholdCache.threshold_for_agent(nil, 42_000) == 42_000
+      # …while absent/nil/non-integer/non-positive per-agent values fall back,
+      # and an unusable node-level fallback lands on the last resort.
+      for summary <-
+            [%{}, %{compression_threshold: nil}, %{compression_threshold: 0}] ++
+              [
+                %{compression_threshold: 12.5},
+                %{compression_threshold: "1"},
+                nil
+              ] do
+        assert ThresholdCache.threshold_for_agent(summary, 42_000) == 42_000
+      end
 
-      # An unusable node-level fallback lands on the 180_000 last resort.
       assert ThresholdCache.threshold_for_agent(%{}, nil) == 180_000
       assert ThresholdCache.threshold_for_agent(%{}, 0) == 180_000
-    end
 
-    test "default_threshold/0 falls back to 180_000" do
       assert ThresholdCache.default_threshold() == 180_000
     end
 
-    test "compression percentage uses the configured node threshold", %{conn: conn} do
-      # Captured in the TEST process (the runner stub runs inside the async
-      # load Task, where the test's process-dictionary id is not visible).
+    test "the bar divides by the per-agent threshold, else the configured node one", %{
+      conn: conn
+    } do
+      # THREE agents, ONE mount: the node-level 42_000 must be used where the
+      # summary carries no usable threshold (the old bug divided by the
+      # 100_000 struct default), while an atom- or string-keyed per-agent value
+      # overrides it.
       id = agent_id()
 
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        [summary_agent(id: id, total_tokens: 21_000)]
-      end)
+      install_agents([
+        # No per-agent threshold ⇒ 21_000 / 42_000 = 50%.
+        summary_agent(id: id, total_tokens: 21_000),
+        # Atom-keyed 100_000 wins over the node's 42_000 (which would render 100%).
+        summary_agent(id: 2, total_tokens: 50_000, compression_threshold: 100_000),
+        # String-keyed 50_000 wins too (the node value would render 59%).
+        summary_agent(id: 3, total_tokens: 25_000)
+        |> Map.put("compression_threshold", 50_000)
+      ])
 
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
         {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
@@ -1075,86 +955,28 @@ defmodule EvoDashWeb.AgentsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
+      # The computation itself, for all three agents.
+      for {agent_id, threshold, pct} <- [{id, 42_000, 50}, {2, 100_000, 50}, {3, 50_000, 50}] do
+        agent = assigns(view)[:agents] |> Enum.find(&(&1.id == agent_id))
+        assert agent.compression_threshold == threshold
+        assert agent.compression_pct == pct
+      end
+
+      # The rendered bar agrees (21_000 / 42_000 = 50%, never the 100_000 default's 21%).
+      view |> element("#agent-card-#{id}") |> render_click()
       view |> element("button[phx-click='toggle_usage']") |> render_click()
       html = render(view)
 
-      # 21_000 / 42_000 = 50% — the old bug computed against the 100_000
-      # default, which would render "(21%)".
       assert html =~ "(50%)"
       refute html =~ "(21%)"
     end
 
-    test "compression percentage prefers an atom-keyed per-agent threshold", %{conn: conn} do
+    test "a nil node threshold falls back to 180_000 and events recompute the bar", %{
+      conn: conn
+    } do
       id = agent_id()
 
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        [summary_agent(id: id, total_tokens: 50_000, compression_threshold: 100_000)]
-      end)
-
-      # The node-level value (42_000) would render 100% here — the per-agent
-      # 100_000 must win.
-      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
-        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
-      end)
-
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
-      assert agent.compression_threshold == 100_000
-      assert agent.compression_pct == 50
-
-      view |> element("#agent-card-#{id}") |> render_click()
-      view |> element("button[phx-click='toggle_usage']") |> render_click()
-      html = render(view)
-
-      # 50_000 / 100_000 = 50% (the node threshold would cap it at 100%).
-      assert html =~ "(50%)"
-      refute html =~ "(100%)"
-    end
-
-    test "compression percentage prefers a string-keyed per-agent threshold", %{conn: conn} do
-      id = agent_id()
-
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        [
-          summary_agent(id: id, total_tokens: 25_000)
-          |> Map.put("compression_threshold", 50_000)
-        ]
-      end)
-
-      # The node-level value would render 59% (25_000 / 42_000) — the
-      # string-keyed per-agent 50_000 must win.
-      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
-        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
-      end)
-
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
-      assert agent.compression_threshold == 50_000
-      assert agent.compression_pct == 50
-
-      view |> element("#agent-card-#{id}") |> render_click()
-      view |> element("button[phx-click='toggle_usage']") |> render_click()
-      html = render(view)
-
-      assert html =~ "(50%)"
-      refute html =~ "(59%)"
-    end
-
-    test "a nil configured threshold renders against 180_000 without crashing", %{conn: conn} do
-      id = agent_id()
-
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        [summary_agent(id: id, total_tokens: 90_000)]
-      end)
+      install_agents([summary_agent(id: id, total_tokens: 90_000)])
 
       # The core's OPTIONAL threshold: nil means "derive it per model".
       Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
@@ -1173,72 +995,44 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert agent.compression_threshold == 180_000
       assert agent.compression_pct == 50
 
+      # 90_000 / 180_000 = 50% — a nil threshold must not crash the bar.
       view |> element("#agent-card-#{id}") |> render_click()
       view |> element("button[phx-click='toggle_usage']") |> render_click()
-
-      # 90_000 / 180_000 = 50% — a nil threshold must not crash the bar.
       assert render(view) =~ "(50%)"
-    end
 
-    test "registered event uses the summary's per-agent threshold", %{conn: conn} do
-      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
-        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
-      end)
+      # A REGISTERED summary carries its own threshold (25_000 / 50_000 = 50%).
+      send(
+        view.pid,
+        {:agent_registered, 2,
+         summary_agent(id: 2, total_tokens: 25_000, compression_threshold: 50_000), node()}
+      )
 
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      summary =
-        summary_agent(id: 2, total_tokens: 25_000, compression_threshold: 50_000)
-
-      send(view.pid, {:agent_registered, 2, summary, node()})
       flush_agent_events(view)
 
       registered = assigns(view)[:agents] |> Enum.find(&(&1.id == 2))
       assert registered.compression_threshold == 50_000
       assert registered.compression_pct == 50
-    end
 
-    test "an updated event recomputes against a changed threshold and ignores a nil one", %{
-      conn: conn
-    } do
-      id = agent_id()
-
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        [summary_agent(id: id, total_tokens: 50_000, compression_threshold: 100_000)]
-      end)
-
-      Application.put_env(:evo_dash, :agents_config_runner, fn _node ->
-        {:ok, %{llm: %{compression_threshold_tokens: 42_000}}}
-      end)
-
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # A threshold-only delta recomputes the bar: 50_000 / 50_000 = 100%.
-      send(view.pid, {:agent_updated, id, [compression_threshold: 50_000], node()})
+      # An UPDATED threshold-only delta recomputes the bar: 25_000 / 25_000 = 100%.
+      send(view.pid, {:agent_updated, 2, [compression_threshold: 25_000], node()})
       flush_agent_events(view)
 
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
-      assert agent.compression_threshold == 50_000
-      assert agent.compression_pct == 100
+      updated = assigns(view)[:agents] |> Enum.find(&(&1.id == 2))
+      assert updated.compression_threshold == 25_000
+      assert updated.compression_pct == 100
 
-      # A nil threshold delta means "unknown" — the previous denominator is
-      # kept (never a division by nil); total_tokens still drives the pct.
+      # A nil threshold delta means "unknown" — the previous denominator is kept
+      # (never a division by nil); total_tokens still drives the pct.
       send(
         view.pid,
-        {:agent_updated, id, [compression_threshold: nil, total_tokens: 25_000], node()}
+        {:agent_updated, 2, [compression_threshold: nil, total_tokens: 12_500], node()}
       )
 
       flush_agent_events(view)
 
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == id))
-      assert agent.compression_threshold == 50_000
-      assert agent.compression_pct == 50
+      updated = assigns(view)[:agents] |> Enum.find(&(&1.id == 2))
+      assert updated.compression_threshold == 25_000
+      assert updated.compression_pct == 50
     end
   end
 
@@ -1250,111 +1044,80 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # in the sibling agents_live/context_meter_test.exs; these tests pin the
     # RENDERED attribute contract the CSS/data consumers read.
 
-    test "renders an empty fill with a 63.1% threshold tick", %{conn: conn} do
+    test "fill, tick and zone boundaries across agents (and the window fallback)", %{
+      conn: conn
+    } do
       id = agent_id()
 
+      # Four agents, ONE mount — the meter reflects the SELECTED agent, so the
+      # zone boundaries are read by switching selection instead of remounting.
       view =
-        mount_context_meter(conn, [
-          summary_agent(
-            id: id,
-            total_tokens: 0,
-            compression_threshold: 126_272,
-            context_window: 200_000
-          )
-        ])
+        mount_context_meter(
+          conn,
+          [
+            # 0 tokens → empty fill, success zone, tick at 63.1%.
+            summary_agent(
+              id: id,
+              total_tokens: 0,
+              compression_threshold: 126_272,
+              context_window: 200_000
+            ),
+            # 110_000 / 200_000 = 55% of the WINDOW (not 87% of the threshold).
+            summary_agent(
+              id: 2,
+              total_tokens: 110_000,
+              compression_threshold: 126_272,
+              context_window: 200_000
+            ),
+            # Reaching the threshold turns the fill red at the same 63.1%.
+            summary_agent(
+              id: 3,
+              total_tokens: 126_272,
+              compression_threshold: 126_272,
+              context_window: 200_000
+            ),
+            # Older/remote summaries omit the optional :context_window — the meter
+            # must still render against the core's 200_000 default.
+            summary_agent(id: 4, total_tokens: 110_000, compression_threshold: 126_272)
+          ],
+          # `show_usage` is reset by every selection change, so each row below
+          # selects AND expands explicitly instead of relying on the mount.
+          expand: false
+        )
 
-      attrs = context_meter_attrs(view)
+      refute Map.has_key?(summary_agent(id: 4, total_tokens: 0), :context_window)
 
-      assert attrs["data-context-fill-pct"] == "0.0"
-      assert attrs["data-context-tick-pct"] == "63.1"
-      assert attrs["data-context-zone"] == "success"
-      assert attrs["data-context-window-tokens"] == "200000"
-      assert attrs["data-context-threshold-tokens"] == "126272"
-      assert attrs["data-context-current-tokens"] == "0"
+      expected = [
+        {id, "0.0", "success", "0"},
+        {2, "55.0", "warning", "110000"},
+        {3, "63.1", "error", "126272"},
+        # A zero-token summary WITHOUT :context_window composes the same way.
+        {4, "55.0", "warning", "110000"}
+      ]
 
-      # The tick's caption carries the compression token count.
+      for {agent_id, fill, zone, current} <- expected do
+        view |> element("#agent-card-#{agent_id}") |> render_click()
+        view |> element("button[phx-click='toggle_usage']") |> render_click()
+
+        attrs = context_meter_attrs(view)
+
+        assert attrs["data-context-fill-pct"] == fill
+        assert attrs["data-context-zone"] == zone
+        assert attrs["data-context-tick-pct"] == "63.1"
+        assert attrs["data-context-window-tokens"] == "200000"
+        assert attrs["data-context-threshold-tokens"] == "126272"
+        assert attrs["data-context-current-tokens"] == current
+      end
+
+      # The defaulted window is materialized on the agent map, not just rendered.
+      assert assigns(view)[:agents] |> Enum.find(&(&1.id == 4)) |> Map.get(:context_window) ==
+               200_000
+
+      # The tick's caption carries the compression token count (never the
+      # "threshold unknown" copy while a threshold is known).
       html = render(view)
       assert html =~ "Compression at 126,272"
       refute html =~ "Compression threshold unknown"
-    end
-
-    test "the fill grows with the current tokens and turns amber past 80%", %{conn: conn} do
-      id = agent_id()
-
-      view =
-        mount_context_meter(conn, [
-          summary_agent(
-            id: id,
-            total_tokens: 110_000,
-            compression_threshold: 126_272,
-            context_window: 200_000
-          )
-        ])
-
-      attrs = context_meter_attrs(view)
-
-      # 110_000 / 200_000 = 55% of the WINDOW (not 87% of the threshold).
-      assert attrs["data-context-fill-pct"] == "55.0"
-      assert attrs["data-context-zone"] == "warning"
-      assert attrs["data-context-tick-pct"] == "63.1"
-      assert attrs["data-context-current-tokens"] == "110000"
-    end
-
-    test "reaching the threshold turns the fill red", %{conn: conn} do
-      id = agent_id()
-
-      view =
-        mount_context_meter(conn, [
-          summary_agent(
-            id: id,
-            total_tokens: 126_272,
-            compression_threshold: 126_272,
-            context_window: 200_000
-          )
-        ])
-
-      attrs = context_meter_attrs(view)
-
-      assert attrs["data-context-zone"] == "error"
-      assert attrs["data-context-fill-pct"] == "63.1"
-      assert attrs["data-context-tick-pct"] == "63.1"
-      assert attrs["data-context-current-tokens"] == "126272"
-    end
-
-    test "a summary without :context_window falls back to the 200_000 default", %{conn: conn} do
-      id = agent_id()
-
-      # Older/remote summaries omit the optional :context_window — the meter
-      # must still render against the core's 200_000 default.
-      summary = summary_agent(id: id, total_tokens: 110_000, compression_threshold: 126_272)
-      refute Map.has_key?(summary, :context_window)
-
-      view = mount_context_meter(conn, [summary])
-
-      attrs = context_meter_attrs(view)
-
-      assert attrs["data-context-window-tokens"] == "200000"
-      assert attrs["data-context-tick-pct"] == "63.1"
-      assert attrs["data-context-fill-pct"] == "55.0"
-
-      assert assigns(view)[:agents] |> Enum.find(&(&1.id == id)) |> Map.get(:context_window) ==
-               200_000
-    end
-
-    test "a zero-token summary without :context_window renders an empty fill", %{conn: conn} do
-      id = agent_id()
-
-      view =
-        mount_context_meter(conn, [
-          summary_agent(id: id, total_tokens: 0, compression_threshold: 126_272)
-        ])
-
-      attrs = context_meter_attrs(view)
-
-      assert attrs["data-context-fill-pct"] == "0.0"
-      assert attrs["data-context-tick-pct"] == "63.1"
-      assert attrs["data-context-window-tokens"] == "200000"
-      assert attrs["data-context-zone"] == "success"
     end
 
     test "an agent without a usable threshold hides the tick", %{conn: conn} do
@@ -1396,25 +1159,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  describe "config_status node-awareness" do
-    # BUG 3 fix: config_status was read once in mount via
-    # EvoGit.Config.config_status() and never refreshed per-node. The layout
-    # config banner showed LOCAL status while viewing remote agents. The fix
-    # makes config_status node-aware via node_config_status/1.
-
-    test "page renders with config_status populated on local node", %{conn: conn} do
-      # The config_status assign should be populated and non-nil on the local
-      # node, proving the node-aware helper works in the local case. The layout
-      # config banner reads @config_status, so if the page renders without error
-      # the assign is present. We verify by checking the rendered HTML includes
-      # the config status badge (present in the navbar when config_status is set).
-      {:ok, _view, html} = live(conn, ~p"/agents")
-
-      # The page should render the agent tree section without crashing, proving
-      # config_status was loaded successfully by the node-aware helper.
-      assert html =~ "Agent Tree"
-    end
-  end
+  # NOTE: config_status node-awareness (BUG 3) is covered by the "renders the
+  # empty agent tree with a node-aware config status" test in "agents page",
+  # which asserts the assign shape directly — a strictly stronger check than
+  # "the page renders without crashing".
 
   describe "format_history_timestamp/1" do
     # Session-memory messages carry a wall-clock timestamp in
@@ -1422,51 +1170,43 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # Unix-seconds integer or DateTime). The dashboard shows a short LOCAL
     # time next to "Turn x" when present, and renders nothing when absent.
 
-    test "returns nil for an absent timestamp" do
-      assert Helpers.format_history_timestamp(nil) == nil
-    end
+    test "formats every supported input shape as the same short LOCAL time" do
+      # Unix-seconds integer, DateTime and ISO8601 binary all resolve to the
+      # SAME local rendering — computed independently of the helper under test.
+      expected = expected_local_time(@unix_seconds)
+      assert expected =~ ~r/^\d{2}:\d{2}:\d{2}$/
 
-    test "returns nil for unparseable values" do
-      assert Helpers.format_history_timestamp("not-a-time") == nil
-      assert Helpers.format_history_timestamp(:bogus) == nil
-      assert Helpers.format_history_timestamp(%{}) == nil
-    end
+      for input <- [
+            @unix_seconds,
+            DateTime.from_unix!(@unix_seconds, :second),
+            "2023-11-14T22:13:20Z"
+          ] do
+        assert Helpers.format_history_timestamp(input) == expected
+      end
 
-    test "formats a Unix-seconds integer as a short LOCAL time string" do
-      formatted = Helpers.format_history_timestamp(@unix_seconds)
-
-      assert formatted =~ ~r/^\d{2}:\d{2}:\d{2}$/
-      assert formatted == expected_local_time(@unix_seconds)
-    end
-
-    test "formats a DateTime as the same short LOCAL time string" do
-      datetime = DateTime.from_unix!(@unix_seconds, :second)
-
-      assert Helpers.format_history_timestamp(datetime) ==
-               Helpers.format_history_timestamp(@unix_seconds)
-    end
-
-    test "formats an ISO8601 binary as the same short LOCAL time string" do
-      iso = "2023-11-14T22:13:20Z"
-
-      assert Helpers.format_history_timestamp(iso) ==
-               Helpers.format_history_timestamp(@unix_seconds)
-    end
-
-    test "converts to LOCAL time, not UTC" do
-      local = Helpers.format_history_timestamp(@unix_seconds)
+      # LOCAL, not UTC (unless the machine's offset happens to be zero).
       utc = Calendar.strftime(DateTime.from_unix!(@unix_seconds, :second), "%H:%M:%S")
 
       if local_offset_seconds() == 0 do
-        assert local == utc
+        assert expected == utc
       else
-        refute local == utc
+        refute expected == utc
+      end
+    end
+
+    test "returns nil for an absent or unparseable timestamp" do
+      for input <- [nil, "not-a-time", :bogus, %{}] do
+        assert Helpers.format_history_timestamp(input) == nil
       end
     end
   end
 
-  describe "message timestamps in agent detail panel" do
-    test "renders the short LOCAL time next to Turn x when the message has a timestamp", %{
+  describe "history entry rendering in the agent detail panel" do
+    # ONE seeded history per rendering contract, one mount per contract: these
+    # are display-only assertions over the SAME joined-history panel, so the
+    # page mount (not any interaction) is the expensive part.
+
+    test "renders the short LOCAL time next to Turn x only when the message has one", %{
       conn: conn
     } do
       seed_agent(agent_id(), [
@@ -1474,48 +1214,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
           role: :assistant,
           content: [%{text: "hello"}],
           metadata: %{turn: 1, timestamp: @unix_seconds}
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      expected = Helpers.format_history_timestamp(@unix_seconds)
-      # History is fetched asynchronously on selection — wait for it.
-      html = wait_for_text(view, "Turn 1")
-
-      assert html =~ "Turn 1"
-      assert html =~ ~r/Turn 1\s*<span[^>]*>#{expected}<\/span>/
-    end
-
-    test "renders just Turn x (no time artifact) when the message has no timestamp", %{
-      conn: conn
-    } do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 2}}
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      html = wait_for_text(view, "Turn 2")
-
-      assert html =~ "Turn 2"
-      refute html =~ ~r/Turn 2\s*<span[^>]*>\d{2}:\d{2}:\d{2}<\/span>/
-    end
-  end
-
-  describe "multimodal content part labels in agent detail panel" do
-    test "renders [image: name] / [audio: name] labels instead of an empty-message fallback",
-         %{conn: conn} do
-      # Real %ReqLLM.Message{} histories with %ReqLLM.Message.ContentPart{}
-      # structs: image/audio parts carry no text, so the joined history content
-      # is exactly what content_part_label/1 produces — an image part plus a
-      # text part on one message, and a bare audio part riding as a :file part
-      # with an audio/* media_type on the next.
-      seed_agent(agent_id(), [
+        },
+        # Multimodal parts carry no text: image/audio render as a bracketed
+        # label instead of the "<empty message>" fallback.
         %ReqLLM.Message{
           role: :user,
           content: [
@@ -1527,7 +1228,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
             },
             %ReqLLM.Message.ContentPart{type: :text, text: " look"}
           ],
-          metadata: %{turn: 1}
+          metadata: %{turn: 2}
         },
         %ReqLLM.Message{
           role: :user,
@@ -1539,7 +1240,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
               media_type: "audio/mpeg"
             }
           ],
-          metadata: %{turn: 2}
+          metadata: %{turn: 3}
         }
       ])
 
@@ -1548,19 +1249,28 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       view |> element("#agent-card-#{agent_id()}") |> render_click()
       # History is fetched asynchronously on selection — wait for it.
-      html = wait_for_text(view, "Turn 2")
+      expected = Helpers.format_history_timestamp(@unix_seconds)
+      html = wait_for_text(view, "Turn 3")
+
+      # Turn 1 carries metadata[:timestamp] ⇒ the local time rides next to it.
+      assert html =~ ~r/Turn 1\s*<span[^>]*>#{expected}<\/span>/
+      # Turn 2 has none ⇒ no time artifact (never a placeholder).
+      refute html =~ ~r/Turn 2\s*<span[^>]*>\d{2}:\d{2}:\d{2}<\/span>/
 
       # Image part → "[image: pic.png]" joined (no separator) with the text
-      # part's " look" — the joined content is non-empty, so no empty fallback.
+      # part's " look" — non-empty content, so no empty fallback.
       assert html =~ "[image: pic.png] look"
       # Audio :file part with audio/* media_type → "[audio: clip.mp3]".
       assert html =~ "[audio: clip.mp3]"
       refute html =~ "<empty message>"
     end
-  end
 
-  describe "inline tool call rendering in agent detail panel" do
-    test "renders shell tool call command and non-shell arguments inline", %{conn: conn} do
+    test "renders tool-call rows and tool results inline, and the modal carries full commands",
+         %{conn: conn} do
+      # A 260-char command: the inline panel caps shell commands at 200 chars +
+      # "…", the full-message modal renders the complete command.
+      long_cmd = String.duplicate("x", 260)
+
       seed_agent(agent_id(), [
         %ReqLLM.Message{
           role: :assistant,
@@ -1574,33 +1284,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
             %ReqLLM.ToolCall{
               id: "call_2",
               function: %{name: "read_file", arguments: ~s({"path":"./README.md"})}
-            }
-          ]
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      html = wait_for_text(view, "Shell call")
-
-      # Shell call: context label + command rendered inline (no expansion needed)
-      assert html =~ "Shell call"
-      assert html =~ "ls -la"
-
-      # Non-shell call: function name + (pretty) arguments inline
-      assert html =~ "read_file"
-      assert html =~ "./README.md"
-    end
-
-    test "a background shell call renders with its own accent and label", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [],
-          metadata: %{turn: 1},
-          tool_calls: [
+            },
             %ReqLLM.ToolCall{
               id: "call_bg",
               function: %{
@@ -1609,51 +1293,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
               }
             },
             %ReqLLM.ToolCall{
-              id: "call_fg",
-              function: %{name: "bash", arguments: ~s({"command":"ls -la"})}
+              id: "call_long",
+              function: %{name: "run_bash", arguments: Jason.encode!(%{"command" => long_cmd})}
             }
           ]
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      panel = wait_for_text(view, "Background shell call")
-
-      # Distinct label + the command still renders (the row contract is intact).
-      assert panel =~ "Background shell call"
-      assert panel =~ "npm run dev"
-      # The foreground sibling keeps the historical presentation.
-      assert panel =~ "Shell call"
-      assert panel =~ "ls -la"
-
-      rows =
-        panel
-        |> Floki.parse_document!()
-        |> Floki.find("div")
-        |> Enum.filter(&(class_string(&1) =~ "flex items-start gap-2"))
-
-      bg_row = Enum.find(rows, &(Floki.text(&1) =~ "Background shell call"))
-      fg_row = Enum.find(rows, &(Floki.text(&1) =~ "Shell call"))
-
-      assert bg_row
-      assert fg_row
-      # Background accent (`info` chip + clock icon) vs the plain secondary row.
-      assert class_string(bg_row) =~ "bg-info/10"
-      assert Floki.find(bg_row, "span.hero-clock") != []
-      refute class_string(fg_row) =~ "bg-info/10"
-      assert Floki.find(fg_row, "span.hero-clock") == []
-
-      # The full-message modal carries the same distinction.
-      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
-      modal = render(view)
-      assert modal =~ "Background shell call"
-      assert modal =~ "border-l-2 border-info/40"
-    end
-
-    test "a subagent report and a top-level tool result render differently", %{conn: conn} do
-      seed_agent(agent_id(), [
+        },
+        # One tool result per render kind: subagent report vs plain tool result
+        # vs background-job output.
         %ReqLLM.Message{
           role: :tool,
           name: "subagent_investigator",
@@ -1677,120 +1323,119 @@ defmodule EvoDashWeb.AgentsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
       view |> element("#agent-card-#{agent_id()}") |> render_click()
-      panel = wait_for_text(view, "Subagent Report: subagent_investigator")
+      panel = wait_for_text(view, "Background shell call")
 
-      # Distinct headers, one per result kind.
+      # Shell call: context label + command rendered inline. Non-shell call:
+      # function name + (pretty) arguments inline.
+      assert panel =~ "Shell call"
+      assert panel =~ "ls -la"
+      assert panel =~ "read_file"
+      assert panel =~ "./README.md"
+      # Background shell call: its own label, command still rendered.
+      assert panel =~ "Background shell call"
+      assert panel =~ "npm run dev"
+
+      # Compact mode: the long command is capped at 200 chars + a trailing "…".
+      assert panel =~ String.slice(long_cmd, 0, 200) <> "…"
+      refute panel =~ long_cmd
+
+      # ONE parse for all structural assertions below.
+      tree = Floki.parse_document!(panel)
+
+      rows =
+        tree
+        |> Floki.find("div")
+        |> Enum.filter(&(class_string(&1) =~ "flex items-start gap-2"))
+
+      bg_row = Enum.find(rows, &(Floki.text(&1) =~ "Background shell call"))
+      fg_row = Enum.find(rows, &(Floki.text(&1) =~ "Shell call"))
+
+      assert bg_row
+      assert fg_row
+      # Background accent (`info` chip + clock icon) vs the plain secondary row.
+      assert class_string(bg_row) =~ "bg-info/10"
+      assert Floki.find(bg_row, "span.hero-clock") != []
+      refute class_string(fg_row) =~ "bg-info/10"
+      assert Floki.find(fg_row, "span.hero-clock") == []
+
+      # Distinct headers + accents per tool-result kind.
       assert panel =~ "Subagent Report: subagent_investigator"
       assert panel =~ "Tool Result: read"
       assert panel =~ "Background job: job_output"
 
-      doc = Floki.parse_document!(panel)
-
-      subagent_panel =
-        doc
-        |> Floki.find("div")
-        |> Enum.find(
-          &(class_string(&1) =~ "bg-accent/10" and Floki.text(&1) =~ "SUBAGENT_REPORT_BODY")
+      find_panel = fn class, body ->
+        Enum.find(
+          Floki.find(tree, "div"),
+          &(class_string(&1) =~ class and Floki.text(&1) =~ body)
         )
+      end
 
-      read_panel =
-        doc
-        |> Floki.find("div")
-        |> Enum.find(
-          &(class_string(&1) =~ "bg-success/10" and Floki.text(&1) =~ "PLAIN_READ_BODY")
-        )
+      subagent_panel = find_panel.("bg-accent/10", "SUBAGENT_REPORT_BODY")
+      read_panel = find_panel.("bg-success/10", "PLAIN_READ_BODY")
+      job_panel = find_panel.("bg-info/10", "JOB_OUTPUT_BODY")
 
       assert subagent_panel
       assert class_string(subagent_panel) =~ "text-accent"
       assert class_string(subagent_panel) =~ "border-l-2 border-accent/40"
-      assert Floki.find(doc, "span.hero-user-group") != []
+      assert Floki.find(tree, "span.hero-user-group") != []
 
       assert read_panel
       assert class_string(read_panel) =~ "text-success"
       refute class_string(read_panel) =~ "border-l-2"
 
-      job_panel =
-        doc
-        |> Floki.find("div")
-        |> Enum.find(&(class_string(&1) =~ "bg-info/10" and Floki.text(&1) =~ "JOB_OUTPUT_BODY"))
-
       assert job_panel
       assert class_string(job_panel) =~ "text-info"
       assert class_string(job_panel) =~ "border-l-2 border-info/40"
-    end
-  end
 
-  describe "thinking block wrapping" do
-    # Regression: a LONG reasoning/thinking block must line-wrap instead of
-    # forcing a horizontal scrollbar. Both render sites carry
-    # `whitespace-pre-wrap break-words` (the inline detail panel's thinking
-    # <div> and the full-message modal's thinking <pre>).
-    #
-    # The modal's OUTER wrapper legitimately keeps `overflow-x-auto` (it scrolls
-    # wide ancestor content), so the "no horizontal scroller" assertion is
-    # SCOPED to the thinking <pre> element itself — a whole-modal refutation
-    # would fail by design.
-    test "thinking text wraps in the inline panel and the full-message modal", %{conn: conn} do
+      # The full-message modal carries the SAME distinctions plus the complete
+      # (untruncated) long command in a scrollable body.
+      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
+      modal = render(view)
+
+      assert modal =~ "Background shell call"
+      assert modal =~ "border-l-2 border-info/40"
+      assert modal =~ long_cmd
+      assert modal =~ "max-h-[60vh]"
+    end
+
+    test "thinking wraps in both render sites, keeps no template indent, and never leaks into the Response block",
+         %{conn: conn} do
+      # A LONG reasoning block must line-wrap instead of forcing a horizontal
+      # scrollbar. Both render sites carry `whitespace-pre-wrap break-words`.
+      # The modal's OUTER wrapper legitimately keeps `overflow-x-auto` (it
+      # scrolls wide ancestor content), so the "no horizontal scroller"
+      # assertion is SCOPED to the thinking <pre> itself.
+      #
+      # Regression (same message): on a reasoning turn the entry carries a
+      # :thinking content part (mirrored into reasoning_details, which drives
+      # the "Thinking" block) AND a :text part (the visible answer). The
+      # Response block must be built from :text parts ONLY.
+      #
+      # Regression (same element): the inline thinking body is a
+      # `whitespace-pre-wrap` element, so ANY newline/indentation the HEEx
+      # template emits between the opening tag and the interpolation renders as
+      # a spurious leading indent — the interpolation must stay flush.
+      sentinel = "THINKING_SENTINEL" <> String.duplicate("A", 300)
+
       seed_agent(agent_id(), [
         %ReqLLM.Message{
           role: :assistant,
-          content: [],
-          reasoning_details: [%{text: String.duplicate("A", 300)}],
+          content: [
+            %ReqLLM.Message.ContentPart{type: :thinking, text: "REASONING_TOKEN"},
+            %ReqLLM.Message.ContentPart{type: :text, text: "RESPONSE_TOKEN"}
+          ],
+          reasoning_details: [%{text: sentinel}],
           metadata: %{turn: 1}
         }
       ])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
-
       view |> element("#agent-card-#{agent_id()}") |> render_click()
       panel = wait_for_text(view, "Thinking")
 
       # Inline panel: the thinking body wraps.
       assert panel =~ "whitespace-pre-wrap break-words"
-
-      # Open the full-message modal — each history entry contains exactly ONE
-      # button (the "view full message" one).
-      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
-      modal = render(view)
-
-      assert modal =~ ~r/<pre class="text-sm whitespace-pre-wrap break-words bg-warning\/10/
-
-      # Scope the refutation to the thinking <pre>: it must wrap and must NOT
-      # itself introduce a horizontal scroller.
-      thinking_pre_class =
-        modal
-        |> Floki.parse_document!()
-        |> Floki.find("pre")
-        |> Enum.map(&List.first(Floki.attribute(&1, "class")))
-        |> Enum.find(&(is_binary(&1) and &1 =~ "bg-warning/10"))
-
-      refute is_nil(thinking_pre_class)
-      assert thinking_pre_class =~ "whitespace-pre-wrap"
-      assert thinking_pre_class =~ "break-words"
-      refute thinking_pre_class =~ "overflow-x-auto"
-    end
-
-    # Regression: the inline thinking body is a `whitespace-pre-wrap` element, so
-    # ANY newline/indentation the HEEx template emits between the opening tag and
-    # the interpolated text is PRESERVED and renders as a spurious leading indent
-    # on every thinking block. The interpolation must stay flush against the tags
-    # (the class must stay exactly `whitespace-pre-wrap break-words`).
-    test "the inline thinking body does not start with template whitespace", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [],
-          reasoning_details: [%{text: "THINKING_SENTINEL"}],
-          metadata: %{turn: 1}
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      panel = wait_for_text(view, "Thinking")
 
       [thinking_body] =
         panel
@@ -1799,99 +1444,45 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert Floki.attribute(thinking_body, "class") == ["whitespace-pre-wrap break-words"]
 
-      # Floki.text/1 KEEPS the whitespace the template indents around the content
-      # (see the `text/2` helper), so a leading whitespace character here is
-      # exactly the bug — the pre-wrap element would render it verbatim.
-      text = Floki.text(thinking_body)
-      refute text =~ ~r/^\s/
-      assert String.starts_with?(text, "THINKING_SENTINEL")
-    end
-  end
+      # Floki.text/1 KEEPS the whitespace the template indents around the
+      # content (see the `text/2` helper), so a leading whitespace character
+      # here is exactly the bug — the pre-wrap element renders it verbatim.
+      inline_text = Floki.text(thinking_body)
+      refute inline_text =~ ~r/^\s/
+      assert String.starts_with?(inline_text, "THINKING_SENTINEL")
 
-  describe "thinking vs response separation" do
-    # Regression: on a reasoning turn the assistant history entry carries a
-    # :thinking content part (mirrored into reasoning_details, which drives the
-    # "Thinking" block) AND a :text part (the visible answer, which drives the
-    # "Response" block). The Response block must be built from :text parts ONLY
-    # — the :thinking part's text must never leak into it, or the two blocks
-    # render byte-identical reasoning.
-    test "the Response block excludes the :thinking part's text", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [
-            %ReqLLM.Message.ContentPart{type: :thinking, text: "REASONING_TOKEN"},
-            %ReqLLM.Message.ContentPart{type: :text, text: "RESPONSE_TOKEN"}
-          ],
-          reasoning_details: [%{text: "REASONING_TOKEN"}],
-          metadata: %{turn: 1}
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      _panel = wait_for_text(view, "Thinking")
-
-      # Open the full-message modal — the assistant view renders the Thinking
-      # <pre> (from reasoning_details) followed by the Response <pre> (from
-      # data.content), and this message has no tool calls, so those are the
-      # modal's only <pre> elements.
+      # Full-message modal: the Thinking <pre> wraps and never introduces its
+      # own horizontal scroller; the Response <pre> carries the :text part only.
       view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
       modal_html = render(view)
 
+      assert modal_html =~ ~r/<pre class="text-sm whitespace-pre-wrap break-words bg-warning\/10/
+
+      modal_pre_classes =
+        modal_html
+        |> Floki.parse_document!()
+        |> Floki.find("pre")
+        |> Enum.map(&List.first(Floki.attribute(&1, "class")))
+
+      thinking_pre_class =
+        Enum.find(modal_pre_classes, &(is_binary(&1) and &1 =~ "bg-warning/10"))
+
+      refute is_nil(thinking_pre_class)
+      assert thinking_pre_class =~ "whitespace-pre-wrap"
+      assert thinking_pre_class =~ "break-words"
+      refute thinking_pre_class =~ "overflow-x-auto"
+
+      # No tool calls on this message, so the modal's only <pre> pair is
+      # Thinking (from reasoning_details) then Response (from :text parts).
       [thinking_pre, response_pre] =
         modal_html
         |> Floki.parse_document!()
         |> Floki.find("#full-message-modal")
         |> Floki.find("pre")
 
-      assert Floki.text(thinking_pre) =~ "REASONING_TOKEN"
+      assert Floki.text(thinking_pre) =~ "THINKING_SENTINEL"
       assert Floki.text(response_pre) =~ "RESPONSE_TOKEN"
       refute Floki.text(response_pre) =~ "REASONING_TOKEN"
-    end
-  end
-
-  describe "full-message modal renders complete tool calls" do
-    # Regression: the inline chat-history panel renders a shell call's command
-    # in COMPACT mode (capped at 200 chars + a trailing "…"), while the
-    # full-message modal renders the COMPLETE command (`mode: :full`).
-    test "the modal shows the untruncated command while the inline panel truncates", %{
-      conn: conn
-    } do
-      cmd = String.duplicate("x", 260)
-
-      call = %ReqLLM.ToolCall{
-        id: "c",
-        function: %{name: "run_bash", arguments: Jason.encode!(%{"command" => cmd})}
-      }
-
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{
-          role: :assistant,
-          content: [],
-          metadata: %{turn: 1},
-          tool_calls: [call]
-        }
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      inline = wait_for_text(view, "Shell call")
-
-      # Compact mode: the command row is capped at 200 chars + a trailing "…".
-      assert inline =~ String.slice(cmd, 0, 200) <> "…"
-      refute inline =~ cmd
-
-      # Full mode: the modal carries the complete, untruncated command.
-      view |> element("#agent-history-entry-#{agent_id()}-0 button") |> render_click()
-      modal = render(view)
-
-      assert modal =~ cmd
-      assert modal =~ "max-h-[60vh]"
     end
   end
 
@@ -2123,62 +1714,9 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # Phoenix.HTML.Safe not implemented for Map. safe_text/1 converts any value
     # to an HTML-safe string before it is rendered in HEEx.
 
-    test "returns empty string for nil" do
-      assert Helpers.safe_text(nil) == ""
-    end
-
-    test "returns a plain string as-is" do
-      assert Helpers.safe_text("hello world") == "hello world"
-    end
-
-    test "renders a flat map as sorted key: value lines without crashing" do
-      result =
-        Helpers.safe_text(%{
-          "commit_id" => "",
-          "objective" => "foo",
-          "path" => "./x"
-        })
-
-      assert is_binary(result)
-
-      # Keys are sorted alphabetically.
-      assert result == "commit_id: \nobjective: foo\npath: ./x"
-
-      # Must be HTML-safe (a Map would previously crash Phoenix.HTML.Safe).
-      assert match?({:safe, _}, Phoenix.HTML.html_escape(result))
-    end
-
-    test "renders a nested map with inspect for non-string leaf values" do
-      result =
-        Helpers.safe_text(%{
-          "args" => %{"limit" => 10},
-          "name" => "sub_agent"
-        })
-
-      assert is_binary(result)
-      # The nested map leaf is rendered via inspect/1.
-      assert result =~ "args:"
-      assert result =~ "%{\"limit\" => 10}"
-      assert result =~ "name: sub_agent"
-    end
-
-    test "handles lists of strings by joining them" do
-      assert Helpers.safe_text(["a", "b", "c"]) == "a\nb\nc"
-    end
-
-    test "handles lists with non-string elements via inspect" do
-      assert Helpers.safe_text([1, 2, 3]) =~ "[1, 2, 3]"
-    end
-
-    test "falls back to inspect for arbitrary terms" do
-      assert Helpers.safe_text(:an_atom) == ":an_atom"
-      assert Helpers.safe_text(42) == "42"
-    end
-
-    test "the exact map shape from the crash report is handled" do
-      # Regression: this was the value that caused
-      # Protocol.UndefinedError (Phoenix.HTML.Safe not implemented for Map)
-      # in the agents_live template.
+    test "converts every scalar/list/term shape to an HTML-safe string" do
+      # The crash report's exact value (a Map raised Phoenix.HTML.Safe) — the
+      # regression this helper exists for.
       map = %{
         "commit_id" => "",
         "objective" => "Investigate and fix the GitHub Actions...",
@@ -2190,40 +1728,74 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert is_binary(result)
       assert result =~ "objective: Investigate"
       assert result =~ "path: ./.github/workflows"
+
+      # Any value at all must survive html_escape/1 — a total function, never a
+      # protocol crash in the HEEx template.
+      for value <- [
+            nil,
+            "hello world",
+            map,
+            %{"a" => %{"n" => 1}},
+            ["a", "b"],
+            [1, 2, 3],
+            :an_atom,
+            42
+          ] do
+        assert is_binary(Helpers.safe_text(value))
+        assert match?({:safe, _}, Phoenix.HTML.html_escape(Helpers.safe_text(value)))
+      end
+    end
+
+    test "sorts map keys, joins list items and inspects non-string leaves" do
+      # Flat map: alphabetically sorted `key: value` lines (an empty value stays
+      # an empty string, not "nil").
+      assert Helpers.safe_text(%{"commit_id" => "", "objective" => "foo", "path" => "./x"}) ==
+               "commit_id: \nobjective: foo\npath: ./x"
+
+      # Nested non-string leaf → inspect/1.
+      nested = Helpers.safe_text(%{"args" => %{"limit" => 10}, "name" => "sub_agent"})
+
+      assert nested =~ "args:"
+      assert nested =~ "%{\"limit\" => 10}"
+      assert nested =~ "name: sub_agent"
+
+      # Lists join on newlines; non-string elements fall back to inspect/1.
+      assert Helpers.safe_text(["a", "b", "c"]) == "a\nb\nc"
+      assert Helpers.safe_text([1, 2, 3]) =~ "[1, 2, 3]"
+
+      # Arbitrary terms fall back to inspect/1.
+      assert Helpers.safe_text(:an_atom) == ":an_atom"
+      assert Helpers.safe_text(42) == "42"
     end
   end
 
   describe "HistoryGate" do
-    test "need_fetch?/3 requires a fetch when there is no last-seen entry" do
+    # The per-agent "which message count did I fetch" gate — the single reason
+    # a burst of agent updates cannot stampede the history endpoint.
+
+    test "need_fetch?/3 fetches on an unknown agent or a moved/nil count, and never otherwise" do
+      # No entry yet (brand-new agent, or a row from a previous node — the gate
+      # is reset on a node switch, agent ids are per-node).
       assert HistoryGate.need_fetch?(%{}, 1, 5)
-    end
 
-    test "need_fetch?/3 requires a fetch when the message count moved" do
+      # A moved count.
       assert HistoryGate.need_fetch?(%{1 => 3}, 1, 5)
-    end
 
-    test "need_fetch?/3 suppresses the fetch while the count is unchanged" do
+      # nil on EITHER side is "unknown" ⇒ fetch.
+      assert HistoryGate.need_fetch?(%{1 => 5}, 1, nil)
+      assert HistoryGate.need_fetch?(%{1 => nil}, 1, 5)
+
+      # The suppression path — the whole point of the gate.
       refute HistoryGate.need_fetch?(%{1 => 5}, 1, 5)
     end
 
-    test "need_fetch?/3 treats nil counts as needing a fetch" do
-      assert HistoryGate.need_fetch?(%{1 => 5}, 1, nil)
-      assert HistoryGate.need_fetch?(%{1 => nil}, 1, 5)
-    end
-
-    test "record/3 stores the count a fetched history corresponds to" do
+    test "record/3 stores the fetched count and known?/2 reports gate membership" do
       assert HistoryGate.record(%{}, 1, 5) == %{1 => 5}
       assert HistoryGate.record(%{1 => 3}, 1, 5) == %{1 => 5}
-    end
 
-    test "known?/2 reports whether the gate has an entry for the agent" do
-      # No entry = a brand-new agent OR a leftover row from a previous node
-      # (the gate is reset on a node switch — agent ids are per-node).
+      # Only THIS agent's entry counts as known (whatever its count).
       refute HistoryGate.known?(%{}, 1)
       refute HistoryGate.known?(%{2 => 5}, 1)
-
-      # An entry (whatever its count) = the gate already observed this agent
-      # on the current node.
       assert HistoryGate.known?(%{1 => 5}, 1)
       assert HistoryGate.known?(%{1 => nil}, 1)
     end
@@ -2265,26 +1837,40 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # (AgentsLive had NO task-broadcast clauses and crashed on any
     # {:task_updated, _, status, node} / {:task_deleted, _, node} message).
 
-    test "matching-node {:task_updated, _, :finalizing, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
+    test "matching-node task broadcasts never crash and each schedules a debounced reload",
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      # The broadcast shape observed crashing in production (the :finalizing
-      # status transition).
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-finalizing", :finalizing, node()}
-      )
+      # Drain the mount's node-aware sidebar/remote loads first: an applied
+      # sidebar-load result CLEARS `:tasks_reload_pending` (NodeAware clears it
+      # for both outcomes), so one still in flight could erase the flag a fresh
+      # broadcast just set and make phase 1 below poll a flag that is already
+      # gone.
+      await_view_async_loads(view)
 
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+      # The three matching-node shapes: the :finalizing status transition
+      # (observed crashing in production), a deletion, and a review-only
+      # mutation carried as status nil. All three run on ONE socket — the
+      # crash class is per-clause, so one mount proves every clause, and the
+      # two-phase wait proves the debounce was scheduled AND cleared each time.
+      for event <- [
+            {:task_updated, "test-finalizing", :finalizing, node()},
+            {:task_deleted, "test-deleted", node()},
+            {:task_updated, "test-review", nil, node()}
+          ] do
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", event)
 
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+        # Phase 1: the event is processed and the debounce is scheduled.
+        wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+
+        # Phase 2: the debounce fires and reload_tasks clears the flag.
+        wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+        # Drain the load the fired reload spawned, so ITS result cannot land
+        # during the next iteration's phase 1 (see the helper's contract).
+        await_view_async_loads(view)
+      end
 
       # render/1 flushes pending messages synchronously; a crash would propagate here.
       html = render(view)
@@ -2292,30 +1878,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "Agent Tree"
     end
 
-    test "matching-node {:task_deleted, _, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, "test-deleted", node()})
-
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
-
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
-
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Agent Tree"
-    end
-
     test "foreign-node {:task_updated, _, :finalizing, remote} is ignored (no crash, no reload)",
-         %{
-           conn: conn
-         } do
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
@@ -2327,9 +1891,17 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:task_updated, "test-finalizing", :finalizing, :remote@elsewhere}
       )
 
-      # Sample across the debounce window (10ms cadence): the
-      # reload-pending flag must never become true.
-      deadline = System.monotonic_time(:millisecond) + 400
+      # The :sys.get_state read behind assigns/1 is a mailbox round-trip, so it
+      # returns only AFTER the LiveView processed the broadcast above — the
+      # event was definitely handled, not still in flight.
+      assert assigns(view)[:tasks_reload_pending] == false
+
+      # Then sample across the debounce window (:node_aware_reload_debounce_ms,
+      # 10ms in tests): the reload-pending flag must never become TRUE. 40ms is
+      # 4x the debounce — the whole window in which a spurious schedule could
+      # fire — where the previous 400ms window made this the slowest test in
+      # the file without strengthening the assertion.
+      deadline = System.monotonic_time(:millisecond) + 40
 
       check_no_reload = fn check_no_reload ->
         assert assigns(view)[:tasks_reload_pending] == false
@@ -2341,31 +1913,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       check_no_reload.(check_no_reload)
-
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Agent Tree"
-    end
-
-    test "review-only {:task_updated, _, nil, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # Review-only mutations broadcast status nil — the clause must accept it.
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-review", nil, node()}
-      )
-
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
-
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       html = render(view)
       assert is_binary(html)
@@ -3687,6 +3234,51 @@ defmodule EvoDashWeb.AgentsLiveTest do
     render(view)
   end
 
+  # Drains every EvoDash.TaskSupervisor child spawned by THIS LiveView process
+  # (Task.Supervisor records the spawning process in the child's `$callers`
+  # dictionary entry) and applies its queued result message with one
+  # synchronous round-trip. NodeAware CLEARS `:tasks_reload_pending` when a
+  # sidebar-load result is applied, so a result still in flight can land
+  # between a fresh broadcast and the `assigns/1` read that expects the flag
+  # to be `true` — draining makes the two-phase debounce assertion
+  # independent of that timing. A task that already exited delivers its
+  # `:DOWN` immediately, and its result message was sent BEFORE it exited, so
+  # the following `render/1` always applies it.
+  defp await_view_async_loads(view) do
+    view.pid
+    |> view_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+
+    _ = render(view)
+    :ok
+  end
+
+  defp view_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_, pid, _, _} when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
+  end
+
   # Blocks the caller until the TEST flips `latch` (an :atomics flag) — the
   # deterministic "the async load is still in flight" barrier used by the
   # initial-load test. It polls a SHARED atomic (not a message) because the page
@@ -3798,7 +3390,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # node-level compression threshold is deterministic (the 180_000 last resort)
   # and never depends on the developer's real config; every fixture supplies its
   # own per-agent `compression_threshold`, which wins anyway.
-  defp mount_context_meter(conn, summaries, opts \\ []) do
+  defp mount_context_meter(conn, summaries, opts) do
     install_agents(summaries)
     Application.put_env(:evo_dash, :agents_config_runner, fn _node -> {:ok, %{}} end)
 

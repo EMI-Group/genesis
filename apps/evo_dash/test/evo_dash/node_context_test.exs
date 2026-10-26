@@ -5,13 +5,17 @@ defmodule EvoDash.NodeContextTest do
 
   alias EvoGit.TaskInfo
 
-  setup do
-    # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
-    # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
-    # production children.
+  # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
+  # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
+  # production children (no start_supervised/on_exit racing).
+  #
+  # Attached ONLY to the describes that actually reach the store/registry (the
+  # summary/lite/cancel/archive reads): the pure delegation-shape describes
+  # (GitHub adapter errors, resolved config, system samples, custom agents
+  # tools + approvals) never touch SQLite, and an isolation round-trip per test
+  # is pure overhead for them.
+  def setup_isolated_registry(_context) do
     :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_context")
-
-    :ok
   end
 
   # Inserts a task directly into the SQLite store (bypasses the async
@@ -76,6 +80,8 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "task-cancellation RPC delegates (local node, real paths)" do
+    setup :setup_isolated_registry
+
     test "cancel_task/2 returns {:error, :not_found} for a missing task" do
       assert EvoDash.NodeContext.cancel_task(node(), "missing-id") == {:error, :not_found}
     end
@@ -93,6 +99,8 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "lightweight task reads (local node, real paths)" do
+    setup :setup_isolated_registry
+
     # The summary/lite reads route through
     # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
     # so the isolated pair from `setup` serves them with real rows.
@@ -161,15 +169,21 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "paged task-archive reads (EvoGit.RemoteNode delegation)" do
-    # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` ship as
-    # parallel core work and do not exist in this tree yet, so the delegation
-    # itself cannot be called here (there is no runner seam for RemoteNode
-    # delegation — the existing tests hit the real local path). What IS asserted
-    # unconditionally is the observable surface that does not need the core:
-    # the documented arities (incl. the `opts \\ []` default form) and the
-    # totality of the two normalization steps NodeContext applies to EVERY
-    # payload, which is what makes the mirrors safe for callers.
+    setup :setup_isolated_registry
+
+    # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` exist
+    # in this tree; the `Code.ensure_loaded?` check below is only a defensive
+    # availability guard, and there is no runner seam for the delegation — the
+    # existing tests hit the real local path. These tests assert the observable
+    # surface unconditionally: the documented arities (incl. the `opts \\ []`
+    # default form) and the totality of the two normalization steps NodeContext
+    # applies to EVERY payload, which is what makes the mirrors safe for
+    # callers.
     test "list_task_archives/3 and get_agent_archive/3 expose the documented arities" do
+      # `function_exported?/3` does NOT load a module, so its answer would
+      # depend on whether some other test happened to run first. Load it
+      # explicitly (fails loudly if the module is gone) before checking.
+      Code.ensure_loaded!(EvoDash.NodeContext)
       assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
       assert function_exported?(EvoDash.NodeContext, :list_task_archives, 3)
       assert function_exported?(EvoDash.NodeContext, :get_agent_archive, 3)
@@ -178,7 +192,11 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "the opts keyword is forwarded unchanged (observable once the core lands)" do
-      if function_exported?(EvoGit.RemoteNode, :list_task_archives, 3) do
+      # Same load-before-inspect rule as above: without it the branch taken
+      # here depends on test order.
+      core_available? = Code.ensure_loaded?(EvoGit.RemoteNode)
+
+      if core_available? and function_exported?(EvoGit.RemoteNode, :list_task_archives, 3) do
         # Real local path: the opts keyword rides through untouched (an unknown
         # task id yields the empty page instead of an error for any opts).
         opts = [limit: 5, offset: 10, include_results: true]
@@ -190,8 +208,9 @@ defmodule EvoDash.NodeContextTest do
         assert EvoDash.NodeContext.list_task_archives(node(), "missing-id") ==
                  %{entries: [], total: 0}
       else
-        # Core not in this tree yet: nothing to call. The documented default is
-        # part of the function head, provable through the 2-arity export above.
+        # Defensive branch: EvoGit.RemoteNode is not loaded/available here, so
+        # there is nothing to call. The documented default is part of the
+        # function head, provable through the 2-arity export above.
         assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
       end
     end
@@ -540,13 +559,13 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "valid decisions dispatch on the local path" do
-      # EvoGit.CommandApproval ships as parallel core work and does not exist
-      # in this tree, so the guarded local path degrades to
-      # {:error, :command_approval_unavailable}. Guard on the backend's
-      # presence (mirrors home_live_test.exs:63 and the node_context.ex
-      # with_remote_connection/4 pattern) so this stays valid once the core
-      # lands: with the real module present, responding on an unknown request
-      # id must degrade to an error tuple rather than raise.
+      # EvoGit.CommandApproval exists in this tree; the `Code.ensure_loaded?`
+      # guard is a defensive availability check (the module lives on the core
+      # side), mirroring home_live_test.exs:63 and the node_context.ex
+      # with_remote_connection/4 pattern. With the module loaded, responding on
+      # an unknown request id must degrade to an error tuple rather than raise;
+      # without it, the guarded local path answers
+      # {:error, :command_approval_unavailable}.
       if Code.ensure_loaded?(EvoGit.CommandApproval) do
         assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", "approve"))
       else

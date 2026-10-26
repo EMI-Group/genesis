@@ -25,217 +25,113 @@ defmodule EvoGit.TaskRegistry.CleanupTest do
   end
 
   describe "cleanup_expired_tasks/0" do
-    test "removes tasks older than max_age_days via persist cycle" do
+    test "removes only old FINISHED tasks — recent and non-terminal rows survive" do
       unique = System.unique_integer([:positive])
+      now = DateTime.utc_now()
 
-      # Insert an old finished task directly into the store.
-      # Age is computed to exceed whatever max_age_days is configured locally.
-      age = old_age_days()
+      # Ages read from the LIVE config, so the fixtures are correct whatever
+      # `max_age_days` a developer's real config.toml carries.
+      over_limit = old_age_days()
+      within_limit = within_age_days()
 
-      old_task = %TaskInfo{
-        id: "test_old_#{unique}",
+      days_ago = fn days -> DateTime.add(now, -days * 24 * 60 * 60, :second) end
+
+      # ONE seeded fixture spanning every case: over-age finished (cleaned), a
+      # finished row inside the age window, three "today" rows, and an over-age
+      # :running / :pending pair (never cleaned). The count limit is NOT
+      # exercised here — `max_tasks` defaults to 100, so seeding past it is not
+      # worth the wall clock; both limits are OR'ed in SQL by
+      # `Store.select_cleanup_info/3`.
+      over_age = %TaskInfo{
+        id: "test_over_age_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        started_at: days_ago.(over_limit),
+        finished_at: days_ago.(over_limit),
         logs: [],
         result: nil
       }
 
-      EvoGit.Store.put_task(store(), old_task)
-
-      # Insert a recent finished task (today)
-      recent_task = %TaskInfo{
-        id: "test_recent_#{unique}",
+      within_window = %TaskInfo{
+        id: "test_within_window_#{unique}",
         type: :genesis,
         status: :completed,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
+        started_at: days_ago.(within_limit),
+        finished_at: days_ago.(within_limit),
         logs: [],
         result: nil
       }
 
-      EvoGit.Store.put_task(store(), recent_task)
+      EvoGit.Store.put_task(store(), over_age)
+      EvoGit.Store.put_task(store(), within_window)
 
-      # Verify both exist
-      tasks = TaskRegistry.list_tasks()
-      assert Enum.any?(tasks, &(&1.id == "test_old_#{unique}"))
-      assert Enum.any?(tasks, &(&1.id == "test_recent_#{unique}"))
+      for i <- 1..3 do
+        :ok =
+          EvoGit.Store.put_task(store(), %TaskInfo{
+            id: "test_recent_#{unique}_#{i}",
+            type: :genesis,
+            status: :completed,
+            opts: [path: "/tmp/test"],
+            ref: nil,
+            started_at: days_ago.(0),
+            finished_at: DateTime.add(now, -i * 60, :second),
+            logs: [],
+            result: nil
+          })
+      end
 
-      # Trigger cleanup via persist cycle
-      trigger_cleanup!()
-
-      # Old task should be cleaned; recent task should remain
-      tasks = TaskRegistry.list_tasks()
-      task_ids = Enum.map(tasks, & &1.id)
-      refute "test_old_#{unique}" in task_ids
-      assert "test_recent_#{unique}" in task_ids
-    end
-
-    test "preserves tasks within max_age_days" do
-      unique = System.unique_integer([:positive])
-
-      # Insert a task within the configured max_age_days window.
-      age = within_age_days()
-
-      task = %TaskInfo{
-        id: "test_5day_#{unique}",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), task)
-
-      # Trigger cleanup
-      trigger_cleanup!()
-
-      tasks = TaskRegistry.list_tasks()
-      task_ids = Enum.map(tasks, & &1.id)
-      assert "test_5day_#{unique}" in task_ids
-    end
-
-    test "never cleans up running or pending tasks even if old" do
-      unique = System.unique_integer([:positive])
-
-      # Age guaranteed to exceed the configured max_age_days window.
-      age = old_age_days()
-
-      # Running task with old started_at (finished_at is nil)
-      running_task = %TaskInfo{
-        id: "test_running_#{unique}",
+      old_running = %TaskInfo{
+        id: "test_old_running_#{unique}",
         type: :genesis,
         status: :running,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        started_at: days_ago.(over_limit),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      EvoGit.Store.put_task(store(), running_task)
-
-      # Pending task
-      pending_task = %TaskInfo{
-        id: "test_pending_#{unique}",
+      old_pending = %TaskInfo{
+        id: "test_old_pending_#{unique}",
         type: :genesis,
         status: :pending,
         opts: [path: "/tmp/test"],
         ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
+        started_at: days_ago.(over_limit),
         finished_at: nil,
         logs: [],
         result: nil
       }
 
-      EvoGit.Store.put_task(store(), pending_task)
+      EvoGit.Store.put_task(store(), old_running)
+      EvoGit.Store.put_task(store(), old_pending)
 
-      # Old finished task (should be cleaned)
-      old_finished = %TaskInfo{
-        id: "test_oldfin_#{unique}",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(DateTime.utc_now(), -age * 24 * 60 * 60, :second),
-        logs: [],
-        result: nil
-      }
+      # Everything is really there before the cleanup runs.
+      before_ids = TaskRegistry.list_tasks() |> Enum.map(& &1.id)
+      assert "test_over_age_#{unique}" in before_ids
+      assert "test_within_window_#{unique}" in before_ids
 
-      EvoGit.Store.put_task(store(), old_finished)
-
-      # Trigger cleanup
       trigger_cleanup!()
 
-      tasks = TaskRegistry.list_tasks()
-      task_ids = Enum.map(tasks, & &1.id)
+      task_ids = TaskRegistry.list_tasks() |> Enum.map(& &1.id)
 
-      # Running and pending always preserved
-      assert "test_running_#{unique}" in task_ids
-      assert "test_pending_#{unique}" in task_ids
+      # Over-age FINISHED row removed.
+      refute "test_over_age_#{unique}" in task_ids
 
-      # Old finished task cleaned
-      refute "test_oldfin_#{unique}" in task_ids
-    end
+      # Finished rows inside the age window are preserved.
+      assert "test_within_window_#{unique}" in task_ids
+      assert "test_recent_#{unique}_1" in task_ids
+      assert "test_recent_#{unique}_2" in task_ids
+      assert "test_recent_#{unique}_3" in task_ids
 
-    test "both age and count limits are applied together" do
-      unique = System.unique_integer([:positive])
-      now = DateTime.utc_now()
-
-      # Old task — age guaranteed to exceed the configured max_age_days window.
-      age = old_age_days()
-
-      old_task = %TaskInfo{
-        id: "test_combined_old_#{unique}",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
-        finished_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), old_task)
-
-      # Recent tasks (within max_age_days) - should be kept
-      for i <- 1..3 do
-        recent = %TaskInfo{
-          id: "test_combined_recent_#{unique}_#{i}",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.add(now, -i * 60, :second),
-          finished_at: DateTime.add(now, -i * 60, :second),
-          logs: [],
-          result: nil
-        }
-
-        EvoGit.Store.put_task(store(), recent)
-      end
-
-      # Running task - should always be kept regardless of age
-      running = %TaskInfo{
-        id: "test_combined_running_#{unique}",
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.add(now, -age * 24 * 60 * 60, :second),
-        finished_at: nil,
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), running)
-
-      # Trigger cleanup
-      trigger_cleanup!()
-
-      tasks = TaskRegistry.list_tasks()
-      task_ids = Enum.map(tasks, & &1.id)
-
-      # Old task removed by age
-      refute "test_combined_old_#{unique}" in task_ids
-      # Recent tasks kept
-      assert "test_combined_recent_#{unique}_1" in task_ids
-      assert "test_combined_recent_#{unique}_2" in task_ids
-      assert "test_combined_recent_#{unique}_3" in task_ids
-      # Running task always kept
-      assert "test_combined_running_#{unique}" in task_ids
+      # Non-terminal rows are never cleaned, however old.
+      assert "test_old_running_#{unique}" in task_ids
+      assert "test_old_pending_#{unique}" in task_ids
     end
   end
 end

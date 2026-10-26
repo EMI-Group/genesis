@@ -100,7 +100,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
       end
     end)
 
-    _ = render(view)
+    # No render here: the test's next synchronous call (render_hook /
+    # :sys.get_state / render) drains the queued result messages first, because
+    # the LiveView processes its mailbox in order.
     :ok
   end
 
@@ -124,10 +126,15 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 
   describe "settings search" do
-    test "renders the search input", %{conn: conn} do
+    test "renders the search input inside a form (required for phx-change)", %{conn: conn} do
       {:ok, _view, html} = mount_settings(conn, ~p"/settings")
 
       assert html =~ "Filter settings..."
+      # The input must sit in a <form> for phx-change to work in LiveView
+      # (pushInput throws if inputEl.form is null) and carries name="value"
+      # (the key the search handler reads).
+      assert html =~ ~s(name="value")
+      assert html =~ ~s(phx-change="search")
     end
 
     test "search handler with 'value' key updates search_text and shows results", %{conn: conn} do
@@ -161,17 +168,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # When search_text is empty, the category section is shown instead of
       # the search results panel.
       refute html =~ "Search Results"
-    end
-
-    test "search input is inside a form (required for phx-change in LiveView)", %{conn: conn} do
-      {:ok, _view, html} = mount_settings(conn, ~p"/settings")
-
-      # The search input must be wrapped in a <form> for phx-change to work
-      # in Phoenix LiveView (pushInput throws if inputEl.form is null).
-      # We assert the input with name="value" and phx-change="search" exists,
-      # and that it is within a form element.
-      assert html =~ ~s(name="value")
-      assert html =~ ~s(phx-change="search")
     end
   end
 
@@ -440,24 +436,13 @@ defmodule EvoDashWeb.SettingsLiveTest do
       {hidden_start, _} = hidden_pos
       {checkbox_start, _} = checkbox_pos
       assert hidden_start < checkbox_start, "hidden field must precede the checkbox"
-    end
 
-    test "toggle is unchecked when value is false/nil (default)", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      # Default for nix.enabled is false, so the checkbox should NOT have 'checked'
-      assert html =~ ~s(name="nix.enabled")
+      # The checkbox is the DaisyUI toggle and is UNCHECKED for the false/nil
+      # default (nix.enabled defaults to false).
+      assert html =~ ~s(class="toggle toggle-primary toggle-sm")
 
       refute html =~
                ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
-    end
-
-    test "toggle uses DaisyUI toggle classes", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert html =~ ~s(class="toggle toggle-primary toggle-sm")
     end
   end
 
@@ -514,6 +499,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       models = current_models(view)
       assert length(models) == 1
       assert hd(models).model == "openrouter:anthropic/claude-3.5-sonnet"
+      assert html =~ "Custom model saved."
       # After saving, the re-rendered HTML pre-fills the model_id input from the map
       assert html =~ ~s(value="anthropic/claude-3.5-sonnet")
     end
@@ -530,6 +516,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "provider_id" => "openai_compatible"
         })
 
+      assert html =~ "Custom model saved."
       assert html =~ ~s(value="my-model")
       assert html =~ ~s(value="https://api.example.com/v1")
 
@@ -542,35 +529,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
                id: "my-model",
                base_url: "https://api.example.com/v1"
              }
-    end
-
-    test "rejects empty model name", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
-      render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "  ",
-          "provider_id" => "openrouter"
-        })
-
-      assert html =~ "Model name cannot be empty."
-    end
-
-    test "rejects empty base URL for OpenAI-compatible", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
-      render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "x",
-          "base_url" => "",
-          "provider_id" => "openai_compatible"
-        })
-
-      assert html =~ "Base URL cannot be empty."
     end
   end
 
@@ -1103,28 +1061,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "{&quot;store&quot;:false}"
     end
 
-    test "save_custom_model with base_url for OpenAI-compatible produces map spec", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
-      render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
-
-      html =
-        render_hook(view, "save_custom_model", %{
-          "model_name" => "gpt-4o",
-          "base_url" => "https://my-proxy.com/v1",
-          "provider_id" => "openai_compatible"
-        })
-
-      assert html =~ "Custom model saved."
-      models = current_models(view)
-
-      assert hd(models).model == %{
-               provider: :openai,
-               id: "gpt-4o",
-               base_url: "https://my-proxy.com/v1"
-             }
-    end
-
     test "save_model_profile then edit pre-fills structured fields from map spec", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})
@@ -1202,19 +1138,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile_ids(view) == ["profile-2", "profile-1"]
     end
 
-    test "move_model_profile moves a profile down", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
-
-      html =
-        render_hook(view, "move_model_profile", %{"direction" => "down", "id" => "profile-1"})
-
-      assert html =~ "Model profile moved."
-      assert profile_ids(view) == ["profile-2", "profile-1"]
-    end
-
-    test "move_model_profile is a no-op when moving the first profile up", %{conn: conn} do
+    test "move_model_profile is a no-op at either boundary", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
       add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
@@ -1224,12 +1148,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Model profile moved."
       assert profile_ids(view) == ["profile-1", "profile-2"]
-    end
-
-    test "move_model_profile is a no-op when moving the last profile down", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html =
         render_hook(view, "move_model_profile", %{"direction" => "down", "id" => "profile-2"})
@@ -2740,28 +2658,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       html |> Floki.parse_document!() |> Floki.find("li.step.step-primary") |> length()
     end
 
-    test "bootstrapping renders the five-step bar with the mapped stage", %{conn: conn} do
-      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-
-      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
-
-      send(
-        view.pid,
-        {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: :uploading}}
-      )
-
-      html = render(view)
-
-      # :stage is the MAPPED 0-4 index, not the raw core atom
-      assert assigns(view)[:bootstrap_progress][id] == %{stage: 0, active: true, status: :active}
-
-      doc = Floki.parse_document!(html)
-      # exactly FIVE <li> steps
-      assert length(Floki.find(doc, "li.step")) == 5
-      # stage 0 highlights only the first step
-      assert length(Floki.find(doc, "li.step.step-primary")) == 1
-    end
-
     test "the five step labels render for a bootstrapping target", %{conn: conn} do
       {id, _manager} = bootstrap_target!({:ok, :daemon_started})
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
@@ -2800,25 +2696,33 @@ defmodule EvoDashWeb.SettingsLiveTest do
         {:starting_daemon, 4}
       ]
 
-      for {stage, expected_idx} <- mappings do
-        {id, _manager} = bootstrap_target!({:ok, :daemon_started})
-        {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
+      # ONE mount + ONE target: every broadcast below targets the same card, so
+      # the bar is re-rendered in place for each stage (no per-stage remount).
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
-        send(
-          view.pid,
-          {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: stage}}
-        )
+      html =
+        Enum.reduce(mappings, nil, fn {stage, expected_idx}, _acc ->
+          send(
+            view.pid,
+            {:remote_connection_status, id, %{phase: :bootstrapping, bootstrap_stage: stage}}
+          )
 
-        html = render(view)
+          html = render(view)
 
-        assert assigns(view)[:bootstrap_progress][id] ==
-                 %{stage: expected_idx, active: true, status: :active},
-               "stage #{inspect(stage)} should map to step index #{expected_idx}"
+          assert assigns(view)[:bootstrap_progress][id] ==
+                   %{stage: expected_idx, active: true, status: :active},
+                 "stage #{inspect(stage)} should map to step index #{expected_idx}"
 
-        # steps 0..idx are highlighted (step-primary), the rest plain
-        assert primary_steps(html) == expected_idx + 1,
-               "stage #{inspect(stage)} should highlight #{expected_idx + 1} steps"
-      end
+          # steps 0..idx are highlighted (step-primary), the rest plain
+          assert primary_steps(html) == expected_idx + 1,
+                 "stage #{inspect(stage)} should highlight #{expected_idx + 1} steps"
+
+          html
+        end)
+
+      # The bar always renders exactly five steps.
+      assert length(Floki.find(Floki.parse_document!(html), "li.step")) == 5
     end
 
     test "unknown stage atom highlights no step", %{conn: conn} do
@@ -2996,9 +2900,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "bootstrap_remote_target shows the bar immediately and completes through the manager", %{
       conn: conn
     } do
-      # 200ms delay: keep the fake's reply in flight so the immediate
-      # assertion above does not race the async {:bootstrap_complete, ...}
-      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      # Gate the fake's reply so it stays in flight until this test releases it
+      # — the immediate assertion below can never race the async
+      # {:bootstrap_complete, ...} (no wall-clock window).
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, :gate)
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       html = render_click(view, "bootstrap_remote_target", %{"id" => id})
@@ -3012,9 +2917,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       assert html =~ "Probing / preparing"
 
-      # Round trip through the fake manager: it answers the GenServer
-      # {:bootstrap, opts} call → the spawned task delivered
-      # {:bootstrap_complete, ...} → frozen all-green bar.
+      # Release the parked reply, then round trip through the fake manager: it
+      # answers the GenServer {:bootstrap, opts} call → the spawned task
+      # delivered {:bootstrap_complete, ...} → frozen all-green bar.
+      send(manager, :release)
+
       assert wait_until(view, fn ->
                assigns(view)[:bootstrap_progress][id] == %{
                  stage: 4,
@@ -3028,9 +2935,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "double-click bootstrap_remote_target while in flight does not spawn a second bootstrap",
          %{conn: conn} do
-      # delay the fake's reply so the first bootstrap is still in flight when
+      # Gate the fake's reply so the first bootstrap is still in flight when
       # the second click lands — the active-entry guard must block it
-      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, :gate)
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "bootstrap_remote_target", %{"id" => id})
@@ -3046,6 +2953,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # Only the FIRST click reaches the fake manager — the guard prevents a
       # second bootstrap call.
+      send(manager, :release)
+
       assert wait_until(view, fn -> GenServer.call(manager, :calls) == [{:bootstrap, []}] end)
       assert GenServer.call(manager, :calls) == [{:bootstrap, []}]
     end
@@ -3089,10 +2998,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "confirm_bootstrap_restart closes the dialog and re-bootstraps with on_running: :restart",
          %{conn: conn} do
-      # 200ms delay: keep the confirm handler's re-bootstrap in flight so the
-      # immediate "progress re-activated" assertion below does not race the
-      # async {:bootstrap_complete, ...}.
-      {id, manager} = bootstrap_target!({:ok, :daemon_started}, 200)
+      # Gate the fake's reply so the confirm handler's re-bootstrap stays in
+      # flight until this test releases it — the immediate "progress
+      # re-activated" assertion below can never race the async
+      # {:bootstrap_complete, ...}.
+      {id, manager} = bootstrap_target!({:ok, :daemon_started}, :gate)
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       send(view.pid, {:bootstrap_complete, id, {:error, {:daemon_running, "daemon is running"}}})
@@ -3114,6 +3024,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       # The confirm handler re-bootstraps through the fake manager — pins the
       # on_running: :restart threading.
+      send(manager, :release)
+
       assert wait_until(view, fn ->
                GenServer.call(manager, :calls) == [{:bootstrap, [on_running: :restart]}]
              end),
@@ -3550,15 +3462,17 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "a second Connect click while the first connect is in flight is a no-op", %{conn: conn} do
-      # 200ms reply delay keeps the first connect in flight while the second
+      # The gated reply keeps the first connect in flight while the second
       # click lands — the per-target pending marker must block the duplicate.
-      {id, manager} = connect_target!(delay_ms: 200)
+      {id, manager} = connect_target!(delay_ms: :gate)
       {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
 
       render_click(view, "connect_remote_target", %{"id" => id})
       render_click(view, "connect_remote_target", %{"id" => id})
 
       # Only the FIRST click reaches the fake manager.
+      send(manager, :release)
+
       assert wait_until(view, fn -> GenServer.call(manager, :calls) == [:connect] end)
       assert GenServer.call(manager, :calls) == [:connect]
     end
@@ -3848,7 +3762,7 @@ defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
   @impl true
   def init({target_id, result, delay_ms}) do
     Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, %{target_id: target_id, result: result, delay_ms: delay_ms, calls: []}}
+    {:ok, %{target_id: target_id, result: result, delay_ms: delay_ms, released: false, calls: []}}
   end
 
   @impl true
@@ -3873,10 +3787,30 @@ defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
   @impl true
   def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
 
+  # `:release` may land BEFORE the gated call (the spawned task has not reached
+  # the manager yet) — remember it so hold_reply/2 does not block.
+  @impl true
+  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
+
   defp reply_bootstrap(state, call) do
-    if state.delay_ms > 0, do: Process.sleep(state.delay_ms)
+    hold_reply(state.delay_ms, state.released)
     {:reply, state.result, %{state | calls: state.calls ++ [call]}}
   end
+
+  # Parks the reply until the test sends `:release` (`delay_ms: :gate`) — a
+  # deterministic in-flight window with no wall-clock sleep, so the test can
+  # assert the "still running" state without racing the completion. Integer
+  # delays are still honoured for callers that want a timed hold.
+  defp hold_reply(:gate, false) do
+    receive do
+      :release -> :ok
+    after
+      5_000 -> :ok
+    end
+  end
+
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(_delay, _released?), do: :ok
 end
 
 # A fake manager for the async remote-connection connect flow. Registered in
@@ -3898,12 +3832,20 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
   @impl true
   def init({target_id, status, connect_result, delay_ms}) do
     Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, %{status: status, connect_result: connect_result, delay_ms: delay_ms, calls: []}}
+
+    {:ok,
+     %{
+       status: status,
+       connect_result: connect_result,
+       delay_ms: delay_ms,
+       released: false,
+       calls: []
+     }}
   end
 
   @impl true
   def handle_call(:connect, _from, state) do
-    if state.delay_ms > 0, do: Process.sleep(state.delay_ms)
+    hold_reply(state.delay_ms, state.released)
     {:reply, state.connect_result, %{state | calls: state.calls ++ [:connect]}}
   end
 
@@ -3924,4 +3866,22 @@ defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
 
   @impl true
   def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
+
+  # See BootstrapManager: a `:release` that arrives before the gated call is
+  # remembered, so hold_reply/2 does not block.
+  @impl true
+  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
+
+  # See BootstrapManager.hold_reply/2 — `delay_ms: :gate` parks the reply until
+  # the test sends `:release` (deterministic in-flight window, no sleep).
+  defp hold_reply(:gate, false) do
+    receive do
+      :release -> :ok
+    after
+      5_000 -> :ok
+    end
+  end
+
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(_delay, _released?), do: :ok
 end

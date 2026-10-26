@@ -99,7 +99,18 @@ defmodule EvoGit.Store.CoveringIndexTest do
     template = Path.join(root, "template.sqlite")
     {:ok, pid} = Boot.start_dynamic(template, pool_size: 1)
     Process.unlink(pid)
-    seed_tasks!(pid)
+
+    # The seed writes `:failed` rows, and `Operations.Tasks` deliberately logs a
+    # `Store: FAILED_WRITE …` warning (plus a stacktrace) for EVERY new failed
+    # write — from the STORE's write path, i.e. not from the test process, so the
+    # suite-wide `ExUnit.start(capture_log: true)` (test-process only) cannot
+    # reach it, and `setup_all/1` is not inside a per-test log capture either. The
+    # production diagnostic stays exactly as it is; it is captured HERE, at the
+    # test boundary, and the text is dropped. The window is console-only and not
+    # process-scoped: a concurrent sibling `async: true` module can also land a
+    # line in it and have it swallowed — harmless.
+    _ = ExUnit.CaptureLog.capture_log(fn -> seed_tasks!(pid) end)
+
     query_rows(pid, "PRAGMA wal_checkpoint(TRUNCATE)")
     :ok = Boot.stop(pid)
 

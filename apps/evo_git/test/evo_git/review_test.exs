@@ -4,16 +4,24 @@ defmodule EvoGit.ReviewTest do
   alias EvoGit.Adapters.Git
   alias EvoGit.Review
 
-  setup do
+  # Repository fixtures start from ONE per-module template (`setup_all`) whose
+  # `.git` is COPIED per test instead of re-running `git init` + the identity
+  # config (3 subprocesses, each a `:file`-server PATH round trip through
+  # `EvoGit.Adapters.Git` / `System.cmd/3`) for every test; see
+  # `git_template!/0`. The copy is a full, isolated repository: every ref each
+  # test sees is one that test created itself.
+  setup_all do
+    template = git_template!()
+    on_exit(fn -> File.rm_rf!(template) end)
+    %{git_template: template}
+  end
+
+  setup %{git_template: template} do
     tmp_dir =
       Path.join(System.tmp_dir!(), "evo_git_review_test_" <> to_string(System.unique_integer()))
 
     File.mkdir_p!(tmp_dir)
-    Git.init(tmp_dir)
-
-    # Configure git identity before committing
-    System.cmd("git", ["config", "user.email", "test@example.com"], cd: tmp_dir)
-    System.cmd("git", ["config", "user.name", "Test"], cd: tmp_dir)
+    File.cp_r!(Path.join(template, ".git"), Path.join(tmp_dir, ".git"))
 
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
@@ -22,14 +30,58 @@ defmodule EvoGit.ReviewTest do
     {:ok, %{tmp_dir: tmp_dir}}
   end
 
+  # Builds the per-module repository template ONCE: `git init` with an EMPTY
+  # template dir (no hook samples / description boilerplate, so the copied
+  # `.git` is a handful of files) plus the fixture commit identity — exactly the
+  # configuration the per-test setup used to write — and `core.abbrev=40` so
+  # `git commit` prints the new commit's FULL sha (see `commit_file/4`, which
+  # then needs no extra `git rev-parse` spawn).
+  defp git_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_review_template_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    seed = Path.join(root, "seed")
+
+    {_output, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", seed],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test"},
+          {"core.abbrev", "40"}
+        ] do
+      {_output, 0} = System.cmd("git", ["config", key, value], cd: seed, stderr_to_stdout: true)
+    end
+
+    seed
+  end
+
   # Writes a file (creating parent dirs), stages, and commits it.
   defp commit_file(tmp_dir, path, content, message) do
     full_path = Path.join(tmp_dir, path)
     File.mkdir_p!(Path.dirname(full_path))
     File.write!(full_path, content)
     Git.add(tmp_dir, path)
-    Git.commit(tmp_dir, message)
-    Git.rev_parse(tmp_dir, "HEAD")
+    {:ok, output} = Git.commit(tmp_dir, message)
+    committed_sha(tmp_dir, output)
+  end
+
+  # `git commit` prints "[<branch> <sha>] <subject>" — the template pins
+  # `core.abbrev=40`, so that sha is complete and usable as a merge target
+  # without an extra `rev-parse` spawn. If the output shape ever changes, fall
+  # back to resolving HEAD (correct, only slower).
+  defp committed_sha(tmp_dir, commit_output) do
+    case Regex.run(~r/^\[[^\]]* ([0-9a-f]{40})\]/m, commit_output) do
+      [_, sha] -> {:ok, sha}
+      _ -> Git.rev_parse(tmp_dir, "HEAD")
+    end
   end
 
   # Counts context lines in a diff (lines not starting with +/-, @@, diff, index).

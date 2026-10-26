@@ -49,6 +49,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
 
+    # Test-only CALL-TIME seam (`EvoGit.Sandbox.Helpers`): the SIGTERM→SIGKILL
+    # grace is shortened to 0 ms — every liveness assertion below polls until the
+    # OS confirms the child is genuinely gone, so the grace buys nothing here. The
+    # production default (100 ms) is unchanged.
+    put_test_env(:kill_grace_ms, 0)
+
     # Its `terminate/2` kills every job still live when the test ends.
     start_supervised!({EvoGit.BackgroundJobs, [name: registry]})
 
@@ -73,6 +79,22 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end)
 
     %{registry: registry}
+  end
+
+  # Sets a test-only CALL-TIME app-env override and restores the PREVIOUS value
+  # afterwards (nil-aware: a key that was absent is deleted again).
+  defp put_test_env(key, value) do
+    original = Application.get_env(:evo_git, key)
+
+    Application.put_env(:evo_git, key, value)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:evo_git, key)
+      else
+        Application.put_env(:evo_git, key, original)
+      end
+    end)
   end
 
   ## Scratch-directory hygiene
@@ -335,7 +357,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       text =
         JobOutput.execute(
-          %{"job_id" => job.id, "wait" => true, "timeout_ms" => 200},
+          %{"job_id" => job.id, "wait" => true, "timeout_ms" => 100},
           cwd,
           cwd
         )
@@ -417,10 +439,14 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end
 
     test "one line per job, newest first, separated by an em dash", %{tmp_dir: cwd} do
-      first = start_job("sleep 5", cwd)
+      # Both jobs are SHORT-LIVED by construction, so the registry settles them
+      # on its own (no kill, and therefore no kill grace, is needed). The pinned
+      # contract here is the rendered line shape and the ordering — the status is
+      # deliberately not asserted, and a finished job stays listed.
+      first = start_job("sleep 0.05", cwd)
       wait_until(fn -> length(BackgroundJobs.list()) == 1 end)
 
-      second = start_job("sleep 5", cwd)
+      second = start_job("sleep 0.05", cwd)
       wait_until(fn -> length(BackgroundJobs.list()) == 2 end)
 
       text = JobList.execute(%{}, cwd, cwd)
@@ -434,14 +460,16 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         # The separator is the EM DASH (U+2014), not a hyphen.
         assert line =~ "—"
         # The label is the command's first line.
-        assert line =~ "sleep 5"
+        assert line =~ "sleep 0.05"
       end
 
       assert hd(lines) =~ second.id
       assert List.last(lines) =~ first.id
 
-      kill_and_reap(first, cwd)
-      kill_and_reap(second, cwd)
+      # Reap: both children exit by themselves; wait for the registry to observe
+      # it so nothing outlives the test.
+      assert await_terminal(first.id) == :completed
+      assert await_terminal(second.id) == :completed
     end
 
     test "the ownership fence hides another agent's job", %{tmp_dir: cwd} do
@@ -464,7 +492,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   end
 
   describe "JobKill.execute/3" do
-    test "requests cancellation of a live job, then reports its settled state", %{tmp_dir: cwd} do
+    test "requests cancellation of a live job, records the reason, then reports its settled state",
+         %{tmp_dir: cwd} do
       job = start_job("sleep 30", cwd)
       pid = job_os_pid(job)
 
@@ -472,28 +501,30 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
                "requested cancellation of job #{job.id}"
 
       killed = await_job_status(job.id, :killed)
+      # The DEFAULT reason is recorded verbatim.
       assert killed.detail == "killed (stopped by request)"
 
       await_dead(pid)
       refute pid_alive?(pid)
 
+      # A repeat kill of the same job reports the settled state instead of
+      # requesting cancellation again.
       again = JobKill.execute(%{"job_id" => job.id}, cwd, cwd)
       assert String.starts_with?(again, "job #{job.id} had already finished [status: ")
       assert again =~ "killed (stopped by request)"
-    end
 
-    test "a custom reason is recorded on the job", %{tmp_dir: cwd} do
-      job = start_job("sleep 30", cwd)
-      pid = job_os_pid(job)
+      # A caller-supplied `reason` is what lands on the job's detail.
+      custom = start_job("sleep 30", cwd)
+      custom_pid = job_os_pid(custom)
 
-      assert JobKill.execute(%{"job_id" => job.id, "reason" => "no longer needed"}, cwd, cwd) ==
-               "requested cancellation of job #{job.id}"
+      assert JobKill.execute(%{"job_id" => custom.id, "reason" => "no longer needed"}, cwd, cwd) ==
+               "requested cancellation of job #{custom.id}"
 
-      killed = await_job_status(job.id, :killed)
-      assert killed.detail == "killed (no longer needed)"
+      custom_killed = await_job_status(custom.id, :killed)
+      assert custom_killed.detail == "killed (no longer needed)"
 
-      await_dead(pid)
-      refute pid_alive?(pid)
+      await_dead(custom_pid)
+      refute pid_alive?(custom_pid)
     end
 
     test "every failure is an Error: string and never raises", %{tmp_dir: cwd} do

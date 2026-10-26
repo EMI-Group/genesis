@@ -377,28 +377,21 @@ defmodule EvoGit.Config.EctoValidationTest do
                })
     end
 
-    test "context_window = 0 is a :integer error at [:llm, :models, 0, :context_window]" do
-      assert {:error, [error]} =
-               Schema.validate(%{
-                 llm: %{models: [%{id: "x", model: "a:b", context_window: 0}]}
-               })
+    test "zero and negative context_window are :integer errors at the same path" do
+      for {bad, message} <- [
+            {0, "context_window must be a positive integer, got 0"},
+            {-1, "context_window must be a positive integer, got -1"}
+          ] do
+        assert {:error, [error]} =
+                 Schema.validate(%{
+                   llm: %{models: [%{id: "x", model: "a:b", context_window: bad}]}
+                 })
 
-      assert error.key_path == [:llm, :models, 0, :context_window]
-      assert error.rule == :integer
-      assert error.value == 0
-      assert error.message == "context_window must be a positive integer, got 0"
-    end
-
-    test "a negative context_window is rejected at the same path" do
-      assert {:error, [error]} =
-               Schema.validate(%{
-                 llm: %{models: [%{id: "x", model: "a:b", context_window: -1}]}
-               })
-
-      assert error.key_path == [:llm, :models, 0, :context_window]
-      assert error.rule == :integer
-      assert error.value == -1
-      assert error.message == "context_window must be a positive integer, got -1"
+        assert error.key_path == [:llm, :models, 0, :context_window]
+        assert error.rule == :integer
+        assert error.value == bad
+        assert error.message == message
+      end
     end
 
     test "a non-integer context_window (string or float) is rejected (no coercion)" do

@@ -32,15 +32,35 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   A RAISE inside a healthy store is forced with an input the query builder
   cannot encode (`get_task/2` with a map instead of an id string), which proves
   the worker's exception is caught and degraded too — the store never sees it.
+
+  ## Console hygiene — ONE log line per degraded read
+
+  The read worker's body (`EvoGit.Store.run_offload/2`) re-raises any
+  query/decode failure as a `:shutdown`-class exit, and `:shutdown` /
+  `{:shutdown, _}` are NORMAL exit classes for the runtime's error logger, so
+  NO OTP crash report is emitted for a degraded read. The facade's own
+  `Store: read <op> failed — <exception + stacktrace>` line is therefore the
+  ONLY trace: it is logged synchronously from the store process while it
+  handles the worker's `:DOWN`, so `capture_log/2` alone captures everything —
+  no counter handler, no awaiting, and nothing leaking between tests. The
+  `refute log =~ "raised an exception"` pins that contract: a crash report
+  would be delivered ~10-200 ms after the death through OTP's `:logger_proxy`,
+  so the window deliberately stays open a little longer than that before it
+  closes.
   """
 
   # `async: false`: the fault arm stops the store's own repo instance and the
-  # raise arm asserts exact log lines; neither should compete with sibling tests.
+  # raise arm asserts exact log lines — neither should race a sibling test.
   use EvoGit.TaskRegistryCase, async: false
 
   import ExUnit.CaptureLog
 
   alias EvoGit.Store
+
+  # A worker's crash report (if the `:shutdown`-class contract regressed) is
+  # delivered by `:logger_proxy` 10-200 ms after the death; keep the capture
+  # window open past that so a stray report would land INSIDE it.
+  @report_grace_ms 250
 
   describe "a failing read never kills the store" do
     test "every read degrades to its own empty shape and the store stays alive",
@@ -89,12 +109,17 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           # … and counts degrade to 0.
           assert Store.count_projects(store) == 0
           assert Store.size(store) == 0
+
+          # See the moduledoc's "Console hygiene": a would-be crash report for
+          # any worker above would arrive inside this grace period.
+          Process.sleep(@report_grace_ms)
         end)
 
       # The store process itself survived every one of those reads …
       assert Process.alive?(store_pid)
 
-      # … and every failure was logged with the operation name (never silent).
+      # … and every failure was logged with the operation name (never silent),
+      # carrying the full exception + stacktrace.
       for op <- [
             "get_task",
             "get_task_lite",
@@ -104,6 +129,12 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           ] do
         assert log =~ "Store: read #{op} failed"
       end
+
+      assert log =~ "** (ArgumentError)"
+
+      # ONE log line per degraded read: the worker's `:shutdown`-class exit
+      # produces no second, asynchronous OTP crash report.
+      refute log =~ "raised an exception"
     end
 
     test "a raise inside the read worker is caught — the store survives and keeps reading",
@@ -119,9 +150,17 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       log =
         capture_log(fn ->
           assert Store.get_task(store, %{}) == nil
+          Process.sleep(@report_grace_ms)
         end)
 
+      # The facade still logs the exception AND its stacktrace in full.
       assert log =~ "Store: read get_task failed"
+      assert log =~ "** (Ecto.Query.CastError)"
+      assert log =~ "store/operations/tasks.ex"
+
+      # … and the worker's death did NOT also become an OTP crash report.
+      refute log =~ "raised an exception"
+
       assert Process.alive?(store_pid)
 
       # The healthy store keeps working normally afterwards: the fault was
@@ -137,7 +176,10 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       assert Store.get_task(store, id) != nil
 
       # A raising read …
-      capture_log(fn -> assert Store.get_task(store, %{}) == nil end)
+      capture_log(fn ->
+        assert Store.get_task(store, %{}) == nil
+        Process.sleep(@report_grace_ms)
+      end)
 
       # … leaves the very next read of the SAME function intact.
       assert %TaskInfo{id: ^id} = Store.get_task(store, id)

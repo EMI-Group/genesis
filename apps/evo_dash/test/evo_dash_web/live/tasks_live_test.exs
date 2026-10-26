@@ -79,11 +79,19 @@ defmodule EvoDashWeb.TasksLiveTest do
   # handlers provoke arms the trailing-edge timer) and then waits for every
   # EvoDash.TaskSupervisor child this view spawned to exit.
   #
-  # The leading render/1 is a synchronous round-trip, so any broadcast already
-  # sitting in the view's mailbox has been processed by the time it returns and
-  # an armed debounce is observable via `:tasks_reload_pending`. No fixed sleeps.
+  # The leading `:sys.get_state/1` is a synchronous round-trip, so any broadcast
+  # already sitting in the view's mailbox has been processed by the time it
+  # returns and an armed debounce is observable via `:tasks_reload_pending`. No
+  # fixed sleeps.
+  #
+  # It is deliberately NOT a `render/1`: the drain only needs the round-trip (a
+  # render additionally serializes the WHOLE page to an HTML string, which the
+  # archive tests — up to 500 rendered entries — pay for on every call). Callers
+  # that assert on rendered output still call `render/1` (or an `element/2`
+  # scoped render) themselves, and those ping the proxy first, so the cached
+  # tree they read is current.
   defp drain_async_loads(view, timeout) do
-    render(view)
+    :sys.get_state(view.pid)
 
     wait_until(
       fn -> not :sys.get_state(view.pid).socket.assigns[:tasks_reload_pending] end,
@@ -333,14 +341,21 @@ defmodule EvoDashWeb.TasksLiveTest do
   defp binary_payload_bytes(_term), do: 0
 
   # Drains every already-sent `{:detail_fetch, task_id}` notification from the
-  # test mailbox (a bounded wait: 100ms of silence). Used before a negative
-  # "no further fetch" assertion, because ONE "tasks" broadcast is delivered
-  # twice (TasksLive + NodeAware both subscribe) and therefore refetches twice.
+  # test mailbox. Used before a negative "no further fetch" assertion, because
+  # ONE "tasks" broadcast is delivered twice (TasksLive + NodeAware both
+  # subscribe) and therefore refetches twice.
+  #
+  # The timeout is ZERO on purpose: every call site runs AFTER a
+  # `drain_async_loads/2`, and a fetch notification is sent by a
+  # Task.Supervisor child to this process BEFORE that child exits, so by the
+  # time the drain returns every notification already sent is provably in THIS
+  # mailbox (local sends are ordered with the drain's `:sys.get_state/1`
+  # round-trip). A non-zero window would only burn the wall clock.
   defp flush_detail_fetches(task_id) do
     receive do
       {:detail_fetch, ^task_id} -> flush_detail_fetches(task_id)
     after
-      100 -> :ok
+      0 -> :ok
     end
   end
 
@@ -355,33 +370,35 @@ defmodule EvoDashWeb.TasksLiveTest do
   end
 
   describe "task search" do
-    test "renders the search input", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/tasks")
-
-      assert html =~ "Search by task ID, prompt, objective, or response"
-
-      # Drain the mount's async page load so no offloaded store read is in
-      # flight when this suite's isolated Store is torn down (see
-      # flush_tasks_load/2).
-      flush_tasks_load(view)
-    end
-
-    test "search_tasks handler filters tasks by prompt text", %{conn: conn} do
+    test "search_tasks matches prompt text case-insensitively and clearing restores all", %{
+      conn: conn
+    } do
       insert_fixture!(opts: [prompt: "build a web app", path: "/tmp/proj"])
-      insert_fixture!(opts: [prompt: "write a database migration", path: "/tmp/proj"])
+      insert_fixture!(opts: [prompt: "write a Database migration", path: "/tmp/proj"])
       insert_fixture!(opts: [prompt: "refactor the auth module", path: "/tmp/proj"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
+      # Prompt match, lower-case query against mixed-case text (the store filter
+      # is case-insensitive on every searched column — the branch-name test
+      # below covers the same leg for branch_name).
       _html = render_hook(view, "search_tasks", %{"search_query" => "database"})
       flush_tasks_load(view)
 
       # The sidebar now lists every completed task pending review, so
       # list-content assertions must be scoped to the #tasks-list container.
-      assert render_tasks_list(view) =~ "write a database migration"
+      assert render_tasks_list(view) =~ "write a Database migration"
       refute render_tasks_list(view) =~ "build a web app"
       refute render_tasks_list(view) =~ "refactor the auth module"
+
+      # Clearing the query restores every task.
+      _html = render_hook(view, "search_tasks", %{"search_query" => ""})
+      html = flush_tasks_load(view)
+
+      assert html =~ "build a web app"
+      assert html =~ "write a Database migration"
+      assert html =~ "refactor the auth module"
     end
 
     test "search_tasks handler filters tasks by objective text", %{conn: conn} do
@@ -410,36 +427,6 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert render_tasks_list(view) =~ "alpha task"
       refute render_tasks_list(view) =~ "beta task"
-    end
-
-    test "clearing the search query restores all tasks", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "alpha task"])
-      insert_fixture!(opts: [prompt: "beta task"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
-      # First narrow down
-      _html = render_hook(view, "search_tasks", %{"search_query" => "alpha"})
-      flush_tasks_load(view)
-      # Then clear
-      _html = render_hook(view, "search_tasks", %{"search_query" => ""})
-      html = flush_tasks_load(view)
-
-      assert html =~ "alpha task"
-      assert html =~ "beta task"
-    end
-
-    test "search is case-insensitive", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "Build a REST API"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
-      _html = render_hook(view, "search_tasks", %{"search_query" => "rest api"})
-      html = flush_tasks_load(view)
-
-      assert html =~ "Build a REST API"
     end
 
     test "search_tasks handler filters tasks by branch name", %{conn: conn} do
@@ -515,7 +502,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   end
 
   describe "filter selects" do
-    test "filter_tasks handler filters by status", %{conn: conn} do
+    test "filter_tasks handler filters by status and 'all' shows everything", %{conn: conn} do
       insert_fixture!(status: :completed, opts: [prompt: "completed one"])
       insert_fixture!(status: :failed, opts: [prompt: "failed one"])
 
@@ -527,15 +514,8 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert render_tasks_list(view) =~ "failed one"
       refute render_tasks_list(view) =~ "completed one"
-    end
 
-    test "filter_tasks handler 'all' shows everything", %{conn: conn} do
-      insert_fixture!(status: :completed, opts: [prompt: "completed one"])
-      insert_fixture!(status: :failed, opts: [prompt: "failed one"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
+      # "all" clears the status filter again.
       _html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
       html = flush_tasks_load(view)
 
@@ -831,7 +811,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html_big =~ "task number 0"
     end
 
-    test "next_page / prev_page events navigate correctly", %{conn: conn} do
+    test "next_page / prev_page / goto_page events navigate correctly", %{conn: conn} do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
@@ -848,18 +828,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       html_prev = flush_tasks_load(view)
       assert html_prev =~ "Page 1 of 2"
       assert html_prev =~ "task number 25"
-    end
 
-    test "goto_page event navigates to a specific page", %{conn: conn} do
-      for i <- 0..25, do: insert_timed_fixture!(i)
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
+      # goto_page jumps straight to the requested page.
       _html = render_click(view, "goto_page", %{"page" => "2"})
-      html = flush_tasks_load(view)
-      assert html =~ "Page 2 of 2"
-      assert html =~ "task number 0"
+      html_goto = flush_tasks_load(view)
+      assert html_goto =~ "Page 2 of 2"
+      assert html_goto =~ "task number 0"
     end
 
     test "status filter works across pages (server-side filtering)", %{conn: conn} do
@@ -922,19 +896,16 @@ defmodule EvoDashWeb.TasksLiveTest do
       # connected mount; only the connected pass may spawn a load. Exactly one
       # spawn here means the discarded static-render load is gone.
       assert_receive :page_load_spawned, 500
-      # The window only has to catch a SECOND spawn (any extra spawn would come
-      # from the same synchronous handle_params/3 sequence that already ran).
-      # The assertion right below is a deterministic backstop: :page_load_seq is
-      # bumped exclusively by start_async_page_load/3 — the very call site that
-      # fires the hook — so it fails loudly if any extra spawn happened. 50ms is
-      # therefore ample, where the old 300ms window was sized for the production
-      # 300ms debounce this test never arms.
-      refute_receive :page_load_spawned, 50
 
       # Corroborating evidence: the monotonic PAGE-LOAD spawn counter
       # advanced once (:page_load_seq is the page load's own counter — the
-      # sidebar fetch has a separate :tasks_load_seq).
+      # sidebar fetch has a separate :tasks_load_seq). start_async_page_load/3 is
+      # the counter's only writer AND the hook's only caller, and this
+      # `:sys.get_state/1` is a synchronous round-trip through the view — any
+      # second spawn's `send/2` would already have landed in THIS mailbox, so the
+      # refute needs no observation window at all.
       assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      refute_receive :page_load_spawned, 0
 
       html = flush_tasks_load(view)
       assert html =~ "one load task"
@@ -952,17 +923,16 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html_response(conn, 200) =~ "Loading tasks..."
       # ...but no load was spawned (its result would only be discarded).
       #
-      # Proof the 10ms window below is sufficient: a plain get/2 drives the
+      # Proof the zero-length window below is exact: a plain get/2 drives the
       # disconnected mount + handle_params/3 IN THIS TEST PROCESS (see the hook
       # comment in install_page_load_hook/0), and handle_params/3 reaches the
       # hook's only call site (spawn_page_load/1) ONLY on the connected pass
       # (tasks_live.ex handle_params/3, `if connected?(socket)`). So a wrongly
       # spawned load would `send(self(), :page_load_spawned)` into THIS mailbox
       # during the synchronous get/2 above — the message would already be here
-      # when the refute runs, and the window exists only to catch a hypothetical
-      # straggler (there is no spawned Task that could produce one: the hook is
-      # invoked before any Task exists).
-      refute_receive :page_load_spawned, 10
+      # when the refute runs, so nothing could arrive later (there is no spawned
+      # Task that could produce one: the hook is invoked before any Task exists).
+      refute_receive :page_load_spawned, 0
     end
 
     test "project filter dropdown populates from the async load", %{conn: conn} do
@@ -994,13 +964,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       _html = render_hook(view, "search_tasks", %{"search_query" => "filtered"})
 
       assert_receive :page_load_spawned, 500
-      # Same reasoning as the "exactly one page load" test above: the refute's
-      # only failure mode is an EXTRA spawn, and the `:page_load_seq == 2`
-      # assertion immediately below is a deterministic backstop for exactly that
-      # (start_async_page_load/3 is the counter's only writer and the hook's
-      # only caller). 50ms of observation is ample.
-      refute_receive :page_load_spawned, 50
+      # Same reasoning as the "exactly one page load" test above: the seq check
+      # is a synchronous round-trip through the view, so it IS the deterministic
+      # backstop for an EXTRA spawn (start_async_page_load/3 is the counter's
+      # only writer and the hook's only caller) — no window needed.
       assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 2
+      refute_receive :page_load_spawned, 0
 
       html = flush_tasks_load(view)
       assert html =~ "filtered task"
@@ -1124,11 +1093,13 @@ defmodule EvoDashWeb.TasksLiveTest do
       # Drain the connected mount's single spawn and pin it deterministically:
       # :page_load_seq is bumped only by start_async_page_load/3 (the hook's only
       # caller), so the `== 1` assertion below fails loudly on any extra mount
-      # spawn and makes the short refute window a formality. `seq_before` is
-      # read straight after, and the debounced reload must advance it.
+      # spawn — and being a synchronous round-trip it also proves every already
+      # sent notification is in the mailbox, which is why the refute window is
+      # zero length. `seq_before` is read straight after, and the debounced
+      # reload must advance it.
       assert_receive :page_load_spawned, 500
-      refute_receive :page_load_spawned, 50
       assert :sys.get_state(view.pid).socket.assigns.page_load_seq == 1
+      refute_receive :page_load_spawned, 0
 
       insert_fixture!(opts: [prompt: "async added task"])
 
@@ -1252,11 +1223,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       # sets :tasks_reload_pending before Process.send_after/3 returns), so the
       # very first :sys.get_state round-trip below — which drains the view's
       # mailbox, the broadcast having been delivered from THIS process — already
-      # observes a wrongly armed timer; the remaining samples then cover the
-      # timer firing (10ms) and a wrongly spawned reload bumping
-      # :page_load_seq. 50ms = 5 debounce periods, where the previous 400ms
-      # window sampled the same 10ms debounce 40x over.
-      deadline = System.monotonic_time(:millisecond) + 50
+      # observes a wrongly armed timer; the added period then covers the
+      # timer FIRING (one 10ms test-seam debounce) and a wrongly spawned reload
+      # bumping :page_load_seq. Anything longer re-samples the same 10ms debounce.
+      deadline = System.monotonic_time(:millisecond) + 12
 
       check_no_reload = fn check_no_reload ->
         state = :sys.get_state(view.pid)
@@ -2215,10 +2185,14 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert_receive {:detail_fetch, ^id, child}, 2000
 
       # A second toggle while the first fetch is in flight is a COLLAPSE: the
-      # cache/in-flight guard in TaskDetail.ensure/2 never refetches.
+      # cache/in-flight guard in TaskDetail.ensure/2 never refetches. Asserted
+      # against the supervised-task registry instead of a timed mailbox window:
+      # the only fetch in flight must still be the FIRST one, and no second
+      # child may exist. This is exact, not a 100ms sample.
       collapsed_html = render_hook(view, "toggle_task_details", %{"task_id" => id})
       refute collapsed_html =~ "Loading task details…"
-      refute_receive {:detail_fetch, ^id, _pid}, 100
+      assert [^child] = view_async_task_pids(view.pid)
+      refute_receive {:detail_fetch, ^id, _pid}, 0
 
       send(child, :release_detail)
       wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
@@ -2229,7 +2203,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       html = render_hook(view, "toggle_task_details", %{"task_id" => id})
       assert html =~ "Agent Message"
       assert html =~ "the agent message"
-      refute_receive {:detail_fetch, ^id, _pid}, 100
+      refute_receive {:detail_fetch, ^id, _pid}, 0
     end
 
     test "a failing or nil detail fetch renders the inline error state without crashing", %{
@@ -2315,7 +2289,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       drain_async_loads(view, 5000)
       flush_detail_fetches(id)
       assert match?(%{state: :ok}, detail_entry(view, id))
-      refute_receive {:detail_fetch, ^id}, 100
+      refute_receive {:detail_fetch, ^id}, 0
 
       # Collapse (the cache is retained), then a DELETE broadcast drops the
       # entry without refetching a collapsed card.
@@ -2324,10 +2298,12 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, id, node()})
       wait_until(fn -> detail_entry(view, id) == nil end)
-      flush_detail_fetches(id)
-      refute_receive {:detail_fetch, ^id}, 100
-
+      # Drain FIRST (the delete also arms NodeAware's trailing-edge reload), so
+      # the zero-timeout flush/refute below are exact — see flush_detail_fetches/1.
       drain_async_loads(view, 5000)
+      flush_detail_fetches(id)
+      refute_receive {:detail_fetch, ^id}, 0
+
       assert detail_entry(view, id) == nil
     end
   end
@@ -2433,7 +2409,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ ~s(phx-click="load_task_archive")
       refute html =~ "objective of agent-1"
       refute html =~ "Export JSON"
-      refute_receive {:archive_page, _, _, _}, 100
+      # expand_card/3 already drained, so nothing is in flight: exact, not sampled.
+      refute_receive {:archive_page, _, _, _}, 0
 
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
@@ -2567,14 +2544,18 @@ defmodule EvoDashWeb.TasksLiveTest do
     test "the retention window bounds the envelope and keeps the offset honest", %{conn: conn} do
       id = insert_fixture!(opts: [archive: true, prompt: "huge archive task"])
       test_pid = self()
-      install_task_archive_runner(paging_runner(paged_archive(700), test_pid))
+      # 600 agents = 6 pages of 100: one page MORE than the 500-entry retention
+      # window (5 pages), which is exactly what this test must prove. Every page
+      # costs one full-page render, so the roster stops at the smallest size that
+      # still crosses the bound.
+      install_task_archive_runner(paging_runner(paged_archive(600), test_pid))
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
       _html = expand_card(view, id)
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
-      # Page through the WHOLE roster: 700 agents, 7 pages of 100.
-      for _page <- 1..6 do
+      # Page through the WHOLE roster: 600 agents, 6 pages of 100.
+      for _page <- 1..5 do
         render_hook(view, "load_more_task_archive", %{"task_id" => id})
         wait_for_archive(view, id, &match?(%{loading_more?: false}, &1))
       end
@@ -2582,10 +2563,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       entry = archive_entry(view, id)
       # Only the most recent 500 rows are retained; the evicted ones are counted.
       assert length(entry.entries) == 500
-      assert entry.dropped == 200
-      assert entry.total == 700
+      assert entry.dropped == 100
+      assert entry.total == 600
       assert entry.exhausted? == false
-      assert Enum.map(entry.entries, & &1["agent_id"]) == Enum.map(201..700, &"agent-#{&1}")
+      assert Enum.map(entry.entries, & &1["agent_id"]) == Enum.map(101..600, &"agent-#{&1}")
       # Every request offset is the number of rows FETCHED, never the retained
       # length (which stops at the window bound).
       offsets =
@@ -2598,11 +2579,11 @@ defmodule EvoDashWeb.TasksLiveTest do
         end)
         |> Enum.take_while(&(&1 != nil))
 
-      assert offsets == [0, 100, 200, 300, 400, 500, 600]
+      assert offsets == [0, 100, 200, 300, 400, 500]
       html = render(view)
       refute html =~ ~s(phx-click="load_more_task_archive")
       # The count line stays honest about the omitted leading rows.
-      assert html =~ "700 agents — showing 201–700"
+      assert html =~ "600 agents — showing 101–600"
       assert html =~ "earlier entries omitted"
     end
 
@@ -2791,7 +2772,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       render_hook(view, "load_task_archive", %{"task_id" => id})
       wait_for_archive(view, id, &match?(%{state: :ok}, &1))
       assert_receive {:archive_page, _node, ^id, _opts}, 2000
-      refute_receive {:agent_fetch, _, _, _}, 100
+      # No agent result is fetched until its own control is used (drained above).
+      refute_receive {:agent_fetch, _, _, _}, 0
 
       render_hook(view, "load_task_archive_agent_result", %{
         "task_id" => id,
@@ -2804,7 +2786,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert_receive {:agent_fetch, node, ^id, "agent-1"}, 2000
       assert node == node()
       # Fetched exactly once.
-      refute_receive {:agent_fetch, _, _, "agent-1"}, 100
+      refute_receive {:agent_fetch, _, _, "agent-1"}, 0
 
       html = render(view)
       assert html =~ "lazy-agent-result-line"
@@ -2818,7 +2800,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       })
 
       drain_async_loads(view, 5000)
-      refute_receive {:agent_fetch, _, _, "agent-1"}, 100
+      refute_receive {:agent_fetch, _, _, "agent-1"}, 0
 
       # A task broadcast invalidates the WHOLE entry — the archive and its
       # cached agent results go with it.

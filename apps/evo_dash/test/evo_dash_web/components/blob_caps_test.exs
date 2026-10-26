@@ -110,7 +110,9 @@ defmodule EvoDashWeb.BlobCapsTest do
     end
 
     test "the in-card copy payload is capped at 1 MiB and says so in its title" do
-      big = String.duplicate("copy-me ", 250_000)
+      # Just over the 1 MiB cap: the render cost is dominated by the HTML
+      # materialization of the copy payload, so keep the source minimal.
+      big = String.duplicate("copy-me ", div(@copy_payload_bytes, 8) + 1)
       assert byte_size(big) > @copy_payload_bytes
 
       full = task(result: {:ok, %{result: big, commit_sha: "abcdef1234"}})
@@ -122,15 +124,11 @@ defmodule EvoDashWeb.BlobCapsTest do
           detail: %{state: :ok, task: full}
         )
 
-      [copy_button] =
-        html
-        |> parse()
-        |> Floki.find("#task-t_blob-result-copy")
+      copy_button = tag_attrs(html, "task-t_blob-result-copy")
 
-      [payload] = Floki.attribute(copy_button, "data-content")
-      assert byte_size(payload) == @copy_payload_bytes
+      assert byte_size(copy_button["data-content"]) == @copy_payload_bytes
 
-      assert copy_button |> Floki.attribute("title") |> List.first() =~
+      assert copy_button["title"] =~
                "Copy is limited to the first 1 MB"
     end
   end
@@ -356,18 +354,18 @@ defmodule EvoDashWeb.BlobCapsTest do
     end
 
     test "the copy payload is capped at 1 MiB and hints at the cap" do
-      big = String.duplicate("copy-me ", 250_000)
+      # Just over the 1 MiB cap (see the sibling in-card test).
+      big = String.duplicate("copy-me ", div(@copy_payload_bytes, 8) + 1)
       assert byte_size(big) > @copy_payload_bytes
 
       html =
         render_component(&ReviewComponents.agent_summary/1, summary: big, summary_raw: true)
 
-      [copy_button] = html |> parse() |> Floki.find("#summary-copy-btn")
-      [payload] = Floki.attribute(copy_button, "data-content")
+      copy_button = tag_attrs(html, "summary-copy-btn")
 
-      assert byte_size(payload) == @copy_payload_bytes
+      assert byte_size(copy_button["data-content"]) == @copy_payload_bytes
 
-      assert copy_button |> Floki.attribute("title") |> List.first() =~
+      assert copy_button["title"] =~
                "Copy is limited to the first 1 MB"
     end
   end
@@ -494,6 +492,30 @@ defmodule EvoDashWeb.BlobCapsTest do
 
   defp rendered_text(rendered),
     do: rendered |> rendered_to_string() |> parse() |> Floki.text()
+
+  # Floki's mochiweb parser takes ~250 ms on a document that carries a 1 MiB
+  # attribute (super-linear attribute parsing), and two tests below legitimately
+  # materialize a 1 MiB `data-content` payload. Read that ONE element's
+  # attributes straight off the REAL rendered HTML instead of parsing the whole
+  # document: Phoenix escapes `"`/`>` inside attribute values, so the opening
+  # tag ends at the first raw `>` and each value at the first raw `"`.
+  defp tag_attrs(html, id) do
+    {id_pos, _} = :binary.match(html, ~s(id="#{id}"))
+    {tag_len, _} = :binary.match(html, ">", scope: {id_pos, byte_size(html) - id_pos})
+    tag = binary_part(html, id_pos, tag_len)
+
+    for attr <- ["data-content", "title"], into: %{} do
+      case :binary.match(tag, attr <> "=\"") do
+        {pos, len} ->
+          start = pos + len
+          {stop, _} = :binary.match(tag, "\"", scope: {start, byte_size(tag) - start})
+          {attr, binary_part(tag, start, stop - start)}
+
+        :nomatch ->
+          {attr, nil}
+      end
+    end
+  end
 
   # Floki's find/2 + attribute/2 require a parsed tree, not a raw binary.
   defp parse(html), do: Floki.parse_document!(html)

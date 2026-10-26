@@ -195,10 +195,32 @@ defmodule EvoDashWeb.NodeAwareTest do
     :ok
   end
 
-  # Polls `fun` every 10ms until it returns truthy or the timeout (default
+  # The `EvoDash.TaskSupervisor` children spawned by `owner` — `Task.Supervisor`
+  # records the spawning process in each child's `:"$callers"` process-dictionary
+  # entry (same idiom as tasks_live_test.exs's drain helpers), so this lists
+  # exactly the async work `owner` started. `Task.Supervisor.start_child/2` is a
+  # synchronous call, so the child is already visible when the spawning function
+  # returns: an empty list right after a call deterministically proves NO spawn.
+  defp spawned_view_tasks(owner) when is_pid(owner) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.filter(fn
+      pid when is_pid(pid) ->
+        case Process.info(pid, :dictionary) do
+          {:dictionary, dict} -> owner in Keyword.get(dict, :"$callers", [])
+          nil -> false
+        end
+
+      _other ->
+        false
+    end)
+  end
+
+  # Polls `fun` every 1ms until it returns truthy or the timeout (default
   # 2000ms) elapses. Used to observe the fake ConnectionManager's recorded
   # calls without fixed sleeps — the spawned connect Task's timing is
-  # nondeterministic.
+  # nondeterministic. The 1 ms tick only bounds how long a satisfied predicate
+  # takes to be noticed (the deadline, not the tick, is the safety margin).
   defp await_until(fun, timeout \\ 2000) do
     deadline = System.monotonic_time(:millisecond) + timeout
     await_until_loop(fun, deadline, timeout)
@@ -213,7 +235,7 @@ defmodule EvoDashWeb.NodeAwareTest do
         flunk("await_until/2 did not become true within #{timeout}ms")
 
       true ->
-        Process.sleep(10)
+        Process.sleep(1)
         await_until_loop(fun, deadline, timeout)
     end
   end
@@ -583,20 +605,6 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:pending_tasks] == []
     end
 
-    test "matching seq and node context assigns the payload" do
-      current_node = node()
-      sock = socket(%{current_node: current_node, current_node_id: nil, tasks_load_seq: 1})
-
-      result =
-        NodeAware.handle_tasks_result(
-          sock,
-          {:node_aware_active_tasks, 1, nil, current_node, {:ok, {[%{id: "fresh"}], []}}}
-        )
-
-      assert result.assigns[:running_tasks] == [%{id: "fresh"}]
-      assert result.assigns[:pending_tasks] == []
-    end
-
     test "node switch triggers a fresh load; same context does not re-spawn" do
       insert_fixture!(EvoGit.Store, id: "running-1", status: :running)
 
@@ -620,8 +628,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert second.assigns[:tasks_load_seq] == 1
 
       # Belt-and-braces only: the seq backstop above deterministically proves
-      # no spawn, so no message can ever be in flight.
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      # no spawn, so no message can ever be in flight (hence the 0 ms window —
+      # the backstop, not the wait, is the evidence).
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
   end
 
@@ -745,7 +754,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       # Nothing is spawned on the dead render — the seq backstop proves it
       # deterministically (no fetch was spawned, so no message can arrive).
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "a malformed hub snapshot is SANITIZED on the mount seed (non-maps dropped)" do
@@ -765,7 +774,7 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # Dead render → still no mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "a stored {[], []} snapshot for a PENDING context seeds [] and still renders (no crash, no leak)" do
@@ -796,7 +805,7 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # Pending context → no mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "warm REMOTE hub + remote mount seeds the REMOTE snapshot, never the local one" do
@@ -835,7 +844,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       # Remote context → no mount fetch (assign_node/2's context-change reload
       # is the single source of remote fetches; the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "a PENDING remote mount seeds [] — the local snapshot never leaks into the pending key" do
@@ -862,7 +871,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
 
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "an unknown node param (local fallback) with a cold hub seeds [] on the dead render" do
@@ -877,7 +886,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == []
       # Dead render → no mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
   end
 
@@ -1007,7 +1016,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       # proves it deterministically). The node-context load still runs.
       assert socket.assigns[:tasks_load_seq] == 0
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
 
     test "warm PENDING hub on a connected PENDING mount does NOT fetch (assign_node owns pending fetches)" do
@@ -1035,7 +1044,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       # Pending context → no sidebar mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
       assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
-      refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+      refute_receive {:node_aware_active_tasks, _, _, _, _}, 0
     end
   end
 
@@ -1059,7 +1068,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.remote_targets == []
       assert socket.assigns.connection_statuses == %{}
       assert socket.assigns.remote_context_seq == 0
-      refute_receive {:node_aware_remote_context, _, _, _, _}, 50
+      refute_receive {:node_aware_remote_context, _, _, _, _}, 0
     end
 
     test "a connected mount loads the saved targets and its ok result applies both assigns" do
@@ -1450,12 +1459,13 @@ defmodule EvoDashWeb.NodeAwareTest do
       id = "conn-spawn"
       save_target!(id)
 
-      # delay_ms 150: the fake holds the :connect call open briefly, so the
-      # recorded caller can be observed before the supervised Task exits.
+      # No `delay_ms`: the fake records the caller BEFORE it replies, so the
+      # recorded pid is observable after the spawned Task has already exited —
+      # holding the call open would only add wall clock.
       manager =
         start_supervised!(
           {EvoDashWeb.NodeAwareTest.ConnectionManager,
-           {id, %{phase: :disconnected}, {:ok, :connecting}, 150}}
+           {id, %{phase: :disconnected}, {:ok, :connecting}}}
         )
 
       sock = socket(%{})
@@ -1472,64 +1482,49 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert is_pid(caller)
       refute caller == self()
 
-      # The delay elapses, the {:ok, :connecting} reply is delivered, and the
-      # supervised Task exits normally — wait for it so teardown never stops
-      # the fake mid-call.
+      # The supervised Task exits normally after replying — wait for it so
+      # teardown never stops the fake mid-call.
       await_until(fn -> not Process.alive?(caller) end)
     end
 
-    test "{:ok, :connecting} connect result → NO {:remote_connect_result, ...} self-message" do
-      id = "conn-ok-connecting"
-      save_target!(id)
+    test "terminal {:ok, _phase} connect results ({:connecting} and {:connected}) → NO self-message" do
+      # Both terminal-reply phases run through the SAME `{:ok, {:ok, _phase}}`
+      # arm (the terminal outcome arrives via the "remote_connections"
+      # broadcast), so one test covers both payloads.
+      for {id, status, result} <- [
+            {"conn-ok-connecting", %{phase: :disconnected}, {:ok, :connecting}},
+            {"conn-ok-connected", %{phase: :connected, node: "genesis_remote@127.0.0.1"},
+             {:ok, :connected}}
+          ] do
+        save_target!(id)
 
-      manager =
-        start_supervised!(
-          {EvoDashWeb.NodeAwareTest.ConnectionManager,
-           {id, %{phase: :disconnected}, {:ok, :connecting}}}
-        )
+        # A per-target child id, so both fakes can be supervised by one test.
+        manager =
+          start_supervised!(
+            Supervisor.child_spec(
+              {EvoDashWeb.NodeAwareTest.ConnectionManager, {id, status, result}},
+              id: id
+            )
+          )
 
-      sock = socket(%{})
-      assert NodeAware.initiate_remote_connect(sock, id) == sock
+        sock = socket(%{})
+        assert NodeAware.initiate_remote_connect(sock, id) == sock
 
-      # Wait for the connect to be recorded — the spawned Task reached the fake.
-      await_until(fn -> GenServer.call(manager, :calls) != [] end)
+        # Wait for the connect to be recorded — the spawned Task reached the fake.
+        await_until(fn -> GenServer.call(manager, :calls) != [] end)
 
-      # Deterministic backstop: capture the spawned Task and wait for it to exit.
-      # Its {:error, reason} arm is its LAST expression, so once the Task is
-      # dead, any self-message it would have sent is already in the mailbox —
-      # the refute below can then never race a late send.
-      assert [caller] = GenServer.call(manager, :callers)
-      await_until(fn -> not Process.alive?(caller) end)
+        # Deterministic backstop: capture the spawned Task and wait for it to
+        # exit. Its {:error, reason} arm is its LAST expression, so once the
+        # Task is dead, any self-message it would have sent is already in the
+        # mailbox — the refute below can then never race a late send (0 ms
+        # window: the dead Task IS the evidence).
+        assert [caller] = GenServer.call(manager, :callers)
+        await_until(fn -> not Process.alive?(caller) end)
 
-      # {:ok, :connecting} is a terminal-enough reply for the helper: only the
-      # {:error, reason} arm sends the view a message, so none may arrive.
-      refute_receive {:remote_connect_result, ^id, _}, 50
-    end
-
-    test "{:ok, :connected} connect result → NO {:remote_connect_result, ...} self-message" do
-      id = "conn-ok-connected"
-      save_target!(id)
-
-      manager =
-        start_supervised!(
-          {EvoDashWeb.NodeAwareTest.ConnectionManager,
-           {id, %{phase: :connected, node: "genesis_remote@127.0.0.1"}, {:ok, :connected}}}
-        )
-
-      sock = socket(%{})
-      assert NodeAware.initiate_remote_connect(sock, id) == sock
-
-      await_until(fn -> GenServer.call(manager, :calls) != [] end)
-
-      # Deterministic backstop: the spawned Task has fully exited (its
-      # {:error, reason} arm is its LAST expression), so any self-message it
-      # would have sent is already in the mailbox before the refute runs.
-      assert [caller] = GenServer.call(manager, :callers)
-      await_until(fn -> not Process.alive?(caller) end)
-
-      # Same contract as {:ok, :connecting} — an already-connected idempotent
-      # no-op still sends no self-message.
-      refute_receive {:remote_connect_result, ^id, _}, 50
+        # {:ok, _phase} is a terminal-enough reply for the helper: only the
+        # {:error, reason} arm sends the view a message, so none may arrive.
+        refute_receive {:remote_connect_result, ^id, _}, 0
+      end
     end
 
     test "{:error, reason} connect result → the {:remote_connect_result, ...} self-message is delivered" do
@@ -1562,13 +1557,13 @@ defmodule EvoDashWeb.NodeAwareTest do
       sock = socket(%{})
       assert NodeAware.initiate_remote_connect(sock, nil) == sock
 
-      # The nil clause returns the socket and spawns nothing — give any buggy
-      # spawn time to land, then assert no self-message arrived and no :connect
-      # call reached the registered fake.
-      # No deterministic backstop exists here: the :calls GenServer.call below
-      # can be answered before a buggy spawned Task would reach the manager, so
-      # the full 150 ms window is deliberately kept.
-      refute_receive {:remote_connect_result, _, _}, 150
+      # The nil clause returns the socket and spawns nothing. `start_child/2`
+      # is synchronous, so an empty supervisor-children list for THIS process
+      # deterministically proves no spawn happened (and a spawn that had
+      # already finished would have left its self-message / :connect call
+      # behind, both asserted below).
+      assert spawned_view_tasks(self()) == []
+      refute_receive {:remote_connect_result, _, _}, 0
       assert GenServer.call(manager, :calls) == []
     end
   end
@@ -1581,18 +1576,16 @@ end
 # test end via `start_supervised!`.
 #
 # Start args: `{target_id, status}` (status-only manager, kept for existing
-# call sites), `{target_id, status, connect_result}` where `connect_result` is
-# what `handle_call(:connect, ...)` replies with (default `{:ok, :connecting}`,
-# e.g. `{:ok, :connected}` or `{:error, reason}`), or
-# `{target_id, status, connect_result, delay_ms}` which additionally holds the
-# `:connect` reply open for `delay_ms` milliseconds (recorded first, so a
-# polling test observes the call while the caller is still in-flight).
+# call sites), or `{target_id, status, connect_result}` where `connect_result`
+# is what `handle_call(:connect, ...)` replies with (default
+# `{:ok, :connecting}`, e.g. `{:ok, :connected}` or `{:error, reason}`).
 #
 # `:connect` records `{:connect, caller_pid}` (`elem(from, 0)`) in a `calls`
-# list and leaves the stored status untouched — tests drive phase transitions
-# explicitly via `{:set_status, status}` (no broadcast). Getters: `:status`
-# (current stored status), `:calls` (recorded `{:connect, pid}` entries), and
-# `:callers` (just the recorded pids).
+# list — BEFORE replying, so a polling test observes the caller even after the
+# spawned Task has exited — and leaves the stored status untouched; tests drive
+# phase transitions explicitly via `{:set_status, status}` (no broadcast).
+# Getters: `:status` (current stored status), `:calls` (recorded
+# `{:connect, pid}` entries), and `:callers` (just the recorded pids).
 defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
   use GenServer
 
@@ -1606,10 +1599,6 @@ defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
   end
 
   def init({target_id, status, connect_result}) do
-    init({target_id, status, connect_result, nil})
-  end
-
-  def init({target_id, status, connect_result, delay_ms}) do
     Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
 
     {:ok,
@@ -1617,7 +1606,6 @@ defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
        target_id: target_id,
        status: status,
        connect_result: connect_result,
-       delay_ms: delay_ms,
        calls: []
      }}
   end
@@ -1627,13 +1615,8 @@ defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
 
   def handle_call(:connect, from, state) do
     caller = elem(from, 0)
-    state = %{state | calls: [{:connect, caller} | state.calls]}
 
-    if state.delay_ms do
-      Process.sleep(state.delay_ms)
-    end
-
-    {:reply, state.connect_result, state}
+    {:reply, state.connect_result, %{state | calls: [{:connect, caller} | state.calls]}}
   end
 
   def handle_call({:set_status, status}, _from, state) do

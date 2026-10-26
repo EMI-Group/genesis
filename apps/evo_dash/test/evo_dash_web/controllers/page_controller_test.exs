@@ -34,22 +34,17 @@ defmodule EvoDashWeb.PageControllerTest do
     :ok
   end
 
-  test "GET / renders the Projects page", %{conn: conn} do
-    conn = get(conn, ~p"/")
-
-    html = html_response(conn, 200)
+  test "GET / renders the Projects page and GET /help the chat page", %{conn: conn} do
+    html = html_response(get(conn, ~p"/"), 200)
     # Projects page: command palette + task form present, no chat send form
     assert html =~ "project-omnibox"
     assert html =~ "AdaptiveInput"
     refute html =~ "chat-form"
-  end
 
-  test "GET /help renders the chat page", %{conn: conn} do
-    conn = get(conn, ~p"/help")
-
-    html = html_response(conn, 200)
-    assert html =~ ~s(id="chat-form")
-    assert html =~ "Chat with Genesis"
+    # The Home chat page is the other entry point (HomeLive at /help).
+    chat_html = html_response(get(conn, ~p"/help"), 200)
+    assert chat_html =~ ~s(id="chat-form")
+    assert chat_html =~ "Chat with Genesis"
   end
 
   # Regression: the sidebar "Active Tasks" hub (`EvoDash.ActiveTasks`) is a

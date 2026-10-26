@@ -44,7 +44,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
   end
 
   describe "desktop quit confirm dialog" do
-    test "desktop_quit_requested opens the modal on the System page", %{conn: conn} do
+    test "full open/cancel/re-open/confirm cycle on the System page", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/system")
 
       # The modal is not visible on initial render
@@ -56,26 +56,19 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       assert html =~ "Running tasks will be interrupted and may lose progress"
       assert html =~ ~s(phx-click="desktop_quit_cancelled")
       assert html =~ ~s(phx-hook="DesktopQuitConfirm")
-    end
 
-    test "desktop_quit_cancelled closes the modal and pushes desktop_quit_closed", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
+      # Regression pin for Rust re-emitting quit-requested (e.g. while the
+      # dialog is already open): the second event must not error the view.
+      assert render_click(view, "desktop_quit_requested") =~ "Quit Genesis?"
 
-      # Open the modal first
-      _html = render_click(view, "desktop_quit_requested")
-
+      # Cancel closes the modal and RE-ARMS the JS latch so a FUTURE tray Quit
+      # is honored (see the DesktopQuit hook's dedup in assets/js/app.js).
       html = render_click(view, "desktop_quit_cancelled")
-
       refute html =~ "Quit Genesis?"
-      # Re-arms the JS latch so a FUTURE tray Quit is honored (see the
-      # DesktopQuit hook's dedup in assets/js/app.js).
       assert_push_event(view, "desktop_quit_closed", %{})
-    end
 
-    test "desktop_quit_confirmed calls the injected stop seam and closes the modal", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      _html = render_click(view, "desktop_quit_requested")
+      # A second tray quit must therefore open the dialog again.
+      assert render_click(view, "desktop_quit_requested") =~ "Quit Genesis?"
 
       html = render_click(view, "desktop_quit_confirmed")
 
@@ -87,33 +80,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       assert_push_event(view, "desktop_quit_closed", %{})
     end
 
-    test "duplicate desktop_quit_requested events are idempotent", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      # Regression pin for Rust re-emitting quit-requested (e.g. while the
-      # dialog is already open): the second event must not error the view.
-      _html = render_click(view, "desktop_quit_requested")
-      html = render_click(view, "desktop_quit_requested")
-
-      assert html =~ "Quit Genesis?"
-    end
-
-    test "requested → cancelled → requested re-opens the dialog", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/system")
-
-      html = render_click(view, "desktop_quit_requested")
-      assert html =~ "Quit Genesis?"
-
-      html = render_click(view, "desktop_quit_cancelled")
-      refute html =~ "Quit Genesis?"
-
-      # The desktop_quit_closed push re-arms the JS latch — a second tray quit
-      # must open the dialog again (documents why the JS dedup/latch exists).
-      html = render_click(view, "desktop_quit_requested")
-      assert html =~ "Quit Genesis?"
-    end
-
-    test "unrelated events still reach the LiveView", %{conn: conn} do
+    test "passes unrelated events through and works on pages other than System", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/system")
 
       # The System page's own event still produces its own response (its stop
@@ -123,22 +90,16 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       assert html =~ "Stop System?"
       refute html =~ "Quit Genesis?"
       refute_received :desktop_stopped
-    end
-
-    test "modal can be opened on a page other than System", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/welcome")
-
-      refute html =~ "Quit Genesis?"
-
-      html = render_click(view, "desktop_quit_requested")
 
       # The dialog lives in the shared app layout, so it works on Welcome too.
+      {:ok, welcome_view, html} = live(conn, ~p"/welcome")
+      refute html =~ "Quit Genesis?"
+
+      html = render_click(welcome_view, "desktop_quit_requested")
       assert html =~ "Quit Genesis?"
       assert html =~ ~s(phx-hook="DesktopQuitConfirm")
 
-      html = render_click(view, "desktop_quit_cancelled")
-
-      refute html =~ "Quit Genesis?"
+      refute render_click(welcome_view, "desktop_quit_cancelled") =~ "Quit Genesis?"
     end
   end
 end

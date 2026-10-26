@@ -6,6 +6,7 @@ defmodule EvoGit.StoreSummaryTest do
   alias EvoGit.Store
   alias EvoGit.Store.Codec
   alias EvoGit.TaskInfo
+  alias EvoGit.TestSupport.StoreTemplate
 
   # The exact 16 keys returned by the summary API (select_tasks_summary/0,1,2,
   # select_tasks_summary_by_path/2,3,4 and select_tasks_changed_since/1,2).
@@ -48,54 +49,32 @@ defmodule EvoGit.StoreSummaryTest do
   # module is `async: false` because it mutates that shared production
   # supervision tree.
   #
-  # It also builds a schema-complete SQLite TEMPLATE once. Creating a brand-new
-  # SQLite file + running the DDL costs ~24ms per test; copying that
-  # checkpointed template costs ~2ms. Each test still gets its own isolated DB
-  # file with the identical schema, so isolation semantics are unchanged.
+  # It also builds a schema-complete SQLite TEMPLATE once (via
+  # `EvoGit.TestSupport.StoreTemplate`) instead of paying the DDL per test.
   setup_all do
-    unique = System.unique_integer([:positive])
-    # OS pid + wall-clock ms on top of the per-BEAM counter: the counter alone
-    # restarts on a fresh node and would collide with a previous run's leftover
-    # tmp file.
-    stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
-    template = Path.join(System.tmp_dir!(), "evogit_summary_template_#{stamp}.sqlite")
-    template_name = :"summary_template_#{unique}"
-
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
 
     # Register the restore BEFORE building the template, so a template-build
     # failure can never leave the production children down for the whole run.
+    # (`on_exit` runs LIFO, so the template's own cleanup — registered inside
+    # `StoreTemplate.new!/0` below — runs before this one.)
     on_exit(fn ->
-      File.rm(template)
-      File.rm(template <> "-wal")
-      File.rm(template <> "-shm")
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.Store)
       Supervisor.restart_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
     end)
 
-    # Stopping the template store closes the last connection to its WAL-mode
-    # database, and SQLite's own implicit checkpointing on last-connection-close
-    # folds the WAL back into the main file and removes the `-wal`/`-shm`
-    # sidecars (its documented default behavior — the connection PRAGMAs are
-    # `journal_mode: :wal` / `synchronous: :normal`, and nothing in the store
-    # runs an explicit `wal_checkpoint`). What is left is a single
-    # self-contained file, which is what makes the byte-copy below valid.
-    {:ok, _} = Store.start_link(data_dir: template, name: template_name)
-    :ok = GenServer.stop(template_name)
-
-    {:ok, %{template: template}}
+    {:ok, %{template: StoreTemplate.new!()}}
   end
 
   # Fresh isolated Store per test, seeded by copying the schema template (the
   # production children are already down).
-  setup %{template: template} do
+  setup %{template: copy_db} do
     unique = System.unique_integer([:positive])
     stamp = "#{unique}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
     root = Path.join(System.tmp_dir!(), "evogit_test_store_summary_#{stamp}")
-    File.mkdir_p!(root)
     sqlite_path = Path.join(root, "tasks.sqlite")
-    File.cp!(template, sqlite_path)
+    copy_db.(sqlite_path)
 
     start_supervised({Store, data_dir: sqlite_path})
     on_exit(fn -> File.rm_rf(root) end)

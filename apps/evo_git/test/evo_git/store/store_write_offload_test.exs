@@ -65,10 +65,22 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   is the facade's inline `:__writer__` handler, which answers straight from
   state without touching SQLite. A DB-backed read cannot serve as a PROMPTNESS
   probe on this one-connection store: it must WAIT for the single pooled
-  connection the write holds — measured ~190 ms behind the 12 MB write below —
-  which is a property of the single-connection POOL, not of the facade, so it
-  cannot discriminate the facade's inbox behaviour. DB-backed reads are asserted
-  right after the write completes instead.
+  connection the write holds — for the whole duration of the in-flight window
+  — which is a property of the single-connection POOL, not of the facade, so it
+  cannot discriminate the facade's inbox behaviour. DB-backed reads are
+  asserted right after the write completes instead.
+
+  ## Why the in-flight window is held by the TEST, not by a big payload
+
+  `hold_write_lock!/1` takes the database's WRITE lock from an external raw
+  connection (`BEGIN IMMEDIATE`), so the writer's write blocks INSIDE SQLite
+  with the pooled connection checked out until the test rolls back. The window
+  in which "a write is in flight" is therefore an event the test controls,
+  instead of a wall-clock race against however long a payload takes to encode —
+  the assertions below are unchanged, they just can no longer be lost to a fast
+  or a loaded machine. `@slow_result_bytes` still makes each of those writes a
+  genuinely multi-megabyte row (JSON encode + insert + WAL commit), it no
+  longer TIMES anything.
   """
   use EvoGit.TaskRegistryCase, async: false
 
@@ -78,10 +90,12 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   alias EvoGit.Store.Operations
   alias EvoGit.TaskInfo
 
-  # A payload big enough that ONE `put_task/2` is genuinely slow (≈100 ms+ on a
-  # developer machine: the row is JSON-encoded, inserted and WAL-committed), so
-  # the in-flight assertions never race a sub-millisecond write.
-  @slow_result_bytes 12_000_000
+  # A payload big enough that ONE `put_task/2` carries a genuinely
+  # multi-megabyte row (JSON-encoded, inserted and WAL-committed; ≈20 ms
+  # measured). It is NO LONGER the source of the in-flight window — that is
+  # `hold_write_lock!/1`, which the test releases when it is done (see the
+  # moduledoc) — so this only has to be "large", not "slow enough to race".
+  @slow_result_bytes 2_000_000
 
   # Re-start this test's isolated store with an EXPLICIT single connection (see
   # the moduledoc's "Why the store under test is pinned to a single connection"
@@ -174,27 +188,47 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # ── arrival-order serialization ──────────────────────────────────────
 
   describe "writes are serialized in arrival order" do
-    test "a write issued while another is in flight lands after it", %{store: store} do
+    test "a write issued while another is in flight lands after it", %{
+      store: store,
+      sqlite_path: sqlite_path
+    } do
       repo = Store.__repo_pid__(store)
+      writer = Store.__writer__(store)
       id = "war_order_inflight"
 
       assert :ok = Store.put_task(store, task(id, {:ok, %{result: "seed"}}))
       assert_connection_ready!(repo)
 
-      # 1. A genuinely slow write (multi-megabyte row) is handed over...
-      slow =
-        Task.async(fn -> Store.put_task(store, task(id, {:ok, %{result: slow_payload()}})) end)
+      lock = hold_write_lock!(sqlite_path)
 
-      # 2. ...and confirmed IN FLIGHT inside the writer (it holds the pooled
-      #    connection), so the write below is unambiguously issued WHILE it is
-      #    still executing.
-      assert :ok = wait_for_inflight_write(repo)
+      {slow, second} =
+        try do
+          # 1. A genuinely slow write (multi-megabyte row) is handed over...
+          slow =
+            Task.async(fn ->
+              Store.put_task(store, task(id, {:ok, %{result: slow_payload()}}))
+            end)
 
-      # 3. Queued behind it. A concurrent/interleaved writer could apply the
-      #    slow write LAST (it finishes last) and the marker would lose.
-      assert :ok = Store.put_task(store, task(id, {:ok, %{result: "SECOND"}}))
+          # 2. ...and confirmed IN FLIGHT inside the writer (it holds the pooled
+          #    connection, blocked on the write lock this test holds), so the
+          #    write below is unambiguously issued WHILE it is still executing.
+          assert :ok = wait_for_inflight_write(repo)
+
+          # 3. Queued behind it: DELIVERED to the writer (it sits in the
+          #    writer's mailbox) while the first write is still running. A
+          #    concurrent/interleaved writer could apply the slow write LAST
+          #    (it finishes last) and the marker would lose.
+          second =
+            Task.async(fn -> Store.put_task(store, task(id, {:ok, %{result: "SECOND"}})) end)
+
+          assert :ok = wait_for_queued_write(writer)
+          {slow, second}
+        after
+          release_write_lock!(lock)
+        end
 
       assert :ok = Task.await(slow)
+      assert :ok = Task.await(second)
 
       # Serialized ⇒ arrival order wins: the marker's row is the final state.
       assert %TaskInfo{result: {:ok, %{result: "SECOND"}}} = Store.get_task(store, id)
@@ -204,13 +238,34 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       assert_connection_ready!(repo)
     end
 
-    test "a delete queued behind an update wins", %{store: store} do
+    test "a delete queued behind an update wins", %{store: store, sqlite_path: sqlite_path} do
+      repo = Store.__repo_pid__(store)
+      writer = Store.__writer__(store)
       id = "war_order_delete"
 
-      # An update carrying a big payload, then the delete: same arrival order,
-      # strictly serialized execution.
-      assert :ok = Store.put_task(store, task(id, {:ok, %{result: slow_payload()}}))
-      assert :ok = Store.delete_task(store, id)
+      lock = hold_write_lock!(sqlite_path)
+
+      {update, delete} =
+        try do
+          # An update carrying a big payload, then the delete: same arrival
+          # order, strictly serialized execution — the delete is delivered while
+          # the update is still running.
+          update =
+            Task.async(fn ->
+              Store.put_task(store, task(id, {:ok, %{result: slow_payload()}}))
+            end)
+
+          assert :ok = wait_for_inflight_write(repo)
+
+          delete = Task.async(fn -> Store.delete_task(store, id) end)
+          assert :ok = wait_for_queued_write(writer)
+          {update, delete}
+        after
+          release_write_lock!(lock)
+        end
+
+      assert :ok = Task.await(update)
+      assert :ok = Task.await(delete)
 
       assert Store.get_task(store, id) == nil
       assert Store.select_task_ids(store) == []
@@ -221,41 +276,52 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
 
   describe "the facade is not blocked by a long-running write" do
     test "inline handlers keep being served while a multi-megabyte write is in flight",
-         %{store: store} do
+         %{store: store, sqlite_path: sqlite_path} do
       repo = Store.__repo_pid__(store)
 
       assert :ok = Store.put_task(store, task("war_seed", {:ok, %{result: "seed"}}))
       assert_connection_ready!(repo)
 
-      slow =
-        Task.async(fn ->
-          Store.put_task(store, task("war_slow", {:ok, %{result: slow_payload()}}))
-        end)
-
-      assert :ok = wait_for_inflight_write(repo)
-
       writer = Store.__writer__(store)
-      probes = 25
+      lock = hold_write_lock!(sqlite_path)
 
-      # Inline facade handlers — `:__writer__` answers from state, so its
-      # latency measures ONLY this GenServer's availability (no SQL, no pool).
-      # With the write running INLINE in the facade (the pre-offload shape)
-      # every one of these calls would have waited for the whole write.
-      {elapsed_us, last} =
-        :timer.tc(fn ->
-          Enum.reduce(1..probes, nil, fn _, _ -> Store.__writer__(store) end)
-        end)
+      slow =
+        try do
+          slow =
+            Task.async(fn ->
+              Store.put_task(store, task("war_slow", {:ok, %{result: slow_payload()}}))
+            end)
 
-      assert last == writer
+          assert :ok = wait_for_inflight_write(repo)
 
-      # The write is STILL in flight after the whole probe loop: every probe
-      # was therefore answered by the facade WHILE the writer was busy. (The
-      # slow write is ~100 ms+; the loop is a few dozen in-process calls.)
-      assert ready_conn_count(repo) == 0,
-             "expected the slow write to still be in flight after #{probes} probes"
+          probes = 25
 
-      # Bounded-time assertion, deliberately generous for slow CI.
-      assert elapsed_us < 2_000_000
+          # Inline facade handlers — `:__writer__` answers from state, so its
+          # latency measures ONLY this GenServer's availability (no SQL, no
+          # pool). With the write running INLINE in the facade (the
+          # pre-offload shape) every one of these calls would have waited for
+          # the whole write.
+          {elapsed_us, last} =
+            :timer.tc(fn ->
+              Enum.reduce(1..probes, nil, fn _, _ -> Store.__writer__(store) end)
+            end)
+
+          assert last == writer
+
+          # The write is STILL in flight after the whole probe loop: every probe
+          # was therefore answered by the facade WHILE the writer was busy. (The
+          # window is held open by this test's write lock, so this is a
+          # construction, not a timing race.)
+          assert ready_conn_count(repo) == 0,
+                 "expected the slow write to still be in flight after #{probes} probes"
+
+          # Bounded-time assertion, deliberately generous for slow CI.
+          assert elapsed_us < 2_000_000
+
+          slow
+        after
+          release_write_lock!(lock)
+        end
 
       assert :ok = Task.await(slow)
 
@@ -356,6 +422,42 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   end
 
   defp slow_payload, do: String.duplicate("x", @slow_result_bytes)
+
+  # ── deterministic in-flight window ───────────────────────────────────
+
+  # Takes the database's WRITE lock from an EXTERNAL raw connection
+  # (`BEGIN IMMEDIATE`): the store's next write blocks inside SQLite with the
+  # pooled connection checked out, so "a write is in flight" lasts exactly until
+  # `release_write_lock!/1` — an event the test controls, not a race against an
+  # encode (see the moduledoc). The external connection is a second writer, but
+  # it writes nothing and never becomes visible; the store's own writes stay
+  # serialized through the writer.
+  defp hold_write_lock!(sqlite_path) do
+    {:ok, conn} = Xqlite.open(sqlite_path)
+    {:ok, _} = Xqlite.query(conn, "BEGIN IMMEDIATE", [])
+    conn
+  end
+
+  defp release_write_lock!(conn) do
+    {:ok, _} = Xqlite.query(conn, "ROLLBACK", [])
+    XqliteNIF.close(conn)
+  end
+
+  # A write the facade already forwarded but the writer has not handled yet sits
+  # in the writer's mailbox: while the writer is blocked inside SQLite this is
+  # the event that proves the second write was issued WHILE the first was still
+  # executing.
+  defp wait_for_queued_write(writer, budget_ms \\ 5_000) do
+    assert wait_until(fn -> queued_writes(writer) >= 1 end, budget_ms),
+           "expected the next write to be queued in the writer's mailbox"
+
+    :ok
+  end
+
+  defp queued_writes(writer) do
+    {:message_queue_len, queued} = Process.info(writer, :message_queue_len)
+    queued
+  end
 
   # ── pool metrics ─────────────────────────────────────────────────────
 

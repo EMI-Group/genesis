@@ -34,7 +34,7 @@ ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linu
   - `linux_test.exs` — `System.put_env/1` for `$TMPDIR` + `$XDG_CONFIG_HOME`, `Application.put_env/2` for `:nix_enabled`.
   - `macos_test.exs` — `System.put_env/1` for `$TMPDIR` + `$XDG_CONFIG_HOME`, `Application.put_env/2` for `:nix_enabled`, `:persistent_term` `{MacOS, :process_limit_rejected}`.
   - `nix_test.exs` — `Application.put_env/2` for `:nix_enabled`, `:persistent_term` `:evogit_nix_dev_env_state` (via `Nix.reset_state/0` and direct seeds).
-  - `background_test.exs` — real host process work no other module may observe: one genuine `Sandbox.spawn_detached/1` round trip (a live `sleep` child spawned through a port owned by the test process, then killed and probed with `kill -0` until the OS confirms it is gone) plus `kill -0` liveness probes against a reaped pid; it also writes the `:nix_enabled` app-env key. Everything else in the module is pure and needs no isolation.
+  - `background_test.exs` — real host process work no other module may observe: one genuine `Sandbox.spawn_detached/1` round trip (a live `sleep` child spawned through a port owned by the test process, then killed and polled with `kill -0` until the OS confirms it is gone) plus `kill -0` liveness probes against a reaped pid; it also writes the `:nix_enabled` and `:kill_grace_ms` app-env keys. Everything else in the module is pure and needs no isolation.
   - Do NOT flip any of these to `async: true`: the mutated state is read by production paths and by other modules.
 - Installing a per-task tmpdir (`EvoGit.TaskTmpdir.put_current/1`) is a PROCESS-LOCAL pdict write — it mutates no BEAM-global state, so it does NOT force serialization (the `async: true` `helpers_test.exs` uses it freely).
 
@@ -67,6 +67,11 @@ ExUnit suites for the sandbox subsystem (`EvoGit.Sandbox`, `EvoGit.Sandbox.{Linu
 - `resolve_tmpdir/0` reads `$TMPDIR` fresh at call time; `System.put_env/2` mutates the VM-global OS env, so under parallel load the pair can be observed inconsistently. `macos_test.exs` uses a bounded retry helper (`assert_tmpdir_falls_back/1`) that re-establishes `$TMPDIR` and re-reads, while keeping the exact `== List.first(Platform.tmp_paths())` assertion.
 - `XDG_CONFIG_HOME` isolation is what makes the sandbox mode resolve to the built-in default instead of the developer's `~/.config/genesis/config.toml`.
 - The `MacOS`/`Bwrap` capability and nix dev-env decisions are cached in `:persistent_term`; tests that seed them erase the keys on exit so no state leaks between tests.
+
+### Kill grace (SIGTERM → SIGKILL) is a call-time seam
+
+- `EvoGit.Sandbox.Helpers.posix_kill_tree/1` reads the app-env `:kill_grace_ms` seam at BOTH `Process.sleep` sites (production default `@kill_grace_ms` = 100 ms), so a test can shorten the grace without changing production behaviour.
+- `background_test.exs` sets it to 10 ms; its post-kill assertion POLLS for a genuinely-dead pid (`kill -0`), so the shorter grace cannot mask a live child — a real survivor still fails.
 
 ### Alive-child rendezvous in the port-lifecycle tests
 

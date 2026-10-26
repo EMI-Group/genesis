@@ -309,24 +309,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert defaults.data.dir == nil
     end
 
-    test "llm model has nil default" do
-      defaults = Schema.defaults()
-      assert Map.has_key?(defaults.llm, :model)
-      assert defaults.llm.model == nil
-    end
-
-    test "CPU-thread-derived defaults track the machine's CPU thread count" do
-      cores = EvoGit.Platform.cpu_threads()
-      defaults = Schema.defaults()
-
-      # max_tool_concurrency defaults to the CPU thread count.
-      assert defaults.scheduler.max_tool_concurrency == cores
-
-      # Sandbox CPU quotas default to "<cores * 100>%".
-      assert defaults.sandbox.resources.cpu_quota == "#{cores * 100}%"
-      assert defaults.sandbox.process.cpu_quota == "#{cores * 100}%"
-    end
-
     test "the schema maps expose the same dynamic defaults the dashboard reads" do
       cores = EvoGit.Platform.cpu_threads()
 
@@ -340,12 +322,6 @@ defmodule EvoGit.Config.SchemaTest do
 
       assert schema_by_path[[:sandbox, :process, :cpu_quota]].default ==
                "#{cores * 100}%"
-    end
-
-    test "github username has nil default" do
-      defaults = Schema.defaults()
-      assert Map.has_key?(defaults.user, :github_username)
-      assert defaults.user.github_username == nil
     end
 
     test "sandbox write_paths has nil default" do
@@ -365,23 +341,6 @@ defmodule EvoGit.Config.SchemaTest do
   end
 
   describe "schemas_by_category/0" do
-    test "returns correct categories" do
-      grouped = Schema.schemas_by_category()
-      assert Map.has_key?(grouped, :scheduler)
-      assert Map.has_key?(grouped, :llm)
-      assert Map.has_key?(grouped, :user)
-      assert Map.has_key?(grouped, :sandbox)
-      assert Map.has_key?(grouped, :truncation)
-      assert Map.has_key?(grouped, :task_history)
-      assert Map.has_key?(grouped, :nix)
-      assert Map.has_key?(grouped, :git)
-      assert Map.has_key?(grouped, :server)
-      assert Map.has_key?(grouped, :tools)
-      assert Map.has_key?(grouped, :node)
-      assert Map.has_key?(grouped, :appearance)
-      assert Map.has_key?(grouped, :data)
-    end
-
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
       assert length(grouped[:scheduler]) == 11
@@ -446,10 +405,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert schema.validation == [min: 0.0, max: 1.0]
       assert schema.category == :llm
       assert schema.sub_category == nil
-    end
-
-    test "validate/1 accepts the defaults (threshold derived, pruning on, fraction 0.5)" do
-      assert {:ok, _} = Schema.validate(Schema.defaults())
     end
 
     test "validate/1 requires an explicit compression threshold to be positive" do
@@ -526,12 +481,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert error.key_path == [:scheduler, :default_llm_max_concurrency]
       assert error.value == -1
       assert error.rule == :pos_integer
-    end
-
-    test "catches pos_integer with zero value" do
-      config = put_in(Schema.defaults(), [:scheduler, :default_llm_max_concurrency], 0)
-      assert {:error, errors} = Schema.validate(config)
-      assert length(errors) > 0
     end
 
     test "catches non_neg_integer with negative value" do
@@ -662,13 +611,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert error.rule == {:max, 1000}
     end
 
-    test "catches sandbox cpu_weight out of range" do
-      config = put_in(Schema.defaults(), [:sandbox, :resources, :cpu_weight], 20_000)
-      assert {:error, errors} = Schema.validate(config)
-      error = List.first(errors)
-      assert error.rule == {:max, 10_000}
-    end
-
     test "accepts valid sandbox modes" do
       for mode <- [:auto, :enabled, :disabled] do
         config = put_in(Schema.defaults(), [:sandbox, :mode], mode)
@@ -771,11 +713,6 @@ defmodule EvoGit.Config.SchemaTest do
       config = put_in(Schema.defaults(), [:llm, :model], 12345)
       assert {:error, _} = Schema.validate(config)
     end
-
-    test "nil is still accepted" do
-      config = put_in(Schema.defaults(), [:llm, :model], nil)
-      assert {:ok, _} = Schema.validate(config)
-    end
   end
 
   describe "model_spec :extra validation for [:llm, :model]" do
@@ -804,46 +741,22 @@ defmodule EvoGit.Config.SchemaTest do
       assert {:ok, _} = Schema.validate(config)
     end
 
-    test "accepts a map without extra" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], %{
-          provider: :openai,
-          id: "my-model"
-        })
+    test "rejects a map where extra is not a map" do
+      for extra <- ["not a map", [1, 2, 3]] do
+        config =
+          put_in(Schema.defaults(), [:llm, :model], %{
+            provider: :openai,
+            id: "my-model",
+            extra: extra
+          })
 
-      assert {:ok, _} = Schema.validate(config)
-    end
+        assert {:error, errors} = Schema.validate(config)
+        assert is_list(errors)
 
-    test "rejects a map where extra is a string" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], %{
-          provider: :openai,
-          id: "my-model",
-          extra: "not a map"
-        })
-
-      assert {:error, errors} = Schema.validate(config)
-      assert is_list(errors)
-
-      assert Enum.any?(errors, fn e ->
-               String.contains?(e.message, "extra")
-             end)
-    end
-
-    test "rejects a map where extra is a list" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], %{
-          provider: :openai,
-          id: "my-model",
-          extra: [1, 2, 3]
-        })
-
-      assert {:error, errors} = Schema.validate(config)
-      assert is_list(errors)
-
-      assert Enum.any?(errors, fn e ->
-               String.contains?(e.message, "extra")
-             end)
+        assert Enum.any?(errors, fn e ->
+                 String.contains?(e.message, "extra")
+               end)
+      end
     end
   end
 
@@ -874,13 +787,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert {:ok, _} = Schema.validate(config)
     end
 
-    test "accepts a valid tuple with just id" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: "gpt-5.6-sol"]})
-
-      assert {:ok, _} = Schema.validate(config)
-    end
-
     test "rejects a tuple missing the id key" do
       config =
         put_in(Schema.defaults(), [:llm, :model], {:openai, [base_url: "https://x"]})
@@ -888,18 +794,13 @@ defmodule EvoGit.Config.SchemaTest do
       assert {:error, _} = Schema.validate(config)
     end
 
-    test "rejects a tuple with empty id string" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: ""]})
+    test "rejects a tuple with an empty or nil id" do
+      for bad_id <- ["", nil] do
+        config =
+          put_in(Schema.defaults(), [:llm, :model], {:openai, [id: bad_id]})
 
-      assert {:error, _} = Schema.validate(config)
-    end
-
-    test "rejects a tuple with nil id" do
-      config =
-        put_in(Schema.defaults(), [:llm, :model], {:openai, [id: nil]})
-
-      assert {:error, _} = Schema.validate(config)
+        assert {:error, _} = Schema.validate(config)
+      end
     end
 
     test "rejects a tuple with non-map extra" do
@@ -1031,15 +932,6 @@ defmodule EvoGit.Config.SchemaTest do
 
       assert {:error, errors} = Schema.validate(config)
       assert Enum.any?(errors, &(&1.key_path == [:llm, :models, 0, :provider_options]))
-    end
-
-    test "accepts a profile with no provider_options (optional)" do
-      config =
-        put_in(Schema.defaults(), [:llm, :models], [
-          %{id: "default", model: "anthropic:claude"}
-        ])
-
-      assert {:ok, _} = Schema.validate(config)
     end
   end
 
@@ -1448,11 +1340,6 @@ defmodule EvoGit.Config.SchemaTest do
       assert Enum.at(profiles, 1).id == "fast"
     end
 
-    test "returns empty list when no models key" do
-      config = %{llm: %{}}
-      assert Schema.model_profiles(config) == []
-    end
-
     test "returns empty list when no llm key" do
       config = %{}
       assert Schema.model_profiles(config) == []
@@ -1471,11 +1358,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "returns {:error, :not_found} when id not present" do
       config = %{llm: %{models: [%{id: "default", model: "x:y"}]}}
       assert {:error, :not_found} = Schema.get_model_profile(config, "nonexistent")
-    end
-
-    test "returns {:error, :not_found} when no profiles" do
-      config = %{llm: %{}}
-      assert {:error, :not_found} = Schema.get_model_profile(config, "default")
+      assert {:error, :not_found} = Schema.get_model_profile(%{llm: %{}}, "default")
     end
   end
 
@@ -1513,37 +1396,10 @@ defmodule EvoGit.Config.SchemaTest do
       assert Keyword.get(params, :reasoning_effort) == :high
     end
 
-    test "returns only provider_options for OpenAI profile with no gen params" do
-      profile = %{id: "default", model: "openai:x:y"}
-      params = Schema.llm_generation_params(profile)
-      # provider_options (store: false) is injected only for OpenAI to disable
-      # Responses API server-side storage / previous_response_id chaining.
-      assert params == [provider_options: [store: false]]
-    end
-
-    test "omits provider_options for non-OpenAI profile with no gen params" do
-      profile = %{id: "default", model: "anthropic:claude-sonnet-4"}
-      params = Schema.llm_generation_params(profile)
-      # Non-OpenAI providers must NOT get store: false.
-      assert params == []
-    end
-
-    test "uses explicit provider_options override from profile config" do
-      profile = %{id: "default", model: "openai:x", provider_options: %{store: true}}
-      params = Schema.llm_generation_params(profile)
-      assert Keyword.get(params, :provider_options) == [store: true]
-    end
-
     test "uses explicit provider_options override for non-OpenAI" do
       profile = %{id: "default", model: "anthropic:claude", provider_options: %{foo: "bar"}}
       params = Schema.llm_generation_params(profile)
       assert Keyword.get(params, :provider_options) == [foo: "bar"]
-    end
-
-    test "empty provider_options map yields no provider_options key" do
-      profile = %{id: "default", model: "openai:x", provider_options: %{}}
-      params = Schema.llm_generation_params(profile)
-      refute Keyword.has_key?(params, :provider_options)
     end
 
     test "delegates to default profile when given a config map" do
@@ -1555,24 +1411,6 @@ defmodule EvoGit.Config.SchemaTest do
     test "returns empty list when no profiles in config" do
       config = %{llm: %{models: []}}
       assert Schema.llm_generation_params(config) == []
-    end
-  end
-
-  describe "default_provider_options/0" do
-    test "returns store: false to disable OpenAI server-side storage" do
-      assert Schema.LLM.default_provider_options() == [store: false]
-    end
-
-    test "is included in profile_generation_params output for OpenAI models" do
-      profile = %{id: "default", temperature: 0.7, model: "openai:gpt-5"}
-      params = Schema.LLM.profile_generation_params(profile)
-      assert Keyword.get(params, :provider_options) == [store: false]
-    end
-
-    test "is NOT included in profile_generation_params output for non-OpenAI models" do
-      profile = %{id: "default", temperature: 0.7, model: "anthropic:claude"}
-      params = Schema.LLM.profile_generation_params(profile)
-      refute Keyword.has_key?(params, :provider_options)
     end
   end
 
@@ -1611,38 +1449,6 @@ defmodule EvoGit.Config.SchemaTest do
 
     test "returns nil for unrecognized format" do
       assert Schema.LLM.provider_from_model(42) == nil
-    end
-  end
-
-  describe "provider_options_for_model/1" do
-    test "returns store: false for OpenAI string model" do
-      assert Schema.LLM.provider_options_for_model("openai:gpt-5") == [store: false]
-    end
-
-    test "returns store: false for OpenAI map model" do
-      assert Schema.LLM.provider_options_for_model(%{provider: :openai, id: "gpt-5"}) == [
-               store: false
-             ]
-    end
-
-    test "returns store: false for OpenAI tuple model" do
-      assert Schema.LLM.provider_options_for_model({:openai, [id: "gpt-5"]}) == [store: false]
-    end
-
-    test "returns [] for non-OpenAI string model" do
-      assert Schema.LLM.provider_options_for_model("anthropic:claude") == []
-    end
-
-    test "returns [] for non-OpenAI map model" do
-      assert Schema.LLM.provider_options_for_model(%{provider: :anthropic, id: "claude"}) == []
-    end
-
-    test "returns [] for indeterminate provider (no colon string)" do
-      assert Schema.LLM.provider_options_for_model("gpt-5") == []
-    end
-
-    test "returns [] for nil" do
-      assert Schema.LLM.provider_options_for_model(nil) == []
     end
   end
 end

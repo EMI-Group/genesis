@@ -40,42 +40,20 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       TaskRegistry.set_review_metadata(task_id, "abc123", "def456")
 
-      # Sync with a call to ensure cast was processed
+      # Sync with a call to ensure the cast (which writes directly to the
+      # store) has been processed, then read the row through BOTH surfaces:
+      # the registry's `get_task/1` and the raw store read. `get_task/1` is
+      # itself a store read, so the two agree by construction — one test pins
+      # both call surfaces for the same row effect.
       TaskRegistry.list_tasks()
 
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.base_sha == "abc123"
       assert fetched.commit_sha == "def456"
-    end
 
-    test "persists to the store after update" do
-      unique = System.unique_integer([:positive])
-      task_id = "review_meta_#{unique}"
-
-      task = %TaskInfo{
-        id: task_id,
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), task)
-
-      TaskRegistry.set_review_metadata(task_id, "base_sha_1", "commit_sha_1")
-
-      # Sync to ensure the cast (which writes directly to the store) has been processed
-      TaskRegistry.list_tasks()
-
-      # Read directly from the store to confirm persistence
       stored_task = EvoGit.Store.get_task(store(), task_id)
-
-      assert stored_task.base_sha == "base_sha_1"
-      assert stored_task.commit_sha == "commit_sha_1"
+      assert stored_task.base_sha == "abc123"
+      assert stored_task.commit_sha == "def456"
     end
 
     test "does nothing for a non-existent task" do
@@ -164,45 +142,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched != nil
       assert fetched.base_sha == nil
       assert fetched.commit_sha == nil
-      assert fetched.model_id == nil
-    end
-
-    test "normalize_tasks backfills model_id to nil for older structs", %{
-      data_dir: data_dir,
-      store: store,
-      registry: registry
-    } do
-      task_id = "model_backfill_#{System.unique_integer([:positive])}"
-
-      stripped =
-        %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: DateTime.utc_now(),
-          logs: [],
-          result: nil,
-          model_id: nil
-        }
-
-      EvoGit.Store.put_task(store(), stripped)
-
-      # Restart the registry to trigger normalize_tasks on init.
-      stop_supervised(registry)
-
-      start_supervised!(
-        Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
-          id: registry
-        )
-      )
-
-      fetched = TaskRegistry.get_task(task_id)
-      assert %TaskInfo{} = fetched
-      assert Map.has_key?(fetched, :model_id)
       assert fetched.model_id == nil
     end
   end
@@ -313,7 +252,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   describe "GenServer resilience and state preservation" do
-    test "registry stays alive and returns inserted tasks" do
+    test "registry stays responsive across insert / read / delete mutations" do
       unique = System.unique_integer([:positive])
       task_id = "resilient_#{unique}"
 
@@ -344,18 +283,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
 
       # The process stays alive after reads
       assert Process.alive?(pid)
-    end
-
-    test "registry survives mutation operations" do
-      unique = System.unique_integer([:positive])
-      pid = GenServer.whereis(TaskRegistry.server())
-      assert Process.alive?(pid)
 
       # Each delete_task cast mutates the store.
       for i <- 1..5 do
         id = "survive_#{unique}_#{i}"
 
-        task = %TaskInfo{
+        EvoGit.Store.put_task(store(), %TaskInfo{
           id: id,
           type: :genesis,
           status: :completed,
@@ -365,24 +298,31 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
           finished_at: DateTime.utc_now(),
           logs: [],
           result: nil
-        }
+        })
 
-        EvoGit.Store.put_task(store(), task)
         TaskRegistry.delete_task(id)
       end
 
-      # Synchronize (list_tasks is a call that flushes pending casts)
-      TaskRegistry.list_tasks()
+      # Synchronize (list_tasks is a call that flushes pending casts).
+      remaining = TaskRegistry.list_tasks()
+      remaining_ids = Enum.map(remaining, & &1.id)
 
-      # The process survived all cleanup_expired_tasks invocations without crashing
+      # The process survived every mutation without crashing OR restarting.
       assert Process.alive?(pid)
-      assert is_list(TaskRegistry.list_tasks())
+      assert GenServer.whereis(TaskRegistry.server()) == pid
+
+      # The five deleted rows are gone; the earlier insert is untouched.
+      for i <- 1..5 do
+        refute "survive_#{unique}_#{i}" in remaining_ids
+      end
+
+      assert task_id in remaining_ids
       assert is_list(TaskRegistry.get_unique_paths())
     end
   end
 
   describe "corruption resilience — structural" do
-    test "registry survives and salvages good tasks when wrong-shape entries exist", %{
+    test "registry reads, cleanup and completion all survive structurally corrupt rows", %{
       sqlite_path: sqlite_path
     } do
       unique = System.unique_integer([:positive])
@@ -423,13 +363,13 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       XqliteNIF.execute(
         raw_conn,
         "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
-        ["bad_string", "completed", "<<invalid json>>"]
+        ["bad_string_#{unique}", "completed", "<<invalid json>>"]
       )
 
       XqliteNIF.execute(
         raw_conn,
         "INSERT OR REPLACE INTO tasks (id, status, type) VALUES (?1, ?2, ?3)",
-        ["bad_map", "completed", "invalid_type_atom_xyz"]
+        ["bad_map_#{unique}", "completed", "invalid_type_atom_xyz"]
       )
 
       XqliteNIF.close(raw_conn)
@@ -443,7 +383,29 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
         }
       )
 
+      # A corrupt row ELSEWHERE must not block a new task's completion cycle
+      # (the cast also runs the internal cleanup pass).
+      new_id = "new_task_#{unique}"
+
+      EvoGit.Store.put_task(store(), %TaskInfo{
+        id: new_id,
+        type: :genesis,
+        status: :running,
+        opts: [path: "/tmp/test"],
+        ref: nil,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        logs: [],
+        result: nil
+      })
+
+      TaskRegistry.update_task_status(new_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
+
+      # An explicit cleanup cycle must survive too (it reads only ids).
+      trigger_cleanup!()
+
       pid = GenServer.whereis(TaskRegistry.server())
+      assert is_pid(pid)
       assert Process.alive?(pid)
 
       # list_tasks must NOT crash — it should return only valid TaskInfo structs
@@ -457,6 +419,11 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # (opts becomes nil). They appear as valid TaskInfo structs.
       # The registry stays alive regardless.
 
+      # The task that completed while corrupt rows existed is persisted.
+      fetched = TaskRegistry.get_task(new_id)
+      assert %TaskInfo{} = fetched
+      assert fetched.status == :completed
+
       # Registry still alive after reads
       assert Process.alive?(pid)
 
@@ -467,106 +434,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # list_recent_projects works
       projects = TaskRegistry.list_recent_projects()
       assert is_list(projects)
-    end
-
-    test "cleanup_expired_tasks does not crash GenServer when wrong-shape entries exist", %{
-      sqlite_path: sqlite_path
-    } do
-      unique = System.unique_integer([:positive])
-
-      good = %TaskInfo{
-        id: "good_cleanup_#{unique}",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), good)
-
-      # Corrupt entry
-      # Inject a corrupt row via raw SQL (put_task rejects non-struct input)
-      {:ok, raw_conn2} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(
-        raw_conn2,
-        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
-        ["bad_cleanup", "completed", "<<not json>>"]
-      )
-
-      XqliteNIF.close(raw_conn2)
-
-      pid = GenServer.whereis(TaskRegistry.server())
-      assert Process.alive?(pid)
-
-      # Trigger cleanup by doing mutations
-      trigger_cleanup!()
-
-      # Registry survived
-      assert Process.alive?(pid)
-
-      tasks = TaskRegistry.list_tasks()
-      assert is_list(tasks)
-      assert Enum.any?(tasks, &(&1.id == "good_cleanup_#{unique}"))
-    end
-
-    test "completing a task persists it even when corrupt entries exist elsewhere", %{
-      sqlite_path: sqlite_path
-    } do
-      unique = System.unique_integer([:positive])
-
-      # Seed a corrupt entry FIRST
-      # Inject a corrupt row via raw SQL (bypassing put_task validation)
-      {:ok, raw_conn} = Xqlite.open(sqlite_path)
-
-      XqliteNIF.execute(
-        raw_conn,
-        "INSERT OR REPLACE INTO tasks (id, status, opts) VALUES (?1, ?2, ?3)",
-        [
-          "pre_existing_corrupt_#{unique}",
-          "completed",
-          "<<invalid json>>"
-        ]
-      )
-
-      XqliteNIF.close(raw_conn)
-
-      # Now start a task and complete it
-      task_id = "new_task_#{unique}"
-
-      task = %TaskInfo{
-        id: task_id,
-        type: :genesis,
-        status: :running,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), task)
-
-      # Simulate completion via cast (this calls cleanup_expired_tasks internally)
-      TaskRegistry.update_task_status(task_id, :completed, {:ok, %{usage: nil, agent_count: 1}})
-
-      # Sync
-      TaskRegistry.list_tasks()
-
-      # The completed task must be persisted and readable
-      fetched = TaskRegistry.get_task(task_id)
-      assert %TaskInfo{} = fetched
-      assert fetched.id == task_id
-      assert fetched.status == :completed
-
-      # Registry is alive
-      pid = GenServer.whereis(TaskRegistry.server())
-      assert Process.alive?(pid)
     end
   end
 
@@ -642,62 +509,44 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert fetched.status == :finalizing
     end
 
-    test "a :completed task still rejects stale status updates (guard integrity)" do
-      task_id = "completed_guard_#{System.unique_integer([:positive])}"
+    test "terminal rows reject stale updates on both the cast and PubSub paths (guard integrity)" do
+      unique = System.unique_integer([:positive])
+      completed_id = "completed_guard_#{unique}"
+      cancelled_id = "cancelled_guard_#{unique}"
 
-      task = %TaskInfo{
-        id: task_id,
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
+      for {id, status} <- [{completed_id, :completed}, {cancelled_id, :cancelled}] do
+        EvoGit.Store.put_task(store(), %TaskInfo{
+          id: id,
+          type: :genesis,
+          status: status,
+          opts: [path: "/tmp/test"],
+          ref: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        })
+      end
 
-      EvoGit.Store.put_task(store(), task)
-
-      # A late :failed update must NOT overwrite a terminal :completed.
-      TaskRegistry.update_task_status(task_id, :failed, "late error")
-
-      TaskRegistry.list_tasks()
-
-      fetched = TaskRegistry.get_task(task_id)
-      assert fetched != nil
-      assert fetched.status == :completed
-    end
-
-    test "a :cancelled task still rejects stale :finalizing via PubSub (guard integrity)" do
-      task_id = "cancelled_guard_#{System.unique_integer([:positive])}"
-
-      task = %TaskInfo{
-        id: task_id,
-        type: :genesis,
-        status: :cancelled,
-        opts: [path: "/tmp/test"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil
-      }
-
-      EvoGit.Store.put_task(store(), task)
+      # A late :failed update must NOT overwrite a terminal :completed (cast path).
+      TaskRegistry.update_task_status(completed_id, :failed, "late error")
 
       # A late :finalizing PubSub update must NOT overwrite a terminal :cancelled.
       Phoenix.PubSub.broadcast(
         EvoGit.PubSub,
         "tasks",
-        {:task_updated, task_id, :finalizing, node()}
+        {:task_updated, cancelled_id, :finalizing, node()}
       )
 
       TaskRegistry.list_tasks()
 
-      fetched = TaskRegistry.get_task(task_id)
-      assert fetched != nil
-      assert fetched.status == :cancelled
+      completed = TaskRegistry.get_task(completed_id)
+      assert completed != nil
+      assert completed.status == :completed
+
+      cancelled = TaskRegistry.get_task(cancelled_id)
+      assert cancelled != nil
+      assert cancelled.status == :cancelled
     end
   end
 
@@ -753,7 +602,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   describe "startup reconciliation of orphaned :finalizing tasks" do
-    test "restart marks an orphaned :finalizing row :failed but leaves a :running row untouched",
+    test "restart marks an orphaned :finalizing row :failed (with the canonical payload) but leaves a :running row untouched",
          %{data_dir: data_dir, store: store, registry: registry} do
       unique = System.unique_integer([:positive])
       finalizing_id = "startup_finalizing_#{unique}"
@@ -804,14 +653,21 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       )
 
       # The Store is the durable source of truth; the registry's init
-      # reconciliation must have marked the orphaned :finalizing row :failed.
+      # reconciliation must have marked the orphaned :finalizing row :failed,
+      # recording the exact lib result literal and the canonical error payload.
       finalizing = EvoGit.Store.get_task(store(), finalizing_id)
       assert finalizing != nil
       assert finalizing.status == :failed
       assert finalizing.finished_at != nil
       assert finalizing.lease_expires_at == nil
-      # Do not over-pin the exact fix wording — just require a result payload.
-      assert is_binary(finalizing.result)
+      assert finalizing.result == "Runtime restarted during task finalization"
+
+      assert finalizing.error == %{
+               kind: :restart,
+               source: :startup_reconcile,
+               message: "Runtime restarted during task finalization",
+               stacktrace: nil
+             }
 
       # Control row: a :running task with a valid (future) lease must NOT be
       # touched at init — sweeping orphaned :running tasks is the :lease_sweep
@@ -820,55 +676,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert running != nil
       assert running.status == :running
       assert running.lease_expires_at == future_lease
-    end
-
-    test "restart records the startup-reconcile error payload on the orphaned :finalizing row",
-         %{data_dir: data_dir, store: store, registry: registry} do
-      unique = System.unique_integer([:positive])
-      finalizing_id = "startup_finalizing_error_#{unique}"
-      future_lease = System.system_time(:second) + 300
-
-      # Stop the initial registry FIRST so the seeded row exists in the Store
-      # before the fresh registry boots. The Store stays running (durable on
-      # disk); it is NOT stopped/restarted.
-      stop_supervised(registry)
-
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: finalizing_id,
-          type: :genesis,
-          status: :finalizing,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: future_lease
-        })
-
-      # Restart the registry pointing at the same store and data_dir.
-      start_supervised(
-        Supervisor.child_spec(
-          {TaskRegistry, task_store: store, data_dir: data_dir, name: registry},
-          id: registry
-        )
-      )
-
-      # The exact lib result literal and the canonical restart error payload.
-      fetched = EvoGit.Store.get_task(store(), finalizing_id)
-      assert fetched != nil
-      assert fetched.status == :failed
-      assert fetched.finished_at != nil
-      assert fetched.lease_expires_at == nil
-      assert fetched.result == "Runtime restarted during task finalization"
-
-      assert fetched.error == %{
-               kind: :restart,
-               source: :startup_reconcile,
-               message: "Runtime restarted during task finalization",
-               stacktrace: nil
-             }
     end
 
     test "restart marks an orphaned :cancelling row :cancelled", %{
@@ -1087,14 +894,16 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
   end
 
   describe "list_task_ids/1 — minimal id/status/updated_at projection" do
-    test "list_task_ids/0 returns ALL tasks with exactly id/status/updated_at keys",
+    test "returns ALL tasks (one seeded fixture) and filters by single or multiple statuses",
          %{sqlite_path: sqlite_path} do
       unique = System.unique_integer([:positive])
-      t1 = "task_ids_all_a_#{unique}"
-      t2 = "task_ids_all_b_#{unique}"
-      t3 = "task_ids_all_c_#{unique}"
-      t4 = "task_ids_all_d_#{unique}"
+      t1 = "task_ids_a_#{unique}"
+      t2 = "task_ids_b_#{unique}"
+      t3 = "task_ids_c_#{unique}"
+      t4 = "task_ids_d_#{unique}"
 
+      # One seeded fixture spanning the whole status matrix: every filter case
+      # below (all / single status / union) reads THIS fixture.
       for {id, status} <- [
             {t1, :completed},
             {t2, :running},
@@ -1122,6 +931,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
       set_updated_at(sqlite_path, t4, "2024-01-04T00:00:00.000Z")
 
+      # list_task_ids/0 → every row.
       rows = TaskRegistry.list_task_ids()
 
       assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t2, t3, t4])
@@ -1144,80 +954,18 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert by_id[t3].updated_at == "2024-01-03T00:00:00.000Z"
       assert by_id[t4].status == :failed
       assert by_id[t4].updated_at == "2024-01-04T00:00:00.000Z"
-    end
 
-    test "list_task_ids/1 with a single status returns only matching rows",
-         %{sqlite_path: sqlite_path} do
-      unique = System.unique_integer([:positive])
-      t1 = "task_ids_filter_a_#{unique}"
-      t2 = "task_ids_filter_b_#{unique}"
-      t3 = "task_ids_filter_c_#{unique}"
+      # Single status → only matching rows.
+      single = TaskRegistry.list_task_ids([:completed])
+      assert Enum.map(single, & &1.id) == [t1]
+      assert Enum.all?(single, &(&1.status == :completed))
 
-      for {id, status} <- [{t1, :completed}, {t2, :running}, {t3, :completed}] do
-        :ok =
-          EvoGit.Store.put_task(store(), %TaskInfo{
-            id: id,
-            type: :genesis,
-            status: status,
-            opts: [path: "/proj-task-ids"],
-            ref: nil,
-            started_at: DateTime.utc_now(),
-            finished_at: nil,
-            logs: [],
-            result: nil
-          })
-      end
-
-      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
-      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
-      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
-
-      rows = TaskRegistry.list_task_ids([:completed])
-
-      assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t3])
-      assert Enum.all?(rows, &(&1.status == :completed))
-
-      # Non-matching statuses are excluded.
       assert TaskRegistry.list_task_ids([:running]) |> Enum.map(& &1.id) == [t2]
-    end
 
-    test "list_task_ids/1 with multiple statuses returns the union of matches",
-         %{sqlite_path: sqlite_path} do
-      unique = System.unique_integer([:positive])
-      t1 = "task_ids_multi_a_#{unique}"
-      t2 = "task_ids_multi_b_#{unique}"
-      t3 = "task_ids_multi_c_#{unique}"
-      t4 = "task_ids_multi_d_#{unique}"
-
-      for {id, status} <- [
-            {t1, :completed},
-            {t2, :failed},
-            {t3, :running},
-            {t4, :pending}
-          ] do
-        :ok =
-          EvoGit.Store.put_task(store(), %TaskInfo{
-            id: id,
-            type: :genesis,
-            status: status,
-            opts: [path: "/proj-task-ids"],
-            ref: nil,
-            started_at: DateTime.utc_now(),
-            finished_at: nil,
-            logs: [],
-            result: nil
-          })
-      end
-
-      set_updated_at(sqlite_path, t1, "2024-01-01T00:00:00.000Z")
-      set_updated_at(sqlite_path, t2, "2024-01-02T00:00:00.000Z")
-      set_updated_at(sqlite_path, t3, "2024-01-03T00:00:00.000Z")
-      set_updated_at(sqlite_path, t4, "2024-01-04T00:00:00.000Z")
-
-      rows = TaskRegistry.list_task_ids([:completed, :failed])
-
-      assert Enum.map(rows, & &1.id) |> Enum.sort() == Enum.sort([t1, t2])
-      assert Enum.all?(rows, &(&1.status in [:completed, :failed]))
+      # Multiple statuses → the union of matches.
+      union = TaskRegistry.list_task_ids([:completed, :failed])
+      assert Enum.map(union, & &1.id) |> Enum.sort() == Enum.sort([t1, t4])
+      assert Enum.all?(union, &(&1.status in [:completed, :failed]))
     end
   end
 
@@ -1239,60 +987,46 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       :ok
     end
 
-    test "resolves a :running task to :completed when no sched_meta entries remain" do
+    test "resolves :running tasks to :completed when no sched_meta entries remain (preserving a pre-existing branch_name)" do
       unique = System.unique_integer([:positive])
-      task_id = "recheck_resolve_#{unique}"
+      plain_id = "recheck_resolve_#{unique}"
+      named_id = "recheck_preserve_#{unique}"
 
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :running,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: System.system_time(:second) + 300
-        })
+      # Two rows, one without and one WITH a pre-existing branch_name — the
+      # "no result found" resolution must clear the lease for both and must
+      # never clobber an existing branch_name.
+      for {id, branch_name} <- [{plain_id, nil}, {named_id, "evogit/orig"}] do
+        :ok =
+          EvoGit.Store.put_task(store(), %TaskInfo{
+            id: id,
+            type: :genesis,
+            status: :running,
+            opts: [path: "/tmp/test"],
+            ref: nil,
+            started_at: DateTime.utc_now(),
+            finished_at: nil,
+            logs: [],
+            result: nil,
+            branch_name: branch_name,
+            lease_expires_at: System.system_time(:second) + 300
+          })
+      end
 
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      send(TaskRegistry.server(), {:recheck_task, task_id})
-      assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
+      send(TaskRegistry.server(), {:recheck_task, plain_id})
+      send(TaskRegistry.server(), {:recheck_task, named_id})
+      assert_receive {:task_updated, ^plain_id, :completed, _}, 1_000
+      assert_receive {:task_updated, ^named_id, :completed, _}, 1_000
 
-      fetched = EvoGit.Store.get_task(store(), task_id)
+      fetched = EvoGit.Store.get_task(store(), plain_id)
       assert fetched.status == :completed
       assert fetched.finished_at != nil
       assert fetched.lease_expires_at == nil
       assert fetched.branch_name == nil
-    end
 
-    test "does not clobber an existing branch_name when no result is found" do
-      unique = System.unique_integer([:positive])
-      task_id = "recheck_preserve_#{unique}"
-
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :running,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          branch_name: "evogit/orig"
-        })
-
-      Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
-      send(TaskRegistry.server(), {:recheck_task, task_id})
-      assert_receive {:task_updated, ^task_id, :completed, _}, 1_000
-
-      fetched = EvoGit.Store.get_task(store(), task_id)
-      assert fetched.status == :completed
-      assert fetched.branch_name == "evogit/orig"
+      preserved = EvoGit.Store.get_task(store(), named_id)
+      assert preserved.status == :completed
+      assert preserved.branch_name == "evogit/orig"
     end
 
     test "reschedules while any sched_meta entry remains; resolves after cleanup" do
@@ -1515,14 +1249,21 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert_receive {:task_updated, ^task_id, :cancelling, _}, 1_000
 
       # Exactly one broadcast (the :cancelling one) may be emitted FOR THIS TASK.
-      # A single shared 200ms quiet window covers both message shapes so the check
-      # costs one window instead of two — flunking on the FIRST unexpected
-      # message. Broadcasts about OTHER task ids are ignored: the "tasks" topic
-      # is process-global, so another registry instance's traffic must not fail
-      # this test (the assertion is pinned to this task's id either way).
-      deadline = System.monotonic_time(:millisecond) + 200
+      # ZERO-WAIT, on ordering rather than a quiet window: `cancel_task/1` is a
+      # synchronous `GenServer.call` and the handler emits EVERY broadcast it
+      # makes INLINE before replying (the :cancelling transition comes from the
+      # `handle_update_status/6` call at task_registry.ex, the pending-arm
+      # :cancelled one from the branch itself, and the agent notification from
+      # `AgentScheduler.begin_graceful_cancel/1` — all inside the same handler).
+      # Broadcasts are registry → test and the reply is registry → test too, so
+      # signal order guarantees anything the handler broadcast is ALREADY in
+      # this mailbox once the call returns; a `0`-timeout refute is therefore
+      # complete evidence that no second broadcast was emitted, at no wall-clock
+      # cost. Both shapes are pinned to this task's id, so another registry
+      # instance's traffic on the process-global "tasks" topic is ignored.
+      refute_receive {:task_updated, ^task_id, _, _}, 0
+      refute_receive {:task_deleted, ^task_id, _}, 0
 
-      assert_no_extra_task_broadcast(task_id, deadline)
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :cancelling
     end
@@ -1662,110 +1403,78 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert {:error, :not_found} = TaskRegistry.cancel_task("cancel_missing_#{unique}")
     end
 
-    test "a completing :cancelling task persists :cancelled with result preserved" do
+    test "a :cancelling task reaching a terminal phase persists :cancelled with the result preserved and no error (both arms)" do
       unique = System.unique_integer([:positive])
-      task_id = "cancel_final_map_#{unique}"
 
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :cancelling,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: System.system_time(:second) + 300
-        })
+      # The wrapper completes (:completed arm) or fails (:failed arm) during the
+      # grace period — `handle_update_status` must force-map BOTH to :cancelled,
+      # PRESERVE the intermediate result, and never persist an error payload
+      # (a graceful cancel is never a failure).
+      cases = [
+        {:completed, {:ok, %{branch_name: "feat/x"}}},
+        {:failed, {:error, "boom during grace"}}
+      ]
 
-      # Simulate the marker being registered by the earlier graceful cancel.
-      :ets.insert(:evogit_cancelling_tasks, {task_id})
-      on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
+      ids =
+        for {idx, {terminal_status, result}} <- Enum.with_index(cases) do
+          task_id = "cancel_final_map_#{unique}_#{idx}"
 
-      # The wrapper completes during the grace period with an intermediate
-      # result — handle_update_status must force-map :completed → :cancelled
-      # while PRESERVING the result.
-      TaskRegistry.update_task_status(task_id, :completed, {:ok, %{branch_name: "feat/x"}})
+          :ok =
+            EvoGit.Store.put_task(store(), %TaskInfo{
+              id: task_id,
+              type: :genesis,
+              status: :cancelling,
+              opts: [path: "/tmp/test"],
+              ref: nil,
+              started_at: DateTime.utc_now(),
+              finished_at: nil,
+              logs: [],
+              result: nil,
+              lease_expires_at: System.system_time(:second) + 300
+            })
+
+          # Simulate the marker being registered by the earlier graceful cancel.
+          :ets.insert(:evogit_cancelling_tasks, {task_id})
+          on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
+
+          TaskRegistry.update_task_status(task_id, terminal_status, result,
+            error: %{
+              kind: :error,
+              source: :result_handler,
+              message: "Task failed: #{inspect(result)}",
+              stacktrace: ["(elixir) lib/foo.ex:1: Foo.bar/0"]
+            }
+          )
+
+          task_id
+        end
 
       TaskRegistry.list_tasks()
 
-      fetched = TaskRegistry.get_task(task_id)
+      for {task_id, {_terminal_status, result}} <- Enum.zip(ids, cases) do
+        fetched = TaskRegistry.get_task(task_id)
 
-      assert fetched.status == :cancelled,
-             "cancelling task must end :cancelled, got #{inspect(fetched.status)}"
+        assert fetched.status == :cancelled,
+               "cancelling task must end :cancelled, got #{inspect(fetched.status)}"
 
-      assert fetched.finished_at != nil
-      assert fetched.lease_expires_at == nil
+        assert fetched.finished_at != nil
+        assert fetched.lease_expires_at == nil
 
-      assert fetched.result == {:ok, %{branch_name: "feat/x"}},
-             "result must be preserved, got #{inspect(fetched.result)}"
+        assert fetched.result == result,
+               "result must be preserved, got #{inspect(fetched.result)}"
 
-      # Terminal state cleaned up the marker.
-      refute :ets.member(:evogit_cancelling_tasks, task_id)
-    end
+        # The guard: no error payload rides a :cancelled row.
+        assert fetched.error == nil
 
-    test "graceful-cancel guard: a :cancelling task force-mapped to :cancelled never persists an error" do
-      unique = System.unique_integer([:positive])
-      task_id = "cancel_guard_error_#{unique}"
+        # Column round-trip via the raw Store read agrees.
+        store_fetched = EvoGit.Store.get_task(store(), task_id)
+        assert store_fetched.status == :cancelled
+        assert store_fetched.result == result
+        assert store_fetched.error == nil
 
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :cancelling,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: System.system_time(:second) + 300
-        })
-
-      # Simulate the marker being registered by the earlier graceful cancel.
-      :ets.insert(:evogit_cancelling_tasks, {task_id})
-      on_exit(fn -> :ets.delete(:evogit_cancelling_tasks, task_id) end)
-
-      # The wrapper FAILS during the grace period with an error payload in the
-      # opts — handle_update_status force-maps :failed → :cancelled, and the
-      # error must NOT be persisted (a graceful cancel is never a failure).
-      TaskRegistry.update_task_status(
-        task_id,
-        :failed,
-        {:error, "boom during grace"},
-        error: %{
-          kind: :error,
-          source: :result_handler,
-          message: "Task failed: \"boom during grace\"",
-          stacktrace: ["(elixir) lib/foo.ex:1: Foo.bar/0"]
-        }
-      )
-
-      TaskRegistry.list_tasks()
-
-      fetched = TaskRegistry.get_task(task_id)
-
-      assert fetched.status == :cancelled,
-             "cancelling task must end :cancelled, got #{inspect(fetched.status)}"
-
-      assert fetched.finished_at != nil
-      assert fetched.lease_expires_at == nil
-
-      assert fetched.result == {:error, "boom during grace"},
-             "result must be preserved, got #{inspect(fetched.result)}"
-
-      # The guard: no error payload rides a :cancelled row.
-      assert fetched.error == nil
-
-      # Column round-trip via the raw Store read agrees.
-      store_fetched = EvoGit.Store.get_task(store(), task_id)
-      assert store_fetched.status == :cancelled
-      assert store_fetched.error == nil
-
-      # Terminal state cleaned up the marker.
-      refute :ets.member(:evogit_cancelling_tasks, task_id)
+        # Terminal state cleaned up the marker.
+        refute :ets.member(:evogit_cancelling_tasks, task_id)
+      end
     end
 
     test "a :finalizing broadcast does not clobber :cancelling" do
@@ -1799,49 +1508,7 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
              "a cancelling task reaching phase finalization must keep :cancelling, got #{inspect(fetched.status)}"
     end
 
-    test "force_kill_task works from :running" do
-      unique = System.unique_integer([:positive])
-      task_id = "forcekill_running_#{unique}"
-      wrapper = spawn(fn -> Process.sleep(:infinity) end)
-
-      :ok =
-        EvoGit.Store.put_task(store(), %TaskInfo{
-          id: task_id,
-          type: :genesis,
-          status: :running,
-          opts: [path: "/tmp/test"],
-          ref: nil,
-          started_at: DateTime.utc_now(),
-          finished_at: nil,
-          logs: [],
-          result: nil,
-          lease_expires_at: System.system_time(:second) + 300
-        })
-
-      # Make the task "owned": inject a live wrapper into task_refs.
-      :sys.replace_state(TaskRegistry.server(), fn state ->
-        %{
-          state
-          | task_refs: Map.put(state.task_refs, task_id, cancel_test_task(wrapper))
-        }
-      end)
-
-      assert :ok = TaskRegistry.force_kill_task(task_id)
-
-      fetched = TaskRegistry.get_task(task_id)
-      # Force-killed tasks are persisted as :failed — "cancelled" now means ONLY
-      # gracefully-cancelled tasks (the :cancelling → :cancelled final mapping).
-      assert fetched.status == :failed
-      assert fetched.finished_at != nil
-      assert fetched.lease_expires_at == nil
-      # Force-killed tasks have no result.
-      assert fetched.result == nil
-
-      state = :sys.get_state(TaskRegistry.server())
-      refute Map.has_key?(state.task_refs, task_id)
-    end
-
-    test "force_kill_task records the force-kill error payload with result nil" do
+    test "force_kill_task works from :running and records the force-kill error payload with result nil" do
       unique = System.unique_integer([:positive])
       task_id = "forcekill_error_#{unique}"
       wrapper = spawn(fn -> Process.sleep(:infinity) end)
@@ -1958,39 +1625,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       _msg -> drain_tasks_mailbox()
     after
       0 -> :ok
-    end
-  end
-
-  # Asserts that no FURTHER `"tasks"`-topic broadcast is emitted for `task_id`
-  # within a bounded quiet window ending at `deadline` (monotonic ms),
-  # flunking on the FIRST unexpected message. Broadcasts about OTHER task ids
-  # come from other registry instances sharing the process-global `"tasks"`
-  # topic and are ignored; a message that is not a `"tasks"` broadcast is
-  # likewise ignored (it belongs to another test's traffic).
-  defp assert_no_extra_task_broadcast(task_id, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining > 0 do
-      receive do
-        {:task_updated, ^task_id, _, _} = m ->
-          flunk("unexpected extra task_updated broadcast: #{inspect(m)}")
-
-        {:task_deleted, ^task_id, _} = m ->
-          flunk("unexpected task_deleted broadcast: #{inspect(m)}")
-
-        {:task_updated, _, _, _} ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-
-        {:task_deleted, _, _} ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-
-        _other ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-      after
-        remaining -> :ok
-      end
-    else
-      :ok
     end
   end
 

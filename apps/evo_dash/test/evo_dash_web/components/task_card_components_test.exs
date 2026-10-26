@@ -22,19 +22,12 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
              ) == "Build the web app"
     end
 
-    test "falls back to :objective when :prompt is absent" do
+    test "falls back to :objective when :prompt is absent or nil (and trims it)" do
       assert TaskCardComponents.objective_text(objective: "  Fix the login bug  ") ==
                "Fix the login bug"
-    end
 
-    test "falls back to :objective when :prompt is nil" do
       assert TaskCardComponents.objective_text(prompt: nil, objective: "fallback text") ==
                "fallback text"
-    end
-
-    test "trims leading and trailing whitespace" do
-      assert TaskCardComponents.objective_text(prompt: "   padded objective   ") ==
-               "padded objective"
     end
 
     test "empty, nil, or whitespace-only opts return an empty string" do
@@ -46,18 +39,14 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
   end
 
   describe "result_copy_text/1" do
-    test "success result copies the raw agent message" do
+    test "success (incl. no-changes) and plain map results copy the raw agent message" do
       assert TaskCardComponents.result_copy_text({:ok, %{result: "the agent message"}}) ==
                "the agent message"
-    end
 
-    test "no-changes success still copies the raw agent message" do
       assert TaskCardComponents.result_copy_text(
                {:ok, %{no_changes: true, result: "nothing to do"}}
              ) == "nothing to do"
-    end
 
-    test "plain map result copies the raw message" do
       assert TaskCardComponents.result_copy_text(%{result: "plain message"}) == "plain message"
     end
 
@@ -241,24 +230,16 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       assert html =~ "/review/"
     end
 
-    test "a completed :reflect (repo-less) task never renders the Review button" do
-      html =
-        render_component(&TaskCardComponents.task_card/1,
-          task: review_task(type: :reflect, status: :completed, result: {:ok, %{result: "chat"}})
-        )
+    test "a :reflect (repo-less) task never renders the Review button" do
+      for status <- [:completed, :cancelled] do
+        html =
+          render_component(&TaskCardComponents.task_card/1,
+            task: review_task(type: :reflect, status: status, result: {:ok, %{result: "chat"}})
+          )
 
-      refute html =~ "/review/"
-      refute html =~ "hero-eye"
-    end
-
-    test "a cancelled :reflect task never renders the Review button" do
-      html =
-        render_component(&TaskCardComponents.task_card/1,
-          task: review_task(type: :reflect, status: :cancelled, result: {:ok, %{result: "chat"}})
-        )
-
-      refute html =~ "/review/"
-      refute html =~ "hero-eye"
+        refute html =~ "/review/"
+        refute html =~ "hero-eye"
+      end
     end
 
     test "non-reviewable statuses never render the Review button" do

@@ -9,13 +9,20 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
   `EvoGit.Application`'s children after `Phoenix.PubSub`, `:permanent`
   restart).
 
-  Waits for the flush are **event-driven**: the throttle clears its pending
-  timer reference exactly when it flushes, so `await_flush/0` polls the
-  throttle's own GenServer state (`nil` == flushed) instead of guessing `2x`
-  the 200ms debounce with a fixed wall-clock window. The 200ms debounce is
-  best-effort — under CPU load the timer and its delivery drift well past any
-  fixed multiple of it — so a fixed window is inherently racy while polling the
-  actual flush event is not.
+  Flushes are driven **synchronously** instead of being awaited: the
+  `:schedule` casts are FIFO-ordered ahead of a `:sys.get_state/1` system
+  message, so the state read after N casts already shows the ONE pending
+  debounce timer (each cast cancels and re-arms the previous one).
+  `drive_pending_flush/0` cancels that single timer and delivers the `:flush`
+  it was going to send — the exact debounce event, without waiting out the
+  real 200ms window. The coalescing contract is unchanged: N casts must yield
+  ONE pending timer and therefore exactly ONE `{:agents_updated, node}`
+  broadcast (three per-cast broadcasts would arrive as three messages), and
+  the cancelled timer can never produce a second one.
+
+  This also removes the wall-clock dependency the old `2x`-debounce polling
+  had: under CPU load a timer and its delivery drift well past any fixed
+  multiple of 200ms, while the synchronous flush has no window to miss.
 
   Uses `async: false` because the throttle process and the `EvoGit.PubSub`
   topic are global — shared with the running application and other test
@@ -30,11 +37,12 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
 
   @topic PubSub.agent_topic()
 
-  # Liveness ceiling for the event-driven flush wait. This is NOT a debounce
-  # budget: `await_flush/0` returns as soon as the throttle's own state shows
-  # the flush happened, so this only trips if the throttle is genuinely wedged
-  # (never flushes) — not merely slow.
-  @flush_liveness_ms 15_000
+  # Liveness ceiling for the negative assertions below. It is NOT a debounce
+  # budget: the pending timer is CANCELLED by `drive_pending_flush/0` before
+  # it can fire, so nothing legitimate can broadcast here at all — this only
+  # catches a duplicate/bugged flush, delivered from the same node (a local
+  # message delivery takes microseconds).
+  @no_duplicate_ms 25
 
   setup do
     Phoenix.PubSub.subscribe(EvoGit.PubSub, @topic)
@@ -59,34 +67,31 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     end
   end
 
-  # Waits until the throttle has performed its trailing flush, observed on the
-  # throttle's OWN state rather than a fixed wall-clock multiple of the 200ms
-  # debounce. `handle_info(:flush, _)` clears the stored timer ref, so a `nil`
-  # state means the flush has run and its `{:agents_updated, node}` broadcast
-  # has already been enqueued into every subscriber's mailbox.
+  # Drives the throttle's ONE pending trailing flush synchronously.
   #
-  # The `:sys.get_state/1` message is FIFO-ordered after the
-  # `broadcast_agents_updated/0` casts issued earlier by this same process, so
-  # the first read reflects those casts (a timer ref) and the wait ends exactly
-  # when the flush clears it. This is immune to the CPU-load-induced timer and
-  # delivery drift that makes a fixed `assert_receive` window flaky.
-  defp await_flush do
-    deadline = System.monotonic_time(:millisecond) + @flush_liveness_ms
-    do_await_flush(deadline)
-  end
+  # The caller's `broadcast_agents_updated/0` calls are `GenServer.cast`s from
+  # THIS process and the `:sys.get_state/1` below is FIFO-ordered behind them,
+  # so the state read already reflects every cast: a single timer reference
+  # (`handle_cast(:schedule, _)` cancels the previous timer and re-arms it).
+  # Cancelling that one reference and delivering the `:flush` it was going to
+  # send reproduces the debounce event immediately, and the cancelled timer can
+  # no longer deliver a second one.
+  #
+  # If the debounce already elapsed on its own (a very slow host stalled this
+  # process for >200ms between the cast and the state read), the state is `nil`
+  # and the natural flush has already broadcast — nothing to drive.
+  defp drive_pending_flush do
+    pid = Process.whereis(Throttle)
+    assert is_pid(pid)
 
-  defp do_await_flush(deadline) do
-    case :sys.get_state(Throttle) do
+    case :sys.get_state(pid) do
       nil ->
-        :ok
+        :already_flushed
 
       ref when is_reference(ref) ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          flunk("throttle did not flush within #{@flush_liveness_ms}ms — is it wedged?")
-        else
-          Process.sleep(2)
-          do_await_flush(deadline)
-        end
+        # `false` == the timer already fired; its flush is then in the queue.
+        if Process.cancel_timer(ref), do: send(pid, :flush)
+        :driven
     end
   end
 
@@ -95,22 +100,24 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     PubSub.broadcast_agents_updated()
     PubSub.broadcast_agents_updated()
 
-    # Wait for the throttle's own trailing flush (event-driven) instead of
-    # guessing `2x` the @throttle_ms floor: under load the 200ms timer expires
-    # late (measured well past 400ms), so a fixed window sits on the boundary.
-    await_flush()
+    # Drive the ONE collapsing flush now instead of waiting out the 200ms
+    # debounce (see drive_pending_flush/0).
+    drive_pending_flush()
 
     # The single coalesced broadcast is already enqueued by the time the flush
-    # cleared the throttle's timer, so this matches immediately.
+    # ran, so this matches immediately.
     assert_receive {:agents_updated, bcast_node}, 1_000
     assert bcast_node == node()
 
-    # The three back-to-back casts must not produce a second flush. A duplicate
-    # flush from OUR casts would have been armed alongside the first (they were
-    # issued back-to-back, each cancelling and re-arming the pending timer) and
-    # delivered ~@throttle_ms later, so any duplicate is already in the mailbox
-    # by now — `refute_receive` fails on an already-delivered match.
-    refute_receive {:agents_updated, _node}, 100
+    # The flush cleared the pending timer reference, and it was the ONLY one:
+    # the three back-to-back casts each cancelled + re-armed the same pending
+    # timer instead of arming one timer each.
+    assert :sys.get_state(Throttle) == nil
+
+    # ... so no second flush can follow. Any duplicate would already be in the
+    # mailbox by now (`refute_receive` fails on an already-delivered match),
+    # and the cancelled timer can no longer fire.
+    refute_receive {:agents_updated, _node}, @no_duplicate_ms
   end
 
   test "broadcast without a throttle process falls back to immediate dispatch with the node element" do
@@ -127,7 +134,8 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
 
     # The fallback broadcasts synchronously in the caller, so the message is in
     # our mailbox before this returns — the short timeout just pins that the
-    # throttled path was not taken (a throttle flush would take ≥@throttle_ms).
+    # throttled path was not taken (a throttled flush would take ≥ the 200ms
+    # debounce).
     assert_receive {:agents_updated, bcast_node}, 100
     assert bcast_node == node()
   end
@@ -143,11 +151,11 @@ defmodule EvoGit.AgentScheduler.PubSubTest do
     assert is_pid(new_pid)
     assert new_pid != old_pid
 
-    # The restarted throttle must serve broadcasts again. Wait on its own state
-    # (event-driven) rather than a fixed `2x` debounce window.
+    # The restarted throttle must serve broadcasts again. Drive its pending
+    # flush synchronously rather than waiting a fixed debounce window.
     drain_mailbox()
     PubSub.broadcast_agents_updated()
-    await_flush()
+    drive_pending_flush()
     assert_receive {:agents_updated, bcast_node}, 1_000
     assert bcast_node == node()
   end

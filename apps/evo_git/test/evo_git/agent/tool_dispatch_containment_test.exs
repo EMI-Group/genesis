@@ -115,9 +115,22 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       "Some output may have been partially captured by the tool."
   end
 
-  setup do
+  # The repository is a MODULE-level fixture: every test here drives FAKE tools
+  # (the `:tool_dispatch_test_tools` registry), so no test ever reads, writes or
+  # commits into it — it only has to exist with a resolvable HEAD for the
+  # agent-state plumbing. Building it once instead of per test removes one
+  # `git init` + identity config + add + commit + `rev-parse` (5 subprocesses,
+  # each a `:file`-server PATH round trip) from each of the 14 tests.
+  setup_all do
     repo = new_repo!()
     {:ok, head} = Git.rev_parse(repo)
+
+    on_exit(fn -> File.rm_rf!(repo) end)
+
+    %{repo: repo, head: head}
+  end
+
+  setup %{repo: repo, head: head} do
     agent_id = 9_970_000 + :erlang.unique_integer([:positive])
 
     agent_state = %EvoGit.AgentScheduler.AgentState{
@@ -145,7 +158,6 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       # holds no slot is a no-op.
       EvoGit.AgentScheduler.release_tool_slot(agent_id)
       EvoGit.AgentScheduler.Store.delete_agent_state(agent_id)
-      File.rm_rf!(repo)
     end)
 
     %{repo: repo}
@@ -675,6 +687,8 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     assert EvoGit.Config.resolve([:scheduler, :default_tool_timeout]) == timeout_ms
   end
 
+  # Builds the ONE module-level repository fixture (see `setup_all`): a real git
+  # repo with an initial commit, serving only as the agent-state repo path.
   defp new_repo! do
     repo =
       Path.join(
@@ -683,7 +697,6 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       )
 
     File.mkdir_p!(repo)
-    on_exit(fn -> File.rm_rf!(repo) end)
     {:ok, _} = Git.init(repo)
     {:ok, _} = Git.run(["config", "user.email", "test@example.com"], repo)
     {:ok, _} = Git.run(["config", "user.name", "Test User"], repo)

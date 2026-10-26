@@ -14,6 +14,9 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
 
   alias EvoDashWeb.AgentsLive.ToolCallDisplay
 
+  @long String.duplicate("x", 260)
+  @capped String.duplicate("x", 200)
+
   # A shell tool call (`run_bash`) whose `command` argument is `cmd`.
   defp shell_call(cmd) do
     %ReqLLM.ToolCall{
@@ -31,72 +34,62 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
   # localized msgid, so match by position rather than by label text).
   defp row_value(%{rows: [{_key, value}]}), do: value
 
-  describe "background shell call detection" do
+  describe "background shell calls" do
     # A `bash` call carrying `run_in_background: true` starts a DETACHED job
     # (the call returns a job id immediately) — it must be distinguishable from
     # a foreground shell call, which keeps the plain `Shell call` descriptor.
-    test "a JSON boolean `true` yields the background variant" do
-      descriptor =
-        ToolCallDisplay.display(
-          call("bash", %{"command" => "npm run dev", "run_in_background" => true})
-        )
-
-      assert descriptor.kind == :structured
-      assert descriptor.variant == :background_shell
-      assert descriptor.label == "Background shell call"
-      assert descriptor.rows == [{"Command", "npm run dev"}]
-    end
-
-    test "the string \"true\" is accepted (the core's lenient reading)" do
-      descriptor =
-        ToolCallDisplay.display(
-          call("bash", %{"command" => "npm run dev", "run_in_background" => "true"})
-        )
-
-      assert descriptor.variant == :background_shell
-      assert descriptor.label == "Background shell call"
-      assert row_value(descriptor) == "npm run dev"
-    end
-
-    test "map-shaped arguments (not a JSON string) are detected too" do
+    test "a JSON boolean, the string \"true\" and map-shaped arguments all yield the background variant" do
       map_call = %ReqLLM.ToolCall{
         id: "c",
         function: %{
           name: "bash",
-          arguments: %{"command" => "make", "run_in_background" => true}
+          arguments: %{"command" => "npm run dev", "run_in_background" => true}
         }
       }
 
-      assert %{variant: :background_shell, label: "Background shell call"} =
-               ToolCallDisplay.display(map_call)
-    end
+      rows = [
+        {call("bash", %{"command" => "npm run dev", "run_in_background" => true}), "npm run dev"},
+        {call("bash", %{"command" => "npm run dev", "run_in_background" => "true"}),
+         "npm run dev"},
+        {map_call, "npm run dev"},
+        # The background variant keeps the 200-char Command truncation contract.
+        {call("bash", %{"command" => @long, "run_in_background" => true}),
+         String.slice(@long, 0, 200) <> "…"}
+      ]
 
-    test "false, \"false\", absent and junk values all stay a normal Shell call" do
-      for args <- [
-            %{"command" => "ls", "run_in_background" => false},
-            %{"command" => "ls", "run_in_background" => "false"},
-            %{"command" => "ls"},
-            %{"command" => "ls", "run_in_background" => "yes"},
-            %{"command" => "ls", "run_in_background" => 1},
-            %{"command" => "ls", "run_in_background" => nil}
-          ] do
-        descriptor = ToolCallDisplay.display(call("bash", args))
+      for {tool_call, expected_row} <- rows do
+        descriptor = ToolCallDisplay.display(tool_call)
 
-        assert descriptor.label == "Shell call"
-        assert descriptor.kind == :structured
-        assert row_value(descriptor) == "ls"
-        # The historical descriptor shape stays byte-identical (no :variant key).
-        refute Map.has_key?(descriptor, :variant)
+        assert {descriptor.kind, descriptor.variant, descriptor.label, row_value(descriptor)} ===
+                 {:structured, :background_shell, "Background shell call", expected_row}
       end
     end
 
-    test "undecodable arguments fall back to a normal Shell call" do
-      raw_call = %ReqLLM.ToolCall{id: "c", function: %{name: "bash", arguments: "not json"}}
+    test "false, junk and undecodable arguments all stay a normal Shell call" do
+      args = [
+        %{"command" => "ls", "run_in_background" => false},
+        %{"command" => "ls", "run_in_background" => "false"},
+        %{"command" => "ls"},
+        %{"command" => "ls", "run_in_background" => "yes"},
+        %{"command" => "ls", "run_in_background" => 1},
+        %{"command" => "ls", "run_in_background" => nil}
+      ]
 
-      descriptor = ToolCallDisplay.display(raw_call)
+      rows =
+        [
+          {%ReqLLM.ToolCall{id: "c", function: %{name: "bash", arguments: "not json"}},
+           "not json"}
+          | for(args <- args, do: {call("bash", args), "ls"})
+        ]
 
-      assert descriptor.label == "Shell call"
-      refute Map.has_key?(descriptor, :variant)
+      for {tool_call, expected_row} <- rows do
+        descriptor = ToolCallDisplay.display(tool_call)
+
+        # The historical descriptor shape stays byte-identical (no :variant key).
+        assert {descriptor.label, descriptor.kind, row_value(descriptor),
+                Map.has_key?(descriptor, :variant)} ===
+                 {"Shell call", :structured, expected_row, false}
+      end
     end
 
     test "the flag only affects the shell tool" do
@@ -105,167 +98,102 @@ defmodule EvoDashWeb.AgentsLive.ToolCallDisplayTest do
 
       assert descriptor == %{label: "read_file", kind: :inline, summary: "./a.ex"}
     end
-
-    test "the background variant keeps the 200-char Command truncation contract" do
-      cmd = String.duplicate("x", 260)
-
-      descriptor =
-        ToolCallDisplay.display(call("bash", %{"command" => cmd, "run_in_background" => true}))
-
-      assert row_value(descriptor) == String.slice(cmd, 0, 200) <> "…"
-    end
   end
 
-  describe "display/1 truncation (compact mode)" do
-    test "a shell call's Command row is capped at 200 chars plus a trailing ellipsis" do
-      cmd = String.duplicate("x", 260)
+  describe "display/1 compact truncation and display/2 mode :full" do
+    test "compact caps a Command row at 200 chars plus an ellipsis; :full never caps" do
+      rows = [
+        {[], @long, String.slice(@long, 0, 200) <> "…", true},
+        # A command at exactly the 200-char cap is left untouched.
+        {[], @capped, @capped, false},
+        {[mode: :full], @long, @long, false}
+      ]
 
-      descriptor = ToolCallDisplay.display(shell_call(cmd))
+      for {opts, cmd, expected, ellipsis?} <- rows do
+        descriptor = ToolCallDisplay.display(shell_call(cmd), opts)
 
-      assert descriptor.kind == :structured
-      assert descriptor.label == "Shell call"
-      assert row_value(descriptor) == String.slice(cmd, 0, 200) <> "…"
+        assert {descriptor.kind, descriptor.label, row_value(descriptor),
+                String.ends_with?(row_value(descriptor), "…")} ===
+                 {:structured, "Shell call", expected, ellipsis?}
+      end
     end
 
-    test "a command at exactly the 200-char cap is left untouched" do
-      cmd = String.duplicate("x", 200)
-
-      descriptor = ToolCallDisplay.display(shell_call(cmd))
-
-      assert row_value(descriptor) == cmd
-      refute String.ends_with?(row_value(descriptor), "…")
-    end
-  end
-
-  describe "display/2 mode: :full (uncapped)" do
-    test "the complete command is returned with no trailing ellipsis" do
-      cmd = String.duplicate("x", 260)
-
-      descriptor = ToolCallDisplay.display(shell_call(cmd), mode: :full)
-
-      assert descriptor.kind == :structured
-      assert descriptor.label == "Shell call"
-      assert row_value(descriptor) == cmd
-      refute String.ends_with?(row_value(descriptor), "…")
-    end
-  end
-
-  describe "display/2 mode fallback (unknown / nil / non-keyword opts -> compact)" do
     test "an unknown :mode, a nil :mode and a non-keyword opts map all equal display/1" do
-      cmd = String.duplicate("x", 260)
-      call = shell_call(cmd)
-
-      compact = ToolCallDisplay.display(call)
+      tool_call = shell_call(@long)
+      compact = ToolCallDisplay.display(tool_call)
 
       # Only `mode: :full` opts into full mode; every other opts shape resolves
       # to the compact default.
-      assert ToolCallDisplay.display(call, mode: :bogus) == compact
-      assert ToolCallDisplay.display(call, mode: nil) == compact
-      assert ToolCallDisplay.display(call, %{mode: :full}) == compact
-      assert ToolCallDisplay.display(call, nil) == compact
-      assert ToolCallDisplay.display(call, []) == compact
-      assert ToolCallDisplay.display(call, [:mode]) == compact
+      for opts <- [[mode: :bogus], [mode: nil], %{mode: :full}, nil, [], [:mode]] do
+        assert ToolCallDisplay.display(tool_call, opts) == compact
+      end
     end
-  end
 
-  describe "display/2 totality" do
     test "nil and an empty map never raise and always carry a :label and :kind" do
-      for call <- [nil, %{}] do
-        descriptor = ToolCallDisplay.display(call)
+      for tool_call <- [nil, %{}] do
+        descriptor = ToolCallDisplay.display(tool_call)
 
-        assert is_binary(descriptor.label)
-        assert descriptor.kind in [:structured, :inline]
+        assert {is_binary(descriptor.label), descriptor.kind in [:structured, :inline]} ===
+                 {true, true}
       end
     end
   end
 
   describe "alias-aware names (model-facing -> previous rendering)" do
-    test "read renders as the historical read_file inline path row" do
-      descriptor = ToolCallDisplay.display(call("read", %{"path" => "./lib/app.ex"}))
+    test "file and search tools render as their historical inline rows" do
+      path = "./lib/app.ex"
 
-      assert descriptor == %{label: "read_file", kind: :inline, summary: "./lib/app.ex"}
+      rows = [
+        {"read", %{"path" => path}, %{label: "read_file", kind: :inline, summary: path}},
+        {"read_file", %{"path" => path}, %{label: "read_file", kind: :inline, summary: path}},
+        {"edit", %{"path" => path}, %{label: "edit_file", kind: :inline, summary: path}},
+        {"write", %{"path" => "./lib/new.ex"},
+         %{label: "write_file", kind: :inline, summary: "./lib/new.ex"}},
+        {"web_search", %{"query" => "elixir genserver"},
+         %{label: "search_web", kind: :inline, summary: ~s({"query":"elixir genserver"})}},
+        {"rg", %{"pattern" => "TODO"},
+         %{label: "rg", kind: :inline, summary: ~s({"pattern":"TODO"})}},
+        {"glob", %{"pattern" => "**/*.ex"},
+         %{label: "glob", kind: :inline, summary: ~s({"pattern":"**/*.ex"})}},
+        {"my_custom_tool", %{"path" => path},
+         %{label: "my_custom_tool", kind: :inline, summary: path}}
+      ]
+
+      for {name, args, expected} <- rows do
+        assert ToolCallDisplay.display(call(name, args)) == expected
+      end
     end
 
-    test "edit renders as the historical edit_file inline label" do
-      descriptor = ToolCallDisplay.display(call("edit", %{"path" => "./lib/app.ex"}))
+    test "shell tools render as a Shell call with a Command row" do
+      for {name, cmd} <- [
+            {"bash", "mix test apps/evo_dash/test"},
+            {"Bash", "ls -la"},
+            {"run_bash", "ls"}
+          ] do
+        descriptor = ToolCallDisplay.display(call(name, %{"command" => cmd}))
 
-      assert descriptor.label == "edit_file"
-      assert descriptor.kind == :inline
-      assert descriptor.summary == "./lib/app.ex"
-    end
-
-    test "write renders as the historical write_file inline label" do
-      descriptor = ToolCallDisplay.display(call("write", %{"path" => "./lib/new.ex"}))
-
-      assert descriptor.label == "write_file"
-      assert descriptor.kind == :inline
-      assert descriptor.summary == "./lib/new.ex"
-    end
-
-    test "bash renders as a Shell call with a Command row" do
-      cmd = "mix test apps/evo_dash/test"
-
-      descriptor = ToolCallDisplay.display(call("bash", %{"command" => cmd}))
-
-      assert descriptor.label == "Shell call"
-      assert descriptor.kind == :structured
-      assert row_value(descriptor) == cmd
-    end
-
-    test "Bash (capitalized) is a shell call too" do
-      descriptor = ToolCallDisplay.display(call("Bash", %{"command" => "ls -la"}))
-
-      assert descriptor.label == "Shell call"
-      assert descriptor.kind == :structured
-      assert row_value(descriptor) == "ls -la"
-    end
-
-    test "web_search renders as the historical search_web inline label" do
-      descriptor = ToolCallDisplay.display(call("web_search", %{"query" => "elixir genserver"}))
-
-      assert descriptor.label == "search_web"
-      assert descriptor.kind == :inline
-      assert descriptor.summary == ~s({"query":"elixir genserver"})
-    end
-
-    test "rg and glob keep their own names" do
-      assert %{label: "rg"} = ToolCallDisplay.display(call("rg", %{"pattern" => "TODO"}))
-      assert %{label: "glob"} = ToolCallDisplay.display(call("glob", %{"pattern" => "**/*.ex"}))
-    end
-
-    test "a legacy read_file call still labels read_file" do
-      descriptor = ToolCallDisplay.display(call("read_file", %{"path" => "./lib/app.ex"}))
-
-      assert descriptor == %{label: "read_file", kind: :inline, summary: "./lib/app.ex"}
-    end
-
-    test "an unknown/custom tool name passes through unchanged" do
-      descriptor =
-        ToolCallDisplay.display(call("my_custom_tool", %{"path" => "./lib/app.ex"}))
-
-      assert descriptor.label == "my_custom_tool"
-      assert descriptor.kind == :inline
-      assert descriptor.summary == "./lib/app.ex"
+        assert {descriptor.label, descriptor.kind, row_value(descriptor)} ===
+                 {"Shell call", :structured, cmd}
+      end
     end
 
     test "the accepted subagent alias spellings render as structured subagent rows" do
       args = %{"path" => "./lib", "objective" => "Investigate the store"}
+      expected = [{"Path", "./lib"}, {"Objective", "Investigate the store"}]
 
       for name <- ["subagent_manager", "subagent", "task"] do
         descriptor = ToolCallDisplay.display(call(name, args))
 
-        assert descriptor.kind == :structured
         # The label is the normalized internal key (`subagent_manager`).
-        assert descriptor.label == "subagent_manager"
-        assert descriptor.rows == [{"Path", "./lib"}, {"Objective", "Investigate the store"}]
+        assert {descriptor.kind, descriptor.label, descriptor.rows} ===
+                 {:structured, "subagent_manager", expected}
       end
     end
 
     test "a non-binary name falls back to the unknown label" do
       descriptor = ToolCallDisplay.display(%{name: nil})
 
-      assert descriptor.label == "unknown"
-      assert descriptor.kind == :inline
+      assert {descriptor.label, descriptor.kind} === {"unknown", :inline}
     end
   end
 end

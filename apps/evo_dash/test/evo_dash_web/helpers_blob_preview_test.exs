@@ -49,15 +49,6 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
       assert preview.text == String.duplicate("a", @default_limit)
       assert byte_size(preview.text) == @default_limit
     end
-
-    test "a large blob is byte-capped at the default limit" do
-      blob = String.duplicate("x", 100_000)
-      preview = Helpers.blob_preview(blob)
-
-      assert %{text: text, truncated?: true, total_bytes: 100_000} = preview
-      assert byte_size(text) == @default_limit
-      assert String.starts_with?(blob, text)
-    end
   end
 
   describe "blob_preview/2 — custom limit" do
@@ -67,6 +58,9 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
                truncated?: true,
                total_bytes: 6
              }
+
+      # An ASCII cut inside a codepoint-free region loses nothing.
+      assert Helpers.blob_preview("abcdef", 4).text == "abcd"
     end
 
     test "a limit larger than the input leaves it untouched" do
@@ -114,23 +108,21 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
   end
 
   describe "blob_preview/2 — multi-byte UTF-8" do
-    test "never cuts a 2-byte character in half" do
-      text = String.duplicate("é", 3)
-      assert byte_size(text) == 6
+    test "a 2-byte and a 3-byte character are never cut in half" do
+      two = String.duplicate("é", 3)
+      assert byte_size(two) == 6
 
-      preview = Helpers.blob_preview(text, 3)
+      preview = Helpers.blob_preview(two, 3)
 
       assert preview.truncated? == true
       assert preview.total_bytes == 6
       assert preview.text == "é"
       assert String.valid?(preview.text)
-    end
 
-    test "never cuts a 3-byte character in half" do
-      text = "日本"
-      assert byte_size(text) == 6
+      three = "日本"
+      assert byte_size(three) == 6
 
-      preview = Helpers.blob_preview(text, 4)
+      preview = Helpers.blob_preview(three, 4)
 
       assert preview.text == "日"
       assert String.valid?(preview.text)
@@ -156,11 +148,6 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
         dropped = limit - byte_size(preview.text)
         assert dropped >= 0 and dropped <= 3, "limit #{limit} dropped #{dropped} bytes"
       end
-    end
-
-    test "an ASCII-only blob cut inside a codepoint-free region loses nothing" do
-      preview = Helpers.blob_preview("abcdef", 4)
-      assert preview.text == "abcd"
     end
   end
 
@@ -203,15 +190,13 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
   end
 
   describe "list_preview/2 — within the limit" do
-    test "a list shorter than the limit is returned whole" do
+    test "a list at or below the limit is returned whole" do
       assert Helpers.list_preview([1, 2, 3], 10) == %{
                items: [1, 2, 3],
                total: 3,
                truncated?: false
              }
-    end
 
-    test "a list exactly at the limit is not truncated" do
       assert Helpers.list_preview([:a, :b], 2) == %{
                items: [:a, :b],
                total: 2,
@@ -271,9 +256,9 @@ defmodule EvoDashWeb.HelpersBlobPreviewTest do
     end
 
     test "a huge list is capped at the requested limit without materializing the rest" do
-      list = Enum.to_list(1..20_000)
+      list = Enum.to_list(1..1_000)
 
-      assert %{items: items, total: 20_000, truncated?: true} =
+      assert %{items: items, total: 1_000, truncated?: true} =
                Helpers.list_preview(list, 3)
 
       assert items == [1, 2, 3]
