@@ -10,6 +10,7 @@ defmodule EvoDashWeb.SettingsLive do
   alias EvoDashWeb.SettingsLive.CustomAgentEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
   alias EvoDashWeb.SettingsLive.ModelProfileHelpers
+  alias EvoDashWeb.SettingsLive.NodeData
   alias EvoDashWeb.SettingsLive.SearchEvents
 
   # Tag for the async node-data load result message (see
@@ -37,6 +38,23 @@ defmodule EvoDashWeb.SettingsLive do
         {EvoDashWeb.RemoteGateComponents.remote_connection_gate(assigns)}
       <% else %>
         <div class="flex flex-col md:h-full">
+          <%!-- In-progress indicator for an ASYNC config save. Remote-node saves
+           run in a supervised task outside the LiveView (see
+           `persist_config/4`), so the LiveView cannot rely on the shared Save
+           button's own pending state — this banner is the feedback until the
+           `{:config_saved, ...}` result lands. --%>
+          <%= if @config_saving do %>
+            <div
+              id="settings-config-saving"
+              class="mb-4 shrink-0 rounded-lg border border-base-300 bg-base-100 p-3 flex items-center gap-3"
+            >
+              <span class="loading loading-spinner loading-sm text-primary-standalone"></span>
+              <span class="text-sm font-medium text-base-content/80">
+                {gettext("Saving configuration…")}
+              </span>
+            </div>
+          <% end %>
+
           <%!-- Config Status Warning --%>
           <%= if @config_status && not @config_status.ok? do %>
             <div class="mb-4 shrink-0 rounded-lg border border-warning/30 bg-warning/5 p-3 flex items-start gap-3">
@@ -745,7 +763,7 @@ defmodule EvoDashWeb.SettingsLive do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "scheduler_config")
     end
 
-    config_status = config_status()
+    config_status = safe_config_status()
     config_path = EvoGit.Config.config_path()
     config_file_exists = File.exists?(config_path)
     file_config = ConfigIO.load_file_config()
@@ -799,6 +817,10 @@ defmodule EvoDashWeb.SettingsLive do
         file_config: file_config,
         config_path: config_path,
         config_file_exists: config_file_exists,
+        # True while an ASYNC config save (remote node) is in flight — drives
+        # the "Saving configuration…" indicator. Cleared by the
+        # {:config_saved, ...} result handler on EVERY branch.
+        config_saving: false,
         credentials: EvoGit.Config.credentials(),
         llm_providers: EvoGit.Config.LLMCatalog.providers(),
         selected_provider_id: nil,
@@ -830,8 +852,8 @@ defmodule EvoDashWeb.SettingsLive do
         # duplicate-click guard.
         remote_connect_pending: %{},
         bootstrap_restart_confirm: nil,
-        remote_targets: EvoDash.NodeContext.list_targets(),
-        remote_statuses: EvoDash.NodeContext.connection_status(),
+        remote_targets: safe_list_targets(),
+        remote_statuses: safe_connection_statuses(),
         remote_form_target: nil,
         remote_show_advanced: false
       )
@@ -877,8 +899,10 @@ defmodule EvoDashWeb.SettingsLive do
     # cross-node RPCs. The page shell above (with mount's locally-loaded config
     # and the seeded category) renders immediately; the result arrives via
     # handle_info({@node_data_tag, ...}) with a stale-guard against node
-    # switches. Per-save flows (save_category, persist_file_config,
-    # CustomAgentEvents) remain synchronous and reload fresh data themselves.
+    # switches. Per-save flows reload their own fresh data: LOCAL saves stay
+    # synchronous (exit-safe through EvoDash.SafeCall, so a dead scheduler or
+    # config read never crashes the page) while REMOTE saves run in a
+    # supervised task with the `config_saving` indicator — see persist_config/4.
     EvoDashWeb.SettingsLive.NodeData.start(socket, @node_data_tag, params["category"])
 
     {:noreply, socket}
@@ -916,7 +940,7 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info({@node_data_tag, requested_node, category_param, results}, socket) do
+  def handle_info({@node_data_tag, requested_node, category_param, result}, socket) do
     # Stale-guard: the load was requested for `requested_node` at spawn time;
     # if the user has since switched nodes (current_node differs), a newer
     # load is already in flight for the new node — drop this result rather
@@ -924,7 +948,97 @@ defmodule EvoDashWeb.SettingsLive do
     if requested_node != socket.assigns.current_node do
       {:noreply, socket}
     else
-      {:noreply, apply_node_data_results(socket, category_param, results)}
+      {:noreply,
+       apply_node_data_results(
+         socket,
+         category_param,
+         node_data_results(result, requested_node, socket)
+       )}
+    end
+  end
+
+  @impl true
+  def handle_info({{:config_saved, saved_node, success_msg}, result}, socket) do
+    # Result of an ASYNC (remote-node) config save started by
+    # start_remote_config_save/4. `EvoDash.SafeCall.start/4` always sends
+    # `{tag, SafeCall.run(fun)}`, so the wrapped task's own `{:ok, map}` /
+    # `{:error, reason}` arrives one level deeper inside the run result.
+    # The `config_saving` indicator is cleared on EVERY branch, including the
+    # stale one, so it can never stick. A stale save (the user switched nodes
+    # mid-flight) is dropped — its value belongs to another node's config.
+    socket = assign(socket, :config_saving, false)
+
+    if saved_node != socket.assigns.current_node do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, {:ok, %{} = saved}} ->
+          # `file_config: nil` means the WRITE succeeded but the re-fetch failed
+          # — keep the just-saved in-memory config and surface the fetch failure
+          # through the existing "Remote Configuration Unavailable" banner.
+          socket =
+            socket
+            |> maybe_assign_saved_file_config(saved)
+            |> assign(
+              :remote_config_error,
+              remote_config_error_message(Map.get(saved, :remote_config_error))
+            )
+            |> assign(:config_file_exists, Map.get(saved, :config_file_exists, false))
+            |> assign(:per_category_errors, %{})
+            |> assign(:appearance_accent_draft, nil)
+            |> assign(:config_status, saved_config_status(saved))
+            |> put_flash(:info, success_msg)
+
+          {:noreply, socket}
+
+        {:ok, {:error, reason}} ->
+          # Keep the previously rendered config — nothing was persisted.
+          {:noreply, save_failed_flash(socket, reason)}
+
+        # The task itself exited / raised — SafeCall reports it here.
+        {:error, reason} ->
+          {:noreply, save_failed_flash(socket, reason)}
+
+        other ->
+          {:noreply, save_failed_flash(socket, {:unexpected_save_result, other})}
+      end
+    end
+  end
+
+  @impl true
+  def handle_info({{:credentials_saved, saved_node, _credential_key}, result}, socket) do
+    # Result of an ASYNC (remote-node) credential save started by
+    # save_api_key_remote/4 — same envelope contract as {:config_saved, ...}:
+    # `EvoDash.SafeCall.start/4` sends `{tag, SafeCall.run(fun)}`, so the
+    # task's own `{:ok, map}` / `{:error, reason}` arrives one level deeper.
+    # `config_saving` (the shared in-page "Saving configuration…" indicator) is
+    # cleared on EVERY branch, including the stale one. A stale save belongs to
+    # a node the user has since left and is dropped.
+    socket = assign(socket, :config_saving, false)
+
+    if saved_node != socket.assigns.current_node do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, {:ok, %{} = saved}} ->
+          # A nil credentials value means the re-fetch failed — keep the current
+          # assign instead of blanking the API-key card.
+          {:noreply,
+           socket
+           |> apply_saved_credentials(saved)
+           |> put_flash(:info, gettext("API key saved successfully."))}
+
+        {:ok, {:error, reason}} ->
+          # Keep the previously rendered state — nothing was persisted.
+          {:noreply, credentials_failed_flash(socket, reason)}
+
+        # The task itself exited / raised — SafeCall reports it here.
+        {:error, reason} ->
+          {:noreply, credentials_failed_flash(socket, reason)}
+
+        other ->
+          {:noreply, credentials_failed_flash(socket, {:unexpected_save_result, other})}
+      end
     end
   end
 
@@ -942,14 +1056,47 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
+  def handle_info({:llm_test_result, result}, socket) do
+    # The spawned test always reports through EvoDash.SafeCall, so a crashed /
+    # unreachable node arrives as `{:error, reason}` and clears the `:testing`
+    # state instead of wedging the button forever. An unexpected positive shape
+    # is normalized to an error too (never a silent no-op).
+    status =
+      case result do
+        {:ok, data} -> {:ok, data}
+        {:error, reason} -> {:error, reason}
+        other -> {:error, {:unexpected_result, other}}
+      end
+
+    {:noreply, assign(socket, :llm_test_status, status)}
+  end
+
+  @impl true
+  def handle_info({:scheduler_config_updated, node}, socket) do
+    # Node filter first: foreign-node events are ignored (socket unchanged).
+    #
+    # NOTE — pre-existing gap, deliberately NOT fixed in the push-refactor:
+    # the reload still reads the LOCAL scheduler config
+    # (ConfigIO.load_scheduler_config() → AgentScheduler.get_config()) even
+    # while viewing a remote node — remote viewers never get a remote-refresh
+    # path for this assign today. Behavior kept exactly as before.
+    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+      {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
+    else
+      # Foreign-node event — dropped, socket unchanged.
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_info({:node_selected, node_id}, socket) do
     {:noreply, socket} = EvoDashWeb.LiveHooks.NodeAware.handle_node_selected(socket, node_id)
 
     socket =
       if socket.assigns.active_category == :remote_connections do
         socket
-        |> assign(:remote_targets, EvoDash.NodeContext.list_targets())
-        |> assign(:remote_statuses, EvoDash.NodeContext.connection_status())
+        |> assign(:remote_targets, safe_list_targets())
+        |> assign(:remote_statuses, safe_connection_statuses())
       else
         socket
       end
@@ -965,7 +1112,7 @@ defmodule EvoDashWeb.SettingsLive do
 
     socket =
       if socket.assigns.active_category == :remote_connections do
-        assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())
+        assign(socket, :remote_statuses, safe_connection_statuses())
       else
         socket
       end
@@ -1035,34 +1182,6 @@ defmodule EvoDashWeb.SettingsLive do
   end
 
   @impl true
-  def handle_info({:scheduler_config_updated, node}, socket) do
-    # Node filter first: foreign-node events are ignored (socket unchanged).
-    #
-    # NOTE — pre-existing gap, deliberately NOT fixed in the push-refactor:
-    # the reload still reads the LOCAL scheduler config
-    # (ConfigIO.load_scheduler_config() → AgentScheduler.get_config()) even
-    # while viewing a remote node — remote viewers never get a remote-refresh
-    # path for this assign today. Behavior kept exactly as before.
-    if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
-      {:noreply, assign(socket, :scheduler_config, ConfigIO.load_scheduler_config())}
-    else
-      # Foreign-node event — dropped, socket unchanged.
-      {:noreply, socket}
-    end
-  end
-
-  @impl true
-  def handle_info({:llm_test_result, result}, socket) do
-    status =
-      case result do
-        {:ok, data} -> {:ok, data}
-        {:error, reason} -> {:error, reason}
-      end
-
-    {:noreply, assign(socket, :llm_test_status, status)}
-  end
-
-  @impl true
   def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
     # Node-identity task broadcast — node-filtered (foreign-node events are
     # dropped BEFORE the debounce is scheduled) and debounced (300ms trailing
@@ -1081,6 +1200,60 @@ defmodule EvoDashWeb.SettingsLive do
     # Debounce timer fired — reload the sidebar's running/pending tasks.
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
   end
+
+  # Normalizes the three result shapes the async node-data load can deliver:
+  #
+  #   * `{:ok, results}` — the normal success map (NodeData.start/3);
+  #   * `{:error, reason}` — the load EXITED or raised (e.g. a dead scheduler
+  #     or an unreachable remote node). Degrade through NodeData.error_results/3
+  #     so the page shows the "Remote Configuration Unavailable" banner and an
+  #     empty config instead of crashing;
+  #   * a BARE results map — the pre-`{:ok, _}` message shape, still delivered
+  #     by tests that inject a hand-built results map.
+  defp node_data_results({:ok, results}, _requested_node, _socket) when is_map(results),
+    do: results
+
+  defp node_data_results({:error, reason}, requested_node, socket) do
+    EvoDashWeb.SettingsLive.NodeData.error_results(
+      requested_node,
+      socket.assigns.all_schemas_by_category,
+      reason
+    )
+  end
+
+  defp node_data_results(results, _requested_node, _socket) when is_map(results), do: results
+
+  defp maybe_assign_saved_file_config(socket, %{file_config: %{} = file_config}) do
+    assign(socket, :file_config, file_config)
+  end
+
+  defp maybe_assign_saved_file_config(socket, _saved), do: socket
+
+  defp saved_config_status(%{config_status: %{} = config_status}), do: config_status
+  defp saved_config_status(_saved), do: NodeData.degraded_config_status()
+
+  # Applies the config-status / credentials re-fetch of a saved credential write:
+  # the status always (a nil value degrades to the conservative "degraded"
+  # status), the credentials map only when the re-fetch produced one.
+  defp apply_saved_credentials(socket, %{} = saved) do
+    socket
+    |> assign(:config_status, saved_config_status(saved))
+    |> maybe_assign_credentials(Map.get(saved, :credentials))
+  end
+
+  defp maybe_assign_credentials(socket, %{} = credentials),
+    do: assign(socket, :credentials, credentials)
+
+  defp maybe_assign_credentials(socket, _credentials), do: socket
+
+  # Normalizes the exit-safe `EvoDash.SafeCall.run/1` envelope around an LLM
+  # connection test into the `{:ok, data} | {:error, reason}` shape the
+  # `llm_test_result` handler renders: the test functions themselves already
+  # return that shape, so a successful guarded call nests it one level deeper.
+  defp normalize_llm_test_result({:ok, {:ok, data}}), do: {:ok, data}
+  defp normalize_llm_test_result({:ok, {:error, reason}}), do: {:error, reason}
+  defp normalize_llm_test_result({:ok, other}), do: {:error, {:unexpected_result, other}}
+  defp normalize_llm_test_result({:error, reason}), do: {:error, reason}
 
   @impl true
   def handle_event("select_category", %{"category" => cat_str}, socket) do
@@ -1101,8 +1274,8 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       if cat == :remote_connections do
         socket
-        |> assign(:remote_targets, EvoDash.NodeContext.list_targets())
-        |> assign(:remote_statuses, EvoDash.NodeContext.connection_status())
+        |> assign(:remote_targets, safe_list_targets())
+        |> assign(:remote_statuses, safe_connection_statuses())
       else
         socket
       end
@@ -1169,65 +1342,17 @@ defmodule EvoDashWeb.SettingsLive do
 
     case Schema.validate(config) do
       {:ok, _validated} ->
-        node = socket.assigns.current_node
-
-        case EvoDash.NodeContext.save_user_config(node, config) do
-          :ok ->
-            {file_config, socket} =
-              if node == node() do
-                # Local save — reload from disk
-                fc = ConfigIO.load_file_config()
-                {fc, assign(socket, :config_status, config_status())}
-              else
-                # Remote save — reload the remote scheduler config and re-fetch
-                EvoDash.NodeContext.reload_remote_config(node)
-                remote_cfg = EvoDash.NodeContext.get_remote_config(node)
-                fc = remote_config_to_file_config(remote_cfg)
-
-                {fc,
-                 assign(
-                   socket,
-                   :config_status,
-                   EvoDash.NodeContext.get_remote_config_status(node)
-                 )}
-              end
-
-            config_file_exists = File.exists?(socket.assigns.config_path)
-
-            socket =
-              socket
-              |> assign(:file_config, file_config)
-              |> assign(:config_file_exists, config_file_exists)
-              |> assign(:per_category_errors, %{})
-              # The reloaded file_config is authoritative — clear any pending
-              # appearance accent draft (its value, if the appearance form was
-              # submitted, is already persisted via the hidden input).
-              |> assign(:appearance_accent_draft, nil)
-              |> put_flash(:info, gettext("Configuration saved successfully."))
-
-            # Update runtime scheduler when LLM or scheduler categories change
-            socket =
-              if category in [:scheduler, :llm] do
-                if node == node() do
-                  ConfigIO.update_runtime_from_file_config(file_config, socket)
-                else
-                  # Remote scheduler was already reloaded above
-                  socket
-                end
-              else
-                socket
-              end
-
-            {:noreply, socket}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(
-               :error,
-               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
-             )}
-        end
+        # Every config persistence goes through persist_config/4: LOCAL saves
+        # stay synchronous (exit-safe via EvoDash.SafeCall) while REMOTE saves
+        # run in a supervised task with the `config_saving` indicator and a
+        # node stale guard. `runtime?` pushes changed LLM / scheduler keys to
+        # the local scheduler.
+        persist_config(
+          socket,
+          config,
+          gettext("Configuration saved successfully."),
+          category in [:scheduler, :llm]
+        )
 
       {:error, errors} ->
         category_errors = Enum.filter(errors, fn e -> List.first(e.key_path) == category end)
@@ -1261,68 +1386,13 @@ defmodule EvoDashWeb.SettingsLive do
 
     case Schema.validate(config) do
       {:ok, _validated} ->
-        node = socket.assigns.current_node
-
-        case EvoDash.NodeContext.save_user_config(node, config) do
-          :ok ->
-            {file_config, socket} =
-              if node == node() do
-                # Local save — reload from disk
-                fc = ConfigIO.load_file_config()
-                {fc, assign(socket, :config_status, config_status())}
-              else
-                # Remote save — reload the remote scheduler config and re-fetch
-                EvoDash.NodeContext.reload_remote_config(node)
-                remote_cfg = EvoDash.NodeContext.get_remote_config(node)
-                fc = remote_config_to_file_config(remote_cfg)
-
-                {fc,
-                 assign(
-                   socket,
-                   :config_status,
-                   EvoDash.NodeContext.get_remote_config_status(node)
-                 )}
-              end
-
-            config_file_exists = File.exists?(socket.assigns.config_path)
-
-            socket =
-              socket
-              |> assign(:file_config, file_config)
-              |> assign(:config_file_exists, config_file_exists)
-              |> assign(:per_category_errors, %{})
-              # The reloaded file_config is authoritative — clear any pending
-              # appearance accent draft (its value, if the appearance form was
-              # submitted, is already persisted via the hidden input).
-              |> assign(:appearance_accent_draft, nil)
-              |> put_flash(:info, gettext("Configuration saved successfully."))
-
-            # Update runtime scheduler when LLM or scheduler keys change
-            socket =
-              if Enum.any?(
-                   all_matching_schemas,
-                   &(List.first(&1.key_path) in [:scheduler, :llm])
-                 ) do
-                if node == node() do
-                  ConfigIO.update_runtime_from_file_config(file_config, socket)
-                else
-                  # Remote scheduler was already reloaded above
-                  socket
-                end
-              else
-                socket
-              end
-
-            {:noreply, socket}
-
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(
-               :error,
-               gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
-             )}
-        end
+        # Same persistence path as save_category/2 (see persist_config/4).
+        persist_config(
+          socket,
+          config,
+          gettext("Configuration saved successfully."),
+          Enum.any?(all_matching_schemas, &(List.first(&1.key_path) in [:scheduler, :llm]))
+        )
 
       {:error, errors} ->
         # Group errors by category for display
@@ -1625,42 +1695,12 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply, put_flash(socket, :error, gettext("API key cannot be empty."))}
     else
       node = socket.assigns.current_node
+      credentials = %{credential_key => String.trim(api_key)}
 
-      case EvoDash.NodeContext.save_credentials(node, %{credential_key => String.trim(api_key)}) do
-        :ok ->
-          # For remote nodes, reload the remote config so the new key takes
-          # effect on the remote scheduler immediately. Re-fetch credentials
-          # from the appropriate node.
-          if node != node() do
-            EvoDash.NodeContext.reload_remote_config(node)
-          end
-
-          config_status =
-            if node == node() do
-              config_status()
-            else
-              EvoDash.NodeContext.get_remote_config_status(node)
-            end
-
-          credentials =
-            case EvoDash.NodeContext.call_remote(node, EvoGit.Config, :credentials, []) do
-              {:ok, creds} when is_map(creds) -> creds
-              _ -> socket.assigns.credentials
-            end
-
-          {:noreply,
-           socket
-           |> assign(:config_status, config_status)
-           |> assign(:credentials, credentials)
-           |> put_flash(:info, gettext("API key saved successfully."))}
-
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to save API key: %{reason}", reason: inspect(reason))
-           )}
+      if node == node() do
+        save_api_key_local(socket, credentials)
+      else
+        save_api_key_remote(socket, node, credential_key, credentials)
       end
     end
   end
@@ -1695,14 +1735,20 @@ defmodule EvoDashWeb.SettingsLive do
       node = socket.assigns.current_node
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        # The call crosses the node boundary (remote) or hits the provider
+        # stack (local), so it runs inside the EvoDash.SafeCall boundary: an
+        # exit (dead node, timed-out :erpc) arrives as a value and the result
+        # message is ALWAYS sent, so the button can never wedge on :testing.
         result =
-          if remote? do
-            EvoGit.RemoteNode.llm_test(node, model, gen_opts)
-          else
-            EvoGit.SystemCheck.llm_test(model, gen_opts)
-          end
+          EvoDash.SafeCall.run(fn ->
+            if remote? do
+              EvoGit.RemoteNode.llm_test(node, model, gen_opts)
+            else
+              EvoGit.SystemCheck.llm_test(model, gen_opts)
+            end
+          end)
 
-        send(parent, {:llm_test_result, result})
+        send(parent, {:llm_test_result, normalize_llm_test_result(result)})
       end)
 
       {:noreply, assign(socket, :llm_test_status, :testing)}
@@ -1743,8 +1789,14 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("edit_remote_target", %{"id" => id}, socket) do
+    # Exit-safe lookup: the target registry is a local GenServer whose call can
+    # EXIT (dead/hung process) — `EvoDash.SafeCall` turns that into an error
+    # value, which reads exactly like an unknown target (no edit form).
     form_target =
-      case EvoDash.NodeContext.get_target(id) do
+      case EvoDash.SafeCall.run(
+             fn -> EvoDash.NodeContext.get_target(id) end,
+             {:error, :not_found}
+           ) do
         {:ok, target} ->
           target
           |> Map.put_new(:dist_port, 9000)
@@ -1753,7 +1805,7 @@ defmodule EvoDashWeb.SettingsLive do
           # auto-track the SSH Target (internal marker, never persisted).
           |> Map.put(:auto_name, false)
 
-        {:error, :not_found} ->
+        {:error, _reason} ->
           nil
       end
 
@@ -1824,7 +1876,12 @@ defmodule EvoDashWeb.SettingsLive do
   def handle_event("save_remote_target", params, socket) do
     target = build_remote_target_from_params(params)
 
-    case EvoDash.NodeContext.save_target(target) do
+    # Exit-safe write: the registry call can EXIT the LiveView (dead/hung
+    # process); the fallback lands on the existing "Failed to save" flash.
+    case EvoDash.SafeCall.run(
+           fn -> EvoDash.NodeContext.save_target(target) end,
+           {:error, :unavailable}
+         ) do
       {:ok, _saved} ->
         socket =
           socket
@@ -1846,7 +1903,11 @@ defmodule EvoDashWeb.SettingsLive do
 
   @impl true
   def handle_event("delete_remote_target", %{"id" => id}, socket) do
-    case EvoDash.NodeContext.delete_target(id) do
+    # Exit-safe delete (see save_remote_target/3).
+    case EvoDash.SafeCall.run(
+           fn -> EvoDash.NodeContext.delete_target(id) end,
+           {:error, :unavailable}
+         ) do
       :ok ->
         socket =
           socket
@@ -1857,6 +1918,14 @@ defmodule EvoDashWeb.SettingsLive do
 
       {:error, :not_found} ->
         {:noreply, put_flash(socket, :error, gettext("Connection not found."))}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to delete: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -1943,7 +2012,14 @@ defmodule EvoDashWeb.SettingsLive do
     # <5s) and the Disconnect button renders only when the phase is :connected
     # (no bootstrap can be queued on that manager), so it cannot block the
     # LiveView meaningfully. Its terminal outcome is the sync result below.
-    result = EvoDash.NodeContext.disconnect(id)
+    # EXIT-SAFE: the manager call can still EXIT this LiveView (dead/hung
+    # process), so it runs through `EvoDash.SafeCall`; a failure reads as an
+    # unavailable subsystem for `flash_remote_lifecycle_result/3`.
+    result =
+      EvoDash.SafeCall.run(
+        fn -> EvoDash.NodeContext.disconnect(id) end,
+        {:error, :remote_connection_unavailable}
+      )
 
     socket =
       socket
@@ -1961,70 +2037,239 @@ defmodule EvoDashWeb.SettingsLive do
   def persist_file_config(file_config, socket, success_msg) do
     # Always update in-memory state so the UI reflects the change immediately
     socket = assign(socket, :file_config, file_config)
+    # A config-file save can change LLM / scheduler keys — push them to the
+    # LOCAL scheduler (remote saves reload the REMOTE scheduler instead).
+    persist_config(socket, file_config, success_msg, true)
+  end
+
+  # Persists `config` for the socket's current node, then applies the reloaded
+  # authoritative config to the socket. Returns the usual LiveView callback
+  # tuple.
+  #
+  # LOCAL node — saved SYNCHRONOUSLY (callers render the refreshed config in the
+  # same event, and the save is a plain file write), but every store/registry
+  # call goes through `EvoDash.SafeCall` so a dead scheduler or an unreadable
+  # config never crashes the page — it flashes the error instead.
+  #
+  # REMOTE node — the save plus the full config round-trip crosses the node
+  # boundary and can take tens of seconds, so it runs in ONE supervised task and
+  # reports back `{:config_saved, node, success_msg, {:ok, map} | {:error, reason}}`.
+  # `config_saving` drives the in-page "Saving configuration…" indicator for the
+  # duration; the result handler clears it on EVERY branch.
+  #
+  # `runtime?` says whether the LOCAL scheduler must be updated from the saved
+  # config (LLM / scheduler keys changed).
+  defp persist_config(socket, config, success_msg, runtime?) do
     node = socket.assigns.current_node
 
-    case EvoDash.NodeContext.save_user_config(node, file_config) do
-      :ok ->
-        if node == node() do
-          # Local save — reload from disk and update the local scheduler
-          file_config = ConfigIO.load_file_config()
-          config_status = config_status()
-          config_file_exists = File.exists?(socket.assigns.config_path)
+    if node == node() do
+      persist_config_local(socket, config, success_msg, runtime?)
+    else
+      start_remote_config_save(socket, node, config, success_msg)
+    end
+  end
 
-          socket =
+  defp persist_config_local(socket, config, success_msg, runtime?) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.save_user_config(node(), config) end) do
+      {:ok, :ok} ->
+        # Reload the authoritative on-disk config. A read failure keeps the
+        # just-saved in-memory config instead of blanking the whole editor.
+        file_config =
+          EvoDash.SafeCall.run(fn -> ConfigIO.load_file_config() end, socket.assigns.file_config)
+
+        socket =
+          socket
+          |> assign(:file_config, file_config)
+          |> assign(:config_status, safe_config_status())
+          |> assign(:config_file_exists, File.exists?(socket.assigns.config_path))
+          |> assign(:per_category_errors, %{})
+          # The reloaded file_config is authoritative — clear any pending
+          # appearance accent draft (its value, if the appearance form was
+          # submitted, is already persisted via the hidden input).
+          |> assign(:appearance_accent_draft, nil)
+          |> put_flash(:info, success_msg)
+
+        socket =
+          if runtime? do
+            ConfigIO.update_runtime_from_file_config(file_config, socket)
+          else
             socket
-            |> assign(:file_config, file_config)
-            |> assign(:config_status, config_status)
-            |> assign(:config_file_exists, config_file_exists)
-            |> assign(:per_category_errors, %{})
-            |> put_flash(:info, success_msg)
+          end
 
-          {:noreply, ConfigIO.update_runtime_from_file_config(file_config, socket)}
-        else
-          # Remote save — reload the remote scheduler config and re-fetch the
-          # FULL resolved config (same shape as the local path), so the editor
-          # keeps showing every section after a save.
-          EvoDash.NodeContext.reload_remote_config(node)
-          config_file_exists = File.exists?(socket.assigns.config_path)
+        {:noreply, socket}
 
-          socket =
-            case EvoDash.NodeContext.get_resolved_config(node) do
-              {:ok, resolved} ->
-                socket
-                |> assign(:file_config, resolved)
-                |> assign(:remote_config_error, nil)
-
-              {:error, reason} ->
-                # The save itself succeeded (save_user_config returned :ok) —
-                # only the re-fetch failed. Keep the just-saved in-memory
-                # config and surface the fetch failure so the UI does not
-                # silently fall back to a stale/empty config.
-                assign(
-                  socket,
-                  :remote_config_error,
-                  gettext(
-                    "Could not load configuration from the remote node: %{reason} — the node may be unreachable.",
-                    reason: inspect(reason)
-                  )
-                )
-            end
-
-          {:noreply,
-           socket
-           |> assign(:config_status, EvoDash.NodeContext.get_remote_config_status(node))
-           |> assign(:config_file_exists, config_file_exists)
-           |> assign(:per_category_errors, %{})
-           |> put_flash(:info, success_msg)}
-        end
+      {:ok, {:error, reason}} ->
+        {:noreply, save_failed_flash(socket, reason)}
 
       {:error, reason} ->
+        {:noreply, save_failed_flash(socket, reason)}
+    end
+  end
+
+  # Remote save in a supervised task — the LiveView process never blocks on the
+  # cross-node write/reload. The task always reports a result (SafeCall.start/4
+  # wraps its body), so `config_saving` can never stick.
+  defp start_remote_config_save(socket, node, config, success_msg) do
+    case EvoDash.SafeCall.start(self(), {:config_saved, node, success_msg}, fn ->
+           remote_config_save(node, config)
+         end) do
+      {:ok, _pid} -> assign(socket, :config_saving, true)
+      # The supervisor is gone — no result will ever arrive, so the indicator
+      # must stay off and the user gets the failure right away.
+      {:error, _reason} -> save_failed_flash(socket, :task_supervisor_unavailable)
+    end
+  end
+
+  # The remote save body (runs in the supervised task). Returns
+  # `{:ok, %{file_config: map | nil, config_status: map | nil, remote_config_error: reason | nil,
+  # config_file_exists: boolean}}` or `{:error, reason}`.
+  #
+  # Only the WRITE failure is an error: once the config file is written, a
+  # failing reload/re-fetch is reported through `remote_config_error` (the
+  # existing "Remote Configuration Unavailable" banner) so a saved config is
+  # never misreported as a failed save.
+  defp remote_config_save(node, config) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.save_user_config(node, config) end) do
+      {:ok, :ok} ->
+        # Make the new config take effect on the remote scheduler immediately.
+        # Best-effort: a reload failure surfaces through the re-fetch below.
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.reload_remote_config(node) end)
+
+        {file_config, remote_config_error} =
+          case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_resolved_config(node) end) do
+            {:ok, %{} = resolved} -> {resolved, nil}
+            {:ok, other} -> {nil, {:unexpected_config, other}}
+            {:error, reason} -> {nil, reason}
+          end
+
+        config_status =
+          EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_remote_config_status(node) end, nil)
+
+        {:ok,
+         %{
+           file_config: file_config,
+           config_status: config_status,
+           remote_config_error: remote_config_error,
+           config_file_exists: true
+         }}
+
+      {:ok, {:error, reason}} ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # LOCAL credential save — deliberately SYNCHRONOUS (a plain file write, so the
+  # success flash renders in the submit reply) but exit-safe: a dead config
+  # store / scheduler surfaces as a value instead of crashing the page.
+  defp save_api_key_local(socket, credentials) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.save_credentials(node(), credentials) end) do
+      {:ok, :ok} ->
         {:noreply,
          socket
-         |> put_flash(
-           :error,
-           gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
-         )}
+         |> assign(:config_status, safe_config_status())
+         |> assign(
+           :credentials,
+           EvoDash.SafeCall.run(fn -> EvoGit.Config.credentials() end, socket.assigns.credentials)
+         )
+         |> put_flash(:info, gettext("API key saved successfully."))}
+
+      {:ok, {:error, reason}} ->
+        {:noreply, credentials_failed_flash(socket, reason)}
+
+      {:error, reason} ->
+        {:noreply, credentials_failed_flash(socket, reason)}
+
+      {:ok, other} ->
+        {:noreply, credentials_failed_flash(socket, {:unexpected_save_result, other})}
     end
+  end
+
+  # REMOTE credential save in a supervised task — the write, the scheduler
+  # reload and the config-status / credentials re-fetch all cross the node
+  # boundary, so the LiveView process never blocks on them. `config_saving`
+  # drives the shared in-page indicator and the result handler
+  # ({:credentials_saved, ...}) clears it on EVERY branch.
+  defp save_api_key_remote(socket, node, credential_key, credentials) do
+    case EvoDash.SafeCall.start(self(), {:credentials_saved, node, credential_key}, fn ->
+           remote_credentials_save(node, credentials)
+         end) do
+      {:ok, _pid} ->
+        {:noreply, assign(socket, :config_saving, true)}
+
+      # The supervisor is gone — no result will ever arrive, so the indicator
+      # must stay off and the user gets the failure right away.
+      {:error, _reason} ->
+        {:noreply, credentials_failed_flash(socket, :task_supervisor_unavailable)}
+    end
+  end
+
+  # The remote credential-save body (runs in the supervised task). Returns
+  # `{:ok, %{config_status: map | nil, credentials: map | nil}}` or
+  # `{:error, reason}`.
+  #
+  # Only the WRITE failure is an error: once the credentials file is written, a
+  # failing reload/re-fetch degrades (nil config status → the conservative
+  # degraded status; nil credentials → the handler keeps the current assign) so
+  # a saved key is never misreported as a failed save.
+  defp remote_credentials_save(node, credentials) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.save_credentials(node, credentials) end) do
+      {:ok, :ok} ->
+        # Make the new key take effect on the remote scheduler immediately.
+        # Best-effort — the re-fetch below surfaces a reload problem.
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.reload_remote_config(node) end)
+
+        config_status =
+          EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_remote_config_status(node) end, nil)
+
+        credentials =
+          case EvoDash.SafeCall.run(fn ->
+                 EvoDash.NodeContext.call_remote(node, EvoGit.Config, :credentials, [])
+               end) do
+            {:ok, %{} = creds} -> creds
+            _failed_or_unexpected -> nil
+          end
+
+        {:ok, %{config_status: config_status, credentials: credentials}}
+
+      {:ok, {:error, reason}} ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, other} ->
+        {:error, {:unexpected_save_result, other}}
+    end
+  end
+
+  defp credentials_failed_flash(socket, reason) do
+    put_flash(
+      socket,
+      :error,
+      gettext("Failed to save API key: %{reason}", reason: inspect(reason))
+    )
+  end
+
+  defp save_failed_flash(socket, reason) do
+    put_flash(
+      socket,
+      :error,
+      gettext("Failed to save configuration: %{reason}", reason: inspect(reason))
+    )
+  end
+
+  # The user-facing banner text for a failed remote config re-fetch (the save
+  # itself succeeded) — same message/shape the synchronous path always used.
+  defp remote_config_error_message(nil), do: nil
+
+  defp remote_config_error_message(reason) do
+    gettext(
+      "Could not load configuration from the remote node: %{reason} — the node may be unreachable.",
+      reason: inspect(reason)
+    )
   end
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -2036,14 +2281,22 @@ defmodule EvoDashWeb.SettingsLive do
   #
   # `EvoDash.NodeContext.list_custom_agents/1` degrades to an empty result on
   # RPC failure, so an unreachable remote node reads as "no custom agents"
-  # instead of crashing. Public because CustomAgentEvents reloads through it
-  # after every mutation.
+  # instead of crashing; `EvoDash.SafeCall` additionally covers an EXIT (a dead
+  # remote-registry GenServer call exits its caller, which a rescue cannot
+  # catch) — the same empty shape is used so the editor still renders. Public
+  # because CustomAgentEvents reloads through it after every mutation.
   @doc false
   def load_custom_agents_data(socket) do
     node = socket.assigns.current_node
 
-    {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}} =
-      EvoDash.NodeContext.list_custom_agents(node)
+    {agents, script, script_status} =
+      case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_custom_agents(node) end) do
+        {:ok, {:ok, %{agents: agents, model_selection_script: script, script_status: status}}} ->
+          {agents, script, status}
+
+        _error_or_unexpected ->
+          {[], "", :ok}
+      end
 
     assign(socket,
       custom_agents: agents,
@@ -2094,6 +2347,31 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: Node-aware config loading
   # ───────────────────────────────────────────────────────────────────────────
+
+  # Local config-completeness status (mount + local saves). Exit-safe: the
+  # core reads the resolved config / scheduler state, so a dead core process
+  # would EXIT the caller. The degraded shape (`ok?: false`, no warnings) is the
+  # conservative fallback — it renders the same "Missing Configuration" box the
+  # page shows for an unconfigured install, never a false "all configured".
+  defp safe_config_status do
+    EvoDash.SafeCall.run(
+      fn -> EvoDashWeb.Helpers.config_status() end,
+      EvoDashWeb.SettingsLive.NodeData.degraded_config_status()
+    )
+  end
+
+  # Saved remote-connection targets (mount + the remote-connections category
+  # switch). A failing registry read degrades to "no targets".
+  defp safe_list_targets do
+    EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_targets() end, [])
+  end
+
+  # Per-target connection-status map (mount + the remote-connections category
+  # switch). A failing read degrades to an empty map (every target renders as
+  # unknown, the pre-existing "no status" rendering).
+  defp safe_connection_statuses do
+    EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connection_status() end, %{})
+  end
 
   # The sandbox backend banner to show for the currently-viewed node.
   #
@@ -2253,11 +2531,11 @@ defmodule EvoDashWeb.SettingsLive do
   # ───────────────────────────────────────────────────────────────────────────
 
   defp reload_remote_targets(socket) do
-    assign(socket, :remote_targets, EvoDash.NodeContext.list_targets())
+    assign(socket, :remote_targets, safe_list_targets())
   end
 
   defp reload_remote_statuses(socket) do
-    assign(socket, :remote_statuses, EvoDash.NodeContext.connection_status())
+    assign(socket, :remote_statuses, safe_connection_statuses())
   end
 
   # ── Bootstrap progress helpers ───────────────────────────────────────────────

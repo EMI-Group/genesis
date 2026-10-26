@@ -331,8 +331,8 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       repo_path: repo_path,
       repo_id: data[:repo_id],
       repo_root: data[:repo_root],
-      started_at: parse_started_at(Process.get(:evogit_started_at)),
-      completed_at: data[:completed_at],
+      started_at: iso8601(parse_started_at(Process.get(:evogit_started_at))),
+      completed_at: iso8601(data[:completed_at]),
       llm_settings:
         build_llm_settings(
           data[:llm_model],
@@ -350,10 +350,29 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       context_node_path: data[:context_node_path]
     }
 
-    # Write to the archive records ETS table (if it exists). The table is a
-    # :set keyed by {task_id, agent_id}, so this is an idempotent overwrite —
-    # a crash-retry completing twice cannot produce a duplicate record.
-    EvoGit.AgentScheduler.Store.put_archive_record(task_id, agent_id, record)
+    # Persist this agent's archive row RIGHT NOW — the streaming write. One row
+    # per `{task_id, agent_id}` is upserted into `task_agent_archives` at agent
+    # completion, so nothing is buffered in memory and nothing has to be
+    # collected at task end (a crash-retry completing twice REPLACES the row).
+    # An unknown task id (SchedMeta/scheduler lookup miss → 0) cannot identify
+    # a row: skip the write (refs are still written above) instead of failing.
+    if task_id in [nil, 0, ""] do
+      Logger.debug(
+        "Archive: no task id for agent #{agent_id} — skipping the archive row write " <>
+          "(refs #{ref_start} and #{ref_final} were written)"
+      )
+    else
+      case EvoGit.TaskRegistry.put_task_archive(Map.put(record, :task_id, task_id)) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Archive: the archive row for agent #{agent_id} (task #{task_id}) was not persisted: " <>
+              inspect(reason)
+          )
+      end
+    end
 
     Logger.info("Archive: Wrote refs #{ref_start} and #{ref_final} for agent #{agent_id}")
   end
@@ -366,6 +385,14 @@ defmodule EvoGit.Agent.Tools.CompleteTask do
       _ -> nil
     end
   end
+
+  # The archive table keeps `started_at`/`completed_at` as ISO-8601 TEXT and
+  # returns exactly the bytes that were written (no re-formatting round trip),
+  # so the producer emits ISO-8601 STRINGS — never a `%DateTime{}`.
+  defp iso8601(nil), do: nil
+  defp iso8601(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp iso8601(value) when is_binary(value), do: value
+  defp iso8601(_other), do: nil
 
   defp build_llm_settings(model, generation_params, compression_threshold, model_id)
        when is_list(generation_params) or is_nil(generation_params) do

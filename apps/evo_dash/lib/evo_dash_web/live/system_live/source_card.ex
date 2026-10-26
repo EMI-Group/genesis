@@ -29,9 +29,10 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
   - `:source_clone_runner` / `:source_update_runner` — return
     `{:ok, status_map} | {:error, reason} | {:unavailable, reason}`.
 
-  Every spawn rescues at the async boundary and reports
-  `{:unavailable, :runner_error}` so a crashing runner can never wedge the
-  card's loading/busy state.
+  Every spawn runs the runner through `EvoDash.SafeCall.run/1` — a crash, throw,
+  or EXIT (e.g. a `GenServer.call` timeout inside the runner) becomes
+  `{:unavailable, :runner_error}` — and the result message is therefore ALWAYS
+  sent, so a crashing runner can never wedge the card's loading/busy state.
 
   ## Grid-card markup
 
@@ -209,13 +210,10 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
     runner = Application.get_env(:evo_dash, :source_status_runner) || (&default_status/1)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        result = runner.(node)
-        send(view_pid, {:source_status_loaded, seq, node, result})
-      rescue
-        # A crashing runner must not wedge the loading state.
-        _ -> send(view_pid, {:source_status_loaded, seq, node, {:unavailable, :runner_error}})
-      end
+      send(
+        view_pid,
+        {:source_status_loaded, seq, node, run_runner(runner, node)}
+      )
     end)
 
     :ok
@@ -229,13 +227,10 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
     runner = Application.get_env(:evo_dash, :source_clone_runner) || (&default_clone/1)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        result = runner.(node)
-        send(view_pid, {:source_clone_result, seq, node, result})
-      rescue
-        # A crashing runner must not wedge the busy state.
-        _ -> send(view_pid, {:source_clone_result, seq, node, {:unavailable, :runner_error}})
-      end
+      send(
+        view_pid,
+        {:source_clone_result, seq, node, run_runner(runner, node)}
+      )
     end)
 
     :ok
@@ -249,16 +244,23 @@ defmodule EvoDashWeb.SystemLive.SourceCard do
     runner = Application.get_env(:evo_dash, :source_update_runner) || (&default_update/1)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        result = runner.(node)
-        send(view_pid, {:source_update_result, seq, node, result})
-      rescue
-        # A crashing runner must not wedge the busy state.
-        _ -> send(view_pid, {:source_update_result, seq, node, {:unavailable, :runner_error}})
-      end
+      send(
+        view_pid,
+        {:source_update_result, seq, node, run_runner(runner, node)}
+      )
     end)
 
     :ok
+  end
+
+  # Runs one runner through the exit-safe boundary: a normal return passes
+  # VERBATIM (including a runner's own `{:error, reason} | {:unavailable, _}`),
+  # while every crash/throw/EXIT collapses to `{:unavailable, :runner_error}`.
+  defp run_runner(runner, node) do
+    case EvoDash.SafeCall.run(fn -> runner.(node) end) do
+      {:ok, result} -> result
+      {:error, _reason} -> {:unavailable, :runner_error}
+    end
   end
 
   # --- Default runners (delegate to the shared domain helper) ---

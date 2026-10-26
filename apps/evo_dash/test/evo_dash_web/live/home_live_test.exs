@@ -1647,6 +1647,60 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view2).chat_task_id == nil
     end
 
+    test "reconciliation finalizes from a terminal row that carries an archive (lite read)", %{
+      conn: conn
+    } do
+      # The result still carries the legacy `archive_records` payload (older
+      # rows); the per-agent archive itself is no longer a task-row column. The
+      # terminal path needs only status/result/error, so the lite read must
+      # still finalize the transcript.
+      insert_task_fixture!(
+        id: "t_archived",
+        type: :reflect,
+        status: :completed,
+        opts: [mode: "reflect", objective: "New message: archived"],
+        project_path: nil,
+        result:
+          {:ok,
+           %{
+             result: "final answer with archive",
+             commit_sha: nil,
+             branch_name: nil,
+             tag: nil,
+             archive_records: [%{"agent_id" => 1, "objective" => "probe"}]
+           }}
+      )
+
+      {:ok, view, _html} = live(conn, "/help")
+      chat_id = assigns(view).chat_id
+
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: "t_archived",
+        chat_agent_id: 1001,
+        chat_node: node(),
+        transcript: [
+          %{id: "1", role: :user, text: "hello", streaming: false},
+          %{id: "2", role: :assistant, text: "", streaming: true}
+        ]
+      })
+
+      # Persist the mid-run state via a REAL persist point (task event).
+      send(view.pid, {:task_updated, "t_archived", :running, node()})
+      render(view)
+      # Leave the page and remount: the ONE-SHOT reconciliation fetch lands
+      # the terminal row and finalizes the transcript from `result`.
+      GenServer.stop(view.pid)
+      {:ok, view2, _html} = live(conn, "/help")
+      assert assigns(view2).chat_id == chat_id
+
+      wait_until(fn -> assigns(view2).chat_status == :idle end)
+      html = render(view2)
+      assert html =~ "final answer with archive"
+      assert assigns(view2).chat_task_status == :completed
+      assert assigns(view2).chat_task_id == nil
+    end
+
     test "mid-run remount reconciles the task ONCE and applies the terminal state", %{
       conn: conn
     } do
@@ -2506,16 +2560,36 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:approval_requested, l2_request()})
       render(view)
 
-      html =
-        render_click(view, "approval_response", %{
-          "request_id" => "req-1",
-          "decision" => "approve"
-        })
+      render_click(view, "approval_response", %{
+        "request_id" => "req-1",
+        "decision" => "approve"
+      })
 
       assert_receive {:approval_response_called, req_node, "req-1", "approve"}
       assert req_node == node()
+
+      # The card is removed OPTIMISTICALLY by the handler, before the responder
+      # outcome lands — that is the whole point of this test.
       assert assigns(view)[:pending_approvals] == []
-      assert html =~ "Failed to respond"
+
+      # The outcome is applied ASYNCHRONOUSLY from the responder result (the
+      # responder runs in a `EvoDash.SafeCall` TaskSupervisor child), which
+      # lands as `{{:approval_response_result, request_id, node}, result}`:
+      # `EvoDash.SafeCall.start/4` sends `{tag, run(fun)}` with the tag VERBATIM
+      # as the message's first element, so a 3-element tuple tag stays ONE
+      # nested tuple and is never flattened. Deliver that exact shape (the same
+      # one the real task sends, and the same nesting SettingsLive/SystemLive
+      # match) so the handler contract — flash + card gone — is what is pinned.
+      send(view.pid, {{:approval_response_result, "req-1", node()}, {:ok, {:error, :nodedown}}})
+
+      # Bounded poll instead of a fixed sleep: the flash appears once the
+      # result message is processed.
+      wait_until(fn -> to_string(assigns(view)[:flash]["error"] || "") =~ "Failed to respond" end)
+
+      html = render(view)
+      assert assigns(view)[:flash]["error"] =~ "Failed to respond: :nodedown"
+      assert assigns(view)[:pending_approvals] == []
+      refute html =~ "The assistant wants your attention"
     end
 
     test "duplicate approval_requested upserts instead of stacking", %{conn: conn} do

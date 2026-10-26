@@ -209,10 +209,18 @@ defmodule EvoDashWeb.LiveHooks.Appearance do
   defp resolve_mode(nil), do: {:local, nil}
   defp resolve_mode("local"), do: {:local, nil}
 
+  # EXIT-SAFE: the target lookup and the connection-status read are local
+  # GenServer calls to the remote-connection subsystem — a dead/hung process
+  # EXITS the caller, which here is the LiveView during its `:handle_params`
+  # interceptor. `EvoDash.SafeCall` turns that into an error value, which reads
+  # as "no usable node context" → the local accent (the safe fallback).
   defp resolve_mode(node_param) do
-    case EvoDash.NodeContext.get_target(node_param) do
-      {:ok, target} ->
-        case EvoDash.NodeContext.connection_status(target.id) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_target(node_param) end) do
+      {:ok, {:ok, target}} ->
+        status =
+          EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connection_status(target.id) end, nil)
+
+        case status do
           %{phase: :connected, node: remote_node} when is_binary(remote_node) ->
             {:remote, node_param, String.to_atom(remote_node)}
 
@@ -220,7 +228,12 @@ defmodule EvoDashWeb.LiveHooks.Appearance do
             {:pending, node_param}
         end
 
-      {:error, :not_found} ->
+      {:ok, {:error, :not_found}} ->
+        {:local, nil}
+
+      # Any other failure mode (an exited call, an unexpected error atom, an
+      # odd return shape) reads as "unknown target" — the local accent.
+      _ ->
         {:local, nil}
     end
   end

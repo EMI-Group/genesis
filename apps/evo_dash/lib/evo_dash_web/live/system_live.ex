@@ -165,9 +165,15 @@ defmodule EvoDashWeb.SystemLive do
                       type="button"
                       phx-click="request_apply_update"
                       class="btn btn-primary btn-sm rounded-md gap-2"
+                      disabled={@update_gate_checking}
                     >
-                      <.icon name="hero-arrow-path" class="size-4" />
-                      {gettext("Restart & Update")} <% # zh_CN: "重启并更新" %>
+                      <.icon
+                        name="hero-arrow-path"
+                        class={"size-4 #{if @update_gate_checking, do: "animate-spin"}"}
+                      />
+                      {if @update_gate_checking,
+                        do: gettext("Checking…"),
+                        else: gettext("Restart & Update")} <% # zh_CN: "重启并更新" %>
                     </button>
                   </div>
                 <% :error -> %>
@@ -530,6 +536,7 @@ defmodule EvoDashWeb.SystemLive do
              Control + System Control grouped in one responsive 3-card grid -->
         <EvoDashWeb.SystemLive.RuntimeControls.controls_section
           scheduler_paused={@scheduler_paused}
+          scheduler_action={@scheduler_action}
           dashboard_path={with_node_param(~p"/dashboard", @current_node_id)}
         />
 
@@ -568,8 +575,12 @@ defmodule EvoDashWeb.SystemLive do
                   type="button"
                   class="btn btn-error rounded-md px-6 gap-2"
                   phx-click="confirm_restart"
+                  disabled={@system_action != nil}
                 >
-                  <.icon name="hero-arrow-path" class="size-4.5" />
+                  <.icon
+                    name="hero-arrow-path"
+                    class={"size-4.5 #{if @system_action == :restarting, do: "animate-spin"}"}
+                  />
                   {gettext("Restart System")}
                 </button>
               </div>
@@ -612,8 +623,12 @@ defmodule EvoDashWeb.SystemLive do
                   type="button"
                   class="btn btn-error rounded-md px-6 gap-2"
                   phx-click="confirm_stop"
+                  disabled={@system_action != nil}
                 >
-                  <.icon name="hero-power" class="size-4.5" />
+                  <.icon
+                    name="hero-power"
+                    class={"size-4.5 #{if @system_action == :stopping, do: "animate-pulse"}"}
+                  />
                   {gettext("Stop System")}
                 </button>
               </div>
@@ -697,6 +712,7 @@ defmodule EvoDashWeb.SystemLive do
                   type="button"
                   class="btn btn-ghost rounded-md px-6"
                   phx-click="cancel_force_kill_update"
+                  disabled={@update_force_killing}
                 >
                   {gettext("Cancel")}
                 </button>
@@ -704,8 +720,12 @@ defmodule EvoDashWeb.SystemLive do
                   type="button"
                   class="btn btn-error rounded-md px-6 gap-2"
                   phx-click="confirm_force_kill_update"
+                  disabled={@update_force_killing}
                 >
-                  <.icon name="hero-power" class="size-4.5" />
+                  <.icon
+                    name="hero-power"
+                    class={"size-4.5 #{if @update_force_killing, do: "animate-pulse"}"}
+                  />
                   {gettext("Force Kill & Update")} <% # zh_CN: "强制终止任务并更新" %>
                 </button>
               </div>
@@ -771,6 +791,12 @@ defmodule EvoDashWeb.SystemLive do
         # Safe default — the node-aware paused state is loaded asynchronously
         # in handle_params/3 (never block the initial render on a node RPC).
         scheduler_paused: false,
+        # In-progress markers for the async system-control actions. Each is set
+        # by its event handler and cleared by the supervised task's result
+        # message (always sent — see EvoDash.SafeCall), so a control can never
+        # stay disabled/wedged.
+        scheduler_action: nil,
+        system_action: nil,
         show_restart_confirm: false,
         show_stop_confirm: false,
         system_checks_status: :checking,
@@ -805,7 +831,14 @@ defmodule EvoDashWeb.SystemLive do
         update_card_visible: false,
         update_status: EvoDash.UpdateStatus.get(),
         update_apply_busy_count: nil,
+        # Ids seen by the async apply gate — the graceful wind-down cancels them
+        # first, before its own poll loop takes over.
+        update_busy_task_ids: [],
+        # True while the async active-task gate runs (Apply button disabled).
+        update_gate_checking: false,
         update_force_kill_count: nil,
+        # True while the async force-kill fallback runs (modal buttons disabled).
+        update_force_killing: false,
         update_winddown: false,
         changelog_open: false,
         # Genesis Source card assigns (visibility is recomputed in
@@ -830,7 +863,7 @@ defmodule EvoDashWeb.SystemLive do
     # changes, clear stale confirmation modal flags so a restart/stop modal
     # opened on the local node doesn't persist (and potentially get confirmed)
     # after switching to a remote node.
-    previous_remote? = socket.assigns[:remote?]
+    previous_node = socket.assigns[:current_node]
 
     # NOTE: `remote?` must be derived from the socket AFTER `assign_node/2`
     # re-assigns `current_node` — computing it inside the pipe from the outer
@@ -912,12 +945,20 @@ defmodule EvoDashWeb.SystemLive do
       end
 
     socket =
-      if previous_remote? != nil and previous_remote? != socket.assigns.remote? do
-        # Node context changed — clear stale confirm flags.
+      if previous_node != nil and previous_node != socket.assigns.current_node do
+        # Node context changed — clear stale confirm flags and every in-progress
+        # marker: an action (or its result) belongs to the PREVIOUS node, and
+        # its result message is stale-guarded away, so the flag would otherwise
+        # wedge the control on the newly-viewed node.
         socket
         |> assign(:show_restart_confirm, false)
         |> assign(:show_stop_confirm, false)
         |> assign(:changelog_open, false)
+        |> assign(:scheduler_action, nil)
+        |> assign(:system_action, nil)
+        |> assign(:update_gate_checking, false)
+        |> assign(:update_force_killing, false)
+        |> assign(:update_busy_task_ids, [])
       else
         socket
       end
@@ -960,43 +1001,28 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("toggle_pause", _params, socket) do
-    node = socket.assigns.current_node
-    remote? = node != node()
+    # The pause/resume call is a scheduler GenServer call (or an :erpc to the
+    # remote node's scheduler) — it must never run on the LiveView process, and
+    # a dead/timeout target must not crash the page. Both variants therefore run
+    # in ONE supervised task through EvoDash.SafeCall, whose result message is
+    # always delivered so the button can be re-enabled unconditionally.
+    cond do
+      socket.assigns[:scheduler_action] != nil ->
+        # A request is already in flight — ignore duplicate clicks.
+        {:noreply, socket}
 
-    if socket.assigns.scheduler_paused do
-      # Resume the scheduler
-      if remote? do
-        EvoDash.NodeContext.call_remote(node, EvoGit.AgentScheduler, :resume, [])
-      else
-        EvoGit.AgentScheduler.resume()
-      end
+      true ->
+        node = socket.assigns.current_node
+        remote? = socket.assigns.remote?
+        action = if socket.assigns.scheduler_paused, do: :resuming, else: :pausing
 
-      {:noreply,
-       socket
-       |> assign(:scheduler_paused, false)
-       # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
-       |> put_flash(
-         :info,
-         gettext("Scheduler resumed. New agents and slots are being granted.")
-       )}
-    else
-      # Pause the scheduler
-      if remote? do
-        EvoDash.NodeContext.call_remote(node, EvoGit.AgentScheduler, :pause, [])
-      else
-        EvoGit.AgentScheduler.pause()
-      end
+        EvoDash.SafeCall.start(
+          self(),
+          {:scheduler_action_result, node, action},
+          fn -> run_scheduler_action(node, remote?, action) end
+        )
 
-      {:noreply,
-       socket
-       |> assign(:scheduler_paused, true)
-       |> put_flash(
-         :info,
-         # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
-         gettext(
-           "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
-         )
-       )}
+        {:noreply, assign(socket, :scheduler_action, action)}
     end
   end
 
@@ -1012,37 +1038,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_restart", _params, socket) do
-    if socket.assigns.remote? do
-      # Restart the remote node via RPC. The :erpc call to System.restart/0
-      # tears down the remote VM mid-call, so the RPC failure is expected —
-      # restart_remote/1 always returns :ok.
-      EvoDash.NodeContext.restart_remote(socket.assigns.current_node)
-
-      {:noreply,
-       socket
-       |> assign(:show_restart_confirm, false)
-       |> put_flash(
-         :info,
-         gettext("Remote node is restarting. Please wait for it to come back up, then reconnect.")
-       )}
-    else
-      # Spawn a short-lived process so this LiveView can finish replying (and the
-      # browser can close the modal) before the VM tears down. System.restart/0
-      # gracefully restarts the BEAM runtime — all applications are stopped and
-      # started again. It does NOT shut down the host OS.
-      spawn(fn ->
-        Process.sleep(150)
-        System.restart()
-      end)
-
-      {:noreply,
-       socket
-       |> assign(:show_restart_confirm, false)
-       |> put_flash(
-         :info,
-         gettext("System is restarting. Please wait while the Erlang VM comes back up.")
-       )}
-    end
+    {:noreply, start_system_action(socket, :restarting)}
   end
 
   @impl true
@@ -1057,37 +1053,7 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_stop", _params, socket) do
-    if socket.assigns.remote? do
-      EvoDash.NodeContext.stop_remote(socket.assigns.current_node)
-
-      {:noreply,
-       socket
-       |> assign(:show_stop_confirm, false)
-       |> put_flash(
-         :info,
-         gettext("Remote node is stopping. It will need to be started again on the remote host.")
-       )}
-    else
-      # Spawn a short-lived process so this LiveView can finish replying (and the
-      # browser can close the modal) before the VM shuts down. System.stop/0
-      # gracefully shuts down the BEAM runtime — all applications are stopped in
-      # order and the VM exits. It does NOT affect the host OS, but the VM will
-      # need to be started again manually.
-      spawn(fn ->
-        Process.sleep(150)
-        System.stop()
-      end)
-
-      {:noreply,
-       socket
-       |> assign(:show_stop_confirm, false)
-       |> put_flash(
-         :info,
-         gettext(
-           "System is stopping. The Erlang VM will shut down and must be started again manually."
-         )
-       )}
-    end
+    {:noreply, start_system_action(socket, :stopping)}
   end
 
   @impl true
@@ -1149,17 +1115,26 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("request_apply_update", _params, socket) do
-    if update_card_visible?(socket) do
-      count = length(EvoDashWeb.SystemLive.UpdateCard.active_task_ids(:gate))
+    cond do
+      not update_card_visible?(socket) ->
+        {:noreply, socket}
 
-      if count == 0 do
-        # No tasks running — apply directly (no modal).
-        {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
-      else
-        {:noreply, assign(socket, :update_apply_busy_count, count)}
-      end
-    else
-      {:noreply, socket}
+      socket.assigns[:update_gate_checking] ->
+        # Gate already in flight — ignore duplicate clicks.
+        {:noreply, socket}
+
+      true ->
+        # The active-task gate is a store query — run it OFF the LiveView
+        # process (exit-safe) and act on its result message.
+        node = socket.assigns.current_node
+
+        EvoDashWeb.SystemLive.UpdateCard.start_active_task_ids(
+          self(),
+          {:update_active_task_ids, node},
+          :gate
+        )
+
+        {:noreply, assign(socket, :update_gate_checking, true)}
     end
   end
 
@@ -1185,17 +1160,20 @@ defmodule EvoDashWeb.SystemLive do
   @impl true
   def handle_event("confirm_apply_graceful", _params, socket) do
     if update_card_visible?(socket) do
-      # Graceful-cancel every active task, then wind down: poll until the list
-      # empties (or the deadline passes), then apply.
-      for id <- EvoDashWeb.SystemLive.UpdateCard.active_task_ids(:gate) do
-        EvoDashWeb.SystemLive.UpdateCard.graceful_cancel(id)
-      end
-
-      EvoDashWeb.SystemLive.UpdateCard.start_winddown(self())
+      # ONE supervised task cancels the ids the gate saw, then winds down: polls
+      # until the list empties (or the deadline passes) and reports back. Both
+      # the cancel calls and the poll are store calls, so they never run on the
+      # LiveView process. `update_winddown` is assigned immediately so the modal
+      # switches to its stopping state on the next render.
+      EvoDashWeb.SystemLive.UpdateCard.start_graceful_winddown(
+        self(),
+        socket.assigns[:update_busy_task_ids] || []
+      )
 
       {:noreply,
        socket
        |> assign(:update_apply_busy_count, nil)
+       |> assign(:update_busy_task_ids, [])
        |> assign(:update_winddown, true)}
     else
       {:noreply, socket}
@@ -1204,29 +1182,40 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_event("confirm_force_kill_update", _params, socket) do
-    if update_card_visible?(socket) do
-      EvoDashWeb.SystemLive.UpdateCard.force_kill_all()
+    cond do
+      not update_card_visible?(socket) ->
+        {:noreply, socket}
 
-      socket =
-        socket
-        |> assign(:update_force_kill_count, nil)
-        |> assign(:update_winddown, false)
+      socket.assigns[:update_force_killing] ->
+        # Force kill already in flight — ignore duplicate clicks.
+        {:noreply, socket}
 
-      {:noreply, EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)}
-    else
-      {:noreply, socket}
+      true ->
+        # The force kill is a store call per task — run it in ONE supervised
+        # task (never on the LiveView process) and apply on its done message.
+        node = socket.assigns.current_node
+        EvoDashWeb.SystemLive.UpdateCard.start_force_kill(self(), node)
+        {:noreply, assign(socket, :update_force_killing, true)}
     end
   end
 
   @impl true
   def handle_event("cancel_force_kill_update", _params, socket) do
-    if update_card_visible?(socket) do
-      {:noreply,
-       socket
-       |> assign(:update_force_kill_count, nil)
-       |> assign(:update_winddown, false)}
-    else
-      {:noreply, socket}
+    cond do
+      not update_card_visible?(socket) ->
+        {:noreply, socket}
+
+      socket.assigns[:update_force_killing] ->
+        # The fallback already started killing tasks — cancelling the modal now
+        # would leave the update half-applied, so the dialog stays until the
+        # kill completes.
+        {:noreply, socket}
+
+      true ->
+        {:noreply,
+         socket
+         |> assign(:update_force_kill_count, nil)
+         |> assign(:update_winddown, false)}
     end
   end
 
@@ -1328,6 +1317,9 @@ defmodule EvoDashWeb.SystemLive do
 
   @impl true
   def handle_info({:update_winddown_error, _reason}, socket) do
+    # The wind-down task reported an error (a crashed/exit-ed cancel loop). The
+    # wind-down flag is cleared so the busy modal is not stuck in its stopping
+    # state, and the update is NOT applied.
     {:noreply,
      socket
      |> assign(:update_winddown, false)
@@ -1335,6 +1327,152 @@ defmodule EvoDashWeb.SystemLive do
        :error,
        gettext("Failed to stop running tasks. The update was not applied.")
      )}
+  end
+
+  # --- Async system-control action results (EvoDash.SafeCall tasks) ---
+
+  @impl true
+  def handle_info({{:scheduler_action_result, node, action}, result}, socket) do
+    # Async pause/resume result (see toggle_pause/3). Stale-guard on the node
+    # the request was made for: a result that lands after a node switch belongs
+    # to the PREVIOUS node's scheduler and must not touch this view.
+    socket =
+      if node == socket.assigns.current_node,
+        do: assign(socket, :scheduler_action, nil),
+        else: socket
+
+    socket =
+      if node == socket.assigns.current_node do
+        case result do
+          {:ok, _value} ->
+            socket
+            |> assign(:scheduler_paused, action == :pausing)
+            |> put_flash(:info, scheduler_action_flash(action))
+
+          {:error, reason} ->
+            # The scheduler state is unknown now (the call failed) — leave
+            # `scheduler_paused` untouched and report the failure.
+            put_flash(
+              socket,
+              :error,
+              gettext("Failed to update the scheduler: %{reason}",
+                reason: describe_error(reason)
+              )
+            )
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({{:system_action_result, node, action}, result}, socket) do
+    # Async REMOTE restart/stop result (see start_system_action/2). On success
+    # the modal closes with the existing info flash; on failure the modal stays
+    # open so the user can retry, and the in-progress marker is cleared either
+    # way.
+    socket =
+      if node == socket.assigns.current_node,
+        do: assign(socket, :system_action, nil),
+        else: socket
+
+    socket =
+      if node == socket.assigns.current_node do
+        case result do
+          {:ok, _value} ->
+            socket
+            |> assign(:show_restart_confirm, false)
+            |> assign(:show_stop_confirm, false)
+            |> put_flash(:info, system_action_flash(action))
+
+          {:error, reason} ->
+            put_flash(socket, :error, system_action_error_message(action, reason))
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({{:update_active_task_ids, node}, result}, socket) do
+    # Async apply-gate result (see request_apply_update/3): no active task →
+    # apply immediately, otherwise open the busy modal with the count.
+    socket =
+      if node == socket.assigns.current_node,
+        do: assign(socket, :update_gate_checking, false),
+        else: socket
+
+    socket =
+      if node == socket.assigns.current_node do
+        case result do
+          {:ok, ids} ->
+            ids = List.wrap(ids)
+
+            if ids == [] do
+              EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)
+            else
+              socket
+              |> assign(:update_apply_busy_count, length(ids))
+              |> assign(:update_busy_task_ids, ids)
+            end
+
+          {:error, reason} ->
+            # The gate could not be evaluated — never apply the update on an
+            # unknown task state.
+            put_flash(
+              socket,
+              :error,
+              gettext("Failed to check running tasks: %{reason}", reason: describe_error(reason))
+            )
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({{:update_force_kill_done, node}, result}, socket) do
+    # Async force-kill fallback finished (see confirm_force_kill_update/3).
+    # Clear the fallback's modal + in-progress markers and apply the update; a
+    # failed kill is reported but still proceeds (the fallback exists precisely
+    # to get past tasks that would not stop gracefully, and the user was warned
+    # that in-flight work is lost).
+    socket =
+      if node == socket.assigns.current_node,
+        do: assign(socket, :update_force_killing, false),
+        else: socket
+
+    socket =
+      if node == socket.assigns.current_node do
+        socket =
+          socket
+          |> assign(:update_force_kill_count, nil)
+          |> assign(:update_winddown, false)
+          |> assign(:update_busy_task_ids, [])
+
+        case result do
+          {:ok, _value} ->
+            EvoDashWeb.SystemLive.UpdateCard.proceed_apply(socket)
+
+          {:error, reason} ->
+            socket
+            |> put_flash(
+              :error,
+              gettext("Failed to force kill tasks: %{reason}", reason: describe_error(reason))
+            )
+            |> EvoDashWeb.SystemLive.UpdateCard.proceed_apply()
+        end
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   # --- Genesis Source card messages ---
@@ -1520,6 +1658,114 @@ defmodule EvoDashWeb.SystemLive do
 
   # --- Private Helpers ---
 
+  # Runs one scheduler pause/resume action. Called INSIDE the supervised
+  # SafeCall task (never on the LiveView process): local nodes call the
+  # scheduler GenServer, remote nodes `:erpc` it. Both can exit (dead scheduler
+  # process, call timeout, unreachable node) — SafeCall turns that into an error
+  # value for the result message.
+  defp run_scheduler_action(node, _remote? = true, action) do
+    EvoDash.NodeContext.call_remote(node, EvoGit.AgentScheduler, scheduler_action_fun(action), [])
+  end
+
+  defp run_scheduler_action(_node, _remote? = false, action) do
+    apply(EvoGit.AgentScheduler, scheduler_action_fun(action), [])
+  end
+
+  defp scheduler_action_fun(:resuming), do: :resume
+  defp scheduler_action_fun(:pausing), do: :pause
+
+  defp scheduler_action_flash(:resuming) do
+    # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+    gettext("Scheduler resumed. New agents and slots are being granted.")
+  end
+
+  defp scheduler_action_flash(:pausing) do
+    # GENESIS_TERM: Scheduler → 调度器, Agent → 智能体
+    gettext(
+      "Scheduler paused. Running agents continue, but no new slots or agents will be granted."
+    )
+  end
+
+  # Starts one VM-level system action (`:restarting | :stopping`) and returns the
+  # updated socket.
+  #
+  # REMOTE nodes: the `:erpc`-routed System.restart/stop call runs in ONE
+  # supervised task through EvoDash.SafeCall; the modal stays open (confirm
+  # button disabled, spinner) until its result message arrives, then closes with
+  # the existing info flash — or stays open with an error flash.
+  #
+  # LOCAL node: the VM is about to go down, so no result can ever be observed.
+  # The existing 150 ms delayed System.restart/stop runs in a SUPERVISED child
+  # (not a bare `spawn/1`) and the modal closes immediately.
+  defp start_system_action(socket, action) do
+    cond do
+      socket.assigns[:system_action] != nil ->
+        # A request is already in flight — ignore duplicate clicks.
+        socket
+
+      socket.assigns[:remote?] ->
+        node = socket.assigns.current_node
+
+        EvoDash.SafeCall.start(
+          self(),
+          {:system_action_result, node, action},
+          fn -> run_remote_system_action(node, action) end
+        )
+
+        assign(socket, :system_action, action)
+
+      true ->
+        # Delay so this LiveView can finish replying (and the browser can close
+        # the modal) before the VM tears down.
+        Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+          Process.sleep(150)
+          run_local_system_action(action)
+        end)
+
+        socket
+        |> assign(:show_restart_confirm, false)
+        |> assign(:show_stop_confirm, false)
+        |> put_flash(:info, system_action_flash(action))
+    end
+  end
+
+  defp run_remote_system_action(node, :restarting), do: EvoDash.NodeContext.restart_remote(node)
+  defp run_remote_system_action(node, :stopping), do: EvoDash.NodeContext.stop_remote(node)
+
+  # System.restart/0 gracefully restarts the BEAM runtime — all applications are
+  # stopped and started again (it does NOT shut down the host OS).
+  defp run_local_system_action(:restarting), do: System.restart()
+  # System.stop/0 gracefully shuts down the BEAM runtime — all applications are
+  # stopped in order and the VM exits (the host OS is unaffected).
+  defp run_local_system_action(:stopping), do: System.stop()
+
+  defp system_action_flash(:restarting) do
+    gettext("Remote node is restarting. Please wait for it to come back up, then reconnect.")
+  end
+
+  defp system_action_flash(:stopping) do
+    gettext("Remote node is stopping. It will need to be started again on the remote host.")
+  end
+
+  defp system_action_error_message(:restarting, reason) do
+    gettext("Failed to restart the remote node: %{reason}", reason: describe_error(reason))
+  end
+
+  defp system_action_error_message(:stopping, reason) do
+    gettext("Failed to stop the remote node: %{reason}", reason: describe_error(reason))
+  end
+
+  # One-line, human-readable rendering of an `EvoDash.SafeCall.run/1` error
+  # reason (`{:exit, reason}` / `{:exception, exception}` / `{kind, reason}`) for
+  # the flash messages. Never raises.
+  defp describe_error({:exception, exception}) do
+    if is_exception(exception), do: Exception.message(exception), else: inspect(exception)
+  end
+
+  defp describe_error({:exit, reason}), do: inspect(reason)
+  defp describe_error({:throw, reason}), do: inspect(reason)
+  defp describe_error(reason), do: inspect(reason)
+
   defp spawn_system_checks(socket) do
     parent = self()
     node = socket.assigns.current_node
@@ -1533,9 +1779,16 @@ defmodule EvoDashWeb.SystemLive do
   # Runs the system self-check. On a remote node, the config-status row should
   # reflect the remote node's config (via RPC); tools/sandbox/supervisor/nix are
   # inherently local to the dashboard VM, so they are NOT fetched remotely.
+  # The RPC runs through EvoDash.SafeCall: an `:erpc` exit would otherwise kill
+  # this task before it sends its result, leaving the whole self-check stuck at
+  # `:checking` forever. A failed fetch degrades to a nil config (the banner
+  # then shows the config check as unknown rather than crashing the page).
   defp safe_system_checks(node) when node != node() do
     base = EvoGit.SystemCheck.run_all_checks()
-    remote_status = EvoDash.NodeContext.get_remote_config_status(node)
+
+    remote_status =
+      EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_remote_config_status(node) end, nil)
+
     Map.put(base, :config, remote_status)
   end
 
@@ -1567,13 +1820,21 @@ defmodule EvoDashWeb.SystemLive do
   # node-aware too (a local-only read would show the wrong state when viewing
   # a remote node). The local liveness gate keeps the task total on a fresh
   # boot where the scheduler process isn't running yet (`AgentScheduler.paused?`
-  # would raise :noproc).
+  # would raise :noproc); the fetch itself runs through EvoDash.SafeCall so an
+  # exit (call timeout / mid-reload target death) degrades to `false` instead of
+  # killing the task before it reports.
   defp spawn_paused_load(socket) do
     parent = self()
     node = socket.assigns.current_node
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      paused = if scheduler_alive?(node), do: EvoDash.NodeContext.paused?(node), else: false
+      paused =
+        if scheduler_alive?(node) do
+          EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.paused?(node) end, false)
+        else
+          false
+        end
+
       send(parent, {:paused_state, node, paused})
     end)
 
@@ -1587,10 +1848,12 @@ defmodule EvoDashWeb.SystemLive do
   # reset — the sequence guard for `{:system_samples_seeded, ...}` result
   # application (mirrors the old chart-tick sequence). The runner is
   # injectable via the :system_samples_runner env seam, resolved AT SPAWN TIME
-  # (inside the task) so tests can stub it. No try/rescue at this boundary:
-  # the default runner (`NodeContext.get_recent_system_samples/1` →
-  # `RemoteNode`) is total — it degrades to `{:error, reason}` (the evo_git
-  # sampler stub returns `{:error, :not_implemented}`), it never raises.
+  # (inside the task) so tests can stub it. The runner call goes through
+  # EvoDash.SafeCall and its outcome is normalized back to the runner's own
+  # result shape (`{:ok, samples}` / `{:error, reason}`), so a runner that exits
+  # (instead of returning `{:error, _}`) still sends the result message and the
+  # existing `{:error, _}` handler — including the one-shot retry — keeps
+  # working.
   defp spawn_sample_seed(socket) do
     parent = self()
     node = socket.assigns.current_node
@@ -1605,7 +1868,12 @@ defmodule EvoDashWeb.SystemLive do
           &EvoDash.NodeContext.get_recent_system_samples/1
         )
 
-      result = runner.(node)
+      result =
+        case EvoDash.SafeCall.run(fn -> runner.(node) end) do
+          {:ok, runner_result} -> runner_result
+          {:error, reason} -> {:error, reason}
+        end
+
       send(parent, {:system_samples_seeded, seq, node, result})
     end)
 

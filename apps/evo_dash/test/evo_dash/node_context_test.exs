@@ -92,6 +92,174 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "lightweight task reads (local node, real paths)" do
+    # The summary/lite reads route through
+    # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
+    # so the isolated pair from `setup` serves them with real rows.
+    @summary_keys ~w(
+      id status review_status started_at finished_at type project_path opts
+      branch_name model_id agent_count base_sha commit_sha lease_expires_at
+      updated_at error
+    )a
+    test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
+      id = insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
+      assert %{rows: [row], total: 1} = EvoDash.NodeContext.list_tasks_page(node())
+      assert row.id == id
+      assert row.status == :completed
+      assert row.project_path == "/tmp/proj_a"
+      # The 16-key projection: heavy blobs are never part of a summary row.
+      assert Enum.sort(Map.keys(row)) == Enum.sort(@summary_keys)
+      refute Map.has_key?(row, :result)
+      refute Map.has_key?(row, :usage)
+      refute Map.has_key?(row, :logs)
+      refute Map.has_key?(row, :archive_metadata)
+    end
+
+    test "list_tasks_page/2 forwards limit/offset and the filter opts" do
+      insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
+      keep = insert_fixture!(status: :failed, project_path: "/tmp/proj_b")
+
+      # The core filter expects the status as its on-disk STRING (the summary
+      # rows still decode it back to an atom).
+      assert %{rows: [row], total: 1} =
+               EvoDash.NodeContext.list_tasks_page(node(), status: "failed")
+
+      assert row.id == keep
+      assert row.status == :failed
+
+      assert %{rows: [], total: 0} =
+               EvoDash.NodeContext.list_tasks_page(node(), project_path: "/tmp/nowhere")
+
+      assert %{rows: rows, total: 2} =
+               EvoDash.NodeContext.list_tasks_page(node(), limit: 1, offset: 0)
+
+      assert length(rows) == 1
+    end
+
+    test "get_task_lite/2 and get_task/2 carry no archive key (the archive is its own table)" do
+      archive = [%{"role" => "user", "content" => "archived"}]
+      id = insert_fixture!(result: {:ok, %{commit_sha: "sha1", archive_records: archive}})
+
+      assert %EvoGit.TaskInfo{id: ^id} =
+               lite =
+               EvoDash.NodeContext.get_task_lite(node(), id)
+
+      # The per-agent archive is NOT a task-row column any more — until the
+      # `task_agent_archives` rebuild the field carried the whole archive. Both
+      # reads decode the row identically and expose no archive key at all; the
+      # archive is read through `list_task_archives/3` / `get_agent_archive/3`.
+      refute Map.has_key?(lite, :archive_metadata)
+      refute Map.has_key?(EvoDash.NodeContext.get_task(node(), id), :archive_metadata)
+
+      assert {:ok, data} = lite.result
+      assert data.commit_sha == "sha1"
+    end
+
+    test "get_task_lite/2 returns nil for a missing task" do
+      assert EvoDash.NodeContext.get_task_lite(node(), "missing-id") == nil
+    end
+  end
+
+  describe "paged task-archive reads (EvoGit.RemoteNode delegation)" do
+    # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` ship as
+    # parallel core work and do not exist in this tree yet, so the delegation
+    # itself cannot be called here (there is no runner seam for RemoteNode
+    # delegation — the existing tests hit the real local path). What IS asserted
+    # unconditionally is the observable surface that does not need the core:
+    # the documented arities (incl. the `opts \\ []` default form) and the
+    # totality of the two normalization steps NodeContext applies to EVERY
+    # payload, which is what makes the mirrors safe for callers.
+    test "list_task_archives/3 and get_agent_archive/3 expose the documented arities" do
+      assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
+      assert function_exported?(EvoDash.NodeContext, :list_task_archives, 3)
+      assert function_exported?(EvoDash.NodeContext, :get_agent_archive, 3)
+      # The single-blob archive read is gone — no deprecation shim survives.
+      refute function_exported?(EvoDash.NodeContext, :get_task_archive, 2)
+    end
+
+    test "the opts keyword is forwarded unchanged (observable once the core lands)" do
+      if function_exported?(EvoGit.RemoteNode, :list_task_archives, 3) do
+        # Real local path: the opts keyword rides through untouched (an unknown
+        # task id yields the empty page instead of an error for any opts).
+        opts = [limit: 5, offset: 10, include_results: true]
+
+        assert EvoDash.NodeContext.list_task_archives(node(), "missing-id", opts) ==
+                 %{entries: [], total: 0}
+
+        # The `opts \\ []` default form delegates with the same shape.
+        assert EvoDash.NodeContext.list_task_archives(node(), "missing-id") ==
+                 %{entries: [], total: 0}
+      else
+        # Core not in this tree yet: nothing to call. The documented default is
+        # part of the function head, provable through the 2-arity export above.
+        assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
+      end
+    end
+
+    test "normalize_archive_page/1 keeps a well-formed atom-keyed page untouched" do
+      entries = [%{"agent_id" => "a1", "depth" => 0}, %{"agent_id" => "a2", "depth" => 1}]
+
+      assert EvoDash.NodeContext.normalize_archive_page(%{entries: entries, total: 2}) ==
+               %{entries: entries, total: 2}
+
+      # Empty page (a task with no archive) is a well-formed payload too.
+      assert EvoDash.NodeContext.normalize_archive_page(%{entries: [], total: 0}) ==
+               %{entries: [], total: 0}
+    end
+
+    test "normalize_archive_page/1 normalizes a string-keyed page to atom keys" do
+      entries = [%{"agent_id" => "a1", "depth" => 0}]
+
+      assert EvoDash.NodeContext.normalize_archive_page(%{"entries" => entries, "total" => 7}) ==
+               %{entries: entries, total: 7}
+    end
+
+    test "normalize_archive_page/1 degrades non-map payloads to the empty page" do
+      empty = %{entries: [], total: 0}
+
+      # nil / error tuples (a failed or unreachable remote call) / garbage.
+      assert EvoDash.NodeContext.normalize_archive_page(nil) == empty
+      assert EvoDash.NodeContext.normalize_archive_page({:error, :boom}) == empty
+      assert EvoDash.NodeContext.normalize_archive_page({:error, {:erpc, :noconnection}}) == empty
+      assert EvoDash.NodeContext.normalize_archive_page(:garbage) == empty
+      assert EvoDash.NodeContext.normalize_archive_page([%{"agent_id" => "a1"}]) == empty
+      assert EvoDash.NodeContext.normalize_archive_page("") == empty
+
+      # A map without either key shape is degraded, never raised on.
+      assert EvoDash.NodeContext.normalize_archive_page(%{}) == empty
+      assert EvoDash.NodeContext.normalize_archive_page(%{rows: [], count: 3}) == empty
+    end
+
+    test "normalize_archive_page/1 coerces malformed fields instead of raising" do
+      # Non-list entries → []; non-integer/negative total → 0.
+      assert EvoDash.NodeContext.normalize_archive_page(%{entries: :bad, total: "x"}) ==
+               %{entries: [], total: 0}
+
+      assert EvoDash.NodeContext.normalize_archive_page(%{entries: nil, total: -4}) ==
+               %{entries: [], total: 0}
+
+      # Each field degrades independently: a good list survives a bad total.
+      assert EvoDash.NodeContext.normalize_archive_page(%{entries: [%{"a" => 1}], total: nil}) ==
+               %{entries: [%{"a" => 1}], total: 0}
+
+      assert EvoDash.NodeContext.normalize_archive_page(%{"entries" => "nope", "total" => 3.0}) ==
+               %{entries: [], total: 0}
+    end
+
+    test "normalize_archive_entry/1 passes a map through and nils everything else" do
+      entry = %{"agent_id" => "a1", "depth" => 0, "result" => %{"objective" => "o"}}
+
+      # Verbatim — including the full "result" the paged read omits.
+      assert EvoDash.NodeContext.normalize_archive_entry(entry) == entry
+
+      assert EvoDash.NodeContext.normalize_archive_entry(nil) == nil
+      assert EvoDash.NodeContext.normalize_archive_entry({:error, :boom}) == nil
+      assert EvoDash.NodeContext.normalize_archive_entry({:error, {:erpc, :noconnection}}) == nil
+      assert EvoDash.NodeContext.normalize_archive_entry([%{"agent_id" => "a1"}]) == nil
+      assert EvoDash.NodeContext.normalize_archive_entry("garbage") == nil
+    end
+  end
+
   describe "task-review RPC delegates (local node, real paths)" do
     test "get_task/2 returns nil for a missing task" do
       assert EvoDash.NodeContext.get_task(node(), "missing-id") == nil

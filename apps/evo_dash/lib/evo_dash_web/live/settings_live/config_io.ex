@@ -20,9 +20,16 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
 
   @doc """
   Reads the current scheduler configuration from the running AgentScheduler.
+
+  EXIT-SAFE: a `GenServer.call` to a stopped/restarting scheduler EXITS the
+  caller (which `rescue` cannot catch, and which would take the whole LiveView
+  down), so the read goes through `EvoDash.SafeCall.run/2` with an empty map
+  fallback. Only `:sandbox_backend` is read from this assign by the settings
+  page (see `SettingsLive.sandbox_backend/1`), so the empty map degrades
+  safely instead of inventing a fake backend.
   """
   def load_scheduler_config do
-    EvoGit.AgentScheduler.get_config()
+    EvoDash.SafeCall.run(fn -> EvoGit.AgentScheduler.get_config() end, %{})
   end
 
   @doc """
@@ -65,12 +72,19 @@ defmodule EvoDashWeb.SettingsLive.ConfigIO do
       SettingsUtils.maybe_add_kw(updates, :model_profiles, Schema.model_profiles(file_config))
 
     if updates != [] do
-      case EvoGit.AgentScheduler.update_config(updates) do
-        :ok ->
+      # EXIT-SAFE: a dead/restarting AgentScheduler exits the caller on call —
+      # the caller is a LiveView, so the update is a best-effort runtime push
+      # (the config file is already written). Failure leaves the socket
+      # untouched, exactly like the `{:error, _msg}` branch below.
+      case EvoDash.SafeCall.run(fn -> EvoGit.AgentScheduler.update_config(updates) end) do
+        {:ok, :ok} ->
           socket
           |> Phoenix.Component.assign(scheduler_config: load_scheduler_config())
 
-        {:error, _msg} ->
+        {:ok, {:error, _msg}} ->
+          socket
+
+        {:error, _reason} ->
           socket
       end
     else

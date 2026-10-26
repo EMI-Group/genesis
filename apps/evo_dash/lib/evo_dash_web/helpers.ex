@@ -1072,6 +1072,86 @@ defmodule EvoDashWeb.Helpers do
   def truncate_string(str, _len), do: str
 
   # ---------------------------------------------------------------------------
+  # Preview Helpers (byte / collection caps for rendering)
+  # ---------------------------------------------------------------------------
+
+  @blob_preview_default_limit 16_384
+
+  @doc """
+  Builds a render-safe preview of a potentially huge text blob (a task
+  `result`, an archive record, a commit message …) without ever handing the
+  whole blob to the template.
+
+  Returns `%{text: prefix, truncated?: boolean, total_bytes: integer}` where
+  `prefix` is a UTF-8-safe prefix of at most `limit` BYTES (a multi-byte
+  character is never cut in half) and `truncated?` is true iff bytes were
+  dropped.
+
+  Sanitization applies ONLY to the truncated path: when the blob is longer than
+  `limit`, `text` is its longest valid-UTF-8 prefix (invalid UTF-8 inside the
+  kept bytes degrades to the last valid prefix before it). When the blob is at
+  or under `limit`, `text` is the input binary VERBATIM — an invalid-UTF-8 blob
+  that fits is returned as-is (`truncated?: false`), so callers must not assume
+  `text` is always valid UTF-8.
+
+  Total for any term: a non-binary (incl. `nil`) yields
+  `%{text: "", truncated?: false, total_bytes: 0}`.
+  """
+  @spec blob_preview(term(), non_neg_integer()) ::
+          %{text: String.t(), truncated?: boolean, total_bytes: non_neg_integer()}
+  def blob_preview(text, limit \\ @blob_preview_default_limit)
+
+  def blob_preview(text, limit) when is_binary(text) do
+    total = byte_size(text)
+    limit = clamp_preview_limit(limit)
+
+    if total > limit do
+      %{text: utf8_prefix(text, limit), truncated?: true, total_bytes: total}
+    else
+      %{text: text, truncated?: false, total_bytes: total}
+    end
+  end
+
+  def blob_preview(_other, _limit), do: %{text: "", truncated?: false, total_bytes: 0}
+
+  # Returns the longest valid-UTF-8 prefix of `text` that is at most `limit`
+  # bytes. `:unicode.characters_to_binary/3` reports invalid/incomplete input as
+  # a tuple whose second element is the valid part decoded so far, so this also
+  # behaves sanely for binary blobs that are not valid UTF-8.
+  defp utf8_prefix(text, limit) do
+    case :unicode.characters_to_binary(:binary.part(text, 0, limit), :utf8, :utf8) do
+      converted when is_binary(converted) -> converted
+      {:incomplete, converted} -> converted
+      {:incomplete, converted, _rest} -> converted
+      {:error, converted, _rest} -> converted
+    end
+  end
+
+  @doc """
+  Builds a render-safe preview of a potentially huge list (thousands of archive
+  records, commits, files …).
+
+  Returns `%{items: items, total: integer, truncated?: boolean}` where `items`
+  holds at most `limit` leading elements and `truncated?` is true iff elements
+  were dropped. Total for any term: a non-list yields
+  `%{items: [], total: 0, truncated?: false}`.
+  """
+  @spec list_preview(term(), non_neg_integer()) ::
+          %{items: list(), total: non_neg_integer(), truncated?: boolean}
+  def list_preview(list, limit) when is_list(list) do
+    total = length(list)
+    limit = clamp_preview_limit(limit)
+
+    %{items: Enum.take(list, limit), total: total, truncated?: total > limit}
+  end
+
+  def list_preview(_other, _limit), do: %{items: [], total: 0, truncated?: false}
+
+  @spec clamp_preview_limit(term()) :: non_neg_integer()
+  defp clamp_preview_limit(limit) when is_integer(limit) and limit >= 0, do: limit
+  defp clamp_preview_limit(_limit), do: @blob_preview_default_limit
+
+  # ---------------------------------------------------------------------------
   # URL / Query Param Helpers
   # ---------------------------------------------------------------------------
 

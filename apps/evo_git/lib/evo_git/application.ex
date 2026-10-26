@@ -33,16 +33,6 @@ defmodule EvoGit.Application do
       read_concurrency: true
     ])
 
-    # Archive records keyed by {task_id, agent_id} — at most one record per
-    # agent per task, so re-writes (e.g. crash-retry double completion) are
-    # idempotent overwrites.
-    ensure_ets_table(:evogit_archive_records, [
-      :named_table,
-      :public,
-      :set,
-      read_concurrency: true
-    ])
-
     # Persistent per-repo worktree-init marker: repo_root => init timestamp.
     # Written once the destructive per-repo init (rm_rf workers dir + orphaned
     # evogit-agent-* branch cleanup + git worktree prune) has run. App-owned so
@@ -98,6 +88,12 @@ defmodule EvoGit.Application do
            Application.get_env(:evo_git, :data_dir, EvoGit.Platform.data_dir()),
            "tasks.sqlite"
          )},
+      # Periodic, best-effort SQLite maintenance (`PRAGMA optimize`) for the
+      # task store — one pass every 60 minutes, no tick at boot (the store's
+      # boot path already optimized on the migrated connection). Starts AFTER
+      # EvoGit.Store so its first tick always finds the store; every tick is
+      # total, so a restarting/absent store is skipped, never a crash.
+      {EvoGit.Store.Maintenance, []},
       {Registry,
        keys: :unique,
        name: EvoGit.TaskRegistry.ProcessRegistry,

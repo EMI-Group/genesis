@@ -422,6 +422,58 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
   end
 
+  # Waits until the connected mount's ASYNC load batch has applied the seeded
+  # recent projects. `ProjectsLive.mount/3` seeds `recent_projects: []` and the
+  # real list arrives one frame later via the
+  # `{:async_project_load, ...}` continuation (see
+  # `EvoDashWeb.ProjectsLive.AsyncLoad`), so every test that seeds recents and
+  # then asserts palette / datalist / auto-activation state MUST wait for the
+  # batch first — otherwise the assertion races the continuation (seed
+  # dependent). Bounded through `wait_assigns/2`, so real breakage still fails
+  # loudly instead of hanging.
+  defp wait_for_recent_projects(view, paths) do
+    wait_assigns(view, fn assigns ->
+      loaded = for %{path: path} <- assigns[:recent_projects] || [], do: path
+      Enum.all?(List.wrap(paths), &(&1 in loaded))
+    end)
+  end
+
+  # Waits until the async batch has SEEDED the notified-terminal-id set.
+  # Notification scanning is skipped entirely until
+  # `notified_task_ids_ready?` is true (diffing against an unseeded empty set
+  # would notify for every historical task), so tests that exercise the
+  # notification path must wait for readiness instead of racing it.
+  defp wait_notified_ids_ready(view) do
+    wait_assigns(view, fn assigns -> assigns[:notified_task_ids_ready?] == true end)
+  end
+
+  # Installs the ProjectsLive async-batch seam, resolved AT SPAWN TIME by
+  # `AsyncLoad.maybe_spawn/2`. The whole batch runs inside
+  # `EvoDash.SafeCall.run/1`, so a fun that exits/raises sends NO result
+  # message at all and the page keeps the defaults `mount/3` seeded.
+  defp install_projects_async_load_runner(fun) do
+    Application.put_env(:evo_dash, :projects_async_load_runner, fun)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :projects_async_load_runner)
+    end)
+  end
+
+  # Safety net for tests that freeze the shared, serialized task registry: a
+  # failed assertion must never leave it suspended for the next suite.
+  # Teardown-only rescue (the registry can already be gone at teardown time).
+  defp restore_registry_on_exit do
+    on_exit(fn ->
+      if Process.whereis(EvoGit.TaskRegistry) do
+        try do
+          :sys.resume(EvoGit.TaskRegistry)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+    end)
+  end
+
   # Bounded poll on the fake connection manager's recorded `:connect` caller
   # list: keeps polling until `predicate` returns a truthy value over the
   # callers, then returns it. `predicate` returns nil to keep polling. Flunks
@@ -978,6 +1030,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(recent_b, "recent-beta")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [recent_a, recent_b])
 
       render_click(view, "open_project_palette", %{})
       html = render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -999,6 +1052,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(unc_path, "unc-proj")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [wsl_path, unc_path])
 
       render_click(view, "open_project_palette", %{})
       html = render_click(view, "palette_mode", %{"mode" => "open_path"})
@@ -1014,6 +1068,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_a, "my-alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a])
 
       html = render_click(view, "open_project_palette", %{})
       assert html =~ "my-alpha"
@@ -1030,6 +1085,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_a, "my-alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a])
 
       html = render_click(view, "open_project_palette", %{})
 
@@ -1054,7 +1110,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_b, "my-beta")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
-      assert assigns(view)[:active_project_path] == project_b
+      # Recent projects AND the most-recent-project auto-activation both arrive
+      # in the connected mount's async batch (ProjectsLive.AsyncLoad), so wait
+      # for that continuation before asserting which project is active.
+      wait_assigns(view, fn assigns ->
+        assigns[:active_project_path] == project_b and
+          Enum.any?(assigns[:recent_projects] || [], &(&1.path == project_a))
+      end)
 
       render_click(view, "open_project_palette", %{})
 
@@ -1083,6 +1145,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_b, "my-beta")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a, project_b])
 
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_keydown", %{"key" => "ArrowDown"})
@@ -1120,6 +1183,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_b, "my-beta")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a, project_b])
 
       render_click(view, "open_project_palette", %{})
 
@@ -1147,6 +1211,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project_b, "bbb-project")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project_a, project_b])
       render_click(view, "open_project_palette", %{})
 
       # Initial: index 0 is selected (the first project)
@@ -1178,6 +1243,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(project, "enter-project")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [project])
       render_click(view, "open_project_palette", %{})
 
       # Enter on index 0 (the only recent project) selects it
@@ -1202,6 +1268,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(recent_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [recent_path])
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
@@ -1230,6 +1297,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       seed_recent_project(recent_path, "alpha")
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_for_recent_projects(view, [recent_path])
       render_click(view, "open_project_palette", %{})
       render_click(view, "palette_mode", %{"mode" => "open_path"})
 
@@ -1588,10 +1656,17 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       insert_task_fixture!(status: :completed)
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      # The terminal-id SEED is part of the connected mount's async batch and
+      # notification scanning is skipped until it lands — wait for it instead
+      # of racing the continuation.
+      wait_notified_ids_ready(view)
 
-      # The mount seed pre-notifies terminal ids, so a reload must not push a
+      # The seed pre-notifies terminal ids, so a reload must not push a
       # browser notification for them.
       send(view.pid, :node_aware_reload_tasks)
+      # The scan runs off-process; drain it so the "no notification" assertion
+      # is evaluated AFTER the scan produced its result.
+      await_async_loads(view)
       html = render(view)
 
       refute_push_event(view, "task_notification", %{})
@@ -1605,6 +1680,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
 
       # Becomes terminal after mount -> newly-terminal -> notification pushed
       new_task =
@@ -1615,9 +1691,39 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         )
 
       send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
       render(view)
 
       {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
+      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
+    end
+
+    test "a newly-terminal task that carries an archive still notifies (lite read)", %{
+      conn: conn
+    } do
+      # Terminal before mount -> part of the mount seed -> never notified
+      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      # The result still carries the legacy `archive_records` payload (older
+      # rows), but the per-agent archive itself is no longer a task-row column.
+      # The notification only needs opts/result/type, so the lite read must not
+      # change the pushed content either way.
+      new_task =
+        insert_task_fixture!(
+          status: :completed,
+          opts: [prompt: "notify archived"],
+          result: {:ok, %{pr_title: "Archived PR title", archive_records: [%{"agent_id" => 1}]}}
+        )
+
+      send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
+      render(view)
+
+      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
+      assert title == "Archived PR title"
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
@@ -1625,6 +1731,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       task = insert_task_fixture!(status: :running)
 
       {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
 
       render_hook(view, "delete_task", %{"task_id" => task.id})
 
@@ -1633,6 +1740,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       EvoGit.TaskRegistry.list_tasks()
 
       send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
       render(view)
 
       refute_push_event(view, "task_notification", %{})
@@ -1647,10 +1755,165 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       render_hook(view, "clear_task_history", %{})
 
+      # The clear re-seeds the notified-id set asynchronously; wait for that
+      # readiness before triggering the scan.
+      wait_notified_ids_ready(view)
+
       send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
       render(view)
 
       refute_push_event(view, "task_notification", %{})
+    end
+  end
+
+  describe "async mount loads + notification scan (exit-safe)" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "mount does no synchronous task-store work and survives an exiting async batch", %{
+      conn: conn
+    } do
+      # The whole batch body is delegated to the seam; an exiting body sends NO
+      # result message, so the page must keep mount/3's seeded defaults.
+      install_projects_async_load_runner(fn -> exit(:boom) end)
+
+      # FREEZE the single, serialized task registry while the page mounts: any
+      # SYNCHRONOUS store call on the mount path would block here and `live/2`
+      # could not return. (The injected batch exits immediately and needs no
+      # store access at all.)
+      :ok = :sys.suspend(EvoGit.TaskRegistry)
+      restore_registry_on_exit()
+
+      # Dead render: renders normally, zero store work.
+      static = get(conn, ~p"/projects")
+      assert html_response(static, 200) =~ "Open a project to get started"
+
+      # Connected mount: renders normally, zero store work, page stays alive.
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      assert Process.alive?(view.pid)
+      assert assigns(view)[:recent_projects] == []
+      assert assigns(view)[:notified_task_ids_ready?] == false
+      assert render(view) =~ "Open a project to get started"
+
+      # A debounced reload while the id set is unseeded must not scan (and so
+      # can never notify), and the handler returns while the store is still
+      # frozen — no synchronous read.
+      send(view.pid, :node_aware_reload_tasks)
+      assert assigns(view)[:task_notifications_seq] == 0
+
+      :ok = :sys.resume(EvoGit.TaskRegistry)
+      await_async_loads(view)
+
+      refute_push_event(view, "task_notification", %{})
+    end
+
+    test "the async batch really fills recent projects a frame after mount", %{conn: conn} do
+      async_path = Path.join(System.tmp_dir!(), "evogit_async_recents_#{System.unique_integer()}")
+      File.mkdir_p!(async_path)
+      on_exit(fn -> File.rm_rf(async_path) end)
+
+      test_pid = self()
+
+      # Block the batch body until the test has observed the mount defaults,
+      # so "not present before the message" is deterministic instead of a race.
+      install_projects_async_load_runner(fn ->
+        send(test_pid, {:batch_started, self()})
+
+        receive do
+          :proceed -> :ok
+        after
+          5_000 -> :ok
+        end
+
+        %{
+          model_profiles: [],
+          default_selected_model_id: nil,
+          recent_projects: [%EvoGit.RecentProject{path: async_path, name: "async-project"}],
+          terminal_ids: MapSet.new(),
+          auto_activate?: false
+        }
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      assert_receive {:batch_started, task_pid}, 1_000
+      # The batch runs OFF the LiveView process.
+      assert task_pid != view.pid
+      assert task_pid != test_pid
+
+      # Mount defaults are still in place while the batch is blocked.
+      assert assigns(view)[:recent_projects] == []
+      assert assigns(view)[:notified_task_ids_ready?] == false
+      refute render(view) =~ "async-project"
+
+      send(task_pid, :proceed)
+
+      wait_for_recent_projects(view, [async_path])
+      # Readiness flips with the same batch (terminal_ids seeded).
+      assert assigns(view)[:notified_task_ids_ready?] == true
+      # The palette renders the async-loaded entry (the trigger stays closed).
+      assert render_click(view, "open_project_palette", %{}) =~ "async-project"
+
+      await_async_loads(view)
+    end
+
+    test "the notified-id seed never notifies for pre-existing terminal tasks", %{conn: conn} do
+      ids = for _ <- 1..3, do: insert_task_fixture!(status: :completed).id
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      # Every pre-existing terminal task is in the seed.
+      assert MapSet.new(ids) |> MapSet.subset?(assigns(view)[:notified_task_ids])
+
+      # No notification before the seed landed...
+      refute_push_event(view, "task_notification", %{})
+
+      # ...and none after a scan runs against the seeded set.
+      send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
+      render(view)
+
+      refute_push_event(view, "task_notification", %{})
+    end
+
+    test "the notification scan runs off-process and notifies only a newly terminal task", %{
+      conn: conn
+    } do
+      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      new_task = insert_task_fixture!(status: :completed, opts: [prompt: "notify me"])
+
+      # FREEZE the registry: the scan's store reads now block, so the handler
+      # finishing synchronously (the :sys.get_state round-trip below) proves
+      # the scan was handed to a supervised task instead of running inline.
+      :ok = :sys.suspend(EvoGit.TaskRegistry)
+      restore_registry_on_exit()
+
+      send(view.pid, :node_aware_reload_tasks)
+
+      assert assigns(view)[:task_notifications_seq] == 1
+      # Off-process work exists: the scan (and the sidebar fetch) are live
+      # supervised children owned by this view, blocked on the frozen store.
+      assert mount_async_task_pids(view.pid) != []
+
+      :ok = :sys.resume(EvoGit.TaskRegistry)
+      await_async_loads(view)
+      render(view)
+
+      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
+      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
+
+      # The old (seeded) task produced no second notification.
+      refute_push_event(view, "task_notification", %{})
+      assert MapSet.member?(assigns(view)[:notified_task_ids], new_task.id)
     end
   end
 
@@ -3179,6 +3442,25 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
       assert %ForeignRepo{writable: true, base_sha: "abc123"} = repo
+    end
+
+    test "resume_from restores foreign repos even when the previous task carries an archive", %{
+      conn: conn
+    } do
+      task =
+        insert_task_fixture!(
+          opts: [
+            foreign_repos: [
+              %{"id" => "orig", "root" => "/Source/original-proj", "description" => "d"}
+            ]
+          ],
+          result: {:ok, %{result: "done", archive_records: [%{"agent_id" => 1}]}}
+        )
+
+      {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+      assert %ForeignRepo{id: "orig"} = repo
     end
 
     test "resume_from restores a string 'true' writable foreign repo", %{conn: conn} do

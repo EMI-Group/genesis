@@ -145,6 +145,10 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "collapsed card shows the multi-repo indicator only when repos is present" do
+      # The collapsed indicator derives from the SUMMARY row
+      # (`opts[:foreign_repos]`, `commit_sha`) enriched by the lazily-fetched
+      # `detail` — the summary itself carries no `result`, so the per-repo
+      # `repos` map only reaches the card through `detail.task`.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: %{
@@ -154,18 +158,27 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
             started_at: DateTime.utc_now(),
             finished_at: DateTime.utc_now(),
             agent_count: 1,
-            opts: [prompt: "multi repo task", mode: "simple"],
-            result:
-              {:ok,
-               %{
-                 result: "done",
-                 commit_sha: "aaaaaaa1",
-                 branch_name: "genesis/agent_1",
-                 repos: %{
-                   "primary" => %{commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
-                   "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "genesis/agent_1"}
-                 }
-               }}
+            opts: [
+              prompt: "multi repo task",
+              mode: "simple",
+              foreign_repos: [%{id: "legacy-api", root: "/tmp/legacy", writable: true}]
+            ]
+          },
+          detail: %{
+            state: :ok,
+            task: %{
+              result:
+                {:ok,
+                 %{
+                   result: "done",
+                   commit_sha: "aaaaaaa1",
+                   branch_name: "genesis/agent_1",
+                   repos: %{
+                     "primary" => %{commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
+                     "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "genesis/agent_1"}
+                   }
+                 }}
+            }
           }
         )
 
@@ -354,6 +367,9 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "expanded failed card keeps the legacy {:error, _} result box when both records coexist" do
+      # The legacy `{:error, _}` RESULT lives on the lazily-fetched FULL
+      # TaskInfo (`detail.task`), while the structured `error` record is a
+      # summary key — both render in the expanded card.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task:
@@ -361,7 +377,8 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
               error: error_record(),
               result: {:error, "legacy boom"}
             ),
-          show_details: true
+          show_details: true,
+          detail: %{state: :ok, task: %{result: {:error, "legacy boom"}}}
         )
 
       # Structured full-detail block...
@@ -473,7 +490,8 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: failed_task(usage: usage),
-          show_details: true
+          show_details: true,
+          detail: %{state: :ok, task: %{usage: usage}}
         )
 
       assert html =~ "Token &amp; Cost Usage"
@@ -488,6 +506,139 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
         )
 
       refute html =~ "best-effort estimate"
+    end
+  end
+
+  describe "Archive accessors — the paged archive envelope" do
+    alias EvoDashWeb.TaskCardComponents.Archive
+
+    # The envelope owned by EvoDashWeb.TasksLive.TaskDetail.
+    defp envelope(overrides) do
+      Map.merge(
+        %{
+          state: :ok,
+          entries: [%{"agent_id" => "a"}, %{"agent_id" => "b"}],
+          total: 7_149,
+          next_offset: 2,
+          loading_more?: false,
+          more_error: nil,
+          error: nil,
+          seq: 3,
+          agent_results: %{
+            "a" => %{state: :ok, entry: %{"agent_id" => "a", "result" => "done"}, error: nil}
+          }
+        },
+        Map.new(overrides)
+      )
+    end
+
+    test "reads the state, the loaded entries and the TRUE total" do
+      envelope = envelope(%{})
+
+      assert Archive.archive_state(envelope) == :ok
+      assert Archive.archive_records(envelope) == [%{"agent_id" => "a"}, %{"agent_id" => "b"}]
+      assert Archive.archive_total(envelope) == 7_149
+      assert Archive.archive_loading_more?(envelope) == false
+      assert Archive.archive_more_error(envelope) == nil
+
+      assert Archive.archive_agent_results(envelope) == %{
+               "a" => %{state: :ok, entry: %{"agent_id" => "a", "result" => "done"}, error: nil}
+             }
+    end
+
+    test "reads the append state" do
+      envelope = envelope(%{loading_more?: true, more_error: {:exit, :boom}})
+
+      assert Archive.archive_loading_more?(envelope) == true
+      assert Archive.archive_more_error(envelope) == {:exit, :boom}
+    end
+
+    test "total falls back to the loaded count when the envelope carries none" do
+      assert Archive.archive_total(%{state: :ok, entries: [%{}, %{}]}) == 2
+      assert Archive.archive_total(%{state: :ok, entries: [], total: nil}) == 0
+    end
+
+    test "every accessor is total over nil and garbage" do
+      for bad <- [nil, "junk", 42, []] do
+        assert Archive.archive_state(bad) == nil
+        assert Archive.archive_records(bad) == []
+        assert Archive.archive_total(bad) == 0
+        assert Archive.archive_agent_results(bad) == %{}
+        assert Archive.archive_loading_more?(bad) == false
+        assert Archive.archive_more_error(bad) == nil
+        refute Archive.archive_opt?(bad)
+      end
+    end
+  end
+
+  describe "task_card/1 — paged archive pass-through" do
+    test "passes the envelope's total, append state and agent results to the archive section" do
+      task =
+        failed_task(%{
+          status: :completed,
+          opts: [prompt: "Archived task", mode: "simple", archive: true]
+        })
+
+      archive = %{
+        state: :ok,
+        entries: [
+          %{"agent_id" => "agent-root", "parent_id" => nil, "objective" => "paged root objective"}
+        ],
+        total: 500,
+        next_offset: 1,
+        loading_more?: false,
+        more_error: nil,
+        error: nil,
+        seq: 1,
+        agent_results: %{}
+      }
+
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: task,
+          show_details: true,
+          detail: %{state: :ok, task: task, archive: archive}
+        )
+
+      assert html =~ "500 agents — showing 1–1"
+      assert html =~ ~s(phx-click="load_more_task_archive")
+      assert html =~ ~s(phx-value-task-id="t_fail")
+      assert html =~ ~s(phx-click="load_task_archive_agent_result")
+      assert html =~ ~s(phx-value-agent-id="agent-root")
+      assert html =~ "Show result"
+    end
+
+    test "renders no Load more button once every page is loaded" do
+      task =
+        failed_task(%{
+          status: :completed,
+          opts: [prompt: "Archived task", mode: "simple", archive: true]
+        })
+
+      archive = %{
+        state: :ok,
+        entries: [
+          %{"agent_id" => "agent-root", "parent_id" => nil, "result" => "archived result"}
+        ],
+        total: 1,
+        next_offset: 1,
+        loading_more?: false,
+        more_error: nil,
+        error: nil,
+        seq: 1,
+        agent_results: %{}
+      }
+
+      html =
+        render_component(&TaskCardComponents.task_card/1,
+          task: task,
+          show_details: true,
+          detail: %{state: :ok, task: task, archive: archive}
+        )
+
+      assert html =~ "1 agents"
+      assert html =~ "archived result"
+      refute html =~ ~s(phx-click="load_more_task_archive")
     end
   end
 

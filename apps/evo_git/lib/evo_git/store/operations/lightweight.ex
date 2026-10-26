@@ -28,9 +28,8 @@ defmodule EvoGit.Store.Operations.Lightweight do
     * `finished_at` (`select_cleanup_info/1` only) is decoded per row via
       `Codec.decode_datetime/1` (nil on corrupt data, never a raise).
 
-  No JSON blob column (`opts`, `result`, `logs`, `usage`,
-  `archive_metadata`) is ever selected — these remain the cheap projections
-  the old handlers were.
+  No JSON blob column (`opts`, `result`, `logs`, `usage`) is ever selected —
+  these remain the cheap projections the old handlers were.
 
   ## SQL equivalence notes
 

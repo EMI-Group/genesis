@@ -524,10 +524,10 @@ defmodule EvoGit.AgentScheduler do
 
   @impl true
   def init(opts) do
-    # ETS tables (:evogit_agent_state, :evogit_sched_meta, :evogit_archive_records)
+    # ETS tables (:evogit_agent_state, :evogit_sched_meta)
     # are created by EvoGit.Application before the scheduler starts so they survive
     # scheduler crashes. Defensive check: warn if any table is unexpectedly missing.
-    for table <- [@agent_table, @sched_table, :evogit_archive_records] do
+    for table <- [@agent_table, @sched_table] do
       if :ets.whereis(table) == :undefined do
         Logger.warning(
           "AgentScheduler: ETS table #{inspect(table)} is missing — agents may not function correctly"
@@ -695,10 +695,12 @@ defmodule EvoGit.AgentScheduler do
 
       {:reply, {:error, :cancelled}, state}
     else
-      # Defensive per-task archive reset: any leftover records from a previous run
-      # sharing this task_id (e.g., a crash before the task completed) must not leak
-      # into this run's collected archive.
-      Lifecycle.clear_archive_records(task_id)
+      # Defensive per-task archive reset: the relational `task_agent_archives`
+      # table is the single canonical archive for a task run, so any leftover
+      # rows from a previous run sharing this task_id (e.g. a crash before the
+      # task completed) must not leak into this run. Best-effort: a store
+      # failure must never kill the scheduler.
+      reset_task_archives(task_id)
 
       repo_root = Dispatch.resolve_agent_repo_root(spec, state)
       task_number = Dispatch.next_task_number(repo_root)
@@ -1133,6 +1135,32 @@ defmodule EvoGit.AgentScheduler do
   @doc "Increments the compression count for an agent in the agent state table."
   @spec increment_compression_count(pos_integer()) :: :ok
   def increment_compression_count(agent_id), do: Store.increment_compression_count(agent_id)
+
+  # --- Task archive reset ---
+
+  # Best-effort archive reset for one task id: the relational
+  # `task_agent_archives` table is the single canonical archive for a task run,
+  # so a task start clears any leftover rows for that id. A store failure
+  # (crash/timeout/exit) is logged and swallowed — it must never kill the
+  # scheduler.
+  defp reset_task_archives(task_id) do
+    EvoGit.Store.delete_task_archives(task_id)
+    :ok
+  rescue
+    error ->
+      Logger.debug(
+        "AgentScheduler: archive reset for task #{inspect(task_id)} failed: #{inspect(error)}"
+      )
+
+      :ok
+  catch
+    :exit, reason ->
+      Logger.debug(
+        "AgentScheduler: archive reset for task #{inspect(task_id)} exited: #{inspect(reason)}"
+      )
+
+      :ok
+  end
 
   # --- Graceful-cancel marker helpers ---
 

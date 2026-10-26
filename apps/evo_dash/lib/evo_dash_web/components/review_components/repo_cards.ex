@@ -18,7 +18,20 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
   attr(:completion, :atom, default: nil)
   attr(:back_url, :string, default: nil)
 
+  # In-flight review-action markers owned by the hosting LiveView:
+  #
+  #   * `review_action` — nil | `%{kind:, repo_id:, seq:}` (the marker that also
+  #     blocks double submits in the LiveView); ANY non-nil value disables the
+  #     batch "Merge all repositories" button and every per-repo action.
+  #   * `busy_repos` — a `MapSet` of repo ids with a per-repo merge/reject in
+  #     flight. Treated TOTALLY here: anything that is not a `MapSet` reads as
+  #     "no repo busy" (never crashes on a nil/legacy shape).
+  attr(:review_action, :any, default: nil)
+  attr(:busy_repos, :any, default: nil)
+
   def repo_cards(assigns) do
+    assigns = assign(assigns, :action_in_flight?, assigns.review_action != nil)
+
     ~H"""
     <div id="review-repo-cards" class="space-y-4">
       <%= if @completion != nil do %>
@@ -31,20 +44,30 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
             id="merge-all-repositories"
             class="btn btn-success btn-sm rounded-lg gap-1.5"
             phx-click="merge_all"
+            disabled={@action_in_flight?}
             phx-confirm={
               gettext(
                 "Merge ALL remaining repositories into their target branches? This cannot be undone."
               )
             }
           >
-            <.icon name="hero-check" class="size-4" />
-            <%!-- zh_CN: 一次合并所有仍未处理的仓库（接受全部） --%>
-            {gettext("Merge all repositories")}
+            <%= if @action_in_flight? do %>
+              <span class="loading loading-spinner loading-xs"></span>
+              {gettext("Merging…")}
+            <% else %>
+              <.icon name="hero-check" class="size-4" />
+              <%!-- zh_CN: 一次合并所有仍未处理的仓库（接受全部） --%>
+              {gettext("Merge all repositories")}
+            <% end %>
           </button>
         </div>
       <% end %>
 
-      <.repo_card :for={repo <- @repos} repo={repo} />
+      <.repo_card
+        :for={repo <- @repos}
+        repo={repo}
+        busy={repo_busy?(@busy_repos, repo, @action_in_flight?)}
+      />
     </div>
     """
   end
@@ -109,6 +132,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
   # ---------------------------------------------------------------------------
 
   attr(:repo, :map, required: true)
+  attr(:busy, :boolean, default: false)
 
   defp repo_card(assigns) do
     repo = assigns.repo
@@ -192,6 +216,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
               repo_id={@repo_id}
               merge_targets={@merge_targets}
               target={target}
+              busy={@busy}
             />
           <% !@branch_exists -> %>
             <.branch_inactive_notice branch_name={@branch_name} />
@@ -205,6 +230,7 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
               repo_id={@repo_id}
               merge_targets={@merge_targets}
               target={target}
+              busy={@busy}
             />
         <% end %>
       </div>
@@ -274,6 +300,10 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
   attr(:repo_id, :string, required: true)
   attr(:merge_targets, :list, default: [])
   attr(:target, :string, default: nil)
+  # True while THIS repo has a merge/reject in flight (or any review action is
+  # in flight): both buttons are disabled and swap their icon for a spinner
+  # with the matching busy label.
+  attr(:busy, :boolean, default: false)
 
   defp repo_action_row(assigns) do
     ~H"""
@@ -304,10 +334,16 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
           <button
             type="submit"
             class="btn btn-success btn-sm rounded-lg gap-1.5"
+            disabled={@busy}
             phx-confirm={gettext("Merge these changes into %{target}?", target: @target)}
           >
-            <.icon name="hero-check" class="size-4" />
-            {gettext("Merge")}
+            <%= if @busy do %>
+              <span class="loading loading-spinner loading-xs"></span>
+              {gettext("Merging…")}
+            <% else %>
+              <.icon name="hero-check" class="size-4" />
+              {gettext("Merge")}
+            <% end %>
           </button>
         </form>
       <% else %>
@@ -315,10 +351,16 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
           class="btn btn-success btn-sm rounded-lg gap-1.5"
           phx-click="merge"
           phx-value-repo_id={@repo_id}
+          disabled={@busy}
           phx-confirm={gettext("Merge these changes into the current branch?")}
         >
-          <.icon name="hero-check" class="size-4" />
-          {gettext("Merge")}
+          <%= if @busy do %>
+            <span class="loading loading-spinner loading-xs"></span>
+            {gettext("Merging…")}
+          <% else %>
+            <.icon name="hero-check" class="size-4" />
+            {gettext("Merge")}
+          <% end %>
         </button>
       <% end %>
 
@@ -326,11 +368,17 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
         class="btn btn-outline btn-error btn-sm rounded-lg gap-1.5"
         phx-click="reject"
         phx-value-repo_id={@repo_id}
+        disabled={@busy}
         phx-confirm={gettext("Reject and delete these changes? This cannot be undone.")}
       >
-        <.icon name="hero-x-mark" class="size-4" />
-        <%!-- zh_CN: 拒绝并删除该仓库分支的全部变更（不可恢复） --%>
-        {gettext("Reject")}
+        <%= if @busy do %>
+          <span class="loading loading-spinner loading-xs"></span>
+          {gettext("Rejecting…")}
+        <% else %>
+          <.icon name="hero-x-mark" class="size-4" />
+          <%!-- zh_CN: 拒绝并删除该仓库分支的全部变更（不可恢复） --%>
+          {gettext("Reject")}
+        <% end %>
       </button>
     </div>
     """
@@ -415,6 +463,17 @@ defmodule EvoDashWeb.ReviewComponents.RepoCards do
 
   defp resolution_state(resolution) when is_map(resolution), do: Map.get(resolution, :state)
   defp resolution_state(_resolution), do: nil
+
+  # A repo card is BUSY when ANY review action is in flight (the LiveView allows
+  # only one at a time) or when this repo id sits in the busy set. `busy_repos`
+  # is treated totally: only a real `MapSet` can report membership, so a nil or
+  # legacy shape simply reads as "not busy" instead of raising.
+  defp repo_busy?(busy_repos, repo, action_in_flight?) do
+    action_in_flight? or busy_repo?(busy_repos, field(repo, :repo_id, "primary"))
+  end
+
+  defp busy_repo?(%MapSet{} = busy_repos, repo_id), do: MapSet.member?(busy_repos, repo_id)
+  defp busy_repo?(_busy_repos, _repo_id), do: false
 
   # A repo "HAS changes" iff its `branch_name` is a non-blank binary — nil/""/
   # whitespace mean the repo produced no changes. Public because the hosting

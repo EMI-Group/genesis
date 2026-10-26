@@ -11,11 +11,18 @@ defmodule EvoDashWeb.NodeAwareTest do
   #
   # The sidebar Active Tasks load is ASYNC: `load_running_and_pending_tasks/1`
   # / `assign_node/2` spawn a fetch on `EvoDash.TaskSupervisor` whose captured
-  # `view_pid` IS the test process, so tests assert on the
-  # `{:node_aware_active_tasks, seq, node_id, node, {running, pending}}`
+  # `view_pid` IS the test process, so tests assert on the tagged
+  # `{:node_aware_active_tasks, seq, node_id, node,
+  #   {:ok, {running, pending}} | {:error, reason}}`
   # message via `assert_receive`/`refute_receive` (send-pattern), and the
   # stale-guard seam `handle_tasks_result/2` is tested directly (pure socket
   # in/out).
+  #
+  # A CONNECTED `on_mount/4` ALSO spawns one node-context load
+  # (`{:node_aware_remote_context, seq, node_id, node,
+  #   {:ok, {targets, statuses}} | {:error, reason}}`), so connected-mount
+  # tests consume that message explicitly (`assert_remote_context_loaded/0`)
+  # instead of leaving it to leak into a bare `assert_receive`.
   #
   # The hub-seeded on_mount describes (added with the EvoDash.ActiveTasks hub)
   # invoke `on_mount/4` directly on a boot-shaped socket — `mount_socket/1`
@@ -61,6 +68,8 @@ defmodule EvoDashWeb.NodeAwareTest do
         current_node_id: "gpu-server",
         current_path: "/agents",
         connection_statuses: %{},
+        remote_targets: [],
+        remote_context_seq: 0,
         running_tasks: [],
         pending_tasks: [],
         tasks_load_seq: 0,
@@ -105,6 +114,17 @@ defmodule EvoDashWeb.NodeAwareTest do
   # != nil`) — a non-nil transport_pid fakes a connected mount.
   defp connected_mount_socket(overrides \\ %{}) do
     %{mount_socket(overrides) | transport_pid: self()}
+  end
+
+  # Consumes the connected-mount node-context load result
+  # (`{:node_aware_remote_context, seq, node_id, node,
+  #   {:ok, {targets, statuses}} | {:error, reason}}`) that `on_mount/4` spawns
+  # on EVERY connected mount (never on a dead render). Returns the payload
+  # result. Tests that only care about the sidebar still call this so the
+  # message never lingers in the test process's mailbox.
+  defp assert_remote_context_loaded do
+    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 1000
+    result
   end
 
   # Saves a connection target into the (per-test isolated) config dir so
@@ -271,10 +291,10 @@ defmodule EvoDashWeb.NodeAwareTest do
     # `EvoDash.NodeContext.list_tasks_summary(node, statuses)` (RPC) for a
     # remote node. The spawned task's captured `view_pid` IS the test process,
     # so the assertions use `assert_receive {:node_aware_active_tasks, seq,
-    # node_id, node, {running, pending}}` on the message payload (the socket
-    # itself comes back unchanged — the load is async). The remote path fails
-    # fast (noconnection) when the target node doesn't exist, so it returns []
-    # quickly without a timeout.
+    # node_id, node, {:ok, {running, pending}}}` on the message payload (the
+    # socket itself comes back unchanged — the load is async). The remote path
+    # fails fast (noconnection) when the target node doesn't exist, so it
+    # returns [] quickly without a timeout.
 
     setup :setup_isolated_registry
 
@@ -301,7 +321,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:pending_tasks] == []
       assert result.assigns[:tasks_load_seq] == 1
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
 
       # The running task appears in running_tasks
       assert length(running) == 1
@@ -322,7 +343,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
 
       ids = Enum.map(running, & &1.id) |> Enum.sort()
       assert ids == ["f1", "p1", "r1"]
@@ -340,7 +362,8 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
 
       assert Enum.any?(running, &(&1.id == "c1"))
       assert hd(running).status == :cancelling
@@ -359,7 +382,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       NodeAware.load_running_and_pending_tasks(sock)
 
       assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^remote_node,
-                      {running, pending}},
+                      {:ok, {running, pending}}},
                      1000
 
       # No tasks from the local registry should leak through to the remote view.
@@ -376,7 +399,9 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       NodeAware.load_running_and_pending_tasks(sock)
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
+                      {:ok, {running, _pending}}},
+                     1000
 
       assert Enum.any?(running, &(&1.id == "should-show"))
     end
@@ -394,7 +419,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       NodeAware.load_running_and_pending_tasks(sock)
 
       assert_receive {:node_aware_active_tasks, 1, "gpu-server", ^current_node,
-                      {running, pending}},
+                      {:ok, {running, pending}}},
                      1000
 
       assert running == []
@@ -406,7 +431,7 @@ defmodule EvoDashWeb.NodeAwareTest do
     # assign_node/2 sets the node-context assigns synchronously and triggers the
     # ASYNC sidebar load after them (dedup-guarded by :tasks_node_loaded). The
     # spawned task's captured view_pid IS the test process, so we assert on the
-    # `{:node_aware_active_tasks, seq, node_id, node, {running, pending}}`
+    # `{:node_aware_active_tasks, seq, node_id, node, {:ok, {running, pending}}}`
     # message payload instead of the returned socket's assigns.
 
     setup :setup_isolated_registry
@@ -425,7 +450,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:tasks_node_loaded] == {nil, current_node}
 
       # ...and the sidebar load arrives asynchronously.
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
 
       assert Enum.any?(running, &(&1.id == "running-1"))
       assert pending == []
@@ -439,7 +465,9 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       NodeAware.assign_node(sock, %{"node" => "local"})
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
+                      {:ok, {running, _pending}}},
+                     1000
 
       assert Enum.any?(running, &(&1.id == "running-2"))
     end
@@ -454,7 +482,9 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # An unknown node param resolves to :local (target not found), so the
       # local task shows up.
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
+                      {:ok, {running, _pending}}},
+                     1000
 
       assert Enum.any?(running, &(&1.id == "local-only-assign"))
     end
@@ -487,7 +517,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:running_tasks] == []
       assert result.assigns[:pending_tasks] == []
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
+                     1000
 
       assert length(running) == 1
       assert hd(running).status == :running
@@ -498,7 +529,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       socket =
         NodeAware.handle_tasks_result(
           result,
-          {:node_aware_active_tasks, 1, nil, current_node, {running, pending}}
+          {:node_aware_active_tasks, 1, nil, current_node, {:ok, {running, pending}}}
         )
 
       assert length(socket.assigns[:running_tasks]) == 1
@@ -522,7 +553,7 @@ defmodule EvoDashWeb.NodeAwareTest do
         NodeAware.handle_tasks_result(
           sock,
           {:node_aware_active_tasks, 1, "other-node", :"other_remote@127.0.0.1",
-           {[%{id: "stale"}], []}}
+           {:ok, {[%{id: "stale"}], []}}}
         )
 
       assert result.assigns[:running_tasks] == [%{id: "keep"}]
@@ -545,7 +576,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       result =
         NodeAware.handle_tasks_result(
           sock,
-          {:node_aware_active_tasks, 2, nil, current_node, {[%{id: "stale"}], []}}
+          {:node_aware_active_tasks, 2, nil, current_node, {:ok, {[%{id: "stale"}], []}}}
         )
 
       assert result.assigns[:running_tasks] == [%{id: "keep"}]
@@ -559,7 +590,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       result =
         NodeAware.handle_tasks_result(
           sock,
-          {:node_aware_active_tasks, 1, nil, current_node, {[%{id: "fresh"}], []}}
+          {:node_aware_active_tasks, 1, nil, current_node, {:ok, {[%{id: "fresh"}], []}}}
         )
 
       assert result.assigns[:running_tasks] == [%{id: "fresh"}]
@@ -576,7 +607,10 @@ defmodule EvoDashWeb.NodeAwareTest do
       result = NodeAware.assign_node(sock, %{})
       assert result.assigns[:tasks_node_loaded] == {nil, current_node}
 
-      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {running, _pending}}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^current_node,
+                      {:ok, {running, _pending}}},
+                     1000
+
       assert Enum.any?(running, &(&1.id == "running-1"))
 
       # A second assign_node with the SAME context must NOT re-spawn (the
@@ -685,9 +719,11 @@ defmodule EvoDashWeb.NodeAwareTest do
     #   at all. LOCAL pages DO fetch on every connected mount — the
     #   staleness catch-up covered in the next describe.
     #
-    # on_mount also calls EvoDash.NodeContext.list_targets() (reads
-    # remote_connections.toml), so the config dir is isolated per test (same
-    # convention as the assign_node remote-target describes).
+    # A CONNECTED mount ALSO spawns ONE node-context load (saved targets +
+    # connection statuses → `{:node_aware_remote_context, ...}`, applied by the
+    # attached :handle_info hook); the dead render never queries the registry.
+    # It reads remote_connections.toml, so the config dir is isolated per test
+    # (same convention as the assign_node remote-target describes).
     setup :isolate_config_dir
 
     test "warm LOCAL hub seeds running/pending synchronously on the dead render (no blink premise)" do
@@ -754,6 +790,10 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == []
       assert EvoDash.ActiveTasks.get("target-empty", node()) == {:ok, {[], []}}
 
+      # The connected mount still runs its ONE node-context load (node-
+      # independent bookkeeping) — consumed here so it never lingers.
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       # Pending context → no mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
@@ -789,6 +829,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.pending_tasks == remote_pending
       refute Enum.any?(socket.assigns.running_tasks, &(&1.id == "local-running"))
 
+      # Connected mount → the node-context load runs (consumed here).
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       # Remote context → no mount fetch (assign_node/2's context-change reload
       # is the single source of remote fetches; the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
@@ -814,6 +857,10 @@ defmodule EvoDashWeb.NodeAwareTest do
       # The hub is cold for the pending key → seeds [] — local tasks stay hidden.
       assert socket.assigns.running_tasks == []
       assert socket.assigns.pending_tasks == []
+
+      # Connected mount → the node-context load runs (consumed here).
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       assert socket.assigns[:tasks_load_seq] == 0
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
@@ -860,8 +907,14 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.running_tasks == []
       assert socket.assigns.pending_tasks == []
 
+      # The node-context load fires too (node-independent bookkeeping).
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       local_node = node()
-      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {running, pending}}, 1000
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, {running, pending}}},
+                     1000
+
       assert running == []
       assert pending == []
     end
@@ -886,14 +939,19 @@ defmodule EvoDashWeb.NodeAwareTest do
 
       # The fetch is spawned despite the warm hub, and the fresh (empty)
       # result heals the sidebar and the hub.
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       local_node = node()
-      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {running, pending}}, 1000
+
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, {running, pending}}},
+                     1000
+
       assert running == []
       assert pending == []
 
       assert {:halt, healed} =
                NodeAware.handle_info(
-                 {:node_aware_active_tasks, 1, nil, local_node, {[], []}},
+                 {:node_aware_active_tasks, 1, nil, local_node, {:ok, {[], []}}},
                  socket
                )
 
@@ -914,8 +972,10 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert socket.assigns.running_tasks == running
       assert socket.assigns.pending_tasks == pending
 
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
+
       local_node = node()
-      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, _}, 1000
+      assert_receive {:node_aware_active_tasks, 1, nil, ^local_node, {:ok, _}}, 1000
     end
 
     test "WARM REMOTE hub on a connected REMOTE mount does NOT fetch (assign_node owns remote fetches)" do
@@ -943,9 +1003,10 @@ defmodule EvoDashWeb.NodeAwareTest do
                  connected_mount_socket()
                )
 
-      # Remote context → no mount fetch, warm or cold (the seq backstop proves
-      # it deterministically).
+      # Remote context → no sidebar mount fetch, warm or cold (the seq backstop
+      # proves it deterministically). The node-context load still runs.
       assert socket.assigns[:tasks_load_seq] == 0
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
     end
 
@@ -971,9 +1032,268 @@ defmodule EvoDashWeb.NodeAwareTest do
       # never the local key).
       assert socket.assigns.running_tasks == [%{id: "pending-seed", status: :running}]
 
-      # Pending context → no mount fetch (the seq backstop proves it).
+      # Pending context → no sidebar mount fetch (the seq backstop proves it).
       assert socket.assigns[:tasks_load_seq] == 0
+      assert {:ok, {_targets, _statuses}} = assert_remote_context_loaded()
       refute_receive {:node_aware_active_tasks, _, _, _, _}, 50
+    end
+  end
+
+  describe "on_mount/4 — node-context load (`:remote_targets` / `:connection_statuses`)" do
+    # The saved SSH targets + connection statuses are node-INDEPENDENT
+    # bookkeeping. The dead render only seeds `[]`/`%{}` (a registry lookup can
+    # block or EXIT — it must never run during the dead render); ONE connected
+    # mount load refreshes both through `EvoDash.SafeCall` and sends
+    # `{:node_aware_remote_context, seq, node_id, node, {:ok, {targets,
+    # statuses}} | {:error, reason}}`, applied by the attached `:handle_info`
+    # hook (`handle_remote_context_result/2` — seq-stale-guarded only, since a
+    # node switch must not throw the target list away).
+
+    setup :isolate_config_dir
+
+    test "the dead render spawns NO node-context load (:remote_context_seq stays 0)" do
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, mount_socket())
+
+      # Dead-render seeds: empty bookkeeping, seq untouched → deterministically
+      # no request was spawned (so no result message can arrive).
+      assert socket.assigns.remote_targets == []
+      assert socket.assigns.connection_statuses == %{}
+      assert socket.assigns.remote_context_seq == 0
+      refute_receive {:node_aware_remote_context, _, _, _, _}, 50
+    end
+
+    test "a connected mount loads the saved targets and its ok result applies both assigns" do
+      save_target!("target-ctx")
+      local_node = node()
+
+      assert {:cont, socket} = NodeAware.on_mount(:default, %{}, %{}, connected_mount_socket())
+
+      # Seeds before the async result lands.
+      assert socket.assigns.remote_targets == []
+      assert socket.assigns.connection_statuses == %{}
+      assert socket.assigns.remote_context_seq == 1
+
+      assert {:ok, {targets, statuses}} = assert_remote_context_loaded()
+      assert Enum.any?(targets, &(&1.id == "target-ctx"))
+      assert is_map(statuses)
+
+      # Feeding the SAME tagged message through the attached hook applies it.
+      assert {:halt, applied} =
+               NodeAware.handle_info(
+                 {:node_aware_remote_context, 1, nil, local_node, {:ok, {targets, statuses}}},
+                 socket
+               )
+
+      assert Enum.any?(applied.assigns.remote_targets, &(&1.id == "target-ctx"))
+      assert applied.assigns.connection_statuses == statuses
+    end
+  end
+
+  describe "exit-safety — a failed fetch never crashes the hook or wedges the sidebar" do
+    # `handle_tasks_result/2` keeps the last-known sidebar state on
+    # `{:error, reason}` (a timed-out / dead store call — an EXIT that a
+    # `rescue` cannot catch) and ALWAYS clears `:tasks_reload_pending` for an
+    # APPLIED (non-stale) result, so the debounce flag can never stay set and
+    # suppress every later broadcast's reload.
+
+    test "an {:error, {:exit, _}} result through the attached hook keeps the lists and clears the flag" do
+      running = [%{id: "keep-running", status: :running}]
+      pending = [%{id: "keep-pending", status: :completed}]
+
+      sock =
+        socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          running_tasks: running,
+          pending_tasks: pending,
+          tasks_load_seq: 1,
+          tasks_reload_pending: true
+        })
+
+      assert {:halt, result} =
+               NodeAware.handle_info(
+                 {:node_aware_active_tasks, 1, nil, node(), {:error, {:exit, :timeout}}},
+                 sock
+               )
+
+      # Last-known state is kept — a failed load never empties the sidebar.
+      assert result.assigns.running_tasks == running
+      assert result.assigns.pending_tasks == pending
+      # The fetch is over, so the debounce flag is released.
+      assert result.assigns.tasks_reload_pending == false
+      # A failed load is NOT last-known state — the hub stays untouched.
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "handle_tasks_result/2 on {:error, _} is a no-op for the lists (pure seam)" do
+      running = [%{id: "keep-running", status: :running}]
+
+      sock =
+        socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          running_tasks: running,
+          tasks_load_seq: 1,
+          tasks_reload_pending: true
+        })
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 1, nil, node(), {:error, {:exit, :timeout}}}
+        )
+
+      assert result.assigns.running_tasks == running
+      assert result.assigns.pending_tasks == []
+      assert result.assigns.tasks_reload_pending == false
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
+    end
+
+    test "a stale (superseded-seq) result does NOT clear the newer request's debounce flag" do
+      sock =
+        socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          tasks_load_seq: 2,
+          tasks_reload_pending: true,
+          running_tasks: [%{id: "keep"}],
+          pending_tasks: []
+        })
+
+      assert {:halt, result} =
+               NodeAware.handle_info(
+                 {:node_aware_active_tasks, 1, nil, node(), {:ok, {[%{id: "stale"}], []}}},
+                 sock
+               )
+
+      # Dropped wholesale: the flag belongs to the NEWER in-flight request.
+      assert result == sock
+      assert result.assigns.tasks_reload_pending == true
+      assert result.assigns.running_tasks == [%{id: "keep"}]
+    end
+
+    test "the legacy bare {running, pending} payload is still accepted (defensive shape)" do
+      sock = socket(%{current_node: node(), current_node_id: nil, tasks_load_seq: 1})
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 1, nil, node(), {[%{id: "legacy"}], []}}
+        )
+
+      assert result.assigns.running_tasks == [%{id: "legacy"}]
+      assert result.assigns.pending_tasks == []
+    end
+
+    test "an {:error, _} remote-context result keeps the previous targets/statuses" do
+      targets = [%{id: "prev-target", name: "Prev"}]
+      statuses = %{"prev-target" => %{phase: :connected}}
+
+      sock =
+        socket(%{remote_targets: targets, connection_statuses: statuses, remote_context_seq: 1})
+
+      assert {:halt, result} =
+               NodeAware.handle_info(
+                 {:node_aware_remote_context, 1, nil, node(), {:error, {:exit, :timeout}}},
+                 sock
+               )
+
+      # A failed lookup must not empty the node selector / gate.
+      assert result.assigns.remote_targets == targets
+      assert result.assigns.connection_statuses == statuses
+    end
+
+    test "a stale remote-context result (superseded seq) is ignored" do
+      targets = [%{id: "prev-target"}]
+      sock = socket(%{remote_targets: targets, connection_statuses: %{}, remote_context_seq: 2})
+      stale = {:ok, {[%{id: "stale"}], %{"stale" => %{phase: :error}}}}
+
+      assert {:halt, result} =
+               NodeAware.handle_info({:node_aware_remote_context, 1, nil, node(), stale}, sock)
+
+      # Targets/statuses are node-INDEPENDENT, but a NEWER load superseded this
+      # one, so it is dropped wholesale.
+      assert result == sock
+    end
+
+    test "a malformed remote-context payload keeps the last-known values (never crashes)" do
+      targets = [%{id: "prev-target"}]
+      statuses = %{"prev-target" => %{phase: :connected}}
+
+      sock =
+        socket(%{remote_targets: targets, connection_statuses: statuses, remote_context_seq: 1})
+
+      assert {:halt, result} =
+               NodeAware.handle_info(
+                 {:node_aware_remote_context, 1, nil, node(), {:ok, {:nope, :nope2}}},
+                 sock
+               )
+
+      # Non-list targets / non-map statuses are rejected in favour of the
+      # last-known value (the layout dot-accesses the assigns).
+      assert result.assigns.remote_targets == targets
+      assert result.assigns.connection_statuses == statuses
+    end
+  end
+
+  describe "exit-safety — an EXITing sidebar fetch (unregistered store) reports back" do
+    setup :setup_isolated_registry
+
+    test "a GenServer.call to a dead/unregistered TaskRegistry yields an {:error, {:exit, _}} result" do
+      # `GenServer.call/3` to an UNREGISTERED name EXITS the caller (`:noproc`) —
+      # the exact failure mode a `rescue` cannot catch and `EvoDash.SafeCall`
+      # exists for. Unregistering the ISOLATED TaskRegistry's name makes that
+      # deterministic (no kill/restart race) and the name is re-registered
+      # before the test ends.
+      registry = Process.whereis(EvoGit.TaskRegistry)
+      assert is_pid(registry)
+
+      restore_registry = fn ->
+        if Process.alive?(registry) and Process.whereis(EvoGit.TaskRegistry) == nil do
+          Process.register(registry, EvoGit.TaskRegistry)
+        end
+      end
+
+      # Belt-and-braces: never leak an unregistered TaskRegistry into teardown
+      # even if an assertion below fails.
+      on_exit(restore_registry)
+
+      running = [%{id: "keep-running", status: :running}]
+      pending = [%{id: "keep-pending", status: :completed}]
+
+      sock =
+        socket(%{
+          current_node: node(),
+          current_node_id: nil,
+          running_tasks: running,
+          pending_tasks: pending,
+          tasks_reload_pending: true
+        })
+
+      Process.unregister(EvoGit.TaskRegistry)
+
+      # The load still spawns (the task supervisor is healthy) — only the
+      # FETCH exits.
+      loaded = NodeAware.load_running_and_pending_tasks(sock)
+      assert loaded.assigns[:tasks_load_seq] == 1
+
+      assert_receive {:node_aware_active_tasks, 1, nil, _node, {:error, {:exit, _reason}}}, 1000
+
+      # Restore the singleton name immediately — nothing else needs it gone.
+      restore_registry.()
+
+      # The EXIT became a VALUE, so the hook applies it without crashing:
+      # the last-known sidebar state survives and the debounce flag clears.
+      assert {:halt, result} =
+               NodeAware.handle_info(
+                 {:node_aware_active_tasks, 1, nil, node(), {:error, {:exit, :timeout}}},
+                 loaded
+               )
+
+      assert result.assigns.running_tasks == running
+      assert result.assigns.pending_tasks == pending
+      assert result.assigns.tasks_reload_pending == false
+      assert EvoDash.ActiveTasks.get(nil, node()) == :empty
     end
   end
 
@@ -998,7 +1318,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       result =
         NodeAware.handle_tasks_result(
           sock,
-          {:node_aware_active_tasks, 2, "target-1", remote_node, {running, pending}}
+          {:node_aware_active_tasks, 2, "target-1", remote_node, {:ok, {running, pending}}}
         )
 
       assert result.assigns.running_tasks == running
@@ -1013,7 +1333,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       result =
         NodeAware.handle_tasks_result(
           sock,
-          {:node_aware_active_tasks, 2, "target-1", remote_node, {[%{id: "stale"}], []}}
+          {:node_aware_active_tasks, 2, "target-1", remote_node, {:ok, {[%{id: "stale"}], []}}}
         )
 
       assert result == sock
@@ -1029,7 +1349,7 @@ defmodule EvoDashWeb.NodeAwareTest do
         NodeAware.handle_tasks_result(
           sock,
           {:node_aware_active_tasks, 1, "other-target", :"other_remote@127.0.0.1",
-           {[%{id: "stale"}], []}}
+           {:ok, {[%{id: "stale"}], []}}}
         )
 
       assert result == sock
@@ -1052,7 +1372,7 @@ defmodule EvoDashWeb.NodeAwareTest do
       result =
         NodeAware.handle_tasks_result(
           sock,
-          {:node_aware_active_tasks, 1, nil, node(), {[:c, valid_map], [:d]}}
+          {:node_aware_active_tasks, 1, nil, node(), {:ok, {[:c, valid_map], [:d]}}}
         )
 
       # Non-map entries are dropped from the applied assigns...
@@ -1102,7 +1422,8 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert result.assigns[:tasks_node_loaded] == {"target-2", remote_node}
 
       # ...and the cold-context fetch arrives for the REMOTE context.
-      assert_receive {:node_aware_active_tasks, 1, "target-2", ^remote_node, {running, pending}},
+      assert_receive {:node_aware_active_tasks, 1, "target-2", ^remote_node,
+                      {:ok, {running, pending}}},
                      1000
 
       # The RPC to the (nonexistent) remote node fails fast → empty lists.

@@ -29,7 +29,31 @@ defmodule EvoGit.MigrateStoreTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
+  @covering_index_version 20_260_815_000_005
+  @unpack_rows_version 20_260_815_000_006
+  @archive_table_version 20_260_815_000_007
+  @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
+  # Ascending, exactly as `schema_migrations` reports it (the rejected
+  # compression migration 004 no longer ships).
+  @migration_versions [
+    @baseline_version,
+    @normalization_version,
+    @composite_index_version,
+    @covering_index_version,
+    @unpack_rows_version,
+    @archive_table_version,
+    @move_archives_version,
+    @normalize_archives_version
+  ]
+
+  @migration_count length(@migration_versions)
+
+  # The 19 LIVE `tasks` columns AFTER the archive migration drops
+  # `archive_metadata`.
+  @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
+                        usage agent_count base_sha commit_sha lease_expires_at model_id
+                        project_path branch_name error updated_at)
 
   # The v0.9.0–v0.12.5 "reported crash-on-upgrade" shape: `updated_at` is the
   # 19th column and `error` does not exist yet — the canonical legacy DB a
@@ -110,20 +134,31 @@ defmodule EvoGit.MigrateStoreTest do
   ## Tests
 
   describe "fresh database (nonexistent path)" do
-    test "applies all three migrations and reports them by name", %{db_path: path} do
+    test "applies every shipped migration and reports them by name", %{db_path: path} do
       refute File.exists?(path)
 
       output = run_task_capturing_output!(path)
 
-      assert output =~ "Applying 3 migration(s):"
+      assert output =~ "Applying #{@migration_count} migration(s):"
       assert output =~ "20260815000001_baseline_adoption"
       assert output =~ "20260815000002_data_normalization"
       assert output =~ "20260815000003_composite_indexes"
-      assert output =~ "Database is now current (3 migration(s) applied)."
+      assert output =~ "20260815000005_covering_indexes"
+      assert output =~ "20260815000006_unpack_abandoned_compressed_rows"
+      assert output =~ "20260815000007_create_task_agent_archives"
+      assert output =~ "20260815000008_move_archives_to_table"
+      refute output =~ "20260815000004"
 
-      # All three versions are stamped and the canonical tables exist.
+      assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
+
+      # Every version is stamped and the canonical tables exist (`tasks` ends at
+      # its 19 live columns — the archive column is gone).
       assert migration_versions(path) == @migration_versions
-      assert Enum.sort(table_names(path)) == ["projects", "schema_migrations", "tasks"]
+
+      assert Enum.sort(table_names(path)) ==
+               ["projects", "schema_migrations", "task_agent_archives", "tasks"]
+
+      assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
       assert "error" in columns(path)
       assert "updated_at" in columns(path)
     end
@@ -135,26 +170,30 @@ defmodule EvoGit.MigrateStoreTest do
 
       output = run_task_capturing_output!(path)
 
-      assert output =~ "Database is already current — no pending migrations (3 applied)."
+      assert output =~
+               "Database is already current — no pending migrations (#{@migration_count} applied)."
+
       refute output =~ "Applying"
       assert migration_versions(path) == @migration_versions
     end
   end
 
   describe "legacy pre-Ecto database" do
-    test "adopts the 19-column table, stamps all three versions, and runs the data normalization",
+    test "adopts the 19-column table, stamps every version, and runs the data normalization",
          %{db_path: path} do
       build_legacy_db!(path, @ddl_19_col, seed: :legacy)
 
       output = run_task_capturing_output!(path)
-      assert output =~ "Applying 3 migration(s):"
+      assert output =~ "Applying #{@migration_count} migration(s):"
 
-      # Adoption: `error` appended (SQLite ALTERs append at the tail), the
-      # full 20-column set, versions stamped.
+      # Adoption: `error` appended (SQLite ALTERs append at the tail), then the
+      # archive migration drops `archive_metadata` → the 19 live columns, with
+      # every version stamped.
       cols = columns(path)
-      assert length(cols) == 20
+      assert Enum.sort(cols) == Enum.sort(@live_task_columns)
       assert "error" in cols
       assert "updated_at" in cols
+      refute "archive_metadata" in cols
       assert migration_versions(path) == @migration_versions
 
       # Data normalization ran through the same migrations: the seeded
@@ -175,7 +214,7 @@ defmodule EvoGit.MigrateStoreTest do
       run_task!(path)
 
       assert migration_versions(path) == @migration_versions
-      assert length(columns(path)) == 20
+      assert Enum.sort(columns(path)) == Enum.sort(@live_task_columns)
     end
   end
 
@@ -200,7 +239,7 @@ defmodule EvoGit.MigrateStoreTest do
 
       assert RepoScope.with_repo(pid, fn ->
                EvoGit.Repo.query!("SELECT COUNT(*) FROM schema_migrations").rows
-             end) == [[3]]
+             end) == [[@migration_count]]
     end
   end
 

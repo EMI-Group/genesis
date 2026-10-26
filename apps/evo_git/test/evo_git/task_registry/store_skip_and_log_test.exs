@@ -60,17 +60,19 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
 
         assert log =~ "Store: skipping undecodable row in tasks (id: #{inspect(garbage_id)})"
 
-        # No extra tables were created (the only tables are tasks/projects),
-        # and the bad row is untouched.
+        # No extra tables were created (the tables are tasks/projects plus the
+        # per-agent archive table), and the bad row is untouched.
         conn = raw_conn(sqlite_path)
 
         {:ok, %{rows: unexpected_tables}} =
           XqliteNIF.query(
             conn,
             # `schema_migrations` is the Ecto migrator's own bookkeeping
-            # table (created by Boot at store start); the assertion's intent
-            # is that skip-and-log performs NO data-movement DDL of its own.
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations')",
+            # table and `task_agent_archives` the per-agent archive table —
+            # both are created by Boot's migrations at store start; the
+            # assertion's intent is that skip-and-log performs NO
+            # data-movement DDL of its own.
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations', 'task_agent_archives')",
             []
           )
 
@@ -185,17 +187,19 @@ defmodule EvoGit.TaskRegistry.StoreSkipAndLogTest do
 
         assert log =~ "Store: skipping undecodable row in projects (id: #{inspect(garbage_path)})"
 
-        # No extra tables were created (the only tables are tasks/projects),
-        # and the bad row is untouched.
+        # No extra tables were created (the tables are tasks/projects plus the
+        # per-agent archive table), and the bad row is untouched.
         conn = raw_conn(sqlite_path)
 
         {:ok, %{rows: unexpected_tables}} =
           XqliteNIF.query(
             conn,
             # `schema_migrations` is the Ecto migrator's own bookkeeping
-            # table (created by Boot at store start); the assertion's intent
-            # is that skip-and-log performs NO data-movement DDL of its own.
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations')",
+            # table and `task_agent_archives` the per-agent archive table —
+            # both are created by Boot's migrations at store start; the
+            # assertion's intent is that skip-and-log performs NO
+            # data-movement DDL of its own.
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('tasks', 'projects', 'schema_migrations', 'task_agent_archives')",
             []
           )
 

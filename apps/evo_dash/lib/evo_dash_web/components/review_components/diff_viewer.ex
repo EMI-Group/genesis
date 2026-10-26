@@ -2,6 +2,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   @moduledoc false
   use EvoDashWeb, :html
 
+  # Maximum number of file entries the sidebar renders in one pass (tree mode
+  # and flat filter mode alike); the remainder is summarised by a dim note.
+  @max_sidebar_files 500
+
   # ---------------------------------------------------------------------------
   # file_tree_sidebar/1 — Sidebar file tree for the split-pane layout.
   #
@@ -18,6 +22,18 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   attr(:file_filter, :string, default: "")
 
   def file_tree_sidebar(assigns) do
+    # A large change can list thousands of files; the tree (and the flat
+    # filtered list) is capped so one render can never build an unbounded DOM.
+    # The FULL list is still the source for the header count and for filter
+    # matching — only the rendered entries are bounded.
+    preview = list_preview(assigns.files, @max_sidebar_files)
+
+    assigns =
+      assigns
+      |> assign(:files_preview, preview)
+      |> assign(:sidebar_truncated, Map.get(preview, :truncated?, false) == true)
+      |> assign(:sidebar_limit, @max_sidebar_files)
+
     ~H"""
     <div class="w-full lg:w-72 shrink-0 lg:sticky lg:top-0 lg:max-h-[100dvh] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
       <div class="p-3 border-b border-base-300 bg-base-200/40 sticky top-0 z-10">
@@ -68,7 +84,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
             <%!-- zh_CN: "No matching files" → 没有匹配的文件（筛选无结果时的空状态） --%>
             <p class="px-2 py-3 text-xs text-base-content/50">{gettext("No matching files")}</p>
           <% else %>
-            <%= for file <- matches do %>
+            <% match_preview = list_preview(matches, @sidebar_limit) %>
+            <%= for file <- Map.get(match_preview, :items, []) do %>
               <.file_row
                 path={file.path}
                 name={Path.basename(file.path)}
@@ -79,9 +96,10 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                 selected_file={@selected_file}
               />
             <% end %>
+            <.sidebar_truncation_note preview={match_preview} />
           <% end %>
         <% else %>
-          <%= for node <- build_file_tree(@files) do %>
+          <%= for node <- build_file_tree(Map.get(@files_preview, :items, [])) do %>
             <.tree_node
               node={node}
               depth={0}
@@ -89,9 +107,40 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
               expanded_dirs={@expanded_dirs}
             />
           <% end %>
+          <%= if @sidebar_truncated do %>
+            <.sidebar_truncation_note preview={@files_preview} />
+          <% end %>
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # sidebar_truncation_note/1 — Dim note shown when the sidebar file list was
+  # capped (see @max_sidebar_files); renders nothing when nothing was dropped.
+  # ---------------------------------------------------------------------------
+
+  attr(:preview, :map, required: true)
+
+  defp sidebar_truncation_note(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :shown,
+        min(Map.get(assigns.preview, :total, 0), @max_sidebar_files)
+      )
+
+    ~H"""
+    <%= if Map.get(@preview, :truncated?, false) == true do %>
+      <%!-- zh_CN: "Showing %{shown} of %{total} files" → 仅显示 %{total} 个文件中的 %{shown} 个（文件树渲染上限提示） --%>
+      <p class="px-2 py-2 mt-1 text-xs text-base-content/60 border-t border-base-300/60">
+        {gettext("Showing %{shown} of %{total} files",
+          shown: format_number(@shown),
+          total: format_number(Map.get(@preview, :total, 0))
+        )}
+      </p>
+    <% end %>
     """
   end
 
@@ -430,7 +479,7 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
   end
 
   defp render_diff_content(file, file_path, context_level) do
-    lines = if file.diff, do: parse_diff_lines(file), else: []
+    {lines, omitted_line_count} = if file.diff, do: parse_diff_lines_bounded(file), else: {[], 0}
 
     # Group lines into segments: pre-hunk lines (meta/header) and hunk blocks.
     # Each hunk block becomes a list of split-view pairs.
@@ -440,7 +489,8 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       file: file,
       file_path: file_path,
       context_level: context_level,
-      segments: segments
+      segments: segments,
+      omitted_line_count: omitted_line_count
     }
 
     ~H"""
@@ -472,6 +522,15 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
                   <.diff_split_row pair={pair} />
                 <% end %>
             <% end %>
+          <% end %>
+          <%= if @omitted_line_count > 0 do %>
+            <%!-- zh_CN: "… more lines not shown" → 还有 %{count} 行未显示（单个文件 diff 超过渲染上限时的提示） --%>
+            <div class="col-span-full flex items-center justify-center gap-2 px-3 py-1.5 text-xs text-base-content/60 bg-base-200/40 border-t border-base-300">
+              <.icon name="hero-ellipsis-horizontal" class="size-3.5 shrink-0" />
+              <span>{gettext("%{count} more lines not shown",
+                count: format_number(@omitted_line_count)
+              )}</span>
+            </div>
           <% end %>
           <%= if show_bottom_expand do %>
             <.diff_expand_bar path={@file_path} context_level={@context_level} direction={:below} />
@@ -762,6 +821,93 @@ defmodule EvoDashWeb.ReviewComponents.DiffViewer do
       end
     end)
   end
+
+  # ---------------------------------------------------------------------------
+  # Bounded diff rendering.
+  #
+  # A single generated file can produce a diff of tens of megabytes (~1M
+  # lines). `parse_diff_lines/1` deliberately keeps its exact,
+  # behaviour-for-behaviour "split the whole binary" semantics (pinned by
+  # tests), so the render path goes through `parse_diff_lines_bounded/1`
+  # instead: it slices at most @max_rendered_diff_lines lines off the RAW
+  # binary BEFORE any line list exists, then feeds that slice to
+  # `parse_diff_lines/1`. The remainder is only COUNTED (one scoped
+  # `:binary.match/3` walk, no list building) so the template can render a
+  # single "%{count} more lines not shown" note instead of a row per line.
+  #
+  # The slice is O(bytes) time and O(1) extra memory beyond the cut prefix,
+  # then O(@max_rendered_diff_lines) for the parsed structures — the cap is
+  # per file per render, and context expansion (which re-fetches a bigger
+  # diff) is still capped the same way.
+  # ---------------------------------------------------------------------------
+
+  # Maximum number of diff lines parsed/rendered per file per render.
+  @max_rendered_diff_lines 2_000
+
+  @doc """
+  Bounded variant of `parse_diff_lines/1` used by the render path.
+
+  Takes the same file map (anything carrying a `:diff` binary) and returns
+  `{lines, omitted_line_count}` where `lines` is `parse_diff_lines/1`'s output
+  for at most `2000` leading diff lines, and `omitted_line_count` is the number
+  of further diff lines in the original binary (`0` when nothing was dropped).
+
+  Total: a file without a binary `:diff` yields `{[], 0}`.
+  """
+  def parse_diff_lines_bounded(file) do
+    case Map.get(file, :diff) do
+      diff when is_binary(diff) ->
+        case nth_newline(diff, 0, @max_rendered_diff_lines) do
+          nil ->
+            {parse_diff_lines(file), 0}
+
+          cut ->
+            prefix = binary_part(diff, 0, cut)
+
+            {parse_diff_lines(Map.put(file, :diff, prefix)),
+             count_newlines(diff, cut + 1, 0) + unterminated_tail_line(diff, cut)}
+        end
+
+      _ ->
+        {[], 0}
+    end
+  end
+
+  # 1 when bytes remain after the cut newline AND the binary does not end with
+  # its own newline (an unterminated final line — a real omitted line that no
+  # newline count can see), else 0.
+  defp unterminated_tail_line(binary, cut) do
+    size = byte_size(binary)
+
+    if size > cut + 1 and :binary.last(binary) != ?\n, do: 1, else: 0
+  end
+
+  # Offset of the n-th "\n" at or after `offset` (n = 1 is the first
+  # occurrence), or nil when the binary holds fewer than n further newlines.
+  # Each step is a scoped :binary.match/3, so the walk allocates nothing and
+  # the total scanned bytes stay linear in the diff size.
+  defp nth_newline(_binary, _offset, n) when n <= 0, do: nil
+
+  defp nth_newline(binary, offset, n) when offset < byte_size(binary) do
+    case :binary.match(binary, "\n", scope: {offset, byte_size(binary) - offset}) do
+      {pos, 1} when n == 1 -> pos
+      {pos, 1} -> nth_newline(binary, pos + 1, n - 1)
+      :nomatch -> nil
+    end
+  end
+
+  defp nth_newline(_binary, _offset, _n), do: nil
+
+  # Count the "\n" occurrences at or after `offset` without materializing a
+  # match list (a scoped step per newline, linear scan overall).
+  defp count_newlines(binary, offset, acc) when offset < byte_size(binary) do
+    case :binary.match(binary, "\n", scope: {offset, byte_size(binary) - offset}) do
+      {pos, 1} -> count_newlines(binary, pos + 1, acc + 1)
+      :nomatch -> acc
+    end
+  end
+
+  defp count_newlines(_binary, _offset, acc), do: acc
 
   # Parse the @@ header to extract old_start and new_start line numbers.
   # Format: "@@ -<old_start>[,<count>] +<new_start>[,<count>] @@ <context>"

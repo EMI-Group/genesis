@@ -387,11 +387,26 @@ defmodule EvoDashWeb.SystemLiveTest do
         }
       }
 
-      assert {:noreply, result_socket} =
+      assert {:noreply, pending_socket} =
                SystemLive.handle_event("confirm_restart", %{}, socket)
 
-      # Modal closed
+      # The remote action runs in an EvoDash.SafeCall task that reports
+      # {{:system_action_result, node, action}, result} to the caller; the
+      # modal closes and the flash lands in handle_info, never in the click reply.
+      assert pending_socket.assigns.system_action == :restarting
+
+      assert_receive {{:system_action_result, :nonexistent_remote@host, :restarting}, _result},
+                     5000
+
+      assert {:noreply, result_socket} =
+               SystemLive.handle_info(
+                 {{:system_action_result, :nonexistent_remote@host, :restarting}, {:ok, :ok}},
+                 pending_socket
+               )
+
+      # Modal closed + in-flight marker cleared
       refute result_socket.assigns.show_restart_confirm
+      assert result_socket.assigns.system_action == nil
       # Info flash about remote restart (not an error flash)
       assert %{"info" => _} = result_socket.assigns.flash
     end
@@ -411,11 +426,24 @@ defmodule EvoDashWeb.SystemLiveTest do
         }
       }
 
-      assert {:noreply, result_socket} =
+      assert {:noreply, pending_socket} =
                SystemLive.handle_event("confirm_stop", %{}, socket)
 
-      # Modal closed
+      # Same async contract as confirm_restart: the result arrives as a
+      # {{:system_action_result, node, action}, result} message.
+      assert pending_socket.assigns.system_action == :stopping
+
+      assert_receive {{:system_action_result, :nonexistent_remote@host, :stopping}, _result}, 5000
+
+      assert {:noreply, result_socket} =
+               SystemLive.handle_info(
+                 {{:system_action_result, :nonexistent_remote@host, :stopping}, {:ok, :ok}},
+                 pending_socket
+               )
+
+      # Modal closed + in-flight marker cleared
       refute result_socket.assigns.show_stop_confirm
+      assert result_socket.assigns.system_action == nil
       # Info flash about remote stop (not an error flash)
       assert %{"info" => _} = result_socket.assigns.flash
     end

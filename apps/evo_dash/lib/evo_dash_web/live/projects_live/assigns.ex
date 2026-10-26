@@ -2,32 +2,17 @@ defmodule EvoDashWeb.ProjectsLive.Assigns do
   @moduledoc """
   Assign-building helpers for the dashboard LiveView.
 
-  Functions that compute derived assigns: notified task IDs and form defaults.
-  Sidebar running/pending task loading lives in the unified NodeAware loader
+  `assign_form_defaults/1` resets the task-form assigns (pure). Nothing here
+  touches the task store: notified-task-id seeding lives in
+  `EvoDashWeb.ProjectsLive.Notifications` and runs in the async load batch,
+  sidebar running/pending task loading lives in the unified NodeAware loader
   (`EvoDashWeb.LiveHooks.NodeAware` — `fetch_active_tasks/1`,
   `partition_active_tasks/1`, `assign_active_tasks/1`, column-based
-  `show_review_button?/1`); the old local-only `assign_running_and_pending_tasks/1`
-  and `show_review_button?/1` duplicates were removed in the unification.
+  `show_review_button?/1`), and project activation lives in `ProjectsLive`.
   """
 
-  alias EvoGit.TaskRegistry
   alias EvoDashWeb.ProjectsLive.Project
   import Phoenix.Component, only: [assign: 2]
-
-  @doc """
-  Builds the set of notified task IDs by merging existing notified IDs with
-  all terminal tasks (completed/failed/cancelled) currently in the store.
-
-  Uses the minimal id+status projection (`TaskRegistry.list_task_ids/1`), so
-  no result/opts JSON decode happens — cheap enough for mount, `handle_params`
-  fallbacks, and task mutations.
-  """
-  def build_notified_task_ids(existing_notified) do
-    TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
-    |> Enum.map(& &1.id)
-    |> MapSet.new()
-    |> MapSet.union(existing_notified)
-  end
 
   @doc """
   Sets form assigns to their default values, auto-detecting the task mode

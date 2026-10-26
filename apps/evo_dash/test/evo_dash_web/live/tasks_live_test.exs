@@ -189,6 +189,161 @@ defmodule EvoDashWeb.TasksLiveTest do
     on_exit(fn -> Application.delete_env(:evo_dash, :tasks_page_load_hook) end)
   end
 
+  # Installs the page-load RUNNER seam, resolved AT SPAWN TIME inside
+  # `PageLoad.run/6`. The runner is invoked inside `EvoDash.SafeCall.run/1` and
+  # `{:tasks_page_loaded, seq, node, result}` is ALWAYS sent (with
+  # `{:error, reason}` on failure), so an exiting/raising runner can never
+  # crash the LiveView or wedge `:tasks_loading`. Restored in on_exit so one
+  # test's broken loader never leaks into the next.
+  defp install_tasks_page_load_runner(fun) do
+    Application.put_env(:evo_dash, :tasks_page_load_runner, fun)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+    end)
+  end
+
+  # Installs the per-card LITE-DETAIL runner seam (:tasks_task_detail_runner,
+  # 2-arity `fn node, task_id -> %EvoGit.TaskInfo{} | nil end`), resolved AT
+  # SPAWN TIME inside `EvoDashWeb.TasksLive.TaskDetail`. Restored in on_exit so
+  # one test's injected runner never leaks into the next.
+  defp install_task_detail_runner(fun) do
+    Application.put_env(:evo_dash, :tasks_task_detail_runner, fun)
+    on_exit(fn -> Application.delete_env(:evo_dash, :tasks_task_detail_runner) end)
+  end
+
+  # Installs the per-card ARCHIVE PAGE runner seam
+  # (:tasks_task_archive_runner, 3-arity
+  # `fn node, task_id, opts -> %{entries: [map()], total: n} end`), also resolved
+  # at spawn time.
+  defp install_task_archive_runner(fun) do
+    Application.put_env(:evo_dash, :tasks_task_archive_runner, fun)
+    on_exit(fn -> Application.delete_env(:evo_dash, :tasks_task_archive_runner) end)
+  end
+
+  # Installs the per-AGENT archive-result runner seam
+  # (:tasks_task_archive_agent_runner, 3-arity
+  # `fn node, task_id, agent_id -> map() | nil end`).
+  defp install_task_archive_agent_runner(fun) do
+    Application.put_env(:evo_dash, :tasks_task_archive_agent_runner, fun)
+    on_exit(fn -> Application.delete_env(:evo_dash, :tasks_task_archive_agent_runner) end)
+  end
+
+  # Registers a CONNECTED (fake) remote target and returns its id, so NodeAware
+  # resolves `/tasks?node=<id>` to a remote BEAM node atom. Same pattern as the
+  # review page's remote-node tests: a temp XDG config dir for the target's TOML
+  # plus a Registry-backed stand-in for the connection manager.
+  defp register_remote_target!(prefix) do
+    original = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_config =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_test_config_#{prefix}_" <> to_string(System.unique_integer([:positive]))
+      )
+
+    File.mkdir_p!(tmp_config)
+    System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+    on_exit(fn ->
+      File.rm_rf(tmp_config)
+
+      if original do
+        System.put_env("XDG_CONFIG_HOME", original)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+    end)
+
+    target_id = "#{prefix}-target-#{System.unique_integer([:positive])}"
+
+    {:ok, _target} =
+      EvoGit.RemoteConnections.save(%{
+        ssh_target: "user@host",
+        id: target_id,
+        name: "Tasks Remote Target"
+      })
+
+    start_supervised!(
+      {EvoDashWeb.TasksLiveTest.ConnectionManager,
+       {target_id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+    )
+
+    target_id
+  end
+
+  # The per-card detail cache entry for `task_id` (nil when not fetched yet).
+  # `:sys.get_state/1` is a synchronous round-trip, so every async result
+  # already sitting in the LiveView mailbox is applied by the time it returns.
+  defp detail_entry(view, task_id) do
+    case :sys.get_state(view.pid).socket.assigns[:task_details] do
+      %{^task_id => entry} -> entry
+      _ -> nil
+    end
+  end
+
+  # Opens a card and WAITS for its LAZY detail fetch to settle (`:ok` or
+  # `:error`), then drains the async work and re-renders. The expanded content
+  # (Agent Message / usage / logs / archive disclosure) only exists once the
+  # detail has landed, so every expanded-content assertion must go through
+  # here — `render_hook(view, "toggle_task_details", ...)` alone returns with
+  # the detail still `:loading`.
+  defp expand_card(view, task_id, timeout \\ 5000) do
+    _loading_html = render_hook(view, "toggle_task_details", %{"task_id" => task_id})
+
+    wait_until(
+      fn -> match?(%{state: state} when state in [:ok, :error], detail_entry(view, task_id)) end,
+      timeout
+    )
+
+    drain_async_loads(view, timeout)
+    render(view)
+  end
+
+  # Memory footprint of a term in BYTES: heap words (`:erts_debug.size/1` × 8,
+  # as the payload test documents) PLUS the payload of every referenced binary.
+  # `:erts_debug.size/1` alone reports a 2 MB refc binary as 8 words on OTP 29
+  # — it measures the ProcBin word block, never the off-heap payload — so the
+  # binary payloads are summed explicitly. That sum is exactly what
+  # distinguishes a summary row from a full `%EvoGit.TaskInfo{}` carrying the
+  # multi-MB `result` blob.
+  defp term_bytes(term), do: :erts_debug.size(term) * 8 + binary_payload_bytes(term)
+
+  defp binary_payload_bytes(bin) when is_binary(bin), do: byte_size(bin)
+
+  # Structs are NOT Enumerable (protocol dispatch falls back to Any), so they
+  # are unwrapped first — a summary row/full TaskInfo carries DateTime,
+  # Range/MapSet and struct fields.
+  defp binary_payload_bytes(%_{} = struct),
+    do: binary_payload_bytes(Map.from_struct(struct))
+
+  defp binary_payload_bytes(map) when is_map(map) do
+    Enum.reduce(map, 0, fn {key, value}, acc ->
+      acc + binary_payload_bytes(key) + binary_payload_bytes(value)
+    end)
+  end
+
+  defp binary_payload_bytes(list) when is_list(list) do
+    Enum.reduce(list, 0, &(binary_payload_bytes(&1) + &2))
+  end
+
+  defp binary_payload_bytes(tuple) when is_tuple(tuple),
+    do: binary_payload_bytes(Tuple.to_list(tuple))
+
+  defp binary_payload_bytes(_term), do: 0
+
+  # Drains every already-sent `{:detail_fetch, task_id}` notification from the
+  # test mailbox (a bounded wait: 100ms of silence). Used before a negative
+  # "no further fetch" assertion, because ONE "tasks" broadcast is delivered
+  # twice (TasksLive + NodeAware both subscribe) and therefore refetches twice.
+  defp flush_detail_fetches(task_id) do
+    receive do
+      {:detail_fetch, ^task_id} -> flush_detail_fetches(task_id)
+    after
+      100 -> :ok
+    end
+  end
+
   # The page reload is ASYNC, so its result arrives on a later
   # {:tasks_page_loaded, ...} message: poll the task-list container (each
   # render is a synchronous round-trip that drains the mailbox) until `needle`
@@ -287,63 +442,75 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "Build a REST API"
     end
 
-    test "search_tasks handler filters tasks by agent response message", %{conn: conn} do
-      # Each fixture's response fragment appears ONLY in that fixture's result
-      # text (never in any opts/prompt/id), so a hit proves the result-column
+    test "search_tasks handler filters tasks by branch name", %{conn: conn} do
+      # The SQL search covers the task ID, the prompt/objective opts and the
+      # BRANCH NAME — never the heavy `result` blob (the /tasks page load is a
+      # lightweight summary projection; see "lightweight page load" below).
+      # Each fixture's branch is unique, so a hit proves the branch_name column
       # match. The prompts are what render in the task cards.
       insert_fixture!(
         opts: [prompt: "deploy the delivery scheduling feature"],
-        result:
-          {:ok,
-           %{
-             result: "Widget Deployment finished cleanly",
-             commit_sha: "abc123",
-             branch_name: "agent-1"
-           }}
+        branch_name: "widget-deployment"
       )
 
       insert_fixture!(
         opts: [prompt: "write the inventory audit report"],
-        result:
-          {:ok,
-           %{
-             result: "Refactored the legacy parser module",
-             commit_sha: "def456",
-             branch_name: "agent-2"
-           }}
+        branch_name: "legacy-parser-refactor"
       )
 
       insert_fixture!(
         opts: [prompt: "tune the payment gateway timeouts"],
-        result:
-          {:ok,
-           %{
-             result: "Resolved the checkout race condition",
-             commit_sha: "beef01",
-             branch_name: "agent-3"
-           }}
+        branch_name: "checkout-race-fix"
       )
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      # Exact-fragment leg: the query occurs in exactly one fixture's response
-      # text, so only that task row survives the store filter.
+      # Exact-fragment leg: the query occurs in exactly one fixture's branch
+      # name, so only that task row survives the store filter.
+      _html = render_hook(view, "search_tasks", %{"search_query" => "widget-deployment"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "deploy the delivery scheduling feature"
+      refute html =~ "write the inventory audit report"
+      refute html =~ "tune the payment gateway timeouts"
+
+      # Case-insensitive leg: re-search the same branch fragment with
+      # different casing and the matching fixture still renders.
+      _html = render_hook(view, "search_tasks", %{"search_query" => "WIDGET-DEPLOYMENT"})
+      html = flush_tasks_load(view)
+
+      assert html =~ "deploy the delivery scheduling feature"
+      refute html =~ "write the inventory audit report"
+      refute html =~ "tune the payment gateway timeouts"
+    end
+
+    test "search_tasks handler no longer matches the agent response (result) blob", %{
+      conn: conn
+    } do
+      # Regression pin for the lightweight /tasks architecture: the WHERE
+      # clause searches ID / opts / branch_name only, so text that exists ONLY
+      # in a task's `result` can never match again (the result is not even
+      # loaded until a card is expanded).
+      insert_fixture!(
+        opts: [prompt: "deploy the delivery scheduling feature"],
+        result: {:ok, %{result: "Widget Deployment finished cleanly"}}
+      )
+
+      insert_fixture!(
+        opts: [prompt: "write the inventory audit report"],
+        result: {:ok, %{result: "Refactored the legacy parser module"}}
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
       _html = render_hook(view, "search_tasks", %{"search_query" => "Widget Deployment"})
       html = flush_tasks_load(view)
 
-      assert html =~ "deploy the delivery scheduling feature"
+      assert html =~ "No tasks found"
+      refute html =~ "deploy the delivery scheduling feature"
       refute html =~ "write the inventory audit report"
-      refute html =~ "tune the payment gateway timeouts"
-
-      # Case-insensitive leg: re-search the same response fragment with
-      # different casing and the matching fixture still renders.
-      _html = render_hook(view, "search_tasks", %{"search_query" => "widget deployment"})
-      html = flush_tasks_load(view)
-
-      assert html =~ "deploy the delivery scheduling feature"
-      refute html =~ "write the inventory audit report"
-      refute html =~ "tune the payment gateway timeouts"
     end
   end
 
@@ -1146,6 +1313,92 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  describe "async page-load exit safety" do
+    test "an exiting page-load runner renders a retry-able error state and recovers on retry", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "recover me"])
+      install_tasks_page_load_runner(fn _, _, _, _ -> exit(:boom) end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      # `SafeCall.run/1` turned the loader's exit into an error VALUE: the
+      # LiveView survives and the loading flag is cleared.
+      assert Process.alive?(view.pid)
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+
+      # Nothing was ever loaded, so the full load-error state renders.
+      list = render_tasks_list(view)
+      assert list =~ "tasks-load-error"
+      assert list =~ "Could not load tasks."
+      refute list =~ "recover me"
+      refute render(view) =~ "tasks-refresh-error"
+
+      # Restoring the real loader and clicking Retry loads the page.
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      html = flush_tasks_load(view)
+
+      assert html =~ "recover me"
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil
+      refute html =~ "tasks-load-error"
+    end
+
+    test "a raising page-load runner fails the same way, without crashing", %{conn: conn} do
+      install_tasks_page_load_runner(fn _, _, _, _ -> raise "boom" end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+
+      assert Process.alive?(view.pid)
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_loading] == false end)
+      assert :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil
+      assert render_tasks_list(view) =~ "tasks-load-error"
+
+      # Retry with the real runner recovers to the empty state (no fixtures).
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+      flush_tasks_load(view)
+
+      refute render(view) =~ "tasks-load-error"
+      assert render(view) =~ "No tasks found"
+    end
+
+    test "a failed background reload keeps the loaded rows and shows the refresh-error strip", %{
+      conn: conn
+    } do
+      insert_fixture!(opts: [prompt: "keep me"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      assert render_tasks_list(view) =~ "keep me"
+
+      # Break the loader AFTER the initial load, then trigger the debounced
+      # background reload (show_loading? false — the rows stay on screen).
+      install_tasks_page_load_runner(fn _, _, _, _ -> exit(:boom) end)
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, "t1", :running, node()})
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] != nil end)
+
+      # The previous rows survive; the compact retry strip sits above them and
+      # the full-page load-error state is NOT used.
+      assert render_tasks_list(view) =~ "keep me"
+      html = render(view)
+      assert html =~ "tasks-refresh-error"
+      assert html =~ "Could not refresh tasks."
+      refute html =~ "tasks-load-error"
+
+      # Restoring the loader and clicking Retry clears the error.
+      Application.delete_env(:evo_dash, :tasks_page_load_runner)
+      render_click(view, "retry_load")
+      wait_until(fn -> :sys.get_state(view.pid).socket.assigns[:tasks_error] == nil end)
+
+      refute render(view) =~ "tasks-refresh-error"
+      assert render_tasks_list(view) =~ "keep me"
+      flush_tasks_load(view)
+    end
+  end
+
   describe "cancelling status display" do
     test "renders the Cancelling label with a warning pulsing dot", %{conn: conn} do
       insert_fixture!(status: :cancelling, finished_at: nil, opts: [prompt: "cancelling task"])
@@ -1526,7 +1779,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       # Flattened structure: "Objective" and "Agent Message" are direct h4 card
       # headers. The old nested "Options"/"Result" card headers are gone —
@@ -1578,7 +1831,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       assert html =~ "Agent Message"
       assert html =~ "Error"
@@ -1596,7 +1849,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       assert html =~ "Agent Message"
       assert html =~ "No Changes"
@@ -1612,7 +1865,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
       assert html =~ "Agent Message"
 
       html = render_hook(view, "view_full_result", %{"task_id" => id})
@@ -1634,7 +1887,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      _html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      _html = expand_card(view, id)
 
       html = render_hook(view, "view_full_options", %{"task_id" => id})
 
@@ -1665,36 +1918,61 @@ defmodule EvoDashWeb.TasksLiveTest do
     # round trip (unknown result keys are never atomized), so fixtures pass
     # through the same shape the core produces.
     test "collapsed card shows the compact per-repo indicator", %{conn: conn} do
-      insert_fixture!(
-        result:
-          {:ok,
-           %{
-             result: "multi-repo work done",
-             commit_sha: "aaaaaaa1111111",
-             branch_name: "genesis/agent_1",
-             repos: %{
-               "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: "genesis/agent_1"},
-               "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"},
-               "readme-tools" => %{commit_sha: "ccccccc3333333", branch_name: "genesis/agent_1"}
-             }
-           }}
-      )
+      # From a SUMMARY row a task is "multi-repo" only through
+      # `opts[:foreign_repos]` — the result's `repos` map lives in the lazy
+      # per-card detail. The summary-derived indicator therefore lists every
+      # configured repo id plus the primary repo's short sha.
+      id =
+        insert_fixture!(
+          commit_sha: "aaaaaaa1111111",
+          branch_name: "genesis/agent_1",
+          opts: [
+            prompt: "multi-repo work",
+            foreign_repos: [
+              %{id: "legacy-api", root: "/tmp/legacy", description: "x", writable: true},
+              %{id: "readme-tools", root: "/tmp/readme", description: "y", writable: false}
+            ]
+          ],
+          result:
+            {:ok,
+             %{
+               result: "multi-repo work done",
+               commit_sha: "aaaaaaa1111111",
+               branch_name: "genesis/agent_1",
+               repos: %{
+                 "primary" => %{commit_sha: "aaaaaaa1111111", branch_name: "genesis/agent_1"},
+                 "legacy-api" => %{commit_sha: "bbbbbbb2222222", branch_name: "genesis/agent_1"},
+                 "readme-tools" => %{commit_sha: "ccccccc3333333", branch_name: "genesis/agent_1"}
+               }
+             }}
+        )
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       html = flush_tasks_load(view)
 
-      # Collapsed indicator: repo ids + short SHAs (first 7 chars) visible
-      # without expanding.
+      # Collapsed indicator: repo ids + the primary short sha (first 7 chars)
+      # visible without expanding. The foreign shas are NOT part of the
+      # summary projection.
       assert html =~ "legacy-api:"
       assert html =~ "readme-tools:"
       assert html =~ "aaaaaaa"
-      assert html =~ "bbbbbbb"
-      assert html =~ "ccccccc"
+
+      # Once the lazy detail has landed, collapsing again renders the ENRICHED
+      # indicator from the result's `repos` map (the cache survives a collapse).
+      _expanded = expand_card(view, id)
+      collapsed = render_hook(view, "toggle_task_details", %{"task_id" => id})
+
+      assert collapsed =~ "legacy-api:"
+      assert collapsed =~ "readme-tools:"
+      assert collapsed =~ "aaaaaaa"
+      assert collapsed =~ "bbbbbbb"
+      assert collapsed =~ "ccccccc"
     end
 
     test "expanded card renders the per-repo Repositories section", %{conn: conn} do
       id =
         insert_fixture!(
+          opts: [prompt: "multi-repo work"],
           result:
             {:ok,
              %{
@@ -1712,7 +1990,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       assert html =~ "Repositories"
       assert html =~ "legacy-api:"
@@ -1742,6 +2020,10 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
+      # The modal state is derived from the LAZY detail cache, so the card must
+      # be expanded (and its detail flushed) before the modal can be `:ok`.
+      _expanded = expand_card(view, id)
+
       html = render_hook(view, "view_full_result", %{"task_id" => id})
 
       assert html =~ "Task Result"
@@ -1769,7 +2051,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       # No per-repo indicator on the collapsed card.
       refute html =~ "Repositories"
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       # Existing badges/behavior unchanged.
       assert html =~ "Agent Message"
@@ -1799,7 +2081,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
-      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      html = expand_card(view, id)
 
       # The No Changes notice still renders (primary had no commits)…
       assert html =~ "No Changes"
@@ -1813,6 +2095,733 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "legacy-api:"
       assert html =~ "bbbbbbb"
       assert html =~ "genesis/agent_1"
+    end
+  end
+
+  # The 16 summary keys of the lightweight /tasks page load (the
+  # `EvoDash.NodeContext.list_tasks_page/2` projection). `result`, `usage`,
+  # `logs` and `archive_metadata` are deliberately absent — they are fetched
+  # per card, on demand.
+  @summary_keys [
+    :id,
+    :status,
+    :review_status,
+    :started_at,
+    :finished_at,
+    :type,
+    :project_path,
+    :opts,
+    :branch_name,
+    :model_id,
+    :agent_count,
+    :base_sha,
+    :commit_sha,
+    :lease_expires_at,
+    :updated_at,
+    :error
+  ]
+
+  describe "lightweight page load (summary rows)" do
+    test "the page assigns summary-shaped rows with no heavy blobs", %{conn: conn} do
+      insert_fixture!(opts: [prompt: "summary row task"])
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      tasks = :sys.get_state(view.pid).socket.assigns.tasks
+      assert is_list(tasks) and tasks != []
+
+      for row <- tasks do
+        for key <- @summary_keys do
+          assert Map.has_key?(row, key), "summary row is missing #{inspect(key)}"
+        end
+
+        for heavy <- [:result, :archive_metadata, :usage, :logs] do
+          refute Map.has_key?(row, heavy), "summary row must not carry #{inspect(heavy)}"
+        end
+      end
+    end
+
+    test "a multi-MB result never rides the page load", %{conn: conn} do
+      big = String.duplicate("multi-mb-payload ", 140_000)
+      assert byte_size(big) > 2_000_000
+
+      insert_fixture!(
+        opts: [prompt: "big payload task"],
+        result: {:ok, %{result: big, commit_sha: "abc1234"}}
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      page_rows = :sys.get_state(view.pid).socket.assigns.tasks
+      assert length(page_rows) == 1
+
+      # The full-row read of the SAME row for comparison.
+      {full_rows, _total} = EvoDash.NodeContext.list_tasks_paginated(node(), limit: 50)
+      assert length(full_rows) == 1
+
+      page_bytes = term_bytes(page_rows)
+      full_bytes = term_bytes(full_rows)
+
+      # The summary page carries no payload at all — it stays orders of
+      # magnitude below the full-row read (and far below the blob itself).
+      assert page_bytes * 50 <= full_bytes,
+             "expected the summary page (#{page_bytes} B) to be at least 50× " <>
+               "smaller than the full-row read (#{full_bytes} B)"
+
+      assert page_bytes < div(byte_size(big), 50)
+    end
+  end
+
+  describe "lazy per-card detail" do
+    test "expanding a card triggers exactly ONE async lite fetch", %{conn: conn} do
+      id =
+        insert_fixture!(
+          opts: [prompt: "one fetch task"],
+          result: {:ok, %{result: "the agent message", commit_sha: "abc1234"}}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      full = EvoDash.NodeContext.get_task_lite(node(), id)
+      assert %EvoGit.TaskInfo{} = full
+
+      test_pid = self()
+
+      # The injected runner HOLDS its result until the test releases it, so the
+      # in-flight ("loading") state is observable deterministically instead of
+      # racing an extra LiveViewTest render round-trip.
+      install_task_detail_runner(fn _node, task_id ->
+        send(test_pid, {:detail_fetch, task_id, self()})
+
+        receive do
+          :release_detail -> full
+        after
+          5000 -> full
+        end
+      end)
+
+      # The expand returns while the detail is still in flight — the card shows
+      # its loading state, never a stale/empty heavy section.
+      loading_html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      assert loading_html =~ ~s(id="task-#{id}-detail-loading")
+      assert loading_html =~ "Loading task details…"
+      # Scope to the rendered <h4> headers — the template's own HTML comments
+      # also mention "Agent Message" (the file's h4_header_texts/1 idiom).
+      refute "Agent Message" in h4_header_texts(loading_html)
+
+      assert_receive {:detail_fetch, ^id, child}, 2000
+
+      # A second toggle while the first fetch is in flight is a COLLAPSE: the
+      # cache/in-flight guard in TaskDetail.ensure/2 never refetches.
+      collapsed_html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      refute collapsed_html =~ "Loading task details…"
+      refute_receive {:detail_fetch, ^id, _pid}, 100
+
+      send(child, :release_detail)
+      wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
+      drain_async_loads(view, 5000)
+
+      # Re-expanding renders from the landed cache — still exactly ONE fetch
+      # for the whole lifecycle of this card.
+      html = render_hook(view, "toggle_task_details", %{"task_id" => id})
+      assert html =~ "Agent Message"
+      assert html =~ "the agent message"
+      refute_receive {:detail_fetch, ^id, _pid}, 100
+    end
+
+    test "a failing or nil detail fetch renders the inline error state without crashing", %{
+      conn: conn
+    } do
+      id =
+        insert_fixture!(
+          opts: [prompt: "failing detail task"],
+          result: {:ok, %{result: "should not be visible while failing"}}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      # `nil` (the task vanished between the page load and the expand) becomes
+      # `:not_found` without crashing the LiveView.
+      install_task_detail_runner(fn _node, _task_id -> nil end)
+      render_hook(view, "toggle_task_details", %{"task_id" => id})
+      wait_until(fn -> match?(%{state: :error}, detail_entry(view, id)) end)
+      drain_async_loads(view, 5000)
+
+      html = render(view)
+      assert html =~ ~s(id="task-#{id}-detail-error")
+      assert html =~ "Could not load task details."
+      assert html =~ ~s(phx-click="retry_task_detail")
+      assert %{state: :error, error: :not_found} = detail_entry(view, id)
+
+      # A runner that EXITS is captured by SafeCall — the LiveView survives and
+      # still renders the retry-able error strip.
+      install_task_detail_runner(fn _node, _task_id -> exit(:boom) end)
+      render_click(view, "retry_task_detail", %{"task_id" => id})
+      wait_until(fn -> match?(%{state: :error}, detail_entry(view, id)) end)
+      drain_async_loads(view, 5000)
+
+      assert Process.alive?(view.pid)
+      html = render(view)
+      assert html =~ ~s(id="task-#{id}-detail-error")
+      assert html =~ ~s(phx-click="retry_task_detail")
+      assert %{state: :error, error: {:exit, :boom}} = detail_entry(view, id)
+
+      # Retry with a working runner recovers the card in place.
+      install_task_detail_runner(&EvoDash.NodeContext.get_task_lite/2)
+      render_click(view, "retry_task_detail", %{"task_id" => id})
+      wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
+      drain_async_loads(view, 5000)
+
+      html = render(view)
+      assert html =~ "Agent Message"
+      assert html =~ "should not be visible while failing"
+      refute html =~ ~s(id="task-#{id}-detail-error")
+    end
+
+    test "a PubSub update invalidates the cached detail; a delete drops it", %{conn: conn} do
+      id =
+        insert_fixture!(
+          opts: [prompt: "invalidate task"],
+          result: {:ok, %{result: "first result"}}
+        )
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      expand_card(view, id)
+      assert match?(%{state: :ok}, detail_entry(view, id))
+
+      test_pid = self()
+
+      install_task_detail_runner(fn node, task_id ->
+        send(test_pid, {:detail_fetch, task_id})
+        EvoDash.NodeContext.get_task_lite(node, task_id)
+      end)
+
+      # An update broadcast on the viewed node drops the EXPANDED card's cache
+      # entry and refetches it immediately (the open card shows loading, then
+      # the fresh detail — it never blanks out). NOTE: BOTH TasksLive and
+      # NodeAware subscribe to the "tasks" topic, so one broadcast is delivered
+      # twice; the assertion is therefore "at least one refetch", not a pinned
+      # count.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :completed, node()})
+
+      assert_receive {:detail_fetch, ^id}, 2000
+      wait_until(fn -> match?(%{state: :ok}, detail_entry(view, id)) end)
+      drain_async_loads(view, 5000)
+      flush_detail_fetches(id)
+      assert match?(%{state: :ok}, detail_entry(view, id))
+      refute_receive {:detail_fetch, ^id}, 100
+
+      # Collapse (the cache is retained), then a DELETE broadcast drops the
+      # entry without refetching a collapsed card.
+      render_hook(view, "toggle_task_details", %{"task_id" => id})
+      assert match?(%{state: :ok}, detail_entry(view, id))
+
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, id, node()})
+      wait_until(fn -> detail_entry(view, id) == nil end)
+      flush_detail_fetches(id)
+      refute_receive {:detail_fetch, ^id}, 100
+
+      drain_async_loads(view, 5000)
+      assert detail_entry(view, id) == nil
+    end
+  end
+
+  # --- paged archive fixtures & helpers ---
+
+  # `count` root archive records with STRING keys and NO "result" key — exactly
+  # what ONE page of `NodeContext.list_task_archives/3` returns with
+  # `include_results: false`.
+  defp paged_archive(count) do
+    for i <- 1..count do
+      %{
+        "agent_id" => "agent-#{i}",
+        "parent_id" => nil,
+        "depth" => 0,
+        "objective" => "objective of agent-#{i}"
+      }
+    end
+  end
+
+  # The 3-arity archive PAGE runner: reports every request to the test process
+  # and returns the requested slice plus the TRUE total.
+  defp paging_runner(entries, test_pid) do
+    fn node, task_id, opts ->
+      send(test_pid, {:archive_page, node, task_id, opts})
+      offset = Keyword.get(opts, :offset, 0)
+      limit = Keyword.get(opts, :limit, 100)
+
+      %{entries: Enum.slice(entries, offset, limit), total: length(entries)}
+    end
+  end
+
+  # The card's cached archive envelope (nil when no archive has been requested
+  # or after an invalidation).
+  defp archive_entry(view, task_id) do
+    case detail_entry(view, task_id) do
+      %{archive: archive} -> archive
+      _ -> nil
+    end
+  end
+
+  # Waits for the archive envelope to satisfy `predicate`, then drains the async
+  # work and re-renders.
+  defp wait_for_archive(view, task_id, predicate, timeout \\ 5000) do
+    wait_until(fn -> predicate.(archive_entry(view, task_id)) end, timeout)
+    drain_async_loads(view, timeout)
+  end
+
+  defp archive_ids(view, task_id) do
+    view
+    |> archive_entry(task_id)
+    |> Map.get(:entries, [])
+    |> Enum.map(& &1["agent_id"])
+  end
+
+  defp agent_result_state(view, task_id, agent_id) do
+    with archive when is_map(archive) <- archive_entry(view, task_id) do
+      get_in(archive, [:agent_results, agent_id, :state])
+    else
+      _ -> nil
+    end
+  end
+
+  # Every archive "Export JSON" href of the rendered page.
+  defp export_hrefs(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s(a[href*="/export"]))
+    |> Floki.attribute("href")
+  end
+
+  # Simulates NodeAware's `?node=` resolution to a CONNECTED remote target. The
+  # suite has no distribution link to a real remote BEAM, so the resolved node
+  # atom is written straight onto the socket exactly as `assign_node/2` does
+  # (through `assign/2`, so HEEx change tracking re-renders node-aware markup).
+  # `node_id` (the `?node=` target id) mirrors the second NodeAware assign that
+  # node-aware links read.
+  defp set_current_node(view, node) do
+    :sys.replace_state(view.pid, fn state ->
+      put_in(state.socket.assigns.current_node, node)
+    end)
+  end
+
+  describe "lazy per-card archive" do
+    test "the first page fetches only on click and reports the true total", %{conn: conn} do
+      id =
+        insert_fixture!(
+          opts: [archive: true, prompt: "archived task"],
+          result: {:ok, %{result: "done"}}
+        )
+
+      test_pid = self()
+      install_task_archive_runner(paging_runner(paged_archive(3), test_pid))
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+
+      html = expand_card(view, id)
+
+      # Disclosure only: the opt-in section renders, no records do.
+      assert html =~ "Archived Agent Details"
+      assert html =~ "The archive loads on demand."
+      assert html =~ ~s(phx-click="load_task_archive")
+      refute html =~ "objective of agent-1"
+      refute html =~ "Export JSON"
+      refute_receive {:archive_page, _, _, _}, 100
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      assert_receive {:archive_page, node, ^id, opts}, 2000
+      assert node == node()
+      assert opts[:limit] == 100
+      assert opts[:offset] == 0
+      refute opts[:include_results]
+
+      html = render(view)
+      assert html =~ "3 agents"
+      assert html =~ "objective of agent-1"
+      assert html =~ "Export JSON"
+      # LOCAL node: the export href stays byte-for-byte what it always was.
+      assert export_hrefs(html) == ["/tasks/#{id}/export"]
+      # Every entry omits its "result" until it is asked for.
+      assert html =~ "Show result"
+      # Everything is loaded, so there is nothing more to page in.
+      refute html =~ ~s(phx-click="load_more_task_archive")
+    end
+
+    test "an empty archive renders the empty state", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "empty archive task"])
+
+      install_task_archive_runner(fn _node, _task_id, _opts ->
+        %{entries: [], total: 0}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok, total: 0}, &1))
+
+      html = render(view)
+      assert html =~ "No archived agents for this task."
+    end
+
+    test "an archive fetch failure renders the error strip and recovers on retry", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "archive error task"])
+
+      counter = :counters.new(1, [])
+
+      install_task_archive_runner(fn _node, _task_id, _opts ->
+        :counters.add(counter, 1, 1)
+
+        if :counters.get(counter, 1) == 1 do
+          raise "archive boom"
+        else
+          %{entries: paged_archive(2), total: 2}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :error}, &1))
+
+      assert Process.alive?(view.pid)
+      html = render(view)
+      assert html =~ "Could not load the task archive."
+      assert html =~ ~s(phx-click="load_task_archive")
+      refute html =~ "objective of agent-1"
+
+      # The strip's Retry is the same event; the second call succeeds.
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      html = render(view)
+      assert html =~ "objective of agent-1"
+      refute html =~ "Could not load the task archive."
+    end
+
+    test "Load more appends the next page at offset 100 in order, without duplicates", %{
+      conn: conn
+    } do
+      id = insert_fixture!(opts: [archive: true, prompt: "paged task"])
+
+      test_pid = self()
+      install_task_archive_runner(paging_runner(paged_archive(250), test_pid))
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok, total: 250}, &1))
+      assert_receive {:archive_page, _node, ^id, first_opts}, 2000
+      assert first_opts[:offset] == 0
+
+      assert archive_ids(view, id) == Enum.map(1..100, &"agent-#{&1}")
+      assert render(view) =~ "250 agents — showing 1–100"
+      assert render(view) =~ ~s(phx-click="load_more_task_archive")
+
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+
+      wait_for_archive(view, id, fn
+        %{loading_more?: false, total: 250, entries: entries} -> length(entries) == 200
+        _ -> false
+      end)
+
+      assert_receive {:archive_page, _node, ^id, more_opts}, 2000
+      assert more_opts[:offset] == 100
+      assert more_opts[:limit] == 100
+
+      # Order preserved across pages, no duplicate agent ids.
+      assert archive_ids(view, id) == Enum.map(1..200, &"agent-#{&1}")
+      assert render(view) =~ "250 agents — showing 1–200"
+
+      # The last page finishes the archive and retires the button.
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+
+      wait_for_archive(view, id, fn
+        %{loading_more?: false, total: 250, entries: entries} -> length(entries) == 250
+        _ -> false
+      end)
+
+      assert_receive {:archive_page, _node, ^id, last_opts}, 2000
+      assert last_opts[:offset] == 200
+
+      html = render(view)
+      assert html =~ "250 agents"
+      refute html =~ "showing"
+      refute html =~ ~s(phx-click="load_more_task_archive")
+    end
+
+    test "a retried page is idempotent (no duplicate agent ids)", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "retried page task"])
+
+      entries = paged_archive(250)
+
+      # A runner that ignores the offset and always answers with page 1 — the
+      # worst case for an append (a retried/duplicated page).
+      install_task_archive_runner(fn _node, _task_id, _opts ->
+        %{entries: Enum.take(entries, 100), total: 250}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok, total: 250}, &1))
+
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{loading_more?: false}, &1))
+
+      ids = archive_ids(view, id)
+      assert length(ids) == 100
+      assert ids == Enum.uniq(ids)
+      assert ids == Enum.map(1..100, &"agent-#{&1}")
+    end
+
+    test "an append failure keeps the loaded page and retries the same event", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "append error task"])
+
+      entries = paged_archive(250)
+      attempts = :counters.new(1, [])
+
+      install_task_archive_runner(fn _node, _task_id, opts ->
+        offset = Keyword.get(opts, :offset, 0)
+
+        if offset > 0 do
+          :counters.add(attempts, 1, 1)
+          if :counters.get(attempts, 1) == 1, do: raise("append boom")
+        end
+
+        %{entries: Enum.slice(entries, offset, 100), total: length(entries)}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok, total: 250}, &1))
+
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+
+      wait_for_archive(view, id, fn
+        %{loading_more?: false, more_error: reason} -> reason != nil
+        _ -> false
+      end)
+
+      assert Process.alive?(view.pid)
+      # The already-loaded page survives; the append failure is inline.
+      assert archive_ids(view, id) == Enum.map(1..100, &"agent-#{&1}")
+
+      html = render(view)
+      assert html =~ "Could not load more archive pages."
+      assert html =~ "Retry"
+      assert html =~ ~s(phx-click="load_more_task_archive")
+
+      # Retry is the same event.
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+
+      wait_for_archive(view, id, fn
+        %{more_error: nil, entries: entries} -> length(entries) == 200
+        _ -> false
+      end)
+
+      assert archive_ids(view, id) == Enum.map(1..200, &"agent-#{&1}")
+      refute render(view) =~ "Could not load more archive pages."
+    end
+
+    test "an entry without a result asks for it instead of rendering an empty Result block", %{
+      conn: conn
+    } do
+      id = insert_fixture!(opts: [archive: true, prompt: "show result task"])
+
+      test_pid = self()
+      install_task_archive_runner(paging_runner(paged_archive(2), test_pid))
+
+      install_task_archive_agent_runner(fn _node, _task_id, agent_id ->
+        %{"result" => agent_id}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      html = render(view)
+
+      # One explicit button per paged entry — nothing is fetched on render.
+      assert html =~ ~s(phx-click="load_task_archive_agent_result")
+      assert html =~ ~s(phx-value-agent-id="agent-1")
+      assert html =~ ~s(phx-value-agent-id="agent-2")
+      assert html =~ "Show result"
+
+      # No Result header is rendered for a paged entry (its body was never read).
+      refute html =~ ~s(mb-0.5">Result</div>)
+    end
+
+    test "one agent's result is fetched once, cached, capped and refetched after invalidation", %{
+      conn: conn
+    } do
+      id = insert_fixture!(opts: [archive: true, prompt: "lazy result task"])
+
+      test_pid = self()
+      install_task_archive_runner(paging_runner(paged_archive(2), test_pid))
+
+      tail = "ZZ_LAZY_AGENT_RESULT_TAIL_ZZ"
+      big = String.duplicate("lazy-agent-result-line ", 1_000) <> tail
+      assert byte_size(big) > 8_192
+
+      install_task_archive_agent_runner(fn node, task_id, agent_id ->
+        send(test_pid, {:agent_fetch, node, task_id, agent_id})
+        %{"agent_id" => agent_id, "result" => big}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+      assert_receive {:archive_page, _node, ^id, _opts}, 2000
+      refute_receive {:agent_fetch, _, _, _}, 100
+
+      render_hook(view, "load_task_archive_agent_result", %{
+        "task_id" => id,
+        "agent_id" => "agent-1"
+      })
+
+      wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
+      drain_async_loads(view, 5000)
+
+      assert_receive {:agent_fetch, node, ^id, "agent-1"}, 2000
+      assert node == node()
+      # Fetched exactly once.
+      refute_receive {:agent_fetch, _, _, "agent-1"}, 100
+
+      html = render(view)
+      assert html =~ "lazy-agent-result-line"
+      refute html =~ tail
+      assert html =~ "Showing 8,192 of"
+
+      # Cached: a second click is a guarded no-op.
+      render_hook(view, "load_task_archive_agent_result", %{
+        "task_id" => id,
+        "agent_id" => "agent-1"
+      })
+
+      drain_async_loads(view, 5000)
+      refute_receive {:agent_fetch, _, _, "agent-1"}, 100
+
+      # A task broadcast invalidates the WHOLE entry — the archive and its
+      # cached agent results go with it.
+      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, :running, node()})
+      wait_until(fn -> archive_entry(view, id) == nil end)
+      drain_async_loads(view, 5000)
+
+      refute render(view) =~ "lazy-agent-result-line"
+
+      # Re-opening the disclosure re-reads page 1; the result is fetched again.
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+      assert_receive {:archive_page, _node, ^id, _opts}, 2000
+
+      render_hook(view, "load_task_archive_agent_result", %{
+        "task_id" => id,
+        "agent_id" => "agent-1"
+      })
+
+      wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
+      drain_async_loads(view, 5000)
+
+      assert_receive {:agent_fetch, _node, ^id, "agent-1"}, 2000
+      assert render(view) =~ "lazy-agent-result-line"
+    end
+
+    test "propagates the viewed node atom to both archive runners", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "remote node task"])
+
+      test_pid = self()
+
+      install_task_archive_runner(fn node, task_id, _opts ->
+        send(test_pid, {:archive_page_node, node, task_id})
+        %{entries: paged_archive(1), total: 1}
+      end)
+
+      install_task_archive_agent_runner(fn node, task_id, agent_id ->
+        send(test_pid, {:agent_fetch_node, node, task_id, agent_id})
+        %{"agent_id" => agent_id, "result" => "remote node result"}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+
+      remote = :"genesis_remote_test@127.0.0.1"
+      set_current_node(view, remote)
+
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      assert_receive {:archive_page_node, ^remote, ^id}, 2000
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      render_hook(view, "load_task_archive_agent_result", %{
+        "task_id" => id,
+        "agent_id" => "agent-1"
+      })
+
+      assert_receive {:agent_fetch_node, ^remote, ^id, "agent-1"}, 2000
+      wait_until(fn -> agent_result_state(view, id, "agent-1") == :ok end)
+      drain_async_loads(view, 5000)
+
+      assert render(view) =~ "remote node result"
+    end
+
+    test "the Export JSON link carries ?node= on a remote node", %{conn: conn} do
+      target_id = register_remote_target!("tasks-export")
+
+      id = insert_fixture!(opts: [archive: true, prompt: "export link task"])
+
+      # Every node-aware read is served from the LOCAL store: the fake remote
+      # node is unreachable, so the seams keep the page renderable while the
+      # node CONTEXT stays remote.
+      install_tasks_page_load_runner(fn _node, page, page_size, filters ->
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      install_task_detail_runner(fn _node, task_id ->
+        EvoDash.NodeContext.get_task_lite(node(), task_id)
+      end)
+
+      install_task_archive_runner(fn _node, _task_id, _opts ->
+        %{entries: paged_archive(1), total: 1}
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?node=" <> target_id)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid).socket.assigns.current_node_id == target_id
+
+      _html = expand_card(view, id)
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      # Without the node target id the export controller resolves the task on
+      # the LOCAL node and 404s.
+      assert export_hrefs(render(view)) == ["/tasks/#{id}/export?node=#{target_id}"]
     end
   end
 
@@ -1840,4 +2849,25 @@ defmodule EvoDashWeb.TasksLiveTest do
     |> Floki.find("h4")
     |> Enum.map(fn el -> Floki.text(el) |> String.trim() end)
   end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# `EvoDashWeb.ReviewLiveTest.ConnectionManager`). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.TasksLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

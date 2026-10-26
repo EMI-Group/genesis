@@ -62,15 +62,39 @@ defmodule EvoGit.Store.BootMigrationTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
+  @covering_index_version 20_260_815_000_005
+  @unpack_rows_version 20_260_815_000_006
+  @archive_table_version 20_260_815_000_007
+  @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
+  # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
+  # the one-shot z1 repair, then the relational archive table + the fan-out that
+  # drops `tasks.archive_metadata`, then the canonical-shape repair of that
+  # table (the rejected compression migration 004 no longer ships).
+  @migration_versions [
+    @baseline_version,
+    @normalization_version,
+    @composite_index_version,
+    @covering_index_version,
+    @unpack_rows_version,
+    @archive_table_version,
+    @move_archives_version,
+    @normalize_archives_version
+  ]
 
-  # The canonical 20 column names in physical order — matches the baseline
-  # migration's @task_columns and TaskRowRaw.__schema__(:fields).
-  @canonical_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error updated_at)
+  # The LEGACY 20 column names in physical order — the baseline migration's
+  # CREATE TABLE (and therefore the shape a legacy fixture file arrives in,
+  # before the archive migration drops `archive_metadata`).
+  @legacy_task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error updated_at)
+
+  # The FINAL 19 column names — the post-boot shape every assertion below
+  # compares against (matches TaskRowRaw.__schema__(:fields)).
+  @canonical_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error updated_at)
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
   # for a fresh AND for an adopted-prefix database (the appended columns land
-  # at exactly these positions with these flags).
+  # at exactly these positions with these flags). 19 rows: the archive
+  # migration drops `archive_metadata`, so the `cid`s are contiguous again.
   @canonical_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -85,18 +109,18 @@ defmodule EvoGit.Store.BootMigrationTest do
     [10, "agent_count", "INTEGER", 0, nil, 0],
     [11, "base_sha", "TEXT", 0, nil, 0],
     [12, "commit_sha", "TEXT", 0, nil, 0],
-    [13, "archive_metadata", "TEXT", 0, nil, 0],
-    [14, "lease_expires_at", "INTEGER", 0, nil, 0],
-    [15, "model_id", "TEXT", 0, nil, 0],
-    [16, "project_path", "TEXT", 0, nil, 0],
-    [17, "branch_name", "TEXT", 0, nil, 0],
-    [18, "error", "TEXT", 0, nil, 0],
-    [19, "updated_at", "TEXT", 0, nil, 0]
+    [13, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [14, "model_id", "TEXT", 0, nil, 0],
+    [15, "project_path", "TEXT", 0, nil, 0],
+    [16, "branch_name", "TEXT", 0, nil, 0],
+    [17, "error", "TEXT", 0, nil, 0],
+    [18, "updated_at", "TEXT", 0, nil, 0]
   ]
 
-  # The ADOPTED 19-column tail: the real v0.9.0–v0.12.5 DDL already ended in
-  # `updated_at`, so the appended `error` lands AFTER it (SQLite ALTERs can
-  # only append). Same 20 rows (types/notnull/pk), the last two swapped.
+  # The ADOPTED tail: the real v0.9.0–v0.12.5 DDL already ended in `updated_at`,
+  # so the appended `error` lands AFTER it (SQLite ALTERs can only append).
+  # Same rows (types/notnull/pk), the last two swapped; `archive_metadata` is
+  # gone from both.
   @adopted_19_col_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -111,13 +135,12 @@ defmodule EvoGit.Store.BootMigrationTest do
     [10, "agent_count", "INTEGER", 0, nil, 0],
     [11, "base_sha", "TEXT", 0, nil, 0],
     [12, "commit_sha", "TEXT", 0, nil, 0],
-    [13, "archive_metadata", "TEXT", 0, nil, 0],
-    [14, "lease_expires_at", "INTEGER", 0, nil, 0],
-    [15, "model_id", "TEXT", 0, nil, 0],
-    [16, "project_path", "TEXT", 0, nil, 0],
-    [17, "branch_name", "TEXT", 0, nil, 0],
-    [18, "updated_at", "TEXT", 0, nil, 0],
-    [19, "error", "TEXT", 0, nil, 0]
+    [13, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [14, "model_id", "TEXT", 0, nil, 0],
+    [15, "project_path", "TEXT", 0, nil, 0],
+    [16, "branch_name", "TEXT", 0, nil, 0],
+    [17, "updated_at", "TEXT", 0, nil, 0],
+    [18, "error", "TEXT", 0, nil, 0]
   ]
 
   @task_index_names [
@@ -128,7 +151,9 @@ defmodule EvoGit.Store.BootMigrationTest do
     "idx_tasks_updated_at",
     "idx_tasks_started_at",
     "idx_tasks_status_started_at",
-    "idx_tasks_project_path_started_at"
+    "idx_tasks_project_path_started_at",
+    "idx_tasks_status_updated_at_id",
+    "idx_tasks_finished_at_id"
   ]
 
   @tasks_pk_autoindex "sqlite_autoindex_tasks_1"
@@ -271,11 +296,13 @@ defmodule EvoGit.Store.BootMigrationTest do
   )
   """
 
-  # A fully-canonical seeded row: all 20 columns, values in @canonical_columns
-  # order — fixed-precision timestamps, JSON-object opts, tagged result,
+  # A fully-canonical seeded row: all 20 LEGACY columns, values in
+  # @legacy_task_columns order — fixed-precision timestamps, JSON-object opts, tagged result,
   # non-null branch_name/updated_at — chosen so BOTH migrations are byte-level
   # no-ops on it (timestamp guard passes, result already tagged, opts already
-  # an object, branch_name/updated_at non-NULL so no backfill fires).
+  # an object, branch_name/updated_at non-NULL so no backfill fires). The
+  # `archive_metadata` entry is unpacked/fanned-out/dropped by the archive
+  # migrations, so it is excluded from the post-boot comparison.
   @byte_values [
     "r6b1-byte",
     "genesis",
@@ -413,7 +440,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── Scenario 1: fresh database ────────────────────────────────────────────
 
   describe "fresh database (nonexistent path)" do
-    test "creates the 20-column tasks table and stamps exactly the two migration versions", %{
+    test "creates the 19-column tasks table and stamps exactly the shipped migration versions", %{
       root: root
     } do
       path = db_path(%{root: root}, :fresh)
@@ -432,7 +459,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   describe "20-column legacy adoption (no schema_migrations)" do
     test "adopts the table and preserves the seeded row byte-identically", %{root: root} do
       path = db_path(%{root: root}, "20col_byte")
-      columns = @canonical_columns
+      columns = @legacy_task_columns
       values = @byte_values
       build_legacy_db!(path, @ddl_20_col, columns, values)
 
@@ -441,18 +468,28 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all three migrations (the Ecto migrator saw version 0).
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
-      # The schema was adopted untouched — the fresh-DB PRAGMA shape.
+      # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
+      # `archive_metadata` column the archive migration drops.
       assert task_table_info(pid) == @canonical_table_info_rows
 
       # BYTE-IDENTICAL data: the raw pre-boot SELECT equals the post-boot
-      # TaskRowRaw load field-for-field (field order == column order).
+      # TaskRowRaw load field-for-field (field order == column order), with the
+      # DROPPED archive column excluded.
       row = get_task_row(pid, "r6b1-byte")
 
+      live_values =
+        columns
+        |> Enum.zip(values)
+        |> Enum.reject(fn {column, _value} -> column == "archive_metadata" end)
+        |> Enum.map(fn {_column, value} -> value end)
+
+      assert length(live_values) == length(TaskRowRaw.__schema__(:fields))
+
       assert Map.drop(Map.from_struct(row), [:__meta__]) ==
-               Map.new(Enum.zip(TaskRowRaw.__schema__(:fields), values))
+               Map.new(Enum.zip(TaskRowRaw.__schema__(:fields), live_values))
     end
   end
 
@@ -489,16 +526,17 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all three migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[3]]
+      assert schema_migrations_count(pid) == [[8]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
-      # type — the ADOPTED tail order the post-invariant accepts.
+      # type — the ADOPTED tail order the post-invariant accepts, with
+      # `archive_metadata` dropped by the archive migration.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
 
-      # ...and all 8 idx_tasks_* indexes were created alongside.
+      # ...and all 10 idx_tasks_* indexes were created alongside.
       index_names =
         query_rows(
           pid,
@@ -543,7 +581,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       # physical tail order it arrived with is preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[3]]
+      assert schema_migrations_count(pid) == [[8]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -702,7 +740,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   # ── Scenario 7: indexes on an adopted legacy DB ───────────────────────────
 
   describe "indexes on an adopted legacy DB" do
-    test "the 8 idx_tasks_* indexes (baseline + composites, plus the PK autoindex) exist",
+    test "the 10 idx_tasks_* indexes (baseline + composites + covering, plus the PK autoindex) exist",
          %{root: root} do
       path = db_path(%{root: root}, "indexes")
       build_legacy_db!(path, @ddl_17_col, ~w(id status), ["r6b1-idx", "completed"])

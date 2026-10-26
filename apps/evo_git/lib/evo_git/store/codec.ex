@@ -26,11 +26,22 @@ defmodule EvoGit.Store.Codec do
   JSON, pair-array opts, invalid JSON) raise `ArgumentError`. Old databases
   must be upgraded with `mix migrate.store` before they can be read.
 
-  One justified `try/rescue` pattern remains on the decode side:
+  ## Plain JSON text columns
 
-    * `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
-      has no non-crashing variant; an unknown reason string legitimately stays
-      a string (it's a valid alternative representation, not "bad data").
+  Every JSON column (`opts`, `logs`, `result`, `usage`, `error`) stores plain
+  UTF-8 JSON TEXT — there is NO compression layer, no prefix-tagged payloads
+  and no zlib anywhere in this module. A value written by an encoder is
+  exactly what SQLite holds, so the column is uniformly readable/queryable as
+  JSON (`json_valid`, `json_extract`, `LIKE`).
+
+  `opts` is a plain JSON object for the same reason: task search is a SQL
+  `LIKE` over the raw `opts` text and several SQL paths
+  (`json_extract(opts, '$.path')`) read it as JSON.
+
+  One justified `try/rescue` pattern remains on the decode side:
+  `decode_reason/1` — best-effort atom recovery. `String.to_existing_atom/1`
+  has no non-crashing variant; an unknown reason string legitimately stays
+  a string (it's a valid alternative representation, not "bad data").
   """
 
   require Logger
@@ -38,7 +49,7 @@ defmodule EvoGit.Store.Codec do
   alias EvoGit.TaskInfo
   alias EvoGit.RecentProject
 
-  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error)
+  @task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error)
   @project_columns ~w(path name last_opened_at)
 
   @usage_fields [
@@ -58,7 +69,7 @@ defmodule EvoGit.Store.Codec do
 
   # Known keys inside the {:ok, data} result map. Used for safe atomization
   # during decode (these are application-controlled, not user input).
-  @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count archive_records)a
+  @result_data_fields ~w(commit_sha result tag branch_name pr_url pr_title no_changes usage agent_count)a
 
   # Precomputed string set for O(1) membership checks in decode_result_data/1.
   @result_data_field_strings MapSet.new(@result_data_fields, &Atom.to_string/1)
@@ -102,7 +113,6 @@ defmodule EvoGit.Store.Codec do
       task.agent_count,
       task.base_sha,
       task.commit_sha,
-      encode_archive(task.archive_metadata),
       task.lease_expires_at,
       task.model_id,
       task.project_path || extract_project_path(task.opts),
@@ -155,7 +165,6 @@ defmodule EvoGit.Store.Codec do
       agent_count,
       base_sha,
       commit_sha,
-      archive_metadata,
       lease_expires_at,
       model_id,
       project_path,
@@ -179,7 +188,6 @@ defmodule EvoGit.Store.Codec do
       agent_count: agent_count,
       base_sha: base_sha,
       commit_sha: commit_sha,
-      archive_metadata: decode_archive(archive_metadata),
       lease_expires_at: lease_expires_at,
       model_id: model_id,
       project_path: project_path,
@@ -374,7 +382,9 @@ defmodule EvoGit.Store.Codec do
   # --- logs (list of strings) ---
   def encode_logs(nil), do: "[]"
 
-  def encode_logs(logs) when is_list(logs) do
+  def encode_logs(logs) when is_list(logs), do: encode_logs_json(logs)
+
+  defp encode_logs_json(logs) do
     case Jason.encode(logs) do
       {:ok, json} -> json
       {:error, _} -> "[]"
@@ -383,8 +393,10 @@ defmodule EvoGit.Store.Codec do
 
   def decode_logs(nil), do: []
 
-  def decode_logs(str) when is_binary(str) do
-    case Jason.decode(str) do
+  def decode_logs(str) when is_binary(str), do: decode_logs_json(str)
+
+  defp decode_logs_json(json) do
+    case Jason.decode(json) do
       {:ok, logs} when is_list(logs) -> logs
       _ -> []
     end
@@ -409,13 +421,15 @@ defmodule EvoGit.Store.Codec do
   # forms decode; legacy raw strings/untagged JSON raise (see decode_result/1).
   def encode_result(nil), do: nil
 
+  def encode_result(result), do: encode_result_json(result)
+
   # Plain strings (crash fallbacks) are JSON-wrapped with a "string" tag so the
   # column is uniformly valid JSON. Jason.encode!/1 of a binary can never fail.
-  def encode_result(result) when is_binary(result) do
+  defp encode_result_json(result) when is_binary(result) do
     Jason.encode!(%{"__result_tag__" => "string", "value" => result})
   end
 
-  def encode_result({:ok, data}) when is_map(data) do
+  defp encode_result_json({:ok, data}) when is_map(data) do
     json_data = encode_result_data(data)
 
     case Jason.encode(%{"__result_tag__" => "ok", "data" => json_data}) do
@@ -431,7 +445,7 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
-  def encode_result({:error, reason}) do
+  defp encode_result_json({:error, reason}) do
     case Jason.encode(%{"__result_tag__" => "error", "reason" => reason}) do
       {:ok, json} ->
         json
@@ -444,7 +458,7 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
-  def encode_result({:exit, reason}) do
+  defp encode_result_json({:exit, reason}) do
     case Jason.encode(%{"__result_tag__" => "exit", "reason" => reason}) do
       {:ok, json} ->
         json
@@ -454,7 +468,7 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
-  def encode_result(other) do
+  defp encode_result_json(other) do
     # Any other shape — fall back to a string-tagged inspect so we never crash
     # on encode and never write raw (untagged) strings.
     Jason.encode!(%{"__result_tag__" => "string", "value" => inspect(other)})
@@ -478,8 +492,8 @@ defmodule EvoGit.Store.Codec do
 
   def decode_result(str) when is_binary(str) do
     # Strictly canonical: only the 4 tagged forms decode. Raw strings, untagged
-    # JSON, invalid JSON, and JSON null raise ArgumentError — legacy rows must
-    # be rewritten by `mix migrate.store` before they can be read.
+    # JSON, invalid JSON and JSON null raise ArgumentError; legacy rows must be
+    # rewritten by `mix migrate.store` before they can be read.
     case Jason.decode(str) do
       {:ok, %{"__result_tag__" => "ok", "data" => data}} when is_map(data) ->
         {:ok, decode_result_data(data)}
@@ -598,29 +612,6 @@ defmodule EvoGit.Store.Codec do
     struct(EvoGit.Agent.Usage, atom_usage)
   end
 
-  # --- archive_metadata (list of maps) ---
-  def encode_archive(nil), do: nil
-
-  def encode_archive(archive) when is_list(archive) do
-    case Jason.encode(archive) do
-      {:ok, json} ->
-        json
-
-      {:error, e} ->
-        Logger.warning("Codec: failed to encode archive_metadata: #{Exception.message(e)}")
-        nil
-    end
-  end
-
-  def decode_archive(nil), do: nil
-
-  def decode_archive(str) when is_binary(str) do
-    case Jason.decode(str) do
-      {:ok, value} when is_list(value) -> value
-      _ -> nil
-    end
-  end
-
   # --- error (canonical failed-task error payload) ---
   # Dedicated informational column recording WHY a task failed. This is NOT the
   # `result` field: force-kill deliberately nils result, startup reconciliation
@@ -633,7 +624,7 @@ defmodule EvoGit.Store.Codec do
   # (String.t(), always present) and `stacktrace` ([String.t()] | nil) — stored
   # as a JSON OBJECT with STRING keys.
   #
-  # Encode is TOTAL (mirrors encode_usage/encode_archive): the map is converted
+  # Encode is TOTAL (mirrors encode_usage): the map is converted
   # to a string-keyed object and Jason-encoded; the closed-set atom values of
   # the `kind`/`source` fields are stringified first (JSON cannot hold atoms —
   # call sites keep the canonical atom form in %TaskInfo{}), and any other

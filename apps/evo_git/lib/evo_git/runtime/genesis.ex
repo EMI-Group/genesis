@@ -167,15 +167,12 @@ defmodule EvoGit.Runtime.Genesis do
 
         Helpers.notify_finalizing(task_id)
 
-        # Combine usage, agent_count, and archive_records from both agents
+        # Combine usage and agent_count from both agents
         combined_usage =
           Usage.add(architect_output.usage || Usage.zero(), manager_output.usage || Usage.zero())
 
         combined_agent_count =
           (architect_output.agent_count || 0) + (manager_output.agent_count || 0)
-
-        combined_archive_records =
-          (architect_output.archive_records || []) ++ (manager_output.archive_records || [])
 
         merged_result =
           %Result{
@@ -184,8 +181,7 @@ defmodule EvoGit.Runtime.Genesis do
             commit_sha: manager_output.commit_sha,
             tag: manager_output.tag || architect_output.tag,
             usage: combined_usage,
-            agent_count: combined_agent_count,
-            archive_records: combined_archive_records
+            agent_count: combined_agent_count
           }
           |> Map.put(
             :foreign_repo_commits,

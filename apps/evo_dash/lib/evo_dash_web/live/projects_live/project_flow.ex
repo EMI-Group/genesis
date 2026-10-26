@@ -29,6 +29,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   alias EvoGit.TaskRegistry
   alias EvoGit.Core.ForeignRepo
   alias EvoDash.NodeContext
+  alias EvoDash.SafeCall
   alias EvoDashWeb.ProjectsLive.Project
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -316,11 +317,21 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # Shared success path for create_project: register the path in recent
   # projects, reload the recents, close the palette, reset it to :menu, flash
   # info, and push the URL params to persist the project across navigation.
+  #
+  # The two local store calls run inside `EvoDash.SafeCall`: a `GenServer.call`
+  # to a dead/timed-out store EXITS the LiveView, so a registration failure is
+  # tolerated (the recents reload falls back to the currently shown list).
   defp register_and_open_project(socket, expanded) do
-    TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+    SafeCall.run(
+      fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+      :ok
+    )
 
     recent_projects =
-      TaskRegistry.list_recent_projects()
+      SafeCall.run(
+        fn -> TaskRegistry.list_recent_projects() end,
+        socket.assigns[:recent_projects] || []
+      )
       |> filter_absolute_recent_projects()
 
     socket =
@@ -355,10 +366,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
         {:ok, expanded} ->
           if File.dir?(expanded) do
-            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+            # Exit-safe store calls (see register_and_open_project/2).
+            SafeCall.run(
+              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+              :ok
+            )
 
             recent_projects =
-              TaskRegistry.list_recent_projects()
+              SafeCall.run(
+                fn -> TaskRegistry.list_recent_projects() end,
+                socket.assigns[:recent_projects] || []
+              )
               |> filter_absolute_recent_projects()
 
             socket =
@@ -402,10 +420,17 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
         {:ok, expanded} ->
           if File.dir?(expanded) do
-            TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+            # Exit-safe store calls (see register_and_open_project/2).
+            SafeCall.run(
+              fn -> TaskRegistry.add_recent_project(expanded, Path.basename(expanded)) end,
+              :ok
+            )
 
             recent_projects =
-              TaskRegistry.list_recent_projects()
+              SafeCall.run(
+                fn -> TaskRegistry.list_recent_projects() end,
+                socket.assigns[:recent_projects] || []
+              )
               |> filter_absolute_recent_projects()
 
             socket =
@@ -502,11 +527,12 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   the project-load result's `foreign_repos` with the resumed task's repos
   (converted node-aware via `repos_from_task_data/2`) BEFORE sending
   `{:async_remote_project, ...}`. The override runs INSIDE the supervised task
-  because for a genuine remote node `NodeContext.get_task/2` is an `:erpc`
+  because for a genuine remote node `NodeContext.get_task_lite/2` is an `:erpc`
   round-trip that must never block the LiveView process — and it lands after
   the genesis.toml `foreign_repos` load, so the async continuation can never
   clobber the task-derived repos (the local flow's task-repos-win precedence,
-  see `ProjectsLive.maybe_restore_foreign_repos_from_task/2`). A missing task
+  see `ProjectsLive.start_foreign_repos_restore/2`).
+  A missing task
   or a task without foreign repos leaves the loaded repos unchanged.
   """
   def spawn_remote_project_activation(socket, expanded, resume_task_id) do
@@ -549,9 +575,9 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
 
   `repos` is a list of `%ForeignRepo{}` structs and/or maps (string- OR
   atom-keyed) — the shape `task.opts[:foreign_repos]` takes after a DB
-  round-trip or when read from a remote task via `EvoDash.NodeContext.get_task/2`.
+  round-trip or when read from a remote task via `EvoDash.NodeContext.get_task_lite/2`.
   Extraction mirrors the tolerant semantics of
-  `ProjectsLive.maybe_restore_foreign_repos_from_task/2`: id falls back to
+  `ProjectsLive.convert_task_foreign_repos/1`: id falls back to
   `"primary"`, root may be `"root"`/`"path"`-keyed, `writable` accepts the
   literal `true` OR the string `"true"`, and `base_sha` is threaded only when a
   non-empty binary. Unparseable entries (non-binary/missing root) are dropped.
@@ -615,7 +641,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   # the project load produced.
   defp task_foreign_repos_for_resume(node, resume_task_id) do
     if is_binary(resume_task_id) and resume_task_id != "" do
-      case NodeContext.get_task(node, resume_task_id) do
+      case NodeContext.get_task_lite(node, resume_task_id) do
         nil ->
           nil
 

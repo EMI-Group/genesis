@@ -11,9 +11,15 @@ defmodule EvoDashWeb.HomeLive do
 
   Everything is push-based: `"tasks"` and `"agents"` PubSub broadcasts drive
   the transcript (task lifecycle events + agent message-count changes), and
-  every cross-node data fetch runs in a `Task.Supervisor` child with a
-  monotonic `:chat_fetch_seq` stale-guard — the LiveView never blocks on
-  `:erpc`. Node-aware like every other page: `?node=` selects the viewed node.
+  the LiveView process NEVER blocks on a store / cross-node call: every
+  store/RPC call is either a guarded per-click mutation (`EvoDash.SafeCall.run/1`
+  — send / stop) or a supervised task (`EvoDash.SafeCall.start/4` or
+  `Task.Supervisor` + `EvoDash.SafeCall.run/1` inside the body — the remote
+  model-profile load, approval responses, and every agent / history / task
+  fetch) with a monotonic seq stale-guard. `EvoDash.SafeCall` is the exit-safe
+  boundary (a `GenServer.call` timeout or an `:erpc` to an unreachable node
+  EXITS the caller, which `rescue` cannot catch). Node-aware like every other
+  page: `?node=` selects the viewed node.
 
   Chats survive remounts: the full chat state is persisted in-memory via
   `EvoDash.ChatHistory` (local-node only, see `home_live/CONTEXT.md`) and a
@@ -280,6 +286,11 @@ defmodule EvoDashWeb.HomeLive do
       pending_approvals: [],
       model_profiles: [],
       model_selection_enabled: false,
+      # Monotonic stale-guard for the ASYNC remote model-profile load (a remote
+      # node resolves its profiles via an `:erpc` config fetch, so the load is
+      # NEVER run in the LiveView process — see assign_model_select/1). Monotonic
+      # and never reset (a reset could make an older in-flight result apply).
+      model_select_seq: 0,
       # Genesis-source gate (EPHEMERAL — never persisted to ChatState): the
       # /help chat needs the managed Genesis source checkout, which is usually
       # absent on a fresh install. `source_available` = the latest availability
@@ -297,19 +308,50 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   # Loads the node's model profiles + model-selection-script state for the
-  # header model selector (node-aware; degrades to {[], false} on RPC failure —
-  # see ModelSelect.load/1). Re-run on every handle_params so a `?node=` switch
+  # header model selector. Re-run on every handle_params so a `?node=` switch
   # reloads for the resolved target. Only assigns `model_profiles` /
   # `model_selection_enabled` — the `selected_model_id` pin (restored by
   # ChatState, kept across new chats / node switches) is never touched here.
+  #
+  # The LiveView process NEVER blocks on a cross-node config fetch:
+  #
+  #   * LOCAL node (`nil` on a fresh socket or `node()`), including a PENDING
+  #     remote context (whose assigns still point at the local node) — the
+  #     config is a local file read, so it stays synchronous.
+  #   * REMOTE node — a `get_resolved_config/1` `:erpc` to a node that may be
+  #     unreachable would block (and, on a call timeout, EXIT) this process.
+  #     Seed the cheap default `{[], false}` (the header select then renders no
+  #     selector) and, on a connected socket, spawn ONE supervised load with a
+  #     monotonic `:model_select_seq` stale-guard; the result lands in the
+  #     `{{:model_select_loaded, seq, node}, result}` handle_info clause
+  #     (`EvoDash.SafeCall.start/4` always sends `{tag, run(fun)}` — the tag
+  #     stays ONE nested tuple, never flattened).
   defp assign_model_select(socket) do
-    {model_profiles, model_selection_enabled} =
-      ModelSelect.load(socket.assigns[:current_node] || node())
+    node = socket.assigns[:current_node] || node()
 
-    assign(socket,
-      model_profiles: model_profiles,
-      model_selection_enabled: model_selection_enabled
-    )
+    if node in [nil, node()] do
+      {model_profiles, model_selection_enabled} = ModelSelect.load(node)
+
+      assign(socket,
+        model_profiles: model_profiles,
+        model_selection_enabled: model_selection_enabled
+      )
+    else
+      socket = assign(socket, model_profiles: [], model_selection_enabled: false)
+
+      # A dead render must not spawn a task that sends into a dying process.
+      if connected?(socket) do
+        seq = Map.get(socket.assigns, :model_select_seq, 0) + 1
+
+        EvoDash.SafeCall.start(self(), {:model_select_loaded, seq, node}, fn ->
+          ModelSelect.load(node)
+        end)
+
+        assign(socket, model_select_seq: seq)
+      else
+        socket
+      end
+    end
   end
 
   # Genesis-source availability check (LOCAL node only, connected socket only).
@@ -498,12 +540,30 @@ defmodule EvoDashWeb.HomeLive do
         # Graceful cancel: :pending → immediate :cancelled; :running →
         # :cancelling (agents save + exit, result preserved). The :cancelled
         # task event completes the transition and finalizes the transcript.
-        case EvoDash.NodeContext.cancel_task(socket.assigns[:current_node] || node(), task_id) do
-          :ok ->
+        #
+        # Guarded per-click mutation: `EvoDash.SafeCall.run/1` converts a store
+        # failure / cross-node `:erpc` exit (a call timeout to an unreachable
+        # node EXITS the caller) into an error value, so a dead node flashes
+        # instead of crashing the page.
+        result =
+          EvoDash.SafeCall.run(fn ->
+            EvoDash.NodeContext.cancel_task(socket.assigns[:current_node] || node(), task_id)
+          end)
+
+        case result do
+          {:ok, :ok} ->
             {:noreply,
              socket
              |> assign(chat_status: :cancelling, chat_task_status: :cancelling)
              |> persist_state()}
+
+          {:ok, {:error, reason}} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext("Failed to stop: %{reason}", reason: inspect(reason))
+             )}
 
           {:error, reason} ->
             {:noreply,
@@ -512,6 +572,13 @@ defmodule EvoDashWeb.HomeLive do
                :error,
                gettext("Failed to stop: %{reason}", reason: inspect(reason))
              )}
+
+          {:ok, _other} ->
+            # Any other non-error return is still a successful cancel request.
+            {:noreply,
+             socket
+             |> assign(chat_status: :cancelling, chat_task_status: :cancelling)
+             |> persist_state()}
         end
     end
   end
@@ -521,9 +588,15 @@ defmodule EvoDashWeb.HomeLive do
   # pending request map (it may differ from the viewed node if the request
   # raced a node switch), routes the response through the call-time
   # :approval_responder seam, and OPTIMISTICALLY removes the card regardless
-  # of the outcome (the :approval_resolved broadcast is the backstop). Total:
-  # the responder contract is `:ok | {:error, reason}` and every clause keeps
-  # the LiveView alive.
+  # of the outcome (the :approval_resolved broadcast is the backstop).
+  #
+  # The responder call runs OFF-PROCESS in an `EvoDash.SafeCall` supervised
+  # task: it may `:erpc` to a remote node, and a call to an unreachable node
+  # EXITS its caller (a `rescue` cannot catch an exit). The outcome lands in
+  # the `{{:approval_response_result, request_id, node}, result}` handle_info
+  # clause, which flashes a failed response and never crashes the page.
+  # (`EvoDash.SafeCall.start/4` always sends `{tag, run(fun)}`, so the tag —
+  # here a 3-tuple — stays nested as the message's first element.)
   @impl true
   def handle_event(
         "approval_response",
@@ -555,26 +628,11 @@ defmodule EvoDashWeb.HomeLive do
         &EvoDash.NodeContext.approval_response/3
       )
 
-    socket = assign(socket, pending_approvals: drop_approval(pending, request_id))
+    EvoDash.SafeCall.start(self(), {:approval_response_result, request_id, node}, fn ->
+      responder.(node, request_id, decision)
+    end)
 
-    case responder.(node, request_id, decision) do
-      :ok ->
-        {:noreply, socket}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
-           gettext("Failed to respond: %{reason}", reason: inspect(reason))
-         )}
-
-      _other ->
-        # Total guard: an unexpected return shape must never crash the
-        # LiveView — the card is already removed, nothing more to do.
-        {:noreply, socket}
-    end
+    {:noreply, assign(socket, pending_approvals: drop_approval(pending, request_id))}
   end
 
   # Missing params / invalid decision (or a blank request id) — no-op.
@@ -809,6 +867,77 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
+  # Command-approval response outcome (from the supervised responder task
+  # spawned by the approval_response event). `EvoDash.SafeCall.start/4` ALWAYS
+  # sends `{tag, run(fun)}`, so the message arrives as
+  # `{{:approval_response_result, request_id, node}, result}` — the tag is ONE
+  # nested 3-tuple, never flattened into the message. The card was already
+  # removed optimistically, so this only surfaces a FAILED response:
+  #
+  #   * `{:ok, :ok}` — the backend accepted the decision → no-op.
+  #   * `{:ok, {:error, reason}}` — the responder reported a failure (e.g. the
+  #     remote approval channel is down) → error flash.
+  #   * `{:error, reason}` — the guarded call EXITED / raised (an unreachable
+  #     node, a call timeout) → the same error flash.
+  #   * anything else — quiet no-op.
+  #
+  # The request id is deliberately NOT used as a filter: the card is gone by
+  # now, so a stale/late result for an already-resolved request must still be
+  # allowed to report its failure. TOTAL: every shape keeps the LiveView alive.
+  @impl true
+  def handle_info({{:approval_response_result, _request_id, _node}, result}, socket) do
+    case result do
+      {:ok, :ok} ->
+        {:noreply, socket}
+
+      {:ok, {:error, reason}} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
+           gettext("Failed to respond: %{reason}", reason: inspect(reason))
+         )}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
+           gettext("Failed to respond: %{reason}", reason: inspect(reason))
+         )}
+
+      _other ->
+        {:noreply, socket}
+    end
+  end
+
+  # Async model-profile load for a REMOTE node (from assign_model_select/1).
+  # The message is `{{:model_select_loaded, seq, node}, result}` — the tag stays
+  # ONE nested tuple (that is exactly what `EvoDash.SafeCall.start/4` sends).
+  # Stale-guarded EXACTLY like the chat fetches: dropped when the viewed node
+  # changed since the spawn or a newer load was started (monotonic
+  # `:model_select_seq`). A well-shaped `{:ok, {profiles, enabled}}` assigns
+  # both; an error / unexpected shape keeps the cheap `{[], false}` defaults the
+  # caller already assigned — never crashes and never clears the pinned model
+  # (`selected_model_id` is ChatState's, untouched here).
+  @impl true
+  def handle_info({{:model_select_loaded, seq, node}, result}, socket) do
+    if node != socket.assigns[:current_node] or
+         seq < Map.get(socket.assigns, :model_select_seq, 0) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, {profiles, enabled}} when is_list(profiles) and is_boolean(enabled) ->
+          {:noreply, assign(socket, model_profiles: profiles, model_selection_enabled: enabled)}
+
+        _other ->
+          {:noreply, socket}
+      end
+    end
+  end
+
   @impl true
   def handle_info({:node_selected, node_id}, socket) do
     NodeAware.handle_node_selected(socket, node_id)
@@ -878,20 +1007,30 @@ defmodule EvoDashWeb.HomeLive do
             chat_node: socket.assigns[:current_node] || node()
           )
 
-        # Synchronous per-click mutation (dashboard convention): starts the
+        # Guarded per-click mutation (dashboard convention): starts the
         # repo-less reflect task on the viewed node. NO :path key. The pinned
         # model (if any) is threaded via ModelSelect.task_opts/2 — :model_id +
         # :model_id_locked when the header selector pinned a profile, nothing
         # on Auto (the runtime's model-selection script or default decides).
+        #
+        # `EvoDash.SafeCall.run/1` normalizes the store/RPC outcome: an
+        # unreachable remote node EXITS its caller (an `:erpc` failure a rescue
+        # cannot catch), so it becomes `{:error, reason}` and lands on the
+        # "Failed to start the task" bubble instead of crashing the page.
         result =
-          EvoDash.NodeContext.start_task(
-            socket.assigns[:current_node] || node(),
-            :reflect,
-            ModelSelect.task_opts(socket.assigns[:selected_model_id],
-              mode: "reflect",
-              objective: objective
-            )
-          )
+          case EvoDash.SafeCall.run(fn ->
+                 EvoDash.NodeContext.start_task(
+                   socket.assigns[:current_node] || node(),
+                   :reflect,
+                   ModelSelect.task_opts(socket.assigns[:selected_model_id],
+                     mode: "reflect",
+                     objective: objective
+                   )
+                 )
+               end) do
+            {:ok, start_result} -> start_result
+            {:error, reason} -> {:error, reason}
+          end
 
         case result do
           {:ok, _task} ->
@@ -934,6 +1073,12 @@ defmodule EvoDashWeb.HomeLive do
   # targets a specific node (mount reconciliation uses the chat's OWN
   # `:chat_node`); the default is the viewed node. Bumps :chat_fetch_seq so
   # only the latest in-flight result applies.
+  #
+  # The RPC runs through `EvoDash.SafeCall.run/2` INSIDE the task: an `:erpc`
+  # to a remote node EXITS the caller (a rescue cannot catch an exit), and a
+  # dying child would never send its result message — the lookup would be lost.
+  # Normalized to `[]` on any error, so the caller simply waits for the
+  # agent_registered / agents_updated retrigger.
   defp async_lookup_agent(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
@@ -941,18 +1086,7 @@ defmodule EvoDashWeb.HomeLive do
     pid = self()
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      agents =
-        try do
-          EvoDash.NodeContext.list_agents(node)
-        rescue
-          # Justified async-boundary rescue: this closure runs OUTSIDE the
-          # LiveView process, so an unexpected exception must never crash the
-          # supervised task silently (the result message would never be sent
-          # and the lookup would be lost). Report [] — the caller then waits
-          # for the agent_registered / agents_updated retrigger.
-          _ -> []
-        end
-
+      agents = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_agents(node) end, [])
       agent = AgentStream.find_root_agent(agents, task_id)
       send(pid, {:chat_agent_lookup, node, seq, task_id, agent})
     end)
@@ -963,6 +1097,8 @@ defmodule EvoDashWeb.HomeLive do
   # Spawns a supervised history fetch for the chat agent. `node_override`
   # targets a specific node (see async_lookup_agent/2). Bumps :chat_fetch_seq
   # (HistoryGate-style: only refetched when the agent's message_count moved).
+  # Same guarded-task contract: any call failure degrades to `[]` (the
+  # handler's unchanged branch) and the result message is always sent.
   defp async_fetch_history(socket, node_override \\ nil) do
     agent_id = socket.assigns[:chat_agent_id]
     node = node_override || socket.assigns[:current_node] || node()
@@ -971,14 +1107,7 @@ defmodule EvoDashWeb.HomeLive do
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result =
-        try do
-          EvoDash.NodeContext.get_agent_history(node, agent_id)
-        rescue
-          # Justified async-boundary rescue (same rationale as
-          # async_lookup_agent): report [] so the LiveView's case falls to the
-          # unchanged branch instead of wedging.
-          _ -> []
-        end
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_agent_history(node, agent_id) end, [])
 
       send(pid, {:chat_history_loaded, node, seq, agent_id, result})
     end)
@@ -989,7 +1118,10 @@ defmodule EvoDashWeb.HomeLive do
   # Spawns a supervised task fetch used to finalize the transcript with the
   # preserved/final result (also the ONE-SHOT mount reconciliation fetch).
   # Bumps :chat_task_fetch_seq (its own counter, so a late history/lookup
-  # fetch can never invalidate the terminal result).
+  # fetch can never invalidate the terminal result). Uses the lite read (no
+  # archive blob — the terminal path reads only status/result/error). A
+  # failed/timed-out fetch degrades to `nil`, which finalize_terminal/2 treats
+  # as deleted.
   defp async_fetch_task(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
@@ -997,15 +1129,7 @@ defmodule EvoDashWeb.HomeLive do
     pid = self()
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      task =
-        try do
-          EvoDash.NodeContext.get_task(node, task_id)
-        rescue
-          # Justified async-boundary rescue (same rationale as
-          # async_lookup_agent): report nil so finalize_terminal treats it as
-          # deleted instead of wedging.
-          _ -> nil
-        end
+      task = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_task_lite(node, task_id) end, nil)
 
       send(pid, {:chat_task_loaded, node, seq, task_id, task})
     end)

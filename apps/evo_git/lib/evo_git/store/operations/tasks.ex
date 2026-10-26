@@ -43,7 +43,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   ## put_task replace semantics
 
   ONE `Repo.transaction(..., mode: :immediate)` performing a `delete_all` by
-  id and then an `insert_all` of a FULL 20-key row (nils explicit; struct
+  id and then an `insert_all` of a FULL 19-key row (nils explicit; struct
   fields absent from the caller's struct default to nil). Re-putting a task
   therefore NULLs every column the new struct omits — parity with the old
   `INSERT OR REPLACE`. A changeset upsert (`on_conflict: :replace_all`) would
@@ -70,6 +70,8 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Operations.Archives
+  alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
@@ -98,7 +100,7 @@ defmodule EvoGit.Store.Operations.Tasks do
     RepoScope.with_repo(repo, fn ->
       case Codec.validate_task(task) do
         :ok ->
-          # Replace semantics: the explicit delete + FULL 20-key insert NULLs
+          # Replace semantics: the explicit delete + FULL 19-key insert NULLs
           # every column the new struct omits (an upsert would not). The
           # `:immediate` mode takes the write lock up front, like every other
           # write of this repo (`default_transaction_mode: :immediate`).
@@ -133,11 +135,16 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Returns `:ok` whether or not the row existed (a DELETE of a missing id is a
   successful no-op statement, same as the old raw SQL).
+
+  The task's per-agent archive rows (`task_agent_archives`) are deleted in the
+  same call (`Archives.delete_by_task/2`). The cascade is EXPLICIT — there is
+  no foreign key — so a deleted task never leaks its archived conversations.
   """
   @spec delete_task(pid(), String.t()) :: :ok
   def delete_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
+      Archives.delete_by_task(repo, task_id)
       :ok
     end)
   end
@@ -149,6 +156,10 @@ defmodule EvoGit.Store.Operations.Tasks do
   The ids are batched into `WHERE id IN (...)` statements of at most 500 ids
   (under SQLite's 999-parameter limit), one committed statement per chunk.
   Returns `:ok`; an empty id list writes nothing.
+
+  The named tasks' per-agent archive rows (`task_agent_archives`) are deleted
+  too, chunked the same way (`Archives.delete_by_tasks/2`). The cascade is
+  EXPLICIT — there is no foreign key.
   """
   @spec delete_tasks(pid(), [String.t()]) :: :ok
   def delete_tasks(repo, task_ids) do
@@ -159,6 +170,8 @@ defmodule EvoGit.Store.Operations.Tasks do
         Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
       end)
 
+      Archives.delete_by_tasks(repo, task_ids)
+
       :ok
     end)
   end
@@ -166,11 +179,16 @@ defmodule EvoGit.Store.Operations.Tasks do
   @doc """
   Deletes all task rows — port of the old `:clear_tasks` handler
   (store.ex:598). Returns `:ok`.
+
+  EVERY per-agent archive row (`task_agent_archives`) is deleted as well
+  (`Archives.delete_all/1`), so a cleared store holds no orphaned archive
+  payloads. The cascade is EXPLICIT — there is no foreign key.
   """
   @spec clear_tasks(pid()) :: :ok
   def clear_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(TaskRow)
+      Archives.delete_all(repo)
       :ok
     end)
   end
@@ -251,14 +269,14 @@ defmodule EvoGit.Store.Operations.Tasks do
   def safe_select_paginated_tasks(repo, opts) when is_list(opts) do
     RepoScope.with_repo(repo, fn ->
       filters = Keyword.get(opts, :filters, [])
-      limit = clamp_limit(Keyword.get(opts, :limit))
-      offset = clamp_offset(Keyword.get(opts, :offset))
+      limit = Filters.clamp_limit(Keyword.get(opts, :limit))
+      offset = Filters.clamp_offset(Keyword.get(opts, :offset))
 
       base = from(t in TaskRowRaw)
 
       rows =
         base
-        |> where_filters(filters)
+        |> Filters.where_filters(filters)
         |> order_by([t], desc: t.started_at)
         |> limit(^limit)
         |> offset(^offset)
@@ -267,7 +285,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
       total_count =
         base
-        |> where_filters(filters)
+        |> Filters.where_filters(filters)
         |> Repo.aggregate(:count)
 
       {rows, total_count}
@@ -375,7 +393,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Reads exactly the 4 columns the TaskRegistry `handle_update_status/6` path
   needs (stale-guard, preservation, project_path) — no heavy JSON field
-  (`logs`, `result`, `usage`, `archive_metadata`) is decoded. `status` is the
+  (`logs`, `result`, `usage`) is decoded. `status` is the
   decoded atom (nil on unknown), `opts` the decoded keyword list (nil when the
   column is NULL), `finished_at` the decoded DateTime (nil on corrupt text),
   `lease_expires_at` the raw unix-ms INTEGER.
@@ -411,107 +429,6 @@ defmodule EvoGit.Store.Operations.Tasks do
     end)
   end
 
-  ## Private — pagination filters (port of the retired Queries.build_where/1 semantics)
-
-  # Pagination clamps — a verbatim port of the retired
-  # `EvoGit.Store.Queries.clamp_limit/1` / `clamp_offset/1`: non-integer or
-  # out-of-range values fall back to the defaults 50 / 0.
-  defp clamp_limit(nil), do: 50
-  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
-  defp clamp_limit(_), do: 50
-
-  defp clamp_offset(nil), do: 0
-  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
-  defp clamp_offset(_), do: 0
-
-  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
-  # with a backslash — a verbatim port of the retired
-  # `EvoGit.Store.Queries.escape_like/1`. Used together with `ESCAPE '\'` on
-  # the LIKE fragment so user-supplied values (e.g. project paths containing
-  # underscores) match literally instead of acting as wildcards.
-  defp escape_like(value) do
-    value
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
-  end
-
-  # Applies the raw store's build_where/1 filter set, clause for clause:
-  #
-  #   * `:status` (default "all") — exact TEXT equality on the stored status
-  #     string (dashboard filters pass the string spelling; "all" = no clause).
-  #   * `:project_path` (default "all") — exact TEXT equality.
-  #   * `:review_status` (default "all") — "pending" is the old COMPOSITE:
-  #     `status = 'completed' AND review_status IS NULL AND branch_name IS NOT
-  #     NULL` (completed tasks with no review whose result carried a
-  #     branch_name → awaiting review); any other value is exact TEXT equality.
-  #   * `:search` (nil/"" = no clause) — a 4-column OR-LIKE over id, opts,
-  #     project_path, result using the old escaped pattern
-  #     `%#{escape_like(search)}%` with `ESCAPE '\'`. This is the ONE
-  #     `fragment` in the module — LIKE-escape cannot be expressed in
-  #     Ecto.Query syntax.
-  defp where_filters(query, filters) do
-    query
-    |> where_status_filter(Keyword.get(filters, :status, "all"))
-    |> where_path_filter(Keyword.get(filters, :project_path, "all"))
-    |> where_review_status_filter(Keyword.get(filters, :review_status, "all"))
-    |> where_search_filter(Keyword.get(filters, :search))
-  end
-
-  defp where_status_filter(query, "all"), do: query
-  defp where_status_filter(query, status), do: where(query, [t], t.status == ^status)
-
-  defp where_path_filter(query, "all"), do: query
-  defp where_path_filter(query, path), do: where(query, [t], t.project_path == ^path)
-
-  defp where_review_status_filter(query, "all"), do: query
-
-  defp where_review_status_filter(query, "pending") do
-    # The composite "pending review" predicate — ported verbatim from the old
-    # build_where/1 arm (literal 'completed' pushdown, exactly as written).
-    where(
-      query,
-      [t],
-      t.status == "completed" and is_nil(t.review_status) and
-        not is_nil(t.branch_name)
-    )
-  end
-
-  defp where_review_status_filter(query, review_status) do
-    where(query, [t], t.review_status == ^review_status)
-  end
-
-  defp where_search_filter(query, search) when search in [nil, ""], do: query
-
-  defp where_search_filter(query, search) do
-    pat = "%#{escape_like(search)}%"
-
-    # A single literal fragment — the 4-column OR-LIKE with the old `\` escape
-    # char. The escape char must be pinned as a PARAMETER, not written as the
-    # SQL literal `'\'`: the adapter doubles backslashes inside SQL string
-    # literals, which SQLite then rejects ("ESCAPE expression must be a single
-    # character"). The pattern itself is the other interpolated (^) value.
-    where(
-      query,
-      [t],
-      fragment(
-        "(? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ?)",
-        t.id,
-        ^pat,
-        ^"\\",
-        t.opts,
-        ^pat,
-        ^"\\",
-        t.project_path,
-        ^pat,
-        ^"\\",
-        t.result,
-        ^pat,
-        ^"\\"
-      )
-    )
-  end
-
   ## Private — pagination decode (skip-and-log safe-select boundary)
 
   # Decodes raw rows one at a time through the Codec (the decode oracle),
@@ -539,7 +456,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
-  # same 19-element `Codec.task_columns/0` order (deliberately WITHOUT
+  # same 18-element `Codec.task_columns/0` order (deliberately WITHOUT
   # `updated_at`, which the old SELECT over those columns never fetched
   # either). Identical to the existing get_task/to_task_info result: decode_task
   # itself applies the `status || :pending` and `ref: nil` fallbacks.
@@ -558,7 +475,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       row.agent_count,
       row.base_sha,
       row.commit_sha,
-      row.archive_metadata,
       row.lease_expires_at,
       row.model_id,
       row.project_path,
@@ -586,7 +502,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   # any column of the physical table could be targeted — and a typo produced a
   # SQLite "no such column" error. Under the schemas the equivalent guard
   # raises here with the unknown name, BEFORE any statement is issued. Every
-  # one of the 20 fields is addressable — the full old surface.
+  # one of the 19 fields is addressable — the full old surface.
   defp validate_update_column!(column) do
     unless column in TaskRow.__schema__(:fields) do
       raise ArgumentError,
@@ -613,12 +529,11 @@ defmodule EvoGit.Store.Operations.Tasks do
   defp encode_column_value(:error, value), do: Codec.encode_error(value)
   defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
   defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
-  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
   defp encode_column_value(_col, value), do: value
 
   ## Private — row building (TaskInfo → insert map)
 
-  # The FULL 20-key insert row. Every key is EXPLICIT (nils included) so the
+  # The FULL 19-key insert row. Every key is EXPLICIT (nils included) so the
   # delete+insert replace NULLs columns the struct omits. Values are RUNTIME
   # values; Ecto dumps each through the schema's EvoGit.Store.Types.* field
   # type, which delegates to the Codec wire format — byte-identical to the old
@@ -638,7 +553,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       agent_count: task.agent_count,
       base_sha: task.base_sha,
       commit_sha: task.commit_sha,
-      archive_metadata: task.archive_metadata,
       lease_expires_at: task.lease_expires_at,
       model_id: task.model_id,
       project_path: task.project_path || project_path_from_opts(task.opts),
@@ -686,7 +600,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       agent_count: row.agent_count,
       base_sha: row.base_sha,
       commit_sha: row.commit_sha,
-      archive_metadata: row.archive_metadata,
       lease_expires_at: row.lease_expires_at,
       model_id: row.model_id,
       project_path: row.project_path,

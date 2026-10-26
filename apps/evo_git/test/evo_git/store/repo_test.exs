@@ -1,19 +1,24 @@
 defmodule EvoGit.Store.RepoTest do
   @moduledoc """
   Infra tests for the Ecto foundations of the task store — the `EvoGit.Repo`
-  configuration + the three shipped `priv/repo/migrations` migrations, exercised
+  configuration + the shipped `priv/repo/migrations` migrations, exercised
   through REAL unnamed dynamic instances (`EvoGit.Store.Boot.start_dynamic/1`)
   — exactly the shape per-store instances use in production.
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the three shipped migration versions
-    * the resulting `tasks` table has the exact 20-column shape (names, ORDER,
-      DDL types, notnull/pk flags) of the baseline migration, and the physical
-      column order matches `TaskRow.columns/0`
-    * the 8 named `idx_tasks_*` indexes exist (the baseline 6 + the two
-      composite `(equality column, started_at)` indexes); `projects` carries its
-      TEXT-PK autoindex
+    * `start_dynamic/1` applies exactly the shipped migration versions
+    * the resulting `tasks` table has the exact 19-column shape (names, ORDER,
+      DDL types, notnull/pk flags) — the baseline's 20-column CREATE TABLE
+      minus the `archive_metadata` column the archive migration drops — and the
+      physical column order matches `TaskRow.columns/0`
+    * the 10 named `idx_tasks_*` indexes exist (the baseline 6 + the two
+      composite `(equality column, started_at)` indexes + the two covering
+      `(equality column, ordering column, id)` indexes) — dropping the archive
+      column does not disturb them; `task_agent_archives`
+      carries its `(task_id, depth, agent_id)` index and its composite
+      `(task_id, agent_id)` PK autoindex; `projects` carries its TEXT-PK
+      autoindex
     * `Boot.run_migrations/1` is idempotent (a re-run migrates nothing)
     * committed rows survive `Boot.stop/1` → `start_dynamic/1` on the same path
     * two dynamic instances on distinct paths coexist with independent data
@@ -37,19 +42,48 @@ defmodule EvoGit.Store.RepoTest do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Boot
+  alias EvoGit.Store.Codec
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
+  @covering_index_version 20_260_815_000_005
+  @unpack_rows_version 20_260_815_000_006
+  @archive_table_version 20_260_815_000_007
+  @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
+  # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
+  # then the one-shot z1 repair, then the relational archive table and the
+  # fan-out that drops `tasks.archive_metadata`, and finally the canonical-shape
+  # repair of that table (the rejected compression migration 004 no longer
+  # ships).
+  @migration_versions [
+    @baseline_version,
+    @normalization_version,
+    @composite_index_version,
+    @covering_index_version,
+    @unpack_rows_version,
+    @archive_table_version,
+    @move_archives_version,
+    @normalize_archives_version
+  ]
+
+  # `tasks` columns RETIRED from the live table: the per-agent archive moved to
+  # its own relational table, so `archive_metadata` is physically DROPPED by
+  # `20260815000008_move_archives_to_table` — no `Codec`/`TaskRow`/read/write
+  # path touches it, and it must never come back.
+  @retired_task_columns ["archive_metadata"]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
-  # exactly what the baseline migration's CREATE TABLE declares, in order:
-  # every column TEXT except `agent_count`/`lease_expires_at` (INTEGER), only
-  # `status` NOT NULL, `id` the TEXT primary key.
+  # the FINAL physical shape: the baseline's CREATE TABLE minus the
+  # `archive_metadata` column dropped by the archive migration (so `cid` is a
+  # contiguous 0..18 again). Every column TEXT except
+  # `agent_count`/`lease_expires_at` (INTEGER), only `status` NOT NULL, `id`
+  # the TEXT primary key.
   @task_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -64,13 +98,12 @@ defmodule EvoGit.Store.RepoTest do
     [10, "agent_count", "INTEGER", 0, nil, 0],
     [11, "base_sha", "TEXT", 0, nil, 0],
     [12, "commit_sha", "TEXT", 0, nil, 0],
-    [13, "archive_metadata", "TEXT", 0, nil, 0],
-    [14, "lease_expires_at", "INTEGER", 0, nil, 0],
-    [15, "model_id", "TEXT", 0, nil, 0],
-    [16, "project_path", "TEXT", 0, nil, 0],
-    [17, "branch_name", "TEXT", 0, nil, 0],
-    [18, "error", "TEXT", 0, nil, 0],
-    [19, "updated_at", "TEXT", 0, nil, 0]
+    [13, "lease_expires_at", "INTEGER", 0, nil, 0],
+    [14, "model_id", "TEXT", 0, nil, 0],
+    [15, "project_path", "TEXT", 0, nil, 0],
+    [16, "branch_name", "TEXT", 0, nil, 0],
+    [17, "error", "TEXT", 0, nil, 0],
+    [18, "updated_at", "TEXT", 0, nil, 0]
   ]
 
   # The 6 named indexes created by the baseline migration (CREATE INDEX IF NOT
@@ -81,7 +114,11 @@ defmodule EvoGit.Store.RepoTest do
     "idx_tasks_lease_expires_at",
     "idx_tasks_project_path",
     "idx_tasks_updated_at",
-    "idx_tasks_started_at"
+    "idx_tasks_started_at",
+    # The two COVERING indexes added by `20260815000005_covering_indexes`
+    # (built AFTER the 004 oversized-row rewrite — see that migration's moduledoc).
+    "idx_tasks_status_updated_at_id",
+    "idx_tasks_finished_at_id"
   ]
 
   # The composite `(equality column, started_at)` indexes added by
@@ -92,6 +129,13 @@ defmodule EvoGit.Store.RepoTest do
   ]
 
   @all_task_index_names @task_index_names ++ @composite_index_names
+
+  # The per-agent archive added by `20260815000007_create_task_agent_archives`:
+  # the roster index (`WHERE task_id = ? ORDER BY depth, agent_id`) and the
+  # implicit UNIQUE autoindex backing the composite `(task_id, agent_id)` PK.
+  @archive_table "task_agent_archives"
+  @archive_index_name "task_agent_archives_task_depth_idx"
+  @archive_pk_autoindex "sqlite_autoindex_task_agent_archives_1"
 
   # SQLite's implicit UNIQUE backing index for the tasks TEXT PK.
   @tasks_pk_autoindex "sqlite_autoindex_tasks_1"
@@ -172,7 +216,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── Migrations applied ───────────────────────────────────────────────────
 
   describe "boot migrations" do
-    test "start_dynamic/1 applies exactly the three shipped versions" do
+    test "start_dynamic/1 applies exactly the shipped versions" do
       pid = start_repo!(:versions)
 
       assert migration_versions(pid) == @migration_versions
@@ -186,27 +230,35 @@ defmodule EvoGit.Store.RepoTest do
              end) == @migration_versions
     end
 
-    test "the database carries exactly the three expected tables" do
+    test "the database carries exactly the four expected tables" do
       pid = start_repo!(:tables)
 
+      # `sqlite_stat%` is excluded: the boot path now runs a best-effort
+      # `PRAGMA optimize`, which may create SQLite's own statistics tables
+      # (see `EvoGit.Store.Boot.start_dynamic/2`).
       assert query_rows(
                pid,
-               "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-             ) == [["projects"], ["schema_migrations"], ["tasks"]]
+               "SELECT name FROM sqlite_master WHERE type = 'table' " <>
+                 "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
+             ) == [["projects"], ["schema_migrations"], [@archive_table], ["tasks"]]
     end
   end
 
   # ── tasks table shape ────────────────────────────────────────────────────
 
   describe "tasks table shape" do
-    test "PRAGMA table_info returns the exact 20 rows: names in order, types, notnull/pk flags" do
+    test "PRAGMA table_info returns the exact 19 rows: names in order, types, notnull/pk flags" do
       pid = start_repo!(:shape)
 
       result = query!(pid, "PRAGMA table_info(tasks)")
 
       assert result.columns == ["cid", "name", "type", "notnull", "dflt_value", "pk"]
-      assert result.num_rows == 20
-      assert result.rows == @task_table_info_rows
+
+      rows = result.rows
+      assert length(rows) == 19
+
+      assert Enum.map(rows, fn [_cid | rest] -> rest end) ==
+               Enum.map(@task_table_info_rows, fn [_cid | rest] -> rest end)
     end
 
     test "physical column order matches the TaskRow schema field order" do
@@ -214,6 +266,21 @@ defmodule EvoGit.Store.RepoTest do
 
       assert query_rows(pid, "PRAGMA table_info(tasks)")
              |> Enum.map(fn [_cid, name | _] -> name end) == TaskRow.columns()
+    end
+
+    test "the retired archive column is physically dropped and has no schema field behind it" do
+      pid = start_repo!(:retired_column)
+
+      live_columns =
+        Enum.map(query_rows(pid, "PRAGMA table_info(tasks)"), fn [_cid, name | _] ->
+          name
+        end)
+
+      for retired <- @retired_task_columns do
+        refute retired in live_columns
+        refute retired in TaskRow.columns()
+        refute retired in Codec.task_columns()
+      end
     end
 
     test "only status is NOT NULL and only id is the primary key" do
@@ -250,10 +317,50 @@ defmodule EvoGit.Store.RepoTest do
     end
   end
 
+  # ── task_agent_archives table shape ──────────────────────────────────────
+
+  describe "task_agent_archives table shape" do
+    test "exact 23-column shape, matching the schema field order" do
+      pid = start_repo!(:archive_shape)
+
+      rows = query_rows(pid, "PRAGMA table_info(#{@archive_table})")
+
+      assert Enum.map(rows, fn [_cid, name | _] -> name end) == TaskAgentArchiveRow.columns()
+
+      # Only the two PK columns and the two NOT NULL DEFAULT 0 counters are
+      # NOT NULL; the PK flags are 1/2 in declaration order (SQLite numbers a
+      # COMPOSITE primary key).
+      assert for([_cid, name, _type, notnull, _dflt, pk] <- rows, notnull == 1, do: {name, pk}) ==
+               [{"task_id", 1}, {"agent_id", 2}, {"depth", 0}, {"compression_count", 0}]
+    end
+
+    test "the roster index is a plain non-unique index on (task_id, depth, agent_id)" do
+      pid = start_repo!(:archive_index)
+
+      rows = query_rows(pid, "PRAGMA index_list(#{@archive_table})")
+      names = Enum.map(rows, fn [_seq, name | _] -> name end)
+
+      assert MapSet.new(names) == MapSet.new([@archive_index_name, @archive_pk_autoindex])
+
+      for [_seq, name, unique, origin, partial] <- rows, name == @archive_index_name do
+        assert unique == 0
+        assert origin == "c"
+        assert partial == 0
+      end
+
+      assert query_rows(pid, "PRAGMA index_info(#{@archive_index_name})")
+             |> Enum.map(fn [_seqno, _cid, column] -> column end) == [
+               "task_id",
+               "depth",
+               "agent_id"
+             ]
+    end
+  end
+
   # ── Indexes ──────────────────────────────────────────────────────────────
 
   describe "indexes" do
-    test "the 8 named idx_tasks_* indexes exist as plain non-unique indexes" do
+    test "the 10 named idx_tasks_* indexes exist as plain non-unique indexes" do
       pid = start_repo!(:indexes)
 
       rows = query_rows(pid, "PRAGMA index_list(tasks)")
@@ -290,6 +397,8 @@ defmodule EvoGit.Store.RepoTest do
                Enum.sort(
                  Enum.map(@all_task_index_names, &[&1, "tasks"]) ++
                    [
+                     [@archive_index_name, @archive_table],
+                     [@archive_pk_autoindex, @archive_table],
                      ["sqlite_autoindex_projects_1", "projects"],
                      ["sqlite_autoindex_tasks_1", "tasks"]
                    ]
