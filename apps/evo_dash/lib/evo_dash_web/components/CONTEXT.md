@@ -176,7 +176,7 @@ The dashboard's sidebar "Active Tasks" section in `EvoDashWeb.Layouts.app` is fe
 
 ### The summary-map contract
 
-Plain maps with keys: `id, status, review_status, result, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at`. `opts` is a decoded keyword list (same as `TaskInfo.opts` — includes objective/prompt/mode). EXCLUDED: `logs`, `usage`, `archive_metadata` (and all other TaskInfo fields like `ref`).
+Plain maps with `EvoGit.Store.Operations.Summaries`' 16 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error`. `opts` is a decoded keyword list (same as `TaskInfo.opts` — includes objective/prompt/mode); `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result` (the heaviest blob is deliberately never selected), `logs`, `usage`, `archive_metadata` (and all other TaskInfo fields like `ref`).
 
 ### Field-access rules for task-card components
 
