@@ -34,7 +34,7 @@ A repo-OPEN failure stops with `{:stop, {:failed_to_open_sqlite, reason}}`; a MI
 
 - `Boot.start_dynamic/2` and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → stop → reopen the pool → start the writer); no `handle_continue`/Task deferral, so the supervisor's child start BLOCKS until it returns.
 - That blocks `EvoGit.Application.start/2` and — via the OTP dependency order — `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener**, so a slow first-boot migration delays HTTP readiness (desktop probe budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
-- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + a version read + one `Migrations already up` line).
+- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + one `schema_migrations` version read, and no per-migration output when nothing is pending).
 - A fresh DB pays no scan cost; later boots pay only the `schema_migrations` check. `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (`XqliteEcto3.supports_ddl_transaction?` is `true`), so a SIGKILLed migration rolls back atomically.
 - A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`; there are NO sleeps on the store/application boot path.
 
@@ -96,7 +96,7 @@ Post-condition: `repo_id` is TEXT and the roster index reports exactly `(task_id
 ### Migration versions & ordering
 
 The shipped versions are 1, 2, 3, 5, 6, 7, 8 and 9; there is no version 4, so a FRESH database never carries a 004 `schema_migrations` row while an upgraded one may still list it (harmless — already applied).
-Migration 6 MUST stay ABOVE migration 5: an index build WALKS the table, and on rows still carrying compressed blobs the `updated_at`/`id` columns sit after the overflow chains, so the walk crawls those pages.
+Migration 6's only job is repairing `"z1:"` values written by UNRELEASED builds — no released version ever wrote them — so on a genuine v0.13.8 database it is a clean no-op costing three `substr(col,1,3) = 'z1:'` sweeps once.
 Give any future index migration a version ABOVE `20260815000009`.
 Migration 9 MUST stay ABOVE migration 8: it rebuilds the table migration 7 creates and migration 8 fills, so it must run after both.
 
@@ -261,7 +261,7 @@ Because `put_task` is delete + full-row insert, every task write maintains all t
 - `./codec.ex` → `EvoGit.Store.Codec` — the pure encode/decode oracle (plain JSON TEXT, no compression)
 - `./operations/` → `Tasks`, `Lightweight`, `Summaries`, `Pages`, `Archives`, `Filters`, `Projects`, `Safety` — all repo access
 - `./schemas/` → `TaskRow`/`ProjectRow` (typed write) + `TaskRowRaw`/`ProjectRowRaw` (raw read projections) + `TaskAgentArchiveRow` (composite `(task_id, agent_id)` PK, no `timestamps()`)
-- `./types/` → `task_timestamp.ex`, `atom_column.ex`, `json_columns.ex` (`OptsJson`/`ResultJson`/`LogsJson`/`UsageJson`/`ArchiveJson`/`ErrorJson`), `archive_columns.ex` (plain-Jason `ArchiveUsageJson`/`ArchiveLlmSettingsJson`/`ArchiveAgentSettingsJson`/`ArchiveForeignReposJson`)
+- `./types/` → `task_timestamp.ex`, `atom_column.ex`, `json_columns.ex` (`OptsJson`/`ResultJson`/`LogsJson`/`UsageJson`/`ErrorJson`), `archive_columns.ex` (plain-Jason `ArchiveUsageJson`/`ArchiveLlmSettingsJson`/`ArchiveAgentSettingsJson`/`ArchiveForeignReposJson`)
 - `./boot.ex` → `EvoGit.Store.Boot` — dynamic-repo boot, migration runner, boot-time `PRAGMA optimize`, `:global` lock
 - `./repo_scope.ex` → `EvoGit.Store.RepoScope` — `with_repo/2` scoped binding
 - `./errors.ex` → `EvoGit.Store.Errors` — disk-full classifiers (exception + NIF-tuple families)

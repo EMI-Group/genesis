@@ -66,7 +66,7 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.Nix` | `nix print-dev-env` caching; `active?/0` |
 | `EvoGit.RemoteConnections` / `RemoteBootstrap` / `RemoteConnection` | SSH target store, pure bootstrap logic, connect lifecycle → `lib/evo_git/CONTEXT.md` |
 | `EvoGit.EpmdDist` / `Distribution` | EPMD-less `erl_epmd` (`register_target/2`) + on-demand distribution |
-| `EvoGit.Store` / `Store.Codec` | Ecto/SQLite facade, seven boot migrations, JSON TEXT columns, isolated reads, page/lite + archive APIs → `store/` |
+| `EvoGit.Store` / `Store.Codec` | Ecto/SQLite facade, eight boot migrations, JSON TEXT columns, isolated reads, page/lite + archive APIs → `store/` |
 | `EvoGit.TaskInfo` / `RecentProject` | persisted structs; `opts`/`result["repos"]` STRING-keyed → `core/` |
 | `EvoGit.TaskRegistry` | lifecycle GenServer (`server/0` seam, `StoreGuard`, cancel/kill, `put_task_archive/1`) → `task_registry/` |
 | `EvoGit.RemoteNode` / `AgentScheduler.RemoteAPI` | `:erpc.call/5` wrapper (`:remote_rpc_timeout` 30s) ↔ read-only RPC → `agent_scheduler/` |
