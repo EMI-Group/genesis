@@ -7,7 +7,7 @@ ExUnit tests for the `EvoGit.AgentScheduler` subsystem — scheduling (no worktr
 ## Routing Table
 
 - `agent_scheduler_test.exs` → scheduling contract + `get_foreign_repo_commits/1`
-- `lifecycle_test.exs` → crash/lifecycle handling, sub-result roll-up, archive records
+- `lifecycle_test.exs` → crash/lifecycle handling, sub-result roll-up, graceful-cancel markers
 - `subagents_test.exs` → spatial contract (cross-repo gate, same-repo hierarchy), writable-foreign-repo delegation gates (root-only via `:foreign_repo_write_not_root`, one-at-a-time via `:foreign_repo_write_serialized` in `spawn_validated_subagents/5`, same-repo-within-foreign unrestricted), `store_sub_result/3,4`
 - `worktrees_test.exs` → WorktreeManager create/reclaim, crash-restart, per-repo init scoping
 - `worktree_admission_test.exs` → bounded worktree-creation ADMISSION QUEUE (head-of-line FIFO, cap never exceeded, queue drains / every caller replied once, queued-agent death dropped without starting a create, under-cap immediate admission) via the `:max_concurrent_worktree_creation` + `:worktree_create_fun` app-env seams, PLUS the create-reply contract of the `:infinity` call: a RAISING create fun and a create fun RETURNING `{:error, reason}` each reply the still-blocked caller exactly once and promptly (raise wrapped as `{:error, {:worktree_create_failed, msg}}` with `msg =~ "raised"`, a plain `{:error, reason}` handed back verbatim, permit released so the queue keeps draining / a subsequent create is admitted); an untrappable create-task death still replies via the `handle_create_task_down/4` safety net (`msg =~ "died"`); and a slow-but-succeeding create is held event-driven without aborting the still-blocked caller
