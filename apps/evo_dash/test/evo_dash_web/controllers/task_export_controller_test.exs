@@ -180,6 +180,79 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       refute_received {:archive_page, _opts}
     end
 
+    test "tolerates a page that reports no total", %{conn: conn} do
+      task = task_fixture()
+      page_one = for index <- 1..200, do: %{agent_id: "A#{index}"}
+      page_two = for index <- 201..260, do: %{agent_id: "A#{index}"}
+      stub_task_runner(fn _node, _task_id -> task end)
+      # A lean roster projection reports NO per-page COUNT(*): the loop must
+      # still write every record of both pages.
+      stub_archive_runner(fn _node, _task_id, opts ->
+        send(self(), {:archive_page, opts})
+
+        case opts[:offset] do
+          0 -> %{entries: page_one}
+          200 -> %{entries: page_two}
+        end
+      end)
+
+      conn = get(conn, ~p"/tasks/#{task.id}/export")
+      decoded = Jason.decode!(response(conn, 200))
+
+      assert Enum.map(decoded["archive_records"], & &1["agent_id"]) ==
+               Enum.map(page_one ++ page_two, & &1.agent_id)
+
+      assert_received {:archive_page, first_opts}
+      assert first_opts[:offset] == 0
+      assert_received {:archive_page, second_opts}
+      assert second_opts[:offset] == 200
+      # The short second page is complete data: no third RPC, nothing truncated.
+      refute_received {:archive_page, _opts}
+      assert tmp_archive_files(task.id) == []
+    end
+
+    test "stops on an empty page when no page reports a total", %{conn: conn} do
+      task = task_fixture()
+      page_one = for index <- 1..200, do: %{agent_id: "A#{index}"}
+      stub_task_runner(fn _node, _task_id -> task end)
+
+      stub_archive_runner(fn _node, _task_id, opts ->
+        send(self(), {:archive_page, opts})
+        if opts[:offset] == 0, do: %{entries: page_one}, else: %{entries: []}
+      end)
+
+      conn = get(conn, ~p"/tasks/#{task.id}/export")
+      decoded = Jason.decode!(response(conn, 200))
+      assert length(decoded["archive_records"]) == 200
+      assert_received {:archive_page, first_opts}
+      assert first_opts[:offset] == 0
+      assert_received {:archive_page, second_opts}
+      assert second_opts[:offset] == 200
+      # An empty page ends the loop — it can never spin without a total.
+      refute_received {:archive_page, _opts}
+    end
+
+    test "a short first page ends the export without another request", %{conn: conn} do
+      task = task_fixture()
+      records = for index <- 1..5, do: %{agent_id: "A#{index}"}
+      stub_task_runner(fn _node, _task_id -> task end)
+
+      stub_archive_runner(fn _node, _task_id, opts ->
+        send(self(), {:archive_page, opts})
+        %{entries: records}
+      end)
+
+      conn = get(conn, ~p"/tasks/#{task.id}/export")
+      decoded = Jason.decode!(response(conn, 200))
+
+      assert Enum.map(decoded["archive_records"], & &1["agent_id"]) ==
+               Enum.map(records, & &1.agent_id)
+
+      assert_received {:archive_page, first_opts}
+      assert first_opts[:offset] == 0
+      refute_received {:archive_page, _opts}
+    end
+
     test "normalizes non-JSON terms inside archive records", %{conn: conn} do
       task = task_fixture()
       naive = ~N[2026-02-03 04:05:06]
