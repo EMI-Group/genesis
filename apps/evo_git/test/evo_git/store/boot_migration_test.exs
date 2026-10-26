@@ -12,27 +12,33 @@ defmodule EvoGit.Store.BootMigrationTest do
 
   ## Pinned behaviors (per scenario)
 
-    * fresh (nonexistent) path → the exact 20-column `tasks` table + both
-      migration versions stamped in `schema_migrations`
-    * a current 20-column table without `schema_migrations` → adopted; the
-      seeded row is preserved BYTE-IDENTICAL (pre-boot raw SELECT == post-boot
-      `TaskRowRaw` load — adoption never rewrites healthy data)
+    * fresh (nonexistent) path → the exact 19-column `tasks` table (the final
+      shape, NO `archive_metadata`), the `task_agent_archives` and `projects`
+      tables, and all six migration versions stamped in `schema_migrations`
+    * a current 20-column legacy table (still carrying `archive_metadata`)
+      without `schema_migrations` → adopted; the seeded row's surviving values
+      are preserved BYTE-IDENTICAL (pre-boot raw SELECT == post-boot
+      `TaskRowRaw` load — adoption never rewrites healthy data), and
+      `20260815000005_task_agent_archives` drops the archive column
     * 15/17-column historical PREFIXES of the canonical DDL → adopted: the
       missing columns are appended as NULLABLE with their declared types, the
       final `PRAGMA table_info(tasks)` matches the fresh-DB shape exactly
-      (names in canonical ORDER, types, notnull/pk flags), and the seeded data
-      survives
+      (names in canonical ORDER, types, notnull/pk flags), the legacy
+      `archive_metadata` column is gone, and the seeded data survives
     * the real 19-column v0.9.0–v0.12.5 shape — which already has `updated_at`
       (19th) and lacks only `error` — IS adopted: the baseline migration
       appends `error` AFTER the existing `updated_at` (SQLite ALTERs can only
       append), and its post-invariant accepts that ADOPTED tail order
-      (`…, branch_name, updated_at, error`) while still asserting all 20
+      (`…, branch_name, updated_at, error`) while still asserting all 19
       columns with their types/nullability/pk. Same for the shape an
       OLD-pipeline repair of that DB produced (`…, branch_name, updated_at,
       error`) — the exact v0.12.5 → v0.13.0 upgrade path the old
       `Schema.migrate_schema/1` repaired in place, carried forward as a
       REQUIRED adoption here: data preserved, `error` added NULLABLE at the
       tail, schema_migrations stamped, indexes created.
+    * the final SIX `idx_tasks_*` indexes exist — on a fresh database AND on
+      an adopted legacy one — and the four redundant single-column indexes
+      (`20260815000006_prune_redundant_indexes`) do NOT
 
   ## Scope
 
@@ -62,33 +68,33 @@ defmodule EvoGit.Store.BootMigrationTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_005
-  @unpack_rows_version 20_260_815_000_006
-  @archive_table_version 20_260_815_000_007
-  @move_archives_version 20_260_815_000_008
-  @normalize_archives_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
-  # the one-shot z1 repair, then the relational archive table + the fan-out that
-  # drops `tasks.archive_metadata`, then the canonical-shape repair of that
-  # table (the rejected compression migration 004 no longer ships).
+  @covering_index_version 20_260_815_000_004
+  @archive_version 20_260_815_000_005
+  @prune_indexes_version 20_260_815_000_006
+  # Ascending, exactly as `schema_migrations` reports it: the one schema-creating
+  # baseline, the data normalization, the two shipped index migrations (the two
+  # composite indexes and the two covering indexes), the merged
+  # `task_agent_archives` table + legacy fan-out that drops
+  # `tasks.archive_metadata`, and the final prune of the four redundant indexes.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
-    @unpack_rows_version,
-    @archive_table_version,
-    @move_archives_version,
-    @normalize_archives_version
+    @archive_version,
+    @prune_indexes_version
   ]
 
-  # The LEGACY 20 column names in physical order — the baseline migration's
-  # CREATE TABLE (and therefore the shape a legacy fixture file arrives in,
-  # before the archive migration drops `archive_metadata`).
+  # The LEGACY 20 column names in physical order — the shape a pre-release
+  # fixture file arrives in: the final 19 columns PLUS the
+  # `archive_metadata` column `20260815000005_task_agent_archives` consumes and
+  # drops.
   @legacy_task_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha archive_metadata lease_expires_at model_id project_path branch_name error updated_at)
 
   # The FINAL 19 column names — the post-boot shape every assertion below
-  # compares against (matches TaskRowRaw.__schema__(:fields)).
+  # compares against (matches TaskRowRaw.__schema__(:fields)), and the shape a
+  # FRESH database is created with (the baseline `CREATE TABLE` already has
+  # this 19-column shape, it never creates `archive_metadata`).
   @canonical_columns ~w(id type status opts started_at finished_at logs result review_status usage agent_count base_sha commit_sha lease_expires_at model_id project_path branch_name error updated_at)
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
@@ -143,17 +149,35 @@ defmodule EvoGit.Store.BootMigrationTest do
     [18, "error", "TEXT", 0, nil, 0]
   ]
 
+  # The FINAL `tasks` index set (six) — the only `idx_tasks_*` indexes that
+  # survive the whole chain: the baseline migration creates them, the two
+  # shipped additive migrations re-state their own two each, and
+  # `20260815000006_prune_redundant_indexes` drops the four below.
   @task_index_names [
-    "idx_tasks_status",
-    "idx_tasks_finished_at",
-    "idx_tasks_lease_expires_at",
-    "idx_tasks_project_path",
     "idx_tasks_updated_at",
     "idx_tasks_started_at",
     "idx_tasks_status_started_at",
     "idx_tasks_project_path_started_at",
     "idx_tasks_status_updated_at_id",
     "idx_tasks_finished_at_id"
+  ]
+
+  # The four single-column indexes pre-release builds carried: each is an exact
+  # prefix of one of the six above (or serves no query at all), so the last
+  # migration removes them. A fresh database NEVER creates them; the legacy
+  # index fixture below really does, so their absence there proves the DROP.
+  @redundant_index_names [
+    "idx_tasks_status",
+    "idx_tasks_finished_at",
+    "idx_tasks_project_path",
+    "idx_tasks_lease_expires_at"
+  ]
+
+  @redundant_indexes_ddl [
+    "CREATE INDEX idx_tasks_status ON tasks(status)",
+    "CREATE INDEX idx_tasks_finished_at ON tasks(finished_at)",
+    "CREATE INDEX idx_tasks_project_path ON tasks(project_path)",
+    "CREATE INDEX idx_tasks_lease_expires_at ON tasks(lease_expires_at)"
   ]
 
   @tasks_pk_autoindex "sqlite_autoindex_tasks_1"
@@ -298,11 +322,12 @@ defmodule EvoGit.Store.BootMigrationTest do
 
   # A fully-canonical seeded row: all 20 LEGACY columns, values in
   # @legacy_task_columns order — fixed-precision timestamps, JSON-object opts, tagged result,
-  # non-null branch_name/updated_at — chosen so BOTH migrations are byte-level
-  # no-ops on it (timestamp guard passes, result already tagged, opts already
-  # an object, branch_name/updated_at non-NULL so no backfill fires). The
-  # `archive_metadata` entry is unpacked/fanned-out/dropped by the archive
-  # migrations, so it is excluded from the post-boot comparison.
+  # non-null branch_name/updated_at — chosen so BOTH data-writing migrations are
+  # byte-level no-ops on it (timestamp guard passes, result already tagged, opts
+  # already an object, branch_name/updated_at non-NULL so no backfill fires).
+  # The `archive_metadata` entry is consumed by
+  # `20260815000005_task_agent_archives` and the column is DROPPED by it, so it
+  # is excluded from the post-boot comparison.
   @byte_values [
     "r6b1-byte",
     "genesis",
@@ -378,6 +403,31 @@ defmodule EvoGit.Store.BootMigrationTest do
     :ok
   end
 
+  # Adds DDL to an already-crafted legacy database with RAW xqlite — one
+  # statement per driver call, exactly like `build_legacy_db!/5`.
+  defp exec_raw_ddl!(path, statements) do
+    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+    for statement <- statements, do: {:ok, _} = XqliteNIF.query(conn, statement, [])
+    :ok = XqliteNIF.close(conn)
+    :ok
+  end
+
+  # Raw xqlite index inventory of `tasks` — the PRE-boot ground truth for the
+  # index-pruning scenario, independent of the repo and the migrations.
+  defp raw_index_names!(path) do
+    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+
+    {:ok, %{rows: rows}} =
+      XqliteNIF.query(
+        conn,
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks' ORDER BY name",
+        []
+      )
+
+    :ok = XqliteNIF.close(conn)
+    Enum.map(rows, &hd/1)
+  end
+
   # Boots a dynamic repo and unlinks it from the test process, stopping it on
   # exit through an alive guard. Concurrent boots are production-safe (the
   # migration run is serialized by the `:global` lock in `EvoGit.Store.Boot`).
@@ -449,7 +499,21 @@ defmodule EvoGit.Store.BootMigrationTest do
       pid = start_booted_repo!(path)
 
       assert File.exists?(path)
+
+      # The FINAL 19-column shape — the parity-pinned PRAGMA rows (names,
+      # order, types, notnull/pk) plus an explicit count/absence check for the
+      # archive column the relocated chain no longer creates.
       assert task_table_info(pid) == @canonical_table_info_rows
+      assert column_names(pid, "tasks") == @canonical_columns
+      assert length(column_names(pid, "tasks")) == 19
+      refute "archive_metadata" in column_names(pid, "tasks")
+
+      # The table the archive migration creates is present (its exact 23-column
+      # shape is pinned by the archive migration's own suite; here only the
+      # chain's effect is asserted — and there is nothing to fan out on a fresh
+      # database).
+      assert length(column_names(pid, "task_agent_archives")) == 23
+
       assert migration_versions(pid) == @migration_versions
     end
   end
@@ -468,12 +532,13 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all eight migrations (the Ecto migrator saw version 0).
+      # The boot stamped all six migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
-      # `archive_metadata` column the archive migration drops.
+      # `archive_metadata` column `20260815000005_task_agent_archives` drops.
       assert task_table_info(pid) == @canonical_table_info_rows
+      assert column_names(pid, "tasks") == @canonical_columns
 
       # BYTE-IDENTICAL data: the raw pre-boot SELECT equals the post-boot
       # TaskRowRaw load field-for-field (field order == column order), with the
@@ -526,9 +591,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all eight migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all six migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[8]]
+      assert schema_migrations_count(pid) == [[6]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -536,7 +601,8 @@ defmodule EvoGit.Store.BootMigrationTest do
       # `archive_metadata` dropped by the archive migration.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
 
-      # ...and all 10 idx_tasks_* indexes were created alongside.
+      # ...and the six final idx_tasks_* indexes were created alongside (the
+      # four redundant single-column ones are never created).
       index_names =
         query_rows(
           pid,
@@ -580,8 +646,9 @@ defmodule EvoGit.Store.BootMigrationTest do
       # No ALTER runs on this shape (all 20 columns already present) — the
       # physical tail order it arrived with is preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
+      refute "archive_metadata" in column_names(pid, "tasks")
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[8]]
+      assert schema_migrations_count(pid) == [[6]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
@@ -737,31 +804,62 @@ defmodule EvoGit.Store.BootMigrationTest do
     end
   end
 
-  # ── Scenario 7: indexes on an adopted legacy DB ───────────────────────────
+  # ── Scenario 7: indexes ───────────────────────────────────────────────────
 
-  describe "indexes on an adopted legacy DB" do
-    test "the 10 idx_tasks_* indexes (baseline + composites + covering, plus the PK autoindex) exist",
+  describe "indexes" do
+    test "an adopted legacy DB ends with the six final idx_tasks_* indexes and none of the four redundant ones",
          %{root: root} do
       path = db_path(%{root: root}, "indexes")
       build_legacy_db!(path, @ddl_17_col, ~w(id status), ["r6b1-idx", "completed"])
+      exec_raw_ddl!(path, @redundant_indexes_ddl)
+
+      # Ground truth BEFORE boot: the legacy file really carries the four
+      # redundant single-column indexes, so their post-boot absence proves the
+      # DROPs (`20260815000006_prune_redundant_indexes`) instead of a fixture
+      # that never had them.
+      assert raw_index_names!(path) == Enum.sort(@redundant_index_names ++ [@tasks_pk_autoindex])
 
       pid = start_booted_repo!(path)
 
-      index_names =
-        query_rows(
-          pid,
-          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks' ORDER BY name"
-        )
-        |> Enum.map(&hd/1)
+      assert_final_indexes!(pid)
+    end
 
-      assert index_names == Enum.sort(@task_index_names ++ [@tasks_pk_autoindex])
+    test "a FRESH database gets the same six and never the four redundant ones", %{root: root} do
+      path = db_path(%{root: root}, "indexes_fresh")
+      refute File.exists?(path)
 
-      # Non-unique, CREATE INDEX-origin, non-partial — the baseline DDL shape.
-      rows = query_rows(pid, "PRAGMA index_list(tasks)")
+      pid = start_booted_repo!(path)
 
-      for [_seq, name, unique, origin, partial] <- rows, name in @task_index_names do
-        assert {unique, origin, partial} == {0, "c", 0}
-      end
+      assert_final_indexes!(pid)
+    end
+  end
+
+  # The final index set: exactly the six `idx_tasks_*` indexes (plus the PK
+  # autoindex of the TEXT primary key) exist in `sqlite_master`, the four
+  # single-column indexes `20260815000006_prune_redundant_indexes` removes are
+  # absent from BOTH `sqlite_master` and `PRAGMA index_list(tasks)`, and the six
+  # are plain, CREATE INDEX-origin, non-partial indexes.
+  defp assert_final_indexes!(pid) do
+    index_names =
+      query_rows(
+        pid,
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'tasks' ORDER BY name"
+      )
+      |> Enum.map(&hd/1)
+
+    assert index_names == Enum.sort(@task_index_names ++ [@tasks_pk_autoindex])
+
+    # Non-unique, CREATE INDEX-origin, non-partial — the baseline DDL shape.
+    rows = query_rows(pid, "PRAGMA index_list(tasks)")
+    listed = Enum.map(rows, fn [_seq, name | _rest] -> name end)
+
+    for [_seq, name, unique, origin, partial] <- rows, name in @task_index_names do
+      assert {unique, origin, partial} == {0, "c", 0}
+    end
+
+    for redundant <- @redundant_index_names do
+      refute redundant in index_names
+      refute redundant in listed
     end
   end
 end
