@@ -53,6 +53,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @unpack_rows_version 20_260_815_000_006
   @archive_table_version 20_260_815_000_007
   @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
@@ -61,6 +62,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @unpack_rows_module EvoGit.Repo.Migrations.UnpackAbandonedCompressedRows
   @archive_table_module EvoGit.Repo.Migrations.CreateTaskAgentArchives
   @move_archives_module EvoGit.Repo.Migrations.MoveArchivesToTable
+  @normalize_archives_module EvoGit.Repo.Migrations.NormalizeTaskAgentArchives
 
   # Every shipped migration version, ascending — the list the seam must return
   # and the list a fresh boot stamps.
@@ -71,7 +73,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     @covering_index_version,
     @unpack_rows_version,
     @archive_table_version,
-    @move_archives_version
+    @move_archives_version,
+    @normalize_archives_version
   ]
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
@@ -110,7 +113,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@unpack_rows_version, @unpack_rows_module},
                {@archive_table_version, @archive_table_module},
-               {@move_archives_version, @move_archives_module}
+               {@move_archives_version, @move_archives_module},
+               {@normalize_archives_version, @normalize_archives_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -170,7 +174,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@covering_index_version, @covering_index_module},
                {@unpack_rows_version, @unpack_rows_module},
                {@archive_table_version, @archive_table_module},
-               {@move_archives_version, @move_archives_module}
+               {@move_archives_version, @move_archives_module},
+               {@normalize_archives_version, @normalize_archives_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
@@ -180,6 +185,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
       assert Code.ensure_loaded?(@unpack_rows_module)
       assert Code.ensure_loaded?(@archive_table_module)
       assert Code.ensure_loaded?(@move_archives_module)
+      assert Code.ensure_loaded?(@normalize_archives_module)
 
       output =
         capture_io(:stderr, fn ->

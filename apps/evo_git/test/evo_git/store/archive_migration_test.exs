@@ -1,6 +1,6 @@
 defmodule EvoGit.Store.ArchiveMigrationTest do
   @moduledoc """
-  Coverage for the two DATA migrations of the relational-archive round:
+  Coverage for the DATA migrations of the relational-archive round:
 
     * `20260815000006_unpack_abandoned_compressed_rows` — the one-shot repair
       that expands values still stored in the rejected `"z1:"`-prefixed
@@ -8,7 +8,11 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       into plain JSON text, for `result`/`logs`/`archive_metadata`;
     * `20260815000008_move_archives_to_table` — the fan-out of the legacy
       `tasks.archive_metadata` JSON array into ONE `task_agent_archives` row per
-      archived agent, followed by the physical `DROP COLUMN`.
+      archived agent, followed by the physical `DROP COLUMN`;
+    * `20260815000009_normalize_task_agent_archives` — the canonical-shape
+      repair of `task_agent_archives`: a table whose `repo_id` was declared
+      INTEGER (a pre-release variant of `…007`) is rebuilt with the canonical
+      TEXT column, every row preserved.
 
   ## Fixture shape
 
@@ -38,6 +42,13 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       `EvoGit.Store` facade (`list_task_archives/3`, `get_agent_archive/3`) —
       with `repo_id` typed INTEGER every real-data load degraded to
       `%{entries: [], total: 0}` / `nil`.
+    * 009: an INTEGER-affinity `repo_id` table is rebuilt into the EXACT
+      canonical shape of `…007` (columns/order/types/NOT NULLs/DEFAULTs/PK),
+      all rows and values preserved, a coerced numeric-looking value coming
+      back as its TEXT form (`"123"`, loadable by the Ecto `:string` field) and
+      the `task_agent_archives_task_depth_idx` index recreated; a canonical
+      TEXT table, a database WITHOUT the table, and a forced re-run are all
+      NO-OPs (no rebuild, no warning).
 
   Never writes to the user's real data dir: every database lives under the
   per-test `System.tmp_dir!()` root.
@@ -59,6 +70,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   @unpack_version 20_260_815_000_006
   @archive_table_version 20_260_815_000_007
   @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
 
   # Ascending, exactly as `schema_migrations` reports it (the rejected
   # compression migration 004 no longer ships).
@@ -69,7 +81,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     @covering_index_version,
     @unpack_version,
     @archive_table_version,
-    @move_archives_version
+    @move_archives_version,
+    @normalize_archives_version
   ]
 
   # The canonical PRE-DROP 20-column DDL — the state a database upgraded from
@@ -121,6 +134,100 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
 
   # The archive-table columns stored as plain JSON TEXT.
   @json_columns ~w(usage llm_settings agent_settings foreign_repos)
+
+  @archive_index "task_agent_archives_task_depth_idx"
+
+  # `PRAGMA table_info(task_agent_archives)` rows — [cid, name, type, notnull,
+  # dflt, pk] — of the CANONICAL table (the exact shape `…007` creates and
+  # `…009` must converge on): TEXT `repo_id`, `task_id`/`agent_id` the composite
+  # primary key, DEFAULT 0 on `depth`/`compression_count`.
+  @canonical_archive_table_info [
+    [0, "task_id", "TEXT", 1, nil, 1],
+    [1, "agent_id", "INTEGER", 1, nil, 2],
+    [2, "parent_id", "INTEGER", 0, nil, 0],
+    [3, "depth", "INTEGER", 1, "0", 0],
+    [4, "agent_type", "TEXT", 0, nil, 0],
+    [5, "context_node_path", "TEXT", 0, nil, 0],
+    [6, "objective", "TEXT", 0, nil, 0],
+    [7, "result", "TEXT", 0, nil, 0],
+    [8, "base_commit", "TEXT", 0, nil, 0],
+    [9, "final_commit", "TEXT", 0, nil, 0],
+    [10, "branch_name", "TEXT", 0, nil, 0],
+    [11, "archive_ref_start", "TEXT", 0, nil, 0],
+    [12, "archive_ref_final", "TEXT", 0, nil, 0],
+    [13, "repo_id", "TEXT", 0, nil, 0],
+    [14, "repo_root", "TEXT", 0, nil, 0],
+    [15, "repo_path", "TEXT", 0, nil, 0],
+    [16, "usage", "TEXT", 0, nil, 0],
+    [17, "llm_settings", "TEXT", 0, nil, 0],
+    [18, "agent_settings", "TEXT", 0, nil, 0],
+    [19, "foreign_repos", "TEXT", 0, nil, 0],
+    [20, "compression_count", "INTEGER", 1, "0", 0],
+    [21, "started_at", "TEXT", 0, nil, 0],
+    [22, "completed_at", "TEXT", 0, nil, 0]
+  ]
+
+  # The PRE-RELEASE variant of the archive table: byte-for-byte the canonical
+  # DDL except `repo_id INTEGER` — the shape a dev database created by the
+  # abandoned `…007` variant carries.
+  @pre_release_archive_ddl """
+  CREATE TABLE task_agent_archives (
+    task_id TEXT NOT NULL,
+    agent_id INTEGER NOT NULL,
+    parent_id INTEGER,
+    depth INTEGER NOT NULL DEFAULT 0,
+    agent_type TEXT,
+    context_node_path TEXT,
+    objective TEXT,
+    result TEXT,
+    base_commit TEXT,
+    final_commit TEXT,
+    branch_name TEXT,
+    archive_ref_start TEXT,
+    archive_ref_final TEXT,
+    repo_id INTEGER,
+    repo_root TEXT,
+    repo_path TEXT,
+    usage TEXT,
+    llm_settings TEXT,
+    agent_settings TEXT,
+    foreign_repos TEXT,
+    compression_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    completed_at TEXT,
+    PRIMARY KEY (task_id, agent_id)
+  )
+  """
+
+  # The canonical `…007` DDL, used by the "already correct, never rebuilt" test.
+  @canonical_archive_ddl """
+  CREATE TABLE task_agent_archives (
+    task_id TEXT NOT NULL,
+    agent_id INTEGER NOT NULL,
+    parent_id INTEGER,
+    depth INTEGER NOT NULL DEFAULT 0,
+    agent_type TEXT,
+    context_node_path TEXT,
+    objective TEXT,
+    result TEXT,
+    base_commit TEXT,
+    final_commit TEXT,
+    branch_name TEXT,
+    archive_ref_start TEXT,
+    archive_ref_final TEXT,
+    repo_id TEXT,
+    repo_root TEXT,
+    repo_path TEXT,
+    usage TEXT,
+    llm_settings TEXT,
+    agent_settings TEXT,
+    foreign_repos TEXT,
+    compression_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    completed_at TEXT,
+    PRIMARY KEY (task_id, agent_id)
+  )
+  """
 
   # The 19 LIVE `tasks` columns AFTER the archive migration drops
   # `archive_metadata`.
@@ -466,6 +573,163 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     end
   end
 
+  # ── 20260815000009_normalize_task_agent_archives ──────────────────────────
+
+  describe "20260815000009_normalize_task_agent_archives" do
+    test "rebuilds an INTEGER repo_id table to TEXT, preserving every row and the index", %{
+      root: root
+    } do
+      path = Path.join(root, "normalize_integer.sqlite")
+      seed_pre_release_archives!(path)
+
+      # The pre-release shape really is INTEGER on disk, and the
+      # numeric-looking TEXT `"123"` was COERCED to the integer 123 by that
+      # affinity — the exact failure mode this migration repairs.
+      assert archive_table_type!(path, "repo_id") == "INTEGER"
+      assert raw_archive_value!(path, "task-legacy", 4, "repo_id") == 123
+
+      {pid, log} = with_log(fn -> start_repo!(path) end)
+
+      assert log =~ "rebuilding task_agent_archives"
+
+      # The rebuilt table carries the EXACT canonical shape of `…007`.
+      assert archive_table_info(pid) == @canonical_archive_table_info
+
+      # The roster index was dropped with the old table and recreated.
+      assert archive_index_columns(pid) == ~w(task_id depth agent_id)
+
+      rows = archive_rows(pid, "task-legacy")
+
+      assert Enum.map(rows, fn [_task_id, agent_id | _rest] -> agent_id end) == [1, 2, 3, 4]
+
+      # Every value survived — the heavy result blob, the JSON columns, the
+      # timestamps, and `repo_id` as the repo ID STRING it always was.
+      assert archive_entry(rows, 1) == %{
+               "task_id" => "task-legacy",
+               "agent_id" => 1,
+               "parent_id" => nil,
+               "depth" => 0,
+               "agent_type" => "manager",
+               "context_node_path" => ".",
+               "objective" => "Build the thing",
+               "result" => "final answer text",
+               "base_commit" => "base1",
+               "final_commit" => "final1",
+               "branch_name" => "evogit-agent-T1-A1",
+               "archive_ref_start" => "refs/genesis/archive/T1-A1-start",
+               "archive_ref_final" => "refs/genesis/archive/T1-A1-final",
+               "repo_id" => "primary",
+               "repo_root" => "/tmp/repo",
+               "repo_path" => "/tmp/repo",
+               "usage" => %{"input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15},
+               "llm_settings" => %{"model" => "test-model"},
+               "agent_settings" => %{"max_turns" => 40},
+               "foreign_repos" => [],
+               "compression_count" => 2,
+               "started_at" => "2024-05-05T09:00:00.000Z",
+               "completed_at" => "2024-05-05T10:00:00.000Z"
+             }
+
+      assert archive_entry(rows, 2)["repo_id"] == "cowboy"
+      assert archive_entry(rows, 2)["depth"] == 1
+      # SQL NULL stays NULL (never defaulted to an index).
+      assert archive_entry(rows, 3)["repo_id"] == nil
+      # The coerced integer is back to its TEXT form.
+      assert archive_entry(rows, 4)["repo_id"] == "123"
+
+      # The archive is readable through the store facade again (an
+      # INTEGER-typed `repo_id` degraded EVERY real-data read).
+      store = start_store!(path)
+
+      assert %{entries: roster, total: 4} = Store.list_task_archives(store, "task-legacy")
+      assert Enum.map(roster, & &1["repo_id"]) == ["primary", "cowboy", nil, "123"]
+
+      assert migration_versions(pid) == @migration_versions
+    end
+
+    test "a numeric-looking repo_id stays TEXT through the rebuild and later inserts", %{
+      root: root
+    } do
+      path = Path.join(root, "normalize_numeric.sqlite")
+      seed_pre_release_archives!(path)
+
+      pid = start_repo!(path)
+
+      # The value coerced by the OLD INTEGER affinity is TEXT after the rebuild.
+      assert raw_archive_value!(path, "task-legacy", 4, "repo_id") == "123"
+
+      # A SUBSEQUENT insert of the same numeric-looking string is stored as
+      # TEXT (the canonical affinity), not coerced to an integer.
+      :ok =
+        sql!(pid, "INSERT INTO #{@archive_table} (task_id, agent_id, repo_id) VALUES (?, ?, ?)", [
+          "task-new",
+          1,
+          "123"
+        ])
+
+      assert raw_archive_value!(path, "task-new", 1, "repo_id") == "123"
+
+      store = start_store!(path)
+
+      assert %{entries: [%{"repo_id" => "123"}], total: 1} =
+               Store.list_task_archives(store, "task-new")
+
+      assert %{"agent_id" => 1, "repo_id" => "123"} =
+               Store.get_agent_archive(store, "task-new", 1)
+    end
+
+    test "a canonical TEXT table is left untouched (no rebuild)", %{root: root} do
+      path = Path.join(root, "normalize_canonical.sqlite")
+      seed_canonical_archives!(path)
+
+      before_info = archive_table_info_raw!(path)
+      before_rows = raw_archive_rows!(path)
+
+      {pid, log} = with_log(fn -> start_repo!(path) end)
+
+      refute log =~ "rebuilding task_agent_archives"
+
+      assert archive_table_info(pid) == before_info
+      assert archive_table_info(pid) == @canonical_archive_table_info
+      assert raw_archive_rows!(path) == before_rows
+      assert migration_versions(pid) == @migration_versions
+    end
+
+    test "a database without the archive table is a no-op", %{root: root} do
+      path = Path.join(root, "normalize_absent.sqlite")
+      # Everything except 009 is stamped and NO archive table exists (a database
+      # that never ran the archive migration).
+      create_db!(path, [@normalize_archives_version])
+
+      {pid, log} = with_log(fn -> start_repo!(path) end)
+
+      refute log =~ "rebuilding task_agent_archives"
+      assert archive_table_info(pid) == []
+      assert migration_versions(pid) == @migration_versions
+    end
+
+    test "is idempotent: a forced re-run rebuilds nothing", %{root: root} do
+      path = Path.join(root, "normalize_idempotent.sqlite")
+      seed_pre_release_archives!(path)
+
+      pid = start_repo!(path)
+      rebuilt_info = archive_table_info(pid)
+      rebuilt_rows = raw_archive_rows!(path)
+
+      # Re-run the migration body over the ALREADY canonical table (the version
+      # row deleted): the `repo_id` probe must short-circuit it.
+      :ok = clear_version!(pid, @normalize_archives_version)
+      :ok = Boot.stop(pid)
+
+      {pid, log} = with_log(fn -> start_repo!(path) end)
+
+      refute log =~ "rebuilding task_agent_archives"
+      assert archive_table_info(pid) == rebuilt_info
+      assert raw_archive_rows!(path) == rebuilt_rows
+      assert migration_versions(pid) == @migration_versions
+    end
+  end
+
   # ── Fixtures ──────────────────────────────────────────────────────────────
 
   # Rows for the unpack migration: one fully packed, one plain, one NULL, and
@@ -586,6 +850,184 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       agent_settings: agent_settings,
       foreign_repos: foreign_repos
     }
+  end
+
+  # The PRE-RELEASE variant of the archive table (`repo_id INTEGER`) with the
+  # roster index and four rows: full, sparse, NULL `repo_id`, and a
+  # numeric-looking `repo_id` (`"123"`, which the INTEGER affinity coerces to the
+  # integer 123 on insert).
+  defp seed_pre_release_archives!(path) do
+    create_db!(path, [@normalize_archives_version])
+
+    exec_raw!(path, @pre_release_archive_ddl)
+
+    exec_raw!(
+      path,
+      "CREATE INDEX #{@archive_index} ON #{@archive_table}(task_id, depth, agent_id)"
+    )
+
+    insert_archive_rows!(path, [
+      [
+        "task-legacy",
+        1,
+        nil,
+        0,
+        "manager",
+        ".",
+        "Build the thing",
+        "final answer text",
+        "base1",
+        "final1",
+        "evogit-agent-T1-A1",
+        "refs/genesis/archive/T1-A1-start",
+        "refs/genesis/archive/T1-A1-final",
+        "primary",
+        "/tmp/repo",
+        "/tmp/repo",
+        ~S({"input_tokens":10,"output_tokens":5,"total_tokens":15}),
+        ~S({"model":"test-model"}),
+        ~S({"max_turns":40}),
+        "[]",
+        2,
+        "2024-05-05T09:00:00.000Z",
+        "2024-05-05T10:00:00.000Z"
+      ],
+      [
+        "task-legacy",
+        2,
+        1,
+        1,
+        "executor",
+        "lib",
+        "Subtask",
+        "sub answer",
+        nil,
+        "final2",
+        nil,
+        nil,
+        nil,
+        "cowboy",
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        0,
+        nil,
+        nil
+      ],
+      [
+        "task-legacy",
+        3,
+        1,
+        1,
+        "executor",
+        "lib",
+        "Another",
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        0,
+        nil,
+        nil
+      ],
+      [
+        "task-legacy",
+        4,
+        1,
+        1,
+        "executor",
+        "lib",
+        "Numeric",
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        "123",
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        0,
+        nil,
+        nil
+      ]
+    ])
+
+    :ok
+  end
+
+  # The CANONICAL (`repo_id TEXT`) table, already correct: the migration must
+  # leave it completely alone.
+  defp seed_canonical_archives!(path) do
+    create_db!(path, [@normalize_archives_version])
+
+    exec_raw!(path, @canonical_archive_ddl)
+
+    exec_raw!(
+      path,
+      "CREATE INDEX #{@archive_index} ON #{@archive_table}(task_id, depth, agent_id)"
+    )
+
+    insert_archive_rows!(path, [
+      [
+        "task-canonical",
+        1,
+        nil,
+        0,
+        "manager",
+        ".",
+        "Already canonical",
+        "done",
+        nil,
+        "final1",
+        nil,
+        nil,
+        nil,
+        "123",
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        nil,
+        0,
+        nil,
+        nil
+      ]
+    ])
+
+    :ok
+  end
+
+  # Inserts rows in `@archive_projection` order.
+  defp insert_archive_rows!(path, rows) do
+    placeholders =
+      @archive_projection
+      |> Enum.with_index(1)
+      |> Enum.map_join(", ", fn {_column, index} -> "?#{index}" end)
+
+    statement =
+      "INSERT INTO #{@archive_table} (#{Enum.join(@archive_projection, ", ")}) " <>
+        "VALUES (#{placeholders})"
+
+    for row <- rows, do: exec_raw!(path, statement, row)
+    :ok
   end
 
   # The canonical 20-column table + `projects` + a `schema_migrations` stamped
@@ -778,6 +1220,71 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
         {column, value} <- [{"result", result}, {"logs", logs}, {"archive_metadata", archive}],
         into: %{},
         do: {{id, column}, value}
+  end
+
+  # ── archive-table raw helpers (`…009`) ────────────────────────────────────
+
+  # A statement against the file through RAW xqlite (usable before/independently
+  # of any repo), returning the result rows.
+  defp query_raw!(path, statement, params \\ []) do
+    {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
+    {:ok, %{rows: rows}} = XqliteNIF.query(conn, statement, params)
+    :ok = XqliteNIF.close(conn)
+    rows
+  end
+
+  defp exec_raw!(path, statement, params \\ []) do
+    _rows = query_raw!(path, statement, params)
+    :ok
+  end
+
+  # `PRAGMA table_info(task_agent_archives)` read with RAW xqlite.
+  defp archive_table_info_raw!(path) do
+    query_raw!(path, "PRAGMA table_info(#{@archive_table})")
+  end
+
+  defp archive_table_type!(path, column) do
+    Enum.find_value(archive_table_info_raw!(path), fn [_cid, name, type | _rest] ->
+      if name == column, do: type
+    end)
+  end
+
+  # ONE column of ONE archive row, read with RAW xqlite — the ground truth on
+  # disk (the affinity coercion is only observable there).
+  defp raw_archive_value!(path, task_id, agent_id, column) do
+    [[value]] =
+      query_raw!(
+        path,
+        "SELECT #{column} FROM #{@archive_table} WHERE task_id = ?1 AND agent_id = ?2",
+        [task_id, agent_id]
+      )
+
+    value
+  end
+
+  # Every archive row on disk, in `@archive_projection` order — the shape a
+  # "nothing was rebuilt" assertion compares.
+  defp raw_archive_rows!(path) do
+    query_raw!(
+      path,
+      "SELECT #{Enum.join(@archive_projection, ", ")} FROM #{@archive_table} " <>
+        "ORDER BY task_id, agent_id"
+    )
+  end
+
+  # `PRAGMA table_info(task_agent_archives)` through the booted repo.
+  defp archive_table_info(pid) do
+    RepoScope.with_repo(pid, fn ->
+      Repo.query!("PRAGMA table_info(#{@archive_table})").rows
+    end)
+  end
+
+  # The columns the roster index covers, via the booted repo.
+  defp archive_index_columns(pid) do
+    RepoScope.with_repo(pid, fn ->
+      Repo.query!("PRAGMA index_info(#{@archive_index})").rows
+      |> Enum.map(fn [_seqno, _cid, column] -> column end)
+    end)
   end
 
   # The same, for a database whose `archive_metadata` column is already gone.

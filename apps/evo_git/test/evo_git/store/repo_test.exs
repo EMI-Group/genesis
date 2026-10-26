@@ -55,10 +55,12 @@ defmodule EvoGit.Store.RepoTest do
   @unpack_rows_version 20_260_815_000_006
   @archive_table_version 20_260_815_000_007
   @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
   # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
   # then the one-shot z1 repair, then the relational archive table and the
-  # fan-out that drops `tasks.archive_metadata` (the rejected compression
-  # migration 004 no longer ships).
+  # fan-out that drops `tasks.archive_metadata`, and finally the canonical-shape
+  # repair of that table (the rejected compression migration 004 no longer
+  # ships).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -66,7 +68,8 @@ defmodule EvoGit.Store.RepoTest do
     @covering_index_version,
     @unpack_rows_version,
     @archive_table_version,
-    @move_archives_version
+    @move_archives_version,
+    @normalize_archives_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to

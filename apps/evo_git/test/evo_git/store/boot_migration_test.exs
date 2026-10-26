@@ -66,10 +66,11 @@ defmodule EvoGit.Store.BootMigrationTest do
   @unpack_rows_version 20_260_815_000_006
   @archive_table_version 20_260_815_000_007
   @move_archives_version 20_260_815_000_008
+  @normalize_archives_version 20_260_815_000_009
   # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
   # the one-shot z1 repair, then the relational archive table + the fan-out that
-  # drops `tasks.archive_metadata` (the rejected compression migration 004 no
-  # longer ships).
+  # drops `tasks.archive_metadata`, then the canonical-shape repair of that
+  # table (the rejected compression migration 004 no longer ships).
   @migration_versions [
     @baseline_version,
     @normalization_version,
@@ -77,7 +78,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @covering_index_version,
     @unpack_rows_version,
     @archive_table_version,
-    @move_archives_version
+    @move_archives_version,
+    @normalize_archives_version
   ]
 
   # The LEGACY 20 column names in physical order — the baseline migration's
@@ -466,7 +468,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0).
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched (the fresh-DB PRAGMA shape), minus the
@@ -524,9 +526,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all seven migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all eight migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[8]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -579,7 +581,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       # physical tail order it arrived with is preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[7]]
+      assert schema_migrations_count(pid) == [[8]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}
