@@ -1066,10 +1066,6 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # manual `&node=` suffix because current_node_id is non-nil.
       render_click(view, "resume")
 
-      # The resume action runs in a TaskSupervisor child; wait for its
-      # {:review_action_result, ...} before asserting the navigation.
-      await_review_action_settled(view)
-
       expected =
         "/projects?" <>
           Plug.Conn.Query.encode(
@@ -1079,7 +1075,19 @@ defmodule EvoDashWeb.ReviewLiveTest do
           ) <>
           "&node=" <> id
 
-      assert_redirect(view, expected)
+      # The resume action runs in a TaskSupervisor child and its result
+      # push_navigates UNCONDITIONALLY (the review-status write is advisory) —
+      # a server-side push_navigate STOPS this LiveView, so the redirect is
+      # asserted FIRST (it reads the proxy's mailbox, no live pid needed) and
+      # the socket-state settle afterwards must tolerate the dead process.
+      # On the unreachable remote node the advisory status write fails, so the
+      # error flash rides along with the navigation.
+      flash = assert_redirect(view, expected, 2000)
+      assert flash["error"] =~ "Failed to update review status"
+
+      # Tolerant settle: the view is already stopped, so this returns "".
+      assert await_review_action_settled(view) == ""
+      refute Process.alive?(view.pid)
     end
   end
 
@@ -4965,9 +4973,28 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # handled). `render/1` then returns the settled page.
   #
   # A no-op marker check when nothing is in flight (never waits out a timeout).
+  #
+  # TOLERATES A STOPPED VIEW: resume/ignore navigate UNCONDITIONALLY now (the
+  # review-status write is advisory), and a server-side `push_navigate` STOPS the
+  # LiveView process — polling its assigns would exit with `:noproc`. A stopped
+  # view IS the settled state (there is no in-flight marker left to clear), so
+  # this returns "" instead of raising; the caller asserts the redirect.
   defp await_review_action_settled(view, timeout \\ 5000) do
-    wait_until(fn -> is_nil(assigns(view)[:review_action]) end, timeout)
-    render(view)
+    wait_until(fn -> review_action_settled?(view) end, timeout)
+
+    if Process.alive?(view.pid), do: render(view), else: ""
+  end
+
+  # True once the in-flight marker is nil — or once the view has STOPPED (a
+  # conditional `catch :exit` because the liveness check and the
+  # `:sys.get_state` round-trip cannot be made atomic: the view may stop in
+  # between, and that is itself the settled state, never a test failure).
+  defp review_action_settled?(view) do
+    try do
+      is_nil(assigns(view)[:review_action])
+    catch
+      :exit, _ -> true
+    end
   end
 
   # Polls `fun` until it returns a truthy value (or the timeout elapses).
