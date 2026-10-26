@@ -39,10 +39,15 @@ defmodule EvoDashWeb.BlobCapsTest do
       big = String.duplicate("head-line ", 10_000) <> tail
       assert byte_size(big) > 100_000
 
+      # The result lives on the lazily-fetched FULL TaskInfo (`detail.task`),
+      # never on the summary map.
+      full = task(result: {:ok, %{result: big, commit_sha: "abcdef1234"}})
+
       text =
         render_component(&TaskCardComponents.task_card/1,
-          task: task(result: {:ok, %{result: big, commit_sha: "abcdef1234"}}),
-          show_details: true
+          task: full,
+          show_details: true,
+          detail: %{state: :ok, task: full}
         )
         |> rendered_text()
 
@@ -108,10 +113,13 @@ defmodule EvoDashWeb.BlobCapsTest do
       big = String.duplicate("copy-me ", 250_000)
       assert byte_size(big) > @copy_payload_bytes
 
+      full = task(result: {:ok, %{result: big, commit_sha: "abcdef1234"}})
+
       html =
         render_component(&TaskCardComponents.task_card/1,
-          task: task(result: {:ok, %{result: big, commit_sha: "abcdef1234"}}),
-          show_details: true
+          task: full,
+          show_details: true,
+          detail: %{state: :ok, task: full}
         )
 
       [copy_button] =

@@ -423,7 +423,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                    spinner — never an endless silent gap, never a crash. --%>
               <%= cond do %>
                 <% detail_state == :error -> %>
-                  <div class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0">
+                  <div
+                    id={"task-#{@task.id}-detail-error"}
+                    class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0"
+                  >
                     <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
                     <span class="text-xs font-medium text-error truncate min-w-0">
                       {gettext("Could not load task details.")}
