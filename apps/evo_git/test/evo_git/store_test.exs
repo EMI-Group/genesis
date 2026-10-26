@@ -1191,24 +1191,6 @@ defmodule EvoGit.StoreTest do
   end
 
   describe "select and count" do
-    test "select_all_tasks returns all tasks" do
-      for i <- 1..3 do
-        :ok =
-          Store.put_task(Store, %TaskInfo{
-            id: "sel-#{i}",
-            type: :genesis,
-            status: :completed,
-            opts: [path: "/t"]
-          })
-      end
-
-      tasks = Store.select_all_tasks(Store)
-      ids = Enum.map(tasks, & &1.id)
-      assert "sel-1" in ids
-      assert "sel-2" in ids
-      assert "sel-3" in ids
-    end
-
     test "select_all_projects returns all projects" do
       :ok =
         Store.put_project(Store, %RecentProject{path: "/p1", name: "P1"})
@@ -1222,18 +1204,6 @@ defmodule EvoGit.StoreTest do
       assert "/p2" in paths
     end
 
-    test "count_tasks returns correct count" do
-      :ok =
-        Store.put_task(Store, %TaskInfo{
-          id: "cnt-1",
-          type: :genesis,
-          status: :completed,
-          opts: [path: "/t"]
-        })
-
-      assert Store.count_tasks(Store) >= 1
-    end
-
     test "count_projects returns correct count" do
       :ok =
         Store.put_project(Store, %RecentProject{path: "/cnt-p1", name: "P1"})
@@ -1242,7 +1212,7 @@ defmodule EvoGit.StoreTest do
     end
 
     test "size returns total across both tables" do
-      tasks_before = Store.count_tasks(Store)
+      tasks_before = length(Store.select_task_ids(Store))
       projects_before = Store.count_projects(Store)
 
       :ok =
@@ -1270,7 +1240,7 @@ defmodule EvoGit.StoreTest do
         })
 
       :ok = Store.clear_tasks(Store)
-      assert Store.count_tasks(Store) == 0
+      assert Store.select_task_ids(Store) == []
     end
 
     test "clear_tasks cascades to every archive row" do
@@ -1285,7 +1255,7 @@ defmodule EvoGit.StoreTest do
 
       :ok = Store.clear_tasks(Store)
 
-      assert Store.count_tasks(Store) == 0
+      assert Store.select_task_ids(Store) == []
       assert Store.list_task_archives(Store, "clr-arch-1") == %{entries: [], total: 0}
       assert Store.list_task_archives(Store, "clr-arch-2") == %{entries: [], total: 0}
       assert Store.get_agent_archive(Store, "clr-arch-1", 1) == nil

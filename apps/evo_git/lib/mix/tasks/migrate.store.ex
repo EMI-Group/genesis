@@ -59,7 +59,17 @@ defmodule Mix.Tasks.Migrate.Store do
     # `Boot.start_dynamic/1` would run the migrations too, but it discards
     # the applied-version list this task reports — so boot the unnamed
     # instance with the same shape and call `Boot.run_migrations/1` directly.
-    case @repo.start_link(database: Path.expand(db_path), name: nil, pool_size: 1) do
+    #
+    # The per-instance keys are merged OVER `EvoGit.Repo.start_opts/0` (the
+    # same shape `Boot.start_opts/2` uses) so the migration run gets the app's
+    # real DBConnection budget (`timeout`, queue bounds, page cache, temp
+    # store). Without it Ecto's own `@defaults` (`timeout: 15_000`) arrive as
+    # start opts and win — see the `EvoGit.Repo` moduledoc. `pool_size: 1`:
+    # the migrator only needs one connection.
+    opts =
+      Keyword.merge(@repo.start_opts(), database: Path.expand(db_path), name: nil, pool_size: 1)
+
+    case @repo.start_link(opts) do
       {:ok, pid} ->
         try do
           pid |> Boot.run_migrations() |> report(pid)

@@ -42,27 +42,23 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
 
-  # The shipped migration versions — the leading integers of
-  # `priv/repo/migrations/20260815000001_baseline_adoption.exs` and
-  # `20260815000002_data_normalization.exs`, as the sibling boot suites pin
-  # them; `migration_file_versions/0` re-derives them from disk.
+  # The shipped migration versions — the leading integers of the six
+  # `priv/repo/migrations/` files (`20260815000001_baseline_adoption.exs` …
+  # `20260815000006_prune_redundant_indexes.exs`), as the sibling boot suites
+  # pin them; `migration_file_versions/0` re-derives them from disk.
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_005
-  @unpack_rows_version 20_260_815_000_006
-  @archive_table_version 20_260_815_000_007
-  @move_archives_version 20_260_815_000_008
-  @normalize_archives_version 20_260_815_000_009
+  @covering_index_version 20_260_815_000_004
+  @archive_version 20_260_815_000_005
+  @prune_indexes_version 20_260_815_000_006
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
   @composite_index_module EvoGit.Repo.Migrations.CompositeIndexes
   @covering_index_module EvoGit.Repo.Migrations.CoveringIndexes
-  @unpack_rows_module EvoGit.Repo.Migrations.UnpackAbandonedCompressedRows
-  @archive_table_module EvoGit.Repo.Migrations.CreateTaskAgentArchives
-  @move_archives_module EvoGit.Repo.Migrations.MoveArchivesToTable
-  @normalize_archives_module EvoGit.Repo.Migrations.NormalizeTaskAgentArchives
+  @archive_module EvoGit.Repo.Migrations.TaskAgentArchives
+  @prune_indexes_module EvoGit.Repo.Migrations.PruneRedundantIndexes
 
   # Every shipped migration version, ascending — the list the seam must return
   # and the list a fresh boot stamps.
@@ -71,10 +67,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
-    @unpack_rows_version,
-    @archive_table_version,
-    @move_archives_version,
-    @normalize_archives_version
+    @archive_version,
+    @prune_indexes_version
   ]
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
@@ -111,10 +105,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
                {@covering_index_version, @covering_index_module},
-               {@unpack_rows_version, @unpack_rows_module},
-               {@archive_table_version, @archive_table_module},
-               {@move_archives_version, @move_archives_module},
-               {@normalize_archives_version, @normalize_archives_module}
+               {@archive_version, @archive_module},
+               {@prune_indexes_version, @prune_indexes_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -172,20 +164,16 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
                {@covering_index_version, @covering_index_module},
-               {@unpack_rows_version, @unpack_rows_module},
-               {@archive_table_version, @archive_table_module},
-               {@move_archives_version, @move_archives_module},
-               {@normalize_archives_version, @normalize_archives_module}
+               {@archive_version, @archive_module},
+               {@prune_indexes_version, @prune_indexes_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
       assert Code.ensure_loaded?(@normalization_module)
       assert Code.ensure_loaded?(@composite_index_module)
       assert Code.ensure_loaded?(@covering_index_module)
-      assert Code.ensure_loaded?(@unpack_rows_module)
-      assert Code.ensure_loaded?(@archive_table_module)
-      assert Code.ensure_loaded?(@move_archives_module)
-      assert Code.ensure_loaded?(@normalize_archives_module)
+      assert Code.ensure_loaded?(@archive_module)
+      assert Code.ensure_loaded?(@prune_indexes_module)
 
       output =
         capture_io(:stderr, fn ->

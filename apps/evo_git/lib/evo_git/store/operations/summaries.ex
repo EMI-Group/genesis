@@ -192,6 +192,29 @@ defmodule EvoGit.Store.Operations.Summaries do
   defp where_since(query, nil), do: query
   defp where_since(query, since), do: where(query, [t], t.updated_at > ^since)
 
+  @doc """
+  Restricts a query to rows whose `opts` column can be DECODED — i.e. the rows
+  `decode_skipping_bad/1` will not drop.
+
+  `Codec.decode_opts/1` raises only for a non-NULL `opts` that is not a JSON
+  OBJECT (invalid JSON, a legacy pair-array, a scalar), so this predicate is
+  exactly "renderable": `opts IS NULL OR json_valid(opts) AND
+  json_type(opts) = 'object'`. Paging reads apply it to the COUNT and to the
+  page selection alike, so `total` and the renderable rows can never disagree
+  (a corrupt row is excluded from both instead of inflating the total).
+  SQLite's JSON1 functions (`json_valid`, `json_type`) are available in the
+  bundled SQLite (>= 3.38 ships JSON1 unconditionally).
+  """
+  @spec where_renderable(Ecto.Query.t()) :: Ecto.Query.t()
+  def where_renderable(query) do
+    where(
+      query,
+      [t],
+      is_nil(t.opts) or
+        fragment("json_valid(?) AND json_type(?) = 'object'", t.opts, t.opts)
+    )
+  end
+
   ## Decode
 
   # Decodes one row of the 16-column RAW projection — a field-for-field port

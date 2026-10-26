@@ -53,6 +53,12 @@ defmodule EvoGit.Store.Operations.TasksTest do
     pid
   end
 
+  # `Operations.Tasks.count_tasks/1` was dead code and is gone; count rows
+  # through the read-only raw twin instead.
+  defp task_count(repo) do
+    RepoScope.with_repo(repo, fn -> Repo.aggregate(TaskRowRaw, :count) end)
+  end
+
   defp raw_row(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.one(from(t in TaskRowRaw, where: t.id == ^task_id))
@@ -214,7 +220,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert fetched.model_id == nil
       assert fetched.type == :evolve
       # Exactly ONE row for the id — replace, not append.
-      assert Tasks.count_tasks(repo) == 1
+      assert task_count(repo) == 1
     end
 
     test "an explicit project_path/branch_name in the struct beats the denormalization" do
@@ -322,7 +328,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert Tasks.put_task(repo, %TaskInfo{id: nil, status: :running}) ==
                {:error, :missing_task_id}
 
-      assert Tasks.count_tasks(repo) == 0
+      assert task_count(repo) == 0
     end
 
     test "returns {:error, :missing_task_status} without writing" do
@@ -331,7 +337,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert Tasks.put_task(repo, %TaskInfo{id: "s", status: nil}) ==
                {:error, :missing_task_status}
 
-      assert Tasks.count_tasks(repo) == 0
+      assert task_count(repo) == 0
     end
   end
 
@@ -344,13 +350,13 @@ defmodule EvoGit.Store.Operations.TasksTest do
 
       assert Tasks.delete_task(repo, "del-1") == :ok
       assert Tasks.get_task(repo, "del-1") == nil
-      assert Tasks.count_tasks(repo) == 0
+      assert task_count(repo) == 0
     end
 
     test "returns :ok for a missing id (no-op delete)" do
       repo = start_repo!()
       assert Tasks.delete_task(repo, "missing") == :ok
-      assert Tasks.count_tasks(repo) == 0
+      assert task_count(repo) == 0
     end
   end
 
@@ -362,7 +368,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       put!(repo, %TaskInfo{id: "keep", type: :evolve, status: :pending})
 
       assert Tasks.delete_tasks(repo, ["multi-1", "multi-2", "multi-3"]) == :ok
-      assert Tasks.count_tasks(repo) == 1
+      assert task_count(repo) == 1
       assert Tasks.get_task(repo, "keep") != nil
     end
 
@@ -371,7 +377,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       put!(repo, %TaskInfo{id: "stay", type: :evolve, status: :pending})
 
       assert Tasks.delete_tasks(repo, []) == :ok
-      assert Tasks.count_tasks(repo) == 1
+      assert task_count(repo) == 1
     end
 
     test "501 ids are chunked (2 statements of 500+1) and all rows go" do
@@ -384,46 +390,10 @@ defmodule EvoGit.Store.Operations.TasksTest do
         :ok = Tasks.put_task(repo, %TaskInfo{id: id, type: :evolve, status: :pending})
       end)
 
-      assert Tasks.count_tasks(repo) == 501
+      assert task_count(repo) == 501
 
       assert Tasks.delete_tasks(repo, ids) == :ok
-      assert Tasks.count_tasks(repo) == 0
-    end
-  end
-
-  # ── select_all_tasks / count_tasks / clear_tasks ─────────────────────────
-
-  describe "select_all_tasks/1" do
-    test "returns every task as TaskInfo structs" do
-      repo = start_repo!()
-      put!(repo, full_task("all-1"))
-      put!(repo, %TaskInfo{id: "all-2", type: :evolve, status: :pending})
-
-      tasks = Tasks.select_all_tasks(repo)
-
-      assert length(tasks) == 2
-      assert Enum.all?(tasks, &is_struct(&1, TaskInfo))
-      ids = tasks |> Enum.map(& &1.id) |> Enum.sort()
-      assert ids == ["all-1", "all-2"]
-
-      by_id = Map.new(tasks, fn t -> {t.id, t} end)
-      assert by_id["all-1"].branch_name == "genesis/agent_beef"
-      assert by_id["all-2"].status == :pending
-    end
-
-    test "returns [] for an empty table" do
-      repo = start_repo!()
-      assert Tasks.select_all_tasks(repo) == []
-    end
-  end
-
-  describe "count_tasks/1" do
-    test "counts rows" do
-      repo = start_repo!()
-      assert Tasks.count_tasks(repo) == 0
-
-      for i <- 1..4, do: put!(repo, %TaskInfo{id: "c-#{i}", type: :evolve, status: :pending})
-      assert Tasks.count_tasks(repo) == 4
+      assert task_count(repo) == 0
     end
   end
 
@@ -434,8 +404,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       put!(repo, %TaskInfo{id: "clear-2", type: :evolve, status: :pending})
 
       assert Tasks.clear_tasks(repo) == :ok
-      assert Tasks.count_tasks(repo) == 0
-      assert Tasks.select_all_tasks(repo) == []
+      assert task_count(repo) == 0
     end
   end
 
@@ -939,11 +908,11 @@ defmodule EvoGit.Store.Operations.TasksTest do
     test "a missing-id update is a no-op :ok (0 rows)" do
       repo = start_repo!()
       assert Tasks.update_task_columns(repo, "missing", status: :completed) == :ok
-      assert Tasks.count_tasks(repo) == 0
+      assert task_count(repo) == 0
     end
   end
 
-  # ── get_task_status / select_task_logs / select_task_update_info ──────────
+  # ── get_task_status / select_task_update_info ──────────────────────────────
 
   describe "get_task_status/2" do
     test "returns the decoded atom for an existing row" do
@@ -955,26 +924,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
     test "returns nil for a missing row" do
       repo = start_repo!()
       assert Tasks.get_task_status(repo, "nope") == nil
-    end
-  end
-
-  describe "select_task_logs/2" do
-    test "returns the decoded list for an existing row" do
-      repo = start_repo!()
-
-      put!(repo, %TaskInfo{id: "lg-1", type: :evolve, status: :running, logs: ["a", "b"]})
-      assert Tasks.select_task_logs(repo, "lg-1") == ["a", "b"]
-    end
-
-    test "a NULL logs column decodes to [] (lenient Codec semantics)" do
-      repo = start_repo!()
-      put!(repo, %TaskInfo{id: "lg-2", type: :evolve, status: :running})
-      assert Tasks.select_task_logs(repo, "lg-2") == []
-    end
-
-    test "returns nil for a missing row" do
-      repo = start_repo!()
-      assert Tasks.select_task_logs(repo, "nope") == nil
     end
   end
 

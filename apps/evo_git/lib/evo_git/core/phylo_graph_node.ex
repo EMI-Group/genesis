@@ -88,20 +88,6 @@ defmodule EvoGit.Core.PhyloGraphNode do
   def current_head(repo), do: Git.rev_parse(repo)
 
   @doc """
-  Lists all files in the given commit recursively.
-  """
-  def list_files(%__MODULE__{} = node) do
-    case Git.run(["ls-tree", "-r", "--name-only", node.current_commit], node.repo) do
-      {:ok, output} ->
-        files = String.split(output, "\n", trim: true)
-        {:ok, files}
-
-      error ->
-        error
-    end
-  end
-
-  @doc """
   Lists immediate children (files and directories) of a given path in a specific commit.
   """
   def list_immediate_children(%__MODULE__{} = node, path) do

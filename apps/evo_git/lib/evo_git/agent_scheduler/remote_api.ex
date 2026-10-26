@@ -517,7 +517,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   fails.
   """
   @spec list_task_archives(String.t(), keyword()) ::
-          %{entries: [map()], total: non_neg_integer()}
+          %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(task_id, opts \\ []) do
     EvoGit.TaskRegistry.list_task_archives(task_id, opts)
   end

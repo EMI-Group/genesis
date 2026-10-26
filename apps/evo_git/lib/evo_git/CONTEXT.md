@@ -57,7 +57,6 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.CustomAgents` / `ModelSelector` · `CustomTools` / `.Tool` · `Agents.Custom` / `Agents.SelfReflective` | `custom_agents/` · `custom_tools/` · `agents/` |
 | `EvoGit.Nix` · `PromptFile` · `ProjectConfig` · `SelfReflectiveSource` | `active?/0` · plain-text reader (`{:error, {:not_text, ext}}`) · `genesis.toml` · managed clone (`reference_path/0`, `available?/0`, LOCAL-NODE-ONLY) |
 | `EvoGit.TaskInfo` / `RecentProject` | persisted structs; `opts`/`result["repos"]` come back STRING-keyed → `core/` |
-| `EvoGit.Task` | legacy `mutate/3`, `diagnose/3`, `resolve_conflict/3` (no callers) |
 
 ### SSH Remote (RemoteBootstrap / RemoteConnection)
 

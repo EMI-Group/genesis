@@ -109,6 +109,100 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert Store.get_task_lite(store, "nope") == nil
   end
 
+  test "select_tasks_page/2 total agrees with the rows its filters actually yield" do
+    store = start_store!()
+    base = ~U[2026-02-01 00:00:00.000Z]
+
+    for i <- 0..3 do
+      :ok = Store.put_task(store, task("c-#{i}", DateTime.add(base, i, :second)))
+    end
+
+    for i <- 4..5 do
+      :ok =
+        Store.put_task(
+          store,
+          task("r-#{i}", DateTime.add(base, i, :second), status: :running, result: nil)
+        )
+    end
+
+    for filters <- [
+          [],
+          [status: "completed"],
+          [status: "running"],
+          [project_path: "/facade/proj"],
+          [search: "c-2"]
+        ] do
+      %{total: total} = Store.select_tasks_page(store, filters: filters, limit: 50)
+
+      # Walking the WHOLE paged set in pages of 2 yields exactly `total` rows,
+      # with no row repeated and no empty page in the middle of the range.
+      pages =
+        for offset <- Enum.take_every(0..(total - 1), 2) do
+          %{rows: rows} = Store.select_tasks_page(store, filters ++ [limit: 2, offset: offset])
+          refute rows == [], "page at offset #{offset} came back empty for #{inspect(filters)}"
+          Enum.map(rows, & &1.id)
+        end
+
+      walked = List.flatten(pages)
+
+      assert length(walked) == total,
+             "total #{total} disagrees with the #{length(walked)} rows for #{inspect(filters)}"
+
+      assert walked == Enum.uniq(walked),
+             "a row was rendered on two pages for #{inspect(filters)}"
+    end
+  end
+
+  test "the archive roster's total agrees with its pages; include_total/include_settings pass through" do
+    store = start_store!()
+
+    for agent_id <- 1..5 do
+      :ok =
+        Store.put_task_archive(store, %{
+          task_id: "t-roster",
+          agent_id: agent_id,
+          depth: rem(agent_id, 2),
+          usage: %{"input_tokens" => agent_id},
+          llm_settings: %{"model_id" => "deepseek-chat"}
+        })
+    end
+
+    assert %{entries: entries, total: 5} = Store.list_task_archives(store, "t-roster", limit: 2)
+    assert length(entries) == 2
+
+    pages =
+      for offset <- [0, 2, 4] do
+        %{entries: page, total: 5} =
+          Store.list_task_archives(store, "t-roster", limit: 2, offset: offset)
+
+        Enum.map(page, & &1["agent_id"])
+      end
+
+    # `depth ASC, agent_id ASC` — the spawn tree, root (depth 0) first: agents
+    # 2 and 4 sit at depth 0, agents 1, 3 and 5 at depth 1. The pages tile that
+    # order exactly, with no gap and no repeat.
+    assert List.flatten(pages) == [2, 4, 1, 3, 5]
+
+    # `include_total: false` reaches the operation: no count, `nil` (not 0).
+    assert %{entries: [_], total: nil} =
+             Store.list_task_archives(store, "t-roster", limit: 1, include_total: false)
+
+    # `include_settings: true` reaches the operation: the export-only columns
+    # are selected and decoded.
+    assert %{entries: [with_settings]} =
+             Store.list_task_archives(store, "t-roster", limit: 1, include_settings: true)
+
+    assert with_settings["llm_settings"] == %{"model_id" => "deepseek-chat"}
+    assert with_settings["usage"] == %{"input_tokens" => 2}
+
+    # …and the default roster carries neither settings key.
+    assert %{entries: [lean]} = Store.list_task_archives(store, "t-roster", limit: 1)
+    refute Map.has_key?(lean, "llm_settings")
+    refute Map.has_key?(lean, "agent_settings")
+    refute Map.has_key?(lean, "foreign_repos")
+    assert lean["usage"] == %{"input_tokens" => 2}
+  end
+
   # The `store \\ __MODULE__` defaults generate arity-1 forms, so a caller can
   # write `Store.select_tasks_page(opts)` / `Store.get_task_lite(id)` against the
   # default store exactly like the neighbouring reads.

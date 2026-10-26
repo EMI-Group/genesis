@@ -50,7 +50,7 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       # Seed real data FIRST, so the degraded values below cannot be confused
       # with "the database is simply empty".
       assert :ok = Store.put_task(store, task(id))
-      assert Store.count_tasks(store) == 1
+      assert length(Store.select_task_ids(store)) == 1
       assert [_] = Store.select_task_ids(store, [:running])
 
       # Kill the store's dynamic repo instance (`:normal`, so the linked store
@@ -64,13 +64,12 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
         capture_log(fn ->
           # Single-item reads degrade to nil …
           assert Store.get_task(store, id) == nil
+          assert Store.get_task_lite(store, id) == nil
           assert Store.get_task_status(store, id) == nil
-          assert Store.select_task_logs(store, id) == nil
           assert Store.select_task_update_info(store, id) == nil
           assert Store.get_project(store, "/no/such/project") == nil
 
           # … list reads to [] …
-          assert Store.select_all_tasks(store) == []
           assert Store.select_task_ids(store, [:running]) == []
           assert Store.select_finished_task_ids(store) == []
           assert Store.select_running_lease_info(store) == []
@@ -88,7 +87,6 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
           assert Store.safe_select_paginated_tasks(store, limit: 10) == {[], 0}
 
           # … and counts degrade to 0.
-          assert Store.count_tasks(store) == 0
           assert Store.count_projects(store) == 0
           assert Store.size(store) == 0
         end)
@@ -99,11 +97,10 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       # … and every failure was logged with the operation name (never silent).
       for op <- [
             "get_task",
+            "get_task_lite",
             "get_task_status",
-            "select_all_tasks",
             "select_task_ids",
-            "safe_select_paginated_tasks",
-            "count_tasks"
+            "safe_select_paginated_tasks"
           ] do
         assert log =~ "Store: read #{op} failed"
       end
@@ -130,7 +127,7 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       # The healthy store keeps working normally afterwards: the fault was
       # contained in the worker, not in the store's state.
       assert %TaskInfo{id: ^id} = Store.get_task(store, id)
-      assert Store.count_tasks(store) == 1
+      assert length(Store.select_task_ids(store)) == 1
     end
 
     test "reads are isolated per call: one failing read does not degrade the next",

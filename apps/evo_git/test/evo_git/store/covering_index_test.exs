@@ -1,6 +1,6 @@
 defmodule EvoGit.Store.CoveringIndexTest do
   @moduledoc """
-  Coverage for `20260815000005_covering_indexes` — the two COVERING indexes that
+  Coverage for `20260815000004_covering_indexes` — the two COVERING indexes that
   let the id-oriented task reads answer from the index with NO table access.
 
   The incident this pins: `EvoGit.Store.select_task_ids([:completed, :failed,
@@ -35,6 +35,18 @@ defmodule EvoGit.Store.CoveringIndexTest do
       cleanup reads against an Elixir-side oracle computed from
       `select_cleanup_info/1`.
 
+  ## Version `20260815000004`, and a fresh database
+
+  `20260815000001_baseline_adoption` creates the final six `idx_tasks_*`
+  indexes, these two included, so this migration is an idempotent no-op on a
+  fresh database. The DDL tests below therefore re-arm version
+  `20260815000004` (`DELETE FROM schema_migrations`) to drive the real module a
+  second time through the real migrator. The four single-column legacy indexes
+  (`idx_tasks_status`, `idx_tasks_finished_at`, `idx_tasks_project_path`,
+  `idx_tasks_lease_expires_at`) are never created any more —
+  `20260815000006_prune_redundant_indexes` only drops them on an adopted
+  database — so every plan below rides the six-index set.
+
   ## Why the DDL/plan-sequencing tests open a SECOND connection
 
   `xqlite` caches a prepared statement's plan PER CONNECTION, and that cache is
@@ -58,7 +70,7 @@ defmodule EvoGit.Store.CoveringIndexTest do
 
   @status_index "idx_tasks_status_updated_at_id"
   @finished_index "idx_tasks_finished_at_id"
-  @migration_version 20_260_815_000_005
+  @migration_version 20_260_815_000_004
 
   # Seed shape: a 10-status cycle repeated 150 times → 1 500 rows.
   @status_cycle ~w(completed failed cancelled completed running pending finalizing completed failed cancelling)
@@ -311,13 +323,17 @@ defmodule EvoGit.Store.CoveringIndexTest do
       end
     end
 
-    test "select_task_paths/0 keeps riding the baseline single-column covering index", ctx do
+    test "select_task_paths/0 rides the path composite as a covering index", ctx do
       pid = boot_copy!(ctx, "plan_paths")
 
       plan = plan_for!(pid, fn -> Lightweight.select_task_paths(pid) end)
 
       # Unchanged by this migration — a new index would only cost write time.
-      assert plan =~ "USING COVERING INDEX idx_tasks_project_path"
+      # The leading `project_path` of the path composite answers the read from
+      # the index b-tree alone (the single-column `idx_tasks_project_path` does
+      # not exist any more).
+      assert_covering(plan, "idx_tasks_project_path_started_at")
+      assert plan =~ ~r/\bSCAN t0 USING COVERING INDEX/
     end
 
     test "select_running_lease_info/1 stays a seek (live rows are a handful by design)", ctx do
@@ -327,9 +343,10 @@ defmodule EvoGit.Store.CoveringIndexTest do
 
       # Deliberately NOT given a dedicated covering index: on a real database
       # this matches only the live tasks, and this synthetic seed is the only
-      # place where those are a large fraction of the table. What must never
-      # come back is a full table scan.
-      assert plan =~ "SEARCH t0 USING INDEX idx_tasks_"
+      # place where those are a large fraction of the table. The status seek
+      # rides the composite `(status, started_at)`. What must never come back is
+      # a full table scan.
+      assert plan =~ "SEARCH t0 USING INDEX idx_tasks_status_started_at"
       refute plan =~ ~r/\bSCAN t0\b/
     end
   end
@@ -367,7 +384,9 @@ defmodule EvoGit.Store.CoveringIndexTest do
       assert cleanup_plan =~ ~r/\bSCAN t0\b/
 
       # Re-arm the migration (the only way to drive it again through the REAL
-      # migrator) and let it restore the declared shape.
+      # migrator) and let it restore the declared shape. Only version
+      # `20260815000004` is pending, so the prune migration
+      # (`20260815000006`) does not re-run and cannot mask the restore.
       query_rows(pid, "DELETE FROM schema_migrations WHERE version = #{@migration_version}")
       assert Boot.run_migrations(pid) == [@migration_version]
 

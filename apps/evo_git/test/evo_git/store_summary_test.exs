@@ -503,12 +503,12 @@ defmodule EvoGit.StoreSummaryTest do
 
       insert_tasks_raw!(sqlite_path, tasks)
 
-      assert Store.count_tasks(Store) == 1005
+      assert length(Store.select_tasks_summary(Store)) == 1005
 
       :ok = Store.delete_tasks(Store, ids)
 
-      assert Store.count_tasks(Store) == 0
       assert Store.select_tasks_summary(Store) == []
+      assert Store.select_task_ids(Store) == []
     end
 
     test "chunked delete leaves non-listed rows untouched" do
@@ -516,23 +516,7 @@ defmodule EvoGit.StoreSummaryTest do
 
       :ok = Store.delete_tasks(Store, ["keep-1", "keep-2"])
       assert Store.get_task(Store, "keep-3") != nil
-      assert Store.count_tasks(Store) == 1
-    end
-  end
-
-  describe "select_task_logs/2 narrow read" do
-    test "returns the decoded logs list for a task with logs" do
-      put_task!(make_task("logs-1", logs: ["line 1", "line 2", "line 3"]))
-      assert Store.select_task_logs(Store, "logs-1") == ["line 1", "line 2", "line 3"]
-    end
-
-    test "returns [] for a task whose logs are empty" do
-      put_task!(make_task("logs-2", logs: []))
-      assert Store.select_task_logs(Store, "logs-2") == []
-    end
-
-    test "returns nil for an unknown id" do
-      assert Store.select_task_logs(Store, "no-such-id") == nil
+      assert Enum.map(Store.select_task_ids(Store), & &1.id) == ["keep-3"]
     end
   end
 
@@ -619,7 +603,6 @@ defmodule EvoGit.StoreSummaryTest do
       assert Store.select_tasks_summary(Store, [], "2100-01-01T00:00:00.000Z") == []
       assert Store.select_running_lease_info(Store) == []
       assert Store.select_cleanup_info(Store) == []
-      assert Store.select_task_logs(Store, "missing") == nil
       assert Store.select_task_update_info(Store, "missing") == nil
       assert Store.select_task_ids(Store) == []
       assert Store.select_task_ids(Store, [:completed]) == []

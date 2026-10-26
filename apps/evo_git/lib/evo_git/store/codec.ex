@@ -26,6 +26,17 @@ defmodule EvoGit.Store.Codec do
   JSON, pair-array opts, invalid JSON) raise `ArgumentError`. Old databases
   must be upgraded with `mix migrate.store` before they can be read.
 
+  ## Status decode is liveness-safe
+
+  `decode_atom/1` (the `type`/`review_status` decoder) maps an unrecognized
+  value to `nil` and logs it. That shape is WRONG for `status`, where `nil`
+  reads as "row absent": `decode_status/1` therefore returns
+  `{:unknown, raw}` for a value outside `known_statuses/0` (logging the
+  offending value), and `EvoGit.Store.get_task_status/2` passes it through —
+  a row that exists can never look leaked. `decode_task/1` (whose
+  `%TaskInfo{status}` field cannot hold the tuple) masks the same value as
+  `:pending`, a LIVE status, and `decode_status/1` has already logged it.
+
   ## Plain JSON text columns
 
   Every JSON column (`opts`, `logs`, `result`, `usage`, `error`) stores plain
@@ -175,7 +186,7 @@ defmodule EvoGit.Store.Codec do
     %TaskInfo{
       id: id,
       type: decode_atom(type),
-      status: decode_atom(status) || :pending,
+      status: decode_task_status(status),
       opts: decode_opts(opts),
       ref: nil,
       started_at: decode_datetime(started_at),
@@ -229,8 +240,7 @@ defmodule EvoGit.Store.Codec do
 
   # The complete set of known atom values across the three atom fields:
   #   * type — :genesis, :evolve, :extract_skills, :reflect (repo-less)
-  #   * status — :pending, :running, :finalizing, :completed, :failed,
-  #     :cancelled, :cancelling
+  #   * status — the `tasks.status` value set (see `@known_statuses`)
   #   * review_status — :open, :merged, :rejected, :continued, :ignored, :no_changes
   #
   # Using String.to_atom/1 is SAFE here because the set is closed, bounded, and
@@ -238,13 +248,32 @@ defmodule EvoGit.Store.Codec do
   # bug where String.to_existing_atom/1 fails for atoms whose defining modules
   # haven't loaded yet (e.g. :merged/:rejected/:continued/:ignored before any
   # code path that references them has run). Truly unknown/corrupt values fall
-  # outside the whitelist and decode to nil.
-  @known_atoms ~w(
-    genesis evolve extract_skills reflect
-    pending running finalizing completed failed cancelled cancelling
-    open merged rejected continued ignored no_changes
-  )a
+  # outside the whitelist and decode to nil (`decode_atom/1`) or to
+  # `{:unknown, raw}` (`decode_status/1` — the liveness-safe form).
+  #
+  # `status: EvoGit.Store.Types.Status.statuses/0` is the ONE declared list of
+  # statuses the scheduler/registry persist; the invariant test
+  # (`test/evo_git/store/store_invariants_test.exs`) fails when a status is
+  # added there without being added to `@known_atoms` here.
+  @known_types ~w(genesis evolve extract_skills reflect)a
+  @known_statuses ~w(pending running finalizing completed failed cancelled cancelling)a
+  @known_review_statuses ~w(open merged rejected continued ignored no_changes)a
+  @known_atoms @known_types ++ @known_statuses ++ @known_review_statuses
   @known_atom_strings MapSet.new(@known_atoms, &Atom.to_string/1)
+  @known_status_strings MapSet.new(@known_statuses, &Atom.to_string/1)
+
+  @doc "The complete whitelist of atom values stored in `type`/`status`/`review_status`."
+  @spec known_atoms() :: [atom()]
+  def known_atoms, do: @known_atoms
+
+  @doc """
+  The `tasks.status` values this Codec recognizes (the status half of
+  `known_atoms/0`). Must stay a SUPERSET of
+  `EvoGit.Store.Types.Status.statuses/0` — the status atoms the registry
+  persists.
+  """
+  @spec known_statuses() :: [atom()]
+  def known_statuses, do: @known_statuses
 
   def decode_atom(nil), do: nil
 
@@ -256,6 +285,55 @@ defmodule EvoGit.Store.Codec do
       nil
     end
   end
+
+  @doc """
+  Decodes a stored `tasks.status` value WITHOUT ever collapsing it to "absent".
+
+  Returns the known status atom, `nil` for a NULL/missing stored value, or
+  `{:unknown, raw}` for a value outside `known_statuses/0` — logging the
+  offending value either way. Callers that decide LIVENESS (lease renewal, the
+  lease sweep) must use this form, never `decode_atom/1`: "unknown" means the
+  row EXISTS with a status this build cannot interpret, which must never be
+  mistaken for a leaked/orphaned task.
+  """
+  @spec decode_status(nil | String.t()) :: atom() | {:unknown, term()} | nil
+  def decode_status(nil), do: nil
+
+  def decode_status(str) when is_binary(str) do
+    if MapSet.member?(@known_status_strings, str) do
+      String.to_atom(str)
+    else
+      Logger.warning(
+        "Codec: unrecognized task status in DB: #{inspect(str)} — the row exists; " <>
+          "treating it as {:unknown, #{inspect(str)}} (never as absent/leaked)"
+      )
+
+      {:unknown, str}
+    end
+  end
+
+  # A non-TEXT cell cannot hold a status at all: the row exists, its status is
+  # simply unreadable — same conservative `{:unknown, raw}` shape.
+  def decode_status(other) do
+    Logger.warning(
+      "Codec: non-text task status in DB: #{inspect(other)} — the row exists; " <>
+        "treating it as {:unknown, #{inspect(other)}} (never as absent/leaked)"
+    )
+
+    {:unknown, other}
+  end
+
+  # `%TaskInfo{status}` is an atom, so an unrecognized stored status cannot be
+  # carried through the full-row decode. It is masked as `:pending` — a LIVE
+  # status, so a consumer inspecting `get_task/2`'s struct can never mistake the
+  # row for a terminal/leaked one — and `decode_status/1` has already logged the
+  # offending value. Liveness decisions must use the narrow, `{:unknown, raw}`-
+  # aware `EvoGit.Store.get_task_status/2` instead of this masked field.
+  defp decode_task_status(raw), do: mask_unknown_status(decode_status(raw))
+
+  defp mask_unknown_status({:unknown, _raw}), do: :pending
+  defp mask_unknown_status(nil), do: :pending
+  defp mask_unknown_status(status), do: status
 
   # --- DateTime ---
   @doc """
@@ -298,14 +376,47 @@ defmodule EvoGit.Store.Codec do
   # encoding just the essential keys (path, mode, prompt, objective), or nil.
   #
   # Known opt keys that the application accesses — atomized safely on decode
-  # via the @known_opt_keys whitelist. Unknown keys remain as strings to avoid
-  # blind atomization.
+  # via the @atomized_opt_keys whitelist. Unknown keys remain as strings to
+  # avoid blind atomization.
   # NOTE: :attachments carries base64-encoded file data (ASCII strings by
   # contract — see EvoGit.Attachments), so Jason-encoding the opts map cannot
   # fail on it; the essential-keys fallback below would drop the key for a
   # deliberately non-Jason-safe payload, which is the pinned behavior.
-  @known_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level)a
-  @known_opt_key_strings MapSet.new(@known_opt_keys, &Atom.to_string/1)
+  #
+  # The persisted-opts contract is TWO sets:
+  #
+  #   * `@atomized_opt_keys` — every opt key `evo_git` consumers read back with
+  #     `Keyword.get(opts, :key)`, so these come back ATOM-keyed. Adding a key
+  #     here changes the decoded shape callers see.
+  #   * `@string_opt_keys` — data-plane keys that decode STRING-keyed ON
+  #     PURPOSE: the dashboard looks them up by string key (`Map.get(Map.new(
+  #     task.opts), "model_id")`), and `evo_dash` pins that shape in its tests.
+  #     No `evo_git` code reads them from a DECODED row, so atomizing them buys
+  #     nothing and breaks the cross-app contract. Promoting one to
+  #     `@atomized_opt_keys` requires updating the dashboard lookups in the SAME
+  #     change.
+  #
+  # `known_opt_keys/0` is the UNION — the persisted-opts registry the invariant
+  # test (`test/evo_git/store/store_invariants_test.exs`) pins so a NEW
+  # unregistered key cannot slip in unnoticed.
+  @atomized_opt_keys ~w(path mode prompt objective foreign_repos node_path starting_commit archive task_id repo_path concurrency tool_concurrency resume_from attachments quality_level)a
+  @string_opt_keys ~w(model_id model_id_locked agent build_system merge_from merge_target)a
+  @known_opt_keys @atomized_opt_keys ++ @string_opt_keys
+  @atomized_opt_key_strings MapSet.new(@atomized_opt_keys, &Atom.to_string/1)
+
+  @doc """
+  The persisted opt keys — the union of the atomized and the intentionally
+  string-keyed sets.
+  """
+  @spec known_opt_keys() :: [atom()]
+  def known_opt_keys, do: @known_opt_keys
+
+  @doc """
+  The subset of `known_opt_keys/0` that `decode_opts/1` atomizes; every other
+  persisted opt key stays STRING-keyed.
+  """
+  @spec known_atomized_opt_keys() :: [atom()]
+  def known_atomized_opt_keys, do: @atomized_opt_keys
 
   def encode_opts(nil), do: nil
 
@@ -367,12 +478,13 @@ defmodule EvoGit.Store.Codec do
     end
   end
 
-  # Known opt keys are atomized for caller convenience (Keyword.get/2 with atom
-  # keys). Unknown keys stay as strings — they are never pattern-matched by key.
+  # Atomized opt keys are converted for caller convenience (Keyword.get/2 with
+  # atom keys). Everything else — including the intentionally string-keyed
+  # `@string_opt_keys` — stays as a string: they are looked up by string key.
   def decode_opt_key(key) when is_atom(key), do: key
 
   def decode_opt_key(key) when is_binary(key) do
-    if MapSet.member?(@known_opt_key_strings, key) do
+    if MapSet.member?(@atomized_opt_key_strings, key) do
       String.to_atom(key)
     else
       key

@@ -16,6 +16,12 @@ defmodule EvoGit.MigrateStoreTest do
   content (adoption DDL, data rewrites) is covered by
   `store/boot_migration_test.exs` + `store/boot_normalization_test.exs` —
   this suite pins only the TASK's behavior around them.
+
+  One scenario is not about the migrations at all: the private instance must
+  boot with the app's shared DBConnection tuning (`EvoGit.Repo.start_opts/0`)
+  rather than Ecto's `@defaults`, captured through the `[:ecto, :repo, :init]`
+  telemetry event because the instance is unnamed and stopped again before
+  `run/1` returns.
   """
 
   use ExUnit.Case, async: true
@@ -29,28 +35,24 @@ defmodule EvoGit.MigrateStoreTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_005
-  @unpack_rows_version 20_260_815_000_006
-  @archive_table_version 20_260_815_000_007
-  @move_archives_version 20_260_815_000_008
-  @normalize_archives_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it (the rejected
-  # compression migration 004 no longer ships).
+  @covering_index_version 20_260_815_000_004
+  @archive_table_version 20_260_815_000_005
+  @prune_indexes_version 20_260_815_000_006
+  # Ascending, exactly as `schema_migrations` reports it — six contiguous
+  # versions, no gaps.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
-    @unpack_rows_version,
     @archive_table_version,
-    @move_archives_version,
-    @normalize_archives_version
+    @prune_indexes_version
   ]
 
   @migration_count length(@migration_versions)
 
-  # The 19 LIVE `tasks` columns AFTER the archive migration drops
-  # `archive_metadata`.
+  # The 19 LIVE `tasks` columns AFTER `20260815000005_task_agent_archives`
+  # drops the legacy `archive_metadata` column.
   @live_task_columns ~w(id type status opts started_at finished_at logs result review_status
                         usage agent_count base_sha commit_sha lease_expires_at model_id
                         project_path branch_name error updated_at)
@@ -143,11 +145,12 @@ defmodule EvoGit.MigrateStoreTest do
       assert output =~ "20260815000001_baseline_adoption"
       assert output =~ "20260815000002_data_normalization"
       assert output =~ "20260815000003_composite_indexes"
-      assert output =~ "20260815000005_covering_indexes"
-      assert output =~ "20260815000006_unpack_abandoned_compressed_rows"
-      assert output =~ "20260815000007_create_task_agent_archives"
-      assert output =~ "20260815000008_move_archives_to_table"
-      refute output =~ "20260815000004"
+      assert output =~ "20260815000004_covering_indexes"
+      assert output =~ "20260815000005_task_agent_archives"
+      assert output =~ "20260815000006_prune_redundant_indexes"
+      # The four retired modules (unpack compressed rows / create / move /
+      # normalize the archive table) ship no version at all any more.
+      refute output =~ "20260815000007"
 
       assert output =~ "Database is now current (#{@migration_count} migration(s) applied)."
 
@@ -243,6 +246,26 @@ defmodule EvoGit.MigrateStoreTest do
     end
   end
 
+  describe "private repo instance" do
+    test "boots with the app's shared DBConnection start opts", %{db_path: path} do
+      opts = capture_repo_init_opts!(path, fn -> run_task!(path) end)
+
+      # The shared runtime tuning must arrive as START OPTS: Ecto's own
+      # `@defaults` (`timeout: 15_000`, ...) are passed as start opts on every
+      # `start_link/1` and win over `EvoGit.Repo.defaults/0` (see the
+      # `EvoGit.Repo` moduledoc), so omitting the merge here would silently
+      # restore the 15 s statement budget for the migration run.
+      for {key, value} <- EvoGit.Repo.start_opts() do
+        assert opts[key] == value
+      end
+
+      # The per-instance keys are merged OVER that shared list.
+      assert opts[:pool_size] == 1
+      assert opts[:name] == nil
+      assert opts[:database] == Path.expand(path)
+    end
+  end
+
   ## Helpers
 
   # --- raw Xqlite helpers (never touch the running EvoGit.Store) ---
@@ -267,6 +290,51 @@ defmodule EvoGit.MigrateStoreTest do
     {result, io} = with_io(fn -> Mix.Tasks.Migrate.Store.run([path]) end)
     assert result == :ok
     io
+  end
+
+  # The task's private repo instance is UNNAMED and stopped before `run/1`
+  # returns, so its effective configuration is only observable while it
+  # starts: `Ecto.Repo.Supervisor` emits `[:ecto, :repo, :init]` (with the
+  # resolved config in `metadata.opts`) from the repo's OWN supervisor
+  # process, before the adapter boots.
+  #
+  # The handler table is BEAM-wide and sibling `async: true` suites boot their
+  # own `EvoGit.Repo` instances, so the capture filters on the repo module AND
+  # this test's unique database path. The event's `opts` carry `:name` and
+  # `:database` as passed by the caller, so `Path.expand/1` is applied here
+  # exactly like the task does.
+  defp capture_repo_init_opts!(path, fun) do
+    test_pid = self()
+    database = Path.expand(path)
+    handler_id = {__MODULE__, :repo_init, System.unique_integer([:positive])}
+
+    :telemetry.attach(
+      handler_id,
+      [:ecto, :repo, :init],
+      fn _event, _measurements, metadata, _config ->
+        if metadata.repo == EvoGit.Repo and metadata.opts[:database] == database do
+          send(test_pid, {:repo_init_opts, metadata.opts})
+        end
+      end,
+      nil
+    )
+
+    try do
+      fun.()
+
+      receive do
+        {:repo_init_opts, opts} ->
+          opts
+      after
+        1_000 ->
+          flunk(
+            "expected a [:ecto, :repo, :init] event for #{inspect(EvoGit.Repo)} " <>
+              "on #{database}, captured none"
+          )
+      end
+    after
+      :telemetry.detach(handler_id)
+    end
   end
 
   defp columns(path) do

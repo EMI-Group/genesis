@@ -62,8 +62,14 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
 
       assert :ok = TaskRegistry.put_task_archive(entry)
 
+      # A FULL round-trip of the 22 producer fields, so the roster read opts
+      # into BOTH the lazy `result` and the three settings JSON columns (the
+      # default roster is lean).
       assert %{entries: [stored], total: 1} =
-               TaskRegistry.list_task_archives(task_id, include_results: true)
+               TaskRegistry.list_task_archives(task_id,
+                 include_results: true,
+                 include_settings: true
+               )
 
       assert Enum.all?(Map.keys(stored), &is_binary/1)
       assert stored["task_id"] == task_id
@@ -195,20 +201,69 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       assert Process.alive?(Process.whereis(registry))
     end
 
-    test "a dead registry degrades to {:error, _} instead of exiting", %{registry: registry} do
+    test "a dead registry loses nothing — the write runs in the CALLER, not the registry",
+         %{store: store, registry: registry} do
       task_id = unique_task_id()
       assert :ok = stop_supervised(registry)
       assert Process.whereis(registry) == nil
 
-      log =
-        capture_log(fn ->
-          assert {:error, {kind, _reason}} =
-                   TaskRegistry.put_task_archive(%{task_id: task_id, agent_id: 1, result: "x"})
+      # The archive row is written by the completing agent itself and needs only
+      # the store (the registry name just resolves which store), so a dead
+      # registry cannot lose a finishing agent's archive.
+      assert :ok = TaskRegistry.put_task_archive(%{task_id: task_id, agent_id: 1, result: "x"})
 
-          assert kind in [:exit, :error, :throw]
+      assert %{entries: [row], total: 1} =
+               EvoGit.Store.list_task_archives(store, task_id, include_results: true)
+
+      assert row["result"] == "x"
+    end
+  end
+
+  describe "the archive write never blocks the registry" do
+    test "an in-flight archive write leaves the registry answering reads",
+         %{data_dir: data_dir} do
+      unique = System.unique_integer([:positive])
+      store_name = :"archive_slow_store_#{unique}"
+      registry_name = :"archive_slow_registry_#{unique}"
+      parent = self()
+
+      start_supervised!(
+        Supervisor.child_spec(
+          {EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore,
+           name: store_name, delay_ms: 2_000, notify: parent},
+          id: store_name
+        )
+      )
+
+      # A registry pointed at the SLOW store: only `put_task_archive` is slow,
+      # every other call answers the empty projection.
+      start_supervised!(
+        Supervisor.child_spec(
+          {TaskRegistry, task_store: store_name, data_dir: data_dir, name: registry_name},
+          id: registry_name
+        )
+      )
+
+      writer =
+        Task.async(fn ->
+          Process.put(:evogit_task_registry_server, registry_name)
+          TaskRegistry.put_task_archive(%{task_id: "slow", agent_id: 1})
         end)
 
-      assert log =~ "TaskRegistry: put_task_archive FAILED"
+      assert_receive {:archive_write_started, ^store_name}, 1_000
+
+      # The registry answers WHILE the multi-second insert is still in flight:
+      # the write runs in the completing agent's process (here `writer`), so
+      # nothing queues behind it in the registry mailbox.
+      probe =
+        Task.async(fn ->
+          Process.put(:evogit_task_registry_server, registry_name)
+          TaskRegistry.list_task_ids([])
+        end)
+
+      assert {:ok, []} = Task.yield(probe, 500)
+      assert Task.yield(writer, 0) == nil
+      assert Task.await(writer, 5_000) == :ok
     end
   end
 
@@ -281,7 +336,10 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       assert length(expected_keys) == 23
 
       assert %{entries: [row], total: 1} =
-               TaskRegistry.list_task_archives(task_id, include_results: true)
+               TaskRegistry.list_task_archives(task_id,
+                 include_results: true,
+                 include_settings: true
+               )
 
       assert Enum.sort(Map.keys(row)) == Enum.sort(expected_keys)
 
@@ -325,4 +383,38 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
     refute Process.alive?(store_pid)
     assert Process.whereis(store) == nil
   end
+end
+
+defmodule EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore do
+  @moduledoc """
+  A store stand-in whose ONLY slow call is the archive write, used to prove the
+  archive producer write does not hold the registry.
+
+  The registry boot reads (`select_running_lease_info`) and the tiny read
+  projections answer an empty list; `put_task_archive` notifies the test that it
+  is in flight, then sleeps for `:delay_ms` before replying `:ok`.
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: opts[:name])
+
+  @impl true
+  def init(opts), do: {:ok, Map.new(opts)}
+
+  @impl true
+  def handle_call({:put_task_archive, _entry}, from, state) do
+    send(state.notify, {:archive_write_started, state.name})
+
+    # Reply LATER — the same shape as the real store's write offload (which
+    # answers its caller only after the commit) — so this stand-in keeps
+    # answering every OTHER call while the archive write is in flight.
+    Task.start(fn ->
+      Process.sleep(state.delay_ms)
+      GenServer.reply(from, :ok)
+    end)
+
+    {:noreply, state}
+  end
+
+  def handle_call(_request, _from, state), do: {:reply, [], state}
 end

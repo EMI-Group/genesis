@@ -17,6 +17,7 @@ defmodule EvoGit.TaskRegistry do
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
+  alias EvoGit.TaskRegistry.ReadOffload
   alias EvoGit.TaskRegistry.StoreGuard
   alias EvoGit.TaskRegistry.TaskExecutor
 
@@ -30,10 +31,11 @@ defmodule EvoGit.TaskRegistry do
 
   @max_recent_projects 10
 
-  # Maximum number of log entries retained per task. Logs grow on every
-  # update_task_log call and are stored as a JSON array in SQLite; without a
-  # cap, each subsequent decode/encode in task_get grows unboundedly.
-  @max_log_entries 500
+  # Registry instance name => its task-store name, published by `init/1` and
+  # read by `put_task_archive/1`. App-owned (`EvoGit.Application`) so it
+  # survives registry restarts; see `put_task_archive/1` for why the archive
+  # write must not call the registry.
+  @store_table :evogit_task_registry_stores
 
   @lease_duration 120
   @heartbeat_interval 60_000
@@ -137,33 +139,30 @@ defmodule EvoGit.TaskRegistry do
   `:task_id`) or string-keyed; the underlying write is an idempotent upsert, so
   a crash-retry completing twice replaces the row instead of duplicating it.
 
+  The write runs in the CALLER's process, NOT in the registry GenServer: the
+  registry name is only used to resolve that instance's store (published by
+  `init/1` into `:evogit_task_registry_stores`), so a multi-MB archive insert
+  never blocks the registry — and the dashboard reads and heartbeat queued
+  behind it. `EvoGit.Store` serializes committed writes through
+  `EvoGit.Store.Writer` and replies AFTER the commit, so this stays
+  synchronous for the caller: the row is durable before the completing agent
+  proceeds to its terminal transition (that ordering is the caller's).
+
   Persistence is BEST-EFFORT and never raises or exits into the caller: a
   dead/restarting store degrades to `{:error, :store_unavailable}` (logged by
-  `EvoGit.TaskRegistry.StoreGuard`), and a dead registry or a raise inside the
-  handler is caught here and logged. An agent's completion must never fail
-  because its archive could not be stored.
+  `EvoGit.TaskRegistry.StoreGuard`), an invalid entry to the store's own
+  `{:error, reason}`. An agent's completion must never fail because its
+  archive could not be stored.
 
   Returns `:ok` on success or `{:error, reason}` otherwise.
   """
   @spec put_task_archive(map()) :: :ok | {:error, term()}
   def put_task_archive(entry) do
-    GenServer.call(server(), {:put_task_archive, entry}, @call_timeout)
-  rescue
-    exception ->
-      Logger.error(
-        "TaskRegistry: put_task_archive FAILED — the archive row was not persisted: " <>
-          Exception.format(:error, exception, __STACKTRACE__)
-      )
+    store = archive_store()
 
-      {:error, {:exception, exception}}
-  catch
-    kind, reason ->
-      Logger.error(
-        "TaskRegistry: put_task_archive FAILED (#{kind}: #{inspect(reason)}) — " <>
-          "the archive row was not persisted (the registry may be down)"
-      )
-
-      {:error, {kind, reason}}
+    StoreGuard.write("put_task_archive", fn ->
+      EvoGit.Store.put_task_archive(store, entry)
+    end)
   end
 
   @doc """
@@ -180,13 +179,21 @@ defmodule EvoGit.TaskRegistry do
       column is NOT selected, so the `"result"` key is ABSENT (not `nil`) from
       every entry. The opened agent's full conversation comes from
       `get_agent_archive/2`.
+    * `:include_settings` — default `false`; when false the export-only JSON
+      columns (`"llm_settings"`, `"agent_settings"`, `"foreign_repos"`) are NOT
+      selected, so their keys are ABSENT from every entry. The CSV/JSON export
+      passes `true`.
+    * `:include_total` — default `true`; pass `false` to skip the `count(*)`
+      when the caller already knows the total (`total` is then `nil`).
 
+  Every opt is forwarded UNCHANGED to `EvoGit.Store.list_task_archives/3` — the
+  registry adds nothing, drops nothing and defaults nothing.
   `total` is the task's whole archive row count, independent of
-  `:limit`/`:offset`. Degrades to `%{entries: [], total: 0}` when the store
-  read fails.
+  `:limit`/`:offset` (and `nil` when `:include_total` is `false`). Degrades to
+  `%{entries: [], total: 0}` when the store read fails.
   """
   @spec list_task_archives(String.t(), keyword()) ::
-          %{entries: [map()], total: non_neg_integer()}
+          %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(task_id, opts \\ []) do
     GenServer.call(server(), {:list_task_archives, task_id, opts}, @call_timeout)
   end
@@ -256,20 +263,12 @@ defmodule EvoGit.TaskRegistry do
     )
   end
 
-  def update_task_log(task_id, log_entry) do
-    GenServer.cast(server(), {:append_log, task_id, log_entry})
-  end
-
   def set_review_status(task_id, status) do
     GenServer.cast(server(), {:set_review_status, task_id, status})
   end
 
   def set_review_metadata(task_id, base_sha, commit_sha) do
     GenServer.cast(server(), {:set_review_metadata, task_id, base_sha, commit_sha})
-  end
-
-  def list_tasks_by_path(path) do
-    GenServer.call(server(), {:list_tasks_by_path, path}, @call_timeout)
   end
 
   @doc """
@@ -389,10 +388,15 @@ defmodule EvoGit.TaskRegistry do
     # == __MODULE__, so production resolves exactly as before.
     Process.put(:evogit_task_registry_server, server_name)
 
+    # Publish this instance's store so `put_task_archive/1` can run the archive
+    # write in the CALLING process instead of here (see that function).
+    publish_store(server_name, task_store)
+
     state = %{
       data_dir: data_dir,
       task_store: task_store,
       task_refs: %{},
+      read_offloads: ReadOffload.new(),
       server_name: server_name
     }
 
@@ -467,13 +471,23 @@ defmodule EvoGit.TaskRegistry do
     # currently :cancelling) must never start. There is no in-runtime
     # :pending → :running scheduled transition, so this is the only place a
     # cancelled pending task could slip through.
-    case safe_store_read("start_task get_task_status", nil, fn ->
-           EvoGit.Store.get_task_status(state.task_store, task_id)
-         end) do
+    persisted_status =
+      safe_store_read("start_task get_task_status", nil, fn ->
+        EvoGit.Store.get_task_status(state.task_store, task_id)
+      end)
+
+    # `{:unknown, raw}` — the row EXISTS but its status text is unreadable, so
+    # it is never treated as absent; it also cannot be PROVEN `:cancelled`, so
+    # the guard below deliberately does not fire and the start proceeds. This
+    # handler always allocates a FRESH task id, so refusing here would only
+    # strand a task nothing else could start.
+    log_unreadable_status("start_task", task_id, persisted_status)
+
+    case persisted_status do
       status when status in [:cancelled, :cancelling] ->
         {:reply, {:error, :cancelled}, state}
 
-      _ ->
+      _known_or_absent ->
         task_ref =
           Task.Supervisor.async_nolink(
             EvoGit.TaskSupervisor,
@@ -540,69 +554,44 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call(:list_tasks, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks", [], fn ->
-        EvoGit.Store.safe_select_all_tasks(state.task_store)
-      end)
+    offload(from, state, "list_tasks", [], fn ->
+      EvoGit.Store.safe_select_all_tasks(state.task_store)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_paginated, opts}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks_paginated", {[], 0}, fn ->
-        EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
-      end)
+    offload(from, state, "list_tasks_paginated", {[], 0}, fn ->
+      EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_page, opts}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks_page", %{rows: [], total: 0}, fn ->
-        EvoGit.Store.select_tasks_page(state.task_store, opts)
-      end)
+    offload(from, state, "list_tasks_page", %{rows: [], total: 0}, fn ->
+      EvoGit.Store.select_tasks_page(state.task_store, opts)
     end)
   end
 
   @impl true
   def handle_call({:get_task_lite, task_id}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("get_task_lite", nil, fn ->
-        EvoGit.Store.get_task_lite(state.task_store, task_id)
-      end)
+    offload(from, state, "get_task_lite", nil, fn ->
+      EvoGit.Store.get_task_lite(state.task_store, task_id)
     end)
   end
 
   @impl true
   def handle_call({:list_task_archives, task_id, opts}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_task_archives", %{entries: [], total: 0}, fn ->
-        EvoGit.Store.list_task_archives(state.task_store, task_id, opts)
-      end)
+    offload(from, state, "list_task_archives", %{entries: [], total: 0}, fn ->
+      EvoGit.Store.list_task_archives(state.task_store, task_id, opts)
     end)
   end
 
   @impl true
   def handle_call({:get_agent_archive, task_id, agent_id}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("get_agent_archive", nil, fn ->
-        EvoGit.Store.get_agent_archive(state.task_store, task_id, agent_id)
-      end)
+    offload(from, state, "get_agent_archive", nil, fn ->
+      EvoGit.Store.get_agent_archive(state.task_store, task_id, agent_id)
     end)
-  end
-
-  # The archive producer's streaming write. Handled through `safe_store_write/2`
-  # like every other registry write, so a dead/restarting store degrades to
-  # `{:error, :store_unavailable}` instead of killing the registry.
-  @impl true
-  def handle_call({:put_task_archive, entry}, _from, state) do
-    reply =
-      safe_store_write("put_task_archive", fn ->
-        EvoGit.Store.put_task_archive(state.task_store, entry)
-      end)
-
-    {:reply, reply, state}
   end
 
   @impl true
@@ -702,6 +691,15 @@ defmodule EvoGit.TaskRegistry do
         nil ->
           {{:error, :not_found}, state}
 
+        {:unknown, raw} ->
+          # The row EXISTS but its status text is unreadable. Force kill
+          # persists `:failed` — it MARKS the row — so it is only allowed for a
+          # status we can prove is live and killable; refuse conservatively
+          # rather than overwrite a row whose liveness we cannot establish.
+          # Never `{:error, :not_found}`: the row is there.
+          log_unreadable_status("force_kill_task", task_id, {:unknown, raw})
+          {{:error, :not_running}, state}
+
         _status ->
           {{:error, :not_running}, state}
       end
@@ -797,31 +795,22 @@ defmodule EvoGit.TaskRegistry do
         nil ->
           {:error, :not_found}
 
+        {:unknown, raw} ->
+          # The row EXISTS with an unreadable status: never `{:error,
+          # :not_found}` (that would claim the row is absent), and neither
+          # cancellation path can be justified — the `:pending` arm would mark a
+          # possibly-live row `:cancelled` and the `:running` arm would push a
+          # cancel to agents that may not exist. Conservative answer: it is not
+          # running (the row keeps its status).
+          log_unreadable_status("cancel_task", task_id, {:unknown, raw})
+          {:error, :not_running}
+
         _status ->
           # :finalizing / :completed / :failed / :cancelled
           {:error, :not_running}
       end
 
     {:reply, result, state}
-  end
-
-  @impl true
-  def handle_call({:list_tasks_by_path, path}, from, state) do
-    # Push filtering to SQL via safe_select_paginated_tasks with project_path filter.
-    # This avoids decoding ALL tasks — only matching tasks are decoded by SQLite.
-    # Use a high limit since path-filtered results are typically manageable.
-    offload(from, state, fn ->
-      {tasks, _total} =
-        safe_store_read("list_tasks_by_path", {[], 0}, fn ->
-          EvoGit.Store.safe_select_paginated_tasks(
-            state.task_store,
-            filters: [project_path: path],
-            limit: 5000
-          )
-        end)
-
-      tasks
-    end)
   end
 
   @impl true
@@ -838,28 +827,22 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_call({:list_tasks_summary, statuses, since}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks_summary", [], fn ->
-        EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
-      end)
+    offload(from, state, "list_tasks_summary", [], fn ->
+      EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_summary_by_path, path, statuses, since}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks_summary_by_path", [], fn ->
-        EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
-      end)
+    offload(from, state, "list_tasks_summary_by_path", [], fn ->
+      EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_changed_since, since_iso}, from, state) do
-    offload(from, state, fn ->
-      safe_store_read("list_tasks_changed_since", [], fn ->
-        EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
-      end)
+    offload(from, state, "list_tasks_changed_since", [], fn ->
+      EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
     end)
   end
 
@@ -990,41 +973,6 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @impl true
-  def handle_cast({:append_log, task_id, log_entry}, state) do
-    # Narrow-column read: only the logs column is fetched (no full 18-column
-    # task_get decode) just to read the existing logs.
-    case safe_store_read("append_log select_task_logs", nil, fn ->
-           EvoGit.Store.select_task_logs(state.task_store, task_id)
-         end) do
-      logs when is_list(logs) ->
-        updated_logs = [log_entry | logs] |> Enum.take(@max_log_entries)
-
-        case safe_store_write("append_log update_task_columns", fn ->
-               EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs)
-             end) do
-          :ok ->
-            :ok
-
-          {:error, :disk_full} ->
-            # Log-loss is acceptable on disk-full (this is a hot path during
-            # runs) — log a warning and continue; never crash the registry.
-            Logger.warning(
-              "TaskRegistry: disk full — log entry for task #{task_id} not persisted"
-            )
-
-          {:error, :store_unavailable} ->
-            # StoreGuard already logged it — log-loss is acceptable here too.
-            :ok
-        end
-
-      nil ->
-        :ok
-    end
-
-    {:noreply, state}
-  end
-
-  @impl true
   def handle_cast({:delete_task, task_id}, state) do
     case safe_store_write("delete_task", fn ->
            EvoGit.Store.delete_task(state.task_store, task_id)
@@ -1057,7 +1005,10 @@ defmodule EvoGit.TaskRegistry do
       nil ->
         :ok
 
-      _status ->
+      # A row that EXISTS — a known status atom OR `{:unknown, raw}` (its status
+      # text is unreadable, but the row is there) — is writable. Only a missing
+      # row is the no-op; review status is independent of the task status.
+      present when not is_nil(present) ->
         case safe_store_write("set_review_status update_task_columns", fn ->
                EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
              end) do
@@ -1090,7 +1041,10 @@ defmodule EvoGit.TaskRegistry do
       nil ->
         :ok
 
-      _status ->
+      # Same tri-state rule as `set_review_status`: `{:unknown, raw}` means the
+      # row EXISTS (only its status text is unreadable), so the SHA columns are
+      # written; only a missing row is a no-op.
+      present when not is_nil(present) ->
         case safe_store_write("set_review_metadata update_task_columns", fn ->
                EvoGit.Store.update_task_columns(state.task_store, task_id,
                  base_sha: base_sha,
@@ -1378,18 +1332,71 @@ defmodule EvoGit.TaskRegistry do
   defp safe_store_read(op, degraded, fun), do: StoreGuard.read(op, degraded, fun)
   defp safe_store_write(op, fun), do: StoreGuard.write(op, fun)
 
-  # Delegates a heavy Store decode to a short-lived Task process so the large
-  # decoded terms are allocated and discarded on that process's heap rather
-  # than ratcheting up this GenServer's heap. `fun` returns the value to reply
-  # with; it captures the caller's bindings (incl. `state`) before the reply is
-  # sent — `state` is never moved into the Task.
-  defp offload(from, state, fun) do
-    {:ok, _task_pid} =
-      Task.start(fn ->
-        GenServer.reply(from, fun.())
-      end)
+  # ── Unreadable persisted status (`{:unknown, raw}`) ──────────────────
+  #
+  # `Store.get_task_status/2` answers THREE shapes: `nil` (no row), a known
+  # status atom, or `{:unknown, raw}` (the row EXISTS but its status text is
+  # outside `Store.Codec.known_statuses/0`; the codec already logged it). Every
+  # consumer above treats `{:unknown, _}` as a PRESENT row and never as absent;
+  # this helper only makes that degradation visible in the log — it changes no
+  # decision.
+  defp log_unreadable_status(op, task_id, {:unknown, raw}) do
+    Logger.warning(
+      "TaskRegistry: #{op} #{task_id} — persisted status #{inspect(raw)} is not a known " <>
+        "status; treating the row as PRESENT (never as absent/leaked)"
+    )
+  end
 
-    {:noreply, state}
+  defp log_unreadable_status(_op, _task_id, _status), do: :ok
+
+  # Resolves this process's registry instance (`server/0`) to the store it was
+  # started with, WITHOUT calling the registry — the whole point of the archive
+  # producer write running in the caller (see `put_task_archive/1`). The mapping
+  # is published by `init/1` into the app-owned `@store_table`; an instance that
+  # never published (registry not started yet / already gone) falls back to the
+  # default store, which is what `init/1` defaults `:task_store` to.
+  defp archive_store do
+    registry = server()
+
+    case :ets.whereis(@store_table) do
+      :undefined ->
+        EvoGit.Store
+
+      _table ->
+        case :ets.lookup(@store_table, registry) do
+          [{^registry, store}] -> store
+          [] -> EvoGit.Store
+        end
+    end
+  end
+
+  # Publishes `server_name => task_store` for `archive_store/0`. Never raises: a
+  # missing table (a registry started outside the `:evo_git` application, e.g. a
+  # bare `start_link/1` in a script) only means archive writes target the
+  # default store — it must not crash a registry boot.
+  defp publish_store(server_name, task_store) do
+    case :ets.whereis(@store_table) do
+      :undefined ->
+        Logger.warning(
+          "TaskRegistry: the #{@store_table} ETS table is missing — archive writes will " <>
+            "target #{inspect(EvoGit.Store)}"
+        )
+
+      _table ->
+        :ets.insert(@store_table, {server_name, task_store})
+    end
+  end
+
+  # Delegates a heavy Store read to a supervised worker so the decoded term is
+  # allocated AND discarded on that worker's heap instead of ratcheting up this
+  # GenServer's heap; the worker replies to `from` itself, so the value never
+  # enters the registry (full contract: `EvoGit.TaskRegistry.ReadOffload`).
+  # `fun` closes over the CURRENT state — captured here, before the worker runs.
+  # `degraded` is this read's own empty shape, used when the worker cannot
+  # answer (spawn failure, crash, or the deadline).
+  defp offload(from, state, op, degraded, fun) do
+    pending = ReadOffload.start(state.read_offloads, op, degraded, from, fun)
+    {:noreply, %{state | read_offloads: pending}}
   end
 
   # Reverse lookup: finds the task id whose in-memory %Task{} ref matches `ref`.
@@ -1741,138 +1748,36 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_info({ref, result}, state) when is_reference(ref) do
-    # Search the in-memory task_refs map for the matching task reference
-    task_id = task_id_for_ref(state, ref)
-
-    if task_id do
-      # Map the wrapper result to a terminal status. For :failed the arm ALSO
-      # builds the persisted error payload (same arm → the reason and its human
-      # message stay in lockstep): {:error, reason} records kind :error,
-      # {:exit, reason} records kind :exit, and any other shape records
-      # kind :error with an "unexpected result shape" message.
-      {status, error} =
-        case result do
-          {:ok, _} ->
-            {:completed, nil}
-
-          {:error, reason} ->
-            Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
-            message = "Task failed: #{inspect(reason)}"
-
-            {:failed,
-             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
-
-          {:exit, reason} ->
-            Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
-            message = "Task exited: #{inspect(reason)}"
-
-            {:failed,
-             Diagnostics.failure_error(:exit, :result_handler, message, stacktrace_lines())}
-
-          other ->
-            Logger.warning(
-              "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
-            )
-
-            message = "Task returned unexpected result shape: #{inspect(other)}"
-
-            {:failed,
-             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
-        end
-
-      # Log the failed transition with the result value and current stacktrace.
-      if status == :failed do
-        Diagnostics.log_failed_transition(
-          task_id,
-          :result_handler,
-          prev_status(state, task_id),
-          result: result
-        )
-      end
-
-      Logger.info(
-        "TaskRegistry: Task #{task_id} wrapper returned — persisting terminal status #{inspect(status)}"
-      )
-
-      update_task_status_with_caller(task_id, status, result,
-        usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
-        agent_count: result_field(result, :agent_count, &is_integer/1),
-        commit_sha: result_field(result, :commit_sha, &is_binary/1),
-        error: error
-      )
+    if ReadOffload.offload?(state.read_offloads, ref) do
+      # A read worker reported in: it already replied to its caller with
+      # `GenServer.reply/2` (its reply is its last statement), so the payload
+      # here is only the reply's `:ok`. The entry is settled by the `:DOWN`
+      # right behind this message (or by the deadline).
+      {:noreply, state}
     else
-      # The result cannot be persisted — no matching in-memory task_refs entry
-      # (e.g. the registry restarted after the wrapper finished, wiping the
-      # refs, or the message is stale). Leave a trail so stranded tasks are
-      # attributable instead of failing silently.
-      Logger.warning(
-        "TaskRegistry: received task result for unknown ref #{inspect(ref)} — " <>
-          "no matching task_refs entry (registry restarted?); result dropped"
-      )
+      handle_wrapper_result(ref, result, state)
     end
-
-    Process.demonitor(ref, [:flush])
-
-    {:noreply, state}
   end
 
   @impl true
   def handle_info({:DOWN, ref, :process, pid, reason}, state) do
-    task_id = task_id_for_ref(state, ref)
+    case ReadOffload.settle_down(state.read_offloads, ref, reason) do
+      {:settled, pending} ->
+        # A read worker: `:normal` means it already replied to its caller with
+        # the real value, any other reason means that caller got the read's
+        # degraded value. Either way the entry is done.
+        {:noreply, %{state | read_offloads: pending}}
 
-    if task_id do
-      case reason do
-        :normal ->
-          # Normal completion via :DOWN (task returned a result and exited cleanly).
-          # The {ref, result} handler should have already processed this, but handle
-          # the edge case where {ref, result} was somehow missed.
-          update_task_status(task_id, :completed)
-
-        reason ->
-          Logger.warning(
-            "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
-              "Checking if AgentScheduler still has active agents before marking as failed."
-          )
-
-          # Check if the AgentScheduler still has active agents for this task.
-          # If so, the wrapper crashed but the real work is still ongoing — do NOT
-          # mark as failed. The task will complete normally when the scheduler
-          # eventually finishes and the result arrives via a different mechanism.
-          if Lease.sched_meta_has_active_agents?(task_id) do
-            Logger.info(
-              "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
-            )
-
-            # Do NOT update status — leave as :running
-          else
-            # No active agents — genuine failure
-            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status(state, task_id),
-              result: "Task process exited: #{inspect(reason)}",
-              extra: [
-                pid: inspect(pid),
-                exit_reason: inspect(reason),
-                sched_meta_has_active_agents: false
-              ]
-            )
-
-            message = "Task process exited: #{inspect(reason)}"
-
-            update_task_status_with_caller(task_id, :failed, message,
-              error: Diagnostics.failure_error(:down, :down_handler, message, stacktrace_lines())
-            )
-          end
-      end
-    else
-      # No matching in-memory task_refs entry (e.g. the registry restarted after
-      # the wrapper exited, wiping the refs). Leave a trail so a lost result is
-      # attributable instead of being a silent no-op.
-      Logger.warning(
-        "TaskRegistry: received :DOWN for unknown ref #{inspect(ref)} (pid #{inspect(pid)}, " <>
-          "reason #{inspect(reason)}) — no matching task_refs entry; ignoring"
-      )
+      :unknown ->
+        handle_wrapper_down(ref, pid, reason, state)
     end
+  end
 
-    {:noreply, state}
+  # The read-worker deadline: the worker wedged, so it is killed and its caller
+  # gets the read's degraded value (never an exit).
+  @impl true
+  def handle_info({:read_offload_deadline, ref}, state) do
+    {:noreply, %{state | read_offloads: ReadOffload.settle_deadline(state.read_offloads, ref)}}
   end
 
   # Periodic heartbeat handler. Renews leases for ALL tasks this registry owns
@@ -1884,15 +1789,20 @@ defmodule EvoGit.TaskRegistry do
 
     # Renew leases for owned tasks using lightweight queries — avoids full
     # decode (task_get) + full re-encode (put_task) for every owned task on
-    # every heartbeat. :cancelling is included so a long graceful-cancel keeps
-    # its lease valid while the wrapper is still alive.
+    # every heartbeat. `Lease.lease_renewable?/1` is the ONE renewal
+    # classification: it covers `:running | :pending | :cancelling` (a long
+    # graceful cancel keeps its lease while the wrapper is still alive) AND
+    # `{:unknown, raw}` — a row that EXISTS with status text we cannot read is
+    # renewed, never left to expire, so an unrecognized status spelling can
+    # never make a LIVE task look leaked to the sweep. `nil` (no row) and every
+    # terminal status renew nothing.
     Enum.each(state.task_refs, fn {task_id, _ref} ->
       status =
         safe_store_read("heartbeat get_task_status", nil, fn ->
           EvoGit.Store.get_task_status(state.task_store, task_id)
         end)
 
-      if status in [:running, :pending, :cancelling] do
+      if Lease.lease_renewable?(status) do
         case safe_store_write("heartbeat update_lease_expires_at", fn ->
                EvoGit.Store.update_lease_expires_at(
                  state.task_store,
@@ -1940,9 +1850,17 @@ defmodule EvoGit.TaskRegistry do
         EvoGit.Store.select_running_lease_info(state.task_store)
       end)
       |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
-        status == :running and
-          id not in owned_ids and
-          not Lease.lease_valid?(lease)
+        # `Lease.leaked?/3` is the ONE leak classification (the same module the
+        # heartbeat's `lease_renewable?/1` lives in): leaked means a KNOWN
+        # `:running` row, not owned by this instance, with an expired/missing
+        # lease. `{:unknown, raw}` is NEVER leaked — the row exists, its status
+        # is merely unreadable, so a spelling must never fail a live task.
+        #
+        # Defence-in-depth: `Store.select_running_lease_info/1` already pushes
+        # `status IN ('running','finalizing','cancelling')` into SQL, so an
+        # unreadable status text cannot even reach this filter; the classifier
+        # stays the single source of truth rather than an inline re-derivation.
+        Lease.leaked?(status, MapSet.member?(owned_ids, id), lease)
       end)
       |> Enum.reduce({false, []}, fn %{id: id, lease_expires_at: lease}, {changed, failed_ids} ->
         if Lease.sched_meta_has_active_agents?(id) do
@@ -2072,4 +1990,142 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # The task WRAPPER's result message — `Task.Supervisor.async_nolink/4` sends
+  # `{ref, result}` to the wrapper's owner (this registry). Maps it to the
+  # task's terminal status.
+  defp handle_wrapper_result(ref, result, state) do
+    # Search the in-memory task_refs map for the matching task reference
+    task_id = task_id_for_ref(state, ref)
+
+    if task_id do
+      # Map the wrapper result to a terminal status. For :failed the arm ALSO
+      # builds the persisted error payload (same arm → the reason and its human
+      # message stay in lockstep): {:error, reason} records kind :error,
+      # {:exit, reason} records kind :exit, and any other shape records
+      # kind :error with an "unexpected result shape" message.
+      {status, error} =
+        case result do
+          {:ok, _} ->
+            {:completed, nil}
+
+          {:error, reason} ->
+            Logger.warning("TaskRegistry: Task #{task_id} returned error: #{inspect(reason)}")
+            message = "Task failed: #{inspect(reason)}"
+
+            {:failed,
+             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
+
+          {:exit, reason} ->
+            Logger.warning("TaskRegistry: Task #{task_id} exited: #{inspect(reason)}")
+            message = "Task exited: #{inspect(reason)}"
+
+            {:failed,
+             Diagnostics.failure_error(:exit, :result_handler, message, stacktrace_lines())}
+
+          other ->
+            Logger.warning(
+              "TaskRegistry: Task #{task_id} returned unexpected result shape: #{inspect(other)}"
+            )
+
+            message = "Task returned unexpected result shape: #{inspect(other)}"
+
+            {:failed,
+             Diagnostics.failure_error(:error, :result_handler, message, stacktrace_lines())}
+        end
+
+      # Log the failed transition with the result value and current stacktrace.
+      if status == :failed do
+        Diagnostics.log_failed_transition(
+          task_id,
+          :result_handler,
+          prev_status(state, task_id),
+          result: result
+        )
+      end
+
+      Logger.info(
+        "TaskRegistry: Task #{task_id} wrapper returned — persisting terminal status #{inspect(status)}"
+      )
+
+      update_task_status_with_caller(task_id, status, result,
+        usage: result_field(result, :usage, &match?(%EvoGit.Agent.Usage{}, &1)),
+        agent_count: result_field(result, :agent_count, &is_integer/1),
+        commit_sha: result_field(result, :commit_sha, &is_binary/1),
+        error: error
+      )
+    else
+      # The result cannot be persisted — no matching in-memory task_refs entry
+      # (e.g. the registry restarted after the wrapper finished, wiping the
+      # refs, or the message is stale). Leave a trail so stranded tasks are
+      # attributable instead of failing silently.
+      Logger.warning(
+        "TaskRegistry: received task result for unknown ref #{inspect(ref)} — " <>
+          "no matching task_refs entry (registry restarted?); result dropped"
+      )
+    end
+
+    Process.demonitor(ref, [:flush])
+
+    {:noreply, state}
+  end
+
+  # The task WRAPPER's `:DOWN`.
+  defp handle_wrapper_down(ref, pid, reason, state) do
+    task_id = task_id_for_ref(state, ref)
+
+    if task_id do
+      case reason do
+        :normal ->
+          # Normal completion via :DOWN (task returned a result and exited cleanly).
+          # The {ref, result} handler should have already processed this, but handle
+          # the edge case where {ref, result} was somehow missed.
+          update_task_status(task_id, :completed)
+
+        reason ->
+          Logger.warning(
+            "TaskRegistry: Task #{task_id} wrapper process #{inspect(pid)} exited abnormally: #{inspect(reason)}. " <>
+              "Checking if AgentScheduler still has active agents before marking as failed."
+          )
+
+          # Check if the AgentScheduler still has active agents for this task.
+          # If so, the wrapper crashed but the real work is still ongoing — do NOT
+          # mark as failed. The task will complete normally when the scheduler
+          # eventually finishes and the result arrives via a different mechanism.
+          if Lease.sched_meta_has_active_agents?(task_id) do
+            Logger.info(
+              "TaskRegistry: Task #{task_id} still has active agents in AgentScheduler — keeping as :running despite wrapper crash"
+            )
+
+            # Do NOT update status — leave as :running
+          else
+            # No active agents — genuine failure
+            Diagnostics.log_failed_transition(task_id, :down_handler, prev_status(state, task_id),
+              result: "Task process exited: #{inspect(reason)}",
+              extra: [
+                pid: inspect(pid),
+                exit_reason: inspect(reason),
+                sched_meta_has_active_agents: false
+              ]
+            )
+
+            message = "Task process exited: #{inspect(reason)}"
+
+            update_task_status_with_caller(task_id, :failed, message,
+              error: Diagnostics.failure_error(:down, :down_handler, message, stacktrace_lines())
+            )
+          end
+      end
+    else
+      # No matching in-memory task_refs entry (e.g. the registry restarted after
+      # the wrapper exited, wiping the refs). Leave a trail so a lost result is
+      # attributable instead of being a silent no-op.
+      Logger.warning(
+        "TaskRegistry: received :DOWN for unknown ref #{inspect(ref)} (pid #{inspect(pid)}, " <>
+          "reason #{inspect(reason)}) — no matching task_refs entry; ignoring"
+      )
+    end
+
+    {:noreply, state}
+  end
 end

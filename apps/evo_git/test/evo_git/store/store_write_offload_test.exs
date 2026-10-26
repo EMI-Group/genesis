@@ -213,7 +213,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       assert :ok = Store.delete_task(store, id)
 
       assert Store.get_task(store, id) == nil
-      assert Store.count_tasks(store) == 0
+      assert Store.select_task_ids(store) == []
     end
   end
 
@@ -269,7 +269,11 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       # the write for longer than the pool's CoDel target is DROPPED rather than
       # served — a property of the pool, and the reason a store serving
       # concurrent readers wants more than one connection).
-      assert Store.count_tasks(store) == 2
+      assert Store.select_task_ids(store) |> Enum.map(& &1.id) |> Enum.sort() == [
+               "war_seed",
+               "war_slow"
+             ]
+
       assert %TaskInfo{result: {:ok, %{result: _}}} = Store.get_task(store, "war_slow")
 
       # The store AND its writer survived the multi-megabyte write.

@@ -631,7 +631,7 @@ defmodule EvoGit.RemoteNode do
   `%{entries: [], total: 0}` when the remote call fails.
   """
   @spec list_task_archives(node(), String.t(), keyword()) ::
-          %{entries: [map()], total: non_neg_integer()}
+          %{entries: [map()], total: non_neg_integer() | nil}
   def list_task_archives(node, task_id, opts \\ []) do
     if node == node() do
       EvoGit.AgentScheduler.RemoteAPI.list_task_archives(task_id, opts)
