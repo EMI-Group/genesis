@@ -7,10 +7,17 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   user upgrading from the v0.13.8 release actually has on disk — a
   `schema_migrations` stamped with EXACTLY the three migrations that release
   shipped (`…00001_baseline_adoption`, `…00002_data_normalization`,
-  `…00003_composite_indexes`, all byte-identical to HEAD's copies), so the REAL
-  pending set is `…00005` … `…00009` (the gap at `…00004` is legal: no such file
-  ships), over a `tasks` table in the pre-drop TWENTY-column shape (still
-  carrying `archive_metadata`) with the six baseline + two composite indexes.
+  `…00003_composite_indexes`), over a `tasks` table in the pre-drop
+  TWENTY-column shape (still carrying `archive_metadata`) with the eight
+  indexes that release carried (the six single-column ones + the two
+  composites).
+
+  Those three versions are STAMPED, so a real v0.13.8 database never re-runs
+  them: this suite proves the PENDING set only — the three migrations HEAD
+  ships on top of them, `…00004_covering_indexes`,
+  `…00005_task_agent_archives` (table + legacy fan-out + `archive_metadata`
+  drop) and `…00006_prune_redundant_indexes`. HEAD's six migrations are
+  versions 1..6 with no gaps.
 
   This suite crafts that file with RAW xqlite — never through the migration
   modules, so the fixture stays independent of HEAD's code — seeds v0.13.8-shaped
@@ -18,7 +25,9 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   entry point `Boot.start_dynamic/2` and `mix migrate.store` use), pinning the
   applied list, the HEAD shapes, the per-agent archive fan-out, the
   `archive_records` strip, the untouched archive-less/canonical rows, the
-  absence of any `"z1:"` payload (`…00006` is a no-op on v0.13.8 data) and a
+  `archive_metadata` drop, the four redundant indexes pruned down to the final
+  six, the plain absence of any `"z1:"` payload (v0.13.8 never wrote that
+  abandoned prefix-tagged format and no migration repairs it any more) and a
   second run that applies nothing and changes nothing.
   """
 
@@ -32,14 +41,12 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # `schema_migrations` carries exactly these rows.
   @v0138_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
 
-  # The five migrations HEAD ships ON TOP of them: the REAL pending set a
-  # v0.13.8 database boots through.
+  # The three migrations HEAD ships ON TOP of the v0.13.8 three: contiguous
+  # versions, so the shipped set is `1..6` with no gaps.
   @pending_versions [
+    20_260_815_000_004,
     20_260_815_000_005,
-    20_260_815_000_006,
-    20_260_815_000_007,
-    20_260_815_000_008,
-    20_260_815_000_009
+    20_260_815_000_006
   ]
 
   @shipped_versions @v0138_versions ++ @pending_versions
@@ -53,8 +60,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   @head_task_columns @v0138_task_columns -- [:archive_metadata]
 
   # The eight indexes a v0.13.8 database carries: the six single-column ones
-  # `…00001` created + the two composites `…00003` created. They must SURVIVE
-  # the upgrade (no later migration re-creates them).
+  # `…00001` created + the two composites `…00003` created.
   @v0138_indexes [
     {"idx_tasks_status", "status"},
     {"idx_tasks_finished_at", "finished_at"},
@@ -70,13 +76,21 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
                        Enum.map(@v0138_indexes, &elem(&1, 0)) ++ ["sqlite_autoindex_tasks_1"]
                      )
 
-  # Every index on `tasks` after the upgrade: the v0.13.8 eight + the two
-  # covering indexes `…00005` adds, plus the PK autoindex.
-  @head_task_index_names Enum.sort(
-                           Enum.map(@v0138_indexes, &elem(&1, 0)) ++
-                             ~w(idx_tasks_status_updated_at_id idx_tasks_finished_at_id
-                                sqlite_autoindex_tasks_1)
-                         )
+  # Four of those eight are exact PREFIXES of a final index (or, for
+  # `lease_expires_at`, serve no query at all): `…00006_prune_redundant_indexes`
+  # drops them.
+  @redundant_index_names ~w(idx_tasks_status idx_tasks_finished_at idx_tasks_project_path
+                            idx_tasks_lease_expires_at)
+
+  # The FINAL `tasks` index set every upgrade converges to: the four surviving
+  # v0.13.8 indexes + the two covering ones `…00004` adds.
+  @final_index_names ~w(idx_tasks_updated_at idx_tasks_started_at idx_tasks_status_started_at
+                        idx_tasks_project_path_started_at idx_tasks_status_updated_at_id
+                        idx_tasks_finished_at_id)
+
+  # Every index on `tasks` after the upgrade: the final six plus the PRIMARY
+  # KEY's implicit b-tree (`id TEXT PRIMARY KEY`), which no migration touches.
+  @head_task_index_names Enum.sort(@final_index_names ++ ["sqlite_autoindex_tasks_1"])
 
   # The canonical `task_agent_archives` columns, in table order.
   @archive_columns ~w(task_id agent_id parent_id depth agent_type context_node_path objective
@@ -133,7 +147,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   # ── The chain ─────────────────────────────────────────────────────────────
 
   describe "released v0.13.8 database → HEAD" do
-    test "applies exactly the five pending migrations and stamps the eight shipped versions",
+    test "applies exactly the three pending migrations and stamps the six shipped versions",
          %{path: path} do
       build_v0138_db!(path)
 
@@ -146,14 +160,15 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert Boot.run_migrations(pid) == @pending_versions
 
       assert migration_versions!(path) == @shipped_versions
-      refute 20_260_815_000_004 in migration_versions!(path)
     end
 
-    test "ends at HEAD's 19-column tasks shape with the ten indexes intact", %{path: path} do
+    test "ends at HEAD's 19-column tasks shape with the four redundant indexes pruned",
+         %{path: path} do
       build_v0138_db!(path)
 
       # Pre-boot: the genuine v0.13.8 twenty-column shape with its eight
-      # indexes (no `archive_metadata` drop, no covering indexes).
+      # indexes (no `archive_metadata` drop, no covering indexes, nothing
+      # pruned yet).
       pre_boot = task_table_info!(path)
       assert length(pre_boot) == 20
       assert "archive_metadata" in column_names(pre_boot)
@@ -173,12 +188,26 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert column_specs(info) ==
                Map.new(@head_task_columns, &{to_string(&1), head_column_spec(&1)})
 
-      # The pre-existing indexes survive and the two covering ones were added.
-      assert table_index_names!(path, "tasks") == @head_task_index_names
+      # Both directions of the prune: none of the four redundant indexes
+      # survives...
+      head_indexes = table_index_names!(path, "tasks")
+
+      for name <- @redundant_index_names do
+        refute name in head_indexes, "#{name} should have been dropped by …00006"
+      end
+
+      # ...and the final six are exactly what is left (with the PK autoindex).
+      assert head_indexes == @head_task_index_names
 
       covering = index_columns!(path, "idx_tasks_status_updated_at_id")
       assert covering == ["status", "updated_at", "id"]
       assert index_columns!(path, "idx_tasks_finished_at_id") == ["finished_at", "id"]
+
+      # The PRIMARY KEY's own b-tree is not one of the `idx_tasks_*` indexes:
+      # it is the table's implicit UNIQUE index, and the `archive_metadata`
+      # DROP COLUMN plus the prune leave it untouched.
+      assert index_meta!(path, "sqlite_autoindex_tasks_1") == {1, "pk"}
+      assert index_columns!(path, "sqlite_autoindex_tasks_1") == ["id"]
     end
 
     test "creates task_agent_archives with TEXT repo_id and one row per archived agent",
@@ -260,7 +289,9 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       after_ = task_rows_snapshot!(path, @head_task_columns)
 
       # (b) the older, never-archived task and (c) the already-canonical row:
-      # not one byte moved (no normalization, no backfill, no z1 unpacking).
+      # not one byte moved. The two no-op data migrations (`…00002`,
+      # `…00003`) are STAMPED on this fixture and never re-run, so this
+      # proves the pending set leaves healthy v0.13.8 rows alone.
       for id <- [@legacy_id, @canonical_id] do
         assert after_[id] == Map.drop(before[id], ["archive_metadata"])
       end
@@ -270,8 +301,9 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
       assert Map.drop(after_[@archived_id], ["result"]) ==
                Map.drop(before[@archived_id], ["archive_metadata", "result"])
 
-      # No `"z1:"`-prefixed value survives anywhere — v0.13.8 never wrote that
-      # format, so `…00006` had nothing to unpack and never rewrote a byte.
+      # No `"z1:"`-prefixed value survives anywhere. v0.13.8 never wrote that
+      # abandoned prefix-tagged format and no shipped migration repairs it, so
+      # this is a plain absence pin against any future writer.
       for {_id, row} <- after_, {column, value} <- row, is_binary(value) do
         refute String.starts_with?(value, "z1:"), "#{column} still holds a z1: payload"
       end
@@ -365,7 +397,7 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
 
   # (a) A COMPLETED task whose per-agent archive lives in `archive_metadata`
   # (a two-record JSON array) AND is duplicated under `result.data.archive_records`
-  # — the exact duplicate `…00008` fans out and strips.
+  # — the exact duplicate `…00005` fans out and strips.
   defp archived_row do
     task_row(@archived_id,
       type: "evolve",
@@ -591,6 +623,21 @@ defmodule EvoGit.Store.V0138UpgradePathTest do
   defp index_columns!(path, index_name) do
     query_rows!(path, "PRAGMA index_info(#{index_name})")
     |> Enum.map(fn [_seqno, _cid, column] -> column end)
+  end
+
+  # `PRAGMA index_list(tasks)` row → `{unique, origin}` for one index
+  # (`origin` is "c" for a CREATE INDEX, "pk" for the PRIMARY KEY's implicit
+  # b-tree).
+  defp index_meta!(path, index_name) do
+    path
+    |> query_rows!("PRAGMA index_list(tasks)")
+    |> Enum.find_value(fn [_seq, name, unique, origin | _rest] ->
+      if name == index_name, do: {unique, origin}
+    end)
+    |> case do
+      nil -> flunk("#{index_name} is not listed by PRAGMA index_list(tasks)")
+      meta -> meta
+    end
   end
 
   defp table_index_names!(path, table) do
