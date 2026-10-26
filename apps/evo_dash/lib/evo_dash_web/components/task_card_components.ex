@@ -297,10 +297,12 @@ defmodule EvoDashWeb.TaskCardComponents do
                       {gettext("Objective")}
                     </h4>
                     <div class="flex items-center gap-2">
+                      <% objective_copy = copy_payload(objective_text(@task.opts)) %>
                       <button
                         id={"task-#{@task.id}-objective-copy"}
                         phx-hook="ClipboardCopy"
-                        data-content={objective_text(@task.opts)}
+                        data-content={objective_copy.text}
+                        title={copy_payload_title(objective_copy)}
                         class="btn btn-xs btn-ghost rounded-md"
                       >
                         <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
@@ -328,10 +330,12 @@ defmodule EvoDashWeb.TaskCardComponents do
                         <%!-- zh_CN: 智能体的最终消息 --%>{gettext("Agent Message")}
                       </h4>
                       <div class="flex items-center gap-2">
+                        <% result_copy = copy_payload(result_copy_text(@task.result)) %>
                         <button
                           id={"task-#{@task.id}-result-copy"}
                           phx-hook="ClipboardCopy"
-                          data-content={result_copy_text(@task.result)}
+                          data-content={result_copy.text}
+                          title={copy_payload_title(result_copy)}
                           class="btn btn-xs btn-ghost rounded-md"
                         >
                           <.icon name="hero-clipboard-document" class="size-3.5 mr-1" />
@@ -498,9 +502,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                     />
                     {gettext("Execution Logs")}
                     <span class="text-xs font-medium bg-base-200 text-base-content/70 px-2 py-0.5 rounded-md ml-2">
-                      {if log_count > 20,
-                        do: gettext("last 20 of %{count}", count: log_count),
-                        else: gettext("%{count}", count: log_count)}
+                      {log_summary_label(log_count)}
                     </span>
                   </summary>
                   <%= if logs_preview.truncated? do %>
@@ -674,6 +676,7 @@ defmodule EvoDashWeb.TaskCardComponents do
   # `view_full_options`) and scrolled by the modal's own container.
   @in_card_blob_limit 16_384
   @in_card_log_limit 200
+  @copy_payload_limit 1_048_576
 
   # Text preview for an in-card payload; `text` is already stringified by the
   # caller (a binary result, or `inspect/2` of a non-binary term).
@@ -692,6 +695,30 @@ defmodule EvoDashWeb.TaskCardComponents do
     do: list_preview(Enum.reverse(logs), @in_card_log_limit)
 
   defp log_preview(_logs), do: %{items: [], total: 0, truncated?: false}
+
+  # Summary-badge label for the logs section — the "shown" number MUST match the
+  # rendered cap (`@in_card_log_limit`, the same limit the body honours), so the
+  # badge never contradicts the visible rows. `count` stays the TOTAL entries.
+  defp log_summary_label(count) when is_integer(count) and count > @in_card_log_limit do
+    # zh_CN: 日志摘要（只显示最后 N 条，N 与正文实际渲染条数一致）
+    gettext("last %{shown} of %{count}", shown: @in_card_log_limit, count: count)
+  end
+
+  defp log_summary_label(count), do: gettext("%{count}", count: count)
+
+  # The card's Copy buttons hand their payload to the ClipboardCopy hook through
+  # `data-content`, which IS materialized in the rendered HTML — so it must be
+  # bounded like the visible body: 1 MiB keeps every normal result/objective
+  # verbatim while a pathological blob stays reachable via the explicit Full
+  # Result / Full Objective modal. `text` is already stringified by the caller.
+  defp copy_payload(text), do: blob_preview(text, @copy_payload_limit)
+
+  # Only a TRUNCATED payload gets a title explaining the cap; a complete payload
+  # renders no title at all (nil attributes are omitted from the markup).
+  defp copy_payload_title(%{truncated?: true}),
+    do: gettext("Copy is limited to the first 1 MB — open Full for the complete text")
+
+  defp copy_payload_title(_payload), do: nil
 
   # Dim "showing X of Y" note — rendered ONLY when a preview actually dropped
   # bytes (a complete payload renders no note at all).
@@ -719,9 +746,10 @@ defmodule EvoDashWeb.TaskCardComponents do
   preview, the expanded Objective card (including its copy button), and
   `render_options/2`.
 
-  Deliberately returns the COMPLETE text — it feeds the Copy button's
-  `data-content` payload, an explicitly user-requested clipboard write. Only
-  the in-card RENDERING path (`render_options/2` with `truncate: true`) caps it.
+  Deliberately returns the COMPLETE text — the card's Copy button bounds it at
+  render time (`copy_payload/1`, 1 MiB cap on the HTML-materialized
+  `data-content`), while the in-card RENDERING path (`render_options/2` with
+  `truncate: true`) caps it to a preview.
   """
   def objective_text(opts) do
     (opts[:prompt] || opts[:objective] || "") |> String.trim()
@@ -1215,9 +1243,11 @@ defmodule EvoDashWeb.TaskCardComponents do
   copy the raw agent message; error/crash results copy the inspected reason
   (unlimited); anything else falls back to a pretty-inspected representation.
 
-  Deliberately returns the COMPLETE text — Copy is an explicit user action and
-  the clipboard payload is exactly what the user asked for. Only the in-card
-  RENDERING path (`render_result/2` with `truncate: true`) caps its output.
+  Deliberately returns the COMPLETE text — this function itself never truncates
+  so the Full Result modal (`tasks_live.ex`) can copy the whole thing. The
+  in-card copy button deliberately does NOT use the raw value: it bounds its
+  HTML-materialized `data-content` through `copy_payload/1` (1 MiB) and renders
+  only a preview in the body (`render_result/2` with `truncate: true`).
   """
   def result_copy_text({:ok, %{result: result}}) when is_binary(result), do: result
   def result_copy_text({:error, reason}), do: inspect(reason, limit: :infinity)
