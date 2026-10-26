@@ -222,7 +222,6 @@ Each `[[llm.models]]` profile may declare five **optional** peak/off-peak fields
 `EvoGit.PeakHourEngine` (supervised after the scheduler) flips scheduler concurrency on start/timer/`"scheduler_config"` PubSub with the **floored** map (`max(effective, default)` per model, explicit `0` stays `0`), applied only when it differs; 0-capacity ENQUEUES slot requests instead of failing fast (granted on resume by `Slots.grant_pending_on_resume/1`; in-flight holders never evicted; force-kill purges queued agents), with clock seams `:peak_hours_now_fun`/`:peak_hours_utc_now_fun`.
 Dashboard: Settings → model profile editor edits the fields (absent/empty peak fields serialize to TOML as absent; `off_peak_days` + window `days` render as chip selectors).
 Details: `apps/evo_git/CONTEXT.md` (full contract, wake triggers, +100ms transition epsilon, 6h safety-net cap) + `apps/evo_dash` settings CONTEXT.md.
-Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash` settings CONTEXT.md.
 
 ### SSH Remote Development
 
