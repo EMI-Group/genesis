@@ -11,8 +11,17 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   ever pushes server→client request events (`update_check_requested` /
   `update_download_requested` / `update_apply_requested`); results arrive via
   hub broadcasts on the `"updates"` topic.
+
+  Every store/registry call the gate and the wind-down need goes through
+  `EvoDash.SafeCall`: a `GenServer.call` to the task registry that times out
+  EXITS its caller (`rescue` cannot catch that), which would either crash the
+  LiveView or kill a supervised task before it reports back — leaving the busy
+  modal or the gate spinner wedged. The `start_*` helpers run their work in ONE
+  `EvoDash.TaskSupervisor` task and always report a result, so the LiveView can
+  clear its in-progress flag unconditionally.
   """
 
+  alias EvoDash.SafeCall
   alias EvoDash.UpdateStatus
 
   # Statuses that count as "active" for update gating: the update can only be
@@ -34,12 +43,23 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   for both contexts) or (b) a one-arg fun `(ctx) -> ids`. Without the seam,
   delegates to the node-aware `EvoDash.NodeContext.list_task_ids/2` (local
   node → TaskRegistry under the hood), mapping each result map to its `:id`.
+
+  The default branch runs inside `EvoDash.SafeCall.run/2`, so a store call that
+  exits (call timeout / dead registry) degrades to `[]` instead of killing the
+  caller. Callers on the LiveView process MUST use `start_active_task_ids/3`
+  instead, so the query never runs on the LiveView process at all.
   """
   def active_task_ids(ctx) do
     case Application.get_env(:evo_dash, :update_active_task_ids) do
       nil ->
-        EvoDash.NodeContext.list_task_ids(node(), @active_statuses)
-        |> Enum.map(& &1.id)
+        SafeCall.run(
+          fn ->
+            EvoDash.NodeContext.list_task_ids(node(), @active_statuses)
+            |> Enum.map(&task_id/1)
+            |> Enum.reject(&is_nil/1)
+          end,
+          []
+        )
 
       seam when is_function(seam, 1) ->
         seam.(ctx) |> List.wrap()
@@ -50,12 +70,24 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   end
 
   @doc """
+  Runs `active_task_ids/1` for `ctx` in ONE supervised task, reporting
+  `{tag, {:ok, ids} | {:error, reason}}` to `parent`.
+
+  The exit-safe async form used by the LiveView's apply gate, so the store query
+  never runs on the LiveView process and its result message is always sent
+  (even on an exit), letting the gate spinner never stick.
+  """
+  def start_active_task_ids(parent, tag, ctx) do
+    SafeCall.start(parent, tag, fn -> active_task_ids(ctx) end)
+  end
+
+  @doc """
   Spawns the never-wedge check watchdog on `EvoDash.TaskSupervisor`.
 
   The runner is a test seam (`config :evo_dash, :update_check_runner`, default
-  `default_watchdog/1`); a raising runner is caught and reported as a failed
-  check so the `:checking` phase can never stick. When the seam replaces the
-  default watchdog, the never-wedge timeout watchdog ALSO runs in parallel —
+  `default_watchdog/1`); a raising — or exiting — runner is reported as a
+  failed check so the `:checking` phase can never stick. When the seam replaces
+  the default watchdog, the never-wedge timeout watchdog ALSO runs in parallel —
   otherwise a runner that never reports (e.g. the no-result test seam) would
   leave `:checking` stuck forever. In production the runner IS the default
   watchdog, so the extra task is not spawned.
@@ -64,11 +96,10 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
     runner = Application.get_env(:evo_dash, :update_check_runner) || (&default_watchdog/1)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        runner.(view_pid)
-      rescue
+      case SafeCall.run(fn -> runner.(view_pid) end) do
+        {:ok, _result} -> :ok
         # A crashing runner must not wedge the :checking phase.
-        _ -> UpdateStatus.check_failed("check_failed")
+        {:error, _reason} -> UpdateStatus.check_failed("check_failed")
       end
     end)
 
@@ -83,18 +114,29 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
 
   @doc """
   Starts the busy-apply wind-down on `EvoDash.TaskSupervisor`: gracefully
-  cancels active tasks in a loop until none remain (or the deadline passes),
-  then reports completion/timeout back to the view.
+  cancels `ids` (the tasks the gate saw), then loops cancelling whatever is
+  still active until none remain (or the deadline passes), and reports
+  completion/timeout back to the view.
   """
-  def start_winddown(view_pid) do
+  def start_graceful_winddown(view_pid, ids) do
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        winddown_loop(view_pid)
-      rescue
+      case SafeCall.run(fn ->
+             for id <- List.wrap(ids), do: graceful_cancel(id)
+             winddown_loop(view_pid)
+           end) do
+        {:ok, _result} -> :ok
         # A crashed wind-down must not wedge the busy modal.
-        _ -> send(view_pid, {:update_winddown_error, :check_failed})
+        {:error, reason} -> send(view_pid, {:update_winddown_error, reason})
       end
     end)
+  end
+
+  @doc """
+  Starts the busy-apply wind-down without pre-cancelling anything (the
+  wind-down loop itself cancels every active task it finds).
+  """
+  def start_winddown(view_pid) do
+    start_graceful_winddown(view_pid, [])
   end
 
   @doc """
@@ -103,9 +145,20 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   unknown ids are normal in tests and racing completions.
   """
   def graceful_cancel(task_id) do
-    EvoGit.TaskRegistry.cancel_task(task_id)
-  rescue
-    _ -> :ok
+    SafeCall.run(fn -> EvoGit.TaskRegistry.cancel_task(task_id) end, :ok)
+  end
+
+  @doc """
+  Force-kills the given task ids — the user-warned fallback ("in-flight work
+  will be lost"). Results are ignored, and every call is exit-safe so one dead
+  registry process cannot abort the rest of the list.
+  """
+  def force_kill(ids) do
+    for id <- List.wrap(ids) do
+      SafeCall.run(fn -> EvoGit.TaskRegistry.force_kill_task(id) end)
+    end
+
+    :ok
   end
 
   @doc """
@@ -113,12 +166,23 @@ defmodule EvoDashWeb.SystemLive.UpdateCard do
   will be lost"). Results are ignored.
   """
   def force_kill_all do
-    for id <- active_task_ids(:gate) do
-      EvoGit.TaskRegistry.force_kill_task(id)
-    end
-
-    :ok
+    force_kill(active_task_ids(:gate))
   end
+
+  @doc """
+  Runs the force-kill fallback in ONE supervised task (never on the LiveView
+  process) and reports `{{:update_force_kill_done, node}, {:ok, :ok} |
+  {:error, reason}}` to `parent`.
+  """
+  def start_force_kill(parent, node) do
+    SafeCall.start(parent, {:update_force_kill_done, node}, fn -> force_kill_all() end)
+  end
+
+  # Maps one `list_task_ids/2` row to its id (atom- or string-keyed, any other
+  # shape dropped) so a single odd row can never crash the gate.
+  defp task_id(%{id: id}), do: id
+  defp task_id(%{"id" => id}), do: id
+  defp task_id(_row), do: nil
 
   @doc """
   Transitions the hub to `:applying` and pushes the apply request to the
