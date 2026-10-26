@@ -10,6 +10,7 @@ Reusable UI component modules and layout templates for the EvoDash web interface
 - `agents_components/` → Agents-page commit-history sub-components (`CommitGraphView` + `agents_components/commit_graph/geometry.ex`) — full detail: `agents_components/CONTEXT.md`.
 - `review_components/` → Review-page sub-components: `DiffViewer`, `Header`, `Actions`, `RepoCards`, `Stats` — full detail: `review_components/CONTEXT.md`.
 - `settings_components/` → Settings sub-components: `CategoryMetadata`, `SettingCard`, `ModelProfilesEditor`, `CustomAgentsEditor`, `CustomToolsPanel`, `ModelSelectionEditor`, `Sidebar`, `SearchResults`, plus the shared building blocks `SaveBar`, `SectionHeader`, `CardShell`, `FormFooter` — full detail: `settings_components/CONTEXT.md`.
+- `task_card_components/` → Task-card helper families extracted from `task_card_components.ex`, re-exported through `EvoDashWeb.TaskCardComponents` delegates: `ResultRender` (`render_result/1,2`, `render_result_full/1`, `result_copy_text/1`, `branch_badge_class/0`), `Options` (`objective_text/1`, `render_options/1,2`, `render_options_full/1`), `Repos` (`result_repos/1`, `task_repos/2`, `result_repos_badges/1`), `Archive` (the lazy `detail.archive` envelope readers + `archive_opt?/1`), `Errors` (the structured failure-record readers).
 
 ## API Surface
 
