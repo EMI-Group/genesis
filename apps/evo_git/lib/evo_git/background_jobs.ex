@@ -23,6 +23,8 @@ defmodule EvoGit.BackgroundJobs do
   # Maximum number of LIVE jobs a single owner (agent) may have at once.
   @max_jobs_per_owner 10
   # Periodic reconcile interval for live `:unit`-handled jobs.
+  # Overridable for tests via the app env `:background_tick_interval_ms` (a
+  # test-only CALL-TIME seam; the production default below is unchanged).
   @tick_interval_ms 1_000
   # Defensive floor: how long a live job may stay UNREPORTABLE (the backend says
   # `{:unknown, nil}` and no observer port is open) before it is settled
@@ -260,7 +262,7 @@ defmodule EvoGit.BackgroundJobs do
   def poll_interval_ms, do: @poll_interval_ms
 
   @doc "Periodic reconcile interval (ms) for live `:unit`-handled jobs."
-  def tick_interval_ms, do: @tick_interval_ms
+  def tick_interval_ms, do: resolved_tick_interval_ms()
 
   @doc "Renders a job status as the public string vocabulary."
   @spec status_string(status() | nil) :: String.t() | nil
@@ -900,6 +902,16 @@ defmodule EvoGit.BackgroundJobs do
     end
   end
 
+  # Test-only CALL-TIME override (`:background_tick_interval_ms`); the production
+  # default `@tick_interval_ms` is unchanged. Read per timer arm so a test module
+  # can shorten the periodic tick without touching module attributes.
+  defp resolved_tick_interval_ms do
+    case Application.get_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _other -> @tick_interval_ms
+    end
+  end
+
   # Only a `:unit` handle with an OPEN observer port (or a `:port` handle whose
   # child still lives) can still deliver a real exit status — everything else is
   # unreportable and eligible for the floor.
@@ -1122,7 +1134,10 @@ defmodule EvoGit.BackgroundJobs do
 
   defp arm_tick(%{tick_timer: nil} = state) do
     if Enum.any?(state.jobs, fn {_id, job} -> live?(job) and unit_handle?(job.handle) end) do
-      %{state | tick_timer: Process.send_after(self(), :reconcile_tick, @tick_interval_ms)}
+      %{
+        state
+        | tick_timer: Process.send_after(self(), :reconcile_tick, resolved_tick_interval_ms())
+      }
     else
       state
     end

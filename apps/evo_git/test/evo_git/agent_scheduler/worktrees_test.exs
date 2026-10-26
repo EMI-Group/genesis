@@ -67,6 +67,22 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     File.rm_rf!(Path.join(template_dir, ".git/hooks"))
     File.rm_rf!(Path.join(template_dir, ".git/logs"))
 
+    # Test-only CALL-TIME seam (`EvoGit.AgentScheduler.WorktreeRetry`): retry
+    # sleeps are sunk to 0 ms so the two DELIBERATE-failure tests below still run
+    # the same attempt counts and assertions without paying ~0.7 s of backoff.
+    # The production default stream `[50, 100, 200]` (exponential, cap 200) is
+    # unchanged.
+    original_delays = Application.get_env(:evo_git, :worktree_retry_delays)
+    Application.put_env(:evo_git, :worktree_retry_delays, [0, 0, 0])
+
+    on_exit(fn ->
+      if is_nil(original_delays) do
+        Application.delete_env(:evo_git, :worktree_retry_delays)
+      else
+        Application.put_env(:evo_git, :worktree_retry_delays, original_delays)
+      end
+    end)
+
     on_exit(fn -> File.rm_rf!(template_dir) end)
 
     {:ok, template_dir: template_dir, base_sha: base_sha}

@@ -99,7 +99,18 @@ defmodule EvoGit.Store.CoveringIndexTest do
     template = Path.join(root, "template.sqlite")
     {:ok, pid} = Boot.start_dynamic(template, pool_size: 1)
     Process.unlink(pid)
-    seed_tasks!(pid)
+
+    # The seed writes `:failed` rows, and `Operations.Tasks` deliberately logs a
+    # `Store: FAILED_WRITE …` warning (plus a stacktrace) for EVERY new failed
+    # write — from the STORE's write path, i.e. not from the test process, so the
+    # suite-wide `ExUnit.start(capture_log: true)` (test-process only) cannot
+    # reach it, and `setup_all/1` is not inside a per-test log capture either. The
+    # production diagnostic stays exactly as it is; it is captured HERE, at the
+    # test boundary.
+    seed_log = capture_seed_log(fn -> seed_tasks!(pid) end)
+
+    assert_seed_warnings_are_ours!(seed_log)
+
     query_rows(pid, "PRAGMA wal_checkpoint(TRUNCATE)")
     :ok = Boot.stop(pid)
 
@@ -183,6 +194,126 @@ defmodule EvoGit.Store.CoveringIndexTest do
   end
 
   defp all_ids, do: for(i <- 1..@seed_rows, do: seed_id(i))
+
+  # ── seed log capture (scoped to the SEEDING process, not a time window) ───
+
+  # Forwards log events to the capturing test process. Installed only for the
+  # duration of the seed (see `capture_seed_log/1`).
+  defmodule SeedLogCapture do
+    @moduledoc false
+
+    # Runs in the EMITTING process — `send/2` has completed before the emitting
+    # `Logger.warning/1` returns, so the capture needs no settle window.
+    def log(event, %{config: %{pid: pid}}) do
+      send(pid, {:seed_log, to_binary(event.msg)})
+      :ok
+    end
+
+    defp to_binary({:string, message}), do: IO.iodata_to_binary(message)
+    defp to_binary({:report, report}), do: inspect(report)
+    defp to_binary({format, args}), do: IO.iodata_to_binary(:io_lib.format(format, args))
+
+    # `:logger` handler filters. `keep?/2` selects the SEEDING process for the
+    # CAPTURING handler; `drop?/2` is installed on the DEFAULT handler for the
+    # same window, so our lines do not ALSO reach the console while a sibling's
+    # keep reaching it untouched (`:ignore` = "this filter does not decide", i.e.
+    # the default handler logs as usual).
+    def keep?(%{meta: %{pid: seed_pid}}, seed_pid), do: :log
+    def keep?(_event, _seed_pid), do: :stop
+
+    def drop?(%{meta: %{pid: seed_pid}}, seed_pid), do: :stop
+    def drop?(_event, _seed_pid), do: :ignore
+  end
+
+  # Collects the log events the SEED emits and returns them as a list of message
+  # strings.
+  #
+  # `ExUnit.CaptureLog.capture_log/2` would also catch the store's diagnostic, but
+  # its window is process-AGNOSTIC: while the 1 500-row seed runs (about a second)
+  # it would also swallow the lines of every sibling `async: true` module that
+  # happens to log — and this module is `async: true`. The capture is therefore
+  # scoped to the EMITTING PROCESS instead (not the group leader: concurrent
+  # `setup_all/1` processes SHARE a group leader, so filtering on that catches
+  # siblings too — verified the hard way).
+  #
+  # Every failed-write diagnostic the seed produces is emitted from THIS process:
+  # `Tasks.put_task/2` runs the diagnostic inside the caller's transaction (see
+  # `RepoScope.with_repo/2`). If that ever moves into the store's writer GenServer,
+  # `assert_seed_warnings_are_ours!/1` fails LOUDLY on the count rather than
+  # silently capturing nothing.
+  defp capture_seed_log(fun) do
+    handler_id = :evogit_covering_index_seed_log
+    seed_pid = self()
+
+    :ok =
+      :logger.add_handler(handler_id, SeedLogCapture, %{
+        level: :warning,
+        config: %{pid: seed_pid},
+        filters: [seed_pid: {&SeedLogCapture.keep?/2, seed_pid}],
+        filter_default: :log
+      })
+
+    silence_console_during(handler_id, seed_pid)
+
+    # `try/after` ONLY to detach the handler/filter on a raised seed failure
+    # (teardown cleanup must not mask the real error) — the same rationale the
+    # suite uses for test-only cleanup.
+    try do
+      fun.()
+      drain_seed_log([])
+    after
+      _ = :logger.remove_handler_filter(:default, handler_id)
+      :ok = :logger.remove_handler(handler_id)
+    end
+  end
+
+  # Keeps OUR diagnostics off the console for the capture window by filtering the
+  # DEFAULT handler only — never by removing it, and never by touching the global
+  # level: another process's events still reach that handler untouched.
+  #
+  # `{:not_found, :default}` means a sibling `async: true` module's
+  # `ExUnit.CaptureLog` window currently owns the console (it swaps `:default`
+  # out); that window swallows everything anyway, so there is nothing to filter.
+  defp silence_console_during(handler_id, seed_pid) do
+    case :logger.add_handler_filter(:default, handler_id, {&SeedLogCapture.drop?/2, seed_pid}) do
+      :ok -> :ok
+      {:error, {:not_found, :default}} -> :ok
+    end
+  end
+
+  defp drain_seed_log(acc) do
+    receive do
+      {:seed_log, message} -> drain_seed_log([message | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  # Pins that the capture above saw exactly this seed's own `FAILED_WRITE`
+  # diagnostics — one per newly-`:failed` row, and NOTHING else. The "nothing
+  # else" half is safe to assert because the capture is scoped to the seeding
+  # process: no sibling module can land in it.
+  defp assert_seed_warnings_are_ours!(messages) do
+    expected = ids_with_statuses(["failed"])
+
+    # Only OUR diagnostics are collected: a sibling `async: true` module can still
+    # land a line in the window (its emitter pid is compared against the seed pid,
+    # so it is not counted here and is never swallowed by our `:default` filter).
+    ids =
+      Enum.flat_map(messages, fn message ->
+        case Regex.run(~r/\AStore: FAILED_WRITE task_id=(\S+) /, message) do
+          [_, id] -> [id]
+          nil -> []
+        end
+      end)
+
+    assert length(ids) == length(expected),
+           "expected one FAILED_WRITE warning per newly-:failed seed row " <>
+             "(#{length(expected)}), captured #{length(ids)}"
+
+    assert Enum.sort(ids) == Enum.sort(expected),
+           "the captured FAILED_WRITE warnings do not name the seeded :failed rows"
+  end
 
   # ── EXPLAIN QUERY PLAN plumbing ──────────────────────────────────────────
 

@@ -32,9 +32,27 @@ defmodule EvoGit.BackgroundJobsTest do
   # not spin. The deadline above stays the only bound.
   @poll_first_ms 2
   @poll_max_ms 20
+  # Containment-only settle for `quiet_kill/1` (see its comment): the `:unit`
+  # kill path's `systemctl --user stop` runs in a fire-and-forget Task with no
+  # handle to await, so the console-noise capture window has to outlive it by a
+  # bounded margin. It never bounds an assertion — the waits that assert all use
+  # `wait_until/3` above.
+  @unit_stop_settle_ms 300
+  @quiet_kill_result :background_jobs_test_quiet_kill_result
+
+  # Test-only CALL-TIME seams (production defaults stay 1_000 ms for the periodic
+  # reconcile tick and 100 ms for the SIGTERM→SIGKILL grace). The tick is
+  # shortened so `await_reconcile_tick!/1` still proves a REAL timer fired, but in
+  # tens of milliseconds; the kill grace is shortened because every liveness
+  # assertion below polls until the child is genuinely gone.
+  @tick_interval_ms_override 25
+  @kill_grace_ms_override 10
 
   setup %{tmp_dir: tmp_dir} do
     name = :"bg_jobs_test_#{System.unique_integer([:positive])}"
+
+    put_test_env(:background_tick_interval_ms, @tick_interval_ms_override)
+    put_test_env(:kill_grace_ms, @kill_grace_ms_override)
 
     # An ISOLATED registry per test: the test supervisor guarantees a graceful
     # shutdown, whose `terminate/2` kills every job still live.
@@ -503,7 +521,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, %{text: _}} = BackgroundJobs.read(job.id, owner_pid: owner)
       assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
 
-      assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
+      assert {:ok, %{status: :killed}} = quiet_kill(job.id)
       Process.exit(owner, :kill)
     end
   end
@@ -533,7 +551,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert message =~ "10"
 
       Enum.each(jobs, fn job ->
-        assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
+        assert {:ok, %{status: :killed}} = quiet_kill(job.id)
       end)
 
       # The one real detached child is really gone (the `:unit` records carry no
@@ -549,6 +567,10 @@ defmodule EvoGit.BackgroundJobsTest do
       # Capacity is released by killing, so a new job is accepted again.
       job = start_live_unit_job!(tmp_dir, "after-release")
       assert job.status == :running
+      # Left live on purpose up to this point; killed here (captured) so the
+      # registry's own `terminate/2` sweep at test teardown — which runs OUTSIDE
+      # any capture window — has no `:unit` job left to stop.
+      assert {:ok, %{status: :killed}} = quiet_kill(job.id)
     end
   end
 
@@ -673,7 +695,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, kept_job} = BackgroundJobs.job(kept.id)
       assert kept_job.status == :running
 
-      assert {:ok, %{status: :killed}} = BackgroundJobs.kill(kept.id)
+      assert {:ok, %{status: :killed}} = quiet_kill(kept.id)
     end
 
     test "is :ok even when no job matches the prefix", %{tmp_dir: tmp_dir} do
@@ -718,7 +740,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert Enum.sort(Enum.map(BackgroundJobs.list(), & &1.id)) ==
                Enum.sort([mine.id, theirs.id])
 
-      assert {:ok, _} = BackgroundJobs.kill(theirs.id)
+      assert {:ok, _} = quiet_kill(theirs.id)
       Process.exit(owner, :kill)
     end
   end
@@ -757,7 +779,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: self()), & &1.id) == [mine.id]
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: owner), & &1.id) == [theirs.id]
 
-      assert {:ok, _} = BackgroundJobs.kill(theirs.id)
+      assert {:ok, _} = quiet_kill(theirs.id)
       Process.exit(owner, :kill)
     end
 
@@ -799,7 +821,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, %{announced: true}} = BackgroundJobs.job(finished.id)
 
-      assert {:ok, _} = BackgroundJobs.kill(running.id)
+      assert {:ok, _} = quiet_kill(running.id)
     end
 
     test "returns multiple terminal jobs newest first", %{tmp_dir: tmp_dir} do
@@ -819,7 +841,7 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
 
-      assert {:ok, _} = BackgroundJobs.kill(job.id)
+      assert {:ok, _} = quiet_kill(job.id)
     end
 
     test "read/2 on a terminal job marks it announced, so a following claim is empty", %{
@@ -854,7 +876,7 @@ defmodule EvoGit.BackgroundJobsTest do
       refute listed.announced
 
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
-      assert {:ok, _} = BackgroundJobs.kill(job.id)
+      assert {:ok, _} = quiet_kill(job.id)
     end
 
     test "kill/3 on a live job suppresses the notice", %{tmp_dir: tmp_dir} do
@@ -906,6 +928,17 @@ defmodule EvoGit.BackgroundJobsTest do
       assert BackgroundJobs.wait_default_ms() == 8_000
       assert BackgroundJobs.wait_max_ms() == 60_000
       assert BackgroundJobs.poll_interval_ms() == 100
+
+      # `tick_interval_ms/0` is read at CALL TIME and this module's `setup`
+      # shortens it; the documented PRODUCTION default is asserted with the
+      # test-only override removed (restored by `on_exit`, so a failure here
+      # cannot leak the override).
+      Application.delete_env(:evo_git, :background_tick_interval_ms)
+
+      on_exit(fn ->
+        Application.put_env(:evo_git, :background_tick_interval_ms, @tick_interval_ms_override)
+      end)
+
       assert BackgroundJobs.tick_interval_ms() == 1_000
     end
 
@@ -1003,6 +1036,36 @@ defmodule EvoGit.BackgroundJobsTest do
 
   defp registry, do: Process.get(:evogit_background_jobs_server)
 
+  # `BackgroundJobs.kill/1` for a `:unit`-shaped handle (the systemd stand-ins
+  # below), with its console noise captured. `BackgroundJobs` stops such a unit
+  # through `Sandbox.Background.stop_unit_async/1`, which spawns an UNLINKED,
+  # untracked `Task` around `systemctl --user stop` (the registry must never block
+  # on systemctl) and returns at once. Where the user bus is unreachable —
+  # containers, CI, this sandbox: "Failed to connect to user scope bus via local
+  # transport" — that call FAILS and the task logs
+  # `[warning] Sandbox.Background: failed to stop unit …` from a process that is
+  # neither the test process nor its child, usually just after the test body
+  # ended, i.e. in the gap where ExUnit's per-test `capture_log: true` window is
+  # gone and the line would leak to the console.
+  #
+  # The spawned task is discarded on purpose in production, so there is no handle
+  # to await: the window below outlives it by `@unit_stop_settle_ms` instead
+  # (containment only, never an assertion bound). `capture_log/2` is WINDOW-based
+  # and catches logs from ANY process; this module is `async: false`, so the
+  # window cannot swallow a sibling module's lines.
+  defp quiet_kill(id) do
+    _log =
+      ExUnit.CaptureLog.capture_log([level: :warning], fn ->
+        # `capture_log/2` returns the LOG, not the function's value, and the fun
+        # runs in this process — so the kill's reply travels via the dictionary
+        # and the callers keep asserting on the REAL result.
+        Process.put(@quiet_kill_result, BackgroundJobs.kill(id))
+        Process.sleep(@unit_stop_settle_ms)
+      end)
+
+    Process.delete(@quiet_kill_result)
+  end
+
   # Registers a job with the SYSTEMD backend's handle shape (`kind: :unit`, plus
   # the still-open `systemd-run --wait` client port) through the registry's real
   # start path (`start_job_with_handle/2` is the test seam; everything else —
@@ -1086,6 +1149,23 @@ defmodule EvoGit.BackgroundJobsTest do
   defp put_unknown_grace(ms) do
     Application.put_env(:evo_git, :background_unknown_grace_ms, ms)
     on_exit(fn -> Application.delete_env(:evo_git, :background_unknown_grace_ms) end)
+  end
+
+  # Sets a test-only CALL-TIME app-env override and restores the PREVIOUS value
+  # afterwards (nil-aware: a key that was absent is deleted again, so the module
+  # never leaks an override into other sync modules).
+  defp put_test_env(key, value) do
+    original = Application.get_env(:evo_git, key)
+
+    Application.put_env(:evo_git, key, value)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:evo_git, key)
+      else
+        Application.put_env(:evo_git, key, original)
+      end
+    end)
   end
 
   # Polls `job/2` until the job's status is `expected`, then returns the returned
