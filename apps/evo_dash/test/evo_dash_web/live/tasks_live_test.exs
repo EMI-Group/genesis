@@ -2564,6 +2564,99 @@ defmodule EvoDashWeb.TasksLiveTest do
       refute html =~ ~s(phx-click="load_more_task_archive")
     end
 
+    test "the retention window bounds the envelope and keeps the offset honest", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "huge archive task"])
+      test_pid = self()
+      install_task_archive_runner(paging_runner(paged_archive(700), test_pid))
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+      # Page through the WHOLE roster: 700 agents, 7 pages of 100.
+      for _page <- 1..6 do
+        render_hook(view, "load_more_task_archive", %{"task_id" => id})
+        wait_for_archive(view, id, &match?(%{loading_more?: false}, &1))
+      end
+
+      entry = archive_entry(view, id)
+      # Only the most recent 500 rows are retained; the evicted ones are counted.
+      assert length(entry.entries) == 500
+      assert entry.dropped == 200
+      assert entry.total == 700
+      assert entry.exhausted? == false
+      assert Enum.map(entry.entries, & &1["agent_id"]) == Enum.map(201..700, &"agent-#{&1}")
+      # Every request offset is the number of rows FETCHED, never the retained
+      # length (which stops at the window bound).
+      offsets =
+        Stream.repeatedly(fn ->
+          receive do
+            {:archive_page, _node, ^id, opts} -> Keyword.fetch!(opts, :offset)
+          after
+            0 -> nil
+          end
+        end)
+        |> Enum.take_while(&(&1 != nil))
+
+      assert offsets == [0, 100, 200, 300, 400, 500, 600]
+      html = render(view)
+      refute html =~ ~s(phx-click="load_more_task_archive")
+      # The count line stays honest about the omitted leading rows.
+      assert html =~ "700 agents — showing 201–700"
+      assert html =~ "earlier entries omitted"
+    end
+
+    test "a short page exhausts the archive and clamps the pager", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "short archive task"])
+      entries = paged_archive(137)
+
+      install_task_archive_runner(fn _node, _task_id, opts ->
+        offset = Keyword.get(opts, :offset, 0)
+        %{entries: Enum.slice(entries, offset, 100), total: 250}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+      render_hook(view, "load_more_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{loading_more?: false}, &1))
+      entry = archive_entry(view, id)
+      # The server counted 250 rows it will never return: the EFFECTIVE total is
+      # what was fetched, so the pager stops; the label keeps the larger count.
+      assert length(entry.entries) == 137
+      assert entry.exhausted? == true
+      assert entry.total == 137
+      assert entry.server_total == 250
+      html = render(view)
+      refute html =~ ~s(phx-click="load_more_task_archive")
+      assert html =~ "250 agents"
+      assert html =~ "No more archive entries."
+    end
+
+    test "a page without a total still loads (lean roster projection)", %{conn: conn} do
+      id = insert_fixture!(opts: [archive: true, prompt: "no total task"])
+      entries = paged_archive(3)
+      install_task_archive_runner(fn _node, _task_id, _opts -> %{entries: entries} end)
+      {:ok, view, _html} = live(conn, ~p"/tasks")
+      flush_tasks_load(view)
+      _html = expand_card(view, id)
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+      entry = archive_entry(view, id)
+      # The short page exhausts the archive; with no COUNT(*) the total is the
+      # fetched row count and no pager renders.
+      assert length(entry.entries) == 3
+      assert entry.server_total == nil
+      assert entry.total == 3
+      assert entry.exhausted? == true
+      assert archive_ids(view, id) == ["agent-1", "agent-2", "agent-3"]
+      html = render(view)
+      assert html =~ "3 agents"
+      refute html =~ ~s(phx-click="load_more_task_archive")
+    end
+
     test "a retried page is idempotent (no duplicate agent ids)", %{conn: conn} do
       id = insert_fixture!(opts: [archive: true, prompt: "retried page task"])
 
