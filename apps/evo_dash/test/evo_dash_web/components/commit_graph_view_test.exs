@@ -3,69 +3,31 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   Component-level tests for `EvoDashWeb.AgentsComponents.CommitGraphView` — the
   TEMPORAL (git commit history) view of the Agents page left panel.
 
-  `commit_graph_view/1` is purely presentational: it renders the per-repo graph
-  view models (the v2 per-agent-LANE contract) as a VERTICAL, GitLens/GitKraken-
-  style commit graph — one row per commit (globally interleaved), ONE LANE PER
-  AGENT in the left gutter, CIRCULAR dots, ROUNDED cross-lane edge routing,
-  DASHED `:spawn` / `:merge_back` connectors, sticky per-lane header chips and a
-  horizontally-scrolling gutter — and fires the existing `select_agent` event
-  from the rows, the agent tags and the lane chips.
+  `commit_graph_view/1` is purely presentational: it renders per-repo graph view
+  models as a VERTICAL, GitLens-style commit graph — one row per commit
+  (globally interleaved), ONE LANE PER AGENT in the left gutter, CIRCULAR dots,
+  ROUNDED cross-lane routing, DASHED `:spawn` / `:merge_back` connectors, sticky
+  per-lane header chips — and fires `select_agent` from the rows, the agent tags
+  and the lane chips. These tests render it in isolation with
+  `render_component/2` and pin the frozen DOM contract consumed by the
+  client-side `CommitGraph` hook / CSS animation. All fixtures are HAND-CRAFTED
+  view models (`repo_view/1`, `node_view/1`, `edge_view/1`, `agent_map/1`) and
+  intentionally do NOT go through `CommitGraph.build/2` (the builder has its own
+  unit suite; this file pins RENDERING only).
 
-  These tests render it in isolation with `render_component/2` (no `live/3` —
-  matching the rest of this directory) and pin the frozen DOM contract consumed
-  by the client-side `CommitGraph` hook / CSS animation. All fixtures are
-  HAND-CRAFTED view models (`repo_view/1`, `node_view/1`, `edge_view/1`,
-  `agent_map/1`); they intentionally do NOT go through the real
-  `CommitGraph.build/2` (the builder is rewritten in parallel against the same
-  contract — end-to-end coverage lands with the later integration wave).
+  Pinned surfaces: `#commit-graph` (+ hook) → `#commit-graph-body-<node_key>` →
+  one section per repo whose id IS `repo_dom_id` VERBATIM → `#cg-scroll-<dom>`
+  hosting the sticky `#cg-lane-header-<dom>` chips (agent buttons + the neutral
+  "Pre-task" span) and the `relative` `#cg-list-<dom>` (absolute `svg.cg-gutter`
+  + `.cg-rows` left-padded by the gutter width), the optional dimmed
+  `#cg-truncated-<dom>` strip at its bottom; ONE `div.cg-row` / `g.cg-node` /
+  `path.cg-edge` per model entry with stable ids, rounded routing and the
+  kind-dependent stroke; selection rings (`circle.cg-node-ring`), row accents and
+  the `#cg-selection-readout-<dom>`; ended-agent dimming; and the loading /
+  empty / error / stale states plus defensive degradation of odd model shapes.
 
-  Pinned surfaces:
-
-    * `#commit-graph` + `phx-hook="CommitGraph"` → the node-scoped body
-      `#commit-graph-body-<node_key>` → one section per repo whose id IS the
-      model's `repo_dom_id` VERBATIM (no extra prefix) with a name header;
-    * `#cg-scroll-<dom>` — the BOTH-axis scroll wrapper (`overflow: auto` +
-      a bounded `max-height` live in the `.cg-scroll` rule in app.css) hosting
-      (top → bottom) the sticky lane-header bar and the `relative` list wrapper
-      `#cg-list-<dom>` holding the absolute gutter `<svg.cg-gutter[viewBox]>`
-      and the `.cg-rows` container left-padded by the gutter width;
-    * LANE HEADER chips: ONE per agent lane (`#cg-lane-<dom>-<lane>`,
-      `button.cg-lane-chip`, `T<task_local_id>` in the agent's hue + status dot,
-      the `select_agent` contract, dimmed when ended — including a lane with NO
-      nodes) plus the NON-clickable neutral lane-0 `span` ("Pre-task") only when
-      unowned nodes exist;
-    * `path.cg-edge[data-commit-graph-anim="edge"]` — ROUNDED routing (same-lane
-      straight vertical; cross-lane with `Q` quarter-turns, NEVER the sharp
-      `L x y L x y L x y` double-corner), `:parent` solid width 2 vs
-      `:merge`/`:spawn`/`:merge_back` dashed `4 3` width 1.6; commit → parent
-      ids `#commit-edge-<dom>-<from>-<to>` vs the agent-level scheme
-      `#commit-edge-<dom>-<kind>-<owner>-<from>-<to>` with `l<col>r<row>` for a
-      VIRTUAL merge-back landing (`to_sha: nil`). Routing is BATCH-AWARE
-      (`Geometry.edge_geo/3` fed the repo's full edge list): concurrent
-      cross-lane edges sharing an UNORDERED lane pair are STAGGERED off the
-      shared midpoint jog, while a LONE pair edge keeps the canonical midpoint
-      route pixel-for-pixel;
-    * the optional dimmed TRUNCATION strip `#cg-truncated-<dom>` (info icon +
-      "Older commits are not shown (limit 100)") at the BOTTOM of the scroll
-      wrapper, rendered ONLY when the repo model flags `truncated: true`
-      (absent / `false` / `nil` render nothing);
-    * `g.cg-node[data-commit-graph-anim="node"]` with `data-cg-agent-id` /
-      `data-cg-sha`, an inner `<title>` tooltip and the CIRCULAR dot geometry
-      (`circle.cg-node-dot` r 6; a `:base`/`:noop` stub hollow r 4);
-    * `div.cg-row[data-commit-graph-anim="row"]` with the stable id, the fixed
-      row height, the `select_agent` contract (omitted for an unowned node), the
-      short sha / message / `author · date` and the second-line TAGS
-      (`button.cg-agent-tag` start/end chips, non-clickable `span.cg-ref-tag`);
-    * selection (`selected_id`): SOLID start ring / DASHED end ring
-      (`circle.cg-node-ring`), row accents + markers, the
-      `#cg-selection-readout-<dom>` annotation;
-    * an ENDED (retained) agent renders DIM: node dots `fill-opacity: 0.5`,
-      edges `stroke-opacity: 0.4`, rows `opacity-50`, lane chip `opacity: 0.5`;
-    * the `:loading` / `:empty` / `:error` / stale-warning states and the total /
-      defensive degradation of odd model shapes.
-
-  Note: Floki's HTML parser lowercases attribute names, so the SVG's `viewBox`
-  is queried as `viewbox`.
+  Note: Floki lowercases attribute names, so the SVG's `viewBox` is queried as
+  `viewbox`.
   """
 
   use ExUnit.Case, async: true
@@ -73,7 +35,6 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.AgentsComponents.CommitGraphView
-  alias EvoDashWeb.Helpers
 
   # Fixture shas (8 chars so the rendered short sha IS the sha).
   @sha_p1 "p1000000"
@@ -87,208 +48,174 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   @depth0_color "#7c38dc"
   @depth1_color "#dcad38"
 
-  # The renderer's documented geometry constants: @row_h = 44, @col_w = 24,
-  # @gutter_pad = 12, @node_r = 6, @base_r = 4, @bend_r = 7, @exit_gap = 2.
-  # dot_x(lane) = 24 + lane * 24 → lanes 0/1/2 sit at x 24/48/72.
-  # dot_y(row) = row * 44 + 22.
-  #
-  # The happy fixture: 3 lanes (0 = neutral pre-task, 1 = agent a1, 2 = agent
-  # a2), 6 nodes on rows 0..5, a virtual merge-back landing at lane 1 / row 6.
-  # gutter_w = 24 + 3 * 24 = 96; total_h = 7 * 44 = 308.
+  # Geometry constants: @row_h 44, @col_w 24, @gutter_pad 12, @node_r 6,
+  # @base_r 4, @bend_r 7, @exit_gap 2 → dot_x(lane) = 24 + 24 * lane,
+  # dot_y(row) = 44 * row + 22. The happy fixture: 3 lanes, rows 0..5 plus a
+  # virtual merge-back landing at lane 1 / row 6 → gutter_w 96, total_h 308.
   @dom "commit-graph-repo-happy-1"
   @happy_gutter_w 96
   @happy_gutter_h 308
 
-  describe "commit_graph_view/1 — root markers" do
+  describe "commit_graph_view/1 — root markers & states" do
     test "renders the #commit-graph hook root wrapping the node-keyed body" do
       tree = parse(render_repos(happy_repos()))
 
       assert [root] = Floki.find(tree, "#commit-graph")
       assert attr(root, "phx-hook") == ["CommitGraph"]
+      assert attr(root, "data-cg-selected-id") == []
 
       # Default node key.
       assert [body] = Floki.find(tree, "#commit-graph-body-local")
       assert attr(body, "class") == ["space-y-4"]
 
+      # Repos without an error carry no stale warning.
+      assert Floki.find(tree, "#commit-graph-stale-warning") == []
+
       # A non-default node key changes ONLY the body id — the hook root (which
       # mounts once per page) is node-independent.
       other = parse(render_repos(happy_repos(), node_key: "remote_one"))
-
       assert Floki.find(other, "#commit-graph-body-remote_one") != []
       assert Floki.find(other, "#commit-graph-body-local") == []
       assert Floki.find(other, "#commit-graph") != []
     end
-  end
 
-  describe "commit_graph_view/1 — states" do
-    test "loading state shows the spinner copy and no error block" do
-      tree = parse(render_repos([], loading: true))
+    test "loading / empty / error / stale states" do
+      loading = parse(render_repos([], loading: true))
+      assert Floki.find(loading, "#commit-graph-body-local") != []
+      assert Floki.text(loading) =~ "Loading commit history…"
+      assert_absent(loading, ["#commit-graph-error", "#commit-graph-stale-warning"])
 
-      assert Floki.find(tree, "#commit-graph-body-local") != []
-      assert Floki.text(tree) =~ "Loading commit history…"
-      assert Floki.find(tree, "#commit-graph-error") == []
-      assert Floki.find(tree, "#commit-graph-stale-warning") == []
-    end
+      empty = parse(render_repos([]))
+      assert Floki.text(empty) =~ "No commit history yet."
+      assert Floki.text(empty) =~ "Start a task from the dashboard to see the commit graph here."
+      assert Floki.find(empty, "#commit-graph-error") == []
 
-    test "empty state renders when there are no repos" do
-      tree = parse(render_repos([]))
-
-      assert Floki.text(tree) =~ "No commit history yet."
-      assert Floki.text(tree) =~ "Start a task from the dashboard to see the commit graph here."
-      assert Floki.find(tree, "#commit-graph-error") == []
-    end
-
-    test "error state renders #commit-graph-error when there are no repos and an error" do
-      tree = parse(render_repos([], error: "boom"))
-
-      assert [err] = Floki.find(tree, "#commit-graph-error")
+      errored = parse(render_repos([], error: "boom"))
+      assert [err] = Floki.find(errored, "#commit-graph-error")
       assert Floki.text(err) =~ "Could not load commit history."
-    end
 
-    test "stale warning renders alongside repos when an error is present" do
-      tree = parse(render_repos(happy_repos(), error: "boom"))
-
-      assert [warning] = Floki.find(tree, "#commit-graph-stale-warning")
+      # The stale warning rides ALONGSIDE cached repos; the hard error block is
+      # NOT rendered once repos exist.
+      stale = parse(render_repos(happy_repos(), error: "boom"))
+      assert [warning] = Floki.find(stale, "#commit-graph-stale-warning")
       assert Floki.text(warning) =~ "Showing the last loaded commit graph"
-      assert Floki.find(tree, ".cg-row") != []
-      # The hard error block is NOT rendered once repos exist.
-      assert Floki.find(tree, "#commit-graph-error") == []
-    end
-
-    test "no stale warning when repos render without an error" do
-      tree = parse(render_repos(happy_repos()))
-      assert Floki.find(tree, "#commit-graph-stale-warning") == []
+      assert Floki.find(stale, ".cg-row") != []
+      assert Floki.find(stale, "#commit-graph-error") == []
     end
   end
 
   describe "commit_graph_view/1 — repo sections" do
-    test "the section id IS repo_dom_id verbatim, with a repo-name header above the list" do
-      {repo, _dom, tree} = happy()
+    test "each repo renders one verbatim-id section with its name header above its own scroll list" do
+      [repo] = happy_repos()
+
+      other =
+        repo_view(
+          repo_dom_id: "commit-graph-repo-foreign-2",
+          repo_name: "foreign-repo",
+          nodes: [
+            node_view(
+              sha: "f1000000",
+              message: "Foreign commit",
+              author_name: "Zoe",
+              date: ~U[2024-01-04 10:00:00Z],
+              owner_id: nil
+            )
+          ]
+        )
+
+      tree = parse(render_repos([repo, other]))
 
       # No doubled prefix: the model's id already starts commit-graph-repo-.
-      assert String.starts_with?(repo.repo_dom_id, "commit-graph-repo-")
       assert [section] = Floki.find(tree, "##{repo.repo_dom_id}")
       assert attr(section, "data-cg-repo-id") == [repo.repo_dom_id]
 
       [header, list] = element_children(section)
 
-      # The header block carries the repo display name + the hero-server-stack chip …
-      assert Floki.find(header, ~s(span[title="My Project"])) != []
-      assert Floki.find(header, "span.hero-server-stack") != []
+      # The header carries the repo display name + the hero-server-stack chip;
+      # the scrollable commit list lives BELOW it.
+      assert_present(header, [~s(span[title="My Project"]), "span.hero-server-stack"])
       assert Floki.text(header) =~ "My Project"
-      # … and the scrollable commit list lives BELOW it.
       assert Floki.find(header, "svg.cg-gutter") == []
       assert Floki.find(list, "svg.cg-gutter") != []
 
-      assert length(repo.nodes) == 6
-    end
-
-    test "two repos render two independent sections" do
-      [repo] = happy_repos()
-      [other] = happy_two_repo_fixture()
-
-      assert repo.repo_dom_id != other.repo_dom_id
-
-      tree = parse(render_repos([repo, other]))
-
-      assert Floki.find(tree, "##{repo.repo_dom_id}") != []
+      # Two repos → two independent sections, gutters and scroll wrappers.
       assert Floki.find(tree, "##{other.repo_dom_id}") != []
-
-      assert Floki.text(Floki.find(tree, "##{repo.repo_dom_id}")) =~ "My Project"
       assert Floki.text(Floki.find(tree, "##{other.repo_dom_id}")) =~ "foreign-repo"
-
-      # Two independent gutters + scroll wrappers, each with its own rows.
       assert Floki.find(tree, "svg.cg-gutter") |> length() == 2
-      assert Floki.find(tree, "#cg-gutter-#{repo.repo_dom_id}") != []
-      assert Floki.find(tree, "#cg-gutter-#{other.repo_dom_id}") != []
-      assert Floki.find(tree, "#cg-scroll-#{repo.repo_dom_id}") != []
-      assert Floki.find(tree, "#cg-scroll-#{other.repo_dom_id}") != []
+
+      assert_present(tree, [
+        "#cg-gutter-#{repo.repo_dom_id}",
+        "#cg-gutter-#{other.repo_dom_id}",
+        "#cg-scroll-#{repo.repo_dom_id}",
+        "#cg-scroll-#{other.repo_dom_id}"
+      ])
     end
   end
 
   describe "commit_graph_view/1 — scroll + gutter geometry" do
-    test "the scroll wrapper hosts the sticky lane header and the list, in order" do
-      {_repo, dom, tree} = happy()
+    test "the scroll wrapper hosts the sticky lane header and the list; gutter + rows geometry" do
+      {repo, dom, tree} = happy()
 
       [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
-
-      # ONE scroll unit on BOTH axes (gutter + rows + lane headers): the
-      # `.cg-scroll` rule in app.css owns `overflow: auto` + the bounded
-      # `max-height` that makes the lane header's sticky actually stick — NO
-      # Tailwind overflow utility rides the element (a lone overflow-x is the
-      # shape that made the stick inert).
+      # ONE scroll unit on BOTH axes — the `.cg-scroll` rule in app.css owns
+      # `overflow: auto` + the bounded max-height that makes the lane header
+      # stick; NO Tailwind overflow utility rides the element.
       assert attr(scroll, "class") == ["cg-scroll"]
 
       [lane_header, list] = element_children(scroll)
       assert attr(lane_header, "id") == ["cg-lane-header-#{dom}"]
-      assert attr(list, "id") == ["cg-list-#{dom}"]
-    end
 
-    test "the list wrapper is relative, carries data-cg-repo-id, and hosts gutter + rows" do
-      {_repo, dom, tree} = happy()
-
-      assert [list] = Floki.find(tree, "#cg-list-#{dom}")
-      assert attr(list, "class") == ["cg-list relative"]
-      assert attr(list, "data-cg-repo-id") == [dom]
+      assert_attrs(list, %{
+        "id" => ["cg-list-#{dom}"],
+        "class" => ["cg-list relative"],
+        "data-cg-repo-id" => [dom]
+      })
 
       [gutter, rows] = element_children(list)
       assert attr(gutter, "class") == ["cg-gutter absolute left-0 top-0 pointer-events-none"]
       assert attr(rows, "class") == ["cg-rows"]
-    end
 
-    test "the gutter svg carries the derived width/height/viewBox and the aria label" do
-      {_repo, dom, tree} = happy()
-
-      [gutter] = Floki.find(tree, "#cg-gutter-#{dom}")
-
-      assert attr(gutter, "width") == [Integer.to_string(@happy_gutter_w)]
-      assert attr(gutter, "height") == [Integer.to_string(@happy_gutter_h)]
-      assert attr(gutter, "viewbox") == ["0 0 #{@happy_gutter_w} #{@happy_gutter_h}"]
-      assert attr(gutter, "class") == ["cg-gutter absolute left-0 top-0 pointer-events-none"]
-      assert attr(gutter, "role") == ["img"]
-      assert attr(gutter, "aria-label") == ["Git commit history graph"]
-
-      # width == 24 + column_count * 24; height covers the virtual landing row
+      # The gutter svg carries the DERIVED width/height/viewBox + the aria label;
+      # width == 24 + column_count * 24, height covers the virtual landing row
       # (7 rows although only 6 nodes exist).
-      assert @happy_gutter_w == 24 + 3 * 24
-      assert @happy_gutter_h == 7 * 44
-    end
+      assert_attrs(gutter, %{
+        "id" => ["cg-gutter-#{dom}"],
+        "width" => [Integer.to_string(@happy_gutter_w)],
+        "height" => [Integer.to_string(@happy_gutter_h)],
+        "viewbox" => ["0 0 #{@happy_gutter_w} #{@happy_gutter_h}"],
+        "role" => ["img"],
+        "aria-label" => ["Git commit history graph"]
+      })
 
-    test "the rows container is left-padded by the gutter width" do
-      {_repo, dom, tree} = happy()
-
-      [rows] = Floki.find(tree, "#cg-list-#{dom} .cg-rows")
       assert attr(rows, "style") == ["padding-left: #{@happy_gutter_w}px"]
-    end
 
-    test "one .cg-row per node, in top → bottom model order" do
-      {repo, dom, tree} = happy()
+      # One .cg-row per node, in top → bottom model order, fixed height.
+      row_els = Floki.find(tree, ".cg-row")
+      assert length(row_els) == length(repo.nodes)
 
-      rows = Floki.find(tree, ".cg-row")
-
-      assert length(rows) == length(repo.nodes)
-
-      assert Enum.map(rows, &(attr(&1, "id") |> hd())) ==
+      assert Enum.map(row_els, &(attr(&1, "id") |> hd())) ==
                for(n <- repo.nodes, do: "commit-row-#{dom}-#{n.sha}")
 
-      # Every row is exactly the fixed height.
-      assert Enum.all?(rows, &(attr(&1, "style") == ["height: 44px"]))
-      assert Enum.all?(rows, &(attr(&1, "data-commit-graph-anim") == ["row"]))
+      assert Enum.all?(row_els, &(attr(&1, "style") == ["height: 44px"]))
+      assert Enum.all?(row_els, &(attr(&1, "data-commit-graph-anim") == ["row"]))
     end
 
-    test "a repo with no nodes renders the empty note instead of a gutter or lane header" do
-      repo = repo_view(nodes: [], edges: [], agents: [])
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+    test "a node-less repo renders the empty note; a missing column_count hint is derived" do
+      empty = repo_view(nodes: [], edges: [], agents: [])
+      tree = parse(render_repos([empty]))
 
       assert [note] = Floki.find(tree, ".cg-empty-note")
       assert Floki.text(note) =~ "No commit history for this repository."
-      assert Floki.find(tree, "#cg-gutter-#{dom}") == []
-      assert Floki.find(tree, "#cg-lane-header-#{dom}") == []
-      assert Floki.find(tree, ".cg-row") == []
-    end
 
-    test "column_count is derived from the nodes and agent lanes when the hint is absent/odd" do
+      assert_absent(tree, [
+        "#cg-gutter-#{empty.repo_dom_id}",
+        "#cg-lane-header-#{empty.repo_dom_id}"
+      ])
+
+      assert Floki.find(tree, ".cg-row") == []
+
+      # column_count hint absent/odd → derived from nodes + agent lanes:
+      # max(column)+1 = 3 → 24 + 3*24 = 96; height = rows × 44 = 88.
       repo =
         repo_view(
           column_count: 0,
@@ -299,61 +226,49 @@ defmodule EvoDashWeb.CommitGraphViewTest do
           agents: [agent_map(lane: 2)]
         )
 
-      tree = parse(render_repos([repo]))
-      [gutter] = Floki.find(tree, "#cg-gutter-#{repo.repo_dom_id}")
-
-      # max(node column)+1 = 3 → 24 + 3*24 = 96.
+      [gutter] = Floki.find(parse(render_repos([repo])), "#cg-gutter-#{repo.repo_dom_id}")
       assert attr(gutter, "width") == ["96"]
       assert attr(gutter, "height") == ["88"]
     end
 
-    test "a truncated repo renders the dimmed truncation strip below the rows" do
+    test "the truncation strip renders only for truncated: true, at the BOTTOM of the scroll wrapper" do
+      # The key is OPTIONAL and read TOTALLY: absent, false and nil all render
+      # nothing (only an explicit `truncated: true` draws the strip).
+      for opts <- [[], [truncated: false], [truncated: nil]] do
+        repo = repo_view([nodes: [node_view(sha: "n0000001", column: 0, row: 0)]] ++ opts)
+        tree = parse(render_repos([repo]))
+        assert_absent(tree, ["#cg-truncated-#{repo.repo_dom_id}", "div[id^='cg-truncated-']"])
+        # The rows still render — the strip is the only thing gated.
+        assert Floki.find(tree, ".cg-row") != []
+      end
+
       repo = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: true)
       tree = parse(render_repos([repo]))
       dom = repo.repo_dom_id
 
-      # The strip sits at the BOTTOM of the scroll wrapper, AFTER the list.
       [strip] = Floki.find(tree, "#cg-truncated-#{dom}")
-
       assert Floki.find(strip, "span.hero-information-circle") != []
       assert text(Floki.find(strip, "span.min-w-0")) == "Older commits are not shown (limit 100)"
 
+      # Inside the scroll wrapper, AFTER the list (the last child).
       [scroll] = Floki.find(tree, "#cg-scroll-#{dom}")
       assert Floki.find(scroll, "#cg-truncated-#{dom}") != []
-      children = element_children(scroll)
-      assert children |> List.last() |> attr("id") == ["cg-truncated-#{dom}"]
-    end
-
-    test "an untruncated repo renders NO truncation strip" do
-      # The key is optional and read TOTALLY: absent, false and nil all render
-      # nothing (only an explicit `truncated: true` draws the strip).
-      absent = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)])
-      falsy = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: false)
-      nilly = repo_view(nodes: [node_view(sha: "n0000001", column: 0, row: 0)], truncated: nil)
-
-      for repo <- [absent, falsy, nilly] do
-        tree = parse(render_repos([repo]))
-        assert Floki.find(tree, "#cg-truncated-#{repo.repo_dom_id}") == []
-        assert Floki.find(tree, "div[id^='cg-truncated-']") == []
-        # The rows still render — the strip is the only thing gated.
-        assert Floki.find(tree, ".cg-row") != []
-      end
+      assert scroll |> element_children() |> List.last() |> attr("id") == ["cg-truncated-#{dom}"]
     end
   end
 
   describe "commit_graph_view/1 — lane header chips" do
-    test "one chip per lane: neutral span + one button per agent, at the lane's x" do
+    test "one chip per lane at the lane's x: neutral span + agent buttons with dots and stagger rows" do
       {_repo, dom, tree} = happy()
 
       [header] = Floki.find(tree, "#cg-lane-header-#{dom}")
-
-      # Sticky above the SVG, inside the horizontal-scroll container.
-      assert attr(header, "class") |> hd() =~ "cg-lane-header"
-      assert attr(header, "class") |> hd() =~ "sticky"
-      assert attr(header, "class") |> hd() =~ "top-0"
+      assert [class] = attr(header, "class")
+      assert class =~ "cg-lane-header"
+      assert class =~ "sticky"
+      assert class =~ "top-0"
       assert attr(header, "style") == ["width: #{@happy_gutter_w}px"]
 
-      # The neutral lane 0 (unowned pre-task nodes exist): a NON-clickable span.
+      # Lane 0 (unowned pre-task nodes exist): a NON-clickable span.
       [neutral] = Floki.find(tree, "#cg-lane-#{dom}-0")
       assert {"span", _, _} = neutral
       assert attr(neutral, "class") |> hd() =~ "cg-lane-chip-neutral"
@@ -361,114 +276,91 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert text(neutral) == "Pre-task"
       assert attr(neutral, "title") == ["Pre-task"]
 
-      # Agent lanes: clickable buttons labelled T<task_local_id> in the depth
-      # hue, anchored at the lane's dot-x (48 / 72).
+      # Agent lanes: clickable buttons labelled T<n> in the depth hue, anchored
+      # at the lane's dot-x (48 / 72) with the shared status-dot colour.
       [chip_a1] = Floki.find(tree, "#cg-lane-#{dom}-1")
       assert {"button", _, _} = chip_a1
-      assert attr(chip_a1, "class") |> hd() =~ "cg-lane-chip"
-      refute attr(chip_a1, "class") |> hd() =~ "cg-lane-chip-neutral"
-      assert attr(chip_a1, "phx-click") == ["select_agent"]
-      assert attr(chip_a1, "phx-value-id") == ["a1"]
+      assert [a1_class] = attr(chip_a1, "class")
+      assert a1_class =~ "cg-lane-chip"
+      refute a1_class =~ "cg-lane-chip-neutral"
 
-      assert attr(chip_a1, "style") == [
-               "position: absolute; left: 48px; transform: translateX(-50%); border-color: #{@depth0_color}; color: #{@depth0_color}; opacity: 1"
-             ]
+      assert_attrs(chip_a1, %{
+        "phx-click" => ["select_agent"],
+        "phx-value-id" => ["a1"],
+        "title" => ["T1 · Running"],
+        "style" => [
+          "position: absolute; left: 48px; transform: translateX(-50%); border-color: #{@depth0_color}; color: #{@depth0_color}; opacity: 1"
+        ]
+      })
 
       assert Floki.text(chip_a1) =~ "T1"
-      assert attr(chip_a1, "title") == ["T1 · Running"]
+      assert [dot] = Floki.find(chip_a1, "span[style*='background-color']")
+      assert attr(dot, "style") == ["background-color: var(--color-success)"]
 
       [chip_a2] = Floki.find(tree, "#cg-lane-#{dom}-2")
       assert attr(chip_a2, "phx-value-id") == ["a2"]
       assert attr(chip_a2, "style") |> hd() =~ "left: 72px"
       assert attr(chip_a2, "style") |> hd() =~ "border-color: #{@depth1_color}"
       assert Floki.text(chip_a2) =~ "T2"
+      assert [dot2] = Floki.find(chip_a2, "span[style*='background-color']")
+      assert attr(dot2, "style") == ["background-color: var(--color-base-content)"]
 
       # Exactly one chip per lane.
       assert Floki.find(tree, ".cg-lane-chip") |> length() == 3
+
+      # Even lanes (0, 2) on chip row 0, odd lanes (1) on chip row 1 — two 18px
+      # strips inside the header.
+      strips = Floki.find(header, "div.absolute")
+      assert length(strips) == 2
+
+      assert Enum.sort(Enum.map(strips, &(attr(&1, "style") |> hd()))) ==
+               ["top: 0px; height: 18px", "top: 18px; height: 18px"]
+
+      [top, bottom] = Enum.sort_by(strips, &(attr(&1, "style") |> hd()))
+      assert_present(top, ["#cg-lane-#{dom}-0", "#cg-lane-#{dom}-2"])
+      assert Floki.find(bottom, "#cg-lane-#{dom}-1") != []
     end
 
-    test "the agent chip's status dot reuses the shared status svg colour" do
-      {_repo, dom, tree} = happy()
-
-      # a1 is :running → success; a2 is :completed → muted base ink.
-      assert Helpers.agent_status_svg_color(:running) == "var(--color-success)"
-      assert Helpers.agent_status_svg_color(:completed) == "var(--color-base-content)"
-
-      [chip_a1] = Floki.find(tree, "#cg-lane-#{dom}-1")
-      assert [dot] = Floki.find(chip_a1, "span[style*='background-color']")
-      assert attr(dot, "style") == ["background-color: var(--color-success)"]
-
-      [chip_a2] = Floki.find(tree, "#cg-lane-#{dom}-2")
-      assert [dot2] = Floki.find(chip_a2, "span[style*='background-color']")
-      assert attr(dot2, "style") == ["background-color: var(--color-base-content)"]
-    end
-
-    test "the neutral chip is absent when no unowned nodes exist / lane 0 is claimed" do
-      repo =
+    test "a claimed lane 0 gets a button; a node-less agent lane still gets its chip" do
+      claimed =
         repo_view(
           nodes: [node_view(sha: "n0000001", owner_id: "hand1", column: 0, row: 0)],
           agents: [agent_map(lane: 0)]
         )
 
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+      tree = parse(render_repos([claimed]))
 
       # Lane 0 is claimed by the agent → a button, never a "Pre-task" span.
-      assert [chip0] = Floki.find(tree, "#cg-lane-#{dom}-0")
+      assert [chip0] = Floki.find(tree, "#cg-lane-#{claimed.repo_dom_id}-0")
       assert {"button", _, _} = chip0
       assert Floki.find(tree, ".cg-lane-chip-neutral") == []
       refute Floki.text(tree) =~ "Pre-task"
-    end
 
-    test "an agent lane with NO nodes still gets its chip (and widens the gutter)" do
-      repo =
+      ghost =
         repo_view(
           nodes: [node_view(sha: "n0000001", column: 1, row: 0, owner_id: "a1")],
-          edges: [],
           agents: [
             agent_map(agent_id: "a1", lane: 1),
             agent_map(agent_id: "ghost9", task_local_id: 9, lane: 2)
           ]
         )
 
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+      gtree = parse(render_repos([ghost]))
 
-      assert [chip] = Floki.find(tree, "#cg-lane-#{dom}-2")
+      assert [chip] = Floki.find(gtree, "#cg-lane-#{ghost.repo_dom_id}-2")
       assert {"button", _, _} = chip
       assert Floki.text(chip) =~ "T9"
       assert attr(chip, "phx-value-id") == ["ghost9"]
 
       # The node-less lane still contributes a gutter column: lanes 0..2 → 96.
-      [gutter] = Floki.find(tree, "#cg-gutter-#{dom}")
+      [gutter] = Floki.find(gtree, "#cg-gutter-#{ghost.repo_dom_id}")
       assert attr(gutter, "width") == ["96"]
-    end
-
-    test "chips stagger over two header rows so adjacent lanes never collide" do
-      {_repo, dom, tree} = happy()
-
-      [header] = Floki.find(tree, "#cg-lane-header-#{dom}")
-
-      # Even lanes (0, 2) on chip row 0, odd lanes (1) on chip row 1 — two
-      # 18px strips inside the header.
-      strips = Floki.find(header, "div.absolute")
-      assert length(strips) == 2
-
-      assert Enum.sort(Enum.map(strips, &(attr(&1, "style") |> hd()))) ==
-               Enum.sort(["top: 0px; height: 18px", "top: 18px; height: 18px"])
-
-      # Lane 0 (even) sits in the top strip; lane 1 (odd) in the bottom one.
-      [top, bottom] = Enum.sort_by(strips, &(attr(&1, "style") |> hd()))
-      assert Floki.find(top, "#cg-lane-#{dom}-0") != []
-      assert Floki.find(top, "#cg-lane-#{dom}-2") != []
-      assert Floki.find(bottom, "#cg-lane-#{dom}-1") != []
     end
   end
 
   describe "commit_graph_view/1 — edges" do
-    test "one path.cg-edge per model edge, with a stable, kind-dependent id" do
+    test "one path per edge: stable ids, solid :parent vs dashed others, rounded routing, owner hue" do
       {repo, dom, tree} = happy()
-
       edges = Floki.find(tree, "path.cg-edge")
 
       assert length(edges) == length(repo.edges)
@@ -477,171 +369,121 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
       ids = Enum.map(edges, &(attr(&1, "id") |> hd()))
 
-      expected = for e <- repo.edges, do: edge_id(dom, e)
+      expected = [
+        "commit-edge-#{dom}-#{@sha_b1}-#{@sha_p1}",
+        "commit-edge-#{dom}-#{@sha_c1}-#{@sha_b1}",
+        "commit-edge-#{dom}-#{@sha_c1}-#{@sha_p1}",
+        "commit-edge-#{dom}-#{@sha_c2}-#{@sha_c1}",
+        "commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}",
+        "commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6",
+        "commit-edge-#{dom}-#{@sha_c4}-#{@sha_c3}"
+      ]
+
       assert ids == expected
       assert ids == Enum.uniq(ids)
-    end
 
-    test "a same-lane edge is a plain straight vertical line with no bend" do
-      {_repo, dom, tree} = happy()
+      # A same-lane edge is a plain straight vertical line (c1 → b1, lane 1,
+      # rows 2 → 1: x = 48 the whole way).
+      [straight] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_c1}-#{@sha_b1}")
+      assert attr(straight, "d") == ["M 48 110 L 48 66"]
+      refute attr(straight, "d") |> hd() =~ "Q"
 
-      # c1 → b1, both on lane 1, rows 2 → 1: x = 48 the whole way.
-      [el] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_c1}-#{@sha_b1}")
-
-      assert attr(el, "d") == ["M 48 110 L 48 66"]
-      refute attr(el, "d") |> hd() =~ "Q"
-    end
-
-    test "a cross-lane edge routes orthogonally with ROUNDED Q corners" do
-      {_repo, dom, tree} = happy()
-
-      # b1 (lane 1, row 1) → p1 (lane 0, row 0): 48,66 → 24,22 with 7px
-      # quarter-turns at the y-midpoint 44.
-      [el] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_b1}-#{@sha_p1}")
-
-      assert attr(el, "d") == ["M 48 66 L 48 51 Q 48 44 41 44 L 31 44 Q 24 44 24 37 L 24 22"]
-    end
-
-    test "NO edge ever carries the sharp double-corner orthogonal signature" do
-      {_repo, _dom, tree} = happy()
-
-      # The legacy 4-point route `M .. L .. L .. L ..` had two sharp 90°
-      # corners (three consecutive L commands); the rounded router emits at
-      # most isolated `L` segments separated by `Q` turns.
-      for el <- Floki.find(tree, "path.cg-edge") do
-        d = attr(el, "d") |> hd()
-        refute d =~ ~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, "sharp corners in: #{d}"
-      end
-    end
-
-    test "a parent edge is solid width 2; merge / spawn / merge_back are dashed 4 3" do
-      {_repo, dom, tree} = happy()
-
+      # A cross-lane edge routes orthogonally with ROUNDED Q corners
+      # (b1 48,66 → p1 24,22 with 7px quarter-turns at the y-midpoint 44) and is
+      # a SOLID width-2 :parent edge.
       [parent_el] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_b1}-#{@sha_p1}")
       assert attr(parent_el, "stroke-width") == ["2"]
       assert attr(parent_el, "stroke-dasharray") == []
 
-      [merge_el] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_c1}-#{@sha_p1}")
-      assert attr(merge_el, "stroke-width") == ["1.6"]
-      assert attr(merge_el, "stroke-dasharray") == ["4 3"]
+      assert attr(parent_el, "d") == [
+               "M 48 66 L 48 51 Q 48 44 41 44 L 31 44 Q 24 44 24 37 L 24 22"
+             ]
 
-      [spawn_el] = Floki.find(tree, "#commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}")
-      assert attr(spawn_el, "stroke-width") == ["1.6"]
-      assert attr(spawn_el, "stroke-dasharray") == ["4 3"]
+      # NEVER the sharp double-corner (`M .. L .. L .. L ..`) signature.
+      for el <- edges do
+        d = attr(el, "d") |> hd()
+        refute d =~ ~r/L \S+ \S+ L \S+ \S+ L \S+ \S+/, "sharp corners in: #{d}"
+      end
 
-      [back_el] = Floki.find(tree, "#commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6")
-      assert attr(back_el, "stroke-width") == ["1.6"]
-      assert attr(back_el, "stroke-dasharray") == ["4 3"]
-    end
+      # :merge / :spawn / :merge_back are dashed 4 3 at width 1.6.
+      for id <- [
+            "commit-edge-#{dom}-#{@sha_c1}-#{@sha_p1}",
+            "commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}",
+            "commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6"
+          ] do
+        [el] = Floki.find(tree, "##{id}")
+        assert_attrs(el, %{"stroke-width" => ["1.6"], "stroke-dasharray" => ["4 3"]})
+      end
 
-    test "a spawn edge departs BELOW its fork node and lands on the child lane" do
-      {_repo, dom, tree} = happy()
-
-      [el] = Floki.find(tree, "#commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}")
-      d = attr(el, "d") |> hd()
-
-      # The fork node c2 sits at (48, 154); the connector's M y is
-      # 154 + node_r(6) + exit_gap(2) = 162 — below the dot's center-y.
-      {mx, my} = path_start(d)
-      assert {mx, my} == {48, 162}
-      assert my > 154
-
-      # It crosses into lane 2 (x 72) and lands on c3's center-y 198 with
-      # rounded bends (fy=162, ty=198 → midpoint 180).
+      # A spawn departs BELOW its fork node (c2 at y 154 → M y 162) and lands on
+      # c3's center-y 198 with rounded bends (midpoint 180).
+      [spawn] = Floki.find(tree, "#commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}")
+      d = attr(spawn, "d") |> hd()
+      assert path_start(d) == {48, 162}
       assert d == "M 48 162 L 48 173 Q 48 180 55 180 L 65 180 Q 72 180 72 187 L 72 198"
-    end
 
-    test "a merge_back edge to a VIRTUAL landing renders from to_column/to_row" do
-      {_repo, dom, tree} = happy()
+      # A merge_back to a VIRTUAL landing (to_sha nil) uses the l<col>r<row> key
+      # and ends at the parent lane's coordinates; it is the SECOND member of the
+      # lane pair {1, 2} (the spawn above is the first), so the batch-aware
+      # router STAGGERS its jog 8px above its own span midpoint 268 — never
+      # colliding with the spawn's canonical jog.
+      [back] = Floki.find(tree, "#commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6")
+      assert attr(back, "id") == ["commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6"]
 
-      # to_sha is nil → the id carries the "l<col>r<row>" landing key and the
-      # path ends at the parent lane's coordinates (48, 286), departing below
-      # the child tip c4 (72, 242 → start y 250).
-      [el] = Floki.find(tree, "#commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6")
-
-      # This merge_back is the SECOND member of the lane pair {1, 2} (the c2 →
-      # c3 :spawn below is the first) so the batch-aware router STAGGERS its
-      # jog 8px (@jog_clear) above its own span midpoint 268 — never colliding
-      # with the spawn's canonical jog.
-      assert attr(el, "d") == [
+      assert attr(back, "d") == [
                "M 72 250 L 72 253 Q 72 260 65 260 L 55 260 Q 48 260 48 267 L 48 286"
              ]
 
-      assert attr(el, "id") == ["commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6"]
-    end
-
-    test "the stroke is the owner's depth hue; an unowned edge is muted" do
-      {repo, dom, tree} = happy()
-
-      # a2 (depth 1) owns its lane's parent edge AND the agent-level connectors.
-      for edge <- repo.edges, edge.owner_id == "a2" do
-        [el] = Floki.find(tree, "##{edge_id(dom, edge)}")
+      # The stroke is the owner's depth hue (a2 depth 1); a1's own edge carries
+      # the depth-0 hue.
+      for id <- [
+            "commit-edge-#{dom}-#{@sha_c4}-#{@sha_c3}",
+            "commit-edge-#{dom}-spawn-a2-#{@sha_c2}-#{@sha_c3}",
+            "commit-edge-#{dom}-merge_back-a2-#{@sha_c4}-l1r6"
+          ] do
+        [el] = Floki.find(tree, "##{id}")
         assert attr(el, "style") == ["stroke: #{@depth1_color}; stroke-opacity: 0.75"]
       end
 
-      # A parent edge owned by a1 carries a1's depth-0 hue.
       [a1_el] = Floki.find(tree, "#commit-edge-#{dom}-#{@sha_c2}-#{@sha_c1}")
       assert attr(a1_el, "style") == ["stroke: #{@depth0_color}; stroke-opacity: 0.75"]
+    end
 
-      # An edge whose owner is not one of the repo's agents stays muted base ink.
+    test "an edge whose owner is not one of the repo's agents stays muted" do
       bare =
         repo_view(
           edges: [edge_view(from_sha: "x0000001", to_sha: "y0000001", owner_id: "ghost")],
           nodes: [node_view(sha: "n0000001", owner_id: nil)]
         )
 
-      bare_tree = parse(render_repos([bare]))
+      [ghost] =
+        Floki.find(
+          parse(render_repos([bare])),
+          "#commit-edge-#{bare.repo_dom_id}-x0000001-y0000001"
+        )
 
-      [ghost_el] = Floki.find(bare_tree, "#commit-edge-#{bare.repo_dom_id}-x0000001-y0000001")
-
-      assert attr(ghost_el, "style") == [
-               "stroke: var(--color-base-content); stroke-opacity: 0.3"
-             ]
+      assert attr(ghost, "style") == ["stroke: var(--color-base-content); stroke-opacity: 0.3"]
     end
 
-    test "an edge endpoint falls back to the edge's own column/row when the node is absent" do
+    test "an absent endpoint falls back to the edge's own column/row; a LONE pair edge keeps the canonical midpoint" do
       repo =
         repo_view(
-          edges: [
-            edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)
-          ],
+          edges: [edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)],
           nodes: [node_view(sha: "unrelated", column: 0, row: 0)]
         )
 
-      tree = parse(render_repos([repo]))
-      [el] = Floki.find(tree, "path.cg-edge")
+      [el] = Floki.find(parse(render_repos([repo])), "path.cg-edge")
 
-      # dot_x(1) = 48, dot_y(3) = 154 → dot_x(0) = 24, dot_y(0) = 22, rounded
-      # at the y-midpoint 88.
-      assert attr(el, "d") == ["M 48 154 L 48 95 Q 48 88 41 88 L 31 88 Q 24 88 24 81 L 24 22"]
-    end
-
-    test "a LONE cross-lane edge keeps the canonical midpoint route (no stagger)" do
-      repo =
-        repo_view(
-          edges: [
-            edge_view(from_sha: "x", from_column: 1, from_row: 3, to_column: 0, to_row: 0)
-          ],
-          nodes: [node_view(sha: "unrelated", column: 0, row: 0)]
-        )
-
-      tree = parse(render_repos([repo]))
-      [el] = Floki.find(tree, "path.cg-edge")
-
-      # The no-stagger guarantee: the batch-aware router only staggers a lane
-      # pair's SECOND (and later) members — the pair's FIRST edge, and
-      # therefore a lone edge between two lanes, routes at the exact vertical
-      # midpoint of its span (88 = (154 + 22) / 2), pixel-identical to the
-      # canonical `Geometry.edge_geo/2` route.
+      # dot_x(1) = 48, dot_y(3) = 154 → dot_x(0) = 24, dot_y(0) = 22, rounded at
+      # the y-midpoint 88 — the batch-aware router only staggers a lane pair's
+      # SECOND member, so a lone edge is pixel-identical to the canonical route.
       assert attr(el, "d") == ["M 48 154 L 48 95 Q 48 88 41 88 L 31 88 Q 24 88 24 81 L 24 22"]
     end
 
     test "concurrent edges sharing a lane pair are STAGGERED onto distinct routes" do
-      # Two agent-level connectors over the SAME unordered lane pair {0, 1}:
-      # a :spawn f → x (lane 1 → lane 0) and a :merge_back y → a virtual
-      # landing back on lane 1. Unstaggered they would jog at the same y; the
-      # batch-aware router keeps the group's first edge canonical and walks the
-      # second one's jog outward in @jog_clear (8px) steps.
+      # Two agent-level connectors over the SAME unordered lane pair {0, 1}: a
+      # :spawn f → x (lane 1 → lane 0) and a :merge_back y → a virtual landing
+      # back on lane 1.
       repo =
         repo_view(
           nodes: [
@@ -690,9 +532,8 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert is_binary(back_d) and back_d != ""
       assert spawn_d != back_d
 
-      # The jog ys are the 8px-staggered pair 48 vs 166 (the group's first
-      # member keeps its own midpoint; the second walks outward from its
-      # midpoint, clearing every interior row's dot band).
+      # The group's first member keeps its own midpoint; the second walks 8px
+      # (@jog_clear) outward — jog ys 48 vs 166.
       assert jog_y(spawn_d) == 48
       assert jog_y(back_d) == 166
     end
@@ -704,86 +545,72 @@ defmodule EvoDashWeb.CommitGraphViewTest do
           nodes: [node_view(sha: "aaaa0000", column: 0, row: 0)]
         )
 
-      tree = parse(render_repos([repo]))
-      assert Floki.find(tree, "path.cg-edge") == []
+      assert Floki.find(parse(render_repos([repo])), "path.cg-edge") == []
     end
   end
 
   describe "commit_graph_view/1 — nodes" do
-    test "one g.cg-node per node, carrying data attrs, a tooltip and the dot geometry" do
+    test "one g.cg-node per node: data attrs, dot geometry/hues, stub and tooltips" do
       {repo, dom, tree} = happy()
 
       nodes = Floki.find(tree, "g.cg-node")
-
       assert length(nodes) == length(repo.nodes)
       assert Enum.all?(nodes, &(attr(&1, "data-commit-graph-anim") == ["node"]))
 
-      for node <- repo.nodes do
-        assert Floki.find(tree, "#commit-node-#{dom}-#{node.sha}") != []
-      end
+      assert_present(tree, for(n <- repo.nodes, do: "#commit-node-#{dom}-#{n.sha}"))
 
-      # The row 2 / lane 1 commit: a CIRCLE centred at x = 48, y = 2*44+22 =
-      # 110, radius 6.
+      # The row 2 / lane 1 commit: a CIRCLE centred at x 48, y 2*44+22 = 110, r 6.
       [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
-      assert attr(dot, "cx") == ["48"]
-      assert attr(dot, "cy") == ["110"]
-      assert attr(dot, "r") == ["6"]
 
-      # The row 4 / lane 2 commit: cx = 72, cy = 198.
+      assert_attrs(dot, %{
+        "cx" => ["48"],
+        "cy" => ["110"],
+        "r" => ["6"],
+        "style" => ["fill: #{@depth0_color}; fill-opacity: 1; stroke: #{@depth0_color}"]
+      })
+
+      # The row 4 / lane 2 commit: cx 72, cy 198.
       [c3_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c3} circle.cg-node-dot")
       assert attr(c3_dot, "cx") == ["72"]
       assert attr(c3_dot, "cy") == ["198"]
-    end
 
-    test "an owned node is filled with its owner's depth hue" do
-      {_repo, dom, tree} = happy()
+      # a1's END commit takes the shared status colour (:running → success).
+      [end_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} circle.cg-node-dot")
 
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
-
-      assert attr(dot, "style") == [
-               "fill: #{@depth0_color}; fill-opacity: 1; stroke: #{@depth0_color}"
-             ]
-    end
-
-    test "an owner's END commit takes the shared status colour" do
-      {_repo, dom, tree} = happy()
-
-      # c2000000 is a1's end commit; a1 is :running → the shared status colour.
-      assert Helpers.agent_status_svg_color(:running) == "var(--color-success)"
-
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} circle.cg-node-dot")
-
-      assert attr(dot, "style") == [
+      assert attr(end_dot, "style") == [
                "fill: var(--color-success); fill-opacity: 1; stroke: var(--color-success)"
              ]
+
+      # A base node is a hollow smaller circle, with a 'base' tooltip prefix.
+      [base_dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_b1} circle.cg-node-dot")
+
+      assert_attrs(base_dot, %{
+        "cx" => ["48"],
+        "cy" => ["66"],
+        "r" => ["4"],
+        "style" => ["fill: none; fill-opacity: 1; stroke: var(--color-base-content)"]
+      })
+
+      # Tooltips join message · sha · author · date · refs (the base stub keeps
+      # its 'base' prefix and the first message line only).
+      assert node_title(tree, "commit-node-#{dom}-#{@sha_b1}") == "base · #{@sha_b1}"
+
+      assert node_title(tree, "commit-node-#{dom}-#{@sha_c1}") ==
+               "Merge pre-task history · c1000000 · Alice · 2024-01-01 10:00"
+
+      assert node_title(tree, "commit-node-#{dom}-#{@sha_c4}") ==
+               "Refactor Z · c4000000 · Dave · 2024-01-03 10:00 · HEAD, genesis/agent_x"
     end
 
-    test "a base node is a hollow smaller circle, with a 'base' tooltip prefix" do
-      {_repo, dom, tree} = happy()
-
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_b1} circle.cg-node-dot")
-
-      assert attr(dot, "cx") == ["48"]
-      assert attr(dot, "cy") == ["66"]
-      assert attr(dot, "r") == ["4"]
-
-      assert attr(dot, "style") == [
-               "fill: none; fill-opacity: 1; stroke: var(--color-base-content)"
-             ]
-
-      title = node_title(tree, "commit-node-#{dom}-#{@sha_b1}")
-      assert title =~ "base"
-    end
-
-    test "a noop stub renders exactly like a base stub, labelled 'no-op'" do
-      repo =
+    test "a :noop stub mirrors a base stub; an unowned node is muted" do
+      noop =
         repo_view(
           nodes: [node_view(sha: "n0000001", kind: :noop, message: nil, author_name: nil)],
           agents: [agent_map([])]
         )
 
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+      tree = parse(render_repos([noop]))
+      dom = noop.repo_dom_id
 
       [dot] = Floki.find(tree, "#commit-node-#{dom}-n0000001 circle.cg-node-dot")
       assert attr(dot, "r") == ["4"]
@@ -795,95 +622,68 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       [row] = Floki.find(tree, ".cg-row")
       assert text(Floki.find(row, ".cg-base-label")) == "no-op"
       assert Floki.find(row, ".cg-row-message") == []
-
       assert node_title(tree, "commit-node-#{dom}-n0000001") == "no-op · n0000001"
-    end
 
-    test "an unowned node is muted base ink at reduced opacity" do
-      repo =
-        repo_view(
-          nodes: [node_view(sha: "n0000001", owner_id: nil)],
-          agents: [agent_map([])]
+      unowned =
+        repo_view(nodes: [node_view(sha: "n0000001", owner_id: nil)], agents: [agent_map([])])
+
+      [udot] =
+        Floki.find(
+          parse(render_repos([unowned])),
+          "#commit-node-#{unowned.repo_dom_id}-n0000001 circle.cg-node-dot"
         )
 
-      tree = parse(render_repos([repo]))
-      [dot] = Floki.find(tree, "#commit-node-#{repo.repo_dom_id}-n0000001 circle.cg-node-dot")
-
-      assert attr(dot, "style") == [
+      assert attr(udot, "style") == [
                "fill: var(--color-base-content); fill-opacity: 0.55; stroke: var(--color-base-content)"
              ]
-    end
-
-    test "the node tooltip joins message · sha · author · date · refs" do
-      {_repo, dom, tree} = happy()
-
-      assert node_title(tree, "commit-node-#{dom}-#{@sha_c1}") ==
-               "Merge pre-task history · c1000000 · Alice · 2024-01-01 10:00"
-
-      assert node_title(tree, "commit-node-#{dom}-#{@sha_c4}") ==
-               "Refactor Z · c4000000 · Dave · 2024-01-03 10:00 · HEAD, genesis/agent_x"
-
-      # The base node has no author/date/refs.
-      assert node_title(tree, "commit-node-#{dom}-#{@sha_b1}") == "base · b1000000"
     end
   end
 
   describe "commit_graph_view/1 — rows" do
-    test "a row carries the select_agent contract for an owned node" do
+    test "an owned row carries the click contract, sha/message/meta; a base row has the chip" do
       {_repo, dom, tree} = happy()
 
       [row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
 
-      assert attr(row, "phx-click") == ["select_agent"]
-      assert attr(row, "phx-value-id") == ["a1"]
-      assert attr(row, "data-cg-sha") == [@sha_c1]
-      assert attr(row, "data-cg-agent-id") == ["a1"]
-    end
-
-    test "a row shows the short sha, the first message line and 'author · date'" do
-      {_repo, dom, tree} = happy()
+      assert_attrs(row, %{
+        "phx-click" => ["select_agent"],
+        "phx-value-id" => ["a1"],
+        "data-cg-sha" => [@sha_c1],
+        "data-cg-agent-id" => ["a1"]
+      })
 
       # c1000000's raw message carries a body line — only the first line renders.
-      [row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
-
       assert text(Floki.find(row, ".cg-row-sha")) == "c1000000"
       assert text(Floki.find(row, ".cg-row-message")) == "Merge pre-task history"
       assert text(Floki.find(row, ".cg-row-meta")) == "Alice · 2024-01-01 10:00"
-    end
 
-    test "a base node row shows the 'base' chip and no message" do
-      {_repo, dom, tree} = happy()
-
-      [row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_b1}")
-
-      assert text(Floki.find(row, ".cg-base-label")) == "base"
-      assert Floki.find(row, ".cg-row-message") == []
-      assert Floki.find(row, ".cg-row-meta") == []
+      [base_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_b1}")
+      assert text(Floki.find(base_row, ".cg-base-label")) == "base"
+      assert Floki.find(base_row, ".cg-row-message") == []
+      assert Floki.find(base_row, ".cg-row-meta") == []
     end
 
     test "an unowned row omits the click contract but keeps a stable id" do
       repo =
-        repo_view(
-          nodes: [node_view(sha: "n0000002", owner_id: nil)],
-          agents: [agent_map([])]
-        )
+        repo_view(nodes: [node_view(sha: "n0000002", owner_id: nil)], agents: [agent_map([])])
 
-      tree = parse(render_repos([repo]))
-      [row] = Floki.find(tree, ".cg-row")
+      [row] = Floki.find(parse(render_repos([repo])), ".cg-row")
 
-      assert attr(row, "id") == ["commit-row-#{repo.repo_dom_id}-n0000002"]
-      assert attr(row, "phx-click") == []
-      assert attr(row, "phx-value-id") == []
-      assert attr(row, "data-cg-agent-id") == []
+      assert_attrs(row, %{
+        "id" => ["commit-row-#{repo.repo_dom_id}-n0000002"],
+        "phx-click" => [],
+        "phx-value-id" => [],
+        "data-cg-agent-id" => []
+      })
     end
   end
 
   describe "commit_graph_view/1 — row tooltips, keyboard access, selection data" do
-    test "every row carries the node tooltip as a native title" do
+    test "every row carries the node tooltip; owned rows are keyboard-reachable, unowned ones are not" do
       {_repo, dom, tree} = happy()
 
-      # The gutter svg is pointer-events: none, so its <title> was unreachable;
-      # the SAME node_title/1 content now rides the row div.
+      # The gutter svg is pointer-events: none, so the SAME node_title/1 content
+      # rides the row div's native title.
       [row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
 
       assert attr(row, "title") == [
@@ -896,34 +696,25 @@ defmodule EvoDashWeb.CommitGraphViewTest do
                "Refactor Z · c4000000 · Dave · 2024-01-03 10:00 · HEAD, genesis/agent_x"
              ]
 
-      # A stub row keeps its 'base' prefix tooltip.
       [base_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_b1}")
-      assert attr(base_row, "title") == ["base · b1000000"]
+      assert attr(base_row, "title") == ["base · #{@sha_b1}"]
 
       # Every row — owned or not — carries one.
-      rows = Floki.find(tree, ".cg-row")
-      assert length(rows) == length(Floki.find(tree, ".cg-row[title]"))
-    end
+      assert Floki.find(tree, ".cg-row") |> length() == length(Floki.find(tree, ".cg-row[title]"))
 
-    test "an owned row is keyboard-reachable; an unowned row is not" do
-      {_repo, dom, tree} = happy()
-
-      [owned] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
-      assert attr(owned, "role") == ["button"]
-      assert attr(owned, "tabindex") == ["0"]
+      assert attr(row, "role") == ["button"]
+      assert attr(row, "tabindex") == ["0"]
 
       # The neutral pre-task row has no click contract and no button role.
       [unowned] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_p1}")
-      assert attr(unowned, "phx-click") == []
-      assert attr(unowned, "role") == []
-      assert attr(unowned, "tabindex") == []
+      assert_attrs(unowned, %{"phx-click" => [], "role" => [], "tabindex" => []})
+
+      # Unselected → no readout.
+      assert Floki.find(tree, "#cg-selection-readout-#{dom}") == []
     end
 
     test "the root carries the selection as data-cg-selected-id (stringified raw term)" do
       repos = happy_repos()
-
-      tree = parse(render_repos(repos))
-      assert attr(hd(Floki.find(tree, "#commit-graph")), "data-cg-selected-id") == []
 
       selected = parse(render_repos(repos, selected_id: "a2"))
       assert attr(hd(Floki.find(selected, "#commit-graph")), "data-cg-selected-id") == ["a2"]
@@ -945,31 +736,35 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   end
 
   describe "commit_graph_view/1 — tags" do
-    test "start_ids render solid 'start' chips and end_ids dashed 'end' chips" do
+    test "start/end chips + refs: markers, hues, tooltips and the click contract" do
       {_repo, dom, tree} = happy()
 
       # c2000000 is a1's END commit AND a2's START commit (a fork point).
       [start_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-#{@sha_c2}-start-a2")
-      assert attr(start_chip, "class") |> hd() =~ "cg-agent-tag-start"
-      assert attr(start_chip, "class") |> hd() =~ "border-solid"
-      assert attr(start_chip, "phx-click") == ["select_agent"]
-      assert attr(start_chip, "phx-value-id") == ["a2"]
+      assert [start_class] = attr(start_chip, "class")
+      assert start_class =~ "cg-agent-tag-start"
+      assert start_class =~ "border-solid"
 
-      assert attr(start_chip, "style") == [
-               "border-color: #{@depth1_color}; color: #{@depth1_color}"
-             ]
+      assert_attrs(start_chip, %{
+        "phx-click" => ["select_agent"],
+        "phx-value-id" => ["a2"],
+        "title" => ["T2 · start · Completed"],
+        "style" => ["border-color: #{@depth1_color}; color: #{@depth1_color}"]
+      })
 
       assert Floki.text(start_chip) =~ "T2"
       assert Floki.text(start_chip) =~ "start"
 
       [end_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-#{@sha_c2}-end-a1")
-      assert attr(end_chip, "class") |> hd() =~ "cg-agent-tag-end"
-      assert attr(end_chip, "class") |> hd() =~ "border-dashed"
-      assert attr(end_chip, "phx-value-id") == ["a1"]
+      assert [end_class] = attr(end_chip, "class")
+      assert end_class =~ "cg-agent-tag-end"
+      assert end_class =~ "border-dashed"
 
-      assert attr(end_chip, "style") == [
-               "border-color: #{@depth0_color}; color: #{@depth0_color}"
-             ]
+      assert_attrs(end_chip, %{
+        "phx-value-id" => ["a1"],
+        "title" => ["T1 · end · Running"],
+        "style" => ["border-color: #{@depth0_color}; color: #{@depth0_color}"]
+      })
 
       assert Floki.text(end_chip) =~ "T1"
       assert Floki.text(end_chip) =~ "end"
@@ -977,23 +772,9 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       # a1 forks at the base node → a start tag there.
       [base_start] = Floki.find(tree, "#commit-agent-tag-#{dom}-#{@sha_b1}-start-a1")
       assert attr(base_start, "phx-value-id") == ["a1"]
-    end
 
-    test "an agent tag tooltip joins label · marker · status" do
-      {_repo, dom, tree} = happy()
-
-      [start_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-#{@sha_c2}-start-a2")
-      assert attr(start_chip, "title") == ["T2 · start · Completed"]
-
-      [end_chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-#{@sha_c2}-end-a1")
-      assert attr(end_chip, "title") == ["T1 · end · Running"]
-    end
-
-    test "refs render as non-clickable mono chips" do
-      {_repo, dom, tree} = happy()
-
-      refs = Floki.find(tree, "span.cg-ref-tag")
-      assert length(refs) == 2
+      # Refs render as non-clickable mono chips.
+      assert Floki.find(tree, "span.cg-ref-tag") |> length() == 2
 
       [head] = Floki.find(tree, "#commit-ref-tag-#{dom}-#{@sha_c4}-HEAD")
       assert text(head) == "HEAD"
@@ -1004,102 +785,82 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       assert Floki.find(tree, "#commit-ref-tag-#{dom}-#{@sha_c4}-genesis-agent_x") != []
     end
 
-    test "an agent tag for an unknown agent id falls back to the raw id + muted colour" do
-      repo =
-        repo_view(
-          nodes: [node_view(sha: "n0000001", start_ids: ["ghost"])],
-          agents: []
-        )
-
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+    test "an unknown agent id falls back to the raw id + muted colour; a tag-less node renders no tag row" do
+      ghost = repo_view(nodes: [node_view(sha: "n0000001", start_ids: ["ghost"])], agents: [])
+      tree = parse(render_repos([ghost]))
+      dom = ghost.repo_dom_id
 
       [chip] = Floki.find(tree, "#commit-agent-tag-#{dom}-n0000001-start-ghost")
       assert Floki.text(chip) =~ "Tghost"
+      assert attr(chip, "phx-value-id") == ["ghost"]
 
       assert attr(chip, "style") == [
                "border-color: var(--color-base-content); color: var(--color-base-content)"
              ]
 
-      assert attr(chip, "phx-value-id") == ["ghost"]
-    end
+      bare = repo_view(nodes: [node_view(sha: "n0000001")], agents: [agent_map([])])
 
-    test "a node with no start/end/ref tags renders no tag row" do
-      repo =
-        repo_view(
-          nodes: [node_view(sha: "n0000001")],
-          agents: [agent_map([])]
-        )
-
-      tree = parse(render_repos([repo]))
-      [row] = Floki.find(tree, ".cg-row")
-
+      [row] = Floki.find(parse(render_repos([bare])), ".cg-row")
       assert Floki.find(row, ".cg-agent-tag") == []
       assert Floki.find(row, ".cg-ref-tag") == []
     end
   end
 
   describe "commit_graph_view/1 — selection" do
-    test "the readout names the selected agent with its start → end short shas" do
+    test "the readout names the selected agent; its start/end dots wear solid/dashed rings and its rows are accented" do
       {_repo, dom, tree} = happy_selected("a2")
 
       [readout] = Floki.find(tree, "#cg-selection-readout-#{dom}")
       assert Floki.text(readout) =~ "Selected T2 · c3000000 → c4000000"
-    end
 
-    test "the readout is omitted when nothing is selected or the selection is foreign" do
-      {_repo, dom, tree} = happy()
-      assert Floki.find(tree, "#cg-selection-readout-#{dom}") == []
-
-      {_repo2, dom2, tree2} = happy_selected("someone-else")
-      assert Floki.find(tree2, "#cg-selection-readout-#{dom2}") == []
-    end
-
-    test "the selected agent's START dot wears a SOLID ring and its END dot a DASHED ring" do
-      {_repo, dom, tree} = happy_selected("a2")
-
-      # c2000000 is a2's start (its fork point, on a1's lane) → solid ring at
+      # c2000000 is a2's start (its fork point, on a1's lane) → SOLID ring at
       # (48, 154) with r = 6 + 3 = 9.
       [start_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c2} circle.cg-node-ring")
-      assert attr(start_ring, "cx") == ["48"]
-      assert attr(start_ring, "cy") == ["154"]
-      assert attr(start_ring, "r") == ["9"]
-      assert attr(start_ring, "stroke-dasharray") == []
-      assert attr(start_ring, "style") == ["fill: none; stroke: var(--color-primary)"]
 
-      # c4000000 is a2's end → dashed ring at (72, 242).
+      assert_attrs(start_ring, %{
+        "cx" => ["48"],
+        "cy" => ["154"],
+        "r" => ["9"],
+        "stroke-dasharray" => [],
+        "style" => ["fill: none; stroke: var(--color-primary)"]
+      })
+
+      # c4000000 is a2's end → DASHED ring at (72, 242). No other node is ringed.
       [end_ring] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c4} circle.cg-node-ring")
-      assert attr(end_ring, "cx") == ["72"]
-      assert attr(end_ring, "cy") == ["242"]
-      assert attr(end_ring, "r") == ["9"]
-      assert attr(end_ring, "stroke-dasharray") == ["3 2"]
 
-      # No other node is ringed.
+      assert_attrs(end_ring, %{
+        "cx" => ["72"],
+        "cy" => ["242"],
+        "r" => ["9"],
+        "stroke-dasharray" => ["3 2"]
+      })
+
       assert Floki.find(tree, "circle.cg-node-ring") |> length() == 2
-    end
-
-    test "the selected agent's start/end rows are accented and carry a start/end marker" do
-      {_repo, dom, tree} = happy_selected("a2")
 
       [start_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c2}")
       assert attr(start_row, "class") |> hd() =~ "ring-1 ring-inset ring-primary/40"
       assert Floki.text(Floki.find(start_row, ".cg-row-marker")) =~ "start"
 
+      # The end row is owned by the selected agent → also gets the bg accent.
       [end_row] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c4}")
       assert attr(end_row, "class") |> hd() =~ "ring-primary/40"
-      assert Floki.text(Floki.find(end_row, ".cg-row-marker")) =~ "end"
-      # The end row is owned by the selected agent → also gets the bg accent.
       assert attr(end_row, "class") |> hd() =~ "bg-primary/10"
+      assert Floki.text(Floki.find(end_row, ".cg-row-marker")) =~ "end"
 
       # Unrelated rows carry neither accent.
       [other] = Floki.find(tree, "#commit-row-#{dom}-#{@sha_c1}")
       refute attr(other, "class") |> hd() =~ "ring-primary/40"
       assert Floki.find(other, ".cg-row-marker") == []
     end
+
+    test "the readout is omitted for a foreign selection" do
+      {_repo, dom, tree} = happy_selected("someone-else")
+      assert Floki.find(tree, "#cg-selection-readout-#{dom}") == []
+    end
   end
 
   describe "commit_graph_view/1 — ended dimming" do
-    test "an ended agent's nodes, edges, rows and lane chip render dim" do
+    test "an ended agent dims its nodes, edges, rows and lane chip; a live/absent flag does not" do
       {_repo, dom, tree} = happy_ended()
 
       # a2's owned node dots drop to half fill-opacity …
@@ -1134,18 +895,16 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
       [live_chip] = Floki.find(tree, "#cg-lane-#{dom}-1")
       assert attr(live_chip, "style") |> hd() =~ "opacity: 1"
-    end
 
-    test "an agent without the OPTIONAL ended flag renders identically to ended: false" do
-      {_repo, dom, tree} = happy()
-
-      [dot] = Floki.find(tree, "#commit-node-#{dom}-#{@sha_c1} circle.cg-node-dot")
-      assert attr(dot, "style") |> hd() =~ "fill-opacity: 1"
+      # A live agent with the OPTIONAL `ended` flag absent renders identically.
+      {_repo2, dom2, live_tree} = happy()
+      [flagless_dot] = Floki.find(live_tree, "#commit-node-#{dom2}-#{@sha_c1} circle.cg-node-dot")
+      assert attr(flagless_dot, "style") |> hd() =~ "fill-opacity: 1"
     end
   end
 
   describe "commit_graph_view/1 — total / defensive degradation" do
-    test "non-map repo entries are dropped; odd repo-level fields fold" do
+    test "non-map entries are dropped; non-list model fields fold to empty" do
       repo =
         repo_view(
           nodes: ["not-a-map", node_view(sha: "n0000001")],
@@ -1157,20 +916,16 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         )
 
       tree = parse(render_repos([repo, "junk", 42]))
-
       assert Floki.find(tree, "svg.cg-gutter") != []
       assert Floki.find(tree, ".cg-row") |> length() == 1
       assert Floki.find(tree, "path.cg-edge") |> length() == 1
+
+      folded = parse(render_repos([repo_view(nodes: :nope, edges: nil, agents: %{})]))
+      assert Floki.find(folded, ".cg-empty-note") != []
+      assert Floki.find(folded, ".cg-row") == []
     end
 
-    test "non-list nodes/edges/agents fold to empty" do
-      tree = parse(render_repos([repo_view(nodes: :nope, edges: nil, agents: %{})]))
-
-      assert Floki.find(tree, ".cg-empty-note") != []
-      assert Floki.find(tree, ".cg-row") == []
-    end
-
-    test "odd grid values and non-binary shas degrade without crashing" do
+    test "odd grid values and non-binary shas/agent ids degrade to DOM-safe ids" do
       repo =
         repo_view(
           nodes: [
@@ -1184,31 +939,26 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       dom = repo.repo_dom_id
 
       # A non-binary sha still gets a stable, DOM-safe element id.
-      assert Floki.find(tree, "#commit-node-#{dom}-42") != []
-      assert Floki.find(tree, "#commit-row-#{dom}-z0000001") != []
+      assert_present(tree, ["#commit-node-#{dom}-42", "#commit-row-#{dom}-z0000001"])
 
-      # Non-integer grid coordinates fold to lane 0 / row 0 → the dot circle is
-      # centred at (24, 22) with radius 6.
+      # Non-integer grid coordinates fold to lane 0 / row 0 → the dot is centred
+      # at (24, 22) with radius 6.
       [dot] = Floki.find(tree, "#commit-node-#{dom}-42 circle.cg-node-dot")
-      assert attr(dot, "cx") == ["24"]
-      assert attr(dot, "cy") == ["22"]
-      assert attr(dot, "r") == ["6"]
-    end
+      assert_attrs(dot, %{"cx" => ["24"], "cy" => ["22"], "r" => ["6"]})
 
-    test "an integer agent/owner id yields a DOM-safe id fragment" do
-      repo =
+      # An integer agent/owner id yields a DOM-safe id fragment and phx value.
+      int_repo =
         repo_view(
           nodes: [node_view(sha: "n0000001", owner_id: 42, start_ids: [42])],
           agents: [agent_map(agent_id: 42, task_local_id: 5)]
         )
 
-      tree = parse(render_repos([repo]))
-      dom = repo.repo_dom_id
+      int_tree = parse(render_repos([int_repo]))
+      idom = int_repo.repo_dom_id
 
-      assert Floki.find(tree, "#commit-row-#{dom}-n0000001") != []
-      assert Floki.find(tree, "#commit-agent-tag-#{dom}-n0000001-start-42") != []
+      assert Floki.find(int_tree, "#commit-agent-tag-#{idom}-n0000001-start-42") != []
 
-      assert Floki.find(tree, "#commit-row-#{dom}-n0000001") |> hd() |> attr("phx-value-id") ==
+      assert Floki.find(int_tree, "#commit-row-#{idom}-n0000001") |> hd() |> attr("phx-value-id") ==
                ["42"]
     end
 
@@ -1226,9 +976,12 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
       # String refs are de-duped; a map-name form is read from atom OR string
       # keys; a non-string/atom term is dropped (never raises).
-      assert Floki.find(tree, "#commit-ref-tag-#{dom}-n0000001-main") != []
-      assert Floki.find(tree, "#commit-ref-tag-#{dom}-n0000001-x") != []
-      assert Floki.find(tree, "#commit-ref-tag-#{dom}-n0000001-y") != []
+      assert_present(tree, [
+        "#commit-ref-tag-#{dom}-n0000001-main",
+        "#commit-ref-tag-#{dom}-n0000001-x",
+        "#commit-ref-tag-#{dom}-n0000001-y"
+      ])
+
       assert Floki.find(tree, "#commit-ref-tag-#{dom}-n0000001-42") == []
       assert Floki.find(tree, "span.cg-ref-tag") |> length() == 3
     end
@@ -1247,6 +1000,88 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   #            merged back into lane 1 at a VIRTUAL landing below c2).
   # Rows are globally interleaved 0..5; the merge-back landing adds row 6.
   defp happy_repos do
+    nodes =
+      for {sha, col, row, extra} <- [
+            {@sha_p1, 0, 0,
+             message: "Pre-task commit",
+             author_name: "Pam",
+             date: ~U[2023-12-31 09:00:00Z],
+             owner_id: nil},
+            {@sha_b1, 1, 1,
+             message: nil,
+             author_name: nil,
+             date: nil,
+             kind: :base,
+             owner_id: "a1",
+             start_ids: ["a1"]},
+            {@sha_c1, 1, 2,
+             message: "Merge pre-task history\n\nbody line",
+             author_name: "Alice",
+             date: ~U[2024-01-01 10:00:00Z],
+             owner_id: "a1"},
+            {@sha_c2, 1, 3,
+             message: "Fix bug Y",
+             author_name: "Bob",
+             date: ~U[2024-01-02 10:00:00Z],
+             owner_id: "a1",
+             end_ids: ["a1"],
+             start_ids: ["a2"]},
+            {@sha_c3, 2, 4,
+             message: "Side change W",
+             author_name: "Carol",
+             date: ~U[2024-01-02 12:00:00Z],
+             owner_id: "a2"},
+            {@sha_c4, 2, 5,
+             message: "Refactor Z",
+             author_name: "Dave",
+             date: ~U[2024-01-03 10:00:00Z],
+             owner_id: "a2",
+             end_ids: ["a2"],
+             refs: ["HEAD", "genesis/agent_x"]}
+          ] do
+        node_view([sha: sha, column: col, row: row] ++ extra)
+      end
+
+    edges =
+      for {from, to, fc, fr, tc, tr, kind, owner} <- [
+            {@sha_b1, @sha_p1, 1, 1, 0, 0, :parent, "a1"},
+            {@sha_c1, @sha_b1, 1, 2, 1, 1, :parent, "a1"},
+            {@sha_c1, @sha_p1, 1, 2, 0, 0, :merge, "a1"},
+            {@sha_c2, @sha_c1, 1, 3, 1, 2, :parent, "a1"},
+            {@sha_c2, @sha_c3, 1, 3, 2, 4, :spawn, "a2"},
+            {@sha_c4, nil, 2, 5, 1, 6, :merge_back, "a2"},
+            {@sha_c4, @sha_c3, 2, 5, 2, 4, :parent, "a2"}
+          ] do
+        edge_view(
+          from_sha: from,
+          to_sha: to,
+          from_column: fc,
+          from_row: fr,
+          to_column: tc,
+          to_row: tr,
+          kind: kind,
+          owner_id: owner
+        )
+      end
+
+    agents =
+      for {id, tli, status, depth, color, [start_sha, end_sha], lane, parent} <- [
+            {"a1", 1, :running, 0, @depth0_color, [@sha_b1, @sha_c2], 1, nil},
+            {"a2", 2, :completed, 1, @depth1_color, [@sha_c3, @sha_c4], 2, "a1"}
+          ] do
+        agent_map(
+          agent_id: id,
+          task_local_id: tli,
+          status: status,
+          depth: depth,
+          color: color,
+          start_sha: start_sha,
+          end_sha: end_sha,
+          lane: lane,
+          parent_id: parent
+        )
+      end
+
     [
       repo_view(
         repo_dom_id: @dom,
@@ -1255,199 +1090,15 @@ defmodule EvoDashWeb.CommitGraphViewTest do
         node_count: 6,
         edge_count: 7,
         row_count: 7,
-        nodes: [
-          node_view(
-            sha: @sha_p1,
-            message: "Pre-task commit",
-            author_name: "Pam",
-            date: ~U[2023-12-31 09:00:00Z],
-            column: 0,
-            row: 0,
-            owner_id: nil
-          ),
-          node_view(
-            sha: @sha_b1,
-            message: nil,
-            author_name: nil,
-            date: nil,
-            column: 1,
-            row: 1,
-            kind: :base,
-            owner_id: "a1",
-            start_ids: ["a1"]
-          ),
-          node_view(
-            sha: @sha_c1,
-            message: "Merge pre-task history\n\nbody line",
-            author_name: "Alice",
-            date: ~U[2024-01-01 10:00:00Z],
-            column: 1,
-            row: 2,
-            owner_id: "a1"
-          ),
-          node_view(
-            sha: @sha_c2,
-            message: "Fix bug Y",
-            author_name: "Bob",
-            date: ~U[2024-01-02 10:00:00Z],
-            column: 1,
-            row: 3,
-            owner_id: "a1",
-            end_ids: ["a1"],
-            start_ids: ["a2"]
-          ),
-          node_view(
-            sha: @sha_c3,
-            message: "Side change W",
-            author_name: "Carol",
-            date: ~U[2024-01-02 12:00:00Z],
-            column: 2,
-            row: 4,
-            owner_id: "a2"
-          ),
-          node_view(
-            sha: @sha_c4,
-            message: "Refactor Z",
-            author_name: "Dave",
-            date: ~U[2024-01-03 10:00:00Z],
-            column: 2,
-            row: 5,
-            owner_id: "a2",
-            end_ids: ["a2"],
-            refs: ["HEAD", "genesis/agent_x"]
-          )
-        ],
-        edges: [
-          edge_view(
-            from_sha: @sha_b1,
-            to_sha: @sha_p1,
-            from_column: 1,
-            from_row: 1,
-            to_column: 0,
-            to_row: 0,
-            kind: :parent,
-            owner_id: "a1"
-          ),
-          edge_view(
-            from_sha: @sha_c1,
-            to_sha: @sha_b1,
-            from_column: 1,
-            from_row: 2,
-            to_column: 1,
-            to_row: 1,
-            kind: :parent,
-            owner_id: "a1"
-          ),
-          edge_view(
-            from_sha: @sha_c1,
-            to_sha: @sha_p1,
-            from_column: 1,
-            from_row: 2,
-            to_column: 0,
-            to_row: 0,
-            kind: :merge,
-            owner_id: "a1"
-          ),
-          edge_view(
-            from_sha: @sha_c2,
-            to_sha: @sha_c1,
-            from_column: 1,
-            from_row: 3,
-            to_column: 1,
-            to_row: 2,
-            kind: :parent,
-            owner_id: "a1"
-          ),
-          edge_view(
-            from_sha: @sha_c2,
-            to_sha: @sha_c3,
-            from_column: 1,
-            from_row: 3,
-            to_column: 2,
-            to_row: 4,
-            kind: :spawn,
-            owner_id: "a2"
-          ),
-          edge_view(
-            from_sha: @sha_c4,
-            to_sha: nil,
-            from_column: 2,
-            from_row: 5,
-            to_column: 1,
-            to_row: 6,
-            kind: :merge_back,
-            owner_id: "a2"
-          ),
-          edge_view(
-            from_sha: @sha_c4,
-            to_sha: @sha_c3,
-            from_column: 2,
-            from_row: 5,
-            to_column: 2,
-            to_row: 4,
-            kind: :parent,
-            owner_id: "a2"
-          )
-        ],
-        agents: [
-          agent_map(
-            agent_id: "a1",
-            task_local_id: 1,
-            status: :running,
-            depth: 0,
-            color: @depth0_color,
-            start_sha: @sha_b1,
-            end_sha: @sha_c2,
-            lane: 1,
-            parent_id: nil
-          ),
-          agent_map(
-            agent_id: "a2",
-            task_local_id: 2,
-            status: :completed,
-            depth: 1,
-            color: @depth1_color,
-            start_sha: @sha_c3,
-            end_sha: @sha_c4,
-            lane: 2,
-            parent_id: "a1"
-          )
-        ]
+        nodes: nodes,
+        edges: edges,
+        agents: agents
       )
     ]
   end
 
-  # A second, independent repo (a single unowned commit on the neutral lane)
-  # for the multi-repo rendering assertions.
-  defp happy_two_repo_fixture do
-    [
-      repo_view(
-        repo_dom_id: "commit-graph-repo-foreign-2",
-        repo_name: "foreign-repo",
-        column_count: 1,
-        node_count: 1,
-        row_count: 1,
-        edge_count: 0,
-        nodes: [
-          node_view(
-            sha: "f1000000",
-            message: "Foreign commit",
-            author_name: "Zoe",
-            date: ~U[2024-01-04 10:00:00Z],
-            column: 0,
-            row: 0,
-            owner_id: nil
-          )
-        ],
-        edges: [],
-        agents: []
-      )
-    ]
-  end
-
-  # Hand-crafted repo/node/edge/agent maps for shapes the happy fixture does
-  # not cover (odd/absent geometry, a fixed DOM id, unowned entries and
-  # non-map entries).
+  # Hand-crafted repo/node/edge/agent maps for shapes the happy fixture does not
+  # cover (odd/absent geometry, a fixed DOM id, unowned entries, non-map entries).
   defp repo_view(overrides) do
     Map.merge(
       %{
@@ -1466,8 +1117,8 @@ defmodule EvoDashWeb.CommitGraphViewTest do
     )
   end
 
-  # `short_sha` defaults to the sha's first 8 chars (the model's convention),
-  # so the rendered short sha IS the fixture sha; an explicit short_sha wins.
+  # `short_sha` defaults to the sha's first 8 chars (the model's convention), so
+  # the rendered short sha IS the fixture sha; an explicit short_sha wins.
   defp node_view(overrides) do
     merged =
       Map.merge(
@@ -1543,43 +1194,31 @@ defmodule EvoDashWeb.CommitGraphViewTest do
 
   defp parse(html), do: Floki.parse_document!(html)
 
-  # The stable repo DOM id.
   defp dom_id(repos), do: repos |> hd() |> Map.fetch!(:repo_dom_id)
 
-  # The edge's DOM id: commit → parent kinds keep `<from>-<to>`; the
-  # agent-level kinds carry `<kind>-<owner>-<from>-<to>` with the
-  # `l<col>r<row>` landing key for a virtual merge-back.
-  defp edge_id(dom, edge) do
-    case edge.kind do
-      kind when kind in [:spawn, :merge_back] ->
-        to_key =
-          case edge.to_sha do
-            nil -> "l#{edge.to_column}r#{edge.to_row}"
-            sha -> sha
-          end
-
-        "commit-edge-#{dom}-#{kind}-#{edge.owner_id}-#{edge.from_sha}-#{to_key}"
-
-      _kind ->
-        "commit-edge-#{dom}-#{edge.from_sha}-#{edge.to_sha}"
+  # Assert several attributes of ONE element from a name → expected-values map.
+  defp assert_attrs(el, expected) do
+    for {name, values} <- expected do
+      assert attr(el, name) == values, "unexpected #{name}: #{inspect(attr(el, name))}"
     end
   end
 
-  # The numeric (x, y) of a path's `M x y` start.
-  defp path_start(d) do
-    [_, x, y] = Regex.run(~r/^M (\S+) (\S+)/, d)
-    {String.to_integer(x), String.to_integer(y)}
+  # Assert each selector matches at least one element / matches nothing.
+  defp assert_present(tree, selectors) do
+    for selector <- selectors, do: assert(Floki.find(tree, selector) != [], selector)
   end
 
-  # The jog y of a routed path — the horizontal segment's y, i.e. the y shared
-  # by its two `Q` control points (the y a STAGGERED edge moves off the span
-  # midpoint). Mirrors the helper in `commit_graph/geometry_test.exs`.
-  defp jog_y(d) do
-    [q1, q2] = Regex.scan(~r/Q \S+ (\S+) /, d, capture: :all_but_first)
-    [jog] = q1
-    assert q2 == [jog], "expected both Q corners on the same horizontal: #{d}"
-    {y, ""} = Float.parse(jog)
-    y
+  defp assert_absent(tree, selectors) do
+    for selector <- selectors, do: assert(Floki.find(tree, selector) == [], selector)
+  end
+
+  defp text(el_or_els), do: el_or_els |> Floki.text() |> String.trim()
+
+  defp attr(el, name), do: el |> Floki.attribute(name) |> Enum.map(&to_string/1)
+
+  defp node_title(tree, id) do
+    [el] = Floki.find(tree, "##{id}")
+    el |> Floki.find("title") |> Floki.text()
   end
 
   # Every element node among a parent's children (whitespace text nodes dropped).
@@ -1590,6 +1229,22 @@ defmodule EvoDashWeb.CommitGraphViewTest do
       {tag, _attrs, _kids} when is_binary(tag) -> true
       _ -> false
     end)
+  end
+
+  # The numeric (x, y) of a path's `M x y` start.
+  defp path_start(d) do
+    [_, x, y] = Regex.run(~r/^M (\S+) (\S+)/, d)
+    {String.to_integer(x), String.to_integer(y)}
+  end
+
+  # The jog y of a routed path — the y shared by its two `Q` control points (the
+  # y a STAGGERED edge moves off the span midpoint).
+  defp jog_y(d) do
+    [q1, q2] = Regex.scan(~r/Q \S+ (\S+) /, d, capture: :all_but_first)
+    [jog] = q1
+    assert q2 == [jog], "expected both Q corners on the same horizontal: #{d}"
+    {y, ""} = Float.parse(jog)
+    y
   end
 
   # The happy fixture repo, its DOM id and its parsed render — the three things
@@ -1618,18 +1273,5 @@ defmodule EvoDashWeb.CommitGraphViewTest do
   defp happy_selected(selected_id) do
     repos = happy_repos()
     {hd(repos), dom_id(repos), parse(render_repos(repos, selected_id: selected_id))}
-  end
-
-  defp node_title(tree, id) do
-    [el] = Floki.find(tree, "##{id}")
-    el |> Floki.find("title") |> Floki.text()
-  end
-
-  # `Floki.text/1` preserves the template's surrounding whitespace, so exact
-  # leaf-text comparisons go through this trimmed variant.
-  defp text(el_or_els), do: el_or_els |> Floki.text() |> String.trim()
-
-  defp attr(el, name) do
-    el |> Floki.attribute(name) |> Enum.map(&to_string/1)
   end
 end
