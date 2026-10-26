@@ -111,6 +111,22 @@ defmodule EvoGit.GitEnv do
     :ok
   end
 
+  # Test helper: pre-seeds the memoized `git config` identity for `repo_path`,
+  # for a repository whose config is KNOWN to already hold exactly `name`/
+  # `email` (e.g. a copied fixture repo whose template pins them). It is the
+  # write-side companion of `clear_config_identity_cache/1` — a test that
+  # builds many throw-away repos would otherwise pay the two `git config`
+  # subprocesses once per repo path. Production code never calls this; the
+  # resolved identity for such a repo is byte-identical to what
+  # `memoized_config_identity/1` would have read.
+  @doc false
+  @spec prime_config_identity_cache(String.t(), String.t(), String.t()) :: :ok
+  def prime_config_identity_cache(repo_path, name, email)
+      when is_binary(repo_path) and is_binary(name) and is_binary(email) do
+    :persistent_term.put({__MODULE__, :config_identity, repo_path}, {name, email})
+    :ok
+  end
+
   @doc """
   Returns true when the given executable is a git command.
 

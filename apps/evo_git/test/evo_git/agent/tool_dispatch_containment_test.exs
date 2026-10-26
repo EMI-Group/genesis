@@ -60,8 +60,13 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       through an isolated `XDG_CONFIG_HOME` holding a `config.toml` with a tiny
       `[scheduler] default_tool_timeout` (the same seam `task_tmpdir_test` uses
       for `[tmp]`). Shrinking it makes the shell-vs-generic discrimination
-      observable in ~120 ms instead of a 10 s wait; the helper ASSERTS that the
+      observable in ~20 ms instead of a 10 s wait; the helper ASSERTS that the
       value actually resolved, so the seam cannot silently no-op.
+    * **Blocking fake tools** — every timeout case uses a tool that blocks until
+      the dispatcher kills it (`blocking_tool/0`) instead of sleeping, so the
+      timeout can only ever be the first thing to fire and the case costs the
+      timeout budget alone. Only the "shell default is NOT the generic default"
+      case still sleeps, because there the tool has to COMPLETE.
 
   Serialized (`async: false`): the dispatcher registers agent state in the
   app-global `:evogit_agent_state` ETS table, acquires tool slots from the
@@ -82,19 +87,21 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
   alias ReqLLM.ToolCall
 
   # Generic (non-shell) tool timeout the timeout describe installs. Small enough
-  # that a ~120 ms fake tool is always cut by it, large enough that scheduling
-  # jitter cannot let the tool win the race.
-  @tiny_generic_timeout 50
+  # that a ~60 ms fake tool is always cut by it, large enough that a timer can
+  # never fire early (timers only ever fire LATE) and so the discrimination is
+  # never lost to scheduling jitter — even on a heavily loaded host.
+  @tiny_generic_timeout 20
 
-  # How long the fake tools in the timeout describe sleep: comfortably above
-  # `@tiny_generic_timeout` (so that default always fires) and incomparably
-  # below the 120 s shell default (so a shell call always completes first).
-  @slow_tool_ms 120
+  # How long the fake tool in the "shell default is NOT the generic default"
+  # case blocks: comfortably above `@tiny_generic_timeout` (so a generic-default
+  # cut would be observable) and incomparably below the 120 s shell default (so
+  # a shell call always completes first).
+  @slow_tool_ms 60
 
   # The explicit `timeout` used by the "explicit argument wins" case — distinct
-  # from both the generic default (50) and the shell default (120_000), and
-  # below `@slow_tool_ms` so the call times out instead of completing.
-  @explicit_timeout 100
+  # from both the generic default (20) and the shell default (120_000). The tool
+  # blocks forever, so the call always times out instead of completing.
+  @explicit_timeout 40
 
   # The dispatch-level read tool (parallel phase, no write guard).
   @read_tool "read_file"
@@ -227,7 +234,12 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       assert ok.tool_call_id == good.id
       assert message_text(ok) == "read ok"
       assert_receive {:tool_ran, %{"file_path" => "./a.txt"}}
-      refute_receive {:tool_ran, _other}
+
+      # `process_tool_calls/3` JOINS every tool task before it returns, and the
+      # send above happens-before the task's own result — so by now the mailbox
+      # is settled and a plain `refute_received` (no 100 ms wait) is exactly as
+      # strong as `refute_receive`.
+      refute_received {:tool_ran, _other}
     end
 
     test "arguments that DO decode run the tool with the decoded map" do
@@ -301,7 +313,9 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       assert message_text(message) =~
                "Error: tool arguments were received as a JSON-encoded string"
 
-      refute_receive {:tool_args, _anything}
+      # The batch's tool task is joined before the dispatch returns (and it sent
+      # nothing), so no wait is needed to prove the tool never ran.
+      refute_received {:tool_args, _anything}
     end
 
     test "the agent loop CONTINUES to the next turn after a malformed-arguments call" do
@@ -461,12 +475,15 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     setup do
       # The generic (non-shell) default has no app-env seam; a tiny value in an
       # isolated config.toml makes the shell-vs-generic discrimination
-      # observable in ~120 ms. The helper asserts the value really resolved.
+      # observable in ~20 ms. The helper asserts the value really resolved.
       isolate_generic_tool_timeout!(@tiny_generic_timeout)
       :ok
     end
 
     test "an OMITTED timeout on the shell tool is NOT cut at the generic default" do
+      # The ONLY case that needs the tool to COMPLETE, so it is the only one that
+      # waits: `@slow_tool_ms` exceeds the configured generic default, so a
+      # completion proves the shell fallback (120 s) was used.
       install_fake_tools(%{@shell_tool_key => slow_tool(@slow_tool_ms, "bash finished")})
 
       call = tool_call(@shell_call_name, %{"command" => "echo hi"})
@@ -474,14 +491,13 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       assert {:continue, [message], _usage} =
                ToolDispatch.process_tool_calls([call], loop_state(), [])
 
-      # `@slow_tool_ms` far exceeds the configured generic default but is
-      # incomparably below the shell default, so a completed call proves the
-      # shell fallback (120 s) was used.
       assert message_text(message) == "bash finished"
     end
 
     test "an OMITTED timeout on a non-shell tool IS cut at the configured generic default" do
-      install_fake_tools(%{@read_tool => slow_tool(@slow_tool_ms, "read finished")})
+      # A tool that NEVER returns cannot win the race against the timeout, so the
+      # cut is deterministic and the wait is only the timeout itself.
+      install_fake_tools(%{@read_tool => blocking_tool()})
 
       call = tool_call(@read_tool, %{"file_path" => "./a.txt"})
 
@@ -492,7 +508,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     end
 
     test "an explicit timeout argument is used as-is instead of the shell default" do
-      install_fake_tools(%{@shell_tool_key => slow_tool(@slow_tool_ms, "bash finished")})
+      install_fake_tools(%{@shell_tool_key => blocking_tool()})
 
       call =
         tool_call(@shell_call_name, %{"command" => "echo hi", "timeout" => @explicit_timeout})
@@ -504,7 +520,7 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     end
 
     test "an invalid timeout argument is treated as absent" do
-      install_fake_tools(%{@read_tool => slow_tool(@slow_tool_ms, "read finished")})
+      install_fake_tools(%{@read_tool => blocking_tool()})
 
       for invalid <- [-1, 0, "9000"] do
         call = tool_call(@read_tool, %{"file_path" => "./a.txt", "timeout" => invalid})
@@ -646,6 +662,22 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     fn _args, _repo, _root, _node ->
       Process.sleep(sleep_ms)
       result
+    end
+  end
+
+  # A tool that never returns on its own: it blocks until the dispatcher's
+  # timeout fires and `Task.shutdown/1` kills the tool task. Used by every
+  # timeout case, where "the tool must NOT complete first" is the whole point —
+  # blocking removes the race a sleep would leave on a loaded host. The `after`
+  # arm is belt-and-braces only (an unkilled task would otherwise hold a global
+  # tool slot for the rest of the suite).
+  defp blocking_tool do
+    fn _args, _repo, _root, _node ->
+      receive do
+        :never_sent -> :ok
+      after
+        30_000 -> "blocking tool was never killed"
+      end
     end
   end
 
