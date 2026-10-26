@@ -14,9 +14,11 @@ defmodule EvoGit.TaskRegistry do
 
   alias EvoGit.TaskInfo
 
+  alias EvoGit.TaskRegistry.ArchiveDedup
   alias EvoGit.TaskRegistry.Cleanup
   alias EvoGit.TaskRegistry.Diagnostics
   alias EvoGit.TaskRegistry.Lease
+  alias EvoGit.TaskRegistry.StoreGuard
   alias EvoGit.TaskRegistry.TaskExecutor
 
   ## Call timeout
@@ -95,6 +97,44 @@ defmodule EvoGit.TaskRegistry do
   """
   def list_tasks_paginated(opts \\ []) do
     GenServer.call(server(), {:list_tasks_paginated, opts}, @call_timeout)
+  end
+
+  @doc """
+  LIGHTWEIGHT paginated task read: one page of the 16-key summary projection
+  plus the filtered total, `%{rows: [summary_map], total: non_neg_integer}`.
+
+  Delegates to `EvoGit.Store.select_tasks_page/2` — the heavy JSON blobs
+  (`result`, `archive_metadata`, `logs`, `usage`) are never selected. `opts`
+  accepts `:limit` (default 25, capped at 50), `:offset` and the filter keys
+  `:status`, `:project_path`, `:review_status`, `:search`.
+
+  Degrades to `%{rows: [], total: 0}` when the store call fails.
+  """
+  def list_tasks_page(opts \\ []) do
+    GenServer.call(server(), {:list_tasks_page, opts}, @call_timeout)
+  end
+
+  @doc """
+  LIGHTWEIGHT single-task read for detail views: decodes like `get_task/1` but
+  never reads the archive (`archive_metadata: nil`, no `:archive_records` in the
+  result data).
+
+  Delegates to `EvoGit.Store.get_task_lite/2`. Returns `%TaskInfo{}` or `nil`
+  (also `nil` when the store call fails).
+  """
+  def get_task_lite(task_id) do
+    GenServer.call(server(), {:get_task_lite, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns the decoded archive records for a task (`[]` when the task is absent,
+  the column is NULL, or the payload is undecodable).
+
+  Delegates to `EvoGit.Store.get_task_archive/2` — only that column is read.
+  Degrades to `[]` when the store call fails.
+  """
+  def get_task_archive(task_id) do
+    GenServer.call(server(), {:get_task_archive, task_id}, @call_timeout)
   end
 
   @doc """
@@ -300,7 +340,11 @@ defmodule EvoGit.TaskRegistry do
     # tasks are deliberately left alone — the one-shot :lease_sweep handles
     # orphaned owners after the lease duration.
     state =
-      EvoGit.Store.select_running_lease_info(task_store)
+      safe_store_read(
+        "init select_running_lease_info",
+        [],
+        fn -> EvoGit.Store.select_running_lease_info(task_store) end
+      )
       |> Enum.reduce(state, fn %{id: task_id, status: status}, acc ->
         case status do
           :finalizing ->
@@ -356,7 +400,9 @@ defmodule EvoGit.TaskRegistry do
     # currently :cancelling) must never start. There is no in-runtime
     # :pending → :running scheduled transition, so this is the only place a
     # cancelled pending task could slip through.
-    case EvoGit.Store.get_task_status(state.task_store, task_id) do
+    case safe_store_read("start_task get_task_status", nil, fn ->
+           EvoGit.Store.get_task_status(state.task_store, task_id)
+         end) do
       status when status in [:cancelled, :cancelling] ->
         {:reply, {:error, :cancelled}, state}
 
@@ -386,8 +432,12 @@ defmodule EvoGit.TaskRegistry do
         # Persist to SQLite with ref nulled (ref is runtime-only data). A
         # disk-full write must NOT crash the registry: the task still runs
         # in-memory (unpersisted) and the next status write (terminal or
-        # otherwise) retries the persistence.
-        case EvoGit.Store.put_task(state.task_store, %{task | ref: nil}) do
+        # otherwise) retries the persistence. An UNAVAILABLE store (a dead /
+        # restarting Store process, or an unexpected store fault) degrades the
+        # same way — the registry never exits from a store call.
+        case safe_store_write("start_task put_task", fn ->
+               EvoGit.Store.put_task(state.task_store, %{task | ref: nil})
+             end) do
           :ok ->
             :ok
 
@@ -396,6 +446,10 @@ defmodule EvoGit.TaskRegistry do
               "TaskRegistry: disk full — task #{task_id} could not be persisted; " <>
                 "continuing in-memory only"
             )
+
+          {:error, :store_unavailable} ->
+            # StoreGuard already logged the fault — keep the task in memory.
+            :ok
         end
 
         # Keep the runtime ref in-memory only
@@ -420,14 +474,45 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call(:list_tasks, from, state) do
     offload(from, state, fn ->
-      EvoGit.Store.safe_select_all_tasks(state.task_store)
+      safe_store_read("list_tasks", [], fn ->
+        EvoGit.Store.safe_select_all_tasks(state.task_store)
+      end)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_paginated, opts}, from, state) do
     offload(from, state, fn ->
-      EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+      safe_store_read("list_tasks_paginated", {[], 0}, fn ->
+        EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:list_tasks_page, opts}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("list_tasks_page", %{rows: [], total: 0}, fn ->
+        EvoGit.Store.select_tasks_page(state.task_store, opts)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:get_task_lite, task_id}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("get_task_lite", nil, fn ->
+        EvoGit.Store.get_task_lite(state.task_store, task_id)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:get_task_archive, task_id}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("get_task_archive", [], fn ->
+        EvoGit.Store.get_task_archive(state.task_store, task_id)
+      end)
     end)
   end
 
@@ -437,7 +522,9 @@ defmodule EvoGit.TaskRegistry do
     # Works from :running (normal force-kill) and :cancelling (escalation path
     # — a graceful cancel that hangs must be force-killable).
     {result, state} =
-      case EvoGit.Store.get_task_status(state.task_store, task_id) do
+      case safe_store_read("force_kill_task get_task_status", nil, fn ->
+             EvoGit.Store.get_task_status(state.task_store, task_id)
+           end) do
         status when status in [:running, :cancelling] ->
           case Map.get(state.task_refs, task_id) do
             %Task{pid: pid} = task_ref ->
@@ -476,18 +563,20 @@ defmodule EvoGit.TaskRegistry do
                 # the in-memory cleanup still happens (task_refs deleted, marker
                 # cleared) and {:error, :disk_full} is returned.
                 reply =
-                  case EvoGit.Store.update_task_columns(state.task_store, task_id,
-                         status: :failed,
-                         finished_at: DateTime.utc_now(),
-                         lease_expires_at: nil,
-                         result: nil,
-                         error:
-                           Diagnostics.failure_error(
-                             :force_kill,
-                             :force_kill_task,
-                             "Task force-killed by user"
-                           )
-                       ) do
+                  case safe_store_write("force_kill_task update_task_columns", fn ->
+                         EvoGit.Store.update_task_columns(state.task_store, task_id,
+                           status: :failed,
+                           finished_at: DateTime.utc_now(),
+                           lease_expires_at: nil,
+                           result: nil,
+                           error:
+                             Diagnostics.failure_error(
+                               :force_kill,
+                               :force_kill_task,
+                               "Task force-killed by user"
+                             )
+                         )
+                       end) do
                     :ok ->
                       :ok
 
@@ -498,6 +587,11 @@ defmodule EvoGit.TaskRegistry do
                       )
 
                       {:error, :disk_full}
+
+                    {:error, :store_unavailable} ->
+                      # StoreGuard already logged it — the in-memory cleanup below
+                      # still runs; the row keeps its previous status.
+                      {:error, :store_unavailable}
                   end
 
                 state = %{state | task_refs: Map.delete(state.task_refs, task_id)}
@@ -531,7 +625,9 @@ defmodule EvoGit.TaskRegistry do
   def handle_call({:cancel_task, task_id}, _from, state) do
     # GRACEFUL cancellation. Narrow-column existence/status check.
     result =
-      case EvoGit.Store.get_task_status(state.task_store, task_id) do
+      case safe_store_read("cancel_task get_task_status", nil, fn ->
+             EvoGit.Store.get_task_status(state.task_store, task_id)
+           end) do
         :pending ->
           # No agents exist yet — mark :cancelled immediately. The start_task
           # guard (see {:start_task, ...} handler) then refuses to start it.
@@ -540,11 +636,13 @@ defmodule EvoGit.TaskRegistry do
           # Broadcast only on the successful write — the :running arm below
           # funnels through handle_update_status/6, which broadcasts the
           # :cancelling transition itself (no double broadcast).
-          case EvoGit.Store.update_task_columns(state.task_store, task_id,
-                 status: :cancelled,
-                 finished_at: DateTime.utc_now(),
-                 lease_expires_at: nil
-               ) do
+          case safe_store_write("cancel_task update_task_columns", fn ->
+                 EvoGit.Store.update_task_columns(state.task_store, task_id,
+                   status: :cancelled,
+                   finished_at: DateTime.utc_now(),
+                   lease_expires_at: nil
+                 )
+               end) do
             :ok ->
               # Direct terminal write (:cancelled) — bypasses
               # handle_update_status/6, so reclaim the tmpdir here too (a
@@ -566,6 +664,11 @@ defmodule EvoGit.TaskRegistry do
               )
 
               {:error, :disk_full}
+
+            {:error, :store_unavailable} ->
+              # StoreGuard already logged it; the pending task is not persisted
+              # as :cancelled, so return the degraded error like disk-full.
+              {:error, :store_unavailable}
           end
 
         :running ->
@@ -620,11 +723,13 @@ defmodule EvoGit.TaskRegistry do
     # Use a high limit since path-filtered results are typically manageable.
     offload(from, state, fn ->
       {tasks, _total} =
-        EvoGit.Store.safe_select_paginated_tasks(
-          state.task_store,
-          filters: [project_path: path],
-          limit: 5000
-        )
+        safe_store_read("list_tasks_by_path", {[], 0}, fn ->
+          EvoGit.Store.safe_select_paginated_tasks(
+            state.task_store,
+            filters: [project_path: path],
+            limit: 5000
+          )
+        end)
 
       tasks
     end)
@@ -634,7 +739,10 @@ defmodule EvoGit.TaskRegistry do
   def handle_call(:get_unique_paths, _from, state) do
     # select_task_paths now returns distinct non-nil project_path values
     # directly from the denormalized column — no per-row decode needed.
-    paths = EvoGit.Store.select_task_paths(state.task_store)
+    paths =
+      safe_store_read("get_unique_paths", [], fn ->
+        EvoGit.Store.select_task_paths(state.task_store)
+      end)
 
     {:reply, paths, state}
   end
@@ -642,21 +750,27 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call({:list_tasks_summary, statuses, since}, from, state) do
     offload(from, state, fn ->
-      EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
+      safe_store_read("list_tasks_summary", [], fn ->
+        EvoGit.Store.select_tasks_summary(state.task_store, statuses, since)
+      end)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_summary_by_path, path, statuses, since}, from, state) do
     offload(from, state, fn ->
-      EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
+      safe_store_read("list_tasks_summary_by_path", [], fn ->
+        EvoGit.Store.select_tasks_summary_by_path(state.task_store, path, statuses, since)
+      end)
     end)
   end
 
   @impl true
   def handle_call({:list_tasks_changed_since, since_iso}, from, state) do
     offload(from, state, fn ->
-      EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
+      safe_store_read("list_tasks_changed_since", [], fn ->
+        EvoGit.Store.select_tasks_changed_since(state.task_store, since_iso)
+      end)
     end)
   end
 
@@ -664,20 +778,31 @@ defmodule EvoGit.TaskRegistry do
   def handle_call({:list_task_ids, statuses}, _from, state) do
     # Tiny projection (id, status, updated_at) — no heavy decode, so reply
     # synchronously without the Task-start offload.
-    tasks = EvoGit.Store.select_task_ids(state.task_store, statuses)
+    tasks =
+      safe_store_read("list_task_ids", [], fn ->
+        EvoGit.Store.select_task_ids(state.task_store, statuses)
+      end)
+
     {:reply, tasks, state}
   end
 
   @impl true
   def handle_call(:clear_finished_tasks, _from, state) do
-    task_ids = EvoGit.Store.select_finished_task_ids(state.task_store)
+    task_ids =
+      safe_store_read("clear_finished_tasks select", [], fn ->
+        EvoGit.Store.select_finished_task_ids(state.task_store)
+      end)
 
     # On disk-full the finished rows remain and {:error, :disk_full} is
     # returned (a later clear retry would succeed once space is freed).
     reply =
-      case EvoGit.Store.delete_tasks(state.task_store, task_ids) do
+      case safe_store_write("clear_finished_tasks delete", fn ->
+             EvoGit.Store.delete_tasks(state.task_store, task_ids)
+           end) do
         :ok ->
-          Cleanup.cleanup_expired_tasks(state.task_store)
+          safe_store_read("clear_finished_tasks cleanup", :ok, fn ->
+            Cleanup.cleanup_expired_tasks(state.task_store)
+          end)
 
           # One event per deleted row — the dashboard needs the id to drop
           # the task from its UI. Broadcast only on the successful write (on
@@ -694,6 +819,10 @@ defmodule EvoGit.TaskRegistry do
           )
 
           {:error, :disk_full}
+
+        {:error, :store_unavailable} ->
+          # StoreGuard already logged it; nothing was deleted, so no broadcast.
+          {:error, :store_unavailable}
       end
 
     {:reply, reply, state}
@@ -707,15 +836,21 @@ defmodule EvoGit.TaskRegistry do
 
     # On disk-full the project simply isn't persisted — log and continue
     # (recent projects are a convenience, never worth crashing the registry).
-    case EvoGit.Store.put_project(
-           state.task_store,
-           %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
-         ) do
+    case safe_store_write("add_recent_project", fn ->
+           EvoGit.Store.put_project(
+             state.task_store,
+             %EvoGit.RecentProject{path: path, name: name, last_opened_at: now}
+           )
+         end) do
       :ok ->
         :ok
 
       {:error, :disk_full} ->
         Logger.warning("TaskRegistry: disk full — recent project #{inspect(path)} not persisted")
+
+      {:error, :store_unavailable} ->
+        # StoreGuard already logged it — recent projects are a convenience.
+        :ok
     end
 
     # Enforce max limit
@@ -737,7 +872,9 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_call({:remove_recent_project, path}, _from, state) do
     # On disk-full the project row simply remains — log and continue.
-    case EvoGit.Store.delete_project(state.task_store, path) do
+    case safe_store_write("remove_recent_project", fn ->
+           EvoGit.Store.delete_project(state.task_store, path)
+         end) do
       :ok ->
         :ok
 
@@ -745,6 +882,9 @@ defmodule EvoGit.TaskRegistry do
         Logger.warning(
           "TaskRegistry: disk full — recent project #{inspect(path)} could not be deleted"
         )
+
+      {:error, :store_unavailable} ->
+        :ok
     end
 
     Phoenix.PubSub.broadcast(EvoGit.PubSub, "recent_projects", {:recent_projects_updated})
@@ -764,11 +904,15 @@ defmodule EvoGit.TaskRegistry do
   def handle_cast({:append_log, task_id, log_entry}, state) do
     # Narrow-column read: only the logs column is fetched (no full 18-column
     # task_get decode) just to read the existing logs.
-    case EvoGit.Store.select_task_logs(state.task_store, task_id) do
+    case safe_store_read("append_log select_task_logs", nil, fn ->
+           EvoGit.Store.select_task_logs(state.task_store, task_id)
+         end) do
       logs when is_list(logs) ->
         updated_logs = [log_entry | logs] |> Enum.take(@max_log_entries)
 
-        case EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs) do
+        case safe_store_write("append_log update_task_columns", fn ->
+               EvoGit.Store.update_task_columns(state.task_store, task_id, logs: updated_logs)
+             end) do
           :ok ->
             :ok
 
@@ -778,6 +922,10 @@ defmodule EvoGit.TaskRegistry do
             Logger.warning(
               "TaskRegistry: disk full — log entry for task #{task_id} not persisted"
             )
+
+          {:error, :store_unavailable} ->
+            # StoreGuard already logged it — log-loss is acceptable here too.
+            :ok
         end
 
       nil ->
@@ -789,7 +937,9 @@ defmodule EvoGit.TaskRegistry do
 
   @impl true
   def handle_cast({:delete_task, task_id}, state) do
-    case EvoGit.Store.delete_task(state.task_store, task_id) do
+    case safe_store_write("delete_task", fn ->
+           EvoGit.Store.delete_task(state.task_store, task_id)
+         end) do
       :ok ->
         # Broadcast only on the successful write — on disk-full the row
         # remains and nothing was deleted.
@@ -800,6 +950,10 @@ defmodule EvoGit.TaskRegistry do
         # Fire-and-forget delete (cast): swallow + log — the task row simply
         # remains until disk space is freed and a later delete/cleanup retries.
         Logger.warning("TaskRegistry: disk full — task #{task_id} could not be deleted")
+
+      {:error, :store_unavailable} ->
+        # Same fire-and-forget degradation (StoreGuard already logged it).
+        :ok
     end
 
     {:noreply, state}
@@ -808,12 +962,16 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_cast({:set_review_status, task_id, status}, state) do
     # Narrow-column existence check: reads only the status column.
-    case EvoGit.Store.get_task_status(state.task_store, task_id) do
+    case safe_store_read("set_review_status get_task_status", nil, fn ->
+           EvoGit.Store.get_task_status(state.task_store, task_id)
+         end) do
       nil ->
         :ok
 
       _status ->
-        case EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status) do
+        case safe_store_write("set_review_status update_task_columns", fn ->
+               EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
+             end) do
           :ok ->
             :ok
 
@@ -823,6 +981,9 @@ defmodule EvoGit.TaskRegistry do
             Logger.warning(
               "TaskRegistry: disk full — review status for task #{task_id} not persisted"
             )
+
+          {:error, :store_unavailable} ->
+            :ok
         end
     end
 
@@ -834,15 +995,19 @@ defmodule EvoGit.TaskRegistry do
   @impl true
   def handle_cast({:set_review_metadata, task_id, base_sha, commit_sha}, state) do
     # Narrow-column existence check: reads only the status column.
-    case EvoGit.Store.get_task_status(state.task_store, task_id) do
+    case safe_store_read("set_review_metadata get_task_status", nil, fn ->
+           EvoGit.Store.get_task_status(state.task_store, task_id)
+         end) do
       nil ->
         :ok
 
       _status ->
-        case EvoGit.Store.update_task_columns(state.task_store, task_id,
-               base_sha: base_sha,
-               commit_sha: commit_sha
-             ) do
+        case safe_store_write("set_review_metadata update_task_columns", fn ->
+               EvoGit.Store.update_task_columns(state.task_store, task_id,
+                 base_sha: base_sha,
+                 commit_sha: commit_sha
+               )
+             end) do
           :ok ->
             :ok
 
@@ -852,6 +1017,9 @@ defmodule EvoGit.TaskRegistry do
             Logger.warning(
               "TaskRegistry: disk full — review metadata for task #{task_id} not persisted"
             )
+
+          {:error, :store_unavailable} ->
+            :ok
         end
     end
 
@@ -875,7 +1043,9 @@ defmodule EvoGit.TaskRegistry do
     # fetched (no full 19-column task_get decode) — exactly the fields this
     # handler needs for the stale-guard, preservation, and project_path.
     state =
-      case EvoGit.Store.select_task_update_info(state.task_store, task_id) do
+      case safe_store_read("handle_update_status select_task_update_info", nil, fn ->
+             EvoGit.Store.select_task_update_info(state.task_store, task_id)
+           end) do
         %{
           status: task_status,
           opts: task_opts,
@@ -941,7 +1111,12 @@ defmodule EvoGit.TaskRegistry do
             update_cols =
               [
                 status: status,
-                result: result,
+                # Archive dedup: the runtime result carries the per-agent
+                # archive under `data.archive_records`, and the SAME list is
+                # persisted into the dedicated `archive_metadata` column below.
+                # Store it ONCE — strip it from the persisted result copy only
+                # (the in-flight `result` keeps it for the rest of the handler).
+                result: ArchiveDedup.strip_archive_records(result),
                 finished_at: finished_at,
                 lease_expires_at: lease_expires_at,
                 project_path: project_path,
@@ -953,7 +1128,9 @@ defmodule EvoGit.TaskRegistry do
                 if(commit_sha, do: [commit_sha: commit_sha], else: []) ++
                 if(archive_records, do: [archive_metadata: archive_records], else: [])
 
-            case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
+            case safe_store_write("handle_update_status update_task_columns", fn ->
+                   EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
+                 end) do
               :ok ->
                 # Broadcast the persisted status only when it actually changed.
                 # A missing row or a stale/no-op update never reaches here, and
@@ -987,6 +1164,12 @@ defmodule EvoGit.TaskRegistry do
                   "TaskRegistry: disk full — status write for task #{task_id} " <>
                     "not persisted (status #{inspect(status)})"
                 )
+
+              {:error, :store_unavailable} ->
+                # StoreGuard already logged it. The terminal write is lost but
+                # the in-memory cleanup below still runs (task_refs removal,
+                # cancelling marker, tmpdir reclaim) so the task is not stuck.
+                :ok
             end
 
             if status in [:completed, :failed, :cancelled] do
@@ -1017,11 +1200,15 @@ defmodule EvoGit.TaskRegistry do
   # --- TaskStore Read Helpers ---
 
   defp task_get(state, task_id) do
-    EvoGit.Store.get_task(state.task_store, task_id)
+    safe_store_read("get_task", nil, fn ->
+      EvoGit.Store.get_task(state.task_store, task_id)
+    end)
   end
 
   defp select_all_projects(state) do
-    EvoGit.Store.safe_select_all_projects(state.task_store)
+    safe_store_read("select_all_projects", [], fn ->
+      EvoGit.Store.safe_select_all_projects(state.task_store)
+    end)
   end
 
   # Removes a task_id from the :evogit_cancelling_tasks marker once the task
@@ -1076,7 +1263,9 @@ defmodule EvoGit.TaskRegistry do
   # root. Best-effort: TaskTmpdir.reclaim/2 never raises.
   defp reclaim_task_tmpdir(state, task_id) do
     project_path =
-      case EvoGit.Store.select_task_update_info(state.task_store, task_id) do
+      case safe_store_read("reclaim_task_tmpdir select_task_update_info", nil, fn ->
+             EvoGit.Store.select_task_update_info(state.task_store, task_id)
+           end) do
         %{opts: opts} when is_list(opts) -> Keyword.get(opts, :path)
         _ -> nil
       end
@@ -1087,6 +1276,25 @@ defmodule EvoGit.TaskRegistry do
   # The PRIMARY repo path from a decoded task struct (nil when absent/repo-less).
   defp task_repo_path(%TaskInfo{opts: opts}) when is_list(opts), do: Keyword.get(opts, :path)
   defp task_repo_path(_task), do: nil
+
+  # ── Store fault isolation ────────────────────────────────────────────
+  #
+  # EVERY synchronous `EvoGit.Store` call in this module goes through one of
+  # these two guards, so a failing store READ/WRITE can never exit or crash the
+  # registry — the GenServer every dashboard LiveView depends on (full rationale
+  # in `EvoGit.TaskRegistry.StoreGuard`).
+  #
+  #   * `safe_store_read/3` — `fun` is a store read; a failure yields the read's
+  #     own EMPTY shape (`degraded`), exactly what `EvoGit.Store` itself answers
+  #     with in-process. The happy-path shape never changes.
+  #   * `safe_store_write/2` — `fun` is a store write; a failure yields
+  #     `{:error, :store_unavailable}`, which call sites handle EXACTLY like
+  #     `{:error, :disk_full}`: log + continue with the in-memory behavior.
+  #
+  # Both log at :error with the operation name, so a degraded store operation is
+  # always observable — never silent.
+  defp safe_store_read(op, degraded, fun), do: StoreGuard.read(op, degraded, fun)
+  defp safe_store_write(op, fun), do: StoreGuard.write(op, fun)
 
   # Delegates a heavy Store decode to a short-lived Task process so the large
   # decoded terms are allocated and discarded on that process's heap rather
@@ -1194,7 +1402,9 @@ defmodule EvoGit.TaskRegistry do
     update_cols =
       [
         status: final_status,
-        result: final_result,
+        # Same persistence-boundary archive dedup as handle_update_status/6 —
+        # `archive_metadata` is the single stored copy of the per-agent archive.
+        result: ArchiveDedup.strip_archive_records(final_result),
         finished_at: finished_at,
         lease_expires_at: nil
       ] ++ if(branch_name, do: [branch_name: branch_name], else: [])
@@ -1203,7 +1413,9 @@ defmodule EvoGit.TaskRegistry do
     # never persisted. On disk-full the task stays in its previous persisted
     # state — log and continue (the in-memory resolution is complete).
     # Broadcast only when the write actually happened (status after resolve).
-    case EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols) do
+    case safe_store_write("resolve_recheck_task update_task_columns", fn ->
+           EvoGit.Store.update_task_columns(state.task_store, task_id, update_cols)
+         end) do
       :ok ->
         Phoenix.PubSub.broadcast(
           EvoGit.PubSub,
@@ -1222,6 +1434,10 @@ defmodule EvoGit.TaskRegistry do
           "TaskRegistry: disk full — recheck resolution for task #{task_id} " <>
             "(#{final_status}) not persisted"
         )
+
+      {:error, :store_unavailable} ->
+        # StoreGuard already logged it — the in-memory resolution is complete.
+        :ok
     end
 
     Logger.info("TaskRegistry: recheck resolved task #{task_id} to #{final_status}")
@@ -1336,7 +1552,9 @@ defmodule EvoGit.TaskRegistry do
         paths = Enum.map(to_remove, fn project -> project.path end)
 
         Enum.each(paths, fn path ->
-          case EvoGit.Store.delete_project(state.task_store, path) do
+          case safe_store_write("trim_recent_projects", fn ->
+                 EvoGit.Store.delete_project(state.task_store, path)
+               end) do
             :ok ->
               :ok
 
@@ -1346,6 +1564,9 @@ defmodule EvoGit.TaskRegistry do
               Logger.warning(
                 "TaskRegistry: disk full — recent project #{inspect(path)} could not be trimmed"
               )
+
+            {:error, :store_unavailable} ->
+              :ok
           end
         end)
 
@@ -1394,11 +1615,19 @@ defmodule EvoGit.TaskRegistry do
             # :finalizing is NON-terminal — finished_at and the lease stay as
             # they are; the final terminal mapping happens at result time in
             # handle_update_status/6.
-            updated = %{task | status: :finalizing}
+            # Archive dedup at the put_task boundary too: this is a FULL-row
+            # re-write of a DECODED task, so a row written before the dedup
+            # rule still carries `data.archive_records` in its result and would
+            # be re-persisted (compressed) as a duplicate of archive_metadata.
+            updated =
+              %{task | status: :finalizing}
+              |> ArchiveDedup.strip_task_archive_records()
 
             # On disk-full the persisted row keeps its old status — log and
             # continue.
-            case EvoGit.Store.put_task(state.task_store, updated) do
+            case safe_store_write("finalizing put_task", fn ->
+                   EvoGit.Store.put_task(state.task_store, updated)
+                 end) do
               :ok ->
                 # The row is now :finalizing — schedule the ONE-SHOT stuck-
                 # :finalizing grace watchdog (only here, NOT on the disk-full
@@ -1412,6 +1641,11 @@ defmodule EvoGit.TaskRegistry do
                   "TaskRegistry: disk full — :task_updated finalizing update for task #{task_id} " <>
                     "not persisted (status :finalizing)"
                 )
+
+              {:error, :store_unavailable} ->
+                # StoreGuard already logged it — the row keeps its old status
+                # and no watchdog is scheduled.
+                :ok
             end
 
             state
@@ -1580,14 +1814,19 @@ defmodule EvoGit.TaskRegistry do
     # every heartbeat. :cancelling is included so a long graceful-cancel keeps
     # its lease valid while the wrapper is still alive.
     Enum.each(state.task_refs, fn {task_id, _ref} ->
-      status = EvoGit.Store.get_task_status(state.task_store, task_id)
+      status =
+        safe_store_read("heartbeat get_task_status", nil, fn ->
+          EvoGit.Store.get_task_status(state.task_store, task_id)
+        end)
 
       if status in [:running, :pending, :cancelling] do
-        case EvoGit.Store.update_lease_expires_at(
-               state.task_store,
-               task_id,
-               now + @lease_duration
-             ) do
+        case safe_store_write("heartbeat update_lease_expires_at", fn ->
+               EvoGit.Store.update_lease_expires_at(
+                 state.task_store,
+                 task_id,
+                 now + @lease_duration
+               )
+             end) do
           :ok ->
             :ok
 
@@ -1598,6 +1837,10 @@ defmodule EvoGit.TaskRegistry do
             Logger.warning(
               "TaskRegistry: disk full — lease renewal for task #{task_id} not persisted"
             )
+
+          {:error, :store_unavailable} ->
+            # Same degradation (StoreGuard already logged it).
+            :ok
         end
       end
     end)
@@ -1620,7 +1863,9 @@ defmodule EvoGit.TaskRegistry do
     # We only need to task_get (full decode) for the very few tasks (usually
     # 0-1) that actually need to be marked :failed.
     {changed, failed_ids} =
-      EvoGit.Store.select_running_lease_info(state.task_store)
+      safe_store_read("lease_sweep select_running_lease_info", [], fn ->
+        EvoGit.Store.select_running_lease_info(state.task_store)
+      end)
       |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
         status == :running and
           id not in owned_ids and
@@ -1651,7 +1896,9 @@ defmodule EvoGit.TaskRegistry do
                   error: Diagnostics.failure_error(:lease_expired, :lease_sweep, message)
               }
 
-              case EvoGit.Store.put_task(state.task_store, updated) do
+              case safe_store_write("lease_sweep put_task", fn ->
+                     EvoGit.Store.put_task(state.task_store, updated)
+                   end) do
                 :ok ->
                   # Direct terminal write (:failed) — bypasses
                   # handle_update_status/6, so reclaim the tmpdir here too. The
@@ -1670,6 +1917,10 @@ defmodule EvoGit.TaskRegistry do
                   )
 
                   {true, failed_ids}
+
+                {:error, :store_unavailable} ->
+                  # Same in-memory outcome as disk-full (StoreGuard logged it).
+                  {true, failed_ids}
               end
 
             nil ->
@@ -1679,7 +1930,9 @@ defmodule EvoGit.TaskRegistry do
       end)
 
     if changed do
-      Cleanup.cleanup_expired_tasks(state.task_store)
+      safe_store_read("lease_sweep cleanup", :ok, fn ->
+        Cleanup.cleanup_expired_tasks(state.task_store)
+      end)
     end
 
     # One event per successfully-persisted sweep — the dashboard needs the id
@@ -1695,7 +1948,10 @@ defmodule EvoGit.TaskRegistry do
   # max_age_days and max_tasks limits. Reschedules itself every 5 minutes.
   @impl true
   def handle_info(:periodic_cleanup, state) do
-    Cleanup.cleanup_expired_tasks(state.task_store)
+    safe_store_read("periodic_cleanup", :ok, fn ->
+      Cleanup.cleanup_expired_tasks(state.task_store)
+    end)
+
     Process.send_after(self(), :periodic_cleanup, 300_000)
     {:noreply, state}
   end

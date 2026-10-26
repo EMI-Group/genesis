@@ -148,7 +148,13 @@ defmodule EvoGit.Store.Operations.Summaries do
   # so every value comes back as the exact bytes SQLite stored (the raw store's
   # @summary_columns SELECT). `result`, `logs`, `usage`, and `archive_metadata`
   # are deliberately not selected.
-  defp summary_query do
+  #
+  # Public (but `@doc false`) so the LIGHTWEIGHT paged read
+  # (`EvoGit.Store.Operations.Pages.select_tasks_page/2`) reuses THIS canonical
+  # projection + its per-row decode instead of inventing a second one.
+  @doc false
+  @spec summary_query() :: Ecto.Query.t()
+  def summary_query do
     from(t in TaskRowRaw,
       select: %{
         id: t.id,
@@ -217,7 +223,12 @@ defmodule EvoGit.Store.Operations.Summaries do
   # decode_skipping_bad/3: rows whose Codec decode RAISES (by design, e.g.
   # non-object `opts` JSON) are skipped with a warning instead of crashing the
   # whole read. No data-movement INSERT/DELETE is performed on bad rows.
-  defp decode_skipping_bad(rows) do
+  #
+  # Public (but `@doc false`) so the lightweight paged read shares the EXACT
+  # same skip-and-log boundary as the summary reads.
+  @doc false
+  @spec decode_skipping_bad([map()]) :: [summary()]
+  def decode_skipping_bad(rows) do
     Enum.flat_map(rows, fn row ->
       # Justified try/rescue — safe-select boundary (mirrors the raw store):
       # DB rows may contain corrupt or legacy data that fails to decode; the

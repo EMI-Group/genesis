@@ -576,7 +576,7 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert Enum.map(tasks, & &1.id) == ["pg-combo-hit"]
     end
 
-    test "search matches id, opts JSON, project_path, and result text" do
+    test "search matches id, opts JSON, project_path, and branch_name (never result)" do
       repo = start_repo!()
 
       put!(repo, %TaskInfo{id: "find-this-id", type: :evolve, status: :pending})
@@ -625,10 +625,17 @@ defmodule EvoGit.Store.Operations.TasksTest do
       {by_path, _} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle-dir"])
       assert Enum.map(by_path, & &1.id) == ["by-path"]
 
+      # `result` is deliberately NOT searched any more: it is zlib-compressed
+      # above 4 kB (so a LIKE over it is a full-blob scan that cannot even see
+      # the user-visible text) and the denormalized `branch_name` column took
+      # its place in the OR-LIKE.
       {by_result, _} =
         Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle summary"])
 
-      assert Enum.map(by_result, & &1.id) == ["by-result"]
+      assert by_result == []
+
+      {by_branch, _} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "agent_n"])
+      assert Enum.map(by_branch, & &1.id) == ["by-result"]
 
       # Empty search string = no clause at all (everything matches).
       {all, all_total} = Tasks.safe_select_paginated_tasks(repo, filters: [search: ""])

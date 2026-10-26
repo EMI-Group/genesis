@@ -70,6 +70,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
   alias EvoGit.Store.Schemas.TaskRowRaw
@@ -251,14 +252,14 @@ defmodule EvoGit.Store.Operations.Tasks do
   def safe_select_paginated_tasks(repo, opts) when is_list(opts) do
     RepoScope.with_repo(repo, fn ->
       filters = Keyword.get(opts, :filters, [])
-      limit = clamp_limit(Keyword.get(opts, :limit))
-      offset = clamp_offset(Keyword.get(opts, :offset))
+      limit = Filters.clamp_limit(Keyword.get(opts, :limit))
+      offset = Filters.clamp_offset(Keyword.get(opts, :offset))
 
       base = from(t in TaskRowRaw)
 
       rows =
         base
-        |> where_filters(filters)
+        |> Filters.where_filters(filters)
         |> order_by([t], desc: t.started_at)
         |> limit(^limit)
         |> offset(^offset)
@@ -267,7 +268,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
       total_count =
         base
-        |> where_filters(filters)
+        |> Filters.where_filters(filters)
         |> Repo.aggregate(:count)
 
       {rows, total_count}
@@ -409,107 +410,6 @@ defmodule EvoGit.Store.Operations.Tasks do
           %{status: status, opts: opts, finished_at: finished_at, lease_expires_at: lease}
       end
     end)
-  end
-
-  ## Private — pagination filters (port of the retired Queries.build_where/1 semantics)
-
-  # Pagination clamps — a verbatim port of the retired
-  # `EvoGit.Store.Queries.clamp_limit/1` / `clamp_offset/1`: non-integer or
-  # out-of-range values fall back to the defaults 50 / 0.
-  defp clamp_limit(nil), do: 50
-  defp clamp_limit(n) when is_integer(n) and n > 0, do: n
-  defp clamp_limit(_), do: 50
-
-  defp clamp_offset(nil), do: 0
-  defp clamp_offset(n) when is_integer(n) and n >= 0, do: n
-  defp clamp_offset(_), do: 0
-
-  # Escapes the SQL LIKE-special characters (`%`, `_`, `\`) by prefixing them
-  # with a backslash — a verbatim port of the retired
-  # `EvoGit.Store.Queries.escape_like/1`. Used together with `ESCAPE '\'` on
-  # the LIKE fragment so user-supplied values (e.g. project paths containing
-  # underscores) match literally instead of acting as wildcards.
-  defp escape_like(value) do
-    value
-    |> String.replace("\\", "\\\\")
-    |> String.replace("%", "\\%")
-    |> String.replace("_", "\\_")
-  end
-
-  # Applies the raw store's build_where/1 filter set, clause for clause:
-  #
-  #   * `:status` (default "all") — exact TEXT equality on the stored status
-  #     string (dashboard filters pass the string spelling; "all" = no clause).
-  #   * `:project_path` (default "all") — exact TEXT equality.
-  #   * `:review_status` (default "all") — "pending" is the old COMPOSITE:
-  #     `status = 'completed' AND review_status IS NULL AND branch_name IS NOT
-  #     NULL` (completed tasks with no review whose result carried a
-  #     branch_name → awaiting review); any other value is exact TEXT equality.
-  #   * `:search` (nil/"" = no clause) — a 4-column OR-LIKE over id, opts,
-  #     project_path, result using the old escaped pattern
-  #     `%#{escape_like(search)}%` with `ESCAPE '\'`. This is the ONE
-  #     `fragment` in the module — LIKE-escape cannot be expressed in
-  #     Ecto.Query syntax.
-  defp where_filters(query, filters) do
-    query
-    |> where_status_filter(Keyword.get(filters, :status, "all"))
-    |> where_path_filter(Keyword.get(filters, :project_path, "all"))
-    |> where_review_status_filter(Keyword.get(filters, :review_status, "all"))
-    |> where_search_filter(Keyword.get(filters, :search))
-  end
-
-  defp where_status_filter(query, "all"), do: query
-  defp where_status_filter(query, status), do: where(query, [t], t.status == ^status)
-
-  defp where_path_filter(query, "all"), do: query
-  defp where_path_filter(query, path), do: where(query, [t], t.project_path == ^path)
-
-  defp where_review_status_filter(query, "all"), do: query
-
-  defp where_review_status_filter(query, "pending") do
-    # The composite "pending review" predicate — ported verbatim from the old
-    # build_where/1 arm (literal 'completed' pushdown, exactly as written).
-    where(
-      query,
-      [t],
-      t.status == "completed" and is_nil(t.review_status) and
-        not is_nil(t.branch_name)
-    )
-  end
-
-  defp where_review_status_filter(query, review_status) do
-    where(query, [t], t.review_status == ^review_status)
-  end
-
-  defp where_search_filter(query, search) when search in [nil, ""], do: query
-
-  defp where_search_filter(query, search) do
-    pat = "%#{escape_like(search)}%"
-
-    # A single literal fragment — the 4-column OR-LIKE with the old `\` escape
-    # char. The escape char must be pinned as a PARAMETER, not written as the
-    # SQL literal `'\'`: the adapter doubles backslashes inside SQL string
-    # literals, which SQLite then rejects ("ESCAPE expression must be a single
-    # character"). The pattern itself is the other interpolated (^) value.
-    where(
-      query,
-      [t],
-      fragment(
-        "(? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ? OR ? LIKE ? ESCAPE ?)",
-        t.id,
-        ^pat,
-        ^"\\",
-        t.opts,
-        ^pat,
-        ^"\\",
-        t.project_path,
-        ^pat,
-        ^"\\",
-        t.result,
-        ^pat,
-        ^"\\"
-      )
-    )
   end
 
   ## Private — pagination decode (skip-and-log safe-select boundary)

@@ -1382,9 +1382,10 @@ defmodule EvoGit.StoreTest do
       assert hd(tasks).opts[:prompt] == "write a database migration"
     end
 
-    test "search by agent response text in result returns only matching tasks" do
-      # Matches: the response message contains "OAuth login" — the lowercase
-      # search term "oauth login" proves case-insensitive matching.
+    test "search by branch_name returns only matching tasks (result text is NOT searched)" do
+      # Matches: the result carries branch_name "genesis/agent_1", which the
+      # store denormalizes into the `branch_name` column — one of the searched
+      # columns now. (A lowercase query still proves case-insensitive matching.)
       insert_filtered!(0,
         id: "result-oauth",
         result:
@@ -1396,7 +1397,7 @@ defmodule EvoGit.StoreTest do
            }}
       )
 
-      # Does NOT match: a different response message.
+      # Does NOT match: a different response message and no branch.
       insert_filtered!(1,
         id: "result-other",
         result: {:ok, %{result: "Refactored the database migration layer.", commit_sha: "def"}}
@@ -1409,12 +1410,27 @@ defmodule EvoGit.StoreTest do
         Store.safe_select_paginated_tasks(Store,
           limit: 50,
           offset: 0,
-          filters: [search: "oauth login"]
+          filters: [search: "agent_1"]
         )
 
       assert length(tasks) == 1
       assert total == 1
       assert hd(tasks).id == "result-oauth"
+
+      # `result` is deliberately no longer searched: `result` is zlib-compressed
+      # above 4 kB, so a LIKE over it was both a full-blob scan and unable to see
+      # the user-visible text. A phrase that exists ONLY in the result text no
+      # longer matches (the behaviour change documented on the shared WHERE
+      # builder, `EvoGit.Store.Operations.Filters`).
+      {by_result_text, by_result_total} =
+        Store.safe_select_paginated_tasks(Store,
+          limit: 50,
+          offset: 0,
+          filters: [search: "oauth login"]
+        )
+
+      assert by_result_text == []
+      assert by_result_total == 0
     end
 
     test "empty search returns all (no filtering)" do
@@ -1965,7 +1981,13 @@ defmodule EvoGit.StoreTest do
     )
     """
 
-    @migration_versions [20_260_815_000_001, 20_260_815_000_002, 20_260_815_000_003]
+    @migration_versions [
+      20_260_815_000_001,
+      20_260_815_000_002,
+      20_260_815_000_003,
+      20_260_815_000_004,
+      20_260_815_000_005
+    ]
 
     test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
          %{root: root} do

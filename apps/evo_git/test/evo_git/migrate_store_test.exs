@@ -29,7 +29,18 @@ defmodule EvoGit.MigrateStoreTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
+  @compress_rows_version 20_260_815_000_004
+  @covering_index_version 20_260_815_000_005
+  # Ascending, exactly as `schema_migrations` reports it: the compression /
+  # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
+  # the index walk never crawls the unrewritten blob overflow chains.
+  @migration_versions [
+    @baseline_version,
+    @normalization_version,
+    @composite_index_version,
+    @compress_rows_version,
+    @covering_index_version
+  ]
 
   # The v0.9.0–v0.12.5 "reported crash-on-upgrade" shape: `updated_at` is the
   # 19th column and `error` does not exist yet — the canonical legacy DB a
@@ -110,16 +121,16 @@ defmodule EvoGit.MigrateStoreTest do
   ## Tests
 
   describe "fresh database (nonexistent path)" do
-    test "applies all three migrations and reports them by name", %{db_path: path} do
+    test "applies all five migrations and reports them by name", %{db_path: path} do
       refute File.exists?(path)
 
       output = run_task_capturing_output!(path)
 
-      assert output =~ "Applying 3 migration(s):"
+      assert output =~ "Applying 5 migration(s):"
       assert output =~ "20260815000001_baseline_adoption"
       assert output =~ "20260815000002_data_normalization"
       assert output =~ "20260815000003_composite_indexes"
-      assert output =~ "Database is now current (3 migration(s) applied)."
+      assert output =~ "Database is now current (5 migration(s) applied)."
 
       # All three versions are stamped and the canonical tables exist.
       assert migration_versions(path) == @migration_versions
@@ -135,7 +146,7 @@ defmodule EvoGit.MigrateStoreTest do
 
       output = run_task_capturing_output!(path)
 
-      assert output =~ "Database is already current — no pending migrations (3 applied)."
+      assert output =~ "Database is already current — no pending migrations (5 applied)."
       refute output =~ "Applying"
       assert migration_versions(path) == @migration_versions
     end
@@ -147,7 +158,7 @@ defmodule EvoGit.MigrateStoreTest do
       build_legacy_db!(path, @ddl_19_col, seed: :legacy)
 
       output = run_task_capturing_output!(path)
-      assert output =~ "Applying 3 migration(s):"
+      assert output =~ "Applying 5 migration(s):"
 
       # Adoption: `error` appended (SQLite ALTERs append at the tail), the
       # full 20-column set, versions stamped.
@@ -200,7 +211,7 @@ defmodule EvoGit.MigrateStoreTest do
 
       assert RepoScope.with_repo(pid, fn ->
                EvoGit.Repo.query!("SELECT COUNT(*) FROM schema_migrations").rows
-             end) == [[3]]
+             end) == [[5]]
     end
   end
 
