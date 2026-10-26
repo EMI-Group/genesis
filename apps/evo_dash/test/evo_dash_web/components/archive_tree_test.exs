@@ -866,4 +866,65 @@ defmodule EvoDashWeb.ArchiveTreeTest do
       end
     end
   end
+
+  describe "archive_opt?/1" do
+    test "accepts the boolean and the legacy string spelling" do
+      assert ArchiveHelpers.archive_opt?(archive: true)
+      assert ArchiveHelpers.archive_opt?(archive: "true")
+    end
+
+    test "rejects everything else (including a missing opt)" do
+      refute ArchiveHelpers.archive_opt?([])
+      refute ArchiveHelpers.archive_opt?(nil)
+      refute ArchiveHelpers.archive_opt?(archive: false)
+      refute ArchiveHelpers.archive_opt?(archive: "false")
+      refute ArchiveHelpers.archive_opt?(path: "/tmp/repo")
+      refute ArchiveHelpers.archive_opt?("archive: true")
+    end
+  end
+
+  describe "retain_window/2,3" do
+    test "keeps every entry below the bound" do
+      entries = Enum.to_list(1..3)
+      assert ArchiveHelpers.retain_window(entries) == {entries, 0}
+    end
+
+    test "keeps the most recent entries and counts the evicted ones" do
+      entries = Enum.to_list(1..8)
+      assert ArchiveHelpers.retain_window(entries, 0, 5) == {Enum.to_list(4..8), 3}
+    end
+
+    test "accumulates the previously evicted count" do
+      assert ArchiveHelpers.retain_window(Enum.to_list(1..6), 4, 5) == {Enum.to_list(2..6), 5}
+      # A window larger than the input keeps everything and the prior count.
+      assert ArchiveHelpers.retain_window(Enum.to_list(1..3), 4, 5) == {Enum.to_list(1..3), 4}
+    end
+
+    test "is total over non-list input and a non-positive bound" do
+      assert ArchiveHelpers.retain_window(nil) == {[], 0}
+      assert ArchiveHelpers.retain_window("nope", 2) == {[], 2}
+      assert ArchiveHelpers.retain_window([1, 2], 0, 0) == {[], 2}
+    end
+
+    test "max_retained/0 is five archive pages" do
+      assert ArchiveHelpers.max_retained() == 500
+    end
+  end
+
+  describe "retained_page_bounds/3 + more_pages?/3" do
+    test "the range counts the evicted leading rows" do
+      assert ArchiveHelpers.retained_page_bounds(500, 200, 700) == {201, 700}
+      assert ArchiveHelpers.retained_page_bounds(100, 0, 250) == {1, 100}
+      assert ArchiveHelpers.retained_page_bounds(150, 0, 150) == {1, 150}
+    end
+
+    test "the pager predicate adds the evicted rows to the retained ones" do
+      assert ArchiveHelpers.more_pages?(500, 200, 700) == false
+      assert ArchiveHelpers.more_pages?(100, 0, 250) == true
+      refute ArchiveHelpers.more_pages?(150, 0, 150)
+      refute ArchiveHelpers.more_pages?(0, 0, 0)
+      # Garbage totals never page forever.
+      refute ArchiveHelpers.more_pages?(10, 0, nil)
+    end
+  end
 end
