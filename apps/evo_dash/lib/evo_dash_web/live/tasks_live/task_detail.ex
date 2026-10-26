@@ -52,9 +52,22 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
        entry) supersedes an older one.
 
   A page APPEND keeps the archive's `seq` (only a first-page fetch bumps it);
-  its result is identified by the envelope's `next_offset`, which is the offset
-  that page was requested at. A stale/foreign-node result is dropped silently
-  and every shape is terminal (no wedged spinners).
+  its result is identified by the envelope's `next_offset`, which is the
+  cumulative count of RAW rows fetched so far — i.e. the offset the next /
+  in-flight page is requested at. A stale/foreign-node result is dropped
+  silently and every shape is terminal (no wedged spinners).
+
+  ## Bounded accumulation (retention window + exhaustion)
+
+  `entries` is bounded by `EvoDashWeb.ArchiveHelpers.max_retained/0` (500 = 5
+  pages): the retention window keeps the most RECENT entries and counts the
+  evicted (oldest) ones in `dropped`. `total` is the EFFECTIVE total used for
+  paging decisions (with eviction it equals `dropped + length(entries)`), while
+  `server_total` carries the server's own count for the LABEL only.
+  `exhausted?` marks a page that returned fewer rows than the requested
+  `@page_limit` — the archive has no further pages, so the pager stops even when
+  a stale `total` would still suggest more. `more_pages?/1` is the single pager
+  predicate built on the shared `ArchiveHelpers.more_pages?/3`.
 
   ## Cached-entry shape
 
@@ -67,9 +80,12 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
           nil
           | %{
               state: :loading | :ok | :error,      # first page
-              entries: [map()],                    # accumulated pages
-              total: non_neg_integer(),
-              next_offset: non_neg_integer(),
+              entries: [map()],                    # retained pages (windowed)
+              total: non_neg_integer(),            # EFFECTIVE total (paging)
+              server_total: non_neg_integer() | nil, # server count (label only)
+              dropped: non_neg_integer(),          # evicted by the window
+              exhausted?: boolean(),               # a short page ⇒ no more pages
+              next_offset: non_neg_integer(),      # cumulative RAW rows fetched
               loading_more?: boolean(),
               more_error: term() | nil,
               error: term() | nil,
@@ -104,11 +120,22 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
           archive: archive_entry() | nil
         }
 
-  @typedoc "The lazily-paged archive envelope nested inside an `entry/0`."
+  @typedoc """
+  The lazily-paged archive envelope nested inside an `entry/0`.
+
+  `total` is the EFFECTIVE total that drives paging (with eviction it equals
+  `dropped + length(entries)`), `server_total` is the server's own count for the
+  label only, `dropped` counts the entries the retention window evicted, and
+  `next_offset` is the cumulative count of RAW rows fetched so far (the offset
+  the next / in-flight page is requested at).
+  """
   @type archive_entry :: %{
           state: :loading | :ok | :error,
           entries: [map()],
           total: non_neg_integer(),
+          server_total: non_neg_integer() | nil,
+          dropped: non_neg_integer(),
+          exhausted?: boolean(),
           next_offset: non_neg_integer(),
           loading_more?: boolean(),
           more_error: term() | nil,
@@ -198,8 +225,8 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
   @doc """
   Fetches the NEXT archive page (append) for `task_id`.
 
-  No-op unless the archive is `:ok`, more entries exist
-  (`length(entries) < total`) and no append is already in flight. A failed
+  No-op unless the archive is `:ok`, more pages exist (`more_pages?/1`, built on
+  `ArchiveHelpers.more_pages?/3`) and no append is already in flight. A failed
   append keeps the already-loaded page (`more_error`) and this same function is
   the retry.
   """
@@ -327,10 +354,11 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
   is appended (deduped by `agent_id`, so a retried page is idempotent); anything
   else folds as the first page.
 
-  First page: `{:ok, %{entries: list, total: n}}` → `:ok` (an empty list is a
-  valid "this task archived nothing"); `{:error, reason}` / any other shape →
-  `:error` (Retry → `load_archive/2`). Append: a failure keeps the loaded page
-  and records `more_error` (Retry → `load_more_archive/2`).
+  First page: `{:ok, %{entries: list}}` (an optional `total` is used when it is
+  a non-negative integer) → `:ok` — an empty list is a valid "this task archived
+  nothing"; `{:error, reason}` / any other shape → `:error` (Retry →
+  `load_archive/2`). Append: a failure keeps the loaded page and records
+  `more_error` (Retry → `load_more_archive/2`).
   """
   @spec apply_archive(Phoenix.LiveView.Socket.t(), pos_integer(), node(), String.t(), term()) ::
           Phoenix.LiveView.Socket.t()
@@ -530,6 +558,9 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
       state: :loading,
       entries: [],
       total: 0,
+      server_total: nil,
+      dropped: 0,
+      exhausted?: false,
       next_offset: 0,
       loading_more?: false,
       more_error: nil,
@@ -539,16 +570,25 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
     }
   end
 
-  defp put_archive_first(archive, {:ok, %{entries: entries, total: total}})
-       when is_list(entries) and is_integer(total) do
-    entries = dedupe(entries)
+  # The first page: the page `total` is OPTIONAL (the store may stop returning a
+  # per-page COUNT(*)), so only a non-negative integer is kept as `server_total`.
+  # `next_offset` counts the RAW rows fetched (not the retained/deduped list), so
+  # the next request offset never regresses when the window evicts rows.
+  defp put_archive_first(archive, {:ok, %{entries: entries} = page}) when is_list(entries) do
+    fetched = length(entries)
+    {retained, dropped} = ArchiveHelpers.retain_window(dedupe(entries), 0)
+    server_total = page_total(page)
+    exhausted? = fetched < @page_limit
 
     %{
       archive
       | state: :ok,
-        entries: entries,
-        total: max(total, 0),
-        next_offset: length(entries),
+        entries: retained,
+        total: effective_total(exhausted?, dropped, length(retained), fetched, server_total),
+        server_total: server_total,
+        dropped: dropped,
+        exhausted?: exhausted?,
+        next_offset: fetched,
         loading_more?: false,
         more_error: nil,
         error: nil
@@ -561,6 +601,9 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
       | state: :error,
         entries: [],
         total: 0,
+        server_total: nil,
+        dropped: 0,
+        exhausted?: false,
         next_offset: 0,
         loading_more?: false,
         more_error: nil,
@@ -574,6 +617,9 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
       | state: :error,
         entries: [],
         total: 0,
+        server_total: nil,
+        dropped: 0,
+        exhausted?: false,
         next_offset: 0,
         loading_more?: false,
         more_error: nil,
@@ -582,13 +628,24 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
   end
 
   defp put_archive_more(archive, {:ok, %{entries: entries} = page}) when is_list(entries) do
+    raw = length(entries)
+    fetched = archive.next_offset + raw
     merged = dedupe(List.wrap(archive.entries) ++ entries)
+
+    {retained, dropped} =
+      ArchiveHelpers.retain_window(merged, Map.get(archive, :dropped, 0))
+
+    server_total = page_total(page) || Map.get(archive, :server_total)
+    exhausted? = raw < @page_limit
 
     %{
       archive
-      | entries: merged,
-        total: more_total(page, archive.total),
-        next_offset: length(merged),
+      | entries: retained,
+        total: effective_total(exhausted?, dropped, length(retained), fetched, server_total),
+        server_total: server_total,
+        dropped: dropped,
+        exhausted?: exhausted?,
+        next_offset: fetched,
         loading_more?: false,
         more_error: nil
     }
@@ -603,8 +660,23 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
     %{archive | loading_more?: false, more_error: other}
   end
 
-  defp more_total(%{total: total}, _previous) when is_integer(total) and total >= 0, do: total
-  defp more_total(_page, previous), do: previous
+  # A page's own `total` when it carries a usable count; nil otherwise (the
+  # store may stop returning COUNT(*) per page).
+  defp page_total(page) do
+    case Map.get(page, :total) do
+      total when is_integer(total) and total >= 0 -> total
+      _ -> nil
+    end
+  end
+
+  # A SHORT page (`exhausted?`) proves the archive ends there, so the effective
+  # total is exactly what was loaded — a stale server count can never keep the
+  # pager alive. Otherwise the best of the fetched row count and the server total.
+  defp effective_total(true, dropped, retained_count, _fetched, _server_total),
+    do: dropped + retained_count
+
+  defp effective_total(false, _dropped, _retained_count, fetched, server_total),
+    do: max(fetched, server_total || 0)
 
   defp put_agent_result(archive, agent_id, {:ok, entry}) when is_map(entry) do
     results =
@@ -638,11 +710,18 @@ defmodule EvoDashWeb.TasksLive.TaskDetail do
 
   ## Private — helpers
 
+  # THE pager predicate: a short page already proved there is nothing left, and
+  # the shared `ArchiveHelpers.more_pages?/3` compares the loaded span
+  # (`dropped + retained`) against the effective `total` — `length(entries) <
+  # total` would be wrong once the retention window evicted rows.
   defp more_pages?(archive) do
-    loaded = length(List.wrap(archive.entries))
+    retained = length(List.wrap(Map.get(archive, :entries)))
+    dropped = Map.get(archive, :dropped) || 0
     total = Map.get(archive, :total) || 0
 
-    loaded < total and not Map.get(archive, :loading_more?, false)
+    not Map.get(archive, :exhausted?, false) and
+      ArchiveHelpers.more_pages?(retained, dropped, total) and
+      not Map.get(archive, :loading_more?, false)
   end
 
   defp agent_results(archive) do
