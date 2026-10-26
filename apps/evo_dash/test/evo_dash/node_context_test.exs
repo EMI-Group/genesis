@@ -180,6 +180,10 @@ defmodule EvoDash.NodeContextTest do
     # totality of the two normalization steps NodeContext applies to EVERY
     # payload, which is what makes the mirrors safe for callers.
     test "list_task_archives/3 and get_agent_archive/3 expose the documented arities" do
+      # `function_exported?/3` does NOT load a module, so its answer would
+      # depend on whether some other test happened to run first. Load it
+      # explicitly (fails loudly if the module is gone) before checking.
+      Code.ensure_loaded!(EvoDash.NodeContext)
       assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
       assert function_exported?(EvoDash.NodeContext, :list_task_archives, 3)
       assert function_exported?(EvoDash.NodeContext, :get_agent_archive, 3)
@@ -188,7 +192,11 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "the opts keyword is forwarded unchanged (observable once the core lands)" do
-      if function_exported?(EvoGit.RemoteNode, :list_task_archives, 3) do
+      # Same load-before-inspect rule as above: without it the branch taken
+      # here depends on test order.
+      core_available? = Code.ensure_loaded?(EvoGit.RemoteNode)
+
+      if core_available? and function_exported?(EvoGit.RemoteNode, :list_task_archives, 3) do
         # Real local path: the opts keyword rides through untouched (an unknown
         # task id yields the empty page instead of an error for any opts).
         opts = [limit: 5, offset: 10, include_results: true]

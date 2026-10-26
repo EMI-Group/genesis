@@ -4050,8 +4050,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # applied, so settle it first (otherwise the clicks below are gated by
       # the in-flight marker rather than by the terminal guard this pins).
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
-      assert_received {:merged_call, _, _, "task-branch", "dev"}
+      # The seam runs INSIDE the spawned action task, so the signal may not be
+      # in the mailbox when render_click returns: settle the action first (it
+      # can only be settled after the runner returned), then probe the mailbox.
       await_review_action_settled(view)
+      assert_received {:merged_call, _, _, "task-branch", "dev"}
 
       render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
       render_click(view, "reject", %{"repo_id" => "primary"})

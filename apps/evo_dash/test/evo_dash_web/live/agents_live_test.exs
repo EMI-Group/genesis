@@ -1842,6 +1842,13 @@ defmodule EvoDashWeb.AgentsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
+      # Drain the mount's node-aware sidebar/remote loads first: an applied
+      # sidebar-load result CLEARS `:tasks_reload_pending` (NodeAware clears it
+      # for both outcomes), so one still in flight could erase the flag a fresh
+      # broadcast just set and make phase 1 below poll a flag that is already
+      # gone.
+      await_view_async_loads(view)
+
       # The three matching-node shapes: the :finalizing status transition
       # (observed crashing in production), a deletion, and a review-only
       # mutation carried as status nil. All three run on ONE socket — the
@@ -1859,6 +1866,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
         # Phase 2: the debounce fires and reload_tasks clears the flag.
         wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+
+        # Drain the load the fired reload spawned, so ITS result cannot land
+        # during the next iteration's phase 1 (see the helper's contract).
+        await_view_async_loads(view)
       end
 
       # render/1 flushes pending messages synchronously; a crash would propagate here.
@@ -3221,6 +3232,51 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp flush_agent_events(view) do
     send(view.pid, :flush_agent_events)
     render(view)
+  end
+
+  # Drains every EvoDash.TaskSupervisor child spawned by THIS LiveView process
+  # (Task.Supervisor records the spawning process in the child's `$callers`
+  # dictionary entry) and applies its queued result message with one
+  # synchronous round-trip. NodeAware CLEARS `:tasks_reload_pending` when a
+  # sidebar-load result is applied, so a result still in flight can land
+  # between a fresh broadcast and the `assigns/1` read that expects the flag
+  # to be `true` — draining makes the two-phase debounce assertion
+  # independent of that timing. A task that already exited delivers its
+  # `:DOWN` immediately, and its result message was sent BEFORE it exited, so
+  # the following `render/1` always applies it.
+  defp await_view_async_loads(view) do
+    view.pid
+    |> view_async_task_pids()
+    |> Enum.map(&Process.monitor/1)
+    |> Enum.each(fn ref ->
+      receive do
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+
+    _ = render(view)
+    :ok
+  end
+
+  defp view_async_task_pids(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.flat_map(fn
+      {_, pid, _, _} when is_pid(pid) ->
+        if view_pid in task_callers(pid), do: [pid], else: []
+
+      _ ->
+        []
+    end)
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
+      _ -> []
+    end
   end
 
   # Blocks the caller until the TEST flips `latch` (an :atomics flag) — the
