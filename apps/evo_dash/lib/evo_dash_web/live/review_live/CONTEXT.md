@@ -109,7 +109,7 @@ The core writes writable-foreign-repo results into the task result's top-level `
 
 | Event | Route branching | Notes |
 |-------|-----------------|-------|
-| `switch_tab` (`conversation`/`objective`/`files_changed`/`commits`/`archive` + fallback no-op) | — | Pure assigns; `archive` additionally runs `ArchiveLoad.ensure_loaded/1` (first page on first open). |
+| `switch_tab` (`conversation`/`objective`/`files_changed`/`commits`/`archive` + fallback no-op) | — | Pure assigns; `archive` switches the tab and runs `ArchiveLoad.ensure_loaded/1` (first page on first open) ONLY when `@archive_opt_in?` — otherwise a complete no-op (no tab switch, no fetch). |
 | `retry_archive` | — | `ArchiveLoad.retry/1` — re-arms the error state and refetches the first page.
 | `load_more_archive` | — | `ArchiveLoad.load_more/1` — appends the next page; also the inline Retry after a failed append (same event).
 | `load_archive_agent_result` %{"agent_id"} / %{"agent-id"} | — | `ArchiveLoad.load_agent_result/2` — fetches one agent's heavy `"result"` on demand (and its Retry). `phx-value-agent-id` reaches the server as the hyphenated `"agent-id"`, so both key spellings are accepted.
