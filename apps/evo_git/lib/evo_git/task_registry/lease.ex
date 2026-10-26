@@ -68,4 +68,48 @@ defmodule EvoGit.TaskRegistry.Lease do
   def lease_valid?(expires_at) do
     System.system_time(:second) < expires_at
   end
+
+  ## Liveness classification of a `EvoGit.Store.get_task_status/2` result
+  ##
+  ## That read answers THREE shapes and callers must not collapse them:
+  ##
+  ##   * `nil` — NO row with that id (the only "absent" answer),
+  ##   * a known status atom — see `EvoGit.Store.Codec.known_statuses/0`,
+  ##   * `{:unknown, raw}` — the row EXISTS but its status text is outside the
+  ##     whitelist (already logged by `Codec.decode_status/1`).
+  ##
+  ## An unreadable status must never be mistaken for an absent/leaked task: the
+  ## checks below answer conservatively for `{:unknown, _}` (the row is there,
+  ## so keep its lease renewed and never declare it orphaned). They live here —
+  ## beside the sweep's other predicates — so the heartbeat and the sweep share
+  ## ONE classification instead of re-deriving `in [...]` lists.
+
+  # Statuses whose lease the heartbeat RENEWS. `:cancelling` is included so a
+  # long graceful cancel keeps its lease while the wrapper is still alive.
+  @renewed_statuses [:running, :pending, :cancelling]
+
+  @doc """
+  `true` when the task's lease should be RENEWED: a live status, or a row that
+  exists with a status we cannot read (`{:unknown, _}` — renew rather than let
+  an unrelated status spelling expire a live task's lease).
+  """
+  @spec lease_renewable?(atom() | {:unknown, term()} | nil) :: boolean()
+  def lease_renewable?({:unknown, _}), do: true
+  def lease_renewable?(status), do: status in @renewed_statuses
+
+  @doc """
+  `true` when the task is PROVABLY a leaked `:running` row: a known `:running`
+  status, an expired (or missing) lease, and not owned by this registry — the
+  verdict the one-shot `:lease_sweep` acts on.
+
+  `{:unknown, _}` is NEVER leaked: the row exists, its status is just
+  unreadable, so the sweep leaves it alone (conservative — a live task must
+  never be failed because of a status spelling).
+  """
+  @spec leaked?(atom() | {:unknown, term()} | nil, boolean(), integer() | nil) :: boolean()
+  def leaked?(:running, owned?, lease_expires_at) do
+    not owned? and not lease_valid?(lease_expires_at)
+  end
+
+  def leaked?(_status, _owned?, _lease_expires_at), do: false
 end

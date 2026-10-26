@@ -57,12 +57,12 @@ defmodule EvoGit.Store do
 
   | Read | Degraded value |
   |------|----------------|
-  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_logs/2`, `select_task_update_info/2`, `get_project/2`, `get_agent_archive/3` | `nil` |
-  | `select_all_tasks/1`, `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1` | `[]` |
+  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_update_info/2`, `get_project/2`, `get_agent_archive/3` | `nil` |
+  | `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1` | `[]` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
   | `select_tasks_page/2` | `%{rows: [], total: 0}` |
   | `list_task_archives/3` | `%{entries: [], total: 0}` |
-  | `count_tasks/1`, `count_projects/1`, `size/1` | `0` |
+  | `count_projects/1`, `size/1` | `0` |
 
   The degraded value is passed EXPLICITLY at each call site (`offload/5`'s
   `degraded_value` argument), so this table and the handlers can never drift.
@@ -251,23 +251,29 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns one page of a task's archived agents plus that task's total row
-  count: `%{entries: [entry], total: non_neg_integer}`.
-
+  Returns one page of a task's archived agents plus (by default) that task's
+  total row count: `%{entries: [entry], total: non_neg_integer | nil}`.
   Entries are STRING-KEYED maps ordered `depth ASC, agent_id ASC` (the spawn
   tree, root first). `opts`:
-
     * `:limit` — page size (default 100, clamped to 1..1000).
     * `:offset` — rows to skip (default 0, never negative).
     * `:include_results` — default `false`: the heavy `result` column is NOT
       selected and the `"result"` key is ABSENT from every entry; pass `true`
       to include each agent's full result text. Fetch ONE agent's result
       instead with `get_agent_archive/3`.
+    * `:include_settings` — default `false`: the export-only JSON columns
+      (`"llm_settings"`, `"agent_settings"`, `"foreign_repos"`) are NOT
+      selected and their keys are ABSENT from every entry (absent, never
+      `nil`); the CSV/JSON export passes `true`.
+    * `:include_total` — default `true`: pass `false` to skip the `count(*)`
+      aggregate when the caller already knows the total — `total` is then
+      `nil`.
 
   `total` counts ALL of the task's archive rows, independent of the page.
   Degrades to `%{entries: [], total: 0}` on a failed read (see the
   moduledoc).
   """
+
   def list_task_archives(store \\ __MODULE__, task_id, opts \\ []) do
     GenServer.call(store, {:list_task_archives, task_id, opts}, @call_timeout)
   end
@@ -301,16 +307,6 @@ defmodule EvoGit.Store do
   @doc "Deletes multiple tasks by id in one call. `task_ids` is a list of id strings."
   def delete_tasks(store \\ __MODULE__, task_ids) do
     GenServer.call(store, {:delete_tasks, task_ids}, @call_timeout)
-  end
-
-  @doc "Returns all tasks as a list of TaskInfo structs."
-  def select_all_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :select_all_tasks, @call_timeout)
-  end
-
-  @doc "Returns the number of task rows."
-  def count_tasks(store \\ __MODULE__) do
-    GenServer.call(store, :count_tasks, @call_timeout)
   end
 
   @doc """
@@ -446,21 +442,17 @@ defmodule EvoGit.Store do
   end
 
   @doc """
-  Returns the decoded status atom for a single task (or nil if not found).
+  Returns a single task's stored status WITHOUT conflating "absent" with
+  "unreadable" — `nil` only when no row has this id, a known status atom when
+  it decodes, and `{:unknown, raw}` when the row EXISTS but its status text is
+  outside the whitelist (logged by `EvoGit.Store.Codec.decode_status/1`).
+  Callers must treat `{:unknown, _}` as "the row exists" — see
+  `EvoGit.TaskRegistry.Lease`, whose classifiers keep the lease heartbeat
+  alive and the sweep conservative for such a row.
   Reads only the `status` column — no heavy JSON decode.
   """
   def get_task_status(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task_status, task_id}, @call_timeout)
-  end
-
-  @doc """
-  Returns the decoded logs list for a single task (or nil if the row is
-  absent). Reads only the `logs` column — no heavy JSON decode of other
-  fields. Used by TaskRegistry.append_log to avoid a full 19-column decode
-  just to read the existing logs.
-  """
-  def select_task_logs(store \\ __MODULE__, task_id) do
-    GenServer.call(store, {:select_task_logs, task_id}, @call_timeout)
   end
 
   @doc """
@@ -714,22 +706,6 @@ defmodule EvoGit.Store do
     offload_write(from, state, fn -> Operations.Tasks.delete_tasks(state.repo, task_ids) end)
   end
 
-  # Offloaded (failure-isolated): the query AND the decode run on a short-lived
-  # UNLINKED worker so large decoded terms are allocated and discarded on that
-  # process's heap, not this GenServer's — and a fault there degrades to `[]`
-  # instead of killing this process. See offload/5 for the full rationale.
-  @impl true
-  def handle_call(:select_all_tasks, from, state) do
-    offload(from, state, "select_all_tasks", [], fn ->
-      Operations.Tasks.select_all_tasks(state.repo)
-    end)
-  end
-
-  @impl true
-  def handle_call(:count_tasks, from, state) do
-    offload(from, state, "count_tasks", 0, fn -> Operations.Tasks.count_tasks(state.repo) end)
-  end
-
   # Offloaded (query + decode + reply on a short-lived unlinked worker): the
   # decoded task list is among the largest terms this store produces — it must
   # not be allocated on this GenServer's heap. The skip-and-log decode boundary
@@ -857,13 +833,6 @@ defmodule EvoGit.Store do
   def handle_call({:get_task_status, task_id}, from, state) do
     offload(from, state, "get_task_status", nil, fn ->
       Operations.Tasks.get_task_status(state.repo, task_id)
-    end)
-  end
-
-  @impl true
-  def handle_call({:select_task_logs, task_id}, from, state) do
-    offload(from, state, "select_task_logs", nil, fn ->
-      Operations.Tasks.select_task_logs(state.repo, task_id)
     end)
   end
 

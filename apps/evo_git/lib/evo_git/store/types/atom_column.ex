@@ -67,15 +67,30 @@ defmodule EvoGit.Store.Types.Status do
   `EvoGit.Store.Types.AtomColumn` (and through it to
   `EvoGit.Store.Codec.encode_atom/1` / `decode_atom/1`).
 
-  Documented value set (`%TaskInfo{}` status):
+  Documented value set (`%TaskInfo{}` status), declared ONCE in `statuses/0`:
 
     `:pending` · `:running` · `:finalizing` · `:completed` · `:failed` ·
     `:cancelled` · `:cancelling`
+
+  `statuses/0` is the single source of truth for "every status the registry
+  can persist"; `Codec.known_statuses/0` must remain a superset (pinned by
+  `test/evo_git/store/store_invariants_test.exs`).
+
+  Liveness decisions must NOT read this column through the type's `:string`
+  load (which maps an unrecognized value to `nil`): use
+  `EvoGit.Store.Codec.decode_status/1` (via `Store.get_task_status/2`), whose
+  `{:unknown, raw}` form says "the row exists".
 
   Pure module — no Repo, no GenServer, no I/O.
   """
 
   alias EvoGit.Store.Types.AtomColumn
+
+  @statuses [:pending, :running, :finalizing, :completed, :failed, :cancelled, :cancelling]
+
+  @doc "Every `tasks.status` value the registry persists."
+  @spec statuses() :: [atom()]
+  def statuses, do: @statuses
 
   defdelegate type, to: AtomColumn
   defdelegate cast(value), to: AtomColumn

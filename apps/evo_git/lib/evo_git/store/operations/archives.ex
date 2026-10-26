@@ -33,6 +33,14 @@ defmodule EvoGit.Store.Operations.Archives do
   (atom-keyed producer maps and string-keyed maps straight out of `get/3`), so
   a read-modify-write round trip needs no reshaping.
 
+  ## Roster projection is opt-in-broad
+  `list/3` selects the LEAST it can: the heavy `result` column and the three
+  export-only JSON "settings" columns (`"llm_settings"`, `"agent_settings"`,
+  `"foreign_repos"`) are opt-in (`include_results: true` /
+  `include_settings: true`), and the `count(*)` is opt-in-out
+  (`include_total: false`). An entry therefore only ever carries keys that
+  were actually decoded — a withheld field is ABSENT, never `nil`. `get/3`
+  always returns the FULL row.
   `"started_at"`/`"completed_at"` come back as the stored ISO-8601 STRINGS
   (never re-parsed); `"usage"`/`"llm_settings"`/`"agent_settings"` are plain
   maps and `"foreign_repos"` a plain list (see
@@ -67,6 +75,13 @@ defmodule EvoGit.Store.Operations.Archives do
   # Keep alive only ONE kind of detail on the roster read: the `result` column
   # is the heavy one, so it is opt-in.
   @default_include_results false
+  # The JSON "settings" columns are decoded on every row of a roster page, yet
+  # no roster view renders them — they are export-only payload. Opt-in.
+  @settings_fields [:llm_settings, :agent_settings, :foreign_repos]
+  @default_include_settings false
+  # `total` costs one extra `count(*)` per page; a caller that already knows it
+  # (a paged reader holding the first page's total) can skip the aggregate.
+  @default_include_total true
 
   # `DELETE ... WHERE task_id IN (...)` chunk size — 500 ids, safely under
   # SQLite's 999-host-parameter limit (same chunk size as
@@ -187,33 +202,47 @@ defmodule EvoGit.Store.Operations.Archives do
   ## Public API — reads
 
   @doc """
-  Returns one page of a task's archived agents plus the task's TOTAL row
-  count: `{:ok, %{entries: [entry], total: non_neg_integer}}`.
-
+  Returns one page of a task's archived agents plus (by default) the task's
+  TOTAL row count: `{:ok, %{entries: [entry], total: non_neg_integer | nil}}`.
   Entries are ordered `depth ASC, agent_id ASC` (the spawn tree, root first).
   `opts`:
-
     * `:limit` — page size, default #{@default_limit}, clamped to 1..#{@max_limit}.
     * `:offset` — rows to skip, default 0, never negative.
     * `:include_results` — default `false`. When false the `result` column is
       NOT SELECTED, so the `"result"` key is ABSENT from every entry (not
       `nil`, not `""`); when true each entry carries it.
+    * `:include_settings` — default `false`. The three JSON "settings"
+      columns (`"llm_settings"`, `"agent_settings"`, `"foreign_repos"`) are
+      export-only payload that no roster view renders, so by default they are
+      NOT SELECTED and their keys are ABSENT from every entry (absent, never
+      `nil` — `entry_from_row/2` only ever carries the selected fields). Pass
+      `true` for the full-row shape the CSV/JSON export serializes.
+
+    * `:include_total` — default `true`. Pass `false` to SKIP the `count(*)`
+      aggregate when the caller already knows the task's archive row count;
+      `total` is then `nil` (never a stale or partial number).
 
   `total` is `SELECT count(*)` over the SAME task — independent of
   `:limit`/`:offset`, so a caller can page without a second count query.
+  Unlike the task page, the roster never skips a row: a corrupt archive
+  column raises and degrades the WHOLE page (the facade's empty shape), so
+  `total` and `entries` can never disagree here.
   """
   @spec list(pid(), String.t(), keyword()) ::
-          {:ok, %{entries: [map()], total: non_neg_integer()}}
+          {:ok, %{entries: [map()], total: non_neg_integer() | nil}}
   def list(repo, task_id, opts \\ []) when is_list(opts) do
     RepoScope.with_repo(repo, fn ->
       limit = clamp_limit(Keyword.get(opts, :limit))
       offset = clamp_offset(Keyword.get(opts, :offset))
       include_results = Keyword.get(opts, :include_results, @default_include_results) == true
-
-      fields = if include_results, do: @fields, else: List.delete(@fields, :result)
+      include_settings = Keyword.get(opts, :include_settings, @default_include_settings) == true
+      include_total = Keyword.get(opts, :include_total, @default_include_total) == true
+      fields = roster_fields(include_results, include_settings)
 
       total =
-        Repo.aggregate(from(r in TaskAgentArchiveRow, where: r.task_id == ^task_id), :count)
+        if include_total do
+          Repo.aggregate(from(r in TaskAgentArchiveRow, where: r.task_id == ^task_id), :count)
+        end
 
       entries =
         TaskAgentArchiveRow
@@ -247,6 +276,18 @@ defmodule EvoGit.Store.Operations.Archives do
         nil -> {:ok, nil}
         row -> {:ok, entry_from_row(row, @fields)}
       end
+    end)
+  end
+
+  ## Private — read helpers
+  # The roster projection: every column except the two opt-in heavy groups.
+  # Both opt-ins only ADD fields back, so a lean entry is a strict SUBSET of
+  # the full one — same key names, same decoded shapes, the omitted keys
+  # absent rather than `nil`. `entry_from_row/2` builds from exactly this list.
+  defp roster_fields(include_results?, include_settings?) do
+    Enum.reject(@fields, fn field ->
+      (field == :result and not include_results?) or
+        (field in @settings_fields and not include_settings?)
     end)
   end
 
