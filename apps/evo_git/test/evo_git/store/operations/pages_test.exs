@@ -1,27 +1,27 @@
 defmodule EvoGit.Store.Operations.PagesTest do
   @moduledoc """
   Tests for `EvoGit.Store.Operations.Pages` — the LIGHTWEIGHT task read API
-  (`select_tasks_page/2`, `get_task_lite/2`, `get_task_archive/2`) and the
-  shared search-filter change it ships with.
+  (`select_tasks_page/2`, `get_task_lite/2`) and the shared search-filter
+  change it ships with.
 
   Pinned contracts:
 
     * `select_tasks_page/2` returns EXACTLY `%{rows: [summary], total: n}`; each
-      row is the canonical 16-key summary projection (no `result`,
-      `archive_metadata`, `logs` or `usage` key) — a multi-megabyte `result`
-      row costs the same as an empty one;
+      row is the canonical 16-key summary projection (no `result`, `logs` or
+      `usage` key) — a multi-megabyte `result` row costs the same as an empty
+      one;
     * filter parity with `Operations.Tasks.safe_select_paginated_tasks/2`: the
       same rows, in the same `started_at DESC` order, with the same total, for
       every filter (status / project_path / review_status / search /
       combinations);
     * page clamps: limit defaults to 25 and caps at 50, offset is never
       negative, and an offset past the end refetches the LAST page;
-    * `get_task_lite/2` is field-identical to `Tasks.get_task/2` except
-      `archive_metadata: nil` and no `:archive_records` in the result;
-    * `get_task_archive/2` returns `[]` (never raises) for a missing row, a
-      NULL column or an undecodable payload;
+    * `get_task_lite/2` decodes field-identically to `Tasks.get_task/2` — the
+      same Codec decode of the same columns. The per-agent archive now lives in
+      the relational `task_agent_archives` table (one row per agent), so there
+      is no archive column on the task row and nothing is dropped here;
     * search now matches `id`/`opts`/`project_path`/`branch_name` and NO LONGER
-      matches `result` (it is zlib-compressed above 4 kB — a full-blob scan
+      matches `result` (the heaviest column in the table — a full-blob scan
       with no user-visible substrings).
 
   Every test boots its own UNNAMED dynamic repo on a unique tmp SQLite file
@@ -139,7 +139,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
       for row <- result.rows do
         assert Map.keys(row) |> Enum.sort() == Enum.sort(@summary_keys)
 
-        for absent <- [:result, :archive_metadata, :logs, :usage] do
+        for absent <- [:result, :logs, :usage] do
           refute Map.has_key?(row, absent), "summary row must not carry #{inspect(absent)}"
         end
       end
@@ -338,7 +338,6 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
     defp big_task(id) do
       big_text = String.duplicate("x", @big_bytes) <> "ZZRESULTONLYZZ"
-      archive = [%{"role" => "user", "content" => String.duplicate("a", @big_bytes)}]
 
       %TaskInfo{
         id: id,
@@ -349,14 +348,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
         finished_at: DateTime.add(@base_started, 60, :second),
         logs: ["heavy"],
         result:
-          {:ok,
-           %{
-             result: big_text,
-             commit_sha: "abc123",
-             branch_name: "genesis/agent_big",
-             archive_records: [%{role: "assistant", content: "archived conversation"}]
-           }},
-        archive_metadata: archive,
+          {:ok, %{result: big_text, commit_sha: "abc123", branch_name: "genesis/agent_big"}},
         agent_count: 1,
         model_id: "big-model"
       }
@@ -372,11 +364,11 @@ defmodule EvoGit.Store.Operations.PagesTest do
       assert row.id == id
       assert row.branch_name == "genesis/agent_big"
 
-      # The whole served row is tiny — the 10 MB of blobs never reached it.
+      # The whole served row is tiny — the multi-megabyte result never reached it.
       assert byte_size(:erlang.term_to_binary(row)) < 10_000
     end
 
-    test "get_task_lite/2 drops archive_metadata + :archive_records, everything else identical" do
+    test "get_task_lite/2 is field-identical to Tasks.get_task/2 (no archive column to drop)" do
       repo = start_repo!(:lite)
       id = put!(repo, big_task("big-lite"))
 
@@ -385,57 +377,30 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
       assert %TaskInfo{} = lite
       assert lite.id == id
-      assert lite.archive_metadata == nil
 
-      # Every OTHER field is decoded exactly like get_task/2.
-      assert %{lite | archive_metadata: nil, result: nil} ==
-               %{full | archive_metadata: nil, result: nil}
+      # The whole struct decodes identically: the per-agent archive lives in the
+      # relational `task_agent_archives` table, so this read is no longer a
+      # "lite" projection of the task row — nothing is dropped.
+      assert lite == full
 
-      # The archive column is genuinely there in the full read …
-      assert [%{"role" => "user", "content" => content}] = full.archive_metadata
-      assert byte_size(content) == @big_bytes
+      # The archive is NOT part of the task row at all any more.
+      refute Map.has_key?(lite, :archive_metadata)
+      refute Map.has_key?(lite, :archive_records)
 
-      # … and the result's archive_records survive only in the full read.
-      assert {:ok, full_data} = full.result
-      assert Map.has_key?(full_data, :archive_records)
-
+      # The big result rides along in full on both reads.
       assert {:ok, lite_data} = lite.result
-      refute Map.has_key?(lite_data, :archive_records)
       assert lite_data.commit_sha == "abc123"
       assert lite_data.branch_name == "genesis/agent_big"
       assert lite_data.result == String.duplicate("x", @big_bytes) <> "ZZRESULTONLYZZ"
-
-      # Structurally cheaper: the archive blob no longer rides along.
-      lite_bytes = byte_size(:erlang.term_to_binary(lite))
-      full_bytes = byte_size(:erlang.term_to_binary(full))
-      assert lite_bytes < full_bytes
-      assert full_bytes - lite_bytes >= @big_bytes
+      refute Map.has_key?(lite_data, :archive_records)
     end
 
-    test "get_task_archive/2 returns the decoded archive list, [] when absent" do
-      repo = start_repo!(:archive)
-      id = put!(repo, big_task("big-archive"))
+    test "get_task_lite/2 returns nil for a missing row" do
+      repo = start_repo!(:lite_missing)
 
-      assert [%{"role" => "user", "content" => content}] = Pages.get_task_archive(repo, id)
-      assert byte_size(content) == @big_bytes
+      put!(repo, %TaskInfo{id: "present", type: :evolve, status: :completed})
 
-      # Missing row → [].
-      assert Pages.get_task_archive(repo, "no-such-task") == []
-
-      # NULL column → [].
-      put!(repo, %TaskInfo{id: "no-archive", type: :evolve, status: :completed})
-      assert Pages.get_task_archive(repo, "no-archive") == []
-
-      # Undecodable payload → [] (never raises).
-      RepoScope.with_repo(repo, fn ->
-        Repo.update_all(from(t in TaskRowRaw, where: t.id == "no-archive"),
-          set: [archive_metadata: "not-a-json-list"]
-        )
-      end)
-
-      assert Pages.get_task_archive(repo, "no-archive") == []
-
-      # get_task_lite/2 on a missing row → nil.
+      assert %TaskInfo{id: "present"} = Pages.get_task_lite(repo, "present")
       assert Pages.get_task_lite(repo, "no-such-task") == nil
     end
   end
@@ -487,8 +452,9 @@ defmodule EvoGit.Store.Operations.PagesTest do
         result: {:ok, %{result: big_text, commit_sha: "c1", branch_name: "genesis/agent_r1"}}
       )
 
-      # Documented behaviour change: `result` is no longer LIKE-ed (it is zlib
-      # compressed above 4 kB, and it is the heaviest column in the table).
+      # Documented behaviour change: `result` is no longer LIKE-ed — it is the
+      # heaviest column in the table and a full-blob scan per keystroke is not
+      # a user-visible search.
       assert Pages.select_tasks_page(repo, search: "ZZONLYINRESULTZZ").total == 0
       assert page_ids(repo, search: "ZZONLYINRESULTZZ") == []
 
@@ -523,7 +489,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
       # No statement that feeds the page references a heavy column.
       for {sql, _params} <- statements do
-        for blob <- ["archive_metadata", "result", "logs", "usage"] do
+        for blob <- ["result", "logs", "usage"] do
           refute String.contains?(sql, blob),
                  "page SQL must not read #{blob}: #{sql}"
         end
@@ -549,7 +515,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
       refute plan_text(repo, count_statement) =~ "TEMP B-TREE"
     end
 
-    test "get_task_lite never selects the archive column, get_task does" do
+    test "get_task_lite and get_task select the SAME task columns (no archive column exists)" do
       repo = start_repo!(:plan_lite)
       put_timed!(repo, "lite-plan", 0)
 
@@ -557,28 +523,15 @@ defmodule EvoGit.Store.Operations.PagesTest do
       assert length(lite_sqls) == 1
 
       [{lite_sql, _}] = lite_sqls
-      refute String.contains?(lite_sql, "archive_metadata")
+      refute String.contains?(lite_sql, "archive")
       assert String.contains?(lite_sql, "result")
 
       [{full_sql, _}] = capture_statements(repo, fn -> Tasks.get_task(repo, "lite-plan") end)
-      assert String.contains?(full_sql, "archive_metadata")
-    end
+      refute String.contains?(full_sql, "archive")
 
-    test "get_task_archive reads ONLY the archive column" do
-      repo = start_repo!(:plan_archive)
-
-      put!(repo, %TaskInfo{
-        id: "arch-plan",
-        type: :evolve,
-        status: :completed,
-        archive_metadata: [%{"role" => "user", "content" => "hi"}]
-      })
-
-      [{sql, _}] = capture_statements(repo, fn -> Pages.get_task_archive(repo, "arch-plan") end)
-
-      assert String.contains?(sql, "archive_metadata")
-      refute String.contains?(sql, "result")
-      refute String.contains?(sql, "logs")
+      # The per-agent archive is a separate TABLE, never a column of `tasks`.
+      refute String.contains?(full_sql, "task_agent_archives")
+      refute String.contains?(lite_sql, "task_agent_archives")
     end
   end
 
