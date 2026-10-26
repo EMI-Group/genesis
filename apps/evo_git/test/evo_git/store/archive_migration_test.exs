@@ -29,10 +29,15 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       `updated_at` never moves;
     * 008: one `task_agent_archives` row per record with EVERY column mapped
       (JSON columns re-encoded as plain JSON, `depth`/`compression_count`
-      defaulting to 0), the duplicated `data.archive_records` stripped from
-      `result` ONLY when present (a result without it stays byte-identical),
-      `archive_metadata` NULLed, the column physically dropped, `updated_at`
-      untouched, and a re-run (partial-failure recovery) converging.
+      defaulting to 0, `repo_id` copied VERBATIM as the repo ID STRING it
+      carried — `"primary"`/`"cowboy"`, never an index), the duplicated
+      `data.archive_records` stripped from `result` ONLY when present (a result
+      without it stays byte-identical), `archive_metadata` NULLed, the column
+      physically dropped, `updated_at` untouched, and a re-run (partial-failure
+      recovery) converging. The migrated rows MUST also be readable through the
+      `EvoGit.Store` facade (`list_task_archives/3`, `get_agent_archive/3`) —
+      with `repo_id` typed INTEGER every real-data load degraded to
+      `%{entries: [], total: 0}` / `nil`.
 
   Never writes to the user's real data dir: every database lives under the
   per-test `System.tmp_dir!()` root.
@@ -43,6 +48,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
   import ExUnit.CaptureLog
 
   alias EvoGit.Repo
+  alias EvoGit.Store
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
 
@@ -258,7 +264,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
                "branch_name" => "evogit-agent-T1-A1",
                "archive_ref_start" => "refs/genesis/archive/T1-A1-start",
                "archive_ref_final" => "refs/genesis/archive/T1-A1-final",
-               "repo_id" => 0,
+               "repo_id" => "primary",
                "repo_root" => "/tmp/repo",
                "repo_path" => "/tmp/repo",
                "usage" => fixture.usage,
@@ -286,7 +292,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
                "branch_name" => nil,
                "archive_ref_start" => nil,
                "archive_ref_final" => nil,
-               "repo_id" => nil,
+               "repo_id" => "cowboy",
                "repo_root" => nil,
                "repo_path" => nil,
                "usage" => nil,
@@ -306,6 +312,9 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       assert no_counters["parent_id"] == 1
       assert no_counters["objective"] == "Another"
       assert no_counters["result"] == nil
+      # A record that carried no `repo_id` keeps SQL NULL — the column is never
+      # defaulted to an index.
+      assert no_counters["repo_id"] == nil
 
       # The second task's archive moved too (its own (task_id, agent_id) key
       # space).
@@ -316,6 +325,23 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
                "result" => "only",
                "depth" => 0
              } = archive_entry(archive_rows(pid, "task-b"), 7)
+
+      # THE REAL-DATA FAILURE MODE this pins: the migrated rows must be LOADABLE
+      # through the `EvoGit.Store` facade. With `repo_id` typed INTEGER a
+      # `"primary"` value raised `cannot load "primary" as type :integer`, the
+      # read offload degraded and every archive read answered its empty shape
+      # (`%{entries: [], total: 0}` / `nil`) for ALL real data.
+      store = start_store!(path)
+
+      assert %{entries: roster, total: 3} = Store.list_task_archives(store, "task-a")
+      # depth ASC then agent_id ASC: 1 and 3 are depth 0, 2 is depth 1.
+      assert Enum.map(roster, & &1["agent_id"]) == [1, 3, 2]
+      assert Enum.map(roster, & &1["repo_id"]) == ["primary", nil, "cowboy"]
+
+      assert %{"agent_id" => 2, "repo_id" => "cowboy", "result" => "sub answer"} =
+               Store.get_agent_archive(store, "task-a", 2)
+
+      assert %{total: 1} = Store.list_task_archives(store, "task-b")
 
       assert migration_versions(pid) == @migration_versions
     end
@@ -496,7 +522,7 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       "branch_name" => "evogit-agent-T1-A1",
       "archive_ref_start" => "refs/genesis/archive/T1-A1-start",
       "archive_ref_final" => "refs/genesis/archive/T1-A1-final",
-      "repo_id" => 0,
+      "repo_id" => "primary",
       "repo_root" => "/tmp/repo",
       "repo_path" => "/tmp/repo",
       "usage" => usage,
@@ -514,7 +540,8 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
       "depth" => 1,
       "objective" => "Subtask",
       "result" => "sub answer",
-      "final_commit" => "final2"
+      "final_commit" => "final2",
+      "repo_id" => "cowboy"
     }
 
     # No `depth` / `compression_count` at all — the columns' DEFAULT 0 applies.
@@ -644,6 +671,23 @@ defmodule EvoGit.Store.ArchiveMigrationTest do
     Process.unlink(pid)
     on_exit(fn -> if Process.alive?(pid), do: :ok = Boot.stop(pid) end)
     pid
+  end
+
+  # A uniquely-named `EvoGit.Store` over an ALREADY-MIGRATED database file — the
+  # facade the dashboard/RPC layers actually call. It boots its OWN dynamic repo
+  # on the same file (every migration is recorded, so nothing runs).
+  defp start_store!(path) do
+    unique =
+      "#{System.pid()}_#{System.system_time(:millisecond)}_" <>
+        "#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
+
+    name = :"archive_migration_store_#{unique}"
+    {:ok, pid} = Store.start_link(data_dir: path, name: name, pool_size: 1)
+    Process.unlink(pid)
+
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid, :normal, 5_000), else: :ok end)
+
+    name
   end
 
   defp migration_versions(pid) do

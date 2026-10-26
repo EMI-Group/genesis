@@ -113,7 +113,7 @@ defmodule EvoGit.StoreTest do
       branch_name: "evogit-agent-T1-A#{agent_id}",
       archive_ref_start: "ref-start-#{agent_id}",
       archive_ref_final: "ref-final-#{agent_id}",
-      repo_id: 0,
+      repo_id: "primary",
       repo_root: "/tmp/archive-repo",
       repo_path: "apps/demo",
       usage: %{"input_tokens" => 10 * agent_id, "total_cost" => 0.5},
@@ -1082,7 +1082,7 @@ defmodule EvoGit.StoreTest do
       assert entry["branch_name"] == "evogit-agent-T1-A7"
       assert entry["archive_ref_start"] == "ref-start-7"
       assert entry["archive_ref_final"] == "ref-final-7"
-      assert entry["repo_id"] == 0
+      assert entry["repo_id"] == "primary"
       assert entry["repo_root"] == "/tmp/archive-repo"
       assert entry["repo_path"] == "apps/demo"
       assert entry["compression_count"] == 1
@@ -1634,11 +1634,12 @@ defmodule EvoGit.StoreTest do
       assert total == 1
       assert hd(tasks).id == "result-oauth"
 
-      # `result` is deliberately no longer searched: `result` is zlib-compressed
-      # above 4 kB, so a LIKE over it was both a full-blob scan and unable to see
-      # the user-visible text. A phrase that exists ONLY in the result text no
-      # longer matches (the behaviour change documented on the shared WHERE
-      # builder, `EvoGit.Store.Operations.Filters`).
+      # `result` is deliberately no longer searched: `result` is a plain JSON
+      # TEXT blob (no compression layer), so a LIKE over it was both a
+      # full-blob scan and unable to see the user-visible text inside the JSON.
+      # A phrase that exists ONLY in the result text no longer matches (the
+      # behaviour change documented on the shared WHERE builder,
+      # `EvoGit.Store.Operations.Filters`).
       {by_result_text, by_result_total} =
         Store.safe_select_paginated_tasks(Store,
           limit: 50,

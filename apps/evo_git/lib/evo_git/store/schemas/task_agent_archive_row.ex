@@ -32,7 +32,7 @@ defmodule EvoGit.Store.Schemas.TaskAgentArchiveRow do
   | `branch_name`        | `:string`                | plain |
   | `archive_ref_start`  | `:string`                | plain |
   | `archive_ref_final`  | `:string`                | plain |
-  | `repo_id`            | `:integer`               | plain |
+  | `repo_id`            | `:string`                | repo ID string — `"primary"` or a foreign repo id |
   | `repo_root`          | `:string`                | plain |
   | `repo_path`          | `:string`                | plain |
   | `usage`              | `ArchiveUsageJson`       | plain JSON object (no `%Usage{}` struct) |
@@ -69,7 +69,7 @@ defmodule EvoGit.Store.Schemas.TaskAgentArchiveRow do
     field(:branch_name, :string)
     field(:archive_ref_start, :string)
     field(:archive_ref_final, :string)
-    field(:repo_id, :integer)
+    field(:repo_id, :string)
     field(:repo_root, :string)
     field(:repo_path, :string)
     field(:usage, Types.ArchiveUsageJson)

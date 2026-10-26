@@ -37,7 +37,9 @@ defmodule EvoGit.Store.Operations.Archives do
   `"started_at"`/`"completed_at"` come back as the stored ISO-8601 STRINGS
   (never re-parsed); `"usage"`/`"llm_settings"`/`"agent_settings"` are plain
   maps and `"foreign_repos"` a plain list (see
-  `EvoGit.Store.Types.ArchiveColumns`).
+  `EvoGit.Store.Types.ArchiveColumns`). `"repo_id"` is a repo ID STRING —
+  `"primary"` or a foreign repo id — and round-trips as one (see
+  `normalize_repo_id/1`).
 
   ## Write semantics
 
@@ -113,8 +115,9 @@ defmodule EvoGit.Store.Operations.Archives do
   is replaced, never duplicated.
 
   Returns `{:error, :missing_task_id}` / `{:error, :missing_agent_id}` for an
-  entry that cannot identify its row (no statement is issued) and
-  `{:error, :invalid_entry}` for a non-map.
+  entry that cannot identify its row (no statement is issued),
+  `{:error, :invalid_repo_id}` for a `repo_id` that is neither a string nor an
+  integer, and `{:error, :invalid_entry}` for a non-map.
   """
   @spec put(pid(), map()) :: :ok | {:error, atom()}
   def put(repo, entry) when is_map(entry) do
@@ -257,6 +260,7 @@ defmodule EvoGit.Store.Operations.Archives do
     cond do
       fetch(entry, :task_id) in [nil, ""] -> {:error, :missing_task_id}
       not is_integer(fetch(entry, :agent_id)) -> {:error, :missing_agent_id}
+      not valid_repo_id?(fetch(entry, :repo_id)) -> {:error, :invalid_repo_id}
       true -> :ok
     end
   end
@@ -266,8 +270,27 @@ defmodule EvoGit.Store.Operations.Archives do
   # columns defaulting to 0.
   defp row_from_entry(entry) do
     row = Map.new(@fields, fn field -> {field, fetch(entry, field)} end)
-    %{row | depth: row.depth || 0, compression_count: row.compression_count || 0}
+
+    %{
+      row
+      | depth: row.depth || 0,
+        compression_count: row.compression_count || 0,
+        repo_id: normalize_repo_id(row.repo_id)
+    }
   end
+
+  # `repo_id` is a REPO ID STRING at runtime (`"primary"` or a foreign repo id —
+  # `EvoGit.AgentSpec`/`AgentState`), so the column is TEXT and a string is
+  # stored unchanged and read back unchanged. An integer-shaped input (an older
+  # hand-written fixture's `0`) is STORED AS ITS DECIMAL TEXT rather than
+  # rejected, so the column's on-disk format stays uniformly TEXT; anything
+  # else is rejected up front by `validate_entry/1` instead of surfacing as an
+  # opaque Ecto cast error inside the writer.
+  defp normalize_repo_id(value) when is_binary(value), do: value
+  defp normalize_repo_id(value) when is_integer(value), do: Integer.to_string(value)
+  defp normalize_repo_id(nil), do: nil
+
+  defp valid_repo_id?(value), do: is_nil(value) or is_binary(value) or is_integer(value)
 
   # Accepts BOTH key spellings: an atom key wins when the map has it (even with
   # a `nil` value), else the string spelling is used. This is what makes a

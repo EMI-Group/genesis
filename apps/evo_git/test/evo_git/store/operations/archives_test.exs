@@ -8,6 +8,9 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
     * `put/2` + `get/3` round-trip EVERY column: string-keyed entries out,
       ISO-8601 timestamps returned as the stored strings, JSON columns decoded
       back to maps/lists, and `nil` JSON columns staying `nil` (SQL NULL);
+    * `repo_id` is a repo ID STRING (`"primary"` / a foreign repo id) that
+      round-trips unchanged through put/get/list — an integer-shaped input is
+      stored as its decimal TEXT, never coerced into an integer column;
     * `put/2` is IDEMPOTENT on `(task_id, agent_id)` — a re-put REPLACES the
       row (never duplicates it) and NULLs the columns the new entry omits;
     * both key spellings are accepted on write (atom-keyed producer maps and
@@ -103,7 +106,7 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
         "branch_name" => "evogit-agent-T1-A7",
         "archive_ref_start" => "refs/archive/start",
         "archive_ref_final" => "refs/archive/final",
-        "repo_id" => 0,
+        "repo_id" => "primary",
         "repo_root" => "/repo/primary",
         "repo_path" => "lib/evo_git",
         "usage" => %{"input_tokens" => 1200, "output_tokens" => 340, "total_cost" => 0.42},
@@ -152,6 +155,9 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
     assert Enum.at(stored["foreign_repos"], 0)["writable"] == true
     assert stored["started_at"] == "2026-03-04T05:06:07.008Z"
     assert stored["completed_at"] == "2026-03-04T05:16:07.000Z"
+    # `repo_id` is a repo ID STRING ("primary" / a foreign repo id), never an
+    # index — it comes back byte-identical.
+    assert stored["repo_id"] == "primary"
 
     # STRING keys only — no atom-keyed twin.
     assert Map.has_key?(stored, "agent_id")
@@ -186,6 +192,47 @@ defmodule EvoGit.Store.Operations.ArchivesTest do
     end
 
     assert map_size(stored) == 23
+  end
+
+  test "repo_id round-trips as the repo ID STRING the runtime sends" do
+    repo = start_repo!("repo-id")
+
+    # The real domain: `AgentState.repo_id` is "primary" or a foreign repo id —
+    # never an index. Both must survive put/get/list unchanged.
+    :ok = Archives.put(repo, full_entry(%{"repo_id" => "primary"}))
+    :ok = Archives.put(repo, full_entry(%{"agent_id" => 8, "repo_id" => "cowboy"}))
+
+    assert {:ok, primary} = Archives.get(repo, "task-a", 7)
+    assert primary["repo_id"] == "primary"
+
+    assert {:ok, foreign} = Archives.get(repo, "task-a", 8)
+    assert foreign["repo_id"] == "cowboy"
+
+    assert {:ok, %{entries: entries, total: 2}} =
+             Archives.list(repo, "task-a", include_results: true)
+
+    # Same depth (2), so the roster orders by agent_id: 7 ("primary"), 8
+    # ("cowboy").
+    assert Enum.map(entries, & &1["repo_id"]) == ["primary", "cowboy"]
+    assert Enum.all?(entries, &is_binary(&1["repo_id"]))
+
+    # A re-put keeps the string form too (the column is TEXT, not a coerced one).
+    assert :ok = Archives.put(repo, Map.put(primary, "result", "re-read then re-written"))
+    assert {:ok, %{"repo_id" => "primary"}} = Archives.get(repo, "task-a", 7)
+
+    # An integer-shaped input is STORED AS ITS DECIMAL TEXT (documented in
+    # `normalize_repo_id/1`) so the on-disk format stays uniformly TEXT.
+    :ok = Archives.put(repo, %{task_id: "task-int", agent_id: 1, repo_id: 0})
+    assert {:ok, %{"repo_id" => "0"}} = Archives.get(repo, "task-int", 1)
+  end
+
+  test "put/2 rejects a repo_id that is neither a string nor an integer" do
+    repo = start_repo!("repo-id-invalid")
+
+    assert {:error, :invalid_repo_id} =
+             Archives.put(repo, %{"task_id" => "task-a", "agent_id" => 1, "repo_id" => [1]})
+
+    assert {:ok, %{entries: [], total: 0}} = Archives.list(repo, "task-a")
   end
 
   test "nil JSON columns stay nil and timestamps keep their stored spelling" do

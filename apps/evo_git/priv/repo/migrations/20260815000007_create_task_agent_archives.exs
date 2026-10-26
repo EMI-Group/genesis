@@ -28,7 +28,7 @@ defmodule EvoGit.Repo.Migrations.CreateTaskAgentArchives do
   | `branch_name`        | TEXT    | branch the agent worked on |
   | `archive_ref_start`  | TEXT    | archive start ref |
   | `archive_ref_final`  | TEXT    | archive final ref |
-  | `repo_id`            | INTEGER | repo index (0 = primary) |
+  | `repo_id`            | TEXT    | repo ID string — `"primary"` or a foreign repo id |
   | `repo_root`          | TEXT    | absolute repo root |
   | `repo_path`          | TEXT    | repo-relative path |
   | `usage`              | TEXT    | plain JSON object (token/cost accounting) |
@@ -94,7 +94,7 @@ defmodule EvoGit.Repo.Migrations.CreateTaskAgentArchives do
     branch_name TEXT,
     archive_ref_start TEXT,
     archive_ref_final TEXT,
-    repo_id INTEGER,
+    repo_id TEXT,
     repo_root TEXT,
     repo_path TEXT,
     usage TEXT,

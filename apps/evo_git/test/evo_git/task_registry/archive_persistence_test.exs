@@ -48,7 +48,7 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
         branch_name: "evogit-agent-T1-A1",
         archive_ref_start: "refs/genesis/archive/T1-A1-start",
         archive_ref_final: "refs/genesis/archive/T1-A1-final",
-        repo_id: 0,
+        repo_id: "primary",
         repo_root: "/repo",
         repo_path: "/repo/worktree",
         usage: %{total_tokens: 42},
@@ -77,7 +77,7 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       assert stored["branch_name"] == "evogit-agent-T1-A1"
       assert stored["archive_ref_start"] == "refs/genesis/archive/T1-A1-start"
       assert stored["archive_ref_final"] == "refs/genesis/archive/T1-A1-final"
-      assert stored["repo_id"] == 0
+      assert stored["repo_id"] == "primary"
       assert stored["repo_root"] == "/repo"
       assert stored["repo_path"] == "/repo/worktree"
       assert stored["compression_count"] == 2
@@ -246,7 +246,7 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
         branch_name: "evogit-agent-T1-A1",
         archive_ref_start: "refs/genesis/archive/T1-A1-start",
         archive_ref_final: "refs/genesis/archive/T1-A1-final",
-        repo_id: 0,
+        repo_id: "primary",
         repo_root: "/tmp/archive_e2e",
         repo_path: "/tmp/archive_e2e/.genesis/workers/worker_T1_A1",
         usage: %{"input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15},

@@ -24,7 +24,9 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
        row, `agent_id` from the record; `depth`/`compression_count` default to
        0; `usage`/`llm_settings`/`agent_settings`/`foreign_repos` are re-encoded
        with `Jason.encode!` — plain JSON, no compression, no `"z1:"` prefix,
-       SQL NULL for a missing value);
+       SQL NULL for a missing value); every other column is copied VERBATIM, in
+       particular `repo_id`, which is a repo ID STRING (`"primary"` or a foreign
+       repo id) and therefore a TEXT column — it is never cast to an integer;
     3. strip `data.archive_records` from `result` — but ONLY when that key is
        present (it was a verbatim DUPLICATE of this column). The result JSON is
        decoded/re-encoded for that one case; a result without the key is left
@@ -184,6 +186,11 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
       value(record, "branch_name"),
       value(record, "archive_ref_start"),
       value(record, "archive_ref_final"),
+      # `repo_id` is copied VERBATIM: it is a REPO ID STRING at runtime
+      # (`"primary"` or a foreign repo id — `EvoGit.AgentSpec`/`AgentState`),
+      # so this column is TEXT and nothing is coerced here. A legacy record
+      # that carried a number is stored as its text form by the column's TEXT
+      # affinity, never converted to an integer.
       value(record, "repo_id"),
       value(record, "repo_root"),
       value(record, "repo_path"),
