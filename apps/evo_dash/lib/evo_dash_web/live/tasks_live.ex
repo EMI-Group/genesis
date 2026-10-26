@@ -563,8 +563,9 @@ defmodule EvoDashWeb.TasksLive do
         show_reflect_tasks: false,
         expanded_task_ids: MapSet.new(),
         # Per-card lazy detail cache, owned by EvoDashWeb.TasksLive.TaskDetail:
-        # %{task_id => %{state:, task:, error:, seq:, archive:}}. Bounded to
-        # ONE page's worth of entries (TaskDetail.prune/2 runs on every landed
+        # %{task_id => %{state:, task:, error:, seq:, archive:}} where `archive`
+        # is the PAGED envelope (entries/total/next_offset/agent_results). Bounded
+        # to ONE page's worth of entries (TaskDetail.prune/2 runs on every landed
         # page load) and seeded empty — nothing is fetched until a card is
         # expanded.
         task_details: %{},
@@ -767,10 +768,18 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply, TaskDetail.apply_detail(socket, seq, node, task_id, result)}
   end
 
-  # Per-card lazy archive result — same guarded apply path.
+  # Per-card lazy archive result — same guarded apply path. The module reads the
+  # envelope to decide whether this is the FIRST page or an appended page.
   @impl true
   def handle_info({:task_archive_loaded, seq, node, task_id, result}, socket) do
     {:noreply, TaskDetail.apply_archive(socket, seq, node, task_id, result)}
+  end
+
+  # Per-agent lazy archive result (one agent's full entry, its `"result"`
+  # included) — same guarded apply path, keyed on the archive's seq.
+  @impl true
+  def handle_info({:task_archive_agent_loaded, seq, node, task_id, agent_id, result}, socket) do
+    {:noreply, TaskDetail.apply_archive_agent(socket, seq, node, task_id, agent_id, result)}
   end
 
   # Sync-error fallback for initiate_remote_connect/2: the subsystem is
@@ -969,11 +978,28 @@ defmodule EvoDashWeb.TasksLive do
     {:noreply, TaskDetail.retry(socket, task_id)}
   end
 
-  # The expanded card's archive section asked for its records → lazy, cached
+  # The expanded card's archive section asked for its FIRST page → lazy, cached
   # archive fetch (no-op while loading / already loaded).
   @impl true
   def handle_event("load_task_archive", %{"task_id" => task_id}, socket) do
     {:noreply, TaskDetail.load_archive(socket, task_id)}
+  end
+
+  # "Load more" (and its retry) — appends the next 100-entry page.
+  @impl true
+  def handle_event("load_more_task_archive", %{"task_id" => task_id}, socket) do
+    {:noreply, TaskDetail.load_more_archive(socket, task_id)}
+  end
+
+  # "Show result" / its retry — ONE agent's full archive entry, including the
+  # heavy `"result"` the paged read deliberately omits.
+  @impl true
+  def handle_event(
+        "load_task_archive_agent_result",
+        %{"task_id" => task_id, "agent_id" => agent_id},
+        socket
+      ) do
+    {:noreply, TaskDetail.load_agent_result(socket, task_id, agent_id)}
   end
 
   @impl true

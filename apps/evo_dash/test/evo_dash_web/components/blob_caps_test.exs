@@ -136,12 +136,12 @@ defmodule EvoDashWeb.BlobCapsTest do
   end
 
   describe "ArchiveComponents.archive_details/1 — record + payload caps" do
-    test "renders at most 100 records with the true total and truncates a huge result" do
+    test "renders at most 300 records with the true total and truncates a huge result" do
       tail = "ZZ_ARCHIVE_RESULT_TAIL_MARKER_ZZ"
       big_result = String.duplicate("archive-result-line ", 2_850) <> tail
       assert byte_size(big_result) > 50_000
 
-      records = archive_records(300, big_result: {1, big_result})
+      records = archive_records(400, big_result: {1, big_result})
 
       html =
         render_component(&ArchiveComponents.archive_details/1,
@@ -151,13 +151,14 @@ defmodule EvoDashWeb.BlobCapsTest do
 
       text = html |> parse() |> Floki.text()
 
-      # The cap note reports the TRUE total (300), not the rendered slice.
-      assert text =~ "Showing 100 of 300 agent records"
+      # Paging is the real bound; the render cap (300) is the second safety net
+      # and its note reports the TRUE loaded total (400), not the rendered slice.
+      assert text =~ "Showing 300 of 400 agent records"
 
       # Exactly one record container per rendered record — nothing beyond the cap.
-      assert length(Regex.scan(~r/rounded-xl bg-base-100\/60 overflow-hidden/, html)) == 100
-      assert text =~ "agent-100"
-      refute text =~ "agent-101"
+      assert length(Regex.scan(~r/rounded-xl bg-base-100\/60 overflow-hidden/, html)) == 300
+      assert text =~ "agent-300"
+      refute text =~ "agent-301"
 
       # The 50 KB result renders its capped prefix plus the note; the tail is gone.
       assert text =~ "archive-result-line"
@@ -262,14 +263,19 @@ defmodule EvoDashWeb.BlobCapsTest do
       assert child[:agent_id] == "child"
     end
 
-    test "parent-less records are not rendered and do not count as truncation" do
+    test "parent-less records are PROMOTED to top level and count as shown" do
       capped =
         ArchiveHelpers.build_tree_capped([record("root", nil), record("orphan", "missing")])
 
-      # The orphan has no in-slice parent, so it never reaches the tree — but it
-      # was NOT dropped by the cap, so `truncated?` stays false.
-      assert %{total: 2, shown: 1, truncated?: false} = capped
-      assert [%{agent: %{agent_id: "root"}, children: []}] = capped.tree
+      # A paged archive routinely holds records whose parent is on another page:
+      # they render as their own top-level node (never silently dropped) and the
+      # promotion is not a truncation.
+      assert %{total: 2, shown: 2, truncated?: false} = capped
+
+      assert [
+               %{agent: %{agent_id: "root"}, children: []},
+               %{agent: %{agent_id: "orphan"}, children: []}
+             ] = capped.tree
     end
 
     test "root records fill the slice before their children" do

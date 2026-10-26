@@ -39,8 +39,11 @@ defmodule EvoDashWeb.TaskCardComponents do
         error: term() | nil,                 # only when state == :error
         seq: pos_integer(),
         archive: nil | %{state: :loading | :ok | :error,
-                          records: [map()], error: term() | nil,
-                          seq: pos_integer()}}
+                          entries: [map()], total: non_neg_integer(),
+                          next_offset: non_neg_integer(),
+                          loading_more?: boolean(), more_error: term() | nil,
+                          error: term() | nil, seq: pos_integer(),
+                          agent_results: %{agent_id => %{state:, entry:, error:}}}}
 
   Only the EXPANDED view reads `detail.task`; the collapsed card renders from
   the summary alone (`task_repos/2` derives its repo badges from the summary's
@@ -65,7 +68,15 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Card readers implemented in the submodules and called directly by the
   # template below.
   import EvoDashWeb.TaskCardComponents.Archive,
-    only: [archive_state: 1, archive_records: 1, archive_opt?: 1]
+    only: [
+      archive_state: 1,
+      archive_records: 1,
+      archive_total: 1,
+      archive_agent_results: 1,
+      archive_loading_more?: 1,
+      archive_more_error: 1,
+      archive_opt?: 1
+    ]
 
   import EvoDashWeb.TaskCardComponents.Errors,
     only: [
@@ -679,13 +690,16 @@ defmodule EvoDashWeb.TaskCardComponents do
                   <% end %>
 
                   <%!--
-                    Archive — LAZY disclosure. The summary map cannot tell
+                    Archive — LAZY, PAGED disclosure. The summary map cannot tell
                     whether archive records exist, so the section appears when
                     the task was started with the `:archive` opt
                     (`opts[:archive]`) OR when the archive has already been
-                    fetched. Records are loaded on demand via the
-                    `load_task_archive` event (button below) and render through
-                    ArchiveComponents' own bounded/capped tree markup.
+                    fetched. The FIRST page (100 entries, results omitted) is
+                    loaded on demand via the `load_task_archive` event (button
+                    below); further pages append through
+                    `load_more_task_archive` and one agent's result through
+                    `load_task_archive_agent_result` — both fired from
+                    ArchiveComponents' own markup.
                   --%>
                   <%= if archive_opt?(@task.opts) or archive != nil do %>
                     <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
@@ -749,6 +763,10 @@ defmodule EvoDashWeb.TaskCardComponents do
                           <div class="mt-4">
                             <EvoDashWeb.ArchiveComponents.archive_details
                               archive_metadata={records}
+                              total={archive_total(archive)}
+                              agent_results={archive_agent_results(archive)}
+                              loading_more?={archive_loading_more?(archive)}
+                              more_error={archive_more_error(archive)}
                               task_id={@task.id}
                             />
                           </div>

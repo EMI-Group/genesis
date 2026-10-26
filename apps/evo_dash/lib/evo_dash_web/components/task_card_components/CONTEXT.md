@@ -10,7 +10,7 @@ The task card's data contract plus the helper families extracted from `task_card
 - `./result_render.ex` → `render_result/1,2`, `render_result_full/1`, `result_copy_text/1`, `branch_badge_class/0`.
 - `./options.ex` → `objective_text/1`, `render_options/1,2`, `render_options_full/1`.
 - `./repos.ex` → `result_repos/1`, `task_repos/2`, `result_repos_badges/1`.
-- `./archive.ex` → the lazy `detail.archive` envelope readers + `archive_opt?/1`.
+- `./archive.ex` → the `detail.archive` envelope readers (`archive_state/1`, `archive_records/1`, `archive_total/1`, `archive_agent_results/1`, `archive_loading_more?/1`, `archive_more_error/1`) + `archive_opt?/1`.
 - `./errors.ex` → the structured failure-record readers `task_error/1` / `error_field/2`.
 
 ## Task Cards & the Summary-Map Contract
@@ -25,7 +25,8 @@ Plain maps with `EvoGit.Store.Operations.Summaries`' 16 keys: `id, status, revie
 ### The `detail` attr — lazily-fetched heavy payload
 
 `task_card/1` declares `attr(:detail, :map, default: nil)` next to `task`/`show_details`/`current_node_id`:
-`nil` (nothing requested yet) or `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, records: [map()], error: term() | nil, seq: pos_integer()}}`.
+`nil` (nothing requested yet) or `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, entries: [map()], total: non_neg_integer(), next_offset: non_neg_integer(), loading_more?: boolean(), more_error: term() | nil, error: term() | nil, seq: pos_integer(), agent_results: %{agent_id => %{state: :loading | :ok | :error, entry: map() | nil, error: term() | nil}}}`.
+`archive.entries` holds only the pages read so far (every entry OMITS its `"result"`), `total` is the true archive size, and `agent_results` carries the lazily fetched full entries per agent id.
 `task` is only meaningful when `state == :ok`; `error` only when `state == :error`.
 The template binds `lite = detail.task` when `state == :ok` (else nil) and `archive = detail.archive` (else nil) once at the top, so no template path ever dot-accesses a nil `detail`.
 `state: :loading`/nil with no `lite` renders the loading placeholder; `state: :error` renders the retry-able error strip; neither can crash the card.
@@ -58,11 +59,12 @@ After the Objective/Agent Message grid the expanded card renders EXACTLY ONE of:
 - `lite == nil` (detail nil or `:loading`) → a compact placeholder `id="task-<id>-detail-loading"`: spinner + `gettext("Loading task details…")`.
 - `lite` present → the heavy sections (Token & Cost Usage from `lite.usage`, Agents Spawned from the summary's `agent_count`/`model_id`, Execution Logs from `lite.logs`, lazy archive — next section).
 
-### Lazy archive disclosure (`load_task_archive`)
+### Lazy, paged archive disclosure (`load_task_archive` / `load_more_task_archive` / `load_task_archive_agent_result`)
 
 The expanded card's archive section renders only when `lite` is present AND (`Keyword.get(@task.opts, :archive) in [true, "true"]` via `Archive.archive_opt?/1` (imported into the card module) OR the archive envelope has been fetched) — the summary map cannot tell whether records exist, so `opts[:archive]` is the opt-in signal.
 Header row: `gettext("Archived Agent Details")` + a `phx-click="load_task_archive"` `phx-value-task_id` button (`gettext("Show archive")`) shown only while `archive == nil`.
-Body states (`archive_state/1` + `archive_records/1`, both total): `nil` → muted `gettext("The archive loads on demand.")` hint; `:loading` → spinner + `gettext("Loading archive…")`; `:error` → error-tinted strip `gettext("Could not load the task archive.")` + the same `load_task_archive` retry button; `:ok` with `records == []` → `gettext("No archived agents for this task.")`; `:ok` with records → the existing `<EvoDashWeb.ArchiveComponents.archive_details archive_metadata={records} task_id={@task.id} />` (its own capped tree markup).
+Body states (`archive_state/1` + `archive_records/1` + `archive_total/1` + `archive_loading_more?/1` + `archive_more_error/1` + `archive_agent_results/1`, all TOTAL): `nil` → muted `gettext("The archive loads on demand.")` hint; `:loading` → spinner + `gettext("Loading archive…")`; `:error` → error-tinted strip `gettext("Could not load the task archive.")` + the same `load_task_archive` retry button; `:ok` with `entries == []` → `gettext("No archived agents for this task.")`; `:ok` with entries → `<EvoDashWeb.ArchiveComponents.archive_details archive_metadata={entries} total={archive_total(archive)} agent_results={archive_agent_results(archive)} loading_more?={archive_loading_more?(archive)} more_error={archive_more_error(archive)} task_id={@task.id} />`, which owns the count/range label, the "Load more" button (`load_more_task_archive`) and the per-agent "Show result" button (`load_task_archive_agent_result`).
+The card never auto-fetches a page or a result: every fetch comes from one of those three clicks, and each agent's `result` is rendered capped once the LiveView folds it back into the envelope.
 
 ### Multi-repo `repos` result rendering (per-repo commit/branch)
 
@@ -84,11 +86,11 @@ Task results may carry a top-level `repos` map — STRING keys: `%{repo_id => %{
 |---|---|---|
 | `Layouts.app` sidebar Active Tasks | `id`, `status`, `started_at`, `finished_at`, `opts`, `project_path` | dot on contract keys only (summary-safe) |
 | `TaskCardComponents.task_card/1` | `type`, `opts`, `id`, `status`, `started_at`, `finished_at`, `agent_count`, `model_id`, `review_status`, `commit_sha`, `branch_name`; `error` | dot on contract keys; `error` only via `task_error/1` + `error_field/2` |
-| `task_card/1` Agent Message / usage / logs / archive sections | `detail.task`'s `result`, `usage` (+ nested `usage.*`), `logs`; `detail.archive.records` | `Map.get(lite, …)` + `not in [nil, []]` guards — hidden until the detail load lands |
+| `task_card/1` Agent Message / usage / logs / archive sections | `detail.task`'s `result`, `usage` (+ nested `usage.*`), `logs`; `detail.archive` via the `Archive` accessors (`entries`, `total`, `agent_results`, `loading_more?`, `more_error`) | `Map.get(lite, …)` + `not in [nil, []]` guards — hidden until the detail load lands |
 | `render_result_full/1` | the result VALUE (`Map.get(lite, :result)`) from TasksLive's detail entry | TasksLive modal only |
 
 - The ONLY dashboard-rendered task-list markup here is the sidebar Active Tasks section, which uses contract keys only — summary-safe.
-- The card never fetches anything itself: `detail` (and its `archive`) is loaded by the owning LiveView, which also owns the `retry_task_detail` / `load_task_archive` events.
+- The card never fetches anything itself: `detail` (and its paged `archive`) is loaded by the owning LiveView, which also owns the `retry_task_detail` / `load_task_archive` / `load_more_task_archive` / `load_task_archive_agent_result` events.
 
 ## Render Cost — card-scoped
 
@@ -96,7 +98,7 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 
 - `task_card/1` makes no `System.cmd`/`Port.open`/`File.*`/`GenServer.*`/`:erpc`/`EvoGit.*` calls at render time; the card is fed already-decoded maps/structs.
 - COLLAPSED card: contract fields only, and it no longer receives any heavy field at all — its sole repo work is `task_repos(@task, @detail)` (a cheap walk of `opts[:foreign_repos]` plus, once loaded, the detail result's `repos` map). Per-card unconditional calls: `task_card_tint/1`, `task_accent_color/1`, `String.slice(id, 0, 8)`, `task_status_badge/1`, `objective_text/1` (interpolated TWICE — body + `title=` — so a long objective is HTML-escaped twice), `task_description/1` only when the objective is empty, `result_repos/1`, `task_error/1`, `relative_time/1`, and `show_review_button?/1` + `with_node_param/2` when reviewable.
-- EXPANDED card: work is bounded by the caps (16 KiB text previews, 200 log rows, 1 MiB copy payloads, 100 archive records). Each preview is computed ONCE per render and reused — never recompute it per field or per branch (`agent_summary/1` feeds one preview to both the Markdown and Raw branches).
+- EXPANDED card: work is bounded by the caps (16 KiB text previews, 200 log rows, 1 MiB copy payloads, 300 archive records). Each preview is computed ONCE per render and reused — never recompute it per field or per branch (`agent_summary/1` feeds one preview to both the Markdown and Raw branches).
 - `render_result_full/1` runs only in the TasksLive modal, never on the page render.
 - A slow task-card page load is no longer explained by these components — the collapsed render is summary-only; the cost sits in the LiveView's paginated summary load and the per-card detail fetches (outside this node).
 
@@ -109,3 +111,4 @@ Every component here is a pure function component re-executed on EVERY LiveView 
 | `task_card_components.ex` in-card text (`@in_card_blob_limit`) | `16_384` bytes — the expanded Objective body and the Agent Message result, including the `{:error, _}` / `{:exit, _}` inspected reasons and the catch-all `inspect/2` path; note rendered by the shared `preview_limit_note/1` (defined in `task_card_components.ex`, called by the moved renderers) |
 | `task_card_components.ex` logs (`@in_card_log_limit`) | the LAST `200` entries (`log_preview/1` = one reverse pass + `list_preview/2`, so no extra `length/1`); the summary badge comes from `log_summary_label/1` so it can never contradict the rendered rows ("last %{shown} of %{count}" above the cap, plain "%{count}" below it) |
 | `task_card_components.ex` copy payloads (`@copy_payload_limit`) | `1_048_576` bytes — `data-content` IS materialized in the rendered HTML; `copy_payload_title/1` adds the hint title only when truncated |
+| `archive_components.ex` archive tree (task-card path) | `300` records (`@max_agent_records`) per render; paging (100 per page) is the real archive bound, each record's `result` is `8_192` / `objective` `4_096` bytes |

@@ -67,44 +67,50 @@ The rendered list holds summary rows only; the heavy data is fetched per card by
 
 ### Entry shape
 
-`:task_details` maps `task_id => entry` with the shape `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, records: [map()], error: term() | nil, seq: pos_integer()}}`.
+`:task_details` maps `task_id => entry` with the shape `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, entries: [map()], total: non_neg_integer(), next_offset: non_neg_integer(), loading_more?: boolean(), more_error: term() | nil, error: term() | nil, seq: pos_integer(), agent_results: %{agent_id => %{state: :loading | :ok | :error, entry: map() | nil, error: term() | nil}}}}`.
 `task` is meaningful only when `state == :ok`, `error` only when `state == :error`.
-The detail entry and its nested archive entry carry their OWN seq drawn from the same monotonic `:task_detail_seq`, so a detail refetch never invalidates a landed archive (and vice versa).
-The cache never exceeds ONE page: `prune/2` keeps only entries whose id is on the freshly loaded page.
+The archive envelope is PAGED: `entries` accumulates the pages read so far, `total` is the TRUE archive size, `next_offset` is the offset the next/in-flight page was requested at, and `agent_results` holds the lazily fetched per-agent full entries (the paged read omits every `"result"`).
+The detail entry and its nested archive entry carry their OWN seq drawn from the same monotonic `:task_detail_seq`, so a detail refetch never invalidates a landed archive (and vice versa); an append keeps the archive's seq and is identified by `next_offset`.
+The cache never exceeds ONE page's worth of entries: `prune/2` keeps only entries whose id is on the freshly loaded page.
 Nothing is fetched at mount or on page load — an entry exists only once the user expands a card.
 
 ### Reads and seams
 
-| read | returns | app-env seam (2-arity) | default |
-|------|---------|------------------------|---------|
-| lite detail | `%EvoGit.TaskInfo{}` with `archive_metadata: nil` and no `:archive_records` in the result | `:tasks_task_detail_runner` | `EvoDash.NodeContext.get_task_lite/2` |
-| archive | `[map()]` (the decoded `archive_metadata`) | `:tasks_task_archive_runner` | `EvoDash.NodeContext.get_task_archive/2` |
+| read | returns | app-env seam | default |
+|------|---------|--------------|---------|
+| lite detail | `%EvoGit.TaskInfo{}` with `archive_metadata: nil` and no `:archive_records` in the result | `:tasks_task_detail_runner` (2-arity) | `EvoDash.NodeContext.get_task_lite/2` |
+| archive PAGE | `%{entries: [map()], total: non_neg_integer()}` for `limit: 100, offset: <page>, include_results: false` | `:tasks_task_archive_runner` (3-arity `fn node, task_id, opts -> end`) | `EvoDash.NodeContext.list_task_archives/3` |
+| one agent's full entry | the entry map INCLUDING its `"result"` (`nil` when absent) | `:tasks_task_archive_agent_runner` (3-arity `fn node, task_id, agent_id -> end`) | `EvoDash.NodeContext.get_agent_archive/3` |
 
-Both seams are resolved AT SPAWN TIME from app env (the dashboard's runner-seam idiom), so a test can inject an exiting runner and assert the LiveView survives.
-Every fetch is ONE supervised `EvoDash.TaskSupervisor` child running `EvoDash.SafeCall.run/1` around the runner call and always reporting back: `{:task_detail_loaded, seq, node, task_id, result}` / `{:task_archive_loaded, seq, node, task_id, result}`.
-No polling — results arrive only from those two messages.
+All three seams are resolved AT SPAWN TIME from app env (the dashboard's runner-seam idiom), so a test can inject an exiting runner and assert the LiveView survives.
+Every fetch is ONE supervised `EvoDash.TaskSupervisor` child running `EvoDash.SafeCall.run/1` around the runner call and always reporting back: `{:task_detail_loaded, seq, node, task_id, result}` / `{:task_archive_loaded, seq, node, task_id, result}` / `{:task_archive_agent_loaded, seq, node, task_id, agent_id, result}`.
+No polling — results arrive only from those three messages.
 
 ### Guards and result folding
 
-`apply_detail/5` and `apply_archive/5` drop a result unless the message's `node` still equals `socket.assigns.current_node`, the entry still exists, AND the entry's seq equals the message's seq (a newer fetch, a pruned entry, or an invalidated entry supersedes the older result).
+`apply_detail/5`, `apply_archive/5` and `apply_archive_agent/6` drop a result unless the message's `node` still equals `socket.assigns.current_node`, the entry still exists, AND the entry's (archive) seq equals the message's seq (a newer fetch, a pruned entry, or an invalidated entry supersedes the older result); `apply_archive_agent/6` additionally requires the agent to still be tracked in `agent_results`.
 `{:ok, %EvoGit.TaskInfo{}}` → `:ok`; `{:ok, nil}` (the task vanished between the page load and the expand) → `:error` with `:not_found`; `{:error, reason}` (including a SafeCall-captured exit) → `:error` with that reason; any other shape → `:error`.
-For the archive, `{:ok, records}` with a list → `:ok` (the empty list is a valid "this task archived nothing"); `{:error, reason}` and any other shape → `:error`.
+For the archive FIRST page, `{:ok, %{entries: list, total: n}}` → `:ok` (the empty list is a valid "this task archived nothing"); `{:error, reason}` and any other shape → `:error` (Retry → `load_archive/2`).
+For an APPEND (`loading_more?: true`), a success merges the page in (deduped by `agent_id`, order preserved) and bumps `next_offset`; a failure keeps the loaded page, clears `loading_more?` and records `more_error` (Retry → `load_more_archive/2`).
+For a per-agent result, `{:ok, entry_map}` caches `%{state: :ok, entry: entry}` AND folds the entry into `entries` via `ArchiveHelpers.merge_entry/2`; `{:ok, nil}` / `{:error, reason}` / anything else → `%{state: :error, error: reason}`.
 
 ### Public API (total — a missing assign reads as an empty cache)
 
 - `toggle/2` — collapse drops the id from `:expanded_task_ids` and keeps the cached entry (a re-expand renders instantly); open adds the id and `ensure/2`s, so this is the `toggle_task_details` entry point.
 - `ensure/2` — fetch when no entry exists; an entry in ANY state (including `:error`) is a no-op, so this is both the cache guard and the in-flight guard.
 - `retry/2` — drop the entry, then `ensure/2` (backs the error strip's Retry).
-- `load_archive/2` — no-op unless the detail entry is `:ok`; fetches when `archive` is `nil` or an `:error` archive, and never while `:loading`/`:ok`.
-- `invalidate/2` — drop the entry; when the card is still in `:expanded_task_ids` it immediately `ensure/2`s again, so an open card shows the loading state and then the fresh detail instead of blanking (a collapsed card stays uncached until the next expand).
+- `load_archive/2` — no-op unless the detail entry is `:ok`; fetches the FIRST page when `archive` is `nil` or an `:error` archive, and never while `:loading`/`:ok`.
+- `load_more_archive/2` — no-op unless the archive is `:ok`, `length(entries) < total` and no append is in flight.
+- `load_agent_result/3` — no-op unless the archive is `:ok`; per-agent cache/in-flight guard (`:loading`/`:ok` left alone, `:error` refetched). Never called on render.
+- `invalidate/2` — drop the entry (archive AND every cached agent result go with it); when the card is still in `:expanded_task_ids` it immediately `ensure/2`s again, so an open card shows the loading state and then the fresh detail instead of blanking (a collapsed card stays uncached until the next expand). This is the ONLY archive invalidation path.
 - `prune/2` — keep only the entries for ids present in the landed page rows.
 - `ensure_expanded/2` — after `prune/2`, refetch the detail of every still-expanded row on the new page (an open card survives a background refresh / pagination round-trip).
-- `apply_detail/5` / `apply_archive/5` — the guarded message folds.
+- `apply_detail/5` / `apply_archive/5` / `apply_archive_agent/6` — the guarded message folds.
 
 ### TasksLive wiring
 
 - `toggle_task_details` (`%{"task_id" => id}`) → `TaskDetail.toggle/2`, which `ensure/2`s ONLY when OPENING; collapse just drops the id from `:expanded_task_ids` and keeps the cached entry, so a re-expand renders instantly and fetches nothing.
-- `retry_task_detail` (`%{"task_id" => id}`) → `TaskDetail.retry/2`; `load_task_archive` (`%{"task_id" => id}`) → `TaskDetail.load_archive/2`.
+- `retry_task_detail` (`%{"task_id" => id}`) → `TaskDetail.retry/2`; `load_task_archive` (`%{"task_id" => id}`) → `TaskDetail.load_archive/2`; `load_more_task_archive` (`%{"task_id" => id}`) → `TaskDetail.load_more_archive/2`; `load_task_archive_agent_result` (`%{"task_id" => id, "agent_id" => agent_id}`) → `TaskDetail.load_agent_result/3`.
 - `{:task_updated, ...}` / `{:task_deleted, ...}` invalidate that id (only when `NodeAware.event_from_current_node?/2`) BEFORE delegating to `NodeAware.handle_task_info/2`.
 - A node-context change in `handle_params/3` resets `:task_details` to `%{}` (cached entries belong to the old node; in-flight results are then rejected by the node + entry guards).
 - A landed page load runs `TaskDetail.prune/2` then `TaskDetail.ensure_expanded/2`.
@@ -121,7 +127,9 @@ The expanded structured-failure block is the exception: it reads the summary's `
 
 The archive section appears only when the detail is `:ok` AND (`opts[:archive]` is truthy OR an archive envelope already exists).
 The records are NEVER fetched with the detail: the section first shows a "Show archive" button (`load_task_archive`) and the hint "The archive loads on demand."
-States: not requested (button + hint) → `:loading` spinner → `:ok` with records rendered through `ArchiveComponents.archive_details` → `:ok` with `[]` → "No archived agents for this task." → `:error` strip ("Could not load the task archive.") whose Retry re-fires the same `load_task_archive` event.
+States: not requested (button + hint) → `:loading` spinner → `:ok` with a page rendered through `ArchiveComponents.archive_details` (count/range label, the tree, "Load more" while `length(entries) < total`, per-agent "Show result") → `:ok` with `[]` → "No archived agents for this task." → `:error` strip ("Could not load the task archive.") whose Retry re-fires the same `load_task_archive` event.
+An append failure is INLINE and non-destructive: the loaded page stays, `more_error` renders "Could not load more archive pages." + Retry (same `load_more_task_archive` event).
+Each agent's heavy `"result"` is fetched only when the user presses "Show result" (`load_task_archive_agent_result`), rendered capped through `blob_preview`, and never auto-fetched on render.
 
 ## Load-cost profile (no blocking store work in the LiveView)
 
@@ -176,7 +184,8 @@ All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (loca
 - **`list_tasks_page/2`** — the page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`PageLoad.filters/1`; `"all"`/`""` passthrough is handled in the store's WHERE builder). Returns `%{rows: [summary_map], total: total_count}` with the 16-key rows. The card reads `id`, `type`, `opts`, `status`, `review_status`, `started_at`, `finished_at`, `agent_count`, `model_id`, `commit_sha`, `branch_name` and `error` from the summary; `project_path`, `base_sha`, `lease_expires_at` and `updated_at` ride along but are not read by this page.
 - **Search surface**: the store applies `search:` as a case-insensitive raw SQL LIKE over `id`, `opts`, `project_path` and `branch_name`. The agent RESPONSE (`result`) is NOT searchable — it is not even loaded until a card is expanded.
 - **`get_task_lite/2`** — ONE read per EXPANDED card (through `TaskDetail`): the full `%EvoGit.TaskInfo{}` decoded exactly like `get_task/2` except that `archive_metadata` is `nil` and the result carries no `:archive_records` key. Consumed: `result` (Agent Message, Full Result modal, expanded "Repositories"), `usage`, `logs`, `opts`, and `commit_sha`/`branch_name` for the multi-repo enrichment.
-- **`get_task_archive/2`** — ONE read per explicit archive disclosure: only the `archive_metadata` column, decoded leniently, degraded to `[]` on a missing row, an undecodable payload, or a failed remote call.
+- **`list_task_archives/3`** — ONE read per archive page (`[limit: 100, offset: page, include_results: false]`): returns `%{entries: [string-keyed map], total: non_neg_integer()}` ordered by `depth, agent_id`, every entry WITHOUT its `"result"`; degraded to `%{entries: [], total: 0}` on a failed remote call.
+- **`get_agent_archive/3`** — ONE read per agent the user asked about: the single full entry map INCLUDING its `"result"` (or nil when the agent id is unknown to that task).
 - **`get_unique_paths/1`** — fetched ONCE per page load, inside the async load task (`PageLoad.load/4`) — `mount/3` does NOT call it. Result assigned as `@project_paths` → filter-dropdown options + active-filter badge.
 - **`cancel_task/2` / `force_kill_task/2` / `delete_task/2` / `clear_finished_tasks/1`** — phx-event triggered and wrapped in `EvoDash.SafeCall.run/1` (see "Mutating events"); they return `:ok | {:error, reason}`.
 - **Multi-repo `repos` result key** — task results may carry a top-level `repos` map (STRING keys) `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}`: `"primary"` is ALWAYS present (nil branch_name = the primary produced no changes), each writable foreign repo that produced commits is present, read-only repos are ABSENT, and top-level `commit_sha`/`branch_name` remain the PRIMARY's. The COLLAPSED card derives its per-repo badges from the SUMMARY through the pure `TaskCardComponents.task_repos(task, detail)` (primary from the summary's `commit_sha`/`branch_name`, foreign repos from `opts[:foreign_repos]`, enriched by the detail result's `repos` map once it has landed; `nil` unless the task is genuinely multi-repo). `result_repos/1` + `result_repos_badges/1` still back the expanded `render_result/2` "Repositories" section and the Full Result modal.
@@ -189,7 +198,8 @@ All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (loca
 - *Summary* (16 keys, no result): `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error` — `error` is the structured failure record map (ATOM-keyed after decode, `nil` unless the task is `:failed`). Consumed by this page's `list_tasks_page/2` and by the NodeAware sidebar loader (`list_tasks_summary`; `show_review_button?/1` reads only `status`/`type`).
 - *Id-only*: `list_task_ids/2` — id + status + updated_at, no result/opts decode.
 - *Lite detail*: `get_task_lite/2` — a full `%TaskInfo{}` decode WITHOUT the `archive_metadata` column and without the result's `:archive_records`; reached only from an expanded card.
-- *Archive*: `get_task_archive/2` — only the `archive_metadata` column; reached only from an explicit archive disclosure.
+- *Archive page*: `list_task_archives/3` — one row per agent archive, paged (`limit: 100`), WITHOUT the heavy `"result"`; reached only from an explicit archive disclosure and its "Load more".
+- *Archive entry*: `get_agent_archive/3` — ONE agent's full archive row (including `"result"`); reached only from that agent's "Show result".
 - *Full* (`list_tasks_paginated/2`, `get_task/1`): `Codec.decode_result` (rebuilds `%Usage{}` + archive_records) runs per row; this page issues neither.
 
 ## Task cancellation UX (graceful cancel + force kill)
@@ -238,10 +248,10 @@ It is `nil` on every non-`:failed` row and rides on the SUMMARY projection, so i
 - `wait_for_list/3` polls the `#tasks-list` container until a needle appears (each render is a synchronous round-trip that drains the LiveView mailbox) — use it whenever an ASYNC reload's effect is being awaited.
 - `install_page_load_hook/0` wraps the `:tasks_page_load_hook` seam so a test receives a `:page_load_spawned` message per page-load spawn, and asserts the counter via `:sys.get_state(view.pid).socket.assigns.page_load_seq`; `install_tasks_page_load_runner/1` injects the 4-arity page-load runner.
 - `expand_card/3` toggles a card and WAITS for its lazy detail to leave `:loading` (polling `detail_entry/2`, then draining async work and re-rendering) — no sleeps; use it for every expanded-content assertion.
-- `install_task_detail_runner/1` / `install_task_archive_runner/1` inject the 2-arity `:tasks_task_detail_runner` / `:tasks_task_archive_runner` seams (restored in `on_exit`); the detail runner may block on a `:release_detail` message so the in-flight `:loading` state is observable deterministically.
+- `install_task_detail_runner/1` / `install_task_archive_runner/1` / `install_task_archive_agent_runner/1` inject the 2-arity `:tasks_task_detail_runner`, the 3-arity `:tasks_task_archive_runner` and the 3-arity `:tasks_task_archive_agent_runner` seams (restored in `on_exit`); the detail runner may block on a `:release_detail` message so the in-flight `:loading` state is observable deterministically, and `paging_runner/2` sends an `{:archive_page, node, task_id, opts}` message per requested page so a test can assert the offsets.
 - `detail_entry/2` reads `:task_details[task_id]` through `:sys.get_state/1` (a synchronous round-trip, so already-sent async results are applied); `flush_detail_fetches/1` drains pending `{:detail_fetch, id}` notifications (a bounded 100ms wait) before a "no further fetch" assertion.
 - `term_bytes/1` = `:erts_debug.size/1 * 8` + the payload of every referenced binary (structs unwrapped via `Map.from_struct/1`, lists/tuples walked) — the payload measurement behind "Measured payload".
-- Test pins for the lazy path: expanding triggers exactly ONE fetch (a second toggle while loading is a guarded no-op, and a re-expand after landing renders from cache); a `nil` detail becomes `:error`/`:not_found` and an EXITING runner becomes `{:exit, :boom}` with the LiveView alive and Retry recovering in place; a node-matching `{:task_updated, ...}` invalidates + refetches an expanded card while a `{:task_deleted, ...}` drops the entry of a collapsed one; the archive fetches ONLY on click and covers records / empty / error+retry.
+- Test pins for the lazy path: expanding triggers exactly ONE fetch (a second toggle while loading is a guarded no-op, and a re-expand after landing renders from cache); a `nil` detail becomes `:error`/`:not_found` and an EXITING runner becomes `{:exit, :boom}` with the LiveView alive and Retry recovering in place; a node-matching `{:task_updated, ...}` invalidates + refetches an expanded card while a `{:task_deleted, ...}` drops the entry of a collapsed one; the archive fetches ONLY on click and covers first page + total / empty / error+retry; "Load more" requests `offset: 100` and appends in order without duplicate agent ids (a retried page is idempotent); an append failure keeps the loaded page and retries; "Show result" fetches one agent ONCE, caches it, renders it capped and refetches after a `{:task_updated, ...}` invalidation; an entry without `"result"` renders the button instead of an empty block; and a remote `?node=` propagates the same node atom to both runners.
 - The search tests assert a `branch_name` hit (case-insensitive) and pin a regression: text that exists ONLY in a task's `result` no longer matches.
 - New-shape events are injected manually — `Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_updated, id, status, node()})` (the `:evo_git` emitters are tested in their own workstream).
 - Debounce assertions use the two-phase `wait_until` helper: first `assigns[:tasks_reload_pending] == true` (event processed + node filter matched + debounce scheduled), then `== false` (debounce fired + the ASYNC reload DISPATCHED — the fresh page arrives later, so follow with `wait_for_list/3`). Foreign-node events: sample `tasks_reload_pending == false` across the whole debounce window + assert content unchanged.
@@ -254,21 +264,22 @@ It is `nil` on every non-`:failed` row and rides on the SUMMARY projection, so i
 
 Every load goes `EvoDash.NodeContext.<f>` (local direct / remote `:erpc`) → `EvoGit.RemoteNode` → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`.
 In the core, reads share a small connection pool (`EvoGit.Store.Boot.default_pool_size/0` = 4) so they run concurrently instead of serializing with one another, while all writes — heartbeat/lease/cleanup included — serialize through the dedicated `EvoGit.Store.Writer` process.
-The page read runs off-process on the core side too (the registry offloads `list_tasks_page`, `get_task_lite` and `get_task_archive`), while `get_unique_paths/1` blocks the core TaskRegistry GenServer for the duration of its read (the store side of that read is still offloaded).
+The page read runs off-process on the core side too (the registry offloads `list_tasks_page`, `get_task_lite`, `list_task_archives` and `get_agent_archive`), while `get_unique_paths/1` blocks the core TaskRegistry GenServer for the duration of its read (the store side of that read is still offloaded).
 
 - **`list_tasks_page/2`** — `PageLoad.load/4` (opts `[limit: 25, offset: (page-1)*25, filters: PageLoad.filters/1]`) → `TaskRegistry.list_tasks_page/1` → `Store.select_tasks_page/2`. Issues **TWO SQL statements** — `COUNT(*)` over the filtered WHERE plus ONE page `SELECT` of the 16 summary columns `ORDER BY started_at DESC LIMIT/OFFSET` — and decodes NO heavy blob per row. A `search` filter is a leading-wildcard OR-`LIKE` over `id`/`opts`/`project_path`/`branch_name` (full-table scan) executed in BOTH statements. The page is index-served (`idx_tasks_started_at`, or the matching composite when a filter pins a leading equality column).
 - **`get_unique_paths/1`** — called ONCE per page load inside the async task (`PageLoad.load/4`) → `TaskRegistry.get_unique_paths/0` → `Store.select_task_paths/1` (`SELECT DISTINCT project_path`) — one more SQL statement, never issued from `mount/3`.
 - **`get_task_lite/2`** — ONE read per EXPANDED card: a single-row `SELECT` of every decode-relevant column except `archive_metadata`, decoded through the same `Codec.decode_task/1`.
-- **`get_task_archive/2`** — ONE read per explicit archive disclosure: a single-row `SELECT` of the `archive_metadata` column only.
+- **`list_task_archives/3`** — ONE read per archive page (`limit: 100`, `offset: page * 100`, `include_results: false`): a `LIMIT/OFFSET` `SELECT` over the per-agent archive rows ordered by `depth, agent_id`, projecting every field EXCEPT the heavy `"result"`, plus the total count.
+- **`get_agent_archive/3`** — ONE read per "Show result" click: a single-row `SELECT` of that agent's archive entry including its `"result"`.
 
 Minimum cost per navigation: 2 core RPCs (page summary + distinct paths) and 2 SQL statements for the page read plus the `DISTINCT project_path` scan, all OUTSIDE the LiveView process.
 A mutating event adds ONE single-row call inline plus the same page-read cost in its async reload.
-Expanding a card adds ONE lite read; disclosing its archive adds ONE more.
+Expanding a card adds ONE lite read; disclosing its archive adds ONE page read (plus ONE more per "Load more"), and each "Show result" adds ONE agent read.
 
 ## Synchronous vs async in the LiveView
 
 - **ASYNC (`EvoDash.TaskSupervisor`)**: the connected mount, `push_patch` pagination, every filter/search/toggle event, `retry_load`, the reload after a successful mutation, and the debounced PubSub reload — all via `PageLoad`, landing as `{:tasks_page_loaded, seq, node, result}` stale-guarded by `:page_load_seq` + the node identity.
-- **ASYNC (`EvoDash.TaskSupervisor`, via `TaskDetail`)**: the per-card detail fetch (`{:task_detail_loaded, ...}`) and the archive fetch (`{:task_archive_loaded, ...}`), stale-guarded by `:task_detail_seq` + the entry + the node identity.
+- **ASYNC (`EvoDash.TaskSupervisor`, via `TaskDetail`)**: the per-card detail fetch (`{:task_detail_loaded, ...}`), the archive page fetches (`{:task_archive_loaded, ...}`) and the per-agent result fetches (`{:task_archive_agent_loaded, ...}`), stale-guarded by `:task_detail_seq` + the entry + the node identity.
 - **SYNCHRONOUS in the LiveView process** (each wrapped in `EvoDash.SafeCall.run/1`, so an exit becomes a flash, not a crashed page): `mount/3`'s `config_status/0`, and the single-row mutating calls of `confirm_cancel_task` / `confirm_force_kill_task` / `delete_task` / `clear_task_history`.
 - **Nothing else blocks**: there is no inline page fetch anywhere in the LiveView.
 
@@ -288,13 +299,13 @@ The page reload also re-runs `TaskDetail.prune/2` + `ensure_expanded/2`, so an o
 ## No per-task N+1 I/O in the list path
 
 `EvoDashWeb.TaskCardComponents.task_card/1` performs NO git subprocess, `File.stat`/`exists?`, `System.cmd`, or `NodeContext` call at render time — it renders the summary row plus whatever the `detail` attr already holds (verified: no `rev_parse|System.cmd|File.stat|NodeContext|Port.open` in that file).
-A detail read exists ONLY for a card the user expanded, and an archive read ONLY for an archive disclosure the user clicked, so the extra round trips are bounded by what the user opened — never by the number of rows on the page.
+A detail read exists ONLY for a card the user expanded, and an archive page read ONLY for a disclosure the user clicked, so the extra round trips are bounded by what the user opened — never by the number of rows on the page.
 The per-row cost of the page load is the core-side summary decode, not an extra round trip.
 
 ## Constraints
 
-- Do NOT reintroduce polling (`:remote_poll` / `Process.send_after` self-ticks) or the DirtyTracker module — push events are the single change-detection mechanism, and detail/archive results arrive only from their two messages.
-- The page loads SUMMARY rows only (`list_tasks_page/2`); heavy data is fetched per card through `TaskDetail` (`get_task_lite/2` / `get_task_archive/2`) and is NEVER transferred with the list or rendered from the summary.
+- Do NOT reintroduce polling (`:remote_poll` / `Process.send_after` self-ticks) or the DirtyTracker module — push events are the single change-detection mechanism, and detail/archive/agent-result values arrive only from their three messages.
+- The page loads SUMMARY rows only (`list_tasks_page/2`); heavy data is fetched per card through `TaskDetail` (`get_task_lite/2` / `list_task_archives/3` / `get_agent_archive/3`) and is NEVER transferred with the list or rendered from the summary.
 - Keep every load ASYNC and connected-gated: `handle_params/3` must only spawn behind `connected?(socket)`, and every page load — including the debounced reload and the post-mutation reload — must go through `PageLoad.start/3`. Never fetch a page inline in the LiveView.
 - Every store/RPC call is exit-safe: page loads via `PageLoad.run/6`'s `EvoDash.SafeCall.run/1`, detail/archive via `TaskDetail`'s spawned runners, mutating events via an explicit `SafeCall.run/1` wrap. Never add a bare `EvoDash.NodeContext` / `EvoGit.TaskRegistry` call to a LiveView event handler.
 - A `:loading`, `:error` or `nil` detail must always be a renderable state — the card shows the loading placeholder or the retry-able error strip; never a stuck spinner, never a crash, and never a heavy section rendered without `detail.task`.
