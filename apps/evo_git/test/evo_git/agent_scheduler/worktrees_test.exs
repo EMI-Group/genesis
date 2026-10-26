@@ -44,6 +44,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   # The template is built EXACTLY like the old per-test setup (no explicit git
   # identity — the commit relies on EvoGit.GitEnv's fallback via the adapter),
   # so the commit identity and sha are identical, and the copy is a valid repo.
+  # A repo-local identity is pinned only AFTER that commit (see setup_all/1), so
+  # copies resolve a host-independent identity without changing the commit.
   setup_all do
     template_dir =
       Path.join(
@@ -59,6 +61,17 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     {:ok, _} = Git.add(template_dir, "README.md")
     {:ok, _} = Git.commit(template_dir, "initial commit")
     {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # Pin a KNOWN repo-local commit identity (two one-off forks; the template's
+    # own commit above is already made, so its sha is unchanged). Every
+    # per-test copy inherits `.git/config`, so `EvoGit.GitEnv` resolves EXACTLY
+    # these values for every copy on EVERY host — independent of the
+    # developer's global git config. That makes the setup/1
+    # `prime_config_identity_cache/3` call byte-identical to what the copy
+    # would resolve on its own: it only skips the two `git config` subprocesses
+    # (~5 ms) that every fresh repo path otherwise pays on its first git call.
+    {:ok, _} = Git.run(["config", "user.name", "Genesis"], template_dir)
+    {:ok, _} = Git.run(["config", "user.email", "noreply@evogit.ai"], template_dir)
 
     # The sample hooks and the reflog are never exercised by these tests; git
     # recreates them on demand and the worktree/branch operations below behave
@@ -106,11 +119,19 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     {:ok, template_dir: template_dir, base_sha: base_sha}
   end
 
-  setup %{template_dir: template_dir, base_sha: base_sha} do
+  setup context do
+    %{template_dir: template_dir, base_sha: base_sha} = context
+
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_worktrees_" <> to_string(System.unique_integer()))
 
     {:ok, _} = File.cp_r(template_dir, tmp_dir)
+
+    # The copy's identity is pinned in the template's `.git/config` (see
+    # setup_all/1), so priming the memoized resolution here is byte-identical
+    # to what the copy's first git call would read — minus two `git config`
+    # forks (~5 ms) that EVERY fresh repo path pays on first use.
+    EvoGit.GitEnv.prime_config_identity_cache(tmp_dir, "Genesis", "noreply@evogit.ai")
 
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
@@ -122,9 +143,26 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
     worktree_repos_self_created = create_worktree_repos_ets()
     clear_ets()
 
+    # Mark the fresh per-test repo as ALREADY lazily initialized, which takes
+    # the WorktreeManager's marker-present init path (`ensure_workers_dir` only
+    # — no `rm_rf` of the workers dir, no `git branch --list`, no
+    # `git worktree prune`): two git forks (~5 ms) per test. The genuine
+    # first-create init is covered by the two "per-repo init scoping" tests and
+    # by "marker-absent restart re-runs the full wipe"; tag those with
+    # `@tag lazy_init: true` to opt out of the pre-seed. Nothing else in this
+    # file asserts on the init path, and every real create pipeline
+    # (`destroy_leftovers/3` etc.) still runs unchanged.
+    unless context[:lazy_init] do
+      :ets.insert(:evogit_worktree_repos, {tmp_dir, 0})
+    end
+
     on_exit(fn ->
       File.rm_rf!(tmp_dir)
       clear_ets()
+
+      if :ets.whereis(:evogit_worktree_repos) != :undefined do
+        :ets.delete(:evogit_worktree_repos, tmp_dir)
+      end
 
       if worktree_repos_self_created do
         if :ets.whereis(:evogit_worktree_repos) != :undefined do
@@ -875,6 +913,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
   # destructive steps. Each test uses its own fresh temp repo (no marker yet)
   # so the first-create path is what runs.
   describe "per-repo init scoping (foreign vs primary)" do
+    # Opt out of the setup's init-marker pre-seed: THIS test is about the
+    # genuine FIRST-create lazy init (see setup/1).
+    @tag lazy_init: true
     test "foreign repo first init preserves real task branches (no orphan cleanup)", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
@@ -911,6 +952,8 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       finish_agent(agent, agent_id, tmp_dir, wt_path, "evogit-agent-T1-A1")
     end
 
+    # First-create lazy init is the code under test — no marker pre-seed.
+    @tag lazy_init: true
     test "primary repo first init wipes real task branches (orphan cleanup)", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
@@ -1015,6 +1058,9 @@ defmodule EvoGit.AgentScheduler.WorktreesTest do
       finish_agent(agent_2, agent_id_2, tmp_dir, wt2, "evogit-agent-T2-A1")
     end
 
+    # No marker pre-seed: this test deletes the marker the first create
+    # records and asserts the marker-ABSENT restart re-runs the full wipe.
+    @tag lazy_init: true
     test "marker-absent restart re-runs the full wipe", %{
       tmp_dir: tmp_dir,
       base_sha: base_sha
