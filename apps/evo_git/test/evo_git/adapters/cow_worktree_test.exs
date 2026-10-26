@@ -4,26 +4,48 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
 
   Uses `async: false` because `:persistent_term` (`:evogit_cow_worktree_enabled`)
   is global state shared across all tests — concurrent flag mutations would race
-  — and because `setup` redirects the process-wide `XDG_CONFIG_HOME` env var via
-  `System.put_env/2` (so `Config.resolve([:git, :cow_worktree_creation])` sees
-  only the schema default).
+  — and because `setup_all` redirects the process-wide `XDG_CONFIG_HOME` env var
+  via `System.put_env/2` (so `Config.resolve([:git, :cow_worktree_creation])`
+  sees only the schema default).
+
+  Every fixture repository is a `File.cp_r!` COPY of one per-module git
+  TEMPLATE built in `setup_all` (`git init` with an EMPTY template dir, a
+  pinned identity, `commit.gpgsign=false`, `core.abbrev=40`) instead of a fresh
+  `git init` + `git config` per test, and `EvoGit.GitEnv`'s per-path identity
+  memo is primed for each fixture path — the template's config holds exactly
+  that identity, so priming only skips the two `git config` subprocesses the
+  first git call in every new directory would otherwise spawn. No assertion
+  depends on either.
   """
 
   use ExUnit.Case, async: false
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Adapters.CowWorktree
+  alias EvoGit.GitEnv
   alias EvoGit.TestSupport.Submodule
 
   @flag_key :evogit_cow_worktree_enabled
+
+  # Identity pinned in the fixture template's repo-local config; the same pair
+  # is primed into GitEnv's per-path memo (byte-identical to what
+  # `git config user.name/user.email` would resolve for a template copy).
+  @identity_name "Test User"
+  @identity_email "test@example.com"
+
+  # The per-module repository template is published here by `setup_all` so the
+  # helpers can copy it without threading the path through every test body.
+  @template_key {__MODULE__, :repo_template}
 
   # -------------------------------------------------------------------------
   # Setup / teardown
   # -------------------------------------------------------------------------
 
-  setup do
+  setup_all do
     # Isolate config so Config.resolve([:git, :cow_worktree_creation]) returns
-    # the schema default (:auto) — no user TOML interferes.
+    # the schema default (:auto) — no user TOML interferes. The redirect lives
+    # for the whole module (async: false, so no other module runs alongside),
+    # which also keeps EvoGit.Config's mtime+size cache warm across tests.
     original_xdg = System.get_env("XDG_CONFIG_HOME")
 
     tmp_xdg =
@@ -32,12 +54,10 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
-    # Erase the global flag so each test starts from a known state.
-    :persistent_term.erase(@flag_key)
+    :persistent_term.put(@template_key, git_template!())
 
     on_exit(fn ->
-      # Restore flag to unset (clean slate for subsequent test files).
-      :persistent_term.erase(@flag_key)
+      :persistent_term.erase(@template_key)
 
       if original_xdg do
         System.put_env("XDG_CONFIG_HOME", original_xdg)
@@ -51,10 +71,69 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
     :ok
   end
 
+  setup do
+    # Erase the global flag so each test starts from a known state, and leave it
+    # unset for subsequent test files.
+    :persistent_term.erase(@flag_key)
+    on_exit(fn -> :persistent_term.erase(@flag_key) end)
+
+    :ok
+  end
+
   # -------------------------------------------------------------------------
   # Helpers
   # -------------------------------------------------------------------------
 
+  # Builds the per-module repository TEMPLATE once (`setup_all`): a bare
+  # `git init` (EMPTY template dir → no hook samples), a repo-local identity,
+  # `commit.gpgsign` neutralized (so a developer's global `gpgsign = true`
+  # cannot make fixture commits fail) and full-length abbreviations. Copied per
+  # test by `make_repo/1`.
+  defp git_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "cow_test_tpl_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    seed = Path.join(root, "seed")
+
+    git!(["init", "-q", "--template=#{empty_template}", "-b", "main", seed], root)
+
+    for {key, value} <- [
+          {"user.name", @identity_name},
+          {"user.email", @identity_email},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
+        ] do
+      git!(["config", key, value], seed)
+    end
+
+    on_exit(fn -> File.rm_rf!(root) end)
+    seed
+  end
+
+  defp repo_template! do
+    case :persistent_term.get(@template_key, nil) do
+      nil -> raise "#{inspect(__MODULE__)}: fixture template missing (setup_all has not run)"
+      template -> template
+    end
+  end
+
+  defp git!(args, cd) do
+    case System.cmd(EvoGit.Executable.resolve("git"), args, cd: cd, stderr_to_stdout: true) do
+      {_output, 0} ->
+        :ok
+
+      {output, code} ->
+        raise "git #{Enum.join(args, " ")} failed with exit #{code} in #{cd}: #{output}"
+    end
+  end
+
+  # Copies the template into a fresh, uniquely-named directory: an isolated
+  # working tree with no commits whose `.git` carries the pinned identity.
   defp make_repo(prefix) do
     dir =
       Path.join(
@@ -66,15 +145,8 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
     # leftover dir from an aborted earlier run first — a stale `.git` would
     # carry stale branches that break `refute Git.branch_exists?(...)`.
     File.rm_rf!(dir)
-    File.mkdir_p!(dir)
-    Git.init(dir)
-
-    # No per-repo identity config needed: `EvoGit.GitEnv.git_env/1` injects the
-    # commit identity into every git invocation as GIT_AUTHOR_*/GIT_COMMITTER_*
-    # env vars, falling back to "Genesis"/"noreply@evogit.ai" when nothing is
-    # configured anywhere. `commit.gpgsign false` is deliberate insurance so a
-    # developer's global `commit.gpgsign = true` cannot make commits fail.
-    Git.run(["config", "commit.gpgsign", "false"], dir)
+    File.cp_r!(repo_template!(), dir)
+    prime_identity!(dir)
 
     # Clean up the repo dir after the test so leftover dirs can't collide with
     # future runs (System.unique_integer([:positive]) repeats across VM runs).
@@ -92,8 +164,38 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   defp commit_all(repo, message) do
     Git.add(repo, ".")
     Git.commit(repo, message)
-    {:ok, sha} = Git.rev_parse(repo, "HEAD")
-    sha
+    head_sha!(repo)
+  end
+
+  # Resolves HEAD from the loose ref file the commit above just wrote (a fixture
+  # repo never packs refs), which avoids one `git rev-parse` subprocess per
+  # commit. Falls back to git for a detached HEAD or a non-loose ref layout
+  # (e.g. the reftable backend).
+  defp head_sha!(repo) do
+    head_path = Path.join([repo, ".git", "HEAD"])
+
+    with {:ok, head} <- File.read(head_path),
+         "ref: " <> ref <- String.trim(head),
+         {:ok, sha} <- File.read(Path.join([repo, ".git", ref])) do
+      String.trim(sha)
+    else
+      _ -> rev_parse!(repo)
+    end
+  end
+
+  defp rev_parse!(repo) do
+    case Git.rev_parse(repo, "HEAD") do
+      {:ok, sha} -> sha
+      {:error, error} -> raise "git rev-parse HEAD failed in #{repo}: #{inspect(error)}"
+    end
+  end
+
+  # The first git call inside a new directory makes `EvoGit.GitEnv` spawn two
+  # `git config` lookups for that path (memoized afterwards). A worktree shares
+  # the fixture repo's config — and therefore its identity — so priming the memo
+  # is byte-identical to resolving it.
+  defp prime_identity!(path) do
+    GitEnv.prime_config_identity_cache(path, @identity_name, @identity_email)
   end
 
   defp make_worktree_path(prefix) do
@@ -106,13 +208,14 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
     # Same stale-dir guard as make_repo/1: a leftover worktree dir from a
     # previous VM run would silently turn create_worktree/5 into a fallback.
     File.rm_rf!(path)
+    prime_identity!(path)
     path
   end
 
-  defp cleanup_worktree(repo, worktree_path) do
-    # `worktree remove --force` already deregisters the worktree, so a
-    # follow-up `worktree prune` would be a redundant no-op (dropped).
-    Git.run(["worktree", "remove", "--force", worktree_path], repo)
+  defp cleanup_worktree(_repo, worktree_path) do
+    # `git worktree remove --force` deliberately does NOT run: the fixture repo
+    # (and with it the worktree registration) is deleted wholesale by make_repo/1's
+    # `on_exit`, so deregistering first only cost one git subprocess per test.
     File.rm_rf!(worktree_path)
   end
 
