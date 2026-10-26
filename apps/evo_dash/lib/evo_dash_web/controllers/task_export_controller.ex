@@ -148,11 +148,22 @@ defmodule EvoDashWeb.TaskExportController do
         &EvoDash.NodeContext.list_task_archives/3
       )
 
+    # FUTURE: once the store's roster read grows an explicit settings opt, THIS is
+    # the one call that must pass it (the export is the full-fidelity consumer —
+    # it ships whole per-agent archive records, including any settings fields the
+    # lean roster projection drops by default). Do NOT pass it now: the current
+    # core rejects unknown opts. The future opt is `include_settings: true`,
+    # passed to `EvoDash.NodeContext.list_task_archives/3` right here.
     opts = [offset: offset, limit: @page_limit, include_results: true]
 
     case SafeCall.run(fn -> runner.(node, task_id, opts) end) do
-      {:ok, %{entries: entries, total: total}} when is_list(entries) ->
-        {:ok, entries, total}
+      # A page WITHOUT a usable `total` is still a GOOD page: the inventory
+      # count is optional (a lean read may drop its COUNT(*)), and rejecting
+      # such a page would silently truncate the export. Only a non-negative
+      # integer total is kept; anything else becomes `nil`, and `write_pages/6`
+      # then stops on its empty/short-page rules instead.
+      {:ok, %{entries: entries} = page} when is_list(entries) ->
+        {:ok, entries, page_total(Map.get(page, :total))}
 
       {:ok, other} ->
         {:error, {:invalid_page, other}}
@@ -161,6 +172,10 @@ defmodule EvoDashWeb.TaskExportController do
         {:error, reason}
     end
   end
+
+  # The page's reported inventory count, or nil when it is unusable.
+  defp page_total(total) when is_integer(total) and total >= 0, do: total
+  defp page_total(_total), do: nil
 
   # ── Writing the JSON document ──────────────────────────────────────
 
@@ -203,16 +218,20 @@ defmodule EvoDashWeb.TaskExportController do
   # non-bang encoder keeps an unencodable head a VALUE, so the temp file is
   # cleaned up and the client gets a 500 instead of a raise escaping the
   # controller.
+  # Every field is read TOTALLY (`Map.get/2` for the LITE row's fields — a nil
+  # value or an absent key is just nil — and `option/2` for the opts list, which
+  # a degraded row can hand us as nil), so the encoder decides whether the head
+  # is representable instead of a KeyError/BadMapError escaping.
   defp head_json(task) do
     head = %{
-      task_id: task.id,
-      task_type: task.type,
-      repo_path: task.opts[:path],
-      status: task.status,
-      started_at: task.started_at,
-      finished_at: task.finished_at,
-      agent_count: task.agent_count,
-      usage: task.usage
+      task_id: Map.get(task, :id),
+      task_type: Map.get(task, :type),
+      repo_path: option(Map.get(task, :opts), :path),
+      status: Map.get(task, :status),
+      started_at: Map.get(task, :started_at),
+      finished_at: Map.get(task, :finished_at),
+      agent_count: Map.get(task, :agent_count),
+      usage: Map.get(task, :usage)
     }
 
     with {:ok, json} <- Jason.encode_to_iodata(normalize_for_json(head)) do
@@ -225,9 +244,25 @@ defmodule EvoDashWeb.TaskExportController do
     end
   end
 
-  # Paged until the accumulated count reaches `total` or a page comes back
-  # empty (hard stop — the loop can never spin forever). `total` is nil until
-  # the first page reports it.
+  # Total read of one option of the LITE row's `opts`: a real task row carries a
+  # keyword list, but a degraded/plain-map row can hand us nil — neither may
+  # raise here.
+  defp option(opts, key) when is_list(opts), do: Keyword.get(opts, key)
+  defp option(opts, key) when is_map(opts), do: Map.get(opts, key)
+  defp option(_opts, _key), do: nil
+
+  # Paged until the archive ends. THREE hard stops keep the loop finite AND
+  # complete:
+  #   * the accumulated count reached a KNOWN `total` (the guard requires an
+  #     integer, so a nil/garbage total never ends the loop early),
+  #   * the page came back EMPTY,
+  #   * the page came back SHORT (`length(entries) < @page_limit`): reads are
+  #     offset/limit based, so a short page IS the archive's last page — it is
+  #     written and the loop stops, avoiding one needless RPC and making an
+  #     endless loop impossible when `total` is missing.
+  # A page with a nil total is written ENTIRELY (`take_remaining/3` keeps every
+  # record), so a lean page never truncates the export. `total` is nil until the
+  # first page reports a usable one.
   defp write_pages(_io, _node, _task_id, _offset, written, total)
        when is_integer(total) and written >= total do
     {:ok, written}
@@ -239,10 +274,15 @@ defmodule EvoDashWeb.TaskExportController do
         {:ok, written}
 
       {:ok, entries, page_total} ->
+        page_size = length(entries)
         entries = take_remaining(entries, written, page_total)
 
         with {:ok, written} <- write_records(io, entries, written) do
-          write_pages(io, node, task_id, offset + length(entries), written, page_total)
+          if page_size < @page_limit do
+            {:ok, written}
+          else
+            write_pages(io, node, task_id, offset + page_size, written, page_total)
+          end
         end
 
       {:error, reason} ->
