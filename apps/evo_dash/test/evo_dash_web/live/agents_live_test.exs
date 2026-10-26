@@ -57,12 +57,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
   defp agent_id, do: Process.get(:agents_live_test_agent_id)
 
   describe "agents page" do
-    test "renders the agents page", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/agents")
-
-      assert html =~ "Agent Tree"
-    end
-
     test "starts in the async loading state with generation 1", %{conn: conn} do
       # Block the async load task so the initial render's loading state is
       # deterministic — the load runs in a TaskSupervisor child and could
@@ -90,25 +84,40 @@ defmodule EvoDashWeb.AgentsLiveTest do
       refute html =~ "Loading agents…"
     end
 
-    test "shows empty state when no agents are running", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/agents")
+    test "renders the empty agent tree with a node-aware config status", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/agents")
+
+      assert html =~ "Agent Tree"
 
       # The agent list is loaded asynchronously — the initial render shows the
       # loading state, so wait for the load to finish before asserting.
       html = flush_agents_load(view)
 
       assert html =~ "No agents currently registered"
+
+      # config_status is read per node by the async load through
+      # node_config_status/1 (the layout config banner's source), so a mounted
+      # page carries a fully evaluated status map — never nil. (Node-awareness
+      # itself is the NodeAware hook's contract; here we pin that the page
+      # actually populated the assign from its load.)
+      assert %{ok?: ok?, missing: missing, warnings: warnings} = assigns(view)[:config_status]
+      assert is_boolean(ok?)
+      assert is_list(missing)
+      assert is_list(warnings)
     end
   end
 
   describe "async agent load" do
-    test "populates the agent tree with message counts", %{conn: conn} do
+    test "populates the tree and drops stale load generations and refresh sequences", %{
+      conn: conn
+    } do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       html = flush_agents_load(view)
+      assert assigns(view)[:load_generation] == 1
 
       # The tree renders the seeded agent's card under its repo root.
       assert html =~ "##{agent_id()}"
@@ -120,17 +129,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert agent.id == agent_id()
       assert agent.message_count == 1
       assert agent.status == :running
-    end
 
-    test "drops stale load generations", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:load_generation] == 1
-
+      # ── stale LOAD GENERATION ─────────────────────────────────────────
       # A result from an older generation (0 < 1) must be dropped. The
       # trailing {:agents_updated, node()} event is only a FIFO
       # synchronization fence: once the refresh it spawned is observable
@@ -142,22 +142,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
       refute render(view) =~ "#99"
-    end
 
-    test "drops stale refresh sequences", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # Trigger an async refresh ({:agents_updated, node()} broadcast) —
-      # refresh_seq becomes 1.
-      send(view.pid, {:agents_updated, node()})
-      flush_agent_events(view)
-      wait_until(fn -> assigns(view)[:refresh_seq] == 1 end)
-
+      # ── stale REFRESH SEQUENCE ────────────────────────────────────────
       # A stale refresh result (seq 0 < 1) must be dropped. FIFO fence: the
       # {:agents_updated, node()} event is processed after the stale message.
       send(view.pid, {:agents_refresh_result, 0, node(), {:ok, [marker_agent()], nil}})
@@ -174,7 +160,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # The HistoryGate suppresses full-history re-transfers while an agent's
     # :message_count is unchanged (see EvoDashWeb.AgentsLive.HistoryGate).
 
-    test "does not re-fetch history while the message count is unchanged", %{conn: conn} do
+    test "re-fetches history only when the message count moved", %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -200,23 +186,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
 
       # The refresh applied but the count is unchanged — the carried history is
       # kept and the gate suppresses a re-fetch.
-      assert Agent.get(counter, & &1) == 1
-    end
-
-    test "re-fetches history when the message count changes", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
       # The conversation grows (2 messages) — the next refresh must drop the
@@ -597,34 +566,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert assigns(view)[:agents] == []
     end
 
-    test "foreign-node events are ignored (tree unchanged, no refresh spawned)", %{conn: conn} do
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:refresh_seq] == 0
-
-      foreign = :remote@elsewhere
-
-      send(view.pid, {:agents_updated, foreign})
-      send(view.pid, {:agent_registered, 2, summary_agent(id: 2), foreign})
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], foreign})
-      send(view.pid, {:agent_removed, agent_id(), foreign})
-
-      # All four events must be dropped. The LiveView processes its mailbox in
-      # FIFO order, so the synchronous `assigns/1` read (:sys.get_state) has
-      # already handled them — and a DROPPED event leaves BOTH the coalescing
-      # buffer and its flush timer untouched, which is a complete deterministic
-      # proof (nothing asynchronous can follow a dropped event), so no timing
-      # window is needed.
-      state = assigns(view)
-      assert state.pending_agent_events == []
-      assert state.agent_flush_scheduled == false
-      assert state.pending_agents_refresh == false
-      assert state.refresh_seq == 0
-      assert state.agents |> Enum.map(& &1.id) == [agent_id()]
-      assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
-    end
+    # NOTE: the "foreign-node events are ignored" contract is covered by
+    # "agent event coalescing → foreign-node events are dropped before
+    # buffering", which injects the same four event shapes and asserts the same
+    # buffer / flush-timer / refresh / tree state (plus `foreign != node()`).
   end
 
   describe "agent_updated message_count gating" do
@@ -633,7 +578,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # The selected-agent history refetch is gated on it via HistoryGate:
     # fetch only when the count moved vs the gate's last-seen entry.
 
-    test "refetches selected history when message_count moved on", %{conn: conn} do
+    test "refetches selected history only when message_count moved on", %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -649,63 +594,28 @@ defmodule EvoDashWeb.AgentsLiveTest do
       wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
-      # The agent's context grew (message_count 1 -> 2) — the event carries
-      # the fresh count, so the refetch fires and the second message renders.
-      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
-      flush_agent_events(view)
-
-      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
-      assert render(view) =~ "fake message 2"
-    end
-
-    test "does not refetch when message_count is unchanged", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      # Same message_count — the gate suppresses the refetch (the status
-      # change still proves the merge applied).
+      # ── (1) UNCHANGED count: the gate suppresses the refetch ────────────
+      # Same :message_count — the merge still applies (proven by the status
+      # change), but no history re-transfer is spawned.
       send(view.pid, {:agent_updated, agent_id(), [message_count: 1, status: :waiting], node()})
       flush_agent_events(view)
 
       assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
-    end
 
-    test "does not refetch when changed_fields lacks :message_count", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      # No :message_count in changed_fields — nothing context-related moved,
-      # so no refetch even though the selected agent was updated.
+      # ── (2) NO :message_count key: nothing context-related moved ────────
       send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
       flush_agent_events(view)
 
       assert render(view) =~ "WAITING"
       assert Agent.get(counter, & &1) == 1
+
+      # ── (3) MOVED count: the refetch fires and the tail renders ─────────
+      send(view.pid, {:agent_updated, agent_id(), [message_count: 2], node()})
+      flush_agent_events(view)
+
+      wait_until(fn -> Agent.get(counter, & &1) == 2 end)
+      assert render(view) =~ "fake message 2"
     end
   end
 
@@ -722,11 +632,27 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # LiveView mailbox is FIFO, so events sent before the flush message are
     # already buffered when it is handled.
 
-    test "a burst of registered events coalesces into a single flush", %{conn: conn} do
+    test "a burst coalesces into one flush and spawns at most one fallback refresh", %{conn: conn} do
+      # Count the authoritative list reads (the initial async load + refreshes).
+      calls = start_supervised!({Agent, fn -> 0 end})
+      id = agent_id()
+
+      # Captured in the TEST process: the runner stub executes inside the async
+      # load Task, where the process-dictionary test id is not available.
+      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
+        Agent.update(calls, &(&1 + 1))
+        [summary_agent(id: id)]
+      end)
+
+      on_exit(&clear_agents_env/0)
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
+      # The page load may be entered more than once (dead render + connected
+      # mount), so count the DELTA caused by the bursts below.
+      before = Agent.get(calls, & &1)
+      assert assigns(view)[:refresh_seq] == 0
       assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
       # Three rapid registrations: two direct sends (the injection shortcut the
@@ -777,32 +703,84 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       assert render(view) =~ "#4"
+
+      # None of those three fell back: every summary was complete, so the burst
+      # spawned NO authoritative refresh at all.
+      assert assigns(view)[:refresh_seq] == 0
+
+      # Two updates for agent ids NOT in the tree (each ⇒ :fallback) plus one
+      # normal update that merges cleanly. All three coalesce into the SAME
+      # flush, which must spawn exactly ONE async refresh (not one per event).
+      send(view.pid, {:agent_updated, 404, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, 405, [status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+
+      flush_agent_events(view)
+
+      # The flush handler spawns AT MOST ONE refresh and bumps the monotonic
+      # :refresh_seq SYNCHRONOUSLY at the spawn, so right after the synchronous
+      # flush round-trip the count is already final: exactly one (a second
+      # spawn would have made it 2).
+      assert assigns(view)[:refresh_seq] == 1
+
+      # The single refresh's authoritative list read lands asynchronously; wait
+      # for it, then assert it happened EXACTLY once — :refresh_seq (asserted
+      # above and re-asserted below) is the deterministic proof that no second
+      # spawn exists, so the counter cannot exceed before + 1.
+      wait_until(fn -> Agent.get(calls, & &1) >= before + 1 end)
+      assert assigns(view)[:refresh_seq] == 1
+      assert Agent.get(calls, & &1) == before + 1
     end
 
-    test "the trailing-edge timer is armed only once per window", %{conn: conn} do
+    test "the trailing-edge timer is armed only once per window and then applies the buffer", %{
+      conn: conn
+    } do
       seed_agent(agent_id(), [])
 
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
 
-      # Five rapid updates for the SAME (already-present) agent.
+      # A registration (arms the timer) plus five rapid updates for the SAME
+      # (already-present) agent — all in one window.
+      send(
+        view.pid,
+        {:agent_registered, 2, summary_agent(id: 2, parent_id: agent_id(), status: :pending),
+         node()}
+      )
+
       for n <- 1..5 do
         send(view.pid, {:agent_updated, agent_id(), [total_tokens: n], node()})
       end
 
-      # :sys.get_state is a mailbox fence — all five events were processed
+      # :sys.get_state is a mailbox fence — all six events were processed
       # before this reply. The FIRST event armed the single timer; the other
-      # four only appended to the buffer (no second schedule).
+      # five only appended to the buffer (no second schedule), and nothing was
+      # applied yet.
       state = :sys.get_state(view.pid).socket.assigns
       assert state.agent_flush_scheduled == true
-      assert length(state.pending_agent_events) == 5
+      assert length(state.pending_agent_events) == 6
+      assert state.agents |> Enum.map(& &1.id) == [agent_id()]
 
       # The buffer is newest-first (prepend); drain restores ARRIVAL order.
       assert hd(state.pending_agent_events) ==
                {:agent_updated, agent_id(), [total_tokens: 5], node()}
 
       assert EvoDashWeb.AgentsLive.PendingEvents.drain(state.pending_agent_events) ==
-               for(n <- 1..5, do: {:agent_updated, agent_id(), [total_tokens: n], node()})
+               [{:agent_registered, 2, summary_agent(id: 2, parent_id: agent_id(), status: :pending), node()}] ++
+                 for(n <- 1..5, do: {:agent_updated, agent_id(), [total_tokens: n], node()})
+
+      # Let the REAL trailing-edge timer fire (no manual flush here): the
+      # arrival of an empty buffer is the deterministic proof that the timer
+      # (not a manual flush) applied it.
+      wait_until(fn -> assigns(view)[:pending_agent_events] == [] end)
+
+      assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
+               Enum.sort([agent_id(), 2])
+
+      assert assigns(view)[:agent_flush_scheduled] == false
+      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).total_tokens == 5
+      assert render(view) =~ "#2"
     end
 
     test "foreign-node events are dropped before buffering", %{conn: conn} do
@@ -831,54 +809,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert Enum.find(state.agents, &(&1.id == agent_id())).status == :running
     end
 
-    test "a burst with missing-agent fallbacks spawns exactly one refresh", %{conn: conn} do
-      # Count the authoritative list reads (the initial async load + refreshes).
-      calls = start_supervised!({Agent, fn -> 0 end})
-
-      # Captured in the TEST process: the runner stub executes inside the async
-      # load Task, where the process-dictionary test id is not available.
-      id = agent_id()
-
-      Application.put_env(:evo_dash, :agents_list_runner, fn _node ->
-        Agent.update(calls, &(&1 + 1))
-        [summary_agent(id: id)]
-      end)
-
-      on_exit(&clear_agents_env/0)
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      # The page load may be entered more than once (dead render + connected
-      # mount), so count the DELTA caused by the burst below.
-      before = Agent.get(calls, & &1)
-      assert assigns(view)[:refresh_seq] == 0
-
-      # Two updates for agent ids NOT in the tree (each ⇒ :fallback) plus one
-      # normal update that merges cleanly. All three coalesce into the SAME
-      # flush, which must spawn exactly ONE async refresh (not one per event).
-      send(view.pid, {:agent_updated, 404, [status: :waiting], node()})
-      send(view.pid, {:agent_updated, 405, [status: :waiting], node()})
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
-
-      flush_agent_events(view)
-
-      # The flush handler spawns AT MOST ONE refresh and bumps the monotonic
-      # :refresh_seq SYNCHRONOUSLY at the spawn, so right after the synchronous
-      # flush round-trip the count is already final: exactly one (a second
-      # spawn would have made it 2).
-      assert assigns(view)[:refresh_seq] == 1
-
-      # The single refresh's authoritative list read lands asynchronously; wait
-      # for it, then assert it happened EXACTLY once — :refresh_seq (asserted
-      # above and re-asserted below) is the deterministic proof that no second
-      # spawn exists, so the counter cannot exceed before + 1.
-      wait_until(fn -> Agent.get(calls, & &1) >= before + 1 end)
-      assert assigns(view)[:refresh_seq] == 1
-      assert Agent.get(calls, & &1) == before + 1
-    end
-
-    test "a burst touching the selected agent refetches history at most once", %{conn: conn} do
+    test "a burst refetches the selected agent's history at most once — and never without :message_count",
+         %{conn: conn} do
       seed_agent(agent_id(), [
         %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
       ])
@@ -895,105 +827,45 @@ defmodule EvoDashWeb.AgentsLiveTest do
       wait_until(fn -> render(view) =~ "fake message 1" end)
       assert Agent.get(counter, & &1) == 1
 
-      # Count only the fetch(es) triggered by the burst below.
       before = Agent.get(counter, & &1)
 
-      # Three rapid context-growth updates for the SELECTED agent — each
+      # ── The inverse contract first: changed_fields WITHOUT :message_count
+      # never means "the context grew", so no fetch is spawned even though the
+      # row merges (tokens fold in, last status wins).
+      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
+      send(view.pid, {:agent_updated, agent_id(), [total_tokens: 123], node()})
+      send(view.pid, {:agent_updated, agent_id(), [status: :running], node()})
+      flush_agent_events(view)
+
+      assert assigns(view)[:previous_statuses][agent_id()] == :running
+      assert Enum.find(assigns(view)[:agents], &(&1.id == agent_id())).total_tokens == 123
+      # Exhaustive: refetch_selected_history/1 sets :history_loading_agent_id
+      # synchronously at spawn (in-flight) and bumps the counter on completion
+      # (finished), so both failure modes are caught without a timing window.
+      assert assigns(view)[:history_loading_agent_id] == nil
+      assert Agent.get(counter, & &1) == before
+
+      # ── Three rapid context-growth updates for the SELECTED agent — each
       # carries :message_count (the contract). The flush must refetch ONCE for
-      # the whole burst, not once per event (refetch_selected_history/1 runs
-      # at most once at the end of the drain).
+      # the whole burst, not once per event.
       send(view.pid, {:agent_updated, agent_id(), [message_count: 2, status: :waiting], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 3], node()})
       send(view.pid, {:agent_updated, agent_id(), [message_count: 4], node()})
 
       flush_agent_events(view)
 
-      # The flush drains the WHOLE burst and calls refetch_selected_history/1 AT
-      # MOST ONCE — its only call site — so exactly one history fetch is spawned
-      # (that call also sets :history_loading_agent_id synchronously at spawn).
-      # Wait for that single fetch's runner call to land, then prove no second
-      # one can follow: the buffer is drained and no flush timer is armed, and
-      # refetch_selected_history/1 has no other caller, so a second fetch is
-      # structurally impossible (no timing window needed).
+      # refetch_selected_history/1 has no other caller and the buffer is now
+      # drained with no flush timer armed, so a second fetch is structurally
+      # impossible (no timing window needed).
       wait_until(fn -> Agent.get(counter, & &1) >= before + 1 end)
       assert assigns(view)[:pending_agent_events] == []
       refute assigns(view)[:agent_flush_scheduled]
       assert Agent.get(counter, & &1) == before + 1
     end
 
-    test "a burst without :message_count triggers no history refetch", %{conn: conn} do
-      seed_agent(agent_id(), [
-        %ReqLLM.Message{role: :user, content: [%{text: "hi"}], metadata: %{turn: 1}}
-      ])
-
-      counter = start_history_counter()
-      Application.put_env(:evo_dash, :agents_history_runner, counting_history_runner(counter))
-      on_exit(&clear_agents_env/0)
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      view |> element("#agent-card-#{agent_id()}") |> render_click()
-      wait_until(fn -> render(view) =~ "fake message 1" end)
-      assert Agent.get(counter, & &1) == 1
-
-      before = Agent.get(counter, & &1)
-
-      # The inverse contract: changed_fields WITHOUT :message_count never means
-      # "the context grew", so the selected-agent history is left alone (no
-      # refetch) even though the agent's row merges.
-      send(view.pid, {:agent_updated, agent_id(), [status: :waiting], node()})
-      send(view.pid, {:agent_updated, agent_id(), [total_tokens: 123], node()})
-      send(view.pid, {:agent_updated, agent_id(), [status: :running], node()})
-
-      flush_agent_events(view)
-
-      # The merge still applied (last event → :running, tokens folded in)…
-      assert assigns(view)[:previous_statuses][agent_id()] == :running
-
-      agent = assigns(view)[:agents] |> Enum.find(&(&1.id == agent_id()))
-      assert agent.total_tokens == 123
-
-      # …but no history fetch was spawned by the burst. The two synchronous
-      # checks below are EXHAUSTIVE: refetch_selected_history/1 sets
-      # :history_loading_agent_id synchronously at spawn, so a spawned-but-
-      # unfinished fetch shows up there immediately; a spawned-and-FINISHED one
-      # clears that flag but bumps the agent counter — so no timing window is
-      # needed, every failure mode is caught.
-      assert assigns(view)[:history_loading_agent_id] == nil
-      assert Agent.get(counter, & &1) == before
-    end
-
-    test "the trailing-edge timer applies the buffer without a manual flush", %{conn: conn} do
-      seed_agent(agent_id(), [])
-
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
-
-      send(
-        view.pid,
-        {:agent_registered, 2, summary_agent(id: 2, parent_id: agent_id(), status: :pending),
-         node()}
-      )
-
-      # Armed, not applied — the merge is deferred to the timer.
-      assert assigns(view)[:pending_agent_events] != []
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) == [agent_id()]
-
-      # Let the REAL trailing-edge timer fire (no manual flush here): poll the
-      # observable buffer until the timer's flush has drained and applied it.
-      # The timer is armed by the event above, so the arrival of an empty buffer
-      # is the deterministic proof that the timer (not a manual flush) applied it.
-      wait_until(fn -> assigns(view)[:pending_agent_events] == [] end)
-
-      assert assigns(view)[:agents] |> Enum.map(& &1.id) |> Enum.sort() ==
-               Enum.sort([agent_id(), 2])
-
-      assert assigns(view)[:pending_agent_events] == []
-      assert assigns(view)[:agent_flush_scheduled] == false
-      assert render(view) =~ "#2"
-    end
+    # NOTE: "the trailing-edge timer applies the buffer without a manual
+    # flush" is the second half of "the trailing-edge timer is armed only once
+    # per window and then applies the buffer" above (same real-timer wait).
   end
 
   describe "compression threshold" do
@@ -1396,25 +1268,10 @@ defmodule EvoDashWeb.AgentsLiveTest do
     end
   end
 
-  describe "config_status node-awareness" do
-    # BUG 3 fix: config_status was read once in mount via
-    # EvoGit.Config.config_status() and never refreshed per-node. The layout
-    # config banner showed LOCAL status while viewing remote agents. The fix
-    # makes config_status node-aware via node_config_status/1.
-
-    test "page renders with config_status populated on local node", %{conn: conn} do
-      # The config_status assign should be populated and non-nil on the local
-      # node, proving the node-aware helper works in the local case. The layout
-      # config banner reads @config_status, so if the page renders without error
-      # the assign is present. We verify by checking the rendered HTML includes
-      # the config status badge (present in the navbar when config_status is set).
-      {:ok, _view, html} = live(conn, ~p"/agents")
-
-      # The page should render the agent tree section without crashing, proving
-      # config_status was loaded successfully by the node-aware helper.
-      assert html =~ "Agent Tree"
-    end
-  end
+  # NOTE: config_status node-awareness (BUG 3) is covered by the "renders the
+  # empty agent tree with a node-aware config status" test in "agents page",
+  # which asserts the assign shape directly — a strictly stronger check than
+  # "the page renders without crashing".
 
   describe "format_history_timestamp/1" do
     # Session-memory messages carry a wall-clock timestamp in
@@ -2265,26 +2122,29 @@ defmodule EvoDashWeb.AgentsLiveTest do
     # (AgentsLive had NO task-broadcast clauses and crashed on any
     # {:task_updated, _, status, node} / {:task_deleted, _, node} message).
 
-    test "matching-node {:task_updated, _, :finalizing, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
+    test "matching-node task broadcasts never crash and each schedules a debounced reload",
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
-      # The broadcast shape observed crashing in production (the :finalizing
-      # status transition).
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-finalizing", :finalizing, node()}
-      )
+      # The three matching-node shapes: the :finalizing status transition
+      # (observed crashing in production), a deletion, and a review-only
+      # mutation carried as status nil. All three run on ONE socket — the
+      # crash class is per-clause, so one mount proves every clause, and the
+      # two-phase wait proves the debounce was scheduled AND cleared each time.
+      for event <- [
+            {:task_updated, "test-finalizing", :finalizing, node()},
+            {:task_deleted, "test-deleted", node()},
+            {:task_updated, "test-review", nil, node()}
+          ] do
+        Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", event)
 
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
+        # Phase 1: the event is processed and the debounce is scheduled.
+        wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
 
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+        # Phase 2: the debounce fires and reload_tasks clears the flag.
+        wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
+      end
 
       # render/1 flushes pending messages synchronously; a crash would propagate here.
       html = render(view)
@@ -2292,30 +2152,8 @@ defmodule EvoDashWeb.AgentsLiveTest do
       assert html =~ "Agent Tree"
     end
 
-    test "matching-node {:task_deleted, _, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      Phoenix.PubSub.broadcast(EvoGit.PubSub, "tasks", {:task_deleted, "test-deleted", node()})
-
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
-
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
-
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Agent Tree"
-    end
-
     test "foreign-node {:task_updated, _, :finalizing, remote} is ignored (no crash, no reload)",
-         %{
-           conn: conn
-         } do
+         %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/agents")
       flush_agents_load(view)
 
@@ -2327,9 +2165,17 @@ defmodule EvoDashWeb.AgentsLiveTest do
         {:task_updated, "test-finalizing", :finalizing, :remote@elsewhere}
       )
 
-      # Sample across the debounce window (10ms cadence): the
-      # reload-pending flag must never become true.
-      deadline = System.monotonic_time(:millisecond) + 400
+      # The :sys.get_state read behind assigns/1 is a mailbox round-trip, so it
+      # returns only AFTER the LiveView processed the broadcast above — the
+      # event was definitely handled, not still in flight.
+      assert assigns(view)[:tasks_reload_pending] == false
+
+      # Then sample across the debounce window (:node_aware_reload_debounce_ms,
+      # 10ms in tests): the reload-pending flag must never become TRUE. 40ms is
+      # 4x the debounce — the whole window in which a spurious schedule could
+      # fire — where the previous 400ms window made this the slowest test in
+      # the file without strengthening the assertion.
+      deadline = System.monotonic_time(:millisecond) + 40
 
       check_no_reload = fn check_no_reload ->
         assert assigns(view)[:tasks_reload_pending] == false
@@ -2341,31 +2187,6 @@ defmodule EvoDashWeb.AgentsLiveTest do
       end
 
       check_no_reload.(check_no_reload)
-
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Agent Tree"
-    end
-
-    test "review-only {:task_updated, _, nil, node()} does not crash and schedules a debounced reload",
-         %{
-           conn: conn
-         } do
-      {:ok, view, _html} = live(conn, ~p"/agents")
-      flush_agents_load(view)
-
-      # Review-only mutations broadcast status nil — the clause must accept it.
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-review", nil, node()}
-      )
-
-      # Phase 1: the event is processed and the debounce is scheduled.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == true end)
-
-      # Phase 2: the debounce fires and reload_tasks clears the flag.
-      wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       html = render(view)
       assert is_binary(html)
