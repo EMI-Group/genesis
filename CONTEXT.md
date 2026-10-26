@@ -129,8 +129,8 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 
 The web dashboard (`:evo_dash`) is internationalized with Gettext — all user-facing strings in LiveViews, components, helpers and templates are wrapped with `gettext/1,2`; the CLI / `:evo_git` core is deliberately NOT internationalized (English-only).
 **During development, agents do NOT need to care about PO files or translations.**
-- **Never** run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during feature work: POT/PO files and translations are maintained centrally and updated once per release (`mix gettext.extract` → `mix gettext.merge` → `mix translate apps/evo_dash/priv/gettext/default.pot all`, AI-powered via `deepseek-v4-flash`).
-- Just write `gettext`-wrapped strings; when a string's meaning needs anchoring for the release-time AI translator (ambiguous short labels, domain jargon), write a **Chinese comment** next to the `gettext` call — the ONLY i18n work expected during development.
+- **Never** run `mix gettext.extract`, `mix gettext.merge`, or `mix translate` during feature work: POT/PO and translations are maintained centrally and updated once per release (`mix gettext.extract` → `mix gettext.merge` → `mix translate apps/evo_dash/priv/gettext/default.pot all`, AI-powered via `deepseek-v4-flash`).
+- Just write `gettext`-wrapped strings; when a meaning needs anchoring for the release-time AI translator (ambiguous short labels, domain jargon), add a **Chinese comment** next to the `gettext` call — the ONLY i18n work expected during development.
 - Full details: `apps/evo_dash/CONTEXT.md` → "Internationalization (i18n)".
 
 ### Versioning
