@@ -54,6 +54,8 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
       assert LLM.provider_options_for_model({:anthropic, [id: "claude"]}) == []
       assert LLM.provider_options_for_model(nil) == []
       assert LLM.provider_options_for_model(%{}) == []
+      # Indeterminate provider: a string spec without a colon prefix.
+      assert LLM.provider_options_for_model("gpt-5") == []
     end
 
     test "default_provider_options/0 is the OpenAI default itself" do

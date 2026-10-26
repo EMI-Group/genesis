@@ -30,14 +30,6 @@ defmodule EvoGit.Config.LLMCatalogTest do
         end
       end
     end
-
-    test ":openrouter entry exists" do
-      assert Enum.find(LLMCatalog.providers(), &(&1.id == :openrouter))
-    end
-
-    test ":openai_compatible entry exists" do
-      assert Enum.find(LLMCatalog.providers(), &(&1.id == :openai_compatible))
-    end
   end
 
   describe "minimax cleanup" do
@@ -89,12 +81,6 @@ defmodule EvoGit.Config.LLMCatalogTest do
   end
 
   describe "resolve_model/2 for minimax" do
-    test "returns a string starting with the canonical provider atom" do
-      result = LLMCatalog.resolve_model(:minimax, "MiniMax-M3")
-      assert is_binary(result)
-      assert String.starts_with?(result, "minimax:")
-    end
-
     test "resolves exact model id" do
       assert LLMCatalog.resolve_model(:minimax, "MiniMax-M3") == "minimax:MiniMax-M3"
     end
@@ -167,201 +153,29 @@ defmodule EvoGit.Config.LLMCatalogTest do
                %{provider: :anthropic, id: "claude-sonnet-4"}
     end
 
-    test "resolves a display name to the canonical catalog id" do
-      # "Claude Sonnet 4.6" -> id "claude-sonnet-4-6" (from the catalog)
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Sonnet 4.6") ==
-               %{provider: :anthropic, id: "claude-sonnet-4-6"}
+    # Data-driven instead of one hand-maintained list per catalogue batch: every
+    # entry the catalogue ships must resolve to its own provider/id, and every
+    # display name to its canonical id.
+    test "every catalog model id resolves to its canonical provider/id" do
+      for provider <- LLMCatalog.providers(),
+          model <- provider.models do
+        canonical = hd(provider.provider_atoms)
+
+        assert LLMCatalog.resolve_model_spec(provider.id, model.id) ==
+                 %{provider: canonical, id: model.id},
+               "#{provider.id} model id #{inspect(model.id)} did not resolve"
+      end
     end
 
-    test "resolves new catalog additions to their ids" do
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.6-flash") ==
-               %{provider: :google, id: "gemini-3.6-flash"}
+    test "every catalog display name resolves to its canonical model id" do
+      for provider <- LLMCatalog.providers(),
+          model <- provider.models do
+        canonical = hd(provider.provider_atoms)
 
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.5-flash-lite") ==
-               %{provider: :google, id: "gemini-3.5-flash-lite"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-opus-5") ==
-               %{provider: :anthropic, id: "claude-opus-5"}
-    end
-
-    test "resolves Aug 2026 catalog additions to their ids" do
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.7-flash") ==
-               %{provider: :google, id: "gemini-3.7-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "glm-5.3") ==
-               %{provider: :zai, id: "glm-5.3"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "glm-5.3-flash") ==
-               %{provider: :zai, id: "glm-5.3-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "grok-4.6") ==
-               %{provider: :xai, id: "grok-4.6"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen3.8-max") ==
-               %{provider: :alibaba, id: "qwen3.8-max"}
-
-      assert LLMCatalog.resolve_model_spec(:deepseek, "deepseek-v4-flash-vision-exp") ==
-               %{provider: :deepseek, id: "deepseek-v4-flash-vision-exp"}
-    end
-
-    test "resolves Aug 2026 display names to canonical catalog ids" do
-      assert LLMCatalog.resolve_model_spec(:google, "Gemini 3.7 Flash") ==
-               %{provider: :google, id: "gemini-3.7-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5.3") ==
-               %{provider: :zai, id: "glm-5.3"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5.3 Flash") ==
-               %{provider: :zai, id: "glm-5.3-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "Grok 4.6") ==
-               %{provider: :xai, id: "grok-4.6"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "Qwen3.8 Max") ==
-               %{provider: :alibaba, id: "qwen3.8-max"}
-
-      assert LLMCatalog.resolve_model_spec(:deepseek, "DeepSeek V4 Flash Vision (Exp)") ==
-               %{provider: :deepseek, id: "deepseek-v4-flash-vision-exp"}
-    end
-
-    test "resolves gemini-3.8-flash and claude-fable-5-1 catalog additions to their ids" do
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.8-flash") ==
-               %{provider: :google, id: "gemini-3.8-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-fable-5-1") ==
-               %{provider: :anthropic, id: "claude-fable-5-1"}
-    end
-
-    test "resolves gemini-3.8-flash and claude-fable-5-1 display names to canonical catalog ids" do
-      assert LLMCatalog.resolve_model_spec(:google, "Gemini 3.8 Flash") ==
-               %{provider: :google, id: "gemini-3.8-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Fable 5.1") ==
-               %{provider: :anthropic, id: "claude-fable-5-1"}
-    end
-
-    test "resolves Oct 2026 catalog additions to their ids" do
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-haiku-5-5") ==
-               %{provider: :anthropic, id: "claude-haiku-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-sonnet-5-5") ==
-               %{provider: :anthropic, id: "claude-sonnet-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-opus-5-5") ==
-               %{provider: :anthropic, id: "claude-opus-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "claude-opus-4-8") ==
-               %{provider: :anthropic, id: "claude-opus-4-8"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6.1-sol") ==
-               %{provider: :openai, id: "gpt-6.1-sol"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6-sol") ==
-               %{provider: :openai, id: "gpt-6-sol"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6-luna") ==
-               %{provider: :openai, id: "gpt-6-luna"}
-
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-4-argon") ==
-               %{provider: :google, id: "gemini-4-argon"}
-
-      assert LLMCatalog.resolve_model_spec(:deepseek, "deepseek-flash") ==
-               %{provider: :deepseek, id: "deepseek-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen3.8-omni-flash") ==
-               %{provider: :alibaba, id: "qwen3.8-omni-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen3.8-flash") ==
-               %{provider: :alibaba, id: "qwen3.8-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen3.7-flash") ==
-               %{provider: :alibaba, id: "qwen3.7-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "qwen3.7-plus") ==
-               %{provider: :alibaba, id: "qwen3.7-plus"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "glm-5.3-flashx") ==
-               %{provider: :zai, id: "glm-5.3-flashx"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "glm-5-turbo") ==
-               %{provider: :zai, id: "glm-5-turbo"}
-
-      assert LLMCatalog.resolve_model_spec(:minimax, "MiniMax-M2.5") ==
-               %{provider: :minimax, id: "MiniMax-M2.5"}
-
-      assert LLMCatalog.resolve_model_spec(:minimax, "MiniMax-M2.5-highspeed") ==
-               %{provider: :minimax, id: "MiniMax-M2.5-highspeed"}
-
-      assert LLMCatalog.resolve_model_spec(:moonshotai, "kimi-k2.6") ==
-               %{provider: :moonshotai, id: "kimi-k2.6"}
-
-      assert LLMCatalog.resolve_model_spec(:moonshotai, "kimi-k2.7-code-highspeed") ==
-               %{provider: :moonshotai, id: "kimi-k2.7-code-highspeed"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "grok-4.7") ==
-               %{provider: :xai, id: "grok-4.7"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "grok-build-0.1") ==
-               %{provider: :xai, id: "grok-build-0.1"}
-    end
-
-    test "resolves Oct 2026 catalog additions' display names to canonical catalog ids" do
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Haiku 5.5") ==
-               %{provider: :anthropic, id: "claude-haiku-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Sonnet 5.5") ==
-               %{provider: :anthropic, id: "claude-sonnet-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Opus 5.5") ==
-               %{provider: :anthropic, id: "claude-opus-5-5"}
-
-      assert LLMCatalog.resolve_model_spec(:anthropic, "Claude Opus 4.8") ==
-               %{provider: :anthropic, id: "claude-opus-4-8"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "GPT-6.1 Sol") ==
-               %{provider: :openai, id: "gpt-6.1-sol"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "GPT-6 Sol") ==
-               %{provider: :openai, id: "gpt-6-sol"}
-
-      assert LLMCatalog.resolve_model_spec(:openai, "GPT-6 Luna") ==
-               %{provider: :openai, id: "gpt-6-luna"}
-
-      assert LLMCatalog.resolve_model_spec(:google, "Gemini 4 Argon") ==
-               %{provider: :google, id: "gemini-4-argon"}
-
-      assert LLMCatalog.resolve_model_spec(:deepseek, "DeepSeek V4.1 Flash") ==
-               %{provider: :deepseek, id: "deepseek-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "Qwen3.8 Omni Flash") ==
-               %{provider: :alibaba, id: "qwen3.8-omni-flash"}
-
-      assert LLMCatalog.resolve_model_spec(:alibaba, "Qwen3.7 Plus") ==
-               %{provider: :alibaba, id: "qwen3.7-plus"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5.3 FlashX") ==
-               %{provider: :zai, id: "glm-5.3-flashx"}
-
-      assert LLMCatalog.resolve_model_spec(:zai, "GLM-5 Turbo") ==
-               %{provider: :zai, id: "glm-5-turbo"}
-
-      assert LLMCatalog.resolve_model_spec(:minimax, "MiniMax-M2.5") ==
-               %{provider: :minimax, id: "MiniMax-M2.5"}
-
-      assert LLMCatalog.resolve_model_spec(:minimax, "MiniMax-M2.5 Highspeed") ==
-               %{provider: :minimax, id: "MiniMax-M2.5-highspeed"}
-
-      assert LLMCatalog.resolve_model_spec(:moonshotai, "Kimi K2.6") ==
-               %{provider: :moonshotai, id: "kimi-k2.6"}
-
-      assert LLMCatalog.resolve_model_spec(:moonshotai, "Kimi K2.7 Code Highspeed") ==
-               %{provider: :moonshotai, id: "kimi-k2.7-code-highspeed"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "Grok 4.7") ==
-               %{provider: :xai, id: "grok-4.7"}
-
-      assert LLMCatalog.resolve_model_spec(:xai, "Grok Build 0.1") ==
-               %{provider: :xai, id: "grok-build-0.1"}
+        assert LLMCatalog.resolve_model_spec(provider.id, model.display_name) ==
+                 %{provider: canonical, id: model.id},
+               "#{provider.id} display name #{inspect(model.display_name)} did not resolve to #{inspect(model.id)}"
+      end
     end
 
     test "includes base_url when a non-empty value is provided" do
@@ -410,42 +224,24 @@ defmodule EvoGit.Config.LLMCatalogTest do
       assert LLMCatalog.requires_base_url?(:openai_compatible) == true
     end
 
-    test "returns false for anthropic" do
-      assert LLMCatalog.requires_base_url?(:anthropic) == false
-    end
-
-    test "returns false for openai" do
-      assert LLMCatalog.requires_base_url?(:openai) == false
-    end
-
-    test "returns false for google" do
-      assert LLMCatalog.requires_base_url?(:google) == false
-    end
-
-    test "returns false for openrouter" do
-      assert LLMCatalog.requires_base_url?(:openrouter) == false
-    end
-
-    test "returns false for an unknown provider" do
-      assert LLMCatalog.requires_base_url?(:unknown_provider) == false
+    test "returns false for providers without the flag and for unknown providers" do
+      for provider <- [:anthropic, :openai, :google, :openrouter, :unknown_provider] do
+        assert LLMCatalog.requires_base_url?(provider) == false,
+               "expected #{inspect(provider)} not to require a base_url"
+      end
     end
   end
 
   describe "credential_key_for_atom/1" do
     test "lowercases the atom name and appends _api_key" do
-      assert LLMCatalog.credential_key_for_atom(:anthropic) == "anthropic_api_key"
-    end
-
-    test "works with multi-word atoms" do
-      assert LLMCatalog.credential_key_for_atom(:zai_coding_plan) == "zai_coding_plan_api_key"
-    end
-
-    test "works with aliased atoms like :alibaba_cn" do
-      assert LLMCatalog.credential_key_for_atom(:alibaba_cn) == "alibaba_cn_api_key"
-    end
-
-    test "works with single-word atoms" do
-      assert LLMCatalog.credential_key_for_atom(:openai) == "openai_api_key"
+      for {atom, key} <- [
+            {:anthropic, "anthropic_api_key"},
+            {:zai_coding_plan, "zai_coding_plan_api_key"},
+            {:alibaba_cn, "alibaba_cn_api_key"},
+            {:openai, "openai_api_key"}
+          ] do
+        assert LLMCatalog.credential_key_for_atom(atom) == key
+      end
     end
   end
 

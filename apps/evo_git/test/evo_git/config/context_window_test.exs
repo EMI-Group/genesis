@@ -55,32 +55,20 @@ defmodule EvoGit.Config.ContextWindowTest do
       assert log == ""
     end
 
-    test "zero is invalid — default + warning" do
-      log =
-        capture_log(fn ->
-          assert LLM.context_window(%{context_window: 0}) == @default
-        end)
+    test "zero, negative and non-integer values are invalid — default + warning" do
+      # One branch (`invalid?`), three input shapes; each logs its own value.
+      for {profile, logged} <- [
+            {%{context_window: 0}, "Invalid LLM model profile context_window 0"},
+            {%{context_window: -1}, "Invalid LLM model profile context_window -1"},
+            {%{"context_window" => "big"}, ~s(Invalid LLM model profile context_window "big")}
+          ] do
+        log = capture_log(fn -> assert LLM.context_window(profile) == @default end)
+        assert log =~ logged
+      end
 
-      assert log =~ "Invalid LLM model profile context_window 0"
+      # The warning also names the fallback it used.
+      log = capture_log(fn -> assert LLM.context_window(%{context_window: 0}) == @default end)
       assert log =~ "using default #{@default}"
-    end
-
-    test "a negative value is invalid — default + warning" do
-      log =
-        capture_log(fn ->
-          assert LLM.context_window(%{context_window: -1}) == @default
-        end)
-
-      assert log =~ "Invalid LLM model profile context_window -1"
-    end
-
-    test "a non-integer value is invalid — default + warning" do
-      log =
-        capture_log(fn ->
-          assert LLM.context_window(%{"context_window" => "big"}) == @default
-        end)
-
-      assert log =~ ~s(Invalid LLM model profile context_window "big")
     end
 
     test "a non-map profile yields the default without raising" do

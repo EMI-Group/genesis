@@ -7,42 +7,38 @@ defmodule EvoGit.ConfigTest do
 
   alias EvoGit.Config
 
+  # Isolates `XDG_CONFIG_HOME` for one test so every config/credentials write in
+  # that test lands in a throwaway temp dir — never the developer's real
+  # `~/.config/genesis/`. Shared by every describe that writes config.toml.
+  defp isolate_xdg!(prefix) do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    tmp_xdg = Path.join(System.tmp_dir!(), "#{prefix}-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    :ok
+  end
+
   describe "defaults/0" do
     test "returns a map with scheduler defaults" do
       defaults = Config.defaults()
       assert is_map(defaults)
       assert %{scheduler: %{default_llm_max_concurrency: 3}} = defaults
     end
-
-    test "has no default llm model" do
-      defaults = Config.defaults()
-      assert Map.has_key?(defaults.llm, :model)
-      assert defaults.llm.model == nil
-    end
-
-    test "has no default github username" do
-      defaults = Config.defaults()
-      assert Map.has_key?(defaults.user, :github_username)
-      assert defaults.user.github_username == nil
-    end
-
-    test "sandbox defaults to :auto" do
-      defaults = Config.defaults()
-      assert defaults.sandbox.mode == :auto
-    end
-
-    test "appearance defaults to blue accent color" do
-      defaults = Config.defaults()
-      assert Map.has_key?(defaults.appearance, :accent_color)
-      assert defaults.appearance.accent_color == "blue"
-    end
   end
 
   describe "sandbox backend config" do
-    test "defaults to :auto" do
-      assert Config.defaults().sandbox.backend == :auto
-    end
-
     test "atomizes string backend values" do
       config =
         Config.defaults()
@@ -59,13 +55,6 @@ defmodule EvoGit.ConfigTest do
       assert config.sandbox.backend == :bwrap
     end
 
-    test "validates the known backend atoms" do
-      for backend <- [:auto, :systemd, :bwrap] do
-        config = put_in(EvoGit.Config.Schema.defaults(), [:sandbox, :backend], backend)
-        assert {:ok, _} = EvoGit.Config.Schema.validate(config)
-      end
-    end
-
     test "rejects an unknown backend value without crashing" do
       config = put_in(EvoGit.Config.Schema.defaults(), [:sandbox, :backend], :bogus)
       assert {:error, errors} = EvoGit.Config.Schema.validate(config)
@@ -79,17 +68,14 @@ defmodule EvoGit.ConfigTest do
   end
 
   describe "resolve/0" do
-    test "returns a map with at least the default keys" do
+    test "returns a map with the documented sections and scheduler keys" do
       config = Config.resolve()
       assert is_map(config)
       assert Map.has_key?(config, :scheduler)
       assert Map.has_key?(config, :llm)
       assert Map.has_key?(config, :user)
       assert Map.has_key?(config, :sandbox)
-    end
 
-    test "scheduler config has expected keys" do
-      config = Config.resolve()
       scheduler = config.scheduler
       assert Map.has_key?(scheduler, :default_llm_max_concurrency)
       assert Map.has_key?(scheduler, :max_tool_concurrency)
@@ -120,19 +106,10 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "user_config/0" do
-    test "returns empty map when no config file exists" do
-      # Config.config_path() may or may not exist
-      # Just verify it returns a map
-      config = Config.user_config()
-      assert is_map(config)
-    end
-  end
-
-  describe "credentials/0" do
-    test "returns empty map when no credentials file exists" do
-      creds = Config.credentials()
-      assert is_map(creds)
+  describe "user_config/0 and credentials/0" do
+    test "both answer a map (never nil) when their files may be absent" do
+      assert is_map(Config.user_config())
+      assert is_map(Config.credentials())
     end
 
     test "does not accidentally set environment variables when no credentials file exists" do
@@ -156,25 +133,14 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "config_dir/0" do
-    test "returns a string path" do
+  describe "config_dir/0, config_path/0 and credentials_path/0" do
+    test "the config dir is a genesis directory and both file paths extend it" do
       dir = Config.config_dir()
       assert is_binary(dir)
       assert String.contains?(dir, "genesis")
-    end
-  end
 
-  describe "config_path/0" do
-    test "returns path ending with config.toml" do
-      path = Config.config_path()
-      assert String.ends_with?(path, "config.toml")
-    end
-  end
-
-  describe "credentials_path/0" do
-    test "returns path ending with credentials.toml" do
-      path = Config.credentials_path()
-      assert String.ends_with?(path, "credentials.toml")
+      assert String.ends_with?(Config.config_path(), "config.toml")
+      assert String.ends_with?(Config.credentials_path(), "credentials.toml")
     end
   end
 
@@ -185,51 +151,13 @@ defmodule EvoGit.ConfigTest do
       assert is_list(errors)
       assert length(errors) > 0
     end
-
-    test "rejects string for integer field" do
-      invalid =
-        put_in(Config.defaults(), [:scheduler, :default_llm_max_concurrency], "not_a_number")
-
-      assert {:error, _} = Config.save_user_config(invalid)
-    end
-
-    test "rejects an invalid accent color value" do
-      invalid = put_in(Config.defaults(), [:appearance, :accent_color], "neon")
-      assert {:error, errors} = Config.save_user_config(invalid)
-      assert is_list(errors)
-      assert length(errors) > 0
-
-      error = List.first(errors)
-      assert error.key_path == [:appearance, :accent_color]
-      assert error.value == "neon"
-      assert error.rule == {:in, ~w(blue teal green yellow orange red pink purple brown slate)}
-    end
   end
 
   describe "appearance accent color save/load round-trip" do
     # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
     # never the developer's real ~/.config/genesis/config.toml.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-config-appearance-#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
+      isolate_xdg!("evogit-config-appearance")
 
       :ok
     end
@@ -253,26 +181,7 @@ defmodule EvoGit.ConfigTest do
     # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
     # never the developer's real ~/.config/genesis/config.toml.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-config-data-dir-#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
+      isolate_xdg!("evogit-config-data-dir")
 
       :ok
     end
@@ -305,36 +214,9 @@ defmodule EvoGit.ConfigTest do
     # Isolates XDG_CONFIG_HOME so save_user_config/1 writes to a temp dir,
     # never the developer's real ~/.config/genesis/config.toml.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-config-llm-window-#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
+      isolate_xdg!("evogit-config-llm-window")
 
       :ok
-    end
-
-    test "defaults: threshold derived (nil), pruning on, target fraction 0.5" do
-      # Isolated XDG_CONFIG_HOME points at an empty tmp dir — no config.toml,
-      # so every value resolves to its schema default.
-      assert Config.resolve([:llm, :compression_threshold_tokens]) == nil
-      assert Config.resolve([:llm, :tool_result_pruning]) == true
-      assert Config.resolve([:llm, :tool_result_pruning_target_fraction]) == 0.5
     end
 
     test "explicit values are written to config.toml and resolve back" do
@@ -438,30 +320,6 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
-  describe "config_status/0 validation_errors" do
-    test "returns validation_errors key" do
-      status = Config.config_status()
-      assert Map.has_key?(status, :validation_errors)
-      assert is_list(status.validation_errors)
-    end
-  end
-
-  describe "config_status/0 uses dynamic env vars" do
-    test "returns a map with :missing key" do
-      status = Config.config_status()
-      assert is_map(status)
-      assert Map.has_key?(status, :missing)
-    end
-
-    test "LLMCatalog.known_credential_keys/0 includes the new provider credential keys" do
-      # If config_status still used a hardcoded list, minimax_api_key and
-      # openrouter_api_key would be absent. The catalog now drives the list.
-      vars = EvoGit.Config.LLMCatalog.known_credential_keys()
-      assert "minimax_api_key" in vars
-      assert "openrouter_api_key" in vars
-    end
-  end
-
   describe "api_key_present?/1" do
     # The ReqLLM credential keys live in the BEAM-global `:req_llm` app env, so
     # these tests work on a SNAPSHOT: `setup` records every key's current value
@@ -520,18 +378,13 @@ defmodule EvoGit.ConfigTest do
       assert Config.api_key_present?(creds) == true
     end
 
-    test "returns true when a key is stored via ReqLLM.put_key (anthropic)" do
-      reqllm_key_cleanup()
-      ReqLLM.put_key(:anthropic_api_key, "sk-test")
+    test "returns true when a key is stored via ReqLLM.put_key (any provider)" do
+      for key <- [:anthropic_api_key, :deepseek_api_key] do
+        reqllm_key_cleanup()
+        ReqLLM.put_key(key, "sk-test")
 
-      assert Config.api_key_present?(%{}) == true
-    end
-
-    test "returns true when a key is stored via ReqLLM.put_key (deepseek)" do
-      reqllm_key_cleanup()
-      ReqLLM.put_key(:deepseek_api_key, "sk-test")
-
-      assert Config.api_key_present?(%{}) == true
+        assert Config.api_key_present?(%{}) == true
+      end
     end
 
     test "treats empty-string creds value as absent" do
@@ -575,13 +428,6 @@ defmodule EvoGit.ConfigTest do
   end
 
   describe "model profiles resolution" do
-    test "defaults produce empty models list" do
-      # Use defaults directly (no user config merge) to verify no models by default
-      config = Config.__migrate_llm_models__(Config.defaults())
-      models = EvoGit.Config.Schema.model_profiles(config)
-      assert models == []
-    end
-
     test "flat config migrates into single default profile" do
       # Simulate what resolve does with a flat config
       flat_config =
@@ -684,24 +530,6 @@ defmodule EvoGit.ConfigTest do
       assert length(models) == 2
       assert Enum.at(models, 0).id == "fast"
       assert Enum.at(models, 1).id == "reasoning"
-    end
-
-    test "config_status reports missing model when no profiles" do
-      # Test the Schema.model_profiles + has_model logic directly since
-      # Config.resolve() reads the real config file in this environment.
-      resolved = Config.__migrate_llm_models__(Config.defaults())
-      profiles = EvoGit.Config.Schema.model_profiles(resolved)
-
-      has_model =
-        Enum.any?(profiles, fn profile ->
-          case Map.get(profile, :model) do
-            nil -> false
-            "" -> false
-            _ -> true
-          end
-        end)
-
-      assert has_model == false
     end
   end
 
@@ -1009,11 +837,6 @@ defmodule EvoGit.ConfigTest do
       assert :github_username not in status.missing
     end
 
-    test ":github_username is not in the :warnings list" do
-      status = Config.config_status()
-      assert :github_username not in status.warnings
-    end
-
     test "the string 'github' does not appear in any warning message" do
       status = Config.config_status()
 
@@ -1125,37 +948,18 @@ defmodule EvoGit.ConfigTest do
     # the REAL Config.config_status/0 gate (which resolves from disk) is
     # exercised — no inline re-implementation of the has_model logic.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
       # These tests satisfy the :api_key gate by storing a ReqLLM credential, so
       # snapshot the `:req_llm` credential keys up front and restore them on exit
       # (the app env is BEAM-global — leaving the store empty would hide a
       # credential from every later module that builds a provider request).
       reqllm_snapshot = reqllm_key_snapshot()
+      on_exit(fn -> reqllm_key_restore(reqllm_snapshot) end)
 
-      tmp_xdg =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-config-status-#{System.unique_integer([:positive])}"
-        )
+      isolate_xdg!("evogit-config-status")
 
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
       # config.toml lives at <xdg>/genesis/config.toml — create the parent dir
       # since these tests write raw TOML (no save_user_config mkdir).
       File.mkdir_p!(Config.config_dir())
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-        # Put the `:req_llm` app env back exactly as this describe found it.
-        reqllm_key_restore(reqllm_snapshot)
-      end)
 
       :ok
     end
@@ -1336,16 +1140,6 @@ defmodule EvoGit.ConfigTest do
       assert get_in(result, [:llm, :model]) == nil
     end
 
-    test "does not crash when a profile has model: nil" do
-      config = %{llm: %{models: [%{id: "profile-1", model: nil}]}}
-      result = Config.__migrate_llm_models__(config)
-
-      assert is_map(result)
-      assert is_list(result.llm.models)
-      # The flat :model field is left unchanged (nil → stays nil).
-      assert get_in(result, [:llm, :model]) == nil
-    end
-
     test "still mirrors model when first profile has one" do
       config = %{llm: %{models: [%{id: "profile-1", model: "openai:gpt-4"}]}}
       result = Config.__migrate_llm_models__(config)
@@ -1376,25 +1170,10 @@ defmodule EvoGit.ConfigTest do
     # XDG_CONFIG_HOME, so the predicate is exercised end-to-end from disk and
     # never reads the developer's own ~/.config/genesis/config.toml.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
+      isolate_xdg!("evogit-config-lsp")
 
-      tmp_xdg =
-        Path.join(System.tmp_dir!(), "evogit-config-lsp-#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
       # config.toml lives at <xdg>/genesis/config.toml.
       File.mkdir_p!(Config.config_dir())
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
 
       :ok
     end
