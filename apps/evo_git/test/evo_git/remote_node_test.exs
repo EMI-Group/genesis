@@ -286,13 +286,78 @@ defmodule EvoGit.RemoteNodeTest do
     end
   end
 
-  describe "get_task_archive/2" do
-    test "returns [] when the remote node is unreachable" do
-      assert RemoteNode.get_task_archive(@fake_remote, "abc123") == []
+  describe "list_task_archives/3" do
+    test "returns %{entries: [], total: 0} when the remote node is unreachable" do
+      assert RemoteNode.list_task_archives(@fake_remote, "abc123") == %{
+               entries: [],
+               total: 0
+             }
+
+      assert RemoteNode.list_task_archives(@fake_remote, "abc123", limit: 10) == %{
+               entries: [],
+               total: 0
+             }
     end
 
-    test "local path returns [] for a missing task" do
-      assert RemoteNode.get_task_archive(node(), "missing-task") == []
+    test "local path returns the empty page for a task with no archive rows" do
+      assert RemoteNode.list_task_archives(node(), "missing-task") == %{entries: [], total: 0}
+    end
+
+    test "local path returns the persisted archive rows (roster + with results)" do
+      id = "rn-archives-#{System.unique_integer([:positive])}"
+      on_exit(fn -> EvoGit.Store.delete_task_archives(EvoGit.Store, id) end)
+
+      :ok =
+        EvoGit.Store.put_task_archive(EvoGit.Store, %{
+          task_id: id,
+          agent_id: 3,
+          depth: 0,
+          objective: "archive parity",
+          result: "the archived conversation"
+        })
+
+      # Roster read: STRING-KEYED entries, no heavy `result` key.
+      assert %{entries: [entry], total: 1} = RemoteNode.list_task_archives(node(), id)
+      assert entry["task_id"] == id
+      assert entry["agent_id"] == 3
+      assert entry["objective"] == "archive parity"
+      refute Map.has_key?(entry, "result")
+
+      # `include_results: true` carries the result text.
+      assert %{entries: [with_result], total: 1} =
+               RemoteNode.list_task_archives(node(), id, include_results: true)
+
+      assert with_result["result"] == "the archived conversation"
+    end
+  end
+
+  describe "get_agent_archive/3" do
+    test "returns nil when the remote node is unreachable" do
+      assert RemoteNode.get_agent_archive(@fake_remote, "abc123", 1) == nil
+    end
+
+    test "local path returns nil for a missing agent" do
+      assert RemoteNode.get_agent_archive(node(), "missing-task", 1) == nil
+    end
+
+    test "local path returns the agent's full entry" do
+      id = "rn-agent-archive-#{System.unique_integer([:positive])}"
+      on_exit(fn -> EvoGit.Store.delete_task_archives(EvoGit.Store, id) end)
+
+      :ok =
+        EvoGit.Store.put_task_archive(EvoGit.Store, %{
+          task_id: id,
+          agent_id: 7,
+          depth: 2,
+          objective: "detail read",
+          result: "full agent result"
+        })
+
+      assert %{"agent_id" => 7, "depth" => 2} =
+               entry =
+               RemoteNode.get_agent_archive(node(), id, 7)
+
+      assert entry["result"] == "full agent result"
     end
   end
 
