@@ -100,6 +100,44 @@ defmodule EvoGit.TaskRegistry do
   end
 
   @doc """
+  LIGHTWEIGHT paginated task read: one page of the 16-key summary projection
+  plus the filtered total, `%{rows: [summary_map], total: non_neg_integer}`.
+
+  Delegates to `EvoGit.Store.select_tasks_page/2` — the heavy JSON blobs
+  (`result`, `archive_metadata`, `logs`, `usage`) are never selected. `opts`
+  accepts `:limit` (default 25, capped at 50), `:offset` and the filter keys
+  `:status`, `:project_path`, `:review_status`, `:search`.
+
+  Degrades to `%{rows: [], total: 0}` when the store call fails.
+  """
+  def list_tasks_page(opts \\ []) do
+    GenServer.call(server(), {:list_tasks_page, opts}, @call_timeout)
+  end
+
+  @doc """
+  LIGHTWEIGHT single-task read for detail views: decodes like `get_task/1` but
+  never reads the archive (`archive_metadata: nil`, no `:archive_records` in the
+  result data).
+
+  Delegates to `EvoGit.Store.get_task_lite/2`. Returns `%TaskInfo{}` or `nil`
+  (also `nil` when the store call fails).
+  """
+  def get_task_lite(task_id) do
+    GenServer.call(server(), {:get_task_lite, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns the decoded archive records for a task (`[]` when the task is absent,
+  the column is NULL, or the payload is undecodable).
+
+  Delegates to `EvoGit.Store.get_task_archive/2` — only that column is read.
+  Degrades to `[]` when the store call fails.
+  """
+  def get_task_archive(task_id) do
+    GenServer.call(server(), {:get_task_archive, task_id}, @call_timeout)
+  end
+
+  @doc """
   Gracefully cancels a running (or pending) task by id.
 
   - `:pending` → marked `:cancelled` immediately (no agents exist yet) and a
@@ -447,6 +485,33 @@ defmodule EvoGit.TaskRegistry do
     offload(from, state, fn ->
       safe_store_read("list_tasks_paginated", {[], 0}, fn ->
         EvoGit.Store.safe_select_paginated_tasks(state.task_store, opts)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:list_tasks_page, opts}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("list_tasks_page", %{rows: [], total: 0}, fn ->
+        EvoGit.Store.select_tasks_page(state.task_store, opts)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:get_task_lite, task_id}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("get_task_lite", nil, fn ->
+        EvoGit.Store.get_task_lite(state.task_store, task_id)
+      end)
+    end)
+  end
+
+  @impl true
+  def handle_call({:get_task_archive, task_id}, from, state) do
+    offload(from, state, fn ->
+      safe_store_read("get_task_archive", [], fn ->
+        EvoGit.Store.get_task_archive(state.task_store, task_id)
       end)
     end)
   end

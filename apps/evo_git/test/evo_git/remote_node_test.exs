@@ -62,6 +62,21 @@ defmodule EvoGit.RemoteNodeTest do
     end
   end
 
+  describe "list_tasks_page/2" do
+    test "returns %{rows: [], total: 0} when the remote node is unreachable" do
+      assert RemoteNode.list_tasks_page(@fake_remote) == %{rows: [], total: 0}
+
+      assert RemoteNode.list_tasks_page(@fake_remote, limit: 10, offset: 5) ==
+               %{rows: [], total: 0}
+    end
+
+    test "local path delegates to RemoteAPI → TaskRegistry (keeps the page shape)" do
+      assert %{rows: rows, total: total} = RemoteNode.list_tasks_page(node())
+      assert is_list(rows)
+      assert is_integer(total) and total >= 0
+    end
+  end
+
   describe "get_unique_paths/1" do
     test "returns [] when the remote node is unreachable" do
       assert RemoteNode.get_unique_paths(@fake_remote) == []
@@ -258,6 +273,26 @@ defmodule EvoGit.RemoteNodeTest do
       assert result.id == id
       assert result.status == :running
       assert result.type == :genesis
+    end
+  end
+
+  describe "get_task_lite/2" do
+    test "returns nil when the remote node is unreachable" do
+      assert RemoteNode.get_task_lite(@fake_remote, "abc123") == nil
+    end
+
+    test "local path returns nil for a missing task" do
+      assert RemoteNode.get_task_lite(node(), "missing-task") == nil
+    end
+  end
+
+  describe "get_task_archive/2" do
+    test "returns [] when the remote node is unreachable" do
+      assert RemoteNode.get_task_archive(@fake_remote, "abc123") == []
+    end
+
+    test "local path returns [] for a missing task" do
+      assert RemoteNode.get_task_archive(node(), "missing-task") == []
     end
   end
 
