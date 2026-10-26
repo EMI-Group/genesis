@@ -10,6 +10,12 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
   until the result arrives. Kept as a support module (same pattern as
   `EvoDashWeb.ReviewLive.MergeCheck`) so the single-page LiveView stays lean.
 
+  The task row itself comes from the LITE read (`get_task_lite/2`): result,
+  opts, SHAs, timestamps, usage and agent_count — but NOT the archive, which
+  is fetched separately, on demand, by
+  `EvoDashWeb.ReviewLive.ArchiveLoad` (the load-result map carries no archive
+  key at all, so applying a load can never wipe an archive already on screen).
+
   `load/3` returns a plain assigns map (no socket) so it can run in any
   process. All review operations run on the node being viewed: local →
   direct call, remote → RPC to the remote daemon (its own TaskRegistry + its
@@ -34,14 +40,10 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     live_action = Keyword.get(opts, :live_action)
     inspect_commit_sha = Keyword.get(opts, :inspect_commit_sha)
 
-    # FULL-ROW fetch: `result` and `archive_metadata` are decoded on every call,
-    # which is the heaviest part of this load. This is the SINGLE place the task
-    # row is fetched, so it is the swap point for the upcoming lightweight
-    # `EvoGit.TaskRegistry.get_task_lite/1` API (not implemented yet — do not
-    # call it); `build_assigns/3` must be adapted to that lighter shape when it
-    # lands (it reads `result`, `opts`, `usage`, `archive_metadata`, the SHAs and
-    # the timestamps).
-    case EvoDash.NodeContext.get_task(node, task_id) do
+    # LITE task read: the heavy `archive_metadata` blob is NOT transferred (its
+    # result data carries no `:archive_records` either). The archive is a
+    # separate, on-demand load — see `EvoDashWeb.ReviewLive.ArchiveLoad`.
+    case EvoDash.NodeContext.get_task_lite(node, task_id) do
       nil ->
         {:error, gettext("Task not found. It may have been deleted.")}
 
@@ -175,7 +177,6 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       repo_path: primary.repo_path,
       objective: objective,
       commits: primary.commits,
-      archive_metadata: task.archive_metadata,
       task_usage: task.usage,
       agent_count: task.agent_count,
       task_status: task.status,

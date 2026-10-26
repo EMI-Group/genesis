@@ -113,7 +113,7 @@ defmodule EvoDashWeb.ReviewLive do
                   active_tab={@review_tab}
                   files_count={stats.files_count}
                   commits_count={stats.commits_count}
-                  show_archive={@archive_metadata not in [nil, []]}
+                  show_archive={true}
                   agents_count={@agent_count}
                 />
 
@@ -160,7 +160,7 @@ defmodule EvoDashWeb.ReviewLive do
                         branch_exists={@branch_exists}
                         has_pr={@has_pr}
                         pr_url={@pr_url}
-                        show_export={@archive_metadata not in [nil, []]}
+                        show_export={EvoDashWeb.ReviewLive.ArchiveLoad.export_available?(assigns)}
                         export_url={with_node_param("/tasks/#{@task_id}/export", @current_node_id)}
                         no_changes={@is_no_changes}
                       />
@@ -215,22 +215,16 @@ defmodule EvoDashWeb.ReviewLive do
                       active_repo_id={@active_repo_id}
                     />
                   <% @review_tab == :archive -> %>
-                    <%= if @archive_metadata not in [nil, []] do %>
-                      <EvoDashWeb.ReviewComponents.archive_review_section
-                        archive_metadata={@archive_metadata}
-                        task_id={@task_id}
-                      />
-                    <% else %>
-                      <div class="p-8 text-center">
-                        <.icon
-                          name="hero-archive-box-x-mark"
-                          class="size-10 text-base-content/50 mx-auto mb-3"
-                        />
-                        <p class="text-sm text-base-content/70">
-                          {gettext("No archived agent data available for this task.")}
-                        </p>
-                      </div>
-                    <% end %>
+                    <%!-- Lazy archive: the page load is LITE (no archive
+                         transfer), so opening this tab triggers ONE cached
+                         on-demand fetch. All four states render inside
+                         ArchiveLoad.panel. --%>
+                    <EvoDashWeb.ReviewLive.ArchiveLoad.panel
+                      state={@archive_state}
+                      records={@archive_records}
+                      error={@archive_error}
+                      task_id={@task_id}
+                    />
                 <% end %>
 
                 <%= if @branch_exists and is_nil(@review_data) and not @loading do %>
@@ -298,6 +292,14 @@ defmodule EvoDashWeb.ReviewLive do
         commit_data: nil,
         commit_header: nil,
         archive_metadata: nil,
+        # Lazy archive load (see EvoDashWeb.ReviewLive.ArchiveLoad): the page
+        # load is LITE (no archive transfer), so the Archive tab fetches it on
+        # demand, once, and caches it for this task/node context.
+        archive_records: [],
+        archive_state: :idle,
+        archive_error: nil,
+        archive_key: nil,
+        archive_seq: 0,
         task_usage: nil,
         agent_count: nil,
         task_status: nil,
@@ -402,11 +404,21 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   def handle_event("switch_tab", %{"tab" => "archive"}, socket) do
-    {:noreply, assign(socket, :review_tab, :archive)}
+    {:noreply,
+     socket
+     |> assign(:review_tab, :archive)
+     |> EvoDashWeb.ReviewLive.ArchiveLoad.ensure_loaded()}
   end
 
   def handle_event("switch_tab", _params, socket) do
     {:noreply, socket}
+  end
+
+  # Retry button inside the Archive tab's error state — re-arms the archive
+  # state machine and starts one fresh fetch (never a poll).
+  @impl true
+  def handle_event("retry_archive", _params, socket) do
+    {:noreply, EvoDashWeb.ReviewLive.ArchiveLoad.retry(socket)}
   end
 
   # Repo <select>s live inside components; each is wrapped in its own
@@ -1129,6 +1141,16 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
+  def handle_info({:review_archive_loaded, task_id, node, seq, result}, socket) do
+    # Lazy archive fetch finished. Stale-guard + state machine live in the
+    # support module (a result for another task/node or an older fetch is
+    # dropped; every shape normalizes to :loaded/:error — never a stuck
+    # spinner).
+    {:noreply,
+     EvoDashWeb.ReviewLive.ArchiveLoad.handle_result(socket, task_id, node, seq, result)}
+  end
+
+  @impl true
   def handle_info({:merge_check_result, task_id, node, repo_id, target, result}, socket) do
     # Async dry-run merge check finished (tagged per repo). Result-shape
     # validation and stale-message guarding live in the support module;
@@ -1662,6 +1684,10 @@ defmodule EvoDashWeb.ReviewLive do
   # spinner forever — and the outcome is normalized to the two shapes the
   # handle_info consumes.
   defp start_async_load(socket, inspect_commit_sha) do
+    # Reconcile the lazily loaded archive with the (re)started load context:
+    # a task/node change invalidates the cache, a same-context reload keeps it.
+    socket = EvoDashWeb.ReviewLive.ArchiveLoad.sync_context(socket)
+
     parent = self()
     node = socket.assigns.current_node
     task_id = socket.assigns.task_id
