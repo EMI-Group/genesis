@@ -51,10 +51,15 @@ defmodule EvoGit.AgentSchedulerTest do
 
   defp wait_until(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait_until(fun, deadline, timeout)
+    do_wait_until(fun, deadline, timeout, 1)
   end
 
-  defp do_wait_until(fun, deadline, original_timeout) do
+  # Beat starts at 1ms and doubles up to 15ms. The conditions gate REAL
+  # scheduler work (an enqueue, a grant, an ETS write) that typically lands in
+  # well under a millisecond, so a fixed 15ms beat quantized every wait to a
+  # full beat. Only the POLL INTERVAL shrinks — every condition, deadline and
+  # assertion is unchanged.
+  defp do_wait_until(fun, deadline, original_timeout, interval) do
     cond do
       fun.() ->
         :ok
@@ -63,8 +68,9 @@ defmodule EvoGit.AgentSchedulerTest do
         flunk("condition not met within #{original_timeout}ms")
 
       true ->
-        Process.sleep(15)
-        do_wait_until(fun, deadline, original_timeout)
+        beat = min(interval, 15)
+        Process.sleep(beat)
+        do_wait_until(fun, deadline, original_timeout, beat * 2)
     end
   end
 
