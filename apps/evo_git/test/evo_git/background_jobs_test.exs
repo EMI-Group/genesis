@@ -1,7 +1,9 @@
 defmodule EvoGit.BackgroundJobsTest do
-  # async: false — every test drives REAL OS processes (the sandbox backend is
+  # async: false — tests drive REAL OS processes (the sandbox backend is
   # disabled in the test env, so each job is a plain `Port.open/2` child through
-  # the platform shell) and they all share the ONE process-wide scratch
+  # the platform shell; where only registry bookkeeping is under test, a job is
+  # registered through the same production start path with a systemd `:unit`
+  # stand-in handle instead) and they all share the ONE process-wide scratch
   # directory `<sandbox tmpdir>/genesis`, where each job writes
   # `genesis_job_<id>.log`. The file-hygiene snapshot/restore below is only sound
   # because the sync phase runs one module at a time, so no other module can
@@ -24,6 +26,12 @@ defmodule EvoGit.BackgroundJobsTest do
   # Generous, bounded deadline for every poll. Nothing here asserts a wall-clock
   # bound — the waits are event-driven and this only absorbs scheduling latency.
   @deadline_ms 5_000
+  # Poll cadence for every wait: tight at first — most conditions are either
+  # already true or become true within a few ms (a shell child's port exit message
+  # lands almost immediately) — then relaxed so a genuinely slow condition does
+  # not spin. The deadline above stays the only bound.
+  @poll_first_ms 2
+  @poll_max_ms 20
 
   setup %{tmp_dir: tmp_dir} do
     name = :"bg_jobs_test_#{System.unique_integer([:positive])}"
@@ -332,11 +340,17 @@ defmodule EvoGit.BackgroundJobsTest do
 
       {job, port} = start_observed_unit_job!(tmp_dir)
 
-      # Several lazy reconciles — and at least one 1 s reconcile tick — happen
-      # here. The observer port can still deliver the real exit code, so the
-      # floor must yield to it.
+      # Lazy reconciles (every `job/2`) and the periodic reconcile tick below run
+      # the SAME `settle_unknown/2` floor. The observer port can still deliver the
+      # real exit code, so the floor must yield to it.
       assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
-      Process.sleep(1_500)
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
+
+      # Event-driven proof that a REAL reconcile tick ran: the tick handler
+      # re-arms its timer, so the registry's `tick_timer` reference changes on
+      # every tick. Waiting for that change replaces the previous fixed 1.5 s
+      # sleep (which was only ever budget for "at least one 1 s tick").
+      await_reconcile_tick!(registry())
       assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
 
       send(registry(), {port, {:exit_status, 0}})
@@ -466,7 +480,9 @@ defmodule EvoGit.BackgroundJobsTest do
 
     test "fences a job owned by another agent", %{tmp_dir: tmp_dir} do
       owner = spawn(fn -> Process.sleep(:infinity) end)
-      job = start_job!(%{command: "sleep 30", cwd: tmp_dir, owner_pid: owner})
+      # The fencing contract is registry-side; the kill at the end is only
+      # cleanup, so a `:unit` record keeps it off the OS-kill path.
+      job = start_live_unit_job!(tmp_dir, "fenced", %{owner_pid: owner})
 
       assert {:error, :not_owner} = BackgroundJobs.job(job.id, owner_pid: self())
       # `job/2` without a fence sees it.
@@ -494,11 +510,20 @@ defmodule EvoGit.BackgroundJobsTest do
 
   describe "per-owner job cap" do
     test "refuses an 11th live job and reports the limit", %{tmp_dir: tmp_dir} do
-      jobs =
-        for _ <- 1..BackgroundJobs.max_jobs_per_owner() do
-          start_job!(%{command: "sleep 5", cwd: tmp_dir})
+      # ONE real detached OS job pins that a real child counts toward the cap; the
+      # remaining slots are filled with live `:unit`-handle records (the systemd
+      # handle shape, no local child). Releasing capacity through a `:unit` kill is
+      # asynchronous (`systemctl --user stop`), so the term→grace→KILL cycle is
+      # paid ONCE (for the real job) instead of ten times. The cap itself is
+      # registry bookkeeping — it never inspects the handle kind.
+      real = start_job!(%{command: "sleep 5", cwd: tmp_dir})
+
+      synthetic =
+        for n <- 1..(BackgroundJobs.max_jobs_per_owner() - 1) do
+          start_live_unit_job!(tmp_dir, n)
         end
 
+      jobs = [real | synthetic]
       assert length(jobs) == 10
       assert Enum.all?(jobs, &(&1.status == :running))
 
@@ -507,21 +532,23 @@ defmodule EvoGit.BackgroundJobsTest do
       assert message =~ "job_kill"
       assert message =~ "10"
 
-      os_pids =
-        Enum.map(jobs, fn job ->
-          assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
-          job.handle.os_pid
-        end)
+      Enum.each(jobs, fn job ->
+        assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
+      end)
+
+      # The one real detached child is really gone (the `:unit` records carry no
+      # local pid at all).
+      assert is_integer(real.handle.os_pid)
 
       wait_until(
-        fn -> Enum.all?(os_pids, &(not pid_alive?(&1))) end,
+        fn -> not pid_alive?(real.handle.os_pid) end,
         10_000,
-        "some job OS processes survived the kills: #{inspect(os_pids)}"
+        "the job's OS process #{real.handle.os_pid} survived the kill"
       )
 
       # Capacity is released by killing, so a new job is accepted again.
-      job = start_job!(%{command: "echo hi", cwd: tmp_dir})
-      assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
+      job = start_live_unit_job!(tmp_dir, "after-release")
+      assert job.status == :running
     end
   end
 
@@ -623,8 +650,12 @@ defmodule EvoGit.BackgroundJobsTest do
       File.mkdir_p!(target)
       File.mkdir_p!(other)
 
+      # The REAPED job is a real detached child: the assertion that its OS process
+      # is gone is what makes `reap_under/1`'s kill real. The untouched neighbour
+      # uses the systemd handle shape (no local child, asynchronous stop), so the
+      # term→grace→KILL cycle is paid once.
       reaped = start_job!(%{command: "sleep 30", cwd: target})
-      kept = start_job!(%{command: "sleep 30", cwd: other})
+      kept = start_live_unit_job!(other, "reap-kept")
 
       assert :ok = BackgroundJobs.reap_under(target)
 
@@ -641,15 +672,8 @@ defmodule EvoGit.BackgroundJobsTest do
       # The unrelated job is untouched and still running.
       assert {:ok, kept_job} = BackgroundJobs.job(kept.id)
       assert kept_job.status == :running
-      assert pid_alive?(kept.handle.os_pid)
 
       assert {:ok, %{status: :killed}} = BackgroundJobs.kill(kept.id)
-
-      wait_until(
-        fn -> not pid_alive?(kept.handle.os_pid) end,
-        @deadline_ms,
-        "the unrelated job's OS process survived its kill"
-      )
     end
 
     test "is :ok even when no job matches the prefix", %{tmp_dir: tmp_dir} do
@@ -685,7 +709,8 @@ defmodule EvoGit.BackgroundJobsTest do
     test "filters by :owner_pid", %{tmp_dir: tmp_dir} do
       owner = spawn(fn -> Process.sleep(:infinity) end)
       mine = start_job!(%{command: "echo mine", cwd: tmp_dir})
-      theirs = start_job!(%{command: "sleep 30", cwd: tmp_dir, owner_pid: owner})
+      # Filtering is registry-side; the kill below is only cleanup.
+      theirs = start_live_unit_job!(tmp_dir, "list-owner", %{owner_pid: owner})
 
       assert Enum.map(BackgroundJobs.list(owner_pid: self()), & &1.id) == [mine.id]
       assert Enum.map(BackgroundJobs.list(owner_pid: owner), & &1.id) == [theirs.id]
@@ -702,10 +727,15 @@ defmodule EvoGit.BackgroundJobsTest do
     test "is owner-scoped, newest first, and capped at 20", %{tmp_dir: tmp_dir} do
       # One at a time: the per-owner LIVE cap is 10, while finished jobs only
       # count toward retention — so sequential short jobs yield 21 finished ones.
+      # Each record is created TERMINAL through the production start path with an
+      # already-exited `:unit` handle, which is the same record a real command
+      # produces (status/exit_code/finished_at/started_at and retention pruning
+      # are all registry-side) without spawning 21 shells: this test pins the
+      # snapshot's ordering and cap, not detached-process execution (covered by
+      # the `completion` / `kill/3` suites against real children).
       ids =
         for n <- 1..21 do
-          job = start_job!(%{command: "echo #{n}", cwd: tmp_dir})
-          _ = await_status!(job.id, :completed, 15_000)
+          job = start_terminal_unit_job!(tmp_dir, n)
           job.id
         end
 
@@ -721,7 +751,8 @@ defmodule EvoGit.BackgroundJobsTest do
       owner = spawn(fn -> Process.sleep(:infinity) end)
 
       mine = start_job!(%{command: "echo mine", cwd: tmp_dir})
-      theirs = start_job!(%{command: "sleep 30", cwd: tmp_dir, owner_pid: owner})
+      # Owner scoping is registry-side; the kill below is only cleanup.
+      theirs = start_live_unit_job!(tmp_dir, "snapshot-owner", %{owner_pid: owner})
 
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: self()), & &1.id) == [mine.id]
       assert Enum.map(BackgroundJobs.snapshot(owner_pid: owner), & &1.id) == [theirs.id]
@@ -757,7 +788,7 @@ defmodule EvoGit.BackgroundJobsTest do
       finished = start_job!(%{command: "echo done", cwd: tmp_dir})
       _ = await_status!(finished.id, :completed)
 
-      running = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+      running = start_live_unit_job!(tmp_dir, "claim-running")
 
       assert {:ok, [claimed]} = BackgroundJobs.claim_finished_notices()
       assert claimed.id == finished.id
@@ -783,7 +814,7 @@ defmodule EvoGit.BackgroundJobsTest do
     end
 
     test "never claims a running job", %{tmp_dir: tmp_dir} do
-      job = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+      job = start_live_unit_job!(tmp_dir, "claim-never")
 
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
@@ -814,7 +845,7 @@ defmodule EvoGit.BackgroundJobsTest do
     end
 
     test "read/2 and list/1 leave a running job unannounced", %{tmp_dir: tmp_dir} do
-      job = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+      job = start_live_unit_job!(tmp_dir, "unannounced")
 
       assert {:ok, %{job: read_job}} = BackgroundJobs.read(job.id)
       refute read_job.announced
@@ -979,20 +1010,8 @@ defmodule EvoGit.BackgroundJobsTest do
   # code). `:open` gives the job a live observer port, `:closed` a `port: nil`
   # handle (an observer-less unit).
   defp start_observed_unit_job!(tmp_dir, observer \\ :open) do
-    handle = %{
-      kind: :unit,
-      unit: EvoGit.Sandbox.Background.unit_name("bash-observed"),
-      backend: EvoGit.Sandbox.Linux,
-      port: if(observer == :open, do: open_observer_port(), else: nil)
-    }
-
-    case BackgroundJobs.start_job_with_handle(
-           %{command: "echo ignored-by-the-stand-in-handle", cwd: tmp_dir},
-           handle
-         ) do
-      {:ok, job} -> {job, handle.port}
-      {:error, message} -> flunk("start_job_with_handle/2 failed: #{inspect(message)}")
-    end
+    port = if(observer == :open, do: open_observer_port(), else: nil)
+    {start_unit_handle_job!(tmp_dir, "observed", %{}, %{port: port}), port}
   end
 
   # A REAL port owned by the test process, standing in for the long-lived
@@ -1008,6 +1027,60 @@ defmodule EvoGit.BackgroundJobsTest do
     on_exit(fn -> EvoGit.Sandbox.Helpers.close_port(port) end)
     port
   end
+
+  # Registers a LIVE job with the systemd (`:unit`) handle shape and NO local
+  # child: `systemctl --user show` answers `{:unknown, _}` for it, so it stays
+  # `:running` well inside the default 15 s unreportable floor. Kills on this
+  # shape are asynchronous (`systemctl --user stop`), which is what makes it
+  # cheap to fill and drain slots. See `start_terminal_unit_job!/3`.
+  defp start_live_unit_job!(cwd, tag, spec \\ %{}) do
+    start_unit_handle_job!(cwd, tag, spec, %{port: nil})
+  end
+
+  # Registers a job that is TERMINAL from the moment it is created: the handle
+  # already carries the exit code an exited `systemd-run --wait` client reports,
+  # so the production start path settles it immediately (see the "an exit
+  # observed during the spawn itself" test). Used where a test needs many finished
+  # records and a real shell spawn per record would only add wall clock.
+  defp start_terminal_unit_job!(cwd, tag, spec \\ %{}) do
+    start_unit_handle_job!(cwd, tag, spec, %{port: nil, pending_exit_code: 0})
+  end
+
+  defp start_unit_handle_job!(cwd, tag, spec, handle_extra) do
+    handle =
+      Map.merge(
+        %{
+          kind: :unit,
+          unit: EvoGit.Sandbox.Background.unit_name("bash-#{tag}"),
+          backend: EvoGit.Sandbox.Linux
+        },
+        handle_extra
+      )
+
+    spec =
+      Map.merge(%{command: "echo ignored-by-the-stand-in-handle", cwd: cwd}, spec)
+
+    case BackgroundJobs.start_job_with_handle(spec, handle) do
+      {:ok, job} -> job
+      {:error, message} -> flunk("start_job_with_handle/2 failed: #{inspect(message)}")
+    end
+  end
+
+  # Waits until the registry has run one PERIODIC reconcile tick. The tick handler
+  # disarms and re-arms its timer, so the registry's `tick_timer` reference changes
+  # on every tick — waiting for the change is event-driven (no fixed sleep) and
+  # still proves the real timer fired.
+  defp await_reconcile_tick!(registry) do
+    previous = tick_timer_ref(registry)
+
+    wait_until(
+      fn -> tick_timer_ref(registry) != previous end,
+      @deadline_ms,
+      "the registry never ran a periodic reconcile tick"
+    )
+  end
+
+  defp tick_timer_ref(registry), do: :sys.get_state(registry).tick_timer
 
   # Shortens the registry's defensive `{:unknown, _}` floor for one test.
   defp put_unknown_grace(ms) do
@@ -1080,17 +1153,17 @@ defmodule EvoGit.BackgroundJobsTest do
 
   defp wait_until(fun, timeout, message) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait_until(fun, deadline, timeout, message)
+    do_wait_until(fun, deadline, timeout, message, @poll_first_ms)
   end
 
-  defp do_wait_until(fun, deadline, timeout, message) do
+  defp do_wait_until(fun, deadline, timeout, message, poll_ms) do
     cond do
       fun.() ->
         :ok
 
       System.monotonic_time(:millisecond) < deadline ->
-        Process.sleep(20)
-        do_wait_until(fun, deadline, timeout, message)
+        Process.sleep(poll_ms)
+        do_wait_until(fun, deadline, timeout, message, min(poll_ms * 2, @poll_max_ms))
 
       true ->
         flunk("timed out after #{timeout}ms: #{message}")
