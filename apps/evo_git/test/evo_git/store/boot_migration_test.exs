@@ -62,14 +62,17 @@ defmodule EvoGit.Store.BootMigrationTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_004
-  @compress_rows_version 20_260_815_000_005
+  @compress_rows_version 20_260_815_000_004
+  @covering_index_version 20_260_815_000_005
+  # Ascending, exactly as `schema_migrations` reports it: the compression /
+  # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
+  # the index walk never crawls the unrewritten blob overflow chains.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
-    @covering_index_version,
-    @compress_rows_version
+    @compress_rows_version,
+    @covering_index_version
   ]
 
   # The canonical 20 column names in physical order — matches the baseline

@@ -1,6 +1,6 @@
 defmodule EvoGit.Store.CoveringIndexTest do
   @moduledoc """
-  Coverage for `20260815000004_covering_indexes` — the two COVERING indexes that
+  Coverage for `20260815000005_covering_indexes` — the two COVERING indexes that
   let the id-oriented task reads answer from the index with NO table access.
 
   The incident this pins: `EvoGit.Store.select_task_ids([:completed, :failed,
@@ -58,7 +58,7 @@ defmodule EvoGit.Store.CoveringIndexTest do
 
   @status_index "idx_tasks_status_updated_at_id"
   @finished_index "idx_tasks_finished_at_id"
-  @migration_version 20_260_815_000_004
+  @migration_version 20_260_815_000_005
 
   # Seed shape: a 10-status cycle repeated 150 times → 1 500 rows.
   @status_cycle ~w(completed failed cancelled completed running pending finalizing completed failed cancelling)

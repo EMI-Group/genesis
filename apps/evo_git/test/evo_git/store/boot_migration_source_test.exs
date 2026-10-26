@@ -49,14 +49,14 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_004
-  @compress_rows_version 20_260_815_000_005
+  @compress_rows_version 20_260_815_000_004
+  @covering_index_version 20_260_815_000_005
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
   @composite_index_module EvoGit.Repo.Migrations.CompositeIndexes
-  @covering_index_module EvoGit.Repo.Migrations.CoveringIndexes
   @compress_rows_module EvoGit.Repo.Migrations.CompressOversizedRows
+  @covering_index_module EvoGit.Repo.Migrations.CoveringIndexes
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
   # pre-loaded source (documented in `EvoGit.Store.Boot` / the store CONTEXT.md)
@@ -91,8 +91,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@baseline_version, @baseline_module},
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
-               {@covering_index_version, @covering_index_module},
-               {@compress_rows_version, @compress_rows_module}
+               {@compress_rows_version, @compress_rows_module},
+               {@covering_index_version, @covering_index_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -149,15 +149,15 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@baseline_version, @baseline_module},
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
-               {@covering_index_version, @covering_index_module},
-               {@compress_rows_version, @compress_rows_module}
+               {@compress_rows_version, @compress_rows_module},
+               {@covering_index_version, @covering_index_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
       assert Code.ensure_loaded?(@normalization_module)
       assert Code.ensure_loaded?(@composite_index_module)
-      assert Code.ensure_loaded?(@covering_index_module)
       assert Code.ensure_loaded?(@compress_rows_module)
+      assert Code.ensure_loaded?(@covering_index_module)
 
       output =
         capture_io(:stderr, fn ->
@@ -166,8 +166,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                      @baseline_version,
                      @normalization_version,
                      @composite_index_version,
-                     @covering_index_version,
-                     @compress_rows_version
+                     @compress_rows_version,
+                     @covering_index_version
                    ]
 
           assert booted_versions(db_path(root, "fresh_b")) ==
@@ -175,8 +175,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                      @baseline_version,
                      @normalization_version,
                      @composite_index_version,
-                     @covering_index_version,
-                     @compress_rows_version
+                     @compress_rows_version,
+                     @covering_index_version
                    ]
         end)
 

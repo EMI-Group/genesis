@@ -45,14 +45,17 @@ defmodule EvoGit.Store.RepoTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_004
-  @compress_rows_version 20_260_815_000_005
+  @compress_rows_version 20_260_815_000_004
+  @covering_index_version 20_260_815_000_005
+  # Ascending, exactly as `schema_migrations` reports it: the compression /
+  # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
+  # the index walk never crawls the unrewritten blob overflow chains.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
-    @covering_index_version,
-    @compress_rows_version
+    @compress_rows_version,
+    @covering_index_version
   ]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
@@ -91,7 +94,8 @@ defmodule EvoGit.Store.RepoTest do
     "idx_tasks_project_path",
     "idx_tasks_updated_at",
     "idx_tasks_started_at",
-    # The two COVERING indexes added by `20260815000004_covering_indexes`.
+    # The two COVERING indexes added by `20260815000005_covering_indexes`
+    # (built AFTER the 004 compression rewrite — see that migration's moduledoc).
     "idx_tasks_status_updated_at_id",
     "idx_tasks_finished_at_id"
   ]

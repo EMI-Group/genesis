@@ -1,6 +1,6 @@
 defmodule EvoGit.Store.OversizedRowMigrationTest do
   @moduledoc """
-  Coverage for `20260815000005_compress_oversized_rows` — the one-shot rewrite
+  Coverage for `20260815000004_compress_oversized_rows` — the one-shot rewrite
   of task rows written BEFORE the codec's transparent compression and before
   the archive-dedup persistence boundary (`EvoGit.TaskRegistry.ArchiveDedup`).
 
@@ -8,8 +8,9 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
 
   Each test crafts a REAL pre-migration database with RAW xqlite (never the
   repo): the canonical 20-column `tasks` table, the `projects` table, and a
-  `schema_migrations` table stamped through version 4 — i.e. exactly the state
-  a booted v0.13.x database is in before this migration ships. Seeded rows:
+  `schema_migrations` table stamped through version 3 — i.e. exactly the state
+  a booted v0.13.x database is in before this migration (004, the first of the
+  two new migrations) ships. Seeded rows:
 
     * `big-archive` — a plain-JSON canonical `{:ok, data}` result whose
       `data.archive_records` array (~6 kB) is a verbatim duplicate of the
@@ -56,15 +57,18 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_004
-  @compress_rows_version 20_260_815_000_005
+  @compress_rows_version 20_260_815_000_004
+  @covering_index_version 20_260_815_000_005
 
+  # Ascending, exactly as `schema_migrations` reports it: the compression /
+  # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
+  # the index walk never crawls the unrewritten blob overflow chains.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
-    @covering_index_version,
-    @compress_rows_version
+    @compress_rows_version,
+    @covering_index_version
   ]
 
   # The canonical 20-column DDL (identical to the baseline migration's CREATE
@@ -117,7 +121,7 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
     {:ok, %{root: root}}
   end
 
-  describe "20260815000005_compress_oversized_rows" do
+  describe "20260815000004_compress_oversized_rows" do
     test "compresses oversized rows and drops the duplicated archive from result", %{root: root} do
       path = Path.join(root, "compress.sqlite")
 
@@ -389,7 +393,9 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
   end
 
   # Creates the canonical tables + a `schema_migrations` stamped through
-  # version 4 (the state before this migration).
+  # version 3 — the state a pre-release (v0.13.x) database is in, with BOTH new
+  # migrations pending. 004 (this rewrite) runs first and 005 (the covering
+  # index build) after it, which is exactly the shipped order.
   defp create_db!(path) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, conn} = Xqlite.open(path, journal_mode: :wal, synchronous: :normal)
@@ -405,7 +411,7 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
         []
       )
 
-    for version <- @migration_versions -- [@compress_rows_version] do
+    for version <- @migration_versions -- [@compress_rows_version, @covering_index_version] do
       {:ok, _} =
         XqliteNIF.query(
           conn,

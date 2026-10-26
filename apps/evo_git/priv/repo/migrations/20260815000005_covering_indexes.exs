@@ -2,6 +2,26 @@ defmodule EvoGit.Repo.Migrations.CoveringIndexes do
   @moduledoc """
   Covering indexes for the id-oriented task reads — the incident query first.
 
+  ## ORDERING: this migration MUST run AFTER `20260815000004_compress_oversized_rows`
+
+  Both indexes are b-trees over scalar columns, so building them looks like
+  pure index work — but SQLite builds an index by WALKING the table, and on a
+  DB whose rows still carry their pre-compression multi-MB
+  `result`/`archive_metadata` blobs that walk has to crawl the blob overflow
+  chains to reach the `updated_at`/`id` values stored behind them. Measured on
+  a 442 MiB live copy (one row with a 103 MiB result + 103 MiB
+  archive_metadata): `CREATE INDEX idx_tasks_status_updated_at_id` took
+  **26.0 s** on the raw pre-migration file and **57.8 ms** on the same file
+  after the compression/dedup rewrite (migration `20260815000004`, whose own
+  work is ~1.1 s). Building the indexes first therefore makes the first boot
+  after an upgrade ~30x slower for exactly the databases that need it most.
+
+  Do NOT renumber this migration below the compression rewrite (or insert a
+  new index migration between them). Any future index migration belongs at a
+  version ABOVE this one.
+
+  ## The incident
+
   `EvoGit.Store.select_task_ids([:completed, :failed, :cancelled])` (the
   dashboard task-list projection, `EvoGit.Store.Operations.Lightweight.select_task_ids/2`)
   once took **26.5 s** on the live `tasks.sqlite` (442 MB, 953 rows) and blew

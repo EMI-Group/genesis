@@ -3,6 +3,23 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
   Rewrites the PRE-EXISTING oversized task rows ONCE: compress the big text
   columns and drop the duplicated per-agent archive from `result`.
 
+  ## ORDERING: this migration MUST run BEFORE `20260815000005_covering_indexes`
+
+  The version numbers encode a hard requirement, not a chronology: this
+  rewrite has to happen before the covering-index build. Both indexes are
+  ordinary b-trees over scalar columns, so building them is pure index work —
+  BUT SQLite can only do that by walking the table, and on a DB whose rows
+  still carry multi-MB `result`/`archive_metadata` blobs the `updated_at`/`id`
+  columns sit physically AFTER the blob overflow chains, so the walk crawls
+  those pages. Measured on a 442 MiB live copy (one 103 MiB result + 103 MiB
+  archive_metadata): the index build alone was **26.0 s** in that state and
+  **57.8 ms** on the compressed + defragmented DB — the whole difference is
+  this migration's rewrite (~1.1 s of UPDATE/SELECT work).
+
+  Do NOT renumber the two migrations back (or insert a new index migration at
+  a lower version). If a future index must be added, give it a version ABOVE
+  `20260815000005`.
+
   ## Why this migration exists
 
   Two independent changes landed in the codec/runtime, and neither can heal a
@@ -141,7 +158,7 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
       end)
 
     Logger.info(
-      "[migration 20260815000005] #{column}: rewrote #{acc.rewritten} row(s) — " <>
+      "[migration 20260815000004] #{column}: rewrote #{acc.rewritten} row(s) — " <>
         "#{format_bytes(acc.before)} -> #{format_bytes(acc.after)}; " <>
         "#{length(acc.skipped)} row(s) left untouched" <>
         if(acc.skipped == [],
@@ -178,7 +195,7 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
 
       {:error, reason} ->
         Logger.warning(
-          "[migration 20260815000005] skipping task #{id}: #{column} could not be " <>
+          "[migration 20260815000004] skipping task #{id}: #{column} could not be " <>
             "decoded (#{format_reason(reason)}); the row is left exactly as it was"
         )
 
