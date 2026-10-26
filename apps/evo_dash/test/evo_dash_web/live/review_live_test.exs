@@ -276,124 +276,33 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
-  describe "archive tab with string-keyed metadata" do
-    # This test guards against the infinite-recursion / OOM bug where archive
-    # records arrive with STRING keys (after a DB round-trip through
-    # Jason.decode) but the tree-building code read them with ATOM keys.
-    # Before the fix, switching to the Archive tab would infinite-loop and
-    # OOM-kill the BEAM. The key assertion is that the render TERMINATES.
-    setup do
-      task_id = "review_test_archive_#{System.unique_integer([:positive])}"
-
-      # Seed the task store with a completed task whose archive_metadata uses
-      # STRING keys — exactly as it looks after decode_archive runs
-      # Jason.decode/1 on the persisted JSON.
-      task = %TaskInfo{
-        id: task_id,
-        type: :evolve,
-        status: :completed,
-        opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
-        ref: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        review_status: nil,
-        archive_metadata: [
-          %{
-            "agent_id" => "agent-1",
-            "parent_id" => nil,
-            "objective" => "Root agent objective",
-            "depth" => 0
-          },
-          %{
-            "agent_id" => "agent-2",
-            "parent_id" => "agent-1",
-            "objective" => "Child agent objective",
-            "depth" => 1
-          }
-        ],
-        result:
-          {:ok,
-           %{
-             commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-             branch_name: "evogit/test-branch",
-             result: "Agent summary",
-             pr_url: nil,
-             pr_title: nil
-           }}
-      }
-
-      EvoGit.Store.put_task(EvoGit.Store, task)
-
-      on_exit(fn ->
-        TaskRegistry.delete_task(task_id)
-        TaskRegistry.list_tasks()
-      end)
-
-      {:ok, task_id: task_id}
-    end
-
-    test "archive tab renders without hanging and shows agent ids", %{
-      conn: conn,
-      task_id: task_id
-    } do
-      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
-
-      # The page load is LITE: it never transfers the archive, so nothing
-      # archive-ish is on screen and the lazy state machine is still :idle.
-      html = flush_review_load(view)
-
-      assert assigns(view).archive_state == :idle
-      assert assigns(view).archive_records == []
-      refute html =~ "agent-1"
-      refute html =~ "Archived Agent Details"
-
-      # Switch to the Archive tab — before the fix this would infinite-loop.
-      # The click kicks off the one on-demand fetch; the first render is the
-      # :loading state.
-      html =
-        view
-        |> element("button[phx-click='switch_tab'][phx-value-tab='archive']")
-        |> render_click()
-
-      # NOTE: literal U+2026 ellipsis (gettext("Loading archive…")).
-      assert html =~ "Loading archive…"
-
-      # The render terminated (didn't OOM). The default runner reads the seeded
-      # store row, so the agent ids appear once the fetch lands.
-      wait_until(fn -> render(view) =~ "agent-1" end)
-      html = render(view)
-
-      assert html =~ "agent-1"
-      assert html =~ "agent-2"
-      assert assigns(view).archive_state == :loaded
-    end
-  end
-
-  describe "lazy archive load" do
+  describe "paged lazy archive load" do
     # The review page load is LITE (`NodeContext.get_task_lite/2`): it never
-    # transfers `archive_metadata`. The Archive tab body is a SEPARATE,
-    # on-demand fetch (`EvoDashWeb.ReviewLive.ArchiveLoad`) behind the
-    # `:review_archive_runner` app-env seam, resolved at CALL time inside the
-    # spawned `EvoDash.TaskSupervisor` child, and cached per {task_id, node} so
-    # tab round-trips and same-context `{:review_data_loaded, ...}` re-applies
-    # never refetch it.
+    # transfers `archive_metadata`. The Archive tab body is a SEPARATE, PAGED
+    # on-demand load (`EvoDashWeb.ReviewLive.ArchiveLoad`): the first page (100
+    # entries, `include_results: false`) is fetched when the tab opens, "Load
+    # more" appends the next page, and each agent's heavy result is fetched on
+    # demand. Both runners are injected through app-env seams and resolved AT
+    # CALL TIME inside the spawned `EvoDash.TaskSupervisor` child — nothing here
+    # depends on the core archive implementation existing.
     setup do
-      # Every test that injects the runner must restore the call-time default.
-      on_exit(fn -> Application.delete_env(:evo_dash, :review_archive_runner) end)
+      # Every test that injects a runner must restore the call-time default.
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :review_archive_runner)
+        Application.delete_env(:evo_dash, :review_archive_agent_runner)
+      end)
 
       :ok
     end
 
     test "page load is lite and transfers no archive", %{conn: conn} do
       task_id = seed_archive_task!(archive_records())
-
       me = self()
 
       # Spy runner: prove the PAGE LOAD never triggers an archive fetch.
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, self(), node, tid})
-        []
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: [], total: 0}
       end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
@@ -402,16 +311,17 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # The lazy state machine is untouched and nothing archive-ish rendered.
       assert assigns(view).archive_state == :idle
       assert assigns(view).archive_records == []
-      assert assigns(view).archive_metadata in [nil, []]
+      assert assigns(view).archive_total == 0
+      assert assigns(view).archive_agent_results == %{}
+
       refute html =~ "agent-1"
       refute html =~ "agent-2"
       refute html =~ "Archived Agent Details"
 
-      # The Archive tab is always rendered for a loaded task.
-      assert has_element?(view, "button[phx-click='switch_tab'][phx-value-tab='archive']")
-
+      # The Archive tab is always rendered for a loaded task…
+      assert has_element?(view, archive_tab_selector())
       # …and no fetch was spawned.
-      refute_receive {:archive_fetch, _, _, _}
+      refute_receive {:archive_fetch, _, _, _, _}
 
       # The lite read carries no archive key at all, so applying a load result
       # can never wipe an archive that is already on screen.
@@ -420,116 +330,512 @@ defmodule EvoDashWeb.ReviewLiveTest do
       refute Map.has_key?(loaded, :archive_records)
     end
 
-    test "opening the Archive tab fetches exactly once and shows the loading state first", %{
-      conn: conn
-    } do
-      records = archive_records()
-      task_id = seed_archive_task!(records)
+    test "the first page shows the server total and the loaded range", %{conn: conn} do
+      task_id = seed_archive_task!([])
       me = self()
 
-      # Blocking runner: reports the call, then waits for the test's reply.
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, self(), node, tid})
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: archive_page_entries(1..100), total: 250}
+      end)
 
-        receive do
-          {:archive_reply, recs} -> recs
-        after
-          # Never leave a blocked supervised child behind on a failing test.
-          5_000 -> []
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      view |> element(archive_tab_selector()) |> render_click()
+
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}
+      assert opts[:limit] == 100
+      assert opts[:offset] == 0
+      assert opts[:include_results] == false
+
+      wait_until(fn -> render(view) =~ "agent-100" end)
+      html = render(view)
+
+      assert assigns(view).archive_state == :loaded
+      assert assigns(view).archive_total == 250
+      assert length(assigns(view).archive_records) == 100
+      # The count line reads the SERVER total plus the loaded range.
+      assert html =~ "250 agents — showing 1–100"
+      assert html =~ "Load more"
+      assert has_element?(view, "button[phx-click='load_more_archive']")
+    end
+
+    test "a complete first page shows no Load more button", %{conn: conn} do
+      task_id = seed_archive_task!([])
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: archive_page_entries(1..2), total: 2}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> render(view) =~ "agent-2" end)
+
+      html = render(view)
+      # Everything is loaded: a plain count, no range and no pager.
+      assert html =~ "2 agents"
+      refute html =~ "showing"
+      refute has_element?(view, "button[phx-click='load_more_archive']")
+    end
+
+    test "load more appends the next page, dedupes and stops at the total", %{conn: conn} do
+      task_id = seed_archive_task!([])
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+
+        entries =
+          case Keyword.fetch!(opts, :offset) do
+            0 -> archive_page_entries(1..100)
+            # The second page REPEATS agent-100 (a retried / overlapping page)
+            # and carries the remaining 50 agents.
+            100 -> archive_page_entries(100..150)
+          end
+
+        %{entries: entries, total: 150}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, first_opts}
+      assert first_opts[:offset] == 0
+      wait_until(fn -> length(assigns(view).archive_records) == 100 end)
+
+      view |> element("button[phx-click='load_more_archive']") |> render_click()
+
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, more_opts}
+      assert more_opts[:offset] == 100
+      assert more_opts[:limit] == 100
+      assert more_opts[:include_results] == false
+
+      wait_until(fn -> length(assigns(view).archive_records) == 150 end)
+
+      ids = Enum.map(assigns(view).archive_records, & &1["agent_id"])
+      # Order preserved, the duplicate agent-100 collapsed into one entry.
+      assert ids == archive_page_ids(1..150)
+      assert length(Enum.uniq(ids)) == 150
+      assert assigns(view).archive_total == 150
+      assert assigns(view).archive_state == :loaded
+
+      # Everything is loaded now: the pager disappears and the range goes away.
+      refute has_element?(view, "button[phx-click='load_more_archive']")
+      assert render(view) =~ "150 agents"
+      refute render(view) =~ "showing"
+    end
+
+    test "a failed append keeps the loaded page and offers a retry", %{conn: conn} do
+      task_id = seed_archive_task!([])
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+
+        case Keyword.fetch!(opts, :offset) do
+          0 -> %{entries: archive_page_entries(1..2), total: 4}
+          2 -> raise "boom"
         end
       end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> length(assigns(view).archive_records) == 2 end)
 
+      view |> element("button[phx-click='load_more_archive']") |> render_click()
+      wait_until(fn -> assigns(view).archive_more_error != nil end)
+
+      html = render(view)
+      # The append failure never blanks the already-loaded page.
+      assert assigns(view).archive_state == :loaded
+      assert length(assigns(view).archive_records) == 2
+      assert assigns(view).archive_loading_more? == false
+      assert assigns(view).archive_more_error == "Failed to load archive data."
+      assert html =~ "agent-1"
+      assert html =~ "agent-2"
+      assert html =~ "Could not load more archive records."
+      refute html =~ "Loading…"
+
+      # Retry fires the SAME append event.
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: archive_page_entries(3..4), total: 4}
+      end)
+
+      view |> element("button[phx-click='load_more_archive']") |> render_click()
+      wait_until(fn -> length(assigns(view).archive_records) == 4 end)
+
+      assert assigns(view).archive_more_error == nil
+      assert assigns(view).archive_loading_more? == false
+      ids = Enum.map(assigns(view).archive_records, & &1["agent_id"])
+      assert ids == ["agent-1", "agent-2", "agent-3", "agent-4"]
+    end
+
+    test "per-agent result is fetched on demand, capped, cached and re-rendered", %{conn: conn} do
+      task_id = seed_archive_task!([])
+      me = self()
+      big_result = String.duplicate("R", 20_000)
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: archive_page_entries(1..2), total: 2}
+      end)
+
+      Application.put_env(:evo_dash, :review_archive_agent_runner, fn node, tid, agent_id ->
+        send(me, {:archive_agent_fetch, self(), node, tid, agent_id})
+
+        receive do
+          {:archive_agent_reply, entry} -> entry
+        after
+          5_000 -> nil
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> render(view) =~ "agent-2" end)
+
+      # Rendering NEVER fetches a result: every agent offers the button.
+      refute_receive {:archive_agent_fetch, _, _, _, _}
+      assert render(view) =~ "Show result"
+
+      assert has_element?(
+               view,
+               "button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']"
+             )
+
+      view
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> render_click()
+
+      # NOTE: literal U+2026 ellipsis (gettext("Loading result…")).
+      assert render(view) =~ "Loading result…"
+      current_node = node()
+      assert_receive {:archive_agent_fetch, pid, ^current_node, ^task_id, "agent-2"}
+
+      entry = %{
+        "agent_id" => "agent-2",
+        "parent_id" => nil,
+        "objective" => "Objective 2",
+        "depth" => 0,
+        "result" => big_result
+      }
+
+      send(pid, {:archive_agent_reply, entry})
+      wait_until(fn -> render(view) =~ "Showing 8,192 of 20,000 bytes" end)
+
+      html = render(view)
+      assert html =~ "Result"
+      assert assigns(view).archive_agent_results["agent-2"].state == :ok
+
+      # The fetched entry was folded into the loaded page (order preserved).
+      records = assigns(view).archive_records
+      assert Enum.map(records, & &1["agent_id"]) == ["agent-1", "agent-2"]
+      assert Enum.at(records, 1)["result"] == big_result
+
+      # A second request for the same agent issues NO second fetch…
+      render_click(view, "load_archive_agent_result", %{"agent_id" => "agent-2"})
+      refute_receive {:archive_agent_fetch, _, _, _, _}, 50
+
+      # …and the result survives a tab round-trip.
+      render_click(view, "switch_tab", %{"tab" => "conversation"})
+      html = view |> element(archive_tab_selector()) |> render_click()
+      assert html =~ "Showing 8,192 of 20,000 bytes"
+      refute_receive {:archive_agent_fetch, _, _, _, _}, 50
+    end
+
+    test "a task broadcast invalidates cached agent results but keeps the loaded page", %{
+      conn: conn
+    } do
+      task_id = seed_archive_task!([])
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: archive_page_entries(1..2), total: 2}
+      end)
+
+      Application.put_env(:evo_dash, :review_archive_agent_runner, fn node, tid, agent_id ->
+        send(me, {:archive_agent_fetch, self(), node, tid, agent_id})
+        %{"agent_id" => agent_id, "parent_id" => nil, "depth" => 0, "result" => "Fetched"}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> render(view) =~ "agent-2" end)
+
+      view
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> render_click()
+
+      wait_until(fn -> render(view) =~ "Fetched" end)
+      assert assigns(view).archive_agent_results["agent-2"].state == :ok
+      assert length(assigns(view).archive_records) == 2
+
+      # A broadcast for the REVIEWED task on the viewed node drops the cache…
+      send(view.pid, {:task_updated, task_id, nil, node()})
+      assert assigns(view).archive_agent_results == %{}
+      # …while the loaded page (entries + total) stays.
+      assert length(assigns(view).archive_records) == 2
+      assert assigns(view).archive_total == 2
+      assert assigns(view).archive_state == :loaded
+
+      # Drain the review-data reload the broadcast armed.
+      settle_debounced_task_reload(view)
+
+      # The agent is fetchable again: the button came back and refetches.
+      assert has_element?(
+               view,
+               "button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']"
+             )
+
+      view
+      |> element("button[phx-click='load_archive_agent_result'][phx-value-agent-id='agent-2']")
+      |> render_click()
+
+      current_node = node()
+      assert_receive {:archive_agent_fetch, _pid, ^current_node, ^task_id, "agent-2"}
+      wait_until(fn -> render(view) =~ "Fetched" end)
+      assert assigns(view).archive_agent_results["agent-2"].state == :ok
+    end
+
+    test "the paged runners receive the viewed remote node atom", %{conn: conn} do
+      # Same remote-node fixture as the "remote node review" describe: a fake
+      # connection manager registers the target as :connected so NodeAware
+      # resolves `?node=` to the remote BEAM node atom.
+      original = System.get_env("XDG_CONFIG_HOME")
+
+      tmp_config =
+        Path.join(
+          System.tmp_dir!(),
+          "evogit_test_config_review_archive_" <> to_string(System.unique_integer([:positive]))
+        )
+
+      File.mkdir_p!(tmp_config)
+      System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+      on_exit(fn ->
+        File.rm_rf(tmp_config)
+
+        if original do
+          System.put_env("XDG_CONFIG_HOME", original)
+        else
+          System.delete_env("XDG_CONFIG_HOME")
+        end
+      end)
+
+      id = "review-archive-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Review Archive Target"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: archive_page_entries(1..1), total: 1}
+      end)
+
+      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+      flush_review_load(view)
+
+      remote_node = assigns(view)[:current_node]
+      assert remote_node != node()
+
+      # Inject a rendered SHOW load (the real one failed with :nodedown).
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
+         {:ok,
+          %{
+            review_repos: [
+              %{
+                repo_id: "primary",
+                repo_path: "/remote/repo/path",
+                branch_name: "evogit/test-branch",
+                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                base_sha: nil,
+                branch_exists: false,
+                review_data: nil,
+                commits: [],
+                merge_targets: [],
+                default_merge_target: nil,
+                merge_status: nil
+              }
+            ],
+            can_resume: false,
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+      view |> element(archive_tab_selector()) |> render_click()
+
+      # The PAGE runner got the REMOTE node atom, not the local one.
+      assert_receive {:archive_fetch, _pid, ^remote_node, "some-remote-task-id", opts}
+      assert opts[:offset] == 0
+      wait_until(fn -> render(view) =~ "agent-1" end)
+      assert assigns(view).archive_state == :loaded
+    end
+
+    test "an orphan record (parent on an unloaded page) still renders and keeps the total", %{
+      conn: conn
+    } do
+      task_id = seed_archive_task!([])
+
+      entries = [
+        %{
+          "agent_id" => "agent-1",
+          "parent_id" => nil,
+          "objective" => "Root agent objective",
+          "depth" => 0
+        },
+        %{
+          "agent_id" => "agent-orphan",
+          "parent_id" => "agent-on-an-unloaded-page",
+          "objective" => "Orphan agent objective",
+          "depth" => 2
+        }
+      ]
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: entries, total: 400}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+
+      # The render terminates and the orphan is promoted to a top-level node.
+      wait_until(fn -> render(view) =~ "agent-orphan" end)
+      html = render(view)
+      assert html =~ "agent-1"
+      assert html =~ "agent-orphan"
+      assert html =~ "Orphan agent objective"
+      # The server total is never silently reduced to the page size.
+      assert assigns(view).archive_total == 400
+      assert html =~ "400 agents — showing 1–2"
+    end
+
+    test "opening the Archive tab fetches exactly once and shows the loading state first", %{
+      conn: conn
+    } do
+      task_id = seed_archive_task!([])
+      me = self()
+
+      # Blocking runner: reports the call, then waits for the test's reply.
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+
+        receive do
+          {:archive_reply, page} -> page
+        after
+          # Never leave a blocked supervised child behind on a failing test.
+          5_000 -> %{entries: [], total: 0}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
       html = view |> element(archive_tab_selector()) |> render_click()
 
       # NOTE: literal U+2026 ellipsis (gettext("Loading archive…")).
       assert html =~ "Loading archive…"
       assert assigns(view).archive_state == :loading
-
       current_node = node()
-      assert_receive {:archive_fetch, pid, ^current_node, ^task_id}
+      assert_receive {:archive_fetch, pid, ^current_node, ^task_id, opts}
+      assert opts[:offset] == 0
 
-      # A second click while the fetch is in flight is a no-op.
+      # A second click while the first page is in flight is a no-op.
       view |> element(archive_tab_selector()) |> render_click()
-      refute_receive {:archive_fetch, _, _, _}, 50
+      refute_receive {:archive_fetch, _, _, _, _}, 50
 
-      send(pid, {:archive_reply, records})
-
+      send(pid, {:archive_reply, %{entries: archive_page_entries(1..2), total: 2}})
       wait_until(fn -> render(view) =~ "agent-1" end)
+
       assert assigns(view).archive_state == :loaded
       assert render(view) =~ "agent-2"
-
       # Still exactly ONE fetch for the whole tab open.
-      refute_receive {:archive_fetch, _, _, _}, 50
+      refute_receive {:archive_fetch, _, _, _, _}, 50
     end
 
-    test "a tab round-trip and a review-data re-apply never refetch the archive", %{conn: conn} do
-      records = archive_records()
-      task_id = seed_archive_task!(records)
+    test "a tab round-trip and a review-data re-apply never refetch the page", %{conn: conn} do
+      task_id = seed_archive_task!([])
       me = self()
 
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, self(), node, tid})
-        records
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: archive_page_entries(1..2), total: 2}
       end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
-
       view |> element(archive_tab_selector()) |> render_click()
-
       wait_until(fn -> render(view) =~ "agent-1" end)
+
       assert assigns(view).archive_state == :loaded
-      assert_receive {:archive_fetch, _pid, _node, ^task_id}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, _opts}
 
       # Tab round-trip: out to the conversation tab and back into the archive.
       render_click(view, "switch_tab", %{"tab" => "conversation"})
       html = view |> element(archive_tab_selector()) |> render_click()
-
       assert html =~ "agent-1"
       assert assigns(view).archive_state == :loaded
-      refute_receive {:archive_fetch, _, _, _}, 50
+      refute_receive {:archive_fetch, _, _, _, _}, 50
 
       # A same-context `{:review_data_loaded, ...}` re-apply (whose assigns map
-      # has no archive key) must neither refetch nor discard the loaded archive.
+      # has no archive key) must neither refetch nor discard the loaded page.
       assert {:ok, loaded} = EvoDashWeb.ReviewLive.LoadData.load(node(), task_id)
       gen = assigns(view)[:load_generation]
-
       # Marker so the assertions below prove the result was APPLIED (not dropped
       # as stale) — otherwise "the archive survived" would be vacuous.
       loaded = Map.put(loaded, :title, "Reloaded review title")
-
       send(view.pid, {:review_data_loaded, task_id, node(), gen, {:ok, loaded}})
 
       # assigns/1 is a synchronous :sys.get_state round-trip processed in
       # mailbox order, so the injected result is already applied here.
       assert assigns(view).title == "Reloaded review title"
       assert assigns(view).archive_state == :loaded
-      assert assigns(view).archive_records == records
+      assert length(assigns(view).archive_records) == 2
       assert render(view) =~ "agent-1"
-      refute_receive {:archive_fetch, _, _, _}, 50
+      refute_receive {:archive_fetch, _, _, _, _}, 50
     end
 
     test "an empty archive renders the empty state without a Retry button", %{conn: conn} do
       task_id = seed_archive_task!([])
 
-      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid -> [] end)
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: [], total: 0}
+      end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
-
       view |> element(archive_tab_selector()) |> render_click()
 
-      wait_until(fn ->
-        render(view) =~ "No archived agent data available for this task."
-      end)
-
+      wait_until(fn -> render(view) =~ "No archived agent data available for this task." end)
       html = render(view)
 
       assert assigns(view).archive_state == :loaded
       assert assigns(view).archive_records == []
+      assert assigns(view).archive_total == 0
       assert html =~ "No archived agent data available for this task."
       # An empty archive is a SETTLED state — no stuck spinner, no retry.
       refute html =~ ~s(phx-click="retry_archive")
@@ -537,15 +843,15 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
 
     test "a failing fetch renders a retry-able error state, then Retry refetches", %{conn: conn} do
-      records = archive_records()
-      task_id = seed_archive_task!(records)
+      task_id = seed_archive_task!([])
       me = self()
 
-      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid -> raise "boom" end)
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        raise "boom"
+      end)
 
       {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
       flush_review_load(view)
-
       view |> element(archive_tab_selector()) |> render_click()
 
       # EvoDash.SafeCall turns the raise into an error value, so the child still
@@ -560,25 +866,26 @@ defmodule EvoDashWeb.ReviewLiveTest do
       # The spinner NEVER survives a failed fetch.
       refute html =~ "Loading archive…"
 
-      # Retry re-arms the state machine and starts ONE fresh fetch.
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, self(), node, tid})
-        records
+      # Retry re-arms the state machine and starts ONE fresh first page.
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: archive_page_entries(1..2), total: 2}
       end)
 
       view |> element("button[phx-click='retry_archive']") |> render_click()
-
       wait_until(fn -> render(view) =~ "agent-1" end)
+
       assert assigns(view).archive_state == :loaded
-      assert_receive {:archive_fetch, _pid, _node, ^task_id}
+      assert_receive {:archive_fetch, _pid, _node, ^task_id, opts}
+      assert opts[:offset] == 0
     end
 
-    test "sync_context/1 keeps a loaded archive for the same task/node" do
+    test "sync_context/1 keeps a loaded paged archive for the same task/node" do
       me = self()
 
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, node, tid})
-        []
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, node, tid, opts})
+        %{entries: [], total: 0}
       end)
 
       socket = archive_socket(%{})
@@ -586,47 +893,54 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       assert synced.assigns.archive_state == :loaded
       assert synced.assigns.archive_records == socket.assigns.archive_records
-      assert synced.assigns.archive_metadata == socket.assigns.archive_metadata
+      assert synced.assigns.archive_total == socket.assigns.archive_total
+      assert synced.assigns.archive_agent_results == socket.assigns.archive_agent_results
       assert synced.assigns.archive_key == {"t1", node()}
       assert synced.assigns.archive_seq == 1
-      refute_receive {:archive_fetch, _, _}
+      assert synced.assigns.archive_agent_seq == 1
+      refute_receive {:archive_fetch, _, _, _}
     end
 
-    test "sync_context/1 resets on a node change and refetches only on the archive tab" do
+    test "sync_context/1 resets every paged assign on a node change and refetches only on the archive tab" do
       me = self()
       other_node = :other@host
 
-      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid ->
-        send(me, {:archive_fetch, node, tid})
-        [%{"agent_id" => "agent-9"}]
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, node, tid, opts})
+        %{entries: archive_page_entries(1..1), total: 1}
       end)
 
-      # Same task, DIFFERENT node, conversation tab: the cache is dropped, no
-      # fetch spawns and the monotonic seq is NOT reset.
+      # Same task, DIFFERENT node, conversation tab: the caches are dropped, no
+      # fetch spawns and the generations advance so in-flight results are stale.
       synced =
         archive_socket(%{current_node: other_node})
         |> EvoDashWeb.ReviewLive.ArchiveLoad.sync_context()
 
       assert synced.assigns.archive_state == :idle
       assert synced.assigns.archive_records == []
-      assert synced.assigns.archive_metadata == nil
+      assert synced.assigns.archive_total == 0
+      assert synced.assigns.archive_loading_more? == false
+      assert synced.assigns.archive_more_error == nil
+      assert synced.assigns.archive_agent_results == %{}
       assert synced.assigns.archive_error == nil
       assert synced.assigns.archive_key == nil
-      assert synced.assigns.archive_seq == 1
-      refute_receive {:archive_fetch, _, _}
+      assert synced.assigns.archive_seq == 2
+      assert synced.assigns.archive_agent_seq == 2
+      refute_receive {:archive_fetch, _, _, _}
 
-      # The next tab open on that new context DOES refetch, with a fresh seq.
+      # The next tab open on that new context DOES refetch the first page.
       synced =
         archive_socket(%{current_node: other_node, review_tab: :archive})
         |> EvoDashWeb.ReviewLive.ArchiveLoad.sync_context()
 
       assert synced.assigns.archive_state == :loading
       assert synced.assigns.archive_key == {"t1", other_node}
-      assert synced.assigns.archive_seq == 2
-      assert_receive {:archive_fetch, ^other_node, "t1"}
+      assert synced.assigns.archive_seq == 3
+      assert_receive {:archive_fetch, ^other_node, "t1", opts}
+      assert opts[:offset] == 0
 
-      assert_receive {:review_archive_loaded, "t1", ^other_node, 2,
-                      {:ok, [%{"agent_id" => "agent-9"}]}}
+      assert_receive {:review_archive_loaded, "t1", ^other_node, 3, 0,
+                      {:ok, %{entries: [_one], total: 1}}}
     end
   end
 
@@ -3064,6 +3378,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
       {_repo_path, task_id, _change_sha} = create_review_task_with_repo!("main", nil, archive)
 
+      # The Archive tab reads the archive through the PAGED seam; serve the
+      # fixture records as one complete page.
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, _opts ->
+        %{entries: archive, total: length(archive)}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_archive_runner) end)
+
       {:ok, task_id: task_id}
     end
 
@@ -5499,6 +5821,21 @@ defmodule EvoDashWeb.ReviewLiveTest do
     "button[phx-click='switch_tab'][phx-value-tab='archive']"
   end
 
+  # `n` STRING-keyed archive records named agent-1..agent-N — all top-level
+  # roots — for the PAGED archive tests (a page is 100 entries).
+  defp archive_page_entries(range) do
+    Enum.map(range, fn i ->
+      %{
+        "agent_id" => "agent-#{i}",
+        "parent_id" => nil,
+        "objective" => "Objective #{i}",
+        "depth" => 0
+      }
+    end)
+  end
+
+  defp archive_page_ids(range), do: Enum.map(range, &"agent-#{&1}")
+
   # A minimal LiveView socket carrying the assigns
   # EvoDashWeb.ReviewLive.ArchiveLoad reads. `assigns.__changed__` is required
   # by Phoenix.LiveView.Utils.force_assign/3 (it reads `assigns.__changed__`).
@@ -5511,7 +5848,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
         review_tab: :conversation,
         archive_state: :loaded,
         archive_records: [%{"agent_id" => "agent-1"}],
-        archive_metadata: [%{"agent_id" => "agent-1"}],
+        archive_total: 100,
+        archive_loading_more?: false,
+        archive_more_error: nil,
+        archive_agent_results: %{},
+        archive_agent_seq: 1,
         archive_error: nil,
         archive_key: {"t1", node()},
         archive_seq: 1
