@@ -72,13 +72,12 @@ Runtime phases never pass file locations between agents; hand-off is text + a co
 - `PullRequest.generate_title_with_llm/3` embeds the objective + a 2000-char slice of the agent result into a PR-TITLE prompt — a post-phase utility, not an agent hand-off.
 - **Repo notes**: `load_repo_notes/2` renders the git-submodules note block (via `render_repo_notes/1` from `Git.ls_tree_gitlinks`; `nil` when there are no gitlinks or detection fails — graceful, no `try/rescue`); root spec builders pass it as `AgentSpec` `repo_notes:` → `ContextBuilder.build_repo_notes_section/1`, and subagents inherit it.
 
-### `merge_and_report/4` Never Merges — `Task.resolve_conflict/3` Is Dead Code
+### `merge_and_report/4` Never Merges
 
 `merge_and_report/4` only `rev_parse`s HEAD and calls `Git.create_branch(repo_path, branch_name, final_sha)` — for the primary repo AND each WRITABLE foreign repo that produced commits (ONE branch name across repos; NEVER merged into any default branch).
 `final_sha` is `agent_output.commit_sha`, the POST-fallback worktree HEAD, because the Runner's `after` auto-commit fallback (`Dispatch.commit_pending_in_worktree/0`) runs BEFORE the agent result is returned and the runner then re-reads the worktree HEAD.
 A change committed ONLY by that fallback therefore still differs from the repo root's live HEAD and produces a real `genesis/agent_<hex>` branch (reviewable/mergeable on the dashboard) instead of `no_changes: true` / `branch_name: nil` — those outcomes apply only when the POST-fallback `final_sha` equals the repo root HEAD.
 The agent commit is NOT merged into any target branch and no PR is created here; there is no conflict path in the phases.
-`EvoGit.Task.resolve_conflict/3` is dead code (no caller anywhere in `apps/`): it git-merges `incoming_sha` into `phylo_node.current_commit` and, on `{:error, {:conflict, _}}`, spawns one `Manager` per conflicted file with an inline resolution prompt.
 Real branch merging with conflict reporting lives in `EvoGit.Review.merge_branch/2,3` (dashboard review flow → `{:conflict, details}`).
 
 ### Per-Repo Branches & the `repos` Report Key
@@ -126,7 +125,7 @@ Branch-creation failure is tolerated SILENTLY: the entry keeps its `commit_sha` 
 - Both phases: ensure repo → create phylo node → load context node → foreign repos + repo notes → root spec → run agent → `notify_finalizing/1` → `merge_and_report`.
 - Agent changes go to **isolated branches** (`genesis/agent_<hex>`), never the working tree; PR creation is optional (requires `gh`).
 - `merge_and_report/3` is shared via `EvoGit.Runtime.Helpers` with phase `"genesis"`, `"evolve"` or `"skill"`; the phase is used ONLY for `String.capitalize/1` log prefixes — `generate_branch_name/1` ignores its argument (`def generate_branch_name(_prefix)`) and always yields `"genesis/agent_" <> 8 lowercase hex`, so evolve and skill-extraction branches are ALSO `genesis/agent_*`.
-- No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks or inline in `EvoGit.Task`.
+- No centralized `prompts.ex` — all prompt text lives in agent modules' `system_prompt/0` callbacks.
 - No `try/rescue` in this directory (spec errors raise; conditions use `with`/`case`/`cond`).
 - PR creation is best-effort and never fails the phase — errors log and return `nil`s.
 - Evolution `node_path` must be RELATIVE and have a `CONTEXT.md` at the target directory (root `"./"` always passes).
@@ -207,7 +206,6 @@ No automatic transition between Genesis and Evolution — each CLI/dashboard/she
 | `EvoGit.Agents.Manager` | Evolution simple-mode root (planning, delegation, validation) and Genesis Mode B second root |
 | `EvoGit.Agents.Executor` / `.TaskScheduler` | Code-implementation subagent / lightweight task-scheduling subagent (spawned by Manager) |
 | `EvoGit.Adapters.Git` | All git CLI operations |
-| `EvoGit.Task` | Lower-level `mutate/3`, `diagnose/3`, `resolve_conflict/3` — not used by the phases (`resolve_conflict/3` is dead code) |
 | `ReqLLM` | LLM streaming for PR title generation in `PullRequest` |
 
 ## Known Issues — `repo_path` Resolution vs. BEAM cwd (dashboard Windows path bug)
