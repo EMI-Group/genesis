@@ -3,16 +3,27 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   Paged, lazy archive loading and the Archive-tab panel for `EvoDashWeb.ReviewLive`.
 
   The review page loads the task row through the LITE read (`get_task_lite/2`), which carries no archive data, so the archive is a SEPARATE on-demand fetch.
-  A task's archive is read in bounded pages (`EvoDash.NodeContext.list_task_archives/3` — 100 entries, `include_results: false`), and the pages ACCUMULATE in `archive_records` until the server's `total` is reached.
+  A task's archive is read in bounded pages (`EvoDash.NodeContext.list_task_archives/3` — 100 entries, `include_results: false`).
+  Pages ACCUMULATE in `archive_records` behind a RETENTION WINDOW: `EvoDashWeb.ArchiveHelpers.max_retained/0` (500 = 5 × the 100-entry page size) keeps only the most RECENT entries, which bounds a multi-thousand-agent task while a normal (≤500-agent) archive stays fully scrollable without eviction.
+  Evicted entries are counted in `archive_dropped`, so the rendered span (`retained_page_bounds/3`) and the pager predicate (`more_pages?/3`) stay correct after eviction.
+  The NEXT REQUEST OFFSET always comes from `archive_fetched` — the cumulative count of RAW server rows received — never from `length(archive_records)`, which shrinks once the window evicts.
+  A page returning FEWER rows than the page limit (an empty page included) EXHAUSTS the archive; the effective total is then clamped to `dropped + retained` (the distinct loaded rows), because the server may stop sending a per-page COUNT.
   No paged entry carries its heavy `"result"`, so one agent's result is fetched on demand (`EvoDash.NodeContext.get_agent_archive/3`) and folded into the already loaded page by `EvoDashWeb.ArchiveHelpers.merge_entry/2`.
   Both caches live for the lifetime of the load context (`{task_id, node}`), so tab round-trips and `{:review_data_loaded, ...}` reloads never refetch anything.
   A task broadcast for the reviewed task drops the cached per-agent results (they may be stale) while the loaded pages stay — including the results already folded into them.
 
+  OPT-IN: the state machine and the panel are a NO-OP unless the task opted into archiving (`archive_opt_in?`, owned by `EvoDashWeb.ReviewLive.LoadData` from `EvoDashWeb.ArchiveHelpers.archive_opt?/1`); a non-opt-in task never issues a fetch and renders an explicit disabled state.
+
   State machine (`socket.assigns`):
 
+    * `archive_opt_in?` — the task opted into archiving; owned by `LoadData`, never touched here. False ⇒ every entry point returns the socket untouched.
     * `archive_state` — `:idle | :loading | :loaded | :error`; only a FIRST page moves it to `:loading`, later appends keep `:loaded`.
-    * `archive_records` — the accumulated entries of every loaded page.
-    * `archive_total` — the server `total` of the whole archive (`0` until the first page lands).
+    * `archive_records` — the RETAINED entries of every loaded page (bounded by the retention window).
+    * `archive_dropped` — entries evicted by the retention window (their rows exist on the server but are no longer loaded).
+    * `archive_fetched` — cumulative RAW server rows received; the ONLY source of the next request offset.
+    * `archive_exhausted?` — a page returned fewer rows than `@page_limit` (an empty page included), so no further page exists.
+    * `archive_server_total` — the raw server count (`nil` when a page reported none); used for the LABEL only.
+    * `archive_total` — the EFFECTIVE total used for paging (clamped when exhausted).
     * `archive_loading_more?` / `archive_more_error` — an append fetch in flight / its failure (the loaded page stays rendered).
     * `archive_error` — a first-page failure (the panel renders the retry-able error state).
     * `archive_key` — the `{task_id, node}` of the cached or in-flight fetch.
@@ -42,32 +53,44 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   @doc """
   Starts the FIRST page fetch when the panel needs one, and only then.
 
-  `:loading` (in flight), `:loaded` (cached for this task/node) and `:error`
-  (needs the explicit `retry/1`) are all no-ops; only `:idle` spawns.
+  A NO-OP for a task that did not opt into archiving (`archive_opt_in?` false):
+  no fetch is ever issued. Otherwise `:loading` (in flight), `:loaded` (cached
+  for this task/node) and `:error` (needs the explicit `retry/1`) are all
+  no-ops too; only `:idle` spawns.
   """
   def ensure_loaded(socket) do
-    case Map.get(socket.assigns, :archive_state, :idle) do
-      :idle -> start_fetch(socket)
-      _other -> socket
+    if Map.get(socket.assigns, :archive_opt_in?, false) do
+      case Map.get(socket.assigns, :archive_state, :idle) do
+        :idle -> start_fetch(socket)
+        _other -> socket
+      end
+    else
+      socket
     end
   end
 
   @doc """
   Appends the next page, when there is one and none is already in flight.
 
-  The offset is the number of accumulated records, so a retried append is
-  idempotent (duplicate `agent_id`s are dropped on arrival). A no-op when the
-  first page is not `:loaded`, an append is in flight, or everything is loaded.
+  The request offset is `archive_fetched` — the cumulative count of raw server
+  rows already received — so a retried append is idempotent (duplicate
+  `agent_id`s are dropped on arrival) even after the retention window evicted
+  older entries. A no-op when the first page is not `:loaded`, an append is in
+  flight, the archive is exhausted, or `EvoDashWeb.ArchiveHelpers.more_pages?/3`
+  says nothing is left.
   """
   def load_more(socket) do
     loaded = loaded_count(socket.assigns)
     total = total_count(socket.assigns)
+    dropped = dropped_count(socket.assigns)
 
     if Map.get(socket.assigns, :archive_state) == :loaded and
-         not Map.get(socket.assigns, :archive_loading_more?, false) and loaded < total do
+         not Map.get(socket.assigns, :archive_loading_more?, false) and
+         not Map.get(socket.assigns, :archive_exhausted?, false) and
+         ArchiveHelpers.more_pages?(loaded, dropped, total) do
       socket
       |> assign(archive_loading_more?: true, archive_more_error: nil)
-      |> request_page(loaded)
+      |> request_page(fetched_count(socket.assigns))
     else
       socket
     end
@@ -135,22 +158,33 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   @doc """
   Retry handler for the panel's Retry button: re-arms the state machine and
   starts a fresh first page.
+
+  A NO-OP for a task that did not opt into archiving — a non-opt-in task can
+  never start a fetch, no matter which control is clicked.
   """
   def retry(socket) do
-    socket
-    |> assign(
-      archive_state: :idle,
-      archive_error: nil,
-      archive_key: nil,
-      archive_records: [],
-      archive_total: 0,
-      archive_loading_more?: false,
-      archive_more_error: nil,
-      archive_agent_results: %{},
-      archive_seq: next_seq(socket, :archive_seq),
-      archive_agent_seq: next_seq(socket, :archive_agent_seq)
-    )
-    |> ensure_loaded()
+    if Map.get(socket.assigns, :archive_opt_in?, false) do
+      socket
+      |> assign(
+        archive_state: :idle,
+        archive_error: nil,
+        archive_key: nil,
+        archive_records: [],
+        archive_total: 0,
+        archive_dropped: 0,
+        archive_fetched: 0,
+        archive_exhausted?: false,
+        archive_server_total: nil,
+        archive_loading_more?: false,
+        archive_more_error: nil,
+        archive_agent_results: %{},
+        archive_seq: next_seq(socket, :archive_seq),
+        archive_agent_seq: next_seq(socket, :archive_agent_seq)
+      )
+      |> ensure_loaded()
+    else
+      socket
+    end
   end
 
   @doc """
@@ -181,9 +215,10 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   Called at the top of `ReviewLive.start_async_load/2`, i.e. exactly when a
   load is (re)started. A nil or matching `archive_key` leaves the cache alone
   (a same task/node reload must not discard a loaded archive); a task/node
-  change resets pages, total, pager state AND the per-agent results, bumps both
-  generations so in-flight fetches are dropped, and re-fetches only when the
-  Archive tab is the one on screen.
+  change resets pages, total, pager state, the retention/offset counters AND
+  the per-agent results, bumps both generations so in-flight fetches are
+  dropped, and re-fetches only when the Archive tab is on screen AND the new
+  task opted into archiving.
   """
   def sync_context(socket) do
     key = {socket.assigns.task_id, socket.assigns.current_node}
@@ -201,6 +236,10 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
             archive_state: :idle,
             archive_records: [],
             archive_total: 0,
+            archive_dropped: 0,
+            archive_fetched: 0,
+            archive_exhausted?: false,
+            archive_server_total: nil,
             archive_error: nil,
             archive_loading_more?: false,
             archive_more_error: nil,
@@ -210,7 +249,8 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
             archive_agent_seq: next_seq(socket, :archive_agent_seq)
           )
 
-        if Map.get(socket.assigns, :review_tab) == :archive do
+        if Map.get(socket.assigns, :review_tab) == :archive and
+             Map.get(socket.assigns, :archive_opt_in?, false) do
           ensure_loaded(socket)
         else
           socket
@@ -231,7 +271,12 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   """
   attr :state, :atom, required: true
   attr :records, :any, default: []
+  # The EFFECTIVE total (paging decisions); `server_total` is the label size.
   attr :total, :any, default: nil
+  attr :opt_in?, :boolean, default: false
+  attr :dropped, :integer, default: 0
+  attr :exhausted?, :boolean, default: false
+  attr :server_total, :integer, default: nil
   attr :loading_more?, :boolean, default: false
   attr :more_error, :any, default: nil
   attr :agent_results, :map, default: %{}
@@ -252,6 +297,18 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
 
     ~H"""
     <%= cond do %>
+      <% not @opt_in? -> %>
+        <div class="p-8 text-center">
+          <.icon name="hero-archive-box-x-mark" class="size-10 text-base-content/40 mx-auto mb-3" />
+          <%!-- zh_CN: archive → 归档 --%>
+          <p class="text-sm text-base-content/60">
+            {gettext("Archive data was not collected for this task.")}
+          </p>
+          <%!-- zh_CN: archive → 归档 --%>
+          <p class="mt-1 text-xs text-base-content/50">
+            {gettext("Tasks started without archiving enabled keep no per-agent archive.")}
+          </p>
+        </div>
       <% @state == :error -> %>
         <div class="rounded-xl border border-error/30 bg-error/5 p-6 text-center">
           <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-3" />
@@ -272,6 +329,9 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
         <EvoDashWeb.ReviewComponents.archive_review_section
           archive_metadata={@records}
           total={@total}
+          dropped={@dropped}
+          exhausted?={@exhausted?}
+          server_total={@server_total}
           loading_more?={@loading_more?}
           more_error={@more_error}
           agent_results={@agent_results}
@@ -290,6 +350,21 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
     """
   end
 
+  @doc """
+  The count the archive is LABELLED with (tab badge + section header).
+
+  `max(server_total, effective_total)` when the server reported a usable count,
+  else the effective total (`0` for a missing/garbage total). Kept separate from
+  the EFFECTIVE total because the label shows the archive's true size even once
+  paging was clamped by exhaustion/eviction. TOTAL — never raises.
+  """
+  def label_total(assigns) do
+    case Map.get(assigns, :archive_server_total) do
+      total when is_integer(total) and total >= 0 -> max(total, total_count(assigns))
+      _other -> total_count(assigns)
+    end
+  end
+
   # Single source of the failure message (a gettext literal so extraction sees
   # it); the fetch paths and the panel share it.
   defp error_message, do: gettext("Failed to load archive data.")
@@ -306,6 +381,10 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
       archive_error: nil,
       archive_records: [],
       archive_total: 0,
+      archive_dropped: 0,
+      archive_fetched: 0,
+      archive_exhausted?: false,
+      archive_server_total: nil,
       archive_loading_more?: false,
       archive_more_error: nil,
       archive_agent_results: %{},
@@ -318,14 +397,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   defp apply_page(socket, 0, result) do
     case result do
       {:ok, %{entries: entries, total: total}} ->
-        assign(socket,
-          archive_state: :loaded,
-          archive_records: entries,
-          archive_total: total,
-          archive_loading_more?: false,
-          archive_more_error: nil,
-          archive_error: nil
-        )
+        apply_page_success(socket, 0, entries, total, entries)
 
       {:error, reason} ->
         assign(socket,
@@ -333,6 +405,10 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
           archive_error: reason,
           archive_records: [],
           archive_total: 0,
+          archive_dropped: 0,
+          archive_fetched: 0,
+          archive_exhausted?: false,
+          archive_server_total: nil,
           archive_loading_more?: false,
           archive_more_error: nil
         )
@@ -343,22 +419,21 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
           archive_error: error_message(),
           archive_records: [],
           archive_total: 0,
+          archive_dropped: 0,
+          archive_fetched: 0,
+          archive_exhausted?: false,
+          archive_server_total: nil,
           archive_loading_more?: false,
           archive_more_error: nil
         )
     end
   end
 
-  defp apply_page(socket, _offset, result) do
+  defp apply_page(socket, offset, result) do
     case result do
       {:ok, %{entries: entries, total: total}} ->
-        assign(socket,
-          archive_state: :loaded,
-          archive_records: append_entries(records(socket.assigns), entries),
-          archive_total: total,
-          archive_loading_more?: false,
-          archive_more_error: nil
-        )
+        accumulated = append_entries(records(socket.assigns), entries)
+        apply_page_success(socket, offset, entries, total, accumulated)
 
       {:error, reason} ->
         # The loaded page stays exactly as it was — only the append failed.
@@ -375,6 +450,42 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
           archive_state: :loaded
         )
     end
+  end
+
+  # Folds ONE successful page into the accumulated records + pager state.
+  #
+  # `offset` is the RAW request offset, so `fetched = offset + page size` counts
+  # every server row received even after the retention window evicted older
+  # ones — it is the only source of the next offset. A page shorter than
+  # `@page_limit` (an empty page included) means the archive ends here, and the
+  # effective total is then clamped to the distinct loaded rows
+  # (`dropped + retained`), because the core may not send a per-page COUNT.
+  defp apply_page_success(socket, offset, page_entries, total, accumulated) do
+    previous_dropped = if offset == 0, do: 0, else: dropped_count(socket.assigns)
+    {retained, dropped} = ArchiveHelpers.retain_window(accumulated, previous_dropped)
+    fetched = offset + length(page_entries)
+    exhausted? = length(page_entries) < @page_limit
+    server_total = if is_integer(total) and total >= 0, do: total
+
+    effective_total =
+      if exhausted? do
+        dropped + length(retained)
+      else
+        max(fetched, server_total || 0)
+      end
+
+    assign(socket,
+      archive_state: :loaded,
+      archive_records: retained,
+      archive_total: effective_total,
+      archive_dropped: dropped,
+      archive_fetched: fetched,
+      archive_exhausted?: exhausted?,
+      archive_server_total: server_total,
+      archive_loading_more?: false,
+      archive_more_error: nil,
+      archive_error: nil
+    )
   end
 
   defp apply_agent_result(socket, agent_id, result) do
@@ -431,6 +542,22 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   defp total_count(assigns) do
     case Map.get(assigns, :archive_total) do
       total when is_integer(total) and total >= 0 -> total
+      _other -> 0
+    end
+  end
+
+  # Cumulative RAW server rows received — the ONLY source of the next request
+  # offset (the retained record count shrinks once the window evicts).
+  defp fetched_count(assigns) do
+    case Map.get(assigns, :archive_fetched) do
+      fetched when is_integer(fetched) and fetched >= 0 -> fetched
+      _other -> 0
+    end
+  end
+
+  defp dropped_count(assigns) do
+    case Map.get(assigns, :archive_dropped) do
+      dropped when is_integer(dropped) and dropped >= 0 -> dropped
       _other -> 0
     end
   end

@@ -67,10 +67,14 @@ The rendered list holds summary rows only; the heavy data is fetched per card by
 
 ### Entry shape
 
-`:task_details` maps `task_id => entry` with the shape `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, entries: [map()], total: non_neg_integer(), next_offset: non_neg_integer(), loading_more?: boolean(), more_error: term() | nil, error: term() | nil, seq: pos_integer(), agent_results: %{agent_id => %{state: :loading | :ok | :error, entry: map() | nil, error: term() | nil}}}}`.
+`:task_details` maps `task_id => entry` with the shape `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, entries: [map()], total: non_neg_integer(), server_total: non_neg_integer() | nil, dropped: non_neg_integer(), exhausted?: boolean(), next_offset: non_neg_integer(), loading_more?: boolean(), more_error: term() | nil, error: term() | nil, seq: pos_integer(), agent_results: %{agent_id => %{state: :loading | :ok | :error, entry: map() | nil, error: term() | nil}}}}`.
 `task` is meaningful only when `state == :ok`, `error` only when `state == :error`.
-The archive envelope is PAGED: `entries` accumulates the pages read so far, `total` is the TRUE archive size, `next_offset` is the offset the next/in-flight page was requested at, and `agent_results` holds the lazily fetched per-agent full entries (the paged read omits every `"result"`).
+The archive envelope is PAGED: `entries` holds the pages read so far (bounded by the retention window below), `total` is the EFFECTIVE total that drives paging, `server_total` is the server's own count for the label only (`nil` when a page carried none), `dropped` counts the entries the retention window evicted, `exhausted?` marks a short/empty page that proved there is nothing more, `next_offset` is the cumulative count of RAW rows fetched so far (the offset the next/in-flight page is requested at), and `agent_results` holds the lazily fetched per-agent full entries (the paged read omits every `"result"`).
+Both `total` and `server_total` are OPTIONAL inputs: a page read may stop returning a per-page `COUNT(*)`, and the fold stays total when it is absent.
 The detail entry and its nested archive entry carry their OWN seq drawn from the same monotonic `:task_detail_seq`, so a detail refetch never invalidates a landed archive (and vice versa); an append keeps the archive's seq and is identified by `next_offset`.
+`entries` is bounded by `EvoDashWeb.ArchiveHelpers.retain_window/2,3` at `ArchiveHelpers.max_retained/0` (500 = 5 pages): the most RECENT entries are kept and the evicted (oldest) count accumulates in `dropped`.
+A SHORT page (`length(page_entries) < 100`, empty included) sets `exhausted?: true` and clamps `total` to `dropped + length(entries)`, so a stale server count can never keep the pager alive; a full page sets `total = max(fetched, server_total || 0)`.
+`more_pages?/1` is the single pager predicate: `not exhausted? and ArchiveHelpers.more_pages?(length(entries), dropped, total) and not loading_more?` — never `length(entries) < total`, which is wrong once rows are evicted.
 The cache never exceeds ONE page's worth of entries: `prune/2` keeps only entries whose id is on the freshly loaded page.
 Nothing is fetched at mount or on page load — an entry exists only once the user expands a card.
 
@@ -79,7 +83,7 @@ Nothing is fetched at mount or on page load — an entry exists only once the us
 | read | returns | app-env seam | default |
 |------|---------|--------------|---------|
 | lite detail | `%EvoGit.TaskInfo{}` with `archive_metadata: nil` and no `:archive_records` in the result | `:tasks_task_detail_runner` (2-arity) | `EvoDash.NodeContext.get_task_lite/2` |
-| archive PAGE | `%{entries: [map()], total: non_neg_integer()}` for `limit: 100, offset: <page>, include_results: false` | `:tasks_task_archive_runner` (3-arity `fn node, task_id, opts -> end`) | `EvoDash.NodeContext.list_task_archives/3` |
+| archive PAGE | `%{entries: [map()]}` plus an OPTIONAL `total` (a non-negative integer becomes `server_total`) for `limit: 100, offset: <page>, include_results: false` | `:tasks_task_archive_runner` (3-arity `fn node, task_id, opts -> end`) | `EvoDash.NodeContext.list_task_archives/3` |
 | one agent's full entry | the entry map INCLUDING its `"result"` (`nil` when absent) | `:tasks_task_archive_agent_runner` (3-arity `fn node, task_id, agent_id -> end`) | `EvoDash.NodeContext.get_agent_archive/3` |
 
 All three seams are resolved AT SPAWN TIME from app env (the dashboard's runner-seam idiom), so a test can inject an exiting runner and assert the LiveView survives.
@@ -90,8 +94,8 @@ No polling — results arrive only from those three messages.
 
 `apply_detail/5`, `apply_archive/5` and `apply_archive_agent/6` drop a result unless the message's `node` still equals `socket.assigns.current_node`, the entry still exists, AND the entry's (archive) seq equals the message's seq (a newer fetch, a pruned entry, or an invalidated entry supersedes the older result); `apply_archive_agent/6` additionally requires the agent to still be tracked in `agent_results`.
 `{:ok, %EvoGit.TaskInfo{}}` → `:ok`; `{:ok, nil}` (the task vanished between the page load and the expand) → `:error` with `:not_found`; `{:error, reason}` (including a SafeCall-captured exit) → `:error` with that reason; any other shape → `:error`.
-For the archive FIRST page, `{:ok, %{entries: list, total: n}}` → `:ok` (the empty list is a valid "this task archived nothing"); `{:error, reason}` and any other shape → `:error` (Retry → `load_archive/2`).
-For an APPEND (`loading_more?: true`), a success merges the page in (deduped by `agent_id`, order preserved) and bumps `next_offset`; a failure keeps the loaded page, clears `loading_more?` and records `more_error` (Retry → `load_more_archive/2`).
+For the archive FIRST page, `{:ok, %{entries: list}}` (with or without a `total`) → `:ok` — the empty list is a valid "this task archived nothing"; `{:error, reason}` and any other shape → `:error` (Retry → `load_archive/2`).
+For an APPEND (`loading_more?: true`), a success merges the page in (deduped by `agent_id`, order preserved), advances `next_offset` by the RAW rows fetched, refreshes `dropped`/`exhausted?`/`server_total` and the effective `total`; a failure keeps the loaded page, clears `loading_more?` and records `more_error` (Retry → `load_more_archive/2`).
 For a per-agent result, `{:ok, entry_map}` caches `%{state: :ok, entry: entry}` AND folds the entry into `entries` via `ArchiveHelpers.merge_entry/2`; `{:ok, nil}` / `{:error, reason}` / anything else → `%{state: :error, error: reason}`.
 
 ### Public API (total — a missing assign reads as an empty cache)
@@ -100,7 +104,7 @@ For a per-agent result, `{:ok, entry_map}` caches `%{state: :ok, entry: entry}` 
 - `ensure/2` — fetch when no entry exists; an entry in ANY state (including `:error`) is a no-op, so this is both the cache guard and the in-flight guard.
 - `retry/2` — drop the entry, then `ensure/2` (backs the error strip's Retry).
 - `load_archive/2` — no-op unless the detail entry is `:ok`; fetches the FIRST page when `archive` is `nil` or an `:error` archive, and never while `:loading`/`:ok`.
-- `load_more_archive/2` — no-op unless the archive is `:ok`, `length(entries) < total` and no append is in flight.
+- `load_more_archive/2` — no-op unless the archive is `:ok` and `more_pages?/1` is true (not `exhausted?`, `dropped + length(entries) < total`, no append in flight).
 - `load_agent_result/3` — no-op unless the archive is `:ok`; per-agent cache/in-flight guard (`:loading`/`:ok` left alone, `:error` refetched). Never called on render.
 - `invalidate/2` — drop the entry (archive AND every cached agent result go with it); when the card is still in `:expanded_task_ids` it immediately `ensure/2`s again, so an open card shows the loading state and then the fresh detail instead of blanking (a collapsed card stays uncached until the next expand). This is the ONLY archive invalidation path.
 - `prune/2` — keep only the entries for ids present in the landed page rows.
@@ -127,7 +131,7 @@ The expanded structured-failure block is the exception: it reads the summary's `
 
 The archive section appears only when the detail is `:ok` AND (`opts[:archive]` is truthy OR an archive envelope already exists).
 The records are NEVER fetched with the detail: the section first shows a "Show archive" button (`load_task_archive`) and the hint "The archive loads on demand."
-States: not requested (button + hint) → `:loading` spinner → `:ok` with a page rendered through `ArchiveComponents.archive_details` (count/range label, the tree, "Load more" while `length(entries) < total`, per-agent "Show result") → `:ok` with `[]` → "No archived agents for this task." → `:error` strip ("Could not load the task archive.") whose Retry re-fires the same `load_task_archive` event.
+States: not requested (button + hint) → `:loading` spinner → `:ok` with a page rendered through `ArchiveComponents.archive_details` (count/range label, the tree, "Load more" only while `not exhausted? and ArchiveHelpers.more_pages?(loaded, dropped, effective_total)`, per-agent "Show result") → `:ok` with `[]` → "No archived agents for this task." → `:error` strip ("Could not load the task archive.") whose Retry re-fires the same `load_task_archive` event.
 An append failure is INLINE and non-destructive: the loaded page stays, `more_error` renders "Could not load more archive pages." + Retry (same `load_more_task_archive` event).
 Each agent's heavy `"result"` is fetched only when the user presses "Show result" (`load_task_archive_agent_result`), rendered capped through `blob_preview`, and never auto-fetched on render.
 
