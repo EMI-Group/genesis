@@ -549,8 +549,9 @@ defmodule EvoDashWeb.ReviewLive do
       end
       |> push_event("scroll_to_file", %{target_id: target_id})
 
-    # Trigger diff loading if file diff is nil
-    maybe_load_diff(socket, path)
+    # The file's diff (when not loaded yet) is fetched off-process — the
+    # selection is already in place, so the result can be applied on arrival.
+    {:noreply, maybe_start_diff_load(socket, path)}
   end
 
   @impl true
@@ -562,20 +563,22 @@ defmodule EvoDashWeb.ReviewLive do
       new_expanded = Map.put(expanded_files, path, !current)
       socket = assign(socket, :expanded_files, new_expanded)
 
-      # If expanding a file whose diff is nil, trigger lazy load
-      if !current do
-        maybe_load_diff(socket, path)
-      else
+      # Expanding a file whose diff is nil fetches it off-process; collapsing
+      # never triggers a load.
+      if current do
         {:noreply, socket}
+      else
+        {:noreply, maybe_start_diff_load(socket, path)}
       end
     else
       # SHOW route: per-repo expansion map keyed by repo_id — toggle only the
       # ACTIVE repo's submap.
       expanded = socket.assigns.expanded_files || %{}
       sub = Map.get(expanded, socket.assigns.active_repo_id, %{})
+      now_expanded? = not Map.get(sub, path, false)
 
       sub =
-        if Map.get(sub, path, false), do: Map.delete(sub, path), else: Map.put(sub, path, true)
+        if now_expanded?, do: Map.put(sub, path, true), else: Map.delete(sub, path)
 
       expanded = Map.put(expanded, socket.assigns.active_repo_id, sub)
 
@@ -584,14 +587,19 @@ defmodule EvoDashWeb.ReviewLive do
         |> assign(:expanded_files, expanded)
         |> project_active_repo()
 
-      # If expanding a file whose diff is nil, trigger lazy load
-      maybe_load_diff(socket, path)
+      # Expanding a file whose diff is nil fetches it off-process; collapsing
+      # never triggers a load.
+      if now_expanded? do
+        {:noreply, maybe_start_diff_load(socket, path)}
+      else
+        {:noreply, socket}
+      end
     end
   end
 
   @impl true
   def handle_event("load_file_diff", %{"path" => path}, socket) do
-    maybe_load_diff(socket, path)
+    {:noreply, maybe_start_diff_load(socket, path)}
   end
 
   @impl true
@@ -603,14 +611,7 @@ defmodule EvoDashWeb.ReviewLive do
   def handle_event("expand_context", %{"path" => path}, socket) do
     # SHOW route reads the context level from the ACTIVE repo's submap;
     # :commit keeps today's legacy flat path-keyed state.
-    current_level =
-      if socket.assigns.live_action == :commit do
-        Map.get(socket.assigns.file_context_levels, path, 3)
-      else
-        socket.assigns.file_context_levels
-        |> Map.get(socket.assigns.active_repo_id, %{})
-        |> Map.get(path, 3)
-      end
+    current_level = context_level(socket, diff_scope(socket), path)
 
     new_level =
       cond do
@@ -621,19 +622,9 @@ defmodule EvoDashWeb.ReviewLive do
 
     opts = if new_level == :all, do: [context: :all], else: [context: new_level]
 
-    case load_file_diff_for_mode(socket, path, opts) do
-      {:ok, diff_string} ->
-        # Context expansion only changes the diff context window.
-        {:noreply, update_file_diff_in_socket(socket, path, diff_string, new_level)}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Failed to expand context: %{reason}", reason: inspect(reason))
-         )}
-    end
+    # The re-fetch with a wider context window runs off-process; the level it
+    # asks for travels in the action ref so the apply step writes it back.
+    {:noreply, start_diff_load(socket, path, :expand_context, new_level, opts)}
   end
 
   @impl true
@@ -1068,13 +1059,17 @@ defmodule EvoDashWeb.ReviewLive do
     # Async action finished. A result for a different task/node belongs to a
     # load context that is already gone (the switch reset the in-progress
     # state) — drop it entirely.
+    #
+    # Apply BEFORE clearing: the lazy-diff actions must read the PRE-clear
+    # @diff_in_flight seq to detect a request that superseded them, while
+    # clear_action_state/3 only removes the in-flight entry this result owns.
     if task_id != socket.assigns.task_id or node != socket.assigns.current_node do
       {:noreply, socket}
     else
       {:noreply,
        socket
-       |> clear_action_state(action, ref)
-       |> apply_action_result(action, ref, result)}
+       |> apply_action_result(action, ref, result)
+       |> clear_action_state(action, ref)}
     end
   end
 
@@ -1373,8 +1368,134 @@ defmodule EvoDashWeb.ReviewLive do
     end
   end
 
+  # Lazy file-diff loads (`:diff`) and their context expansions
+  # (`:expand_context`): the result is applied only when it is still the CURRENT
+  # request for its `{scope, path}` key and the file is still on screen in that
+  # scope — see apply_diff_action_result/4.
+  defp apply_action_result(socket, action, ref, result) when action in [:diff, :expand_context] do
+    key = {Map.get(ref, :repo_id), Map.get(ref, :path)}
+
+    # The in-flight entry holds the seq of the LATEST load started for this
+    # {scope, path}. A different value means a newer request superseded this
+    # one (and owns the entry), so the stale result is dropped untouched.
+    if Map.get(socket.assigns.diff_in_flight, key) != Map.get(ref, :seq) do
+      socket
+    else
+      apply_diff_action_result(socket, action, ref, result)
+    end
+  end
+
   # An unexpected action shape must never crash the page.
   defp apply_action_result(socket, _action, _ref, _result), do: socket
+
+  # Applies one lazy-diff outcome. The scope is the one CAPTURED at spawn time
+  # (the active repo id on the SHOW route, the :commit atom on the :commit
+  # route), never the scope that happens to be active now — a result landing
+  # after a repo switch is dropped instead of written into the wrong repo.
+  defp apply_diff_action_result(socket, action, ref, result) do
+    scope = Map.get(ref, :repo_id)
+    path = Map.get(ref, :path)
+    level = if action == :expand_context, do: Map.get(ref, :level, 3), else: 3
+
+    if diff_result_relevant?(socket, action, scope, path) do
+      case result do
+        {:ok, {:ok, diff_string}} ->
+          update_file_diff_in_socket(socket, scope, path, diff_string, level)
+
+        other ->
+          put_flash(socket, :error, diff_error_message(action, path, other))
+      end
+    else
+      socket
+    end
+  end
+
+  # A diff result may be applied only while its scope and file are still on
+  # screen: the route still shows that scope, the active repo is still the
+  # captured one (:show), and the file still exists in that scope's file list.
+  # Selection-driven loads additionally require the file to still be the
+  # selection or still expanded; a context expansion applies whenever the file
+  # is present (it may have been triggered from an unselected file).
+  defp diff_result_relevant?(socket, action, scope, path) do
+    scope_in_view?(socket, scope) and file_present?(socket, scope, path) and
+      (action == :expand_context or file_selected_or_expanded?(socket, scope, path))
+  end
+
+  # The route/scope still on screen: :commit requires the commit route, a repo
+  # id requires the SHOW route with that repo still active.
+  defp scope_in_view?(socket, :commit), do: socket.assigns.live_action == :commit
+
+  defp scope_in_view?(socket, scope),
+    do: socket.assigns.live_action != :commit and socket.assigns.active_repo_id == scope
+
+  defp file_present?(socket, scope, path) do
+    case scope_files(socket, scope) do
+      files when is_list(files) -> Enum.any?(files, &(Map.get(&1, :path) == path))
+      _ -> false
+    end
+  end
+
+  defp file_selected_or_expanded?(socket, scope, path) do
+    selected?(socket, scope, path) or expanded?(socket, scope, path)
+  end
+
+  defp selected?(socket, :commit, path), do: socket.assigns.selected_file == path
+
+  defp selected?(socket, scope, path),
+    do: Map.get(socket.assigns.selected_file || %{}, scope) == path
+
+  defp expanded?(socket, :commit, path),
+    do: Map.get(socket.assigns.expanded_files || %{}, path, false) == true
+
+  defp expanded?(socket, scope, path) do
+    expanded = socket.assigns.expanded_files || %{}
+
+    expanded
+    |> Map.get(scope, %{})
+    |> Map.get(path, false) == true
+  end
+
+  # The scope's review data: @commit_data on the :commit route, the scoped
+  # @review_repos entry's review_data on the SHOW route (nil when the repo is
+  # gone or has no diff data).
+  defp scope_files(socket, :commit) do
+    case socket.assigns.commit_data do
+      %{} = data -> Map.get(data, :files)
+      _ -> nil
+    end
+  end
+
+  defp scope_files(socket, scope) do
+    case find_review_repo(socket.assigns.review_repos, scope) do
+      %{} = repo ->
+        case Map.get(repo, :review_data) do
+          %{} = data -> Map.get(data, :files)
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # The failure flash for a lazy-diff load, keeping the two established
+  # strings: context expansion has its own message.
+  defp diff_error_message(:expand_context, _path, result) do
+    gettext("Failed to expand context: %{reason}", reason: inspect(diff_failure_reason(result)))
+  end
+
+  defp diff_error_message(_action, path, result) do
+    gettext("Failed to load diff for %{path}: %{reason}",
+      path: path,
+      reason: inspect(diff_failure_reason(result))
+    )
+  end
+
+  # The reason behind a failed diff load: the Actions outcome's `{:error,
+  # reason}`, a SafeCall exit/exception wrapper, or an unexpected shape.
+  defp diff_failure_reason({:ok, {:error, reason}}), do: reason
+  defp diff_failure_reason({:error, reason}), do: reason
+  defp diff_failure_reason(other), do: other
 
   # One batch outcome: a merged repo records its TERMINAL resolution and counts
   # toward the batch tally; a conflict/error repo lands in its non-terminal
@@ -1470,12 +1591,18 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   # Clears the in-progress state an action set, for the action's shape:
-  # diff loads delete their `{repo_id, path}` entry, the background completion
-  # write owns none, and every other action clears the marker (plus its repo's
-  # busy flag) and the task-level spinner.
+  # diff loads release their `{scope, path}` entry (only when this result still
+  # owns it — a newer request for the same file keeps its own marker), the
+  # background completion write owns none, and every other action clears the
+  # marker (plus its repo's busy flag) and the task-level spinner.
   defp clear_action_state(socket, action, ref) when action in [:diff, :expand_context] do
     key = {Map.get(ref, :repo_id), Map.get(ref, :path)}
-    assign(socket, :diff_in_flight, Map.delete(socket.assigns.diff_in_flight, key))
+    seq = Map.get(ref, :seq)
+
+    case Map.get(socket.assigns.diff_in_flight, key) do
+      ^seq -> assign(socket, :diff_in_flight, Map.delete(socket.assigns.diff_in_flight, key))
+      _superseded -> socket
+    end
   end
 
   defp clear_action_state(socket, :completion, _ref), do: socket
@@ -1577,160 +1704,175 @@ defmodule EvoDashWeb.ReviewLive do
     |> Enum.join("\n")
   end
 
-  defp maybe_load_diff(socket, path) do
-    if socket.assigns.live_action == :commit do
-      maybe_load_commit_diff(socket, path)
-    else
-      maybe_load_review_diff(socket, path)
+  # --- Lazy file-diff loads ---
+  #
+  # A file's diff is fetched on demand (first selection / expansion, or an
+  # explicit context expansion) OFF the LiveView process, through the shared
+  # action plumbing (`spawn_action/4` + `{:review_action_result, ...}`), so a
+  # slow git/RPC call can neither block the page nor exit the LiveView.
+
+  # The scope a lazy diff load belongs to: the ACTIVE repo id on the SHOW
+  # route, the `:commit` atom on the `:commit` route. Captured at spawn time so
+  # a result landing after a repo switch is never written into the wrong repo.
+  defp diff_scope(socket) do
+    if socket.assigns.live_action == :commit, do: :commit, else: socket.assigns.active_repo_id
+  end
+
+  # Starts the load for `path` only when the current scope does not have its
+  # diff yet (the lazy gate shared by every selection/expansion path). A file
+  # missing from the scope's list is never fetched.
+  defp maybe_start_diff_load(socket, path) do
+    scope = diff_scope(socket)
+
+    case scope_files(socket, scope) do
+      files when is_list(files) ->
+        case Enum.find(files, &(Map.get(&1, :path) == path)) do
+          %{} = file ->
+            if is_nil(Map.get(file, :diff)),
+              do: start_diff_load(socket, path, :diff, 3, []),
+              else: socket
+
+          _ ->
+            socket
+        end
+
+      _ ->
+        socket
     end
   end
 
-  defp maybe_load_review_diff(socket, path) do
-    review_data = socket.assigns.review_data
-    file = review_data && Enum.find(review_data.files, &(&1.path == path))
+  # Spawns one exit-safe diff load. The `{scope, path}` entry in
+  # @diff_in_flight stores the seq of the LATEST request: a second request for
+  # the same file is a no-op while one is in flight, and the apply step uses
+  # the seq to discard a superseded result.
+  defp start_diff_load(socket, path, action, level, opts) do
+    scope = diff_scope(socket)
+    key = {scope, path}
 
-    if file && is_nil(file.diff) do
-      %{base_sha: base_sha, commit_sha: commit_sha, repo_path: repo_path} = socket.assigns
-      node = socket.assigns.current_node
-
-      case EvoDash.NodeContext.load_file_diff(node, repo_path, base_sha, commit_sha, path) do
-        {:ok, diff_string} ->
-          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
-
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to load diff for %{path}: %{reason}",
-               path: path,
-               reason: inspect(reason)
-             )
-           )}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  defp maybe_load_commit_diff(socket, path) do
-    commit_data = socket.assigns.commit_data
-    file = commit_data && Enum.find(commit_data.files, &(&1.path == path))
-
-    if file && is_nil(file.diff) do
-      %{repo_path: repo_path, inspect_commit_sha: commit_sha} = socket.assigns
-      node = socket.assigns.current_node
-
-      case EvoDash.NodeContext.load_commit_file_diff(node, repo_path, commit_sha, path) do
-        {:ok, diff_string} ->
-          {:noreply, update_file_diff_in_socket(socket, path, diff_string, 3)}
-
-        {:error, reason} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Failed to load diff for %{path}: %{reason}",
-               path: path,
-               reason: inspect(reason)
-             )
-           )}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  # Loads a file diff using the appropriate mode (commit vs review).
-  defp load_file_diff_for_mode(socket, path, opts) do
-    %{repo_path: repo_path} = socket.assigns
-    node = socket.assigns.current_node
-
-    if socket.assigns.live_action == :commit do
-      %{inspect_commit_sha: commit_sha} = socket.assigns
-
-      EvoDash.NodeContext.load_file_diff(
-        node,
-        repo_path,
-        "#{commit_sha}~1",
-        commit_sha,
-        path,
-        opts
-      )
-    else
-      %{base_sha: base_sha, commit_sha: commit_sha} = socket.assigns
-      EvoDash.NodeContext.load_file_diff(node, repo_path, base_sha, commit_sha, path, opts)
-    end
-  end
-
-  # Updates a file's diff in the appropriate data source (commit_data or
-  # review_data) and sets the context level and expanded state. On the SHOW
-  # route the diff is written into the ACTIVE repo's entry inside
-  # @review_repos, and the diff-state maps (selected_file / expanded_files /
-  # file_context_levels) are updated for that repo; the :commit route keeps
-  # today's legacy flat path-keyed behavior.
-  defp update_file_diff_in_socket(socket, path, diff_string, context_level) do
-    if socket.assigns.live_action == :commit do
-      data = socket.assigns.commit_data
-
-      updated_files =
-        Enum.map(data.files, fn f ->
-          if f.path == path do
-            %{f | diff: diff_string}
-          else
-            f
-          end
-        end)
-
-      updated_data = %{data | files: updated_files}
-      expanded_files = Map.put(socket.assigns.expanded_files, path, true)
-      file_context_levels = Map.put(socket.assigns.file_context_levels, path, context_level)
-
-      assign(socket, [
-        {:commit_data, updated_data},
-        {:expanded_files, expanded_files},
-        {:file_context_levels, file_context_levels}
-      ])
-    else
-      repo_id = socket.assigns.active_repo_id
-
-      review_repos =
-        Enum.map(socket.assigns.review_repos, fn repo ->
-          if repo.repo_id == repo_id do
-            case repo.review_data do
-              nil ->
-                repo
-
-              data ->
-                updated_files =
-                  Enum.map(data.files, fn f ->
-                    if f.path == path, do: %{f | diff: diff_string}, else: f
-                  end)
-
-                %{repo | review_data: %{data | files: updated_files}}
-            end
-          else
-            repo
-          end
-        end)
-
-      expanded = socket.assigns.expanded_files || %{}
-      expanded_sub = Map.put(Map.get(expanded, repo_id, %{}), path, true)
-      expanded = Map.put(expanded, repo_id, expanded_sub)
-
-      levels = socket.assigns.file_context_levels || %{}
-      levels_sub = Map.put(Map.get(levels, repo_id, %{}), path, context_level)
-      levels = Map.put(levels, repo_id, levels_sub)
-
+    if Map.has_key?(socket.assigns.diff_in_flight, key) do
       socket
-      |> assign(
-        review_repos: review_repos,
-        selected_file: Map.put(socket.assigns.selected_file || %{}, repo_id, path),
-        expanded_files: expanded,
-        file_context_levels: levels
-      )
-      |> project_active_repo()
+    else
+      {seq, socket} = next_action_seq(socket)
+      socket = assign(socket, :diff_in_flight, Map.put(socket.assigns.diff_in_flight, key, seq))
+
+      fun = diff_load_fun(socket, scope, path, opts)
+      spawn_action(socket, action, %{repo_id: scope, path: path, level: level, seq: seq}, fun)
     end
+  end
+
+  # The off-process load for one scope, with every argument captured here (the
+  # closure runs after the socket may have moved on). SHOW loads the reviewed
+  # range (base → tip) of the scoped repo; :commit loads the inspected commit
+  # (its plain diff, or — when the caller asked for more context — a diff
+  # against its parent).
+  defp diff_load_fun(socket, :commit, path, opts) do
+    node = socket.assigns.current_node
+    repo_path = socket.assigns.repo_path
+    commit_sha = socket.assigns.inspect_commit_sha
+
+    if opts == [] do
+      fn -> Actions.load_commit_diff(node, repo_path, commit_sha, path) end
+    else
+      fn -> Actions.load_commit_diff_with_opts(node, repo_path, commit_sha, path, opts) end
+    end
+  end
+
+  defp diff_load_fun(socket, scope, path, opts) do
+    node = socket.assigns.current_node
+    repo = find_review_repo(socket.assigns.review_repos, scope) || %{}
+
+    repo_path = Map.get(repo, :repo_path) || socket.assigns.repo_path
+    base_sha = Map.get(repo, :base_sha) || socket.assigns.base_sha
+    commit_sha = Map.get(repo, :commit_sha) || socket.assigns.commit_sha
+
+    fn -> Actions.load_review_diff(node, repo_path, base_sha, commit_sha, path, opts) end
+  end
+
+  # The context level currently shown for `path` in `scope` (default 3 lines
+  # of context). SHOW reads the ACTIVE repo's submap; :commit keeps today's
+  # legacy flat path-keyed state.
+  defp context_level(socket, :commit, path) do
+    Map.get(socket.assigns.file_context_levels || %{}, path, 3)
+  end
+
+  defp context_level(socket, scope, path) do
+    levels = socket.assigns.file_context_levels || %{}
+
+    levels
+    |> Map.get(scope, %{})
+    |> Map.get(path, 3)
+  end
+
+  # Never downgrade a file's context window: :all is unbounded, and an integer
+  # level only grows (a plain `:diff` load landing after an expansion keeps the
+  # expanded level).
+  defp max_context_level(:all, _requested), do: :all
+  defp max_context_level(_current, :all), do: :all
+
+  defp max_context_level(current, requested) when is_integer(current) and is_integer(requested),
+    do: max(current, requested)
+
+  defp max_context_level(_current, requested), do: requested
+
+  # Writes a loaded diff into the CAPTURED scope's data source (commit_data on
+  # the :commit route, the scoped @review_repos entry's review_data on SHOW),
+  # marks the file expanded and records the context level. The selection is
+  # NOT touched here — it belongs to the interaction that requested the load.
+  defp update_file_diff_in_socket(socket, :commit, path, diff_string, context_level) do
+    data = socket.assigns.commit_data
+
+    updated_files =
+      Enum.map(data.files, fn f ->
+        if f.path == path do
+          %{f | diff: diff_string}
+        else
+          f
+        end
+      end)
+
+    levels = socket.assigns.file_context_levels || %{}
+    level = max_context_level(Map.get(levels, path), context_level)
+
+    assign(socket,
+      commit_data: %{data | files: updated_files},
+      expanded_files: Map.put(socket.assigns.expanded_files || %{}, path, true),
+      file_context_levels: Map.put(levels, path, level)
+    )
+  end
+
+  defp update_file_diff_in_socket(socket, repo_id, path, diff_string, context_level) do
+    review_repos =
+      Enum.map(socket.assigns.review_repos, fn repo ->
+        if repo.repo_id == repo_id do
+          case repo.review_data do
+            nil ->
+              repo
+
+            data ->
+              updated_files =
+                Enum.map(data.files, fn f ->
+                  if f.path == path, do: %{f | diff: diff_string}, else: f
+                end)
+
+              %{repo | review_data: %{data | files: updated_files}}
+          end
+        else
+          repo
+        end
+      end)
+
+    expanded = socket.assigns.expanded_files || %{}
+    expanded_sub = Map.put(Map.get(expanded, repo_id, %{}), path, true)
+    expanded = Map.put(expanded, repo_id, expanded_sub)
+
+    levels = socket.assigns.file_context_levels || %{}
+    levels_sub = Map.get(levels, repo_id, %{})
+    level = max_context_level(Map.get(levels_sub, path), context_level)
+    levels = Map.put(levels, repo_id, Map.put(levels_sub, path, level))
+
+    socket
+    |> assign(review_repos: review_repos, expanded_files: expanded, file_context_levels: levels)
+    |> project_active_repo()
   end
 
   # Projects the ACTIVE repo's per-repo data onto the flat assigns the template
