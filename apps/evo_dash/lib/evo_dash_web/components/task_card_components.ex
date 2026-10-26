@@ -686,7 +686,7 @@ defmodule EvoDashWeb.TaskCardComponents do
 
   # Newest-first capped view of the task's logs: one reverse pass, then
   # `Helpers.list_preview/2` (also yields the total, so no extra `length/1`).
-  # Total for nil/non-list, so a malformed `logs` value renders nothing instead
+  # Total for nil/non-list, so a malformed `logs` value yields no rows instead
   # of crashing `Enum.reverse/1`.
   defp log_preview(logs) when is_list(logs),
     do: list_preview(Enum.reverse(logs), @in_card_log_limit)
