@@ -49,6 +49,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
 
+    # Test-only CALL-TIME seam (`EvoGit.Sandbox.Helpers`): the SIGTERM→SIGKILL
+    # grace is shortened to 0 ms — every liveness assertion below polls until the
+    # OS confirms the child is genuinely gone, so the grace buys nothing here. The
+    # production default (100 ms) is unchanged.
+    put_test_env(:kill_grace_ms, 0)
+
     # Its `terminate/2` kills every job still live when the test ends.
     start_supervised!({EvoGit.BackgroundJobs, [name: registry]})
 
@@ -73,6 +79,22 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     end)
 
     %{registry: registry}
+  end
+
+  # Sets a test-only CALL-TIME app-env override and restores the PREVIOUS value
+  # afterwards (nil-aware: a key that was absent is deleted again).
+  defp put_test_env(key, value) do
+    original = Application.get_env(:evo_git, key)
+
+    Application.put_env(:evo_git, key, value)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:evo_git, key)
+      else
+        Application.put_env(:evo_git, key, original)
+      end
+    end)
   end
 
   ## Scratch-directory hygiene

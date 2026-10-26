@@ -38,7 +38,30 @@ defmodule EvoGit.Sandbox.BackgroundTest do
     original = Application.get_env(:evo_git, :nix_enabled)
     Application.put_env(:evo_git, :nix_enabled, false)
     on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
+
+    # Test-only CALL-TIME seam (`EvoGit.Sandbox.Helpers`): shorten the
+    # SIGTERM→SIGKILL grace to 10 ms — every liveness assertion below polls until
+    # the OS confirms the child is genuinely gone. Production default (100 ms) is
+    # unchanged.
+    put_test_env(:kill_grace_ms, 10)
+
     :ok
+  end
+
+  # Sets a test-only CALL-TIME app-env override and restores the PREVIOUS value
+  # afterwards (nil-aware: a key that was absent is deleted again).
+  defp put_test_env(key, value) do
+    original = Application.get_env(:evo_git, key)
+
+    Application.put_env(:evo_git, key, value)
+
+    on_exit(fn ->
+      if is_nil(original) do
+        Application.delete_env(:evo_git, key)
+      else
+        Application.put_env(:evo_git, key, original)
+      end
+    end)
   end
 
   # ---------------------------------------------------------------------------

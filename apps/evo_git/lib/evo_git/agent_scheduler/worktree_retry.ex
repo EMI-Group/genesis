@@ -40,7 +40,9 @@ defmodule EvoGit.AgentScheduler.WorktreeRetry do
     `0` "first attempt now" delay is always prepended). Defaults to
     `exponential_backoff(50, 2) |> cap(200) |> take(3)` → 4 total attempts.
     Pass `[0, 0, 0]` for a zero-sleep 4-attempt stream (hermetic tests), or
-    `[]` for a single attempt.
+    `[]` for a single attempt. When `:delays` is absent the test-only app env
+    `:worktree_retry_delays` is consulted at CALL TIME (production default
+    unchanged).
   """
 
   # Transient filesystem error reasons worth retrying. Windows anti-virus
@@ -136,8 +138,12 @@ defmodule EvoGit.AgentScheduler.WorktreeRetry do
       String.contains?(output, "not a git repository")
   end
 
+  # Precedence: explicit `:delays` option → test-only CALL-TIME app env
+  # override → the unchanged production default stream.
   defp delay_stream(opts) do
-    Keyword.get(opts, :delays, default_delays())
+    Keyword.get(opts, :delays) ||
+      Application.get_env(:evo_git, :worktree_retry_delays) ||
+      default_delays()
   end
 
   defp default_delays do
