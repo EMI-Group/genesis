@@ -6,13 +6,24 @@ Nix build support for Genesis. The primary entry points are the flake at the rep
 
 ## Routing Table
 
-- None — leaf directory (single script: `bundle-vendor.sh`).
+- None — leaf directory (two scripts: `bundle-vendor.sh`, `desktop-smoke.sh`).
 
 ## API Surface
 
 | File | Purpose |
 |------|---------|
 | `bundle-vendor.sh` | Downloads ripgrep and copies system git into `apps/evo_git/priv/vendor/<platform>/`, replicating the "Bundle vendor binaries" step from `.github/workflows/build-desktop.yml`. Auto-detects x86_64/aarch64 Linux targets. |
+| `desktop-smoke.sh` | Release-time desktop start-up smoke test — boots the packaged Tauri app in `--headless` mode and asserts the dashboard is served, then shuts it down. Run via `nix run .#desktop-smoke`; the flake wrapper exports `GENESIS_DESKTOP_APP` and provides `curl`/`coreutils`/`grep`/`procps`. |
+
+## Desktop Smoke Test
+
+`desktop-smoke.sh` proves the REAL packaged desktop app starts: the Tauri shell runs in its `--headless` mode (`desktop/src-tauri/src/main.rs` `run_headless()`), resolves the bundled release through `sidecar_path::resolve_launcher` (the same resolution the GUI path uses), starts the BEAM and serves the dashboard over HTTP on `127.0.0.1:$PORT`.
+Nothing else boots the packaged artifact, which is why a release could ship `+t 80000` in `vm.args`, exhaust the atom table, and fail to start on ALL platforms with a silent, zero-log boot failure while every test stayed green.
+Run it manually at release time: `nix run .#desktop-smoke` (it is also `packages.desktop-smoke`; that exposure exists only so the app's program path resolves).
+It is deliberately NOT a flake `checks` entry and never wired into CI — it builds the entire desktop app and boots a real BEAM, so it must stay an explicit release-manager action.
+Assertions, in order (each failure prints a single `[smoke] FAIL:` line): package layout (`$GENESIS_DESKTOP_APP/lib/genesis-desktop/resources/genesis-backend/bin/genesis_desktop` exists — catches drift between `genesis-desktop.nix` and the script); the packaged `releases/*/vm.args` carries NO `+t`/`+P` process/atom cap (the atom-table regression guard, and it names the historical `+t 80000` failure); HTTP 200 from `http://127.0.0.1:$PORT/` within 180s with a body containing `<html`; non-empty `$XDG_DATA_HOME/genesis/logs/{shell,backend}.log` free of boot-failure markers (`atom table`, `no more index entries`, `failed to start`, `CRASH`); SIGTERM shutdown, port closed, and no leftover release process (`pgrep -f` on the release path, ancestors excluded — never a broad `beam.smp` match).
+Reading a failure: the `[smoke] FAIL:` line names the assertion, and the 40-line tails of the headless stdout plus both data-dir logs are printed above it — an EMPTY `backend.log` is itself the atom-table signature, `PORT ... already in use` in the headless output means the probed port was taken (just re-run), and a readiness timeout with no logs means the release never reached the BEAM.
+The run is isolated (temp `HOME`, `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `XDG_RUNTIME_DIR`), so it never touches the developer's `tasks.sqlite` or `config.toml`.
 
 ## Constraints
 
@@ -27,9 +38,11 @@ Nix build support for Genesis. The primary entry points are the flake at the rep
 - `mixFodDeps` covers Hex deps only, so a NIF bump needs BOTH the `mixFodDeps.hash` refresh AND the `precompiled_nifs` entry update; verify each separately with `nix-store --realise <fod.drv>` on the drvs referenced by `nix eval --raw .#default.drvPath` (`.#desktop.drvPath` must evaluate too). A green `nix build .#default` is the end-to-end proof of both — the build sandbox has no network, so it also proves the seeded cache still satisfies `rustler_precompiled` at the new version.
 - Scripts in this directory are designed to run inside the `nix develop` shell where `curl`, `git`, and `rg` are available.
 - `bundle-vendor.sh` is only needed for the manual `nix develop` → `mix release` workflow. The `nix build` path handles vendor binaries via the derivation's `postInstall` hook.
+- `desktop-smoke.sh` is wrapped by `writeShellApplication`, which runs `shellcheck` at build time — the script must stay shellcheck-clean (and it relies on the wrapper's `set -o errexit -o nounset -o pipefail`).
+- Keep the smoke test out of `checks` and out of CI, and never make `desktop-smoke.sh` build anything: it consumes `$GENESIS_DESKTOP_APP` (an already-built `packages.desktop`) only.
 
 ## See Also
 
-- `../flake.nix` — Flake entry point: `nix run` (CLI), `nix run .#desktop` (Tauri), `nix develop` (dev shell)
+- `../flake.nix` — Flake entry point: `nix run` (CLI), `nix run .#desktop` (Tauri), `nix run .#desktop-smoke` (manual packaged-app start-up smoke test), `nix develop` (dev shell)
 - `../genesis.nix` — Nix derivation for the CLI Mix release (`genesis`). Parameterized with `mixReleaseName`; call with `mixReleaseName = "genesis_desktop"` for the desktop variant.
 - `../genesis-desktop.nix` — Nix derivation for the Tauri desktop app. Builds the `genesis_desktop` Mix release, builds the Tauri Rust binary via `rustPlatform.buildRustPackage`, and wraps them together with `makeWrapper`.

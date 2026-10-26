@@ -1,5 +1,5 @@
 {
-  description = "Genesis — evolutionary software development in Elixir. `nix run` for the CLI; `nix run .#desktop` for the native desktop app; `nix develop` for the Tauri build environment.";
+  description = "Genesis — evolutionary software development in Elixir. `nix run` for the CLI; `nix run .#desktop` for the native desktop app; `nix run .#desktop-smoke` for the manual packaged-app start-up smoke test; `nix develop` for the Tauri build environment.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -47,6 +47,36 @@
           pkgs.dconf # GSettings backend (required by GTK at runtime)
           pkgs.hicolor-icon-theme # icon theme needed by app bundles
         ];
+
+        # ── Manual desktop start-up smoke test ──────────────────────
+        # Boots the REAL packaged desktop app (Tauri shell in its `--headless`
+        # mode → the bundled `genesis_desktop` Mix release → the dashboard on
+        # HTTP) and asserts it serves the dashboard and shuts down cleanly.
+        # This is the only test that exercises the packaged `vm.args` + ERTS, so
+        # it is what catches boot-only regressions such as the shipped
+        # `+t 80000` atom-table cap (which made the app fail to start on ALL
+        # platforms with a silent, zero-log boot failure).
+        # DELIBERATELY an app (never a flake `checks` entry, never wired into
+        # CI): it builds the entire desktop app and boots a real BEAM, so it is
+        # expensive and must only run when a release manager explicitly asks.
+        # Exposed under `packages` too, so the app's program path resolves and
+        # `nix eval .#desktop-smoke.drvPath` works — nothing builds it by
+        # default.
+        desktopSmoke = pkgs.writeShellApplication {
+          name = "genesis-desktop-smoke";
+          runtimeInputs = [
+            self.packages.${system}.desktop
+            pkgs.curl
+            pkgs.coreutils
+            pkgs.gnugrep
+            pkgs.procps
+          ];
+          # GENESIS_DESKTOP_APP points the script at the packaged app; the
+          # script body lives in nix/desktop-smoke.sh.
+          text =
+            ''export GENESIS_DESKTOP_APP="${self.packages.${system}.desktop}"'' + "\n"
+            + builtins.readFile ./nix/desktop-smoke.sh;
+        };
       in
       {
         # ── `nix build` / `nix run` ──────────────────────────────────
@@ -65,6 +95,10 @@
           beamPackages = beamPkgs;
         };
 
+        # Manual start-up smoke test (derivation defined in the `let` block
+        # above); exposed as a package so the app's program path resolves.
+        packages.desktop-smoke = desktopSmoke;
+
         apps.default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/genesis";
@@ -73,6 +107,12 @@
         apps.desktop = {
           type = "app";
           program = "${self.packages.${system}.desktop}/bin/genesis-desktop";
+        };
+
+        # `nix run .#desktop-smoke` — manual, release-time only.
+        apps.desktop-smoke = {
+          type = "app";
+          program = "${self.packages.${system}.desktop-smoke}/bin/genesis-desktop-smoke";
         };
 
         # ── Development shell ────────────────────────────────────────
