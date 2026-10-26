@@ -394,14 +394,14 @@ defmodule EvoDashWeb.BlobCapsTest do
   end
 
   describe "ReviewComponents.archive_review_section/1 — record caps" do
-    test "caps the record list and each record's objective/result payloads" do
+    test "renders at most 300 records with the true loaded total and truncates huge payloads" do
       result_tail = "ZZ_REVIEW_ARCHIVE_RESULT_TAIL_ZZ"
       objective_tail = "ZZ_REVIEW_ARCHIVE_OBJECTIVE_TAIL_ZZ"
       big_result = String.duplicate("review-archive-result ", 2_500) <> result_tail
       big_objective = String.duplicate("review-archive-objective ", 2_000) <> objective_tail
 
       records =
-        archive_records(300,
+        archive_records(400,
           big_result: {1, big_result},
           big_objective: {1, big_objective}
         )
@@ -413,9 +413,14 @@ defmodule EvoDashWeb.BlobCapsTest do
         )
         |> rendered_text()
 
-      assert text =~ "Showing 100 of 300 agent records"
-      assert text =~ "agent-100"
-      refute text =~ "agent-101"
+      # No :total is passed, so the header falls back to the loaded count.
+      assert text =~ "400 agents"
+
+      # Paging is the real bound; the render cap (300) is the second safety net
+      # and its note reports the TRUE loaded total (400), not the rendered slice.
+      assert text =~ "Showing 300 of 400 agent records"
+      assert text =~ "agent-300"
+      refute text =~ "agent-301"
 
       assert text =~ "review-archive-result"
       refute text =~ result_tail

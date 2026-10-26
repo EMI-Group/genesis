@@ -216,11 +216,10 @@ defmodule EvoDashWeb.ReviewComponents do
       <div class="p-4 sm:p-6 space-y-3">
         <%= if @archive_truncated? do %>
           <p class="text-xs text-base-content/60">
-            <%!-- zh_CN: 智能体（agent）渲染条数超过上限被截断 — 其余已加载记录与完整归档请通过导出 JSON 查看 --%>
-            {gettext(
-              "Only the first %{shown} of %{loaded} loaded agent records render here — export JSON for the rest",
+            <%!-- zh_CN: “records” → “条智能体记录”；export JSON → 导出 JSON 以查看完整归档 --%>
+            {gettext("Showing %{shown} of %{total} agent records — export JSON for the full archive",
               shown: format_number(@archive_shown),
-              loaded: format_number(@archive_loaded)
+              total: format_number(@archive_loaded)
             )}
           </p>
         <% end %>
