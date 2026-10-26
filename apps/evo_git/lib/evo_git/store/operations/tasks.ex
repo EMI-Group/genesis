@@ -70,6 +70,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Operations.Archives
   alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
@@ -134,11 +135,16 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Returns `:ok` whether or not the row existed (a DELETE of a missing id is a
   successful no-op statement, same as the old raw SQL).
+
+  The task's per-agent archive rows (`task_agent_archives`) are deleted in the
+  same call (`Archives.delete_by_task/2`). The cascade is EXPLICIT — there is
+  no foreign key — so a deleted task never leaks its archived conversations.
   """
   @spec delete_task(pid(), String.t()) :: :ok
   def delete_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
+      Archives.delete_by_task(repo, task_id)
       :ok
     end)
   end
@@ -150,6 +156,10 @@ defmodule EvoGit.Store.Operations.Tasks do
   The ids are batched into `WHERE id IN (...)` statements of at most 500 ids
   (under SQLite's 999-parameter limit), one committed statement per chunk.
   Returns `:ok`; an empty id list writes nothing.
+
+  The named tasks' per-agent archive rows (`task_agent_archives`) are deleted
+  too, chunked the same way (`Archives.delete_by_tasks/2`). The cascade is
+  EXPLICIT — there is no foreign key.
   """
   @spec delete_tasks(pid(), [String.t()]) :: :ok
   def delete_tasks(repo, task_ids) do
@@ -160,6 +170,8 @@ defmodule EvoGit.Store.Operations.Tasks do
         Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
       end)
 
+      Archives.delete_by_tasks(repo, task_ids)
+
       :ok
     end)
   end
@@ -167,11 +179,16 @@ defmodule EvoGit.Store.Operations.Tasks do
   @doc """
   Deletes all task rows — port of the old `:clear_tasks` handler
   (store.ex:598). Returns `:ok`.
+
+  EVERY per-agent archive row (`task_agent_archives`) is deleted as well
+  (`Archives.delete_all/1`), so a cleared store holds no orphaned archive
+  payloads. The cascade is EXPLICIT — there is no foreign key.
   """
   @spec clear_tasks(pid()) :: :ok
   def clear_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(TaskRow)
+      Archives.delete_all(repo)
       :ok
     end)
   end

@@ -46,8 +46,8 @@ defmodule EvoGit.Store.Schemas.TaskAgentArchiveRow do
   There is NO `timestamps()`: `started_at`/`completed_at` are the archive's
   own ISO-8601 strings, kept as TEXT so a read returns exactly the bytes that
   were written (no re-formatting round trip). The JSON columns use the plain
-  `EvoGit.Store.Types.ArchiveColumns.*` types — no Codec, no `"z1:"`
-  compression (see that module's moduledoc for why).
+  `EvoGit.Store.Types.ArchiveColumns.*` types — plain Jason, no Codec
+  (see that module's moduledoc for why).
   """
 
   use Ecto.Schema
