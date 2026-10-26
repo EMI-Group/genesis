@@ -40,8 +40,9 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
   end
 
   describe "welcome complete page rendering" do
-    test "renders the explanation, example objective, and copy button", %{conn: conn} do
-      {:ok, _view, html} = live(conn, ~p"/welcome/complete")
+    test "renders the explanation, example objective and copy button; copying flashes info",
+         %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/welcome/complete")
 
       # Heading + explanation
       assert html =~ "Write high-level prompts, not code"
@@ -74,13 +75,9 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
 
       assert html =~
                ~s(data-content="Build a simulated, web-based Windows desktop environment using a single browser page.)
-    end
 
-    test "copied event shows an info flash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/welcome/complete")
-
+      # Copying pushes an info flash.
       html = render_click(view, "copied", %{})
-
       assert html =~ "Copied to clipboard"
     end
   end
