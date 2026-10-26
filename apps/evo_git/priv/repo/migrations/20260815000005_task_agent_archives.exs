@@ -1,20 +1,72 @@
-defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
+defmodule EvoGit.Repo.Migrations.TaskAgentArchives do
   @moduledoc """
-  Moves the per-agent archive from the single `tasks.archive_metadata` JSON
-  array into the relational `task_agent_archives` table — ONE ROW PER ARCHIVED
-  AGENT — then DROPS the column.
+  Creates `task_agent_archives` — ONE relational ROW per (task, agent) — and
+  moves any pre-existing archive into it.
 
-  ## Why
+  The per-agent archive used to be a single JSON array inside
+  `tasks.archive_metadata` (and, before the dedup, a duplicate
+  `archive_records` key inside `tasks.result`). Reading ONE agent's archived
+  conversation therefore meant decoding the WHOLE task's archive, and the
+  dashboard's agent-detail panel paid for every agent of the task on every
+  open. This migration gives each archived agent its own row, so the archive
+  becomes a normal relational read: page the roster without the `result` blob,
+  fetch one agent's `result` on demand, delete by task.
 
-  `tasks.archive_metadata` held a JSON array of every archived agent of a
-  task. Reading ONE agent's archived conversation meant decoding the WHOLE
-  task's archive, so the dashboard's agent-detail panel paid for every agent
-  of the task on every open. The archive is now a normal relational table
-  (created by `20260815000007`, which runs immediately before this one) and
-  nothing in the runtime reads or writes the column any more — it is dead
-  weight on every row, so it is removed from the physical schema here.
+  ## 1. The table (the ONLY create site)
 
-  ## Per task row with a non-empty `archive_metadata`
+  | column               | type    | notes |
+  |----------------------|---------|-------|
+  | `task_id`            | TEXT    | NOT NULL, PK part 1 |
+  | `agent_id`           | INTEGER | NOT NULL, PK part 2 |
+  | `parent_id`          | INTEGER | spawn tree parent (agent id), NULL for the root agent |
+  | `depth`              | INTEGER | NOT NULL DEFAULT 0 — spawn depth (root = 0) |
+  | `agent_type`         | TEXT    | agent type key (manager/executor/...) |
+  | `context_node_path`  | TEXT    | node the agent was scoped to |
+  | `objective`          | TEXT    | the agent's objective |
+  | `result`             | TEXT    | the agent's final response — the HEAVY column, paged separately |
+  | `base_commit`        | TEXT    | commit the agent started from |
+  | `final_commit`       | TEXT    | commit the agent ended on |
+  | `branch_name`        | TEXT    | branch the agent worked on |
+  | `archive_ref_start`  | TEXT    | archive start ref |
+  | `archive_ref_final`  | TEXT    | archive final ref |
+  | `repo_id`            | TEXT    | repo ID string — `"primary"` or a foreign repo id |
+  | `repo_root`          | TEXT    | absolute repo root |
+  | `repo_path`          | TEXT    | repo-relative path |
+  | `usage`              | TEXT    | plain JSON object (token/cost accounting) |
+  | `llm_settings`       | TEXT    | plain JSON object |
+  | `agent_settings`     | TEXT    | plain JSON object |
+  | `foreign_repos`      | TEXT    | plain JSON array of objects |
+  | `compression_count`  | INTEGER | NOT NULL DEFAULT 0 |
+  | `started_at`         | TEXT    | ISO-8601 TEXT, stored as-is |
+  | `completed_at`       | TEXT    | ISO-8601 TEXT, stored as-is |
+
+  The composite `PRIMARY KEY (task_id, agent_id)` is what makes a write
+  idempotent: a re-put of the same pair REPLACES the row
+  (`INSERT … ON CONFLICT (task_id, agent_id) DO UPDATE` / the equivalent
+  `INSERT OR REPLACE`), so a re-run or a crash-recovered write can never
+  duplicate an agent.
+
+  Timestamps stay ISO-8601 **TEXT** and the four JSON columns stay plain JSON
+  **TEXT** — no Ecto field types, no compression, exactly like every other
+  column in this store (the wire format is owned by
+  `EvoGit.Store.Types.ArchiveColumns.*`, not by the migration).
+
+  ## 2. The index
+
+  `task_agent_archives_task_depth_idx` on `(task_id, depth, agent_id)` serves
+  the one read shape the dashboard uses — the per-task roster,
+  `WHERE task_id = ? ORDER BY depth ASC, agent_id ASC LIMIT/OFFSET` — as an
+  index-served seek + ordered scan, with `id`-only projections (`agent_id`,
+  `depth`) answered from the index. The `task_id` prefix also serves the
+  `DELETE … WHERE task_id = ?` cascade. No other index is added: `agent_id`
+  lookups always carry the `task_id` (the pair IS the primary key, whose
+  b-tree already covers the full-row fetch).
+
+  ## 3. The legacy fan-out (guarded)
+
+  Only when `PRAGMA table_info(tasks)` still reports `archive_metadata` (a
+  pre-release build's shape; a fresh or already-fanned-out database no-ops in
+  O(1)), each task row with a non-empty archive is moved over:
 
     1. decode the JSON array LENIENTLY (`Jason.decode/1`); a corrupt value, or
        a value that is not a list, is logged with `Logger.warning` naming the
@@ -23,10 +75,10 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
        mapping every record key onto its column (`task_id` comes from the task
        row, `agent_id` from the record; `depth`/`compression_count` default to
        0; `usage`/`llm_settings`/`agent_settings`/`foreign_repos` are re-encoded
-       with `Jason.encode!` — plain JSON, no compression, no `"z1:"` prefix,
-       SQL NULL for a missing value); every other column is copied VERBATIM, in
-       particular `repo_id`, which is a repo ID STRING (`"primary"` or a foreign
-       repo id) and therefore a TEXT column — it is never cast to an integer;
+       with `Jason.encode!` — plain JSON, no compression, SQL NULL for a missing
+       value); every other column is copied VERBATIM, in particular `repo_id`,
+       which is a repo ID STRING (`"primary"` or a foreign repo id) and
+       therefore a TEXT column — it is never cast to an integer;
     3. strip `data.archive_records` from `result` — but ONLY when that key is
        present (it was a verbatim DUPLICATE of this column). The result JSON is
        decoded/re-encoded for that one case; a result without the key is left
@@ -36,25 +88,24 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
   `updated_at` (and every other column) is NEVER touched: moving the archive
   is not a task mutation.
 
-  ## Then the column goes
-
-  `ALTER TABLE tasks DROP COLUMN archive_metadata` runs at the very end, and
-  only when the column still exists (`PRAGMA table_info(tasks)` probe) — SQLite
-  has supported `DROP COLUMN` since 3.35, and no index or constraint references
-  this column, so the operation is an O(1) schema-header edit (no table
-  rebuild).
+  Then the column goes: `ALTER TABLE tasks DROP COLUMN archive_metadata` runs
+  at the very end, and only when the column still exists — SQLite has supported
+  `DROP COLUMN` since 3.35, no index or constraint references this column, so
+  the operation is an O(1) schema-header edit (no table rebuild).
 
   ## Idempotent / resumable
 
   Every step converges on a re-run, which is what makes a PARTIAL failure safe:
 
+    * the table/index DDL is `IF NOT EXISTS`, and the shape post-conditions
+      raise on a same-named object of a different shape;
     * the `INSERT OR REPLACE` upsert on the composite `(task_id, agent_id)`
       primary key can never duplicate an agent (it replaces it);
     * each task only clears its own `archive_metadata` after its records are in
       the table, and an already-NULL archive is not a candidate;
-    * the `DROP COLUMN` is guarded by a column-existence probe, so a boot that
-      crashed between the fan-out and the drop (or one re-running after the
-      column is already gone) simply finishes;
+    * the fan-out and the `DROP COLUMN` are guarded by a column-existence probe,
+      so a boot that crashed between them (or one re-running after the column
+      is already gone) simply finishes;
     * a still-corrupt archive is skipped again (and logged again), leaving the
       migration converging without it.
 
@@ -62,40 +113,88 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
 
   Statements run via `repo().query/3` + `repo().query!/3` (the sibling
   migrations' convention), NOT `Ecto.Migration.execute/1`, whose string
-  commands are queued until `flush/0` — the fan-out, the NULLing, the column
-  probe and the final DDL all have to observe each other in body order.
-  Values are read ONE ROW AT A TIME (an archived agent's `result` can be tens
-  of MiB) with `timeout: 600_000` per statement. Defined as `up/0` (no
-  `down/0`): the column is gone and the data now lives in the table.
+  commands are queued until `flush/0` — the DDL, the shape probes, the
+  fan-out's per-row reads/writes, the NULLing, the column probe and the final
+  `DROP` all have to observe each other in body order. Payload-moving values
+  are read ONE ROW AT A TIME (an archived agent's `result` can be tens of MiB)
+  with `timeout: 600_000` per statement. Defined as `up/0` (no `down/0`):
+  dropping the table would drop user archive data and the column is gone.
+
+  A database created by a PRE-RELEASE build that declared `repo_id` INTEGER is
+  not rebuilt here — that variant never shipped; delete the database instead.
   """
 
   use Ecto.Migration
 
   require Logger
 
-  @column "archive_metadata"
-  @archive_table "task_agent_archives"
+  # The physical column order — FIRST the two primary-key columns, then the
+  # roster columns, then the heavy `result` blob, then the refs/repo/JSON
+  # columns, and the timestamps LAST. Kept as data so the post-condition below
+  # can assert the exact shape that was created.
+  @table_ddl """
+  CREATE TABLE IF NOT EXISTS task_agent_archives (
+    task_id TEXT NOT NULL,
+    agent_id INTEGER NOT NULL,
+    parent_id INTEGER,
+    depth INTEGER NOT NULL DEFAULT 0,
+    agent_type TEXT,
+    context_node_path TEXT,
+    objective TEXT,
+    result TEXT,
+    base_commit TEXT,
+    final_commit TEXT,
+    branch_name TEXT,
+    archive_ref_start TEXT,
+    archive_ref_final TEXT,
+    repo_id TEXT,
+    repo_root TEXT,
+    repo_path TEXT,
+    usage TEXT,
+    llm_settings TEXT,
+    agent_settings TEXT,
+    foreign_repos TEXT,
+    compression_count INTEGER NOT NULL DEFAULT 0,
+    started_at TEXT,
+    completed_at TEXT,
+    PRIMARY KEY (task_id, agent_id)
+  )
+  """
 
-  # The destination columns, in the table's declaration order (see
-  # `20260815000007_create_task_agent_archives`). `task_id` comes from the
-  # task row, every other value from the record map of the same name.
-  @archive_columns ~w(task_id agent_id parent_id depth agent_type context_node_path objective
-                      result base_commit final_commit branch_name archive_ref_start
-                      archive_ref_final repo_id repo_root repo_path usage llm_settings
-                      agent_settings foreign_repos compression_count started_at completed_at)
+  @columns ~w(task_id agent_id parent_id depth agent_type context_node_path objective result
+              base_commit final_commit branch_name archive_ref_start archive_ref_final repo_id
+              repo_root repo_path usage llm_settings agent_settings foreign_repos
+              compression_count started_at completed_at)
 
+  @index_name "task_agent_archives_task_depth_idx"
+  @index_columns ~w(task_id depth agent_id)
+
+  # The legacy column this migration consumes and removes.
+  @legacy_column "archive_metadata"
+
+  # The heavy `result` blob is read/written row by row; a user database can
+  # hold thousands of multi-MiB rows.
   @statement_timeout 600_000
 
   def up do
-    if column_exists?(@column) do
+    sql(@table_ddl)
+
+    sql(
+      "CREATE INDEX IF NOT EXISTS #{@index_name} ON task_agent_archives(task_id, depth, agent_id)"
+    )
+
+    assert_table_shape!()
+    assert_index_shape!()
+
+    if column_exists?(@legacy_column) do
       fan_out()
-      drop_column()
+      drop_legacy_column()
     end
 
     :ok
   end
 
-  ## Fan-out
+  ## Legacy fan-out
 
   defp fan_out do
     {tasks, records, skipped} =
@@ -108,7 +207,7 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
       end)
 
     Logger.info(
-      "#{inspect(__MODULE__)}: #{tasks} task(s) moved to #{@archive_table} " <>
+      "#{inspect(__MODULE__)}: #{tasks} task(s) moved to task_agent_archives " <>
         "(#{records} agent record(s)); #{length(skipped)} task(s) skipped"
     )
 
@@ -152,7 +251,7 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
     end)
   end
 
-  # ONE record → the destination row values, in `@archive_columns` order.
+  # ONE record → the destination row values, in `@columns` order.
   # A record without a usable integer `agent_id` cannot key a row, so it is
   # logged and skipped (the rest of the task's archive is still migrated).
   defp archive_values(task_id, record) when is_map(record) do
@@ -209,8 +308,8 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
   defp upsert_archive(values) do
     sql(
       """
-      INSERT OR REPLACE INTO #{@archive_table} (#{Enum.join(@archive_columns, ", ")})
-      VALUES (#{placeholders(length(@archive_columns))})
+      INSERT OR REPLACE INTO task_agent_archives (#{Enum.join(@columns, ", ")})
+      VALUES (#{placeholders(length(@columns))})
       """,
       values
     )
@@ -243,15 +342,15 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
   defp task_ids_with_archive do
     """
     SELECT id FROM tasks
-     WHERE #{@column} IS NOT NULL
-       AND length(#{@column}) > 0
+     WHERE #{@legacy_column} IS NOT NULL
+       AND length(#{@legacy_column}) > 0
     """
     |> select_ids([])
   end
 
   defp fetch_task(task_id) do
     case repo().query(
-           "SELECT result, #{@column} FROM tasks WHERE id = ?",
+           "SELECT result, #{@legacy_column} FROM tasks WHERE id = ?",
            [task_id],
            timeout: @statement_timeout,
            log: false
@@ -262,7 +361,7 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
   end
 
   defp null_archive(task_id) do
-    sql("UPDATE tasks SET #{@column} = NULL WHERE id = ?", [task_id])
+    sql("UPDATE tasks SET #{@legacy_column} = NULL WHERE id = ?", [task_id])
   end
 
   defp write_result(task_id, encoded) do
@@ -276,7 +375,7 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
     end
   end
 
-  defp sql(statement, params) do
+  defp sql(statement, params \\ []) do
     repo().query!(statement, params, timeout: @statement_timeout, log: false)
   end
 
@@ -367,6 +466,54 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
 
   ## Guards / post-conditions
 
+  # Post-condition: the table carries EXACTLY the declared columns in the
+  # declared order. `IF NOT EXISTS` alone would silently keep a same-named
+  # table of a different shape, and every read/write through the schema would
+  # then fail at runtime instead of here.
+  defp assert_table_shape! do
+    actual = table_columns()
+
+    if actual != @columns do
+      raise Ecto.MigrationError,
+            "task_agent_archives was not created with the expected columns: " <>
+              "PRAGMA table_info returned #{inspect(actual)}"
+    end
+
+    :ok
+  end
+
+  # PRAGMA table_info(<table>) rows: [cid, name, type, notnull, dflt, pk]. A
+  # missing table yields NO rows (never an error), so [] is the "absent" signal.
+  defp table_columns do
+    case repo().query("PRAGMA table_info(task_agent_archives)", [], log: false) do
+      {:ok, %{rows: rows}} ->
+        Enum.map(rows, fn [_cid, name, _type, _notnull, _dflt, _pk] -> name end)
+
+      _other ->
+        []
+    end
+  end
+
+  defp assert_index_shape! do
+    actual = index_columns()
+
+    if actual != @index_columns do
+      raise Ecto.MigrationError,
+            "index #{@index_name} on task_agent_archives(#{Enum.join(@index_columns, ", ")}) " <>
+              "was not applied: PRAGMA index_info returned #{inspect(actual)}"
+    end
+
+    :ok
+  end
+
+  # PRAGMA index_info(<name>) rows: [seqno, cid, name].
+  defp index_columns do
+    case repo().query("PRAGMA index_info(#{@index_name})", [], log: false) do
+      {:ok, %{rows: rows}} -> Enum.map(rows, fn [_seqno, _cid, column] -> column end)
+      _other -> []
+    end
+  end
+
   defp column_exists?(column) do
     case repo().query("PRAGMA table_info(tasks)", [], log: false) do
       {:ok, %{rows: rows}} -> Enum.any?(rows, fn [_cid, name | _rest] -> name == column end)
@@ -379,8 +526,8 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
 
     """
     SELECT id FROM tasks
-     WHERE #{@column} IS NOT NULL
-       AND length(#{@column}) > 0
+     WHERE #{@legacy_column} IS NOT NULL
+       AND length(#{@legacy_column}) > 0
      #{exclusion}
     """
     |> select_ids(params)
@@ -390,19 +537,19 @@ defmodule EvoGit.Repo.Migrations.MoveArchivesToTable do
 
       remaining ->
         raise Ecto.MigrationError,
-              "move-archives-to-table did not converge: #{length(remaining)} task(s) still " <>
-                "hold an #{@column} value (e.g. " <>
+              "task-agent-archives did not converge: #{length(remaining)} task(s) still " <>
+                "hold an #{@legacy_column} value (e.g. " <>
                 "#{remaining |> Enum.take(5) |> Enum.join(", ")}); the migration's UPDATE did " <>
                 "not take effect"
     end
   end
 
-  defp drop_column do
-    sql("ALTER TABLE tasks DROP COLUMN #{@column}", [])
+  defp drop_legacy_column do
+    sql("ALTER TABLE tasks DROP COLUMN #{@legacy_column}")
 
-    if column_exists?(@column) do
+    if column_exists?(@legacy_column) do
       raise Ecto.MigrationError,
-            "#{@column} was not dropped from tasks: PRAGMA table_info still reports it"
+            "#{@legacy_column} was not dropped from tasks: PRAGMA table_info still reports it"
     end
 
     :ok
