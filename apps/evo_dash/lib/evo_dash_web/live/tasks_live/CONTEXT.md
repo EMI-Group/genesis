@@ -68,6 +68,9 @@ Every page load goes through `EvoDashWeb.TasksLive.PageLoad`
 - `PageLoad.start/3` bumps the monotonic `:page_load_seq` (its only writer),
   optionally sets `:tasks_loading`, and hands the spawn fun to the
   `:tasks_page_load_hook` seam.
+- `PageLoad.load/4` issues ONE
+  `EvoDash.NodeContext.list_tasks_page/2` read (the 16-key summary projection,
+  no `result`/`usage`/`logs`/`archive_metadata`) plus `get_unique_paths/1`.
 - `PageLoad.run/6` runs `PageLoad.load/4` in a supervised
   `EvoDash.TaskSupervisor` task behind `EvoDash.SafeCall.run/1` and ALWAYS sends
   exactly one `{:tasks_page_loaded, seq, node, result}` message to the
