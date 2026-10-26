@@ -187,7 +187,11 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
       default_merge_target: primary.default_merge_target,
       merge_status: primary.merge_status,
       review_repos: review_repos,
-      active_repo_id: "primary"
+      active_repo_id: "primary",
+      # The single opt-in signal for the archive: a task started WITHOUT
+      # `archive: true` has no per-agent archive at all, so the Review page's
+      # Archive tab is disabled and `ArchiveLoad` never issues a fetch.
+      archive_opt_in?: EvoDashWeb.ArchiveHelpers.archive_opt?(task.opts)
     }
   end
 

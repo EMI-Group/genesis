@@ -109,13 +109,14 @@ defmodule EvoDashWeb.ReviewLive do
                 />
 
                 <!-- Page tabs (underline bar with count badges) -->
-                <%!-- the archive's true size, once its first page lands (0/unknown renders no badge) --%>
+                <%!-- the archive's LABEL size once a page lands; 0/unknown renders no badge.
+                     The tab itself only renders for a task that opted into archiving. --%>
                 <EvoDashWeb.ReviewComponents.page_tabs
                   active_tab={@review_tab}
                   files_count={stats.files_count}
                   commits_count={stats.commits_count}
-                  show_archive={true}
-                  archive_count={@archive_total}
+                  show_archive={@archive_opt_in?}
+                  archive_count={EvoDashWeb.ReviewLive.ArchiveLoad.label_total(assigns)}
                 />
 
                 <%= cond do %>
@@ -226,6 +227,10 @@ defmodule EvoDashWeb.ReviewLive do
                       state={@archive_state}
                       records={@archive_records}
                       total={@archive_total}
+                      opt_in?={@archive_opt_in?}
+                      dropped={@archive_dropped}
+                      exhausted?={@archive_exhausted?}
+                      server_total={@archive_server_total}
                       loading_more?={@archive_loading_more?}
                       more_error={@archive_more_error}
                       agent_results={@archive_agent_results}
@@ -311,6 +316,19 @@ defmodule EvoDashWeb.ReviewLive do
         archive_more_error: nil,
         archive_key: nil,
         archive_seq: 0,
+        # Archiving opt-in ("archive: true" in the task opts, owned by
+        # LoadData): a non-opt-in task has no per-agent archive at all, so the
+        # Archive tab renders a disabled state and never fetches.
+        archive_opt_in?: false,
+        # Retention/offset counters for the paged archive: `archive_dropped` =
+        # entries evicted by the retention window, `archive_fetched` = cumulative
+        # RAW rows received (the next request offset), `archive_exhausted?` = a
+        # short page ended the archive, `archive_server_total` = the raw server
+        # count for the LABEL (nil when a page reported none).
+        archive_dropped: 0,
+        archive_fetched: 0,
+        archive_exhausted?: false,
+        archive_server_total: nil,
         # Per-agent lazy results, keyed by agent id:
         # %{agent_id => %{state: :loading | :ok | :error, entry:, error:}}.
         archive_agent_results: %{},
@@ -418,11 +436,18 @@ defmodule EvoDashWeb.ReviewLive do
     {:noreply, assign(socket, :review_tab, :commits)}
   end
 
+  # The Archive tab is only reachable for a task that opted into archiving
+  # (`@archive_opt_in?`, from the task opts): for any other task the click is a
+  # complete no-op — no tab switch, no fetch.
   def handle_event("switch_tab", %{"tab" => "archive"}, socket) do
-    {:noreply,
-     socket
-     |> assign(:review_tab, :archive)
-     |> EvoDashWeb.ReviewLive.ArchiveLoad.ensure_loaded()}
+    if Map.get(socket.assigns, :archive_opt_in?, false) do
+      {:noreply,
+       socket
+       |> assign(:review_tab, :archive)
+       |> EvoDashWeb.ReviewLive.ArchiveLoad.ensure_loaded()}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("switch_tab", _params, socket) do
