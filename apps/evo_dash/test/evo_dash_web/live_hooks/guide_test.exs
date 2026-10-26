@@ -39,8 +39,80 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
       :ok
     end
 
+    # Mounts `/tasks` and registers the load drain that keeps this suite's
+    # teardown leak-free (see `await_view_async_loads/2`).
+    defp mount_tasks!(conn) do
+      {:ok, view, html} = live(conn, ~p"/tasks")
+
+      # `on_exit` callbacks run in REVERSE registration order, so this one runs
+      # BEFORE `isolate!/1`'s stop/restore teardown (registered earlier, in
+      # setup) — and it is registered here rather than in the test body so a
+      # FAILING test still drains.
+      on_exit(fn -> await_view_async_loads(view.pid, 5_000) end)
+
+      {view, html}
+    end
+
+    # Leaves no async load in flight before the isolated Store is stopped.
+    #
+    # A `/tasks` mount spawns `EvoDash.TaskSupervisor` children: TasksLive's
+    # page load plus NodeAware's sidebar and node-context loads, and each drives
+    # an offloaded `EvoGit.Store` read. A read still in flight when this suite's
+    # per-test isolated Store stops (isolate!/1's `on_exit`) crashes on the
+    # store's vanished Ecto query-cache ETS table and leaks an `[error]` crash
+    # report into the between-test gap — outside ExUnit's capture_log window.
+    #
+    # ExUnit terminates the test supervisor (and with it the LiveView) before
+    # ANY `on_exit` callback runs, so this never talks to the view: it only
+    # monitors the children the view spawned. `Task.Supervisor` records the
+    # spawning process in each child's `:"$callers"` entry, so matching against
+    # the view pid targets exactly this view's work. A task's result is sent
+    # (and its store read therefore already replied) BEFORE the process exits,
+    # so a fired monitor means nothing is in flight anymore. The bound keeps a
+    # child stuck on a store call from wedging teardown.
+    defp await_view_async_loads(view_pid, timeout) do
+      view_pid
+      |> view_async_task_pids()
+      |> Enum.map(&Process.monitor/1)
+      |> Enum.each(fn ref ->
+        receive do
+          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+        after
+          timeout -> :ok
+        end
+      end)
+
+      :ok
+    end
+
+    defp view_async_task_pids(view_pid) do
+      EvoDash.TaskSupervisor
+      |> Task.Supervisor.children()
+      |> Enum.filter(fn
+        pid when is_pid(pid) ->
+          case Process.info(pid, :dictionary) do
+            {:dictionary, dict} -> view_pid in Keyword.get(dict, :"$callers", [])
+            nil -> false
+          end
+
+        _other ->
+          false
+      end)
+    end
+
+    # Delivers a guide broadcast and SYNCHRONIZES with the view before returning
+    # (a `:sys.get_state/1` round-trip handles every already-queued message —
+    # including this broadcast, and therefore its `push_event` — before it
+    # replies). That is what lets the negative push assertion below run with a
+    # 0 ms window instead of a fixed wait.
+    defp broadcast_guide!(view, payload) do
+      send(view.pid, {:guide_updated, "g1", payload, node()})
+      _ = :sys.get_state(view.pid)
+      :ok
+    end
+
     test "no guide panel on initial render", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
       # The panel container class is unique to the floating guide panel. (A
       # literal "Genesis Guide" assertion would false-positive here — the
@@ -50,28 +122,31 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
     end
 
     test "guide broadcast renders the floating panel", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g1",
-         %{message: "hello guide", page: nil, selector: nil, dismissible: true}, node()}
-      )
+      broadcast_guide!(view, %{
+        message: "hello guide",
+        page: nil,
+        selector: nil,
+        dismissible: true
+      })
 
       html = render(view)
       assert html =~ "Genesis Guide"
       assert html =~ "hello guide"
+      # The floating container classes are part of the same render.
       assert html =~ "fixed top-4 right-4 z-50"
     end
 
     test "foreign-node guide broadcast is dropped, previous guide stays", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g1",
-         %{message: "hello guide", page: nil, selector: nil, dismissible: true}, node()}
-      )
+      broadcast_guide!(view, %{
+        message: "hello guide",
+        page: nil,
+        selector: nil,
+        dismissible: true
+      })
 
       assert render(view) =~ "hello guide"
 
@@ -89,13 +164,14 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
 
     test "guide with selector pushes guide_highlight with exactly %{selector: selector}",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g3",
-         %{message: "m", page: nil, selector: "#main-content", dismissible: false}, node()}
-      )
+      broadcast_guide!(view, %{
+        message: "m",
+        page: nil,
+        selector: "#main-content",
+        dismissible: false
+      })
 
       # assert_push_event pins the payload (exact match) — the hook pushes
       # %{selector: selector} with no extra keys.
@@ -103,26 +179,26 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
     end
 
     test "guide without selector pushes no guide_highlight", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g4", %{message: "m", page: nil, selector: nil, dismissible: false},
-         node()}
-      )
+      broadcast_guide!(view, %{message: "m", page: nil, selector: nil, dismissible: false})
 
-      refute_push_event(view, "guide_highlight", %{selector: _})
+      # The round-trip inside broadcast_guide!/2 proves the broadcast was fully
+      # handled before this runs, so a 0 ms window is conclusive: no push was
+      # sent at all (the hook only pushes when a selector is present).
+      refute_push_event(view, "guide_highlight", %{selector: _}, 0)
     end
 
     test "dismissing a dismissible guide clears the panel and pushes guide_cleared",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g1",
-         %{message: "hello guide", page: nil, selector: nil, dismissible: true}, node()}
-      )
+      broadcast_guide!(view, %{
+        message: "hello guide",
+        page: nil,
+        selector: nil,
+        dismissible: true
+      })
 
       assert render(view) =~ "hello guide"
 
@@ -134,13 +210,9 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
     end
 
     test "guide with a page renders the Go link pointing at that page", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g1",
-         %{message: "m", page: "/system", selector: nil, dismissible: false}, node()}
-      )
+      broadcast_guide!(view, %{message: "m", page: "/system", selector: nil, dismissible: false})
 
       html = render(view)
       assert html =~ "Go"
@@ -153,27 +225,11 @@ defmodule EvoDashWeb.LiveHooks.GuideTest do
     end
 
     test "guide without a page renders no Go link", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
+      {view, _html} = mount_tasks!(conn)
 
-      send(
-        view.pid,
-        {:guide_updated, "g1", %{message: "m", page: nil, selector: nil, dismissible: false},
-         node()}
-      )
+      broadcast_guide!(view, %{message: "m", page: nil, selector: nil, dismissible: false})
 
       refute view |> has_element?("a", "Go")
-    end
-
-    test "panel markup includes the floating container classes", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-
-      send(
-        view.pid,
-        {:guide_updated, "g1", %{message: "m", page: nil, selector: nil, dismissible: false},
-         node()}
-      )
-
-      assert render(view) =~ "fixed top-4 right-4 z-50"
     end
   end
 end

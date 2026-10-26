@@ -5,13 +5,17 @@ defmodule EvoDash.NodeContextTest do
 
   alias EvoGit.TaskInfo
 
-  setup do
-    # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
-    # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
-    # production children.
+  # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
+  # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
+  # production children (no start_supervised/on_exit racing).
+  #
+  # Attached ONLY to the describes that actually reach the store/registry (the
+  # summary/lite/cancel/archive reads): the pure delegation-shape describes
+  # (GitHub adapter errors, resolved config, system samples, custom agents
+  # tools + approvals) never touch SQLite, and an isolation round-trip per test
+  # is pure overhead for them.
+  def setup_isolated_registry(_context) do
     :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_context")
-
-    :ok
   end
 
   # Inserts a task directly into the SQLite store (bypasses the async
@@ -76,6 +80,8 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "task-cancellation RPC delegates (local node, real paths)" do
+    setup :setup_isolated_registry
+
     test "cancel_task/2 returns {:error, :not_found} for a missing task" do
       assert EvoDash.NodeContext.cancel_task(node(), "missing-id") == {:error, :not_found}
     end
@@ -93,6 +99,8 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "lightweight task reads (local node, real paths)" do
+    setup :setup_isolated_registry
+
     # The summary/lite reads route through
     # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
     # so the isolated pair from `setup` serves them with real rows.
@@ -161,6 +169,8 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "paged task-archive reads (EvoGit.RemoteNode delegation)" do
+    setup :setup_isolated_registry
+
     # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` ship as
     # parallel core work and do not exist in this tree yet, so the delegation
     # itself cannot be called here (there is no runner seam for RemoteNode

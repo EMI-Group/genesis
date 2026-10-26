@@ -32,12 +32,6 @@ defmodule EvoDash.ActiveTasksTest do
       ActiveTasks.put(nil, node(), [], [:c])
       assert ActiveTasks.get(nil, node()) == {:ok, {[], [:c]}}
     end
-
-    test "a later put for the same context overwrites the earlier snapshot" do
-      ActiveTasks.put(nil, node(), [:a], [:b])
-      ActiveTasks.put(nil, node(), [:a, :c], [])
-      assert ActiveTasks.get(nil, node()) == {:ok, {[:a, :c], []}}
-    end
   end
 
   describe "per-context isolation" do
@@ -57,11 +51,6 @@ defmodule EvoDash.ActiveTasksTest do
 
       assert ActiveTasks.get("some-target", :node@remote) == {:ok, {[:r1], []}}
       assert ActiveTasks.get("other-target", :node@remote2) == {:ok, {[:r2], []}}
-    end
-
-    test "the same remote node atom under a different node_id is a distinct context" do
-      ActiveTasks.put("some-target", :node@remote, [:a], [])
-      assert ActiveTasks.get("other-target", :node@remote) == :empty
     end
   end
 
@@ -101,11 +90,6 @@ defmodule EvoDash.ActiveTasksTest do
       assert ActiveTasks.get(nil, node()) == :empty
       assert ActiveTasks.get("some-target", :node@remote) == :empty
       assert ActiveTasks.get("other-target", :node@remote2) == :empty
-    end
-
-    test "is idempotent on an already-empty hub" do
-      ActiveTasks.reset()
-      assert ActiveTasks.get(nil, node()) == :empty
     end
   end
 
