@@ -215,13 +215,19 @@ defmodule EvoDashWeb.ReviewLive do
                       active_repo_id={@active_repo_id}
                     />
                   <% @review_tab == :archive -> %>
-                    <%!-- Lazy archive: the page load is LITE (no archive
-                         transfer), so opening this tab triggers ONE cached
-                         on-demand fetch. All four states render inside
+                    <%!-- Lazy, PAGED archive: the page load is LITE (no
+                         archive transfer), so opening this tab triggers a
+                         cached on-demand load of the FIRST page; "Load more"
+                         appends further pages and each agent's heavy result is
+                         fetched on demand. Every state renders inside
                          ArchiveLoad.panel. --%>
                     <EvoDashWeb.ReviewLive.ArchiveLoad.panel
                       state={@archive_state}
                       records={@archive_records}
+                      total={@archive_total}
+                      loading_more?={@archive_loading_more?}
+                      more_error={@archive_more_error}
+                      agent_results={@archive_agent_results}
                       error={@archive_error}
                       task_id={@task_id}
                     />
@@ -291,15 +297,22 @@ defmodule EvoDashWeb.ReviewLive do
         inspect_commit_sha: params["commit_sha"],
         commit_data: nil,
         commit_header: nil,
-        archive_metadata: nil,
-        # Lazy archive load (see EvoDashWeb.ReviewLive.ArchiveLoad): the page
-        # load is LITE (no archive transfer), so the Archive tab fetches it on
-        # demand, once, and caches it for this task/node context.
+        # Paged lazy archive load (see EvoDashWeb.ReviewLive.ArchiveLoad): the
+        # page load is LITE (no archive transfer), so the Archive tab fetches
+        # the archive in bounded pages, and one agent's heavy result on demand.
+        # Cached for this task/node context.
         archive_records: [],
+        archive_total: 0,
         archive_state: :idle,
         archive_error: nil,
+        archive_loading_more?: false,
+        archive_more_error: nil,
         archive_key: nil,
         archive_seq: 0,
+        # Per-agent lazy results, keyed by agent id:
+        # %{agent_id => %{state: :loading | :ok | :error, entry:, error:}}.
+        archive_agent_results: %{},
+        archive_agent_seq: 0,
         task_usage: nil,
         agent_count: nil,
         task_status: nil,
@@ -415,11 +428,34 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   # Retry button inside the Archive tab's error state — re-arms the archive
-  # state machine and starts one fresh fetch (never a poll).
+  # state machine and starts one fresh first page (never a poll).
   @impl true
   def handle_event("retry_archive", _params, socket) do
     {:noreply, EvoDashWeb.ReviewLive.ArchiveLoad.retry(socket)}
   end
+
+  # "Load more" (and its inline Retry after a failed append): appends the next
+  # page. The support module owns every guard (already loaded, append in
+  # flight, nothing left to load).
+  @impl true
+  def handle_event("load_more_archive", _params, socket) do
+    {:noreply, EvoDashWeb.ReviewLive.ArchiveLoad.load_more(socket)}
+  end
+
+  # Per-agent lazy result: fetches ONE agent's heavy "result" on demand (also
+  # the Retry path for a failed fetch). Never triggered by a render.
+  # `phx-value-agent-id` arrives as the hyphenated key "agent-id" (LiveView
+  # keeps the attribute suffix verbatim), so accept both spellings.
+  @impl true
+  def handle_event("load_archive_agent_result", %{"agent_id" => agent_id}, socket) do
+    {:noreply, EvoDashWeb.ReviewLive.ArchiveLoad.load_agent_result(socket, agent_id)}
+  end
+
+  def handle_event("load_archive_agent_result", %{"agent-id" => agent_id}, socket) do
+    {:noreply, EvoDashWeb.ReviewLive.ArchiveLoad.load_agent_result(socket, agent_id)}
+  end
+
+  def handle_event("load_archive_agent_result", _params, socket), do: {:noreply, socket}
 
   # Repo <select>s live inside components; each is wrapped in its own
   # <form phx-change="switch_repo">, so the payload arrives as
@@ -1033,7 +1069,11 @@ defmodule EvoDashWeb.ReviewLive do
     socket =
       if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) and
            task_id == socket.assigns.task_id do
-        assign(socket, :review_broadcast_status, status)
+        socket
+        |> assign(:review_broadcast_status, status)
+        # The reviewed task changed, so any lazily fetched per-agent result may
+        # be stale: drop that cache (the loaded archive pages stay).
+        |> EvoDashWeb.ReviewLive.ArchiveLoad.invalidate_agent_results()
       else
         socket
       end
@@ -1141,13 +1181,35 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:review_archive_loaded, task_id, node, seq, result}, socket) do
-    # Lazy archive fetch finished. Stale-guard + state machine live in the
-    # support module (a result for another task/node or an older fetch is
-    # dropped; every shape normalizes to :loaded/:error — never a stuck
-    # spinner).
+  def handle_info({:review_archive_loaded, task_id, node, seq, offset, result}, socket) do
+    # Lazy archive page finished. Stale-guard + state machine live in the
+    # support module (a result for another task/node or from before the current
+    # context generation is dropped; a first page normalizes to :loaded/:error,
+    # an append failure keeps the loaded page — never a stuck spinner).
     {:noreply,
-     EvoDashWeb.ReviewLive.ArchiveLoad.handle_result(socket, task_id, node, seq, result)}
+     EvoDashWeb.ReviewLive.ArchiveLoad.handle_result(
+       socket,
+       task_id,
+       node,
+       seq,
+       offset,
+       result
+     )}
+  end
+
+  @impl true
+  def handle_info({:review_archive_agent_loaded, task_id, node, agent_id, seq, result}, socket) do
+    # One agent's lazily fetched result landed: cache it and fold it into the
+    # loaded page. Every shape is terminal (:ok or a retry-able :error).
+    {:noreply,
+     EvoDashWeb.ReviewLive.ArchiveLoad.handle_agent_result(
+       socket,
+       task_id,
+       node,
+       agent_id,
+       seq,
+       result
+     )}
   end
 
   @impl true

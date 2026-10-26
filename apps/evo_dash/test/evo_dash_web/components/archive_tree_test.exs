@@ -203,6 +203,224 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
+  # A paged archive page: entries carry NO "result" key (the paged read omits it
+  # unless results are explicitly requested) and may reference a parent that sits
+  # on a page which is not loaded.
+  @paged_entries [
+    %{"agent_id" => "page-root", "parent_id" => nil, "depth" => 0, "objective" => "paged root"},
+    %{
+      "agent_id" => "page-orphan",
+      "parent_id" => "not-loaded",
+      "depth" => 2,
+      "objective" => "paged orphan"
+    }
+  ]
+
+  describe "ArchiveComponents.archive_details/1 — paged archive envelope" do
+    test "labels the loaded page against the TRUE total" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 7_149,
+          task_id: "t1"
+        )
+
+      text = Floki.text(Floki.parse_document!(html))
+
+      # 1–2 of 7,149 — one-based inclusive bounds of what is loaded.
+      assert text =~ "7,149 agents — showing 1–2"
+    end
+
+    test "labels the archive with its total once everything is loaded" do
+      text =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          task_id: "t1"
+        )
+        |> rendered_text()
+
+      assert text =~ "2 agents"
+      refute text =~ "showing"
+    end
+
+    test "falls back to the loaded count when no total is supplied" do
+      text =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          task_id: "t1"
+        )
+        |> rendered_text()
+
+      assert text =~ "2 agents"
+    end
+
+    test "renders a Load more button only while more pages exist, wired to the task" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 7_149,
+          task_id: "task-42"
+        )
+
+      assert html =~ ~s(phx-click="load_more_task_archive")
+      assert html =~ ~s(phx-value-task-id="task-42")
+      assert html =~ "Load more"
+      refute html =~ "Loading…"
+
+      # Once everything is loaded there is nothing left to fetch.
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          task_id: "task-42"
+        )
+
+      refute html =~ ~s(phx-click="load_more_task_archive")
+      refute html =~ "Load more"
+    end
+
+    test "the Load more button is disabled and shows a spinner while a page is in flight" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 7_149,
+          loading_more?: true,
+          task_id: "task-42"
+        )
+
+      [button] =
+        Floki.find(Floki.parse_document!(html), ~s(button[phx-click="load_more_task_archive"]))
+
+      assert Floki.attribute(button, "disabled") == ["disabled"]
+      assert Floki.text(button) =~ "Loading…"
+    end
+
+    test "an append failure keeps the page and offers the same event as Retry" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 7_149,
+          more_error: :boom,
+          task_id: "task-42"
+        )
+
+      text = Floki.text(Floki.parse_document!(html))
+
+      assert text =~ "Could not load more archive pages."
+      assert text =~ "Retry"
+      assert text =~ "page-root"
+
+      assert length(
+               Floki.find(Floki.parse_document!(html), ~s([phx-click="load_more_task_archive"]))
+             ) == 2
+    end
+
+    test "a paged entry without a result offers Show result instead of an empty block" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          task_id: "task-42"
+        )
+
+      doc = Floki.parse_document!(html)
+
+      assert html =~ ~s(phx-click="load_task_archive_agent_result")
+      assert html =~ ~s(phx-value-agent-id="page-root")
+      assert html =~ "Show result"
+      # No Result header is rendered while nothing was fetched.
+      refute Floki.text(doc) =~ "Result"
+    end
+
+    test "a per-agent result load renders its spinner, then its capped result" do
+      loading =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          agent_results: %{"page-root" => %{state: :loading, entry: nil, error: nil}},
+          task_id: "task-42"
+        )
+        |> rendered_text()
+
+      assert loading =~ "Loading result…"
+      # Only the requested agent is loading; the other still offers the button.
+      assert loading =~ "Show result"
+
+      tail = "ZZ_LAZY_RESULT_TAIL_ZZ"
+      big = String.duplicate("lazy-result-line ", 1_000) <> tail
+      assert byte_size(big) > 8_192
+
+      loaded =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          agent_results: %{
+            "page-root" => %{
+              state: :ok,
+              entry: %{"agent_id" => "page-root", "result" => big},
+              error: nil
+            }
+          },
+          task_id: "task-42"
+        )
+        |> rendered_text()
+
+      assert loaded =~ "lazy-result-line"
+      refute loaded =~ tail
+      assert loaded =~ "Showing 8,192 of"
+    end
+
+    test "a failed per-agent result load renders the retry-able error line" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          agent_results: %{"page-root" => %{state: :error, entry: nil, error: :boom}},
+          task_id: "task-42"
+        )
+
+      assert html =~ "Could not load this agent&#39;s result."
+      assert html =~ ~s(phx-click="load_task_archive_agent_result")
+      assert html =~ "Retry"
+    end
+
+    test "an entry that already carries its result renders it without a button" do
+      text =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: [
+            %{"agent_id" => "with-result", "parent_id" => nil, "result" => "inline result body"}
+          ],
+          total: 1,
+          task_id: "task-42"
+        )
+        |> rendered_text()
+
+      assert text =~ "inline result body"
+      refute text =~ "Show result"
+    end
+
+    test "renders a record whose parent lives on an unloaded page (orphan promotion)" do
+      text =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @paged_entries,
+          total: 2,
+          task_id: "task-42"
+        )
+        |> rendered_text()
+
+      assert text =~ "page-root"
+      assert text =~ "page-orphan"
+      assert text =~ "paged orphan"
+    end
+  end
+
+  # Render a component and extract only its VISIBLE text (raw HTML would also
+  # carry attribute payloads). `render_component/2` already returns the rendered
+  # HTML string, so no `rendered_to_string/1` is needed here.
+  defp rendered_text(html) when is_binary(html),
+    do: html |> Floki.parse_document!() |> Floki.text()
+
   describe "normalize_agent_keys/1 with string-keyed nested usage (DB round-trip)" do
     test "atomizes the nested usage sub-map via the real core usage keys" do
       agent = EvoDashWeb.ArchiveHelpers.normalize_agent_keys(hd(@string_key_usage_archive))
