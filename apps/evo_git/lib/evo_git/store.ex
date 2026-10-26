@@ -23,13 +23,16 @@ defmodule EvoGit.Store do
       existing user DB is upgraded automatically on first start; a manual
       `mix migrate.store` is never required for the app to boot.
     * **Operations** — `Operations.Tasks`, `Operations.Lightweight`,
-      `Operations.Summaries`, `Operations.Pages`, `Operations.Filters`,
-      `Operations.Projects`, `Operations.Safety` own
+      `Operations.Summaries`, `Operations.Pages`, `Operations.Archives`,
+      `Operations.Filters`, `Operations.Projects`, `Operations.Safety` own
       the actual `EvoGit.Repo.*` + `Ecto.Query` work. Every function takes the
       repo pid FIRST and binds it with `EvoGit.Store.RepoScope.with_repo/2`,
       so it targets THIS store's dynamic instance regardless of the calling
       process. All serialization is delegated to `EvoGit.Store.Codec` (the
-      single encode/decode oracle) through `EvoGit.Store.Types.*`.
+      single encode/decode oracle) through `EvoGit.Store.Types.*` — except the
+      relational per-agent archive (`task_agent_archives`), whose four JSON
+      columns are plain Jason (`EvoGit.Store.Types.ArchiveColumns.*`: no
+      compression, no magic prefixes).
     * **Facade** — this module keeps: the client API, the `handle_call`
       dispatch (one line per handler), the heavy-read offload, the write
       offload to the dedicated `EvoGit.Store.Writer` process, and the
@@ -54,10 +57,11 @@ defmodule EvoGit.Store do
 
   | Read | Degraded value |
   |------|----------------|
-  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_logs/2`, `select_task_update_info/2`, `get_project/2` | `nil` |
-  | `select_all_tasks/1`, `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1`, `get_task_archive/2` | `[]` |
+  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_logs/2`, `select_task_update_info/2`, `get_project/2`, `get_agent_archive/3` | `nil` |
+  | `select_all_tasks/1`, `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1` | `[]` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
   | `select_tasks_page/2` | `%{rows: [], total: 0}` |
+  | `list_task_archives/3` | `%{entries: [], total: 0}` |
   | `count_tasks/1`, `count_projects/1`, `size/1` | `0` |
 
   The degraded value is passed EXPLICITLY at each call site (`offload/5`'s
@@ -217,21 +221,76 @@ defmodule EvoGit.Store do
   Decodes every column exactly like `get_task/2` (same Codec) with two
   savings: the `archive_metadata` column is never read (`archive_metadata:
   nil`) and the result's `:archive_records` key is dropped. Use `get_task/2`
-  when the archive really is needed, `get_task_archive/2` to fetch it
-  separately. Returns `nil` when the row is absent (and on a failed read —
-  see the moduledoc's degradation table).
+  when the archive really is needed, `list_task_archives/3` +
+  `get_agent_archive/3` to fetch it. Returns `nil` when the row is absent (and
+  on a failed read — see the moduledoc's degradation table).
   """
   def get_task_lite(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task_lite, task_id}, @call_timeout)
   end
 
+  ## Public API — Per-agent archive (`task_agent_archives`)
+
   @doc """
-  Returns the decoded `archive_metadata` list for a task (`[]` when the row is
-  missing, the column is NULL, or the payload is undecodable — never raises).
-  Reads ONLY that column.
+  Inserts or REPLACES one archived agent's row (`task_agent_archives`).
+
+  `entry` is a map — atom-keyed (the producer's shape) or string-keyed (the
+  shape `get_agent_archive/3` returns); every field accepts both spellings.
+  Missing values default (`depth` 0, `compression_count` 0, the rest `nil`).
+  The write is IDEMPOTENT on `(task_id, agent_id)`: a re-put replaces, never
+  duplicates. Dispatched through the WRITE offload (the dedicated
+  `EvoGit.Store.Writer`), so it is serialized with every other write and its
+  reply arrives only after the commit.
+
+  Returns `:ok` (`{:error, :disk_full}` on a full disk,
+  `{:error, :missing_task_id}` / `{:error, :missing_agent_id}` for an entry
+  that cannot identify its row — no statement is issued for those).
   """
-  def get_task_archive(store \\ __MODULE__, task_id) do
-    GenServer.call(store, {:get_task_archive, task_id}, @call_timeout)
+  def put_task_archive(store \\ __MODULE__, entry) do
+    GenServer.call(store, {:put_task_archive, entry}, @call_timeout)
+  end
+
+  @doc """
+  Returns one page of a task's archived agents plus that task's total row
+  count: `%{entries: [entry], total: non_neg_integer}`.
+
+  Entries are STRING-KEYED maps ordered `depth ASC, agent_id ASC` (the spawn
+  tree, root first). `opts`:
+
+    * `:limit` — page size (default 100, clamped to 1..1000).
+    * `:offset` — rows to skip (default 0, never negative).
+    * `:include_results` — default `false`: the heavy `result` column is NOT
+      selected and the `"result"` key is ABSENT from every entry; pass `true`
+      to include each agent's full result text. Fetch ONE agent's result
+      instead with `get_agent_archive/3`.
+
+  `total` counts ALL of the task's archive rows, independent of the page.
+  Degrades to `%{entries: [], total: 0}` on a failed read (see the
+  moduledoc).
+  """
+  def list_task_archives(store \\ __MODULE__, task_id, opts \\ []) do
+    GenServer.call(store, {:list_task_archives, task_id, opts}, @call_timeout)
+  end
+
+  @doc """
+  Returns ONE archived agent's full entry (including `"result"`), or `nil` when
+  the task has no such agent (and on a failed read — see the moduledoc).
+
+  This is the lazy detail half of the archive API: `list_task_archives/3` pages
+  the roster without results, this fetches the opened agent's conversation.
+  """
+  def get_agent_archive(store \\ __MODULE__, task_id, agent_id) do
+    GenServer.call(store, {:get_agent_archive, task_id, agent_id}, @call_timeout)
+  end
+
+  @doc """
+  Deletes every archive row of ONE task. Returns `:ok` (also when the task had
+  no archive rows — a DELETE matching nothing is a successful no-op).
+
+  Dispatched through the WRITE offload, like every other write.
+  """
+  def delete_task_archives(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:delete_task_archives, task_id}, @call_timeout)
   end
 
   @doc "Deletes a single task by id."
@@ -704,12 +763,35 @@ defmodule EvoGit.Store do
     end)
   end
 
-  # Offloaded (failure-isolated): the archive-on-demand read (single column).
+  # Offloaded (failure-isolated): the per-agent archive roster read. Never
+  # selects `result` unless asked, so a fault degrades to an empty page rather
+  # than killing this process.
   @impl true
-  def handle_call({:get_task_archive, task_id}, from, state) do
-    offload(from, state, "get_task_archive", [], fn ->
-      Operations.Pages.get_task_archive(state.repo, task_id)
+  def handle_call({:list_task_archives, task_id, opts}, from, state) do
+    offload(from, state, "list_task_archives", %{entries: [], total: 0}, fn ->
+      {:ok, page} = Operations.Archives.list(state.repo, task_id, opts)
+      page
     end)
+  end
+
+  # Offloaded (failure-isolated): the archive detail read for ONE agent.
+  @impl true
+  def handle_call({:get_agent_archive, task_id, agent_id}, from, state) do
+    offload(from, state, "get_agent_archive", nil, fn ->
+      {:ok, entry} = Operations.Archives.get(state.repo, task_id, agent_id)
+      entry
+    end)
+  end
+
+  # Write — one archived agent's row (idempotent upsert), through the writer.
+  @impl true
+  def handle_call({:put_task_archive, entry}, from, state) do
+    offload_write(from, state, fn -> Operations.Archives.put(state.repo, entry) end)
+  end
+
+  @impl true
+  def handle_call({:delete_task_archives, task_id}, from, state) do
+    offload_write(from, state, fn -> Operations.Archives.delete_by_task(state.repo, task_id) end)
   end
 
   @impl true
@@ -1113,7 +1195,8 @@ defmodule EvoGit.Store do
   #
   # Shared boundary for EVERY task/project write dispatched by this facade
   # (put_task, delete_task, delete_tasks, clear_tasks, update_lease_expires_at,
-  # update_task_columns, delete_project — put_project protects itself inside
+  # update_task_columns, delete_project, put_task_archive,
+  # delete_task_archives — put_project protects itself inside
   # Operations.Projects). The XqliteEcto3 adapter RAISES %XqliteEcto3.Error{}
   # on failure; disk-full-class errors (SQLITE_FULL 13, SQLITE_IOERR 10,
   # SQLITE_READONLY 8 — see EvoGit.Store.Errors) are converted to
