@@ -3,9 +3,9 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
   Async dry-run merge check + auto-resolve support for `EvoDashWeb.ReviewLive`.
 
   Kept as a support module (same pattern as the `projects_live/` support
-  modules) so the single-page LiveView stays lean. Every function takes and
-  returns a LiveView socket; ReviewLive's handle_event/handle_info clauses are
-  thin wrappers.
+  modules) so the single-page LiveView stays lean. The check functions take and
+  return a LiveView socket; `auto_resolve_payload/1` is PURE (it builds the
+  payload the LiveView's off-process action layer executes).
 
   Multi-repo aware: operates on `socket.assigns.review_repos` (a list of repo
   maps, primary first), never on the flat per-repo assigns. Each async check
@@ -19,7 +19,6 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
   use Gettext, backend: EvoDashWeb.Gettext
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [put_flash: 3, push_navigate: 2]
 
   alias EvoDashWeb.Helpers
 
@@ -80,13 +79,18 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
   end
 
   @doc """
-  Handles the conflict-status block's `auto_resolve` event: marks the original
-  task continued (mirroring the resume flow) and starts a merge-resolution
-  `:evolve` task. Primary-repo scoped — reads the `"primary"` entry from
-  `@review_repos`. Redirects to the projects page on success.
+  Builds the merge-resolution task payload for the conflict-status block's
+  `auto_resolve` event — `{:ok, %{opts: opts, to: to}}` when the PRIMARY repo
+  currently reports a merge conflict with a known target branch, else
+  `:unavailable`.
+
+  Pure: it performs no I/O and mutates nothing, so `EvoDashWeb.ReviewLive`
+  spawns the actual work (mark the task continued, start the `:evolve` task)
+  off-process through `EvoDashWeb.ReviewLive.Actions.auto_resolve/3`.
+  Primary-repo scoped — reads the `"primary"` entry from `@review_repos`.
   """
-  def handle_auto_resolve(socket) do
-    %{task_id: task_id, current_node: current_node} = socket.assigns
+  def auto_resolve_payload(socket) do
+    %{task_id: task_id} = socket.assigns
 
     case find_repo(socket.assigns.review_repos, "primary") do
       %{
@@ -95,16 +99,6 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
         commit_sha: commit_sha
       }
       when is_binary(target) ->
-        # Mirror the resume flow: mark the original task continued before
-        # spawning the merge-resolution task.
-        EvoDash.NodeContext.set_review_status(current_node, task_id, :continued)
-
-        # The continued task leaves the sidebar's pending-review partition —
-        # invalidate the acting node context's hub snapshot so the destination
-        # mount is COLD and re-fetches (same mechanism as ReviewLive's
-        # merge/reject/resume/ignore success paths).
-        EvoDash.ActiveTasks.invalidate(socket.assigns.current_node_id, current_node)
-
         opts = [
           path: repo_path,
           mode: "simple",
@@ -117,33 +111,14 @@ defmodule EvoDashWeb.ReviewLive.MergeCheck do
           merge_target: target
         ]
 
-        case EvoDash.NodeContext.start_task(current_node, :evolve, opts) do
-          {:ok, _task} ->
-            socket
-            |> put_flash(
-              :success,
-              gettext(
-                "Auto-resolve task started. It will merge the changes and resolve conflicts; review its result when done."
-              )
-            )
-            |> push_navigate(
-              to: Helpers.with_node_param("/projects", socket.assigns.current_node_id)
-            )
-
-          {:error, reason} ->
-            put_flash(
-              socket,
-              :error,
-              gettext("Failed to start auto-resolve: %{reason}", reason: inspect(reason))
-            )
-        end
+        {:ok,
+         %{
+           opts: opts,
+           to: Helpers.with_node_param("/projects", socket.assigns.current_node_id)
+         }}
 
       _ ->
-        put_flash(
-          socket,
-          :error,
-          gettext("Auto-resolve unavailable — no merge conflict detected.")
-        )
+        :unavailable
     end
   end
 
