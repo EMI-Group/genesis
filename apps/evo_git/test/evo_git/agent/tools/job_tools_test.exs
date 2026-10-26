@@ -46,6 +46,19 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   # ceiling, NOT a latency race.
   @job_output_default_timeout_ms 65_000
 
+  # Poll cadence for every wait below (see `wait_until/2`): tight at first, then
+  # relaxed so a genuinely slow condition does not spin. The wait's own deadline
+  # stays the only bound.
+  @poll_first_ms 2
+  @poll_max_ms 20
+
+  # Test-only CALL-TIME seam (`EvoGit.BackgroundJobs.poll_interval_ms/0`): the
+  # caller-side `wait: true` loop sleeps this long between `job/2` polls, so the
+  # production 100 ms would make every settled wait pay a full interval. The
+  # production default is unchanged; the wait's own `timeout_ms` budget is what
+  # the timed-out case exercises.
+  @poll_interval_ms_override 10
+
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
 
@@ -54,6 +67,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
     # OS confirms the child is genuinely gone, so the grace buys nothing here. The
     # production default (100 ms) is unchanged.
     put_test_env(:kill_grace_ms, 0)
+    put_test_env(:background_poll_interval_ms, @poll_interval_ms_override)
 
     # Its `terminate/2` kills every job still live when the test ends.
     start_supervised!({EvoGit.BackgroundJobs, [name: registry]})
@@ -142,10 +156,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   defp wait_until(fun, timeout \\ 15_000) do
     deadline = System.monotonic_time(:millisecond) + timeout
-    do_wait_until(fun, deadline, timeout)
+    do_wait_until(fun, deadline, timeout, @poll_first_ms)
   end
 
-  defp do_wait_until(fun, deadline, timeout) do
+  defp do_wait_until(fun, deadline, timeout, poll_ms) do
     result = fun.()
 
     cond do
@@ -156,8 +170,8 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         flunk("the awaited condition was not reached within #{timeout} ms")
 
       true ->
-        Process.sleep(20)
-        do_wait_until(fun, deadline, timeout)
+        Process.sleep(poll_ms)
+        do_wait_until(fun, deadline, timeout, min(poll_ms * 2, @poll_max_ms))
     end
   end
 

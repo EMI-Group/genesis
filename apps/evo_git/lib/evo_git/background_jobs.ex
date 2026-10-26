@@ -259,7 +259,7 @@ defmodule EvoGit.BackgroundJobs do
   def wait_max_ms, do: @wait_max_ms
 
   @doc "Suggested polling interval (ms) for a caller-side `wait: true` loop."
-  def poll_interval_ms, do: @poll_interval_ms
+  def poll_interval_ms, do: resolved_poll_interval_ms()
 
   @doc "Periodic reconcile interval (ms) for live `:unit`-handled jobs."
   def tick_interval_ms, do: resolved_tick_interval_ms()
@@ -899,6 +899,17 @@ defmodule EvoGit.BackgroundJobs do
     case Application.get_env(:evo_git, :background_unknown_grace_ms, @unknown_grace_ms) do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @unknown_grace_ms
+    end
+  end
+
+  # Test-only CALL-TIME override (`:background_poll_interval_ms`); the production
+  # default `@poll_interval_ms` is unchanged. Read on EVERY sleep of a caller-side
+  # `wait: true` loop (`EvoGit.Agent.Tools.JobOutput`), so a suite can shorten the
+  # poll cadence without redefining the documented production interval.
+  defp resolved_poll_interval_ms do
+    case Application.get_env(:evo_git, :background_poll_interval_ms, @poll_interval_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _other -> @poll_interval_ms
     end
   end
 
