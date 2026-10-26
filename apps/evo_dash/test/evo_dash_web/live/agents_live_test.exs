@@ -3334,7 +3334,7 @@ defmodule EvoDashWeb.AgentsLiveTest do
   # node-level compression threshold is deterministic (the 180_000 last resort)
   # and never depends on the developer's real config; every fixture supplies its
   # own per-agent `compression_threshold`, which wins anyway.
-  defp mount_context_meter(conn, summaries, opts \\ []) do
+  defp mount_context_meter(conn, summaries, opts) do
     install_agents(summaries)
     Application.put_env(:evo_dash, :agents_config_runner, fn _node -> {:ok, %{}} end)
 

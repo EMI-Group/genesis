@@ -31,6 +31,15 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     * the isolated pair is started under a supervisor owned by this module and
       is stopped **explicitly and first** in the teardown, so the singleton
       names are provably free before the production children are restarted;
+    * that supervisor is **unlinked** from the test process: ExUnit ends the
+      test process with `exit(:shutdown)` *before* any `on_exit` callback runs,
+      so a linked pair would be torn down by the test's death, at a point where
+      nothing can be ordered;
+    * the shutdown itself is **ordered**: registry first (no new read can start),
+      then the `TaskRegistry` read workers that registry already started are
+      drained (they live under the long-lived `EvoGit.TaskRegistry.ReadSupervisor`
+      and would otherwise be mid-`GenServer.call(EvoGit.Store, …)` when the
+      store stops), and only then the store — so no read is ever interrupted;
     * the restart results are **checked** — a failed restore raises (loud)
       rather than silently leaving the globals unrestored;
     * the restored identity is **verified** (production data dir / `task_store`)
@@ -50,10 +59,11 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   windows' worth of setup/teardown per `async: false` test): restarting the
   production pair is ~1.7 ms/call (its schema is already migrated, so the boot
   migrations are a verified no-op) and everything else — terminating the
-  production pair, the temp-dir `mkdir_p!`/`rm_rf`, and `stop_isolated/1`,
-  which takes its cheap `:ok` branch because the isolated supervisor (linked to
-  the test process) is already dead by the time `on_exit` runs — is
-  sub-millisecond. The isolated store boot was the remaining term.
+  production pair, the temp-dir `mkdir_p!`/`rm_rf`, the read-worker drain
+  (normally an empty `Task.Supervisor.children/1` list; one in-flight read
+  costs that read's own sub-millisecond duration, not a fixed wait) and
+  `stop_isolated/1` — is sub-millisecond. The isolated store boot was the
+  remaining term.
 
   `EvoGit.Store` ALWAYS runs the Ecto migrations at boot
   (`EvoGit.Store.Boot.start_dynamic/2` → `Ecto.Migrator.run(…, all: true)`), and
@@ -100,6 +110,25 @@ defmodule EvoDash.Test.IsolatedTaskStore do
       the migrator is idempotent and would simply re-run the remaining
       migrations on the copy.
   """
+
+  # Caller-local (`Process.get/1`) slot holding the PID of the supervisor that
+  # owns the isolated pair, recorded by `isolate!/1` and read by
+  # `isolated_supervisor/0`.
+  @supervisor_key {__MODULE__, :isolated_supervisor}
+
+  @doc """
+  The PID of the isolated supervisor the LAST `isolate!/1` call started in the
+  CALLING process (`nil` when that process never isolated).
+
+  Exposed only so a suite can pin the lifetime contract that keeps the teardown
+  deterministic (see `isolate!/1`): the pair must NOT be linked to the test
+  process, because ExUnit ends the test process with `exit(:shutdown)` BEFORE
+  any `on_exit` callback runs and a linked pair would be torn down there,
+  unordered. Caller-local (`Process.get/1`), so it never crosses processes.
+  """
+  @spec isolated_supervisor() :: pid() | nil
+  def isolated_supervisor, do: Process.get(@supervisor_key)
+
   @doc """
   Terminate the production children, start an isolated Store + TaskRegistry
   under a supervisor owned by this helper, and register a teardown that stops
@@ -139,6 +168,31 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         ],
         strategy: :one_for_one
       )
+
+    # Unlink the isolated supervisor from the TEST PROCESS, deliberately.
+    #
+    # ExUnit's test process ends with `exit(:shutdown)` (ExUnit.Runner
+    # `spawn_test_monitor/4`) BEFORE `on_exit` callbacks run. A supervisor
+    # started with `start_link/2` in `setup` is therefore killed by that exit
+    # signal, i.e. the isolated pair is torn down by the TEST's death rather
+    # than by this helper's ordered teardown below — and it is torn down at a
+    # point where NOTHING can be ordered: a registry read worker still blocked
+    # in its `GenServer.call(EvoGit.Store, …)` then sees the store vanish and
+    # logs `TaskRegistry: store operation … FAILED` whenever the BEAM happens
+    # to schedule it, which is after the between-test log-capture window has
+    # already closed (the observed stray `[error]` line).
+    #
+    # Unlinking keeps the pair alive until `stop_isolated/1` stops it below, so
+    # the shutdown becomes ordered (registry first, read workers drained, store
+    # last) and deterministic. Nothing depends on the link: this helper's
+    # `on_exit` always runs, and it is the one that stops the pair.
+    Process.unlink(sup)
+
+    # Cheap, caller-local record of the pair's supervisor, so a suite can pin
+    # the lifetime contract without any message passing (see
+    # `isolated_supervisor/0`). `Process.put/2` is a dictionary write in the
+    # TEST process — nanoseconds, no coordination.
+    Process.put(@supervisor_key, sup)
 
     ExUnit.Callbacks.on_exit(fn ->
       # The whole stop/restore sequence runs inside a log capture: `on_exit`
@@ -408,23 +462,120 @@ defmodule EvoDash.Test.IsolatedTaskStore do
   end
 
   defp terminate_production! do
+    # Same ordered shutdown as the teardown (see `stop_isolated/1`): release
+    # the registry, let the read workers it started finish their store calls,
+    # and only then stop the store. Setup runs inside the test's own capture
+    # window, so an unordered stop would usually be captured — "usually" is
+    # exactly the timing dependence this ordering removes.
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.TaskRegistry)
+    await_read_workers()
     Supervisor.terminate_child(EvoGit.Supervisor, EvoGit.Store)
     :ok
   end
 
+  # Stop the isolated pair in an order that cannot produce a stray log line.
+  #
+  # Order is load-bearing:
+  #
+  #   1. stop `EvoGit.TaskRegistry` — it is the ONLY process that starts read
+  #      workers, so after it is down no NEW worker can be spawned against the
+  #      isolated store (a call queued behind it exits `:noproc` in the CALLER,
+  #      which every dashboard call site already handles as a degraded value);
+  #   2. `await_read_workers/0` — the workers the registry had already started
+  #      live under the LONG-LIVED `EvoGit.TaskRegistry.ReadSupervisor` (a
+  #      child of `EvoGit.Supervisor`, NOT of the isolated supervisor, so
+  #      stopping the isolated supervisor does not stop them). A worker still
+  #      blocked in `GenServer.call(EvoGit.Store, …)` when the store stops exits
+  #      with `{:shutdown, {: … GenServer, :call …}}` and logs
+  #      `TaskRegistry: store operation … FAILED` from its OWN process — a line
+  #      that lands whenever the BEAM schedules it, i.e. typically just outside
+  #      the `on_exit` capture window. Waiting here means the store only stops
+  #      once no read of it is in flight;
+  #   3. stop `EvoGit.Store` — no caller is mid-call, so nothing degrades;
+  #   4. stop the (now childless) isolated supervisor, releasing the names.
   defp stop_isolated(sup) do
     if isolated_alive?(sup) do
+      Supervisor.terminate_child(sup, EvoGit.TaskRegistry)
+      await_read_workers()
+      Supervisor.terminate_child(sup, EvoGit.Store)
       Supervisor.stop(sup, :normal, 30_000)
     else
       :ok
     end
   catch
-    # The isolated supervisor may already be gone (it is linked to the test
-    # process, which ExUnit has already terminated when `on_exit` runs, or an
-    # earlier teardown step stopped it). Either way the names are released,
-    # which is all this step exists to guarantee.
+    # The isolated supervisor may already be gone (stopped by an earlier
+    # teardown step). Either way the names are released, which is all this step
+    # exists to guarantee.
     :exit, _ -> :ok
+  end
+
+  # ── Read-worker drain ───────────────────────────────────────────────────
+  #
+  # `EvoGit.TaskRegistry` offloads every heavy read to a worker under the
+  # named `EvoGit.TaskRegistry.ReadSupervisor`, and that supervisor is started
+  # ONCE by `EvoGit.Supervisor` at application boot — it is NOT part of the
+  # isolated supervisor, so its workers outlive both the isolated registry and
+  # the isolated store unless they are waited for. `Task.Supervisor.children/1`
+  # is the only handle on them (the registry's own `pending` map dies with the
+  # registry), and a monitor is the only deterministic way to know a worker is
+  # DONE: a worker replies to its caller only after its store call returned, and
+  # exits right after, so the `:DOWN` is the "no store call in flight" proof.
+  #
+  # The wait is bounded because a wedged read must not wedge the teardown; the
+  # bound is far above the slowest observed read (sub-millisecond here, the
+  # store's own read deadline is 25 s).
+  @read_supervisor EvoGit.TaskRegistry.ReadSupervisor
+  @read_drain_timeout 10_000
+
+  defp await_read_workers do
+    drain_read_workers(System.monotonic_time(:millisecond) + @read_drain_timeout)
+  end
+
+  defp drain_read_workers(deadline) do
+    case read_worker_pids() do
+      # Nothing in flight: the store can stop without interrupting anybody.
+      [] ->
+        :ok
+
+      pids ->
+        refs = Enum.map(pids, &{Process.monitor(&1), &1})
+        all_down? = await_down(refs, deadline)
+        Enum.each(refs, fn {ref, _pid} -> Process.demonitor(ref, [:flush]) end)
+
+        cond do
+          all_down? ->
+            # A second pass only PROVES the property (no new worker can appear:
+            # the registry that spawns them is already down); it costs one
+            # `children/1` call and leaves as soon as that list is empty.
+            drain_read_workers(deadline)
+
+          true ->
+            # Bounded fallback for a read that cannot finish: kill the workers
+            # the same way a supervisor shutdown would (they are `:temporary`,
+            # so nothing restarts), so they can never log after the store is
+            # gone. Every dashboard caller runs its read inside
+            # `EvoDash.SafeCall`, which turns the missing reply into a degraded
+            # value rather than a crash.
+            Enum.each(pids, &Task.Supervisor.terminate_child(@read_supervisor, &1))
+            :ok
+        end
+    end
+  end
+
+  defp await_down([], _deadline), do: true
+
+  defp await_down([{ref, pid} | rest], deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> await_down(rest, deadline)
+    after
+      remaining -> false
+    end
+  end
+
+  defp read_worker_pids do
+    if Process.whereis(@read_supervisor), do: Task.Supervisor.children(@read_supervisor), else: []
   end
 
   # `Supervisor.start_link/2` returns a PID (not a registered name), so the
