@@ -680,7 +680,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "missing foreign repo root returns an error tuple, no crash",
-         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: template} do
+         %{agent_id: agent_id, tmp_dir: tmp_dir, git_template: _template} do
       missing_root = Path.join(tmp_dir, "does_not_exist")
 
       state = %LoopState{

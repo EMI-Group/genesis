@@ -31,6 +31,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   alias EvoGit.Store.Maintenance
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.TestSupport.StoreTemplate
 
   @moduletag :tmp_dir
 
@@ -41,28 +42,14 @@ defmodule EvoGit.Store.MaintenanceTest do
   # `schema_migrations` holds 6 rows.
   @migration_count 6
 
-  # One schema-complete, CHECKPOINTED database built per module: a brand-new
-  # file plus the six migrations costs ~12 ms per boot, a byte copy of this
-  # template ~0.1 ms. Every test still gets its own isolated file with the
-  # identical schema, so the isolation semantics are unchanged (same idiom as
-  # `test/evo_git/store_test.exs`).
+  # One schema-complete, CHECKPOINTED database built per module
+  # (`EvoGit.TestSupport.StoreTemplate`): a brand-new file plus the six
+  # migrations costs ~12 ms per boot, a byte copy of this template ~0.1 ms.
+  # Every test still gets its own isolated file with the identical schema, so
+  # the isolation semantics are unchanged. The `:template` context value is the
+  # helper's `destination -> destination` copy function.
   setup_all do
-    stamp =
-      "#{System.unique_integer([:positive])}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
-
-    template = Path.join(System.tmp_dir!(), "evogit_maint_template_#{stamp}.sqlite")
-    {:ok, pid} = Boot.start_dynamic(template)
-    :ok = Boot.stop(pid)
-    checkpoint_and_strip_wal!(template)
-
-    # The copy is only worth anything if the MAIN file is the migrated
-    # database: prove the schema sits in it (and not in a `-wal` sidecar that a
-    # plain `File.cp!/2` would miss).
-    assert [[1]] = raw_query(template, "SELECT count(*) FROM sqlite_master WHERE name = 'tasks'")
-
-    on_exit(fn -> remove_db(template) end)
-
-    {:ok, %{template: template}}
+    {:ok, %{template: StoreTemplate.new!()}}
   end
 
   # ── Fake store (the maintenance GenServer's `__repo_pid__` peer) ──────────
@@ -265,7 +252,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   describe "EvoGit.Store.Maintenance.run/1" do
     test "optimizes an isolated store's own repo", %{tmp_dir: dir, template: template} do
       path = db_path(dir, "run_isolated")
-      File.cp!(template, path)
+      template.(path)
       store = unique_name(:evogit_maint_store)
 
       {:ok, store_pid} = Store.start_link(data_dir: path, name: store)
@@ -431,7 +418,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   # start remain), and stops it on test exit.
   defp start_repo!(template, dir, tag, opts \\ []) do
     path = db_path(dir, tag)
-    File.cp!(template, path)
+    template.(path)
     {:ok, pid} = Boot.start_dynamic(path, opts)
     Process.unlink(pid)
 
@@ -452,19 +439,6 @@ defmodule EvoGit.Store.MaintenanceTest do
     File.rm(path)
     File.rm(path <> "-wal")
     File.rm(path <> "-shm")
-  end
-
-  # Folds the WAL back into the main file: `Boot.stop/1` checkpoints it as the
-  # last connection closes, but that is asynchronous with respect to the stop
-  # returning, and a `File.cp!/2` of the main file alone would otherwise miss
-  # the schema. `TRUNCATE` leaves the WAL empty, so the sidecars can go.
-  defp checkpoint_and_strip_wal!(path) do
-    {:ok, conn} = Xqlite.open(path)
-    {:ok, _} = Xqlite.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
-    XqliteNIF.close(conn)
-    File.rm(path <> "-wal")
-    File.rm(path <> "-shm")
-    :ok
   end
 
   defp unique_name(prefix) do
@@ -512,7 +486,7 @@ defmodule EvoGit.Store.MaintenanceTest do
   # migrated template, then closes it — a small, realistic database for the mix
   # task.
   defp seed_db!(template, path, count) do
-    File.cp!(template, path)
+    template.(path)
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
 
