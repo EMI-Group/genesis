@@ -21,15 +21,13 @@ defmodule EvoDash.ChatHistoryTest do
   end
 
   describe "new_chat/0" do
-    test "creates a chat, makes it current, and returns a positive integer id" do
+    test "creates a chat, makes it current, and returns unique positive ids" do
       id = ChatHistory.new_chat()
 
       assert is_integer(id) and id > 0
       assert ChatHistory.current_chat_id() == id
       assert ChatHistory.list_chats() == [id]
-    end
 
-    test "returns unique ids across calls" do
       ids = for _ <- 1..5, do: ChatHistory.new_chat()
 
       assert length(Enum.uniq(ids)) == 5
@@ -37,24 +35,23 @@ defmodule EvoDash.ChatHistoryTest do
       # guaranteed strictly increasing — creation order is tracked separately
       # (an internal monotonic seq drives list_chats/0's newest-first order).
       assert ChatHistory.current_chat_id() == List.last(ids)
+      # list_chats/0 is newest-first.
+      assert Enum.take(ChatHistory.list_chats(), 5) == Enum.reverse(ids)
     end
   end
 
   describe "current_chat_id/0 and set_current_chat/1" do
-    test "current_chat_id/0 is nil when no chat is current" do
+    test "the current pointer starts nil, switches freely, and does not validate ids" do
       assert ChatHistory.current_chat_id() == nil
-    end
 
-    test "set_current_chat/1 switches the current pointer" do
       first = ChatHistory.new_chat()
       second = ChatHistory.new_chat()
 
       assert ChatHistory.current_chat_id() == second
       assert ChatHistory.set_current_chat(first) == :ok
       assert ChatHistory.current_chat_id() == first
-    end
 
-    test "set_current_chat/1 does not validate the chat id" do
+      # An unknown id is accepted verbatim (no lookup, no error).
       assert ChatHistory.set_current_chat(999_999) == :ok
       assert ChatHistory.current_chat_id() == 999_999
       assert ChatHistory.get_state(999_999) == nil
@@ -62,11 +59,9 @@ defmodule EvoDash.ChatHistoryTest do
   end
 
   describe "list_chats/0" do
-    test "is empty when no chats exist" do
+    test "is empty with no chats and newest-first otherwise" do
       assert ChatHistory.list_chats() == []
-    end
 
-    test "returns chat ids newest-first" do
       first = ChatHistory.new_chat()
       second = ChatHistory.new_chat()
       third = ChatHistory.new_chat()
@@ -76,31 +71,21 @@ defmodule EvoDash.ChatHistoryTest do
   end
 
   describe "put_state/2 and get_state/1" do
-    test "round-trips opaque state for an existing chat" do
+    test "round-trips opaque state, overwrites it, and upserts unknown chats as newest" do
       id = ChatHistory.new_chat()
 
       assert ChatHistory.get_state(id) == nil
       assert ChatHistory.put_state(id, %{messages: ["hello"]}) == :ok
       assert ChatHistory.get_state(id) == %{messages: ["hello"]}
-    end
 
-    test "put_state/2 overwrites previous state" do
-      id = ChatHistory.new_chat()
       ChatHistory.put_state(id, :first)
       ChatHistory.put_state(id, :second)
-
       assert ChatHistory.get_state(id) == :second
-    end
 
-    test "get_state/1 returns nil for an unknown chat" do
       assert ChatHistory.get_state(123_456) == nil
-    end
-
-    test "put_state/2 upserts an unknown chat id as a new (newest) chat" do
-      existing = ChatHistory.new_chat()
 
       assert ChatHistory.put_state(42, "transcript") == :ok
-      assert ChatHistory.list_chats() == [42, existing]
+      assert ChatHistory.list_chats() == [42, id]
       assert ChatHistory.get_state(42) == "transcript"
     end
   end
@@ -115,20 +100,18 @@ defmodule EvoDash.ChatHistoryTest do
       assert ChatHistory.get_state(id) == nil
     end
 
-    test "clears the current pointer when the deleted chat was current" do
-      id = ChatHistory.new_chat()
-
-      assert ChatHistory.delete_chat(id) == :ok
-      assert ChatHistory.current_chat_id() == nil
-    end
-
-    test "keeps the current pointer when a non-current chat is deleted" do
+    test "clears the current pointer only when the deleted chat was current" do
       first = ChatHistory.new_chat()
-      second = ChatHistory.new_chat()
 
       assert ChatHistory.delete_chat(first) == :ok
-      assert ChatHistory.current_chat_id() == second
-      assert ChatHistory.list_chats() == [second]
+      assert ChatHistory.current_chat_id() == nil
+
+      second = ChatHistory.new_chat()
+      third = ChatHistory.new_chat()
+
+      assert ChatHistory.delete_chat(second) == :ok
+      assert ChatHistory.current_chat_id() == third
+      assert ChatHistory.list_chats() == [third]
     end
 
     test "is a no-op for unknown chat ids" do
@@ -148,7 +131,7 @@ defmodule EvoDash.ChatHistoryTest do
       assert ChatHistory.list_chats() == [third, second]
     end
 
-    test "clears the current pointer when the current chat is pruned away" do
+    test "clears the current pointer only when the current chat is pruned away" do
       first = ChatHistory.new_chat()
       newest = ChatHistory.new_chat()
       ChatHistory.set_current_chat(first)
@@ -156,29 +139,22 @@ defmodule EvoDash.ChatHistoryTest do
       assert ChatHistory.prune(1) == :ok
       assert ChatHistory.list_chats() == [newest]
       assert ChatHistory.current_chat_id() == nil
-    end
 
-    test "keeps the current pointer when the current chat survives" do
-      ChatHistory.new_chat()
-      current = ChatHistory.new_chat()
-
+      ChatHistory.set_current_chat(newest)
       assert ChatHistory.prune(1) == :ok
-      assert ChatHistory.current_chat_id() == current
-      assert ChatHistory.list_chats() == [current]
+      assert ChatHistory.current_chat_id() == newest
+      assert ChatHistory.list_chats() == [newest]
     end
 
-    test "with 0 clears all chats and the current pointer" do
+    test "with 0 clears everything; a bound >= the chat count is a no-op" do
       ChatHistory.new_chat()
       ChatHistory.new_chat()
 
       assert ChatHistory.prune(0) == :ok
       assert ChatHistory.list_chats() == []
       assert ChatHistory.current_chat_id() == nil
-    end
 
-    test "with a bound >= chat count is a no-op" do
       id = ChatHistory.new_chat()
-
       assert ChatHistory.prune(10) == :ok
       assert ChatHistory.list_chats() == [id]
     end
@@ -197,12 +173,14 @@ defmodule EvoDash.ChatHistoryTest do
 
   describe "reset/0" do
     test "clears all chats, states, and the current pointer" do
-      ChatHistory.new_chat()
+      id = ChatHistory.new_chat()
+      ChatHistory.put_state(id, :state)
       ChatHistory.new_chat()
 
       assert ChatHistory.reset() == :ok
       assert ChatHistory.list_chats() == []
       assert ChatHistory.current_chat_id() == nil
+      assert ChatHistory.get_state(id) == nil
     end
   end
 end
