@@ -9,19 +9,16 @@ defmodule EvoDashWeb.HomeLive.TranscriptTest do
   # keys, and non-boolean streaming flags all degrade instead of crashing.
 
   describe "normalize/1" do
-    test "non-lists normalize to []" do
+    test "non-lists normalize to []; non-map entries are dropped" do
       for input <- [nil, "x", 42, %{}] do
         assert Transcript.normalize(input) == []
       end
-    end
 
-    test "non-map entries are dropped" do
-      assert length(
+      assert [%{id: "1", role: :user, text: "hi"}] =
                Transcript.normalize([%{id: "1", role: :user, text: "hi"}, :junk, "str", nil])
-             ) == 1
     end
 
-    test "non-binary ids are coerced; nil ids get fresh unique ids" do
+    test "non-binary ids are coerced; nil and absent ids get fresh unique ids" do
       [e1, e2, e3] =
         Transcript.normalize([
           %{id: 7, role: :user, text: "a"},
@@ -30,56 +27,40 @@ defmodule EvoDashWeb.HomeLive.TranscriptTest do
         ])
 
       assert e1.id == "7"
-      assert e2.id != ""
-      assert e3.id != ""
+      assert e2.id != "" and e3.id != ""
       assert e2.id != e3.id
     end
 
-    test "unknown roles fall back to :assistant (kept visible, left-aligned)" do
-      [e] = Transcript.normalize([%{role: :bogus, text: "x"}])
-      assert e.role == :assistant
-    end
-
-    test "string roles are whitelisted" do
-      [u, a, e] =
+    test "string roles are whitelisted, unknown roles fall back to :assistant" do
+      # Unknown roles keep the entry visible, left-aligned.
+      [u, a, e, bogus] =
         Transcript.normalize([
           %{role: "user", text: "1"},
           %{role: "assistant", text: "2"},
-          %{role: "error", text: "3"}
+          %{role: "error", text: "3"},
+          %{role: :bogus, text: "x"}
         ])
 
-      assert u.role == :user
-      assert a.role == :assistant
-      assert e.role == :error
+      assert {u.role, a.role, e.role, bogus.role} == {:user, :assistant, :error, :assistant}
     end
 
-    test "missing/absent keys degrade" do
-      [e] = Transcript.normalize([%{}])
-      assert e.text == ""
-      assert e.role == :assistant
-      assert e.streaming == false
-      assert is_binary(e.id)
-    end
+    test "missing keys degrade; streaming is boolean-ized; text is coerced" do
+      [empty] = Transcript.normalize([%{}])
+      assert {empty.text, empty.role, empty.streaming} == {"", :assistant, false}
+      assert is_binary(empty.id)
 
-    test "streaming is boolean-ized (true only for exactly true)" do
-      [e1, e2, e3] =
+      # true only for exactly true.
+      [s1, s2, s3] =
         Transcript.normalize([
           %{streaming: true, text: "a"},
           %{streaming: "yes", text: "b"},
           %{streaming: false, text: "c"}
         ])
 
-      assert e1.streaming == true
-      assert e2.streaming == false
-      assert e3.streaming == false
-    end
+      assert {s1.streaming, s2.streaming, s3.streaming} == {true, false, false}
 
-    test "text is coerced to a binary" do
-      [e] = Transcript.normalize([%{text: 123}])
-      assert e.text == "123"
-
-      [e2] = Transcript.normalize([%{text: nil}])
-      assert e2.text == ""
+      assert [%{text: "123"}] = Transcript.normalize([%{text: 123}])
+      assert [%{text: ""}] = Transcript.normalize([%{text: nil}])
     end
 
     test "valid entries pass through unchanged" do
