@@ -24,6 +24,16 @@ defmodule EvoGit.Store.CompositeIndexTest do
       `total_count`, pagination included: a new index must never change WHICH
       rows a query returns.
 
+  ## A fresh database already has these indexes
+
+  `20260815000001_baseline_adoption` creates the final six `idx_tasks_*`
+  indexes, both composites included, so this migration is an idempotent no-op
+  on a fresh database; the DDL/post-condition test re-arms version
+  `20260815000003` (`DELETE FROM schema_migrations`) to drive the real module a
+  second time. The single-column `idx_tasks_status` / `idx_tasks_project_path`
+  indexes no longer exist anywhere — `20260815000006_prune_redundant_indexes`
+  drops them on an adopted database and a fresh one never creates them.
+
   ## Why the two DDL-sequencing tests pin their store to ONE connection
 
   Each test boots its OWN dynamic repo via `start_repo!/3`, which forwards
@@ -56,6 +66,9 @@ defmodule EvoGit.Store.CompositeIndexTest do
 
   @status_index "idx_tasks_status_started_at"
   @path_index "idx_tasks_project_path_started_at"
+  # The only other status-leading index of the final six — the fallback the
+  # planner takes when the composite above is gone.
+  @status_updated_at_id_index "idx_tasks_status_updated_at_id"
 
   # ── setup / helpers ──────────────────────────────────────────────────────
 
@@ -289,13 +302,17 @@ defmodule EvoGit.Store.CompositeIndexTest do
       assert plan =~ @status_index
       refute plan =~ "TEMP B-TREE"
 
-      # Same database, same rows, composite dropped — exactly the pre-migration
-      # shape (baseline idx_tasks_status + USE TEMP B-TREE FOR ORDER BY).
+      # Same database, same rows, composite dropped. No single-column
+      # `idx_tasks_status` exists any more (the six-index set has none), so the
+      # status equality falls to the other status-leading index,
+      # `idx_tasks_status_updated_at_id`, which cannot deliver
+      # `ORDER BY started_at DESC` — the temp B-tree comes back.
       query_rows(pid, "DROP INDEX #{@status_index}")
 
       assert %{page: plan} = plan_texts(pid, filters: [status: "completed"])
       assert plan =~ "USE TEMP B-TREE FOR ORDER BY"
-      assert plan =~ "USING INDEX idx_tasks_status"
+      assert plan =~ "USING INDEX #{@status_updated_at_id_index}"
+      refute plan =~ @status_index
 
       # Re-creating it restores the index-served plan.
       query_rows(pid, "CREATE INDEX #{@status_index} ON tasks(status, started_at)")
