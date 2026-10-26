@@ -12,24 +12,32 @@ defmodule EvoDashWeb.PlatformInfoTest do
   alias EvoDashWeb.PlatformInfo
   alias EvoDashWeb.SettingsLive.ConfigIO
 
-  describe "show_sandbox?/1" do
-    test "is true for linux and macos" do
-      assert PlatformInfo.show_sandbox?(:linux)
-      assert PlatformInfo.show_sandbox?(:macos)
-    end
-
-    test "is false for windows and unknown" do
-      refute PlatformInfo.show_sandbox?(:windows)
-      refute PlatformInfo.show_sandbox?(:unknown)
-    end
+  # Installs a global app-env seam value for this test and restores it in
+  # `on_exit` — app env is process-wide, so the delete must always run.
+  defp override(key, value) do
+    Application.put_env(:evo_dash, key, value)
+    on_exit(fn -> Application.delete_env(:evo_dash, key) end)
   end
 
-  describe "sandbox_backend_for/1" do
-    test "maps each OS to its sandbox backend" do
-      assert PlatformInfo.sandbox_backend_for(:linux) == :systemd_run
-      assert PlatformInfo.sandbox_backend_for(:macos) == :sandbox_exec
-      assert PlatformInfo.sandbox_backend_for(:windows) == :none
-      assert PlatformInfo.sandbox_backend_for(:unknown) == :none
+  describe "platform predicates" do
+    test "show_sandbox?/1 is true only for linux/macos and sandbox_backend_for/1 maps each OS" do
+      for os <- [:linux, :macos] do
+        assert PlatformInfo.show_sandbox?(os), "expected show_sandbox?(#{inspect(os)})"
+      end
+
+      for os <- [:windows, :unknown] do
+        refute PlatformInfo.show_sandbox?(os), "expected not show_sandbox?(#{inspect(os)})"
+      end
+
+      for {os, backend} <- [
+            {:linux, :systemd_run},
+            {:macos, :sandbox_exec},
+            {:windows, :none},
+            {:unknown, :none}
+          ] do
+        assert PlatformInfo.sandbox_backend_for(os) == backend,
+               "expected #{inspect(os)} to map to #{inspect(backend)}"
+      end
     end
   end
 
@@ -46,178 +54,123 @@ defmodule EvoDashWeb.PlatformInfoTest do
       }
     end
 
-    test ":linux returns the map unchanged" do
+    test ":linux returns the map unchanged; :windows and :unknown drop only the sandbox category" do
       schemas = sandbox_fixture()
 
       assert PlatformInfo.filter_schemas_by_category(schemas, :linux) == schemas
+
+      for os <- [:windows, :unknown] do
+        filtered = PlatformInfo.filter_schemas_by_category(schemas, os)
+
+        refute Map.has_key?(filtered, :sandbox), "expected :sandbox dropped for #{inspect(os)}"
+        assert filtered.llm == schemas.llm
+      end
     end
 
-    test ":windows removes the sandbox category, leaving other categories untouched" do
-      schemas = sandbox_fixture()
-
-      filtered = PlatformInfo.filter_schemas_by_category(schemas, :windows)
-
-      refute Map.has_key?(filtered, :sandbox)
-      assert filtered.llm == schemas.llm
-    end
-
-    test ":unknown behaves like :windows" do
-      schemas = sandbox_fixture()
-
-      filtered = PlatformInfo.filter_schemas_by_category(schemas, :unknown)
-
-      refute Map.has_key?(filtered, :sandbox)
-      assert filtered.llm == schemas.llm
-    end
-
-    test ":macos keeps only sub_category-nil schemas in the sandbox entry" do
+    test ":macos keeps only sub_category-nil sandbox schemas (empty entry when the category is absent)" do
       schemas = sandbox_fixture()
 
       filtered = PlatformInfo.filter_schemas_by_category(schemas, :macos)
 
       assert filtered.sandbox == [%{key_path: [:sandbox, :mode], sub_category: nil}]
       assert filtered.llm == schemas.llm
-    end
 
-    test ":macos on a map without a :sandbox key produces an empty sandbox entry" do
-      schemas = %{llm: [%{key_path: [:llm, :model], sub_category: nil}]}
-
-      filtered = PlatformInfo.filter_schemas_by_category(schemas, :macos)
+      without_sandbox = %{llm: [%{key_path: [:llm, :model], sub_category: nil}]}
+      filtered = PlatformInfo.filter_schemas_by_category(without_sandbox, :macos)
 
       assert filtered.sandbox == []
-      assert filtered.llm == schemas.llm
+      assert filtered.llm == without_sandbox.llm
     end
   end
 
   describe "os_for_node/1" do
-    test "override wins even for a remote node" do
-      Application.put_env(:evo_dash, :platform_os_override, :windows)
-      on_exit(fn -> Application.delete_env(:evo_dash, :platform_os_override) end)
-
+    test "a valid override wins even for a remote node (:unknown passes through)" do
+      override(:platform_os_override, :windows)
       assert PlatformInfo.os_for_node(:anything_remote@host) == :windows
-    end
 
-    test ":unknown override passes through" do
       Application.put_env(:evo_dash, :platform_os_override, :unknown)
-      on_exit(fn -> Application.delete_env(:evo_dash, :platform_os_override) end)
-
       assert PlatformInfo.os_for_node(nil) == :unknown
     end
 
-    test "non-override value is ignored and falls through to detection" do
-      Application.put_env(:evo_dash, :platform_os_override, :bogus)
-      on_exit(fn -> Application.delete_env(:evo_dash, :platform_os_override) end)
+    test "a non-override value is ignored and falls through; a fake remote node degrades to :unknown" do
+      override(:platform_os_override, :bogus)
 
-      assert PlatformInfo.os_for_node(nil) == EvoGit.Platform.os()
-    end
-
-    test "local node detection matches EvoGit.Platform.os/0" do
       assert PlatformInfo.os_for_node(nil) == EvoGit.Platform.os()
       assert PlatformInfo.os_for_node(node()) == EvoGit.Platform.os()
-    end
 
-    test "fake remote node degrades to :unknown without raising" do
+      Application.delete_env(:evo_dash, :platform_os_override)
       assert PlatformInfo.os_for_node(:nonexistent@nohost) == :unknown
     end
   end
 
   describe "nix_available_for_node/1" do
-    test "boolean override wins even for a remote node" do
-      Application.put_env(:evo_dash, :nix_available_override, true)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
+    test "a boolean override wins even for a remote node (false is honored too)" do
+      override(:nix_available_override, true)
       assert PlatformInfo.nix_available_for_node(:anything_remote@host)
-    end
 
-    test "false override is honored" do
       Application.put_env(:evo_dash, :nix_available_override, false)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
       refute PlatformInfo.nix_available_for_node(nil)
     end
 
-    test "non-boolean override is ignored and falls through to detection" do
-      Application.put_env(:evo_dash, :nix_available_override, :bogus)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
+    test "a non-boolean override is ignored and falls through; a fake remote node degrades to false" do
+      override(:nix_available_override, :bogus)
 
       # Falls through to EvoGit.Platform.nix_available?/0 on the local node —
       # the result is whatever the host says, but always a boolean.
       assert is_boolean(PlatformInfo.nix_available_for_node(nil))
-    end
-
-    test "local node detection matches EvoGit.Platform.nix_available?/0" do
       assert PlatformInfo.nix_available_for_node(nil) == EvoGit.Platform.nix_available?()
       assert PlatformInfo.nix_available_for_node(node()) == EvoGit.Platform.nix_available?()
-    end
 
-    test "fake remote node degrades to false without raising" do
       # call_remote normalizes erpc failures to {:error, _} → conservative false.
+      Application.delete_env(:evo_dash, :nix_available_override)
       refute PlatformInfo.nix_available_for_node(:nonexistent@nohost)
     end
   end
 
   describe "nix_enabled_explicitly?/1 (pure)" do
-    test "empty config → false" do
-      refute PlatformInfo.nix_enabled_explicitly?(%{})
-    end
+    test "an explicit true OR false counts as configured; absent/empty is false" do
+      cases = [
+        # TomlElixir.decode returns string keys — the real raw-config shape.
+        {%{"nix" => %{"enabled" => true}}, true},
+        {%{"nix" => %{"enabled" => false}}, true},
+        {%{nix: %{enabled: true}}, true},
+        # present [nix] table without an :enabled key
+        {%{"nix" => %{}}, false},
+        {%{}, false}
+      ]
 
-    test "string-keyed raw TOML map with enabled = true → true" do
-      # TomlElixir.decode returns string keys — the real raw-config shape.
-      assert PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{"enabled" => true}})
-    end
-
-    test "string-keyed raw TOML map with enabled = false → true (explicit false counts)" do
-      assert PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{"enabled" => false}})
-    end
-
-    test "atom-keyed map with enabled = true → true" do
-      assert PlatformInfo.nix_enabled_explicitly?(%{nix: %{enabled: true}})
-    end
-
-    test "present [nix] table without enabled key → false" do
-      refute PlatformInfo.nix_enabled_explicitly?(%{"nix" => %{}})
+      for {config, expected} <- cases do
+        assert PlatformInfo.nix_enabled_explicitly?(config) == expected,
+               "expected #{inspect(config)} to be #{expected}"
+      end
     end
   end
 
-  describe "show_nix_category?/1" do
-    test "true override short-circuits without reading config" do
-      Application.put_env(:evo_dash, :nix_available_override, true)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
-      assert PlatformInfo.show_nix_category?(nil)
+  describe "show_nix_category?/1 and filter_nix_category/2" do
+    defp nix_schemas do
+      %{nix: [%{key_path: [:nix, :enabled]}], llm: [%{key_path: [:llm, :model]}]}
     end
 
-    test "false override + unresponsive remote node → hidden (no local config read)" do
-      Application.put_env(:evo_dash, :nix_available_override, false)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
-      # The override forces nix_available_for_node to false; the remote RPC to
-      # a nonexistent node fails and nix_enabled_explicitly_for_node degrades
-      # to false. Deterministic — no local host config is ever read.
+    test "a false override + unresponsive remote node hides and strips :nix; a true override keeps it" do
+      # The false override forces nix_available_for_node to false; the remote RPC
+      # to a nonexistent node fails and nix_enabled_explicitly_for_node degrades
+      # to false — deterministic, no local host config is ever read.
+      override(:nix_available_override, false)
       refute PlatformInfo.show_nix_category?(:nonexistent@nohost)
-    end
 
-    test "filter_nix_category removes :nix only when the category is hidden" do
-      schemas = %{nix: [%{key_path: [:nix, :enabled]}], llm: [%{key_path: [:llm, :model]}]}
-
-      # Hidden path: false override + unresponsive remote node → :nix removed.
-      Application.put_env(:evo_dash, :nix_available_override, false)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
+      schemas = nix_schemas()
       assert PlatformInfo.filter_nix_category(schemas, :nonexistent@nohost) == %{llm: schemas.llm}
 
-      # Visible path: true override → map unchanged (short-circuits, no config).
+      # The true override short-circuits (no config read) → category kept.
       Application.put_env(:evo_dash, :nix_available_override, true)
-      on_exit(fn -> Application.delete_env(:evo_dash, :nix_available_override) end)
-
+      assert PlatformInfo.show_nix_category?(nil)
       assert PlatformInfo.filter_nix_category(schemas, nil) == schemas
     end
   end
 
   describe "round-trip safety: hidden (filtered-out) schemas are never clobbered" do
-    # Mirrors the real macOS-visible sandbox schemas (:sub_category == nil),
-    # like the fixtures in config_io_test.exs — only key_path/type/sub_category
-    # (+ the :atom whitelist) matter for the logic.
+    # Mirrors the real macOS-visible sandbox schemas (:sub_category == nil) —
+    # only key_path/type/sub_category (+ the :atom whitelist) matter for the logic.
     defp mode_schema do
       %{
         key_path: [:sandbox, :mode],
@@ -227,60 +180,43 @@ defmodule EvoDashWeb.PlatformInfoTest do
       }
     end
 
-    defp write_paths_schema do
-      %{
-        key_path: [:sandbox, :write_paths],
-        type: :list_of_strings,
-        sub_category: nil
-      }
+    defp save_sandbox(params, file_config) do
+      ConfigIO.build_config_from_category_params(
+        params,
+        :sandbox,
+        [
+          mode_schema(),
+          %{key_path: [:sandbox, :write_paths], type: :list_of_strings, sub_category: nil}
+        ],
+        file_config
+      )
     end
 
-    test "absent params for filtered-out schemas do not delete their config keys" do
-      # macOS-filtered sandbox schema list: only :sub_category == nil fields
-      # (mode, write_paths). The resources/linux schemas are absent from the
-      # list, so the form has no keys for them — and they must NOT be
-      # deep-deleted as "emptied" on save.
-      macos_sandbox_schemas = [mode_schema(), write_paths_schema()]
-
-      file_config = %{
-        sandbox: %{
-          mode: :auto,
-          write_paths: ["/tmp/a"],
-          resources: %{max_rss: 1024},
-          linux: %{no_new_privileges: true}
-        }
-      }
-
-      params = %{"sandbox.mode" => "auto", "sandbox.write_paths" => ["/tmp/a"]}
-
+    test "absent params for filtered-out schemas never delete their keys (a rendered one IS deleted)" do
+      # The macOS-filtered list holds only :sub_category == nil fields (mode,
+      # write_paths). resources/linux schemas are absent from it, so the form has
+      # no keys for them — and they must NOT be deep-deleted as "emptied" on save.
       config =
-        ConfigIO.build_config_from_category_params(
-          params,
-          :sandbox,
-          macos_sandbox_schemas,
-          file_config
-        )
+        save_sandbox(%{"sandbox.mode" => "auto", "sandbox.write_paths" => ["/tmp/a"]}, %{
+          sandbox: %{
+            mode: :auto,
+            write_paths: ["/tmp/a"],
+            resources: %{max_rss: 1024},
+            linux: %{no_new_privileges: true}
+          }
+        })
 
       assert get_in(config, [:sandbox, :resources, :max_rss]) == 1024
       assert get_in(config, [:sandbox, :linux, :no_new_privileges]) == true
       assert get_in(config, [:sandbox, :write_paths]) == ["/tmp/a"]
       assert get_in(config, [:sandbox, :mode]) == :auto
-    end
 
-    test "negative control: absent param for a rendered schema IS the delete signal" do
-      schemas = [mode_schema(), write_paths_schema()]
-
-      file_config = %{sandbox: %{mode: :auto, write_paths: ["/tmp/a"]}}
-
-      # write_paths is present in the schema list (rendered) but absent from
-      # the form → deep-deleted (pre-existing semantics).
+      # Negative control: write_paths IS in the schema list (rendered) but absent
+      # from the form → deep-deleted (pre-existing semantics).
       config =
-        ConfigIO.build_config_from_category_params(
-          %{"sandbox.mode" => "auto"},
-          :sandbox,
-          schemas,
-          file_config
-        )
+        save_sandbox(%{"sandbox.mode" => "auto"}, %{
+          sandbox: %{mode: :auto, write_paths: ["/tmp/a"]}
+        })
 
       assert is_nil(get_in(config, [:sandbox, :write_paths]))
       assert get_in(config, [:sandbox, :mode]) == :auto
