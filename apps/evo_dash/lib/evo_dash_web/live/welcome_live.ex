@@ -607,7 +607,9 @@ defmodule EvoDashWeb.WelcomeLive do
 
       # Save the credential if a new key was entered.
       api_key != "" ->
-        case EvoGit.Config.save_credentials(%{credential_key => api_key}) do
+        case safe_config_write(fn ->
+               EvoGit.Config.save_credentials(%{credential_key => api_key})
+             end) do
           :ok ->
             socket =
               socket
@@ -664,8 +666,19 @@ defmodule EvoDashWeb.WelcomeLive do
            {:ok, socket} <- save_typed_key_for_test(entry.credential_key, socket) do
         parent = self()
 
+        # The test runs OUTSIDE this LiveView, so its failure modes must become
+        # VALUES: an unguarded exit would kill the child BEFORE it sends its
+        # result, wedging `llm_test_status` at `:testing` forever (a spinner
+        # with no way back). EvoDash.SafeCall.run captures exits/raises and the
+        # result is normalized to the `{:ok, data} | {:error, reason}` shape the
+        # handler understands.
         Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-          result = EvoGit.SystemCheck.llm_test(model_value)
+          result =
+            case EvoDash.SafeCall.run(fn -> EvoGit.SystemCheck.llm_test(model_value) end) do
+              {:ok, value} -> value
+              {:error, reason} -> {:error, llm_test_failure_message(reason)}
+            end
+
           send(parent, {:llm_test_result, result})
         end)
 
@@ -682,10 +695,14 @@ defmodule EvoDashWeb.WelcomeLive do
 
   @impl true
   def handle_info({:llm_test_result, result}, socket) do
+    # Every shape settles on a TERMINAL status — including an unexpected payload
+    # (it can only come from a future/changed producer): the page must never sit
+    # on `:testing` with no way to retry.
     status =
       case result do
         {:ok, data} -> {:ok, data}
-        {:error, reason} -> {:error, reason}
+        {:error, reason} -> {:error, llm_test_display_reason(reason)}
+        other -> {:error, llm_test_failure_message({:unexpected, other})}
       end
 
     {:noreply, assign(socket, :llm_test_status, status)}
@@ -711,6 +728,42 @@ defmodule EvoDashWeb.WelcomeLive do
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
   end
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # Private: exit-safe calls
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Runs a LOCAL config-file write through the exit-safe boundary and unwraps it
+  # back to the plain `:ok | {:error, reason}` contract those writes already
+  # return, so an unexpected exit/exception lands on the EXISTING error-flash
+  # path instead of crashing the LiveView. Config writes stay synchronous —
+  # only their failure modes are captured.
+  defp safe_config_write(fun) do
+    case EvoDash.SafeCall.run(fun) do
+      {:ok, result} -> result
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Renders a captured failure reason as a DISPLAYABLE string (`llm_test/1`
+  # already returns a human-readable `{:error, msg}`, so binaries pass through
+  # verbatim). Never returns a non-string, because the template interpolates it.
+  defp llm_test_display_reason(reason) when is_binary(reason), do: reason
+  defp llm_test_display_reason(reason), do: llm_test_failure_message(reason)
+
+  defp llm_test_failure_message({:exception, exception}) when is_exception(exception) do
+    gettext("Connection test failed: %{reason}", reason: Exception.message(exception))
+  end
+
+  defp llm_test_failure_message({:unexpected, payload}) do
+    gettext("Connection test failed with an unexpected result: %{reason}",
+      reason: inspect(payload)
+    )
+  end
+
+  defp llm_test_failure_message(reason) do
+    gettext("Connection test failed: %{reason}", reason: inspect(reason))
+  end
+
   # Saves a newly-typed API key before running the connection test, so the
   # test exercises the key the user just entered (`EvoGit.SystemCheck.llm_test`
   # reads credentials from the saved credentials file). Returns `{:ok, socket}`
@@ -722,7 +775,9 @@ defmodule EvoDashWeb.WelcomeLive do
     if api_key == "" do
       {:ok, socket}
     else
-      case EvoGit.Config.save_credentials(%{credential_key => api_key}) do
+      case safe_config_write(fn ->
+             EvoGit.Config.save_credentials(%{credential_key => api_key})
+           end) do
         :ok ->
           {:ok,
            socket
@@ -963,7 +1018,7 @@ defmodule EvoDashWeb.WelcomeLive do
     # Always update in-memory state so the UI reflects the change immediately.
     socket = assign(socket, :file_config, file_config)
 
-    case EvoGit.Config.save_user_config(file_config) do
+    case safe_config_write(fn -> EvoGit.Config.save_user_config(file_config) end) do
       :ok ->
         file_config = ConfigIO.load_file_config()
         model_profiles = get_in(file_config, [:llm, :models]) || []

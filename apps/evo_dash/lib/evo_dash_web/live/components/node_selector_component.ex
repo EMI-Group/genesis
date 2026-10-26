@@ -102,11 +102,22 @@ defmodule EvoDashWeb.NodeSelectorComponent do
 
   @impl true
   def update(assigns, socket) do
+    # Both reads run in the PARENT LiveView process on every re-render, and both
+    # are `GenServer.call`s into the connection subsystem: a dead/busy target
+    # would EXIT the caller (rescuing cannot catch an exit). Exit-safe with
+    # neutral fallbacks keeps the navbar — which renders on every page — alive:
+    # no remote targets and no statuses simply render the Local-only dropdown.
     socket =
       socket
       |> assign(assigns)
-      |> assign(:remote_targets, EvoDash.NodeContext.list_targets())
-      |> assign(:connection_statuses, EvoDash.NodeContext.connection_status())
+      |> assign(
+        :remote_targets,
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_targets() end, [])
+      )
+      |> assign(
+        :connection_statuses,
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connection_status() end, %{})
+      )
 
     {:ok, socket}
   end
@@ -122,9 +133,16 @@ defmodule EvoDashWeb.NodeSelectorComponent do
     # NodeAware.handle_connection_status/2) drive status reconciliation.
     # No result self-message: host pages differ and some have no catch-all;
     # the gate surfaces unavailable/disconnected state via safe status reads.
-    if node_id != "local" and not EvoDash.NodeContext.connected?(node_id) do
+    #
+    # The `connected?/1` probe and `connect/1` are both `GenServer.call`s that
+    # can EXIT, so the probe is exit-safe here (fallback `false` ⇒ attempt the
+    # connect; short-circuited for "local", which needs no probe) and
+    # `connect/1` runs inside `EvoDash.SafeCall.run` in the supervised child —
+    # an exit is captured there instead of killing the child before the core
+    # even starts working.
+    if node_id != "local" and not safe_connected?(node_id) do
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-        EvoDash.NodeContext.connect(node_id)
+        EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connect(node_id) end)
       end)
     end
 
@@ -143,6 +161,12 @@ defmodule EvoDashWeb.NodeSelectorComponent do
   # which reloads statuses from EvoDash.NodeContext.
 
   # ── View helpers ──────────────────────────────────────────────────
+
+  # Exit-safe `connected?/1` probe: a dead/busy connection subsystem degrades to
+  # `false` (⇒ the connect attempt is made) instead of exiting the LiveView.
+  defp safe_connected?(node_id) do
+    EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.connected?(node_id) end, false)
+  end
 
   # Single shared dot renderer for the trigger AND the dropdown items: always
   # returns the full shape classes plus the shared phase-appropriate color
