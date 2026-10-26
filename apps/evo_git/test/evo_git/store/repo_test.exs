@@ -1,18 +1,19 @@
 defmodule EvoGit.Store.RepoTest do
   @moduledoc """
   Infra tests for the Ecto foundations of the task store — the `EvoGit.Repo`
-  configuration + the three shipped `priv/repo/migrations` migrations, exercised
+  configuration + the five shipped `priv/repo/migrations` migrations, exercised
   through REAL unnamed dynamic instances (`EvoGit.Store.Boot.start_dynamic/1`)
   — exactly the shape per-store instances use in production.
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the three shipped migration versions
+    * `start_dynamic/1` applies exactly the five shipped migration versions
     * the resulting `tasks` table has the exact 20-column shape (names, ORDER,
       DDL types, notnull/pk flags) of the baseline migration, and the physical
       column order matches `TaskRow.columns/0`
-    * the 8 named `idx_tasks_*` indexes exist (the baseline 6 + the two
-      composite `(equality column, started_at)` indexes); `projects` carries its
+    * the 10 named `idx_tasks_*` indexes exist (the baseline 6 + the two
+      composite `(equality column, started_at)` indexes + the two covering
+      `(equality column, ordering column, id)` indexes); `projects` carries its
       TEXT-PK autoindex
     * `Boot.run_migrations/1` is idempotent (a re-run migrates nothing)
     * committed rows survive `Boot.stop/1` → `start_dynamic/1` on the same path
@@ -44,7 +45,15 @@ defmodule EvoGit.Store.RepoTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @migration_versions [@baseline_version, @normalization_version, @composite_index_version]
+  @covering_index_version 20_260_815_000_004
+  @compress_rows_version 20_260_815_000_005
+  @migration_versions [
+    @baseline_version,
+    @normalization_version,
+    @composite_index_version,
+    @covering_index_version,
+    @compress_rows_version
+  ]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
   # exactly what the baseline migration's CREATE TABLE declares, in order:
@@ -81,7 +90,10 @@ defmodule EvoGit.Store.RepoTest do
     "idx_tasks_lease_expires_at",
     "idx_tasks_project_path",
     "idx_tasks_updated_at",
-    "idx_tasks_started_at"
+    "idx_tasks_started_at",
+    # The two COVERING indexes added by `20260815000004_covering_indexes`.
+    "idx_tasks_status_updated_at_id",
+    "idx_tasks_finished_at_id"
   ]
 
   # The composite `(equality column, started_at)` indexes added by
@@ -172,7 +184,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── Migrations applied ───────────────────────────────────────────────────
 
   describe "boot migrations" do
-    test "start_dynamic/1 applies exactly the three shipped versions" do
+    test "start_dynamic/1 applies exactly the five shipped versions" do
       pid = start_repo!(:versions)
 
       assert migration_versions(pid) == @migration_versions
@@ -257,7 +269,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── Indexes ──────────────────────────────────────────────────────────────
 
   describe "indexes" do
-    test "the 8 named idx_tasks_* indexes exist as plain non-unique indexes" do
+    test "the 10 named idx_tasks_* indexes exist as plain non-unique indexes" do
       pid = start_repo!(:indexes)
 
       rows = query_rows(pid, "PRAGMA index_list(tasks)")

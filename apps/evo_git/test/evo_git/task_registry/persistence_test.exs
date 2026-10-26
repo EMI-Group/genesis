@@ -716,8 +716,18 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       EvoGit.Store.put_task(store(), task)
 
       archive_records = [
-        %{"agent_id" => "T1_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"},
-        %{"agent_id" => "T2_A1", "parent_id" => "T1_A1", "objective" => "Implement", "role" => "executor"}
+        %{
+          "agent_id" => "T1_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        },
+        %{
+          "agent_id" => "T2_A1",
+          "parent_id" => "T1_A1",
+          "objective" => "Implement",
+          "role" => "executor"
+        }
       ]
 
       # The in-flight runtime result — exactly what the wrapper hands to
@@ -804,7 +814,12 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       # decoding an in-memory result directly must preserve every key (this is
       # the `store/types_test.exs` oracle's contract).
       archive_records = [
-        %{"agent_id" => "T4_A1", "parent_id" => nil, "objective" => "Genesis", "role" => "manager"}
+        %{
+          "agent_id" => "T4_A1",
+          "parent_id" => nil,
+          "objective" => "Genesis",
+          "role" => "manager"
+        }
       ]
 
       in_flight = %{

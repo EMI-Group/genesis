@@ -190,9 +190,14 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
   # stripped, transparently compressed on encode.
   defp reencode(:result, value) do
     case decode(fn -> Codec.decode_result(value) end) do
-      {:ok, nil} -> {:error, :empty_result}
-      {:ok, result} -> encode(fn -> Codec.encode_result(ArchiveDedup.strip_archive_records(result)) end)
-      {:error, reason} -> {:error, reason}
+      {:ok, nil} ->
+        {:error, :empty_result}
+
+      {:ok, result} ->
+        encode(fn -> Codec.encode_result(ArchiveDedup.strip_archive_records(result)) end)
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -255,13 +260,14 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
   # row changed between the sweep and this write (or a concurrent boot already
   # rewrote it), the update matches nothing instead of clobbering it.
   defp write_column(column, id, encoded) do
-    sql("""
-    UPDATE tasks
-       SET #{column} = ?
-     WHERE id = ?
-       AND #{column} IS NOT NULL
-       AND #{column} NOT LIKE '#{@compressed_prefix}%'
-    """,
+    sql(
+      """
+      UPDATE tasks
+         SET #{column} = ?
+       WHERE id = ?
+         AND #{column} IS NOT NULL
+         AND #{column} NOT LIKE '#{@compressed_prefix}%'
+      """,
       # 108 MB payloads: params, never string interpolation.
       [encoded, id]
     )
