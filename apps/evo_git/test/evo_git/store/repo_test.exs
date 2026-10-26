@@ -7,15 +7,18 @@ defmodule EvoGit.Store.RepoTest do
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the shipped migration versions
+    * `start_dynamic/1` applies exactly the six shipped migration versions
     * the resulting `tasks` table has the exact 19-column shape (names, ORDER,
-      DDL types, notnull/pk flags) — the baseline's 20-column CREATE TABLE
-      minus the `archive_metadata` column the archive migration drops — and the
-      physical column order matches `TaskRow.columns/0`
-    * the 10 named `idx_tasks_*` indexes exist (the baseline 6 + the two
-      composite `(equality column, started_at)` indexes + the two covering
-      `(equality column, ordering column, id)` indexes) — dropping the archive
-      column does not disturb them; `task_agent_archives`
+      DDL types, notnull/pk flags) — declared in ONE step by the baseline
+      migration, which never creates the retired `archive_metadata` column (only
+      an adopted legacy database can still carry it, and
+      `20260815000005_task_agent_archives` consumes it) — and the physical
+      column order matches `TaskRow.columns/0`
+    * the six named `idx_tasks_*` indexes exist (two plain single-column
+      indexes + the two composite `(equality column, started_at)` indexes + the
+      two covering `(equality column, ordering column, id)` indexes) and the
+      four redundant single-column indexes `20260815000006_prune_redundant_indexes`
+      drops are GONE; `task_agent_archives`
       carries its `(task_id, depth, agent_id)` index and its composite
       `(task_id, agent_id)` PK autoindex; `projects` carries its TEXT-PK
       autoindex
@@ -51,39 +54,36 @@ defmodule EvoGit.Store.RepoTest do
   @baseline_version 20_260_815_000_001
   @normalization_version 20_260_815_000_002
   @composite_index_version 20_260_815_000_003
-  @covering_index_version 20_260_815_000_005
-  @unpack_rows_version 20_260_815_000_006
-  @archive_table_version 20_260_815_000_007
-  @move_archives_version 20_260_815_000_008
-  @normalize_archives_version 20_260_815_000_009
-  # Ascending, exactly as `schema_migrations` reports it: the covering indexes,
-  # then the one-shot z1 repair, then the relational archive table and the
-  # fan-out that drops `tasks.archive_metadata`, and finally the canonical-shape
-  # repair of that table (the rejected compression migration 004 no longer
-  # ships).
+  @covering_index_version 20_260_815_000_004
+  @archive_table_version 20_260_815_000_005
+  @prune_indexes_version 20_260_815_000_006
+  # Ascending, exactly as `schema_migrations` reports it: the ONE schema-creating
+  # baseline, the data normalization, the two shipped index migrations (the
+  # `(equality, started_at)` composites, then the covering pair), the merged
+  # archive-table migration (legacy fan-out + `archive_metadata` drop, both
+  # skipped on a fresh database), and finally the redundant-index prune.
   @migration_versions [
     @baseline_version,
     @normalization_version,
     @composite_index_version,
     @covering_index_version,
-    @unpack_rows_version,
     @archive_table_version,
-    @move_archives_version,
-    @normalize_archives_version
+    @prune_indexes_version
   ]
 
   # `tasks` columns RETIRED from the live table: the per-agent archive moved to
-  # its own relational table, so `archive_metadata` is physically DROPPED by
-  # `20260815000008_move_archives_to_table` — no `Codec`/`TaskRow`/read/write
-  # path touches it, and it must never come back.
+  # its own relational table, so the baseline CREATE TABLE no longer declares
+  # `archive_metadata` AT ALL — `20260815000005_task_agent_archives` only drops
+  # it from a legacy database that still carries it. No
+  # `Codec`/`TaskRow`/read/write path touches it, and it must never come back.
   @retired_task_columns ["archive_metadata"]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
-  # the FINAL physical shape: the baseline's CREATE TABLE minus the
-  # `archive_metadata` column dropped by the archive migration (so `cid` is a
-  # contiguous 0..18 again). Every column TEXT except
-  # `agent_count`/`lease_expires_at` (INTEGER), only `status` NOT NULL, `id`
-  # the TEXT primary key.
+  # the FINAL physical shape: the baseline migration's CREATE TABLE declares
+  # exactly these 19 columns in this order (a fresh database never sees the
+  # retired `archive_metadata` column, so `cid` is a contiguous 0..18). Every
+  # column TEXT except `agent_count`/`lease_expires_at` (INTEGER), only `status`
+  # NOT NULL, `id` the TEXT primary key.
   @task_table_info_rows [
     [0, "id", "TEXT", 0, nil, 1],
     [1, "type", "TEXT", 0, nil, 0],
@@ -106,19 +106,12 @@ defmodule EvoGit.Store.RepoTest do
     [18, "updated_at", "TEXT", 0, nil, 0]
   ]
 
-  # The 6 named indexes created by the baseline migration (CREATE INDEX IF NOT
-  # EXISTS, one per queried column — the query planner's access paths).
-  @task_index_names [
-    "idx_tasks_status",
-    "idx_tasks_finished_at",
-    "idx_tasks_lease_expires_at",
-    "idx_tasks_project_path",
+  # The two plain single-column indexes the baseline migration creates that
+  # survive the chain (`CREATE INDEX IF NOT EXISTS`, one per queried ordering
+  # column — the query planner's access paths).
+  @single_column_index_names [
     "idx_tasks_updated_at",
-    "idx_tasks_started_at",
-    # The two COVERING indexes added by `20260815000005_covering_indexes`
-    # (built AFTER the 004 oversized-row rewrite — see that migration's moduledoc).
-    "idx_tasks_status_updated_at_id",
-    "idx_tasks_finished_at_id"
+    "idx_tasks_started_at"
   ]
 
   # The composite `(equality column, started_at)` indexes added by
@@ -128,9 +121,30 @@ defmodule EvoGit.Store.RepoTest do
     "idx_tasks_project_path_started_at"
   ]
 
-  @all_task_index_names @task_index_names ++ @composite_index_names
+  # The two COVERING indexes added by `20260815000004_covering_indexes` — the
+  # id-oriented task reads answer from the index with NO table access.
+  @covering_index_names [
+    "idx_tasks_status_updated_at_id",
+    "idx_tasks_finished_at_id"
+  ]
 
-  # The per-agent archive added by `20260815000007_create_task_agent_archives`:
+  # The FINAL `tasks` index set — exactly six named indexes.
+  @all_task_index_names @single_column_index_names ++
+                          @composite_index_names ++
+                          @covering_index_names
+
+  # The redundant single-column indexes
+  # `20260815000006_prune_redundant_indexes` drops: each one is an exact PREFIX
+  # of a final composite/covering index (or has no query at all), so it can
+  # never win a plan. They must be absent from the booted schema.
+  @redundant_index_names [
+    "idx_tasks_status",
+    "idx_tasks_finished_at",
+    "idx_tasks_project_path",
+    "idx_tasks_lease_expires_at"
+  ]
+
+  # The per-agent archive created by `20260815000005_task_agent_archives`:
   # the roster index (`WHERE task_id = ? ORDER BY depth, agent_id`) and the
   # implicit UNIQUE autoindex backing the composite `(task_id, agent_id)` PK.
   @archive_table "task_agent_archives"
@@ -268,7 +282,7 @@ defmodule EvoGit.Store.RepoTest do
              |> Enum.map(fn [_cid, name | _] -> name end) == TaskRow.columns()
     end
 
-    test "the retired archive column is physically dropped and has no schema field behind it" do
+    test "the retired archive column is never created and has no schema field behind it" do
       pid = start_repo!(:retired_column)
 
       live_columns =
@@ -360,7 +374,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── Indexes ──────────────────────────────────────────────────────────────
 
   describe "indexes" do
-    test "the 10 named idx_tasks_* indexes exist as plain non-unique indexes" do
+    test "exactly the six final idx_tasks_* indexes exist as plain non-unique indexes" do
       pid = start_repo!(:indexes)
 
       rows = query_rows(pid, "PRAGMA index_list(tasks)")
@@ -372,6 +386,30 @@ defmodule EvoGit.Store.RepoTest do
         assert unique == 0
         assert origin == "c"
         assert partial == 0
+      end
+    end
+
+    test "the four redundant single-column indexes the prune migration drops are gone" do
+      pid = start_repo!(:pruned_indexes)
+
+      names =
+        pid
+        |> query_rows("PRAGMA index_list(tasks)")
+        |> Enum.map(fn [_seq, name | _] -> name end)
+
+      # Guard the assertion's own meaning: three of the four are exact PREFIXES
+      # of a surviving composite/covering index (which is why they can never win
+      # a plan) and the fourth (`lease_expires_at`) is not queried at all.
+      prefixed =
+        Enum.filter(@redundant_index_names, fn name ->
+          Enum.any?(@all_task_index_names, &String.starts_with?(&1, name <> "_"))
+        end)
+
+      assert prefixed == ~w(idx_tasks_status idx_tasks_finished_at idx_tasks_project_path)
+      assert "idx_tasks_lease_expires_at" in @redundant_index_names
+
+      for redundant <- @redundant_index_names do
+        refute redundant in names
       end
     end
 

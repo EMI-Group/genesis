@@ -19,14 +19,14 @@ defmodule EvoGit.Store.Operations.Tasks do
   | `get_task/2`                    | store.ex:518 | `%EvoGit.TaskInfo{} \| nil`                                           |
   | `delete_task/2`                 | store.ex:531 | `:ok`                                                                 |
   | `delete_tasks/2`                | store.ex:539 | `:ok`                                                                 |
-  | `select_all_tasks/1`            | store.ex:570 | `[EvoGit.TaskInfo.t()]`                                               |
-  | `count_tasks/1`                 | store.ex:581 | `non_neg_integer()`                                                   |
+  | `select_all_tasks/1`            | —            | REMOVED (dead code: zero callers)                                     |
+  | `count_tasks/1`                 | —            | REMOVED (dead code: zero callers)                                     |
   | `clear_tasks/1`                 | store.ex:598 | `:ok`                                                                 |
   | `safe_select_paginated_tasks/2` | store.ex:587 | `{[TaskInfo.t()], total_count}` — bad rows skipped+logged, still counted |
   | `update_lease_expires_at/3`     | store.ex:697 | `:ok` — does NOT bump `updated_at`                                    |
   | `update_task_columns/3`         | store.ex:713 | `:ok` — ALWAYS bumps `updated_at`                                     |
-  | `get_task_status/2`             | store.ex:730 | `atom() \| nil`                                                       |
-  | `select_task_logs/2`            | store.ex:738 | `[String.t()] \| nil`                                                 |
+  | `get_task_status/2`             | store.ex:730 | `atom() \| {:unknown, raw} \| nil`                                    |
+  | `select_task_logs/2`            | —            | REMOVED (dead code: nothing writes logs)                              |
   | `select_task_update_info/2`     | store.ex:754 | `%{status, opts, finished_at, lease_expires_at} \| nil`               |
 
   ## Crash philosophy (inherited from the old `EvoGit.Store` moduledoc)
@@ -214,31 +214,6 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   @doc """
-  Returns every task as a list of `%TaskInfo{}` — port of the old
-  `:select_all_tasks` handler (store.ex:570). No skip-and-log boundary here
-  (that belongs to the safe-select helpers): a corrupt row raises, exactly
-  like the old `Enum.map(rows, &Codec.decode_task/1)` did.
-  """
-  @spec select_all_tasks(pid()) :: [TaskInfo.t()]
-  def select_all_tasks(repo) do
-    RepoScope.with_repo(repo, fn ->
-      Repo.all(TaskRow)
-      |> Enum.map(&to_task_info/1)
-    end)
-  end
-
-  @doc """
-  Returns the number of task rows — port of the old `:count_tasks` handler
-  (store.ex:581).
-  """
-  @spec count_tasks(pid()) :: non_neg_integer()
-  def count_tasks(repo) do
-    RepoScope.with_repo(repo, fn ->
-      Repo.aggregate(TaskRow, :count)
-    end)
-  end
-
-  @doc """
   Paginated + filtered task select — port of the old
   `{:safe_select_paginated_tasks, opts}` handler (store.ex:587 +
   do_safe_select_paginated_tasks, store.ex:1000).
@@ -353,35 +328,29 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   @doc """
-  Returns only the decoded status atom (or `nil` for a missing row) — port of
-  the old `{:get_task_status, task_id}` handler (store.ex:730).
+  Returns the task's stored status without ever collapsing "cannot decode" into
+  "row absent":
 
-  The status column is read through the typed schema, whose
-  `EvoGit.Store.Types.Status` load applies the same `Codec.decode_atom/1` the
-  old `read_task_status/2` used (known atom, or `nil` on unknown values).
+    * `nil` — NO row with this id exists (the only "absent" answer),
+    * a known status atom (`EvoGit.Store.Codec.known_statuses/0`),
+    * `{:unknown, raw}` — the row EXISTS but its status text is outside the
+      whitelist (or the cell is not text); the offending value is logged by
+      `EvoGit.Store.Codec.decode_status/1`.
+
+  The read selects `{id, status}` from the RAW wire twin (no typed-schema
+  `load`, which maps an unrecognized value to `nil`), so liveness callers — the
+  lease heartbeat above all — can never mistake a live row for a leaked one.
+  `EvoGit.TaskRegistry.Lease` classifies the three shapes.
   """
-  @spec get_task_status(pid(), String.t()) :: atom() | nil
+  @spec get_task_status(pid(), String.t()) :: atom() | {:unknown, term()} | nil
   def get_task_status(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
-      Repo.one(from(t in TaskRow, select: t.status, where: t.id == ^task_id))
-    end)
-  end
-
-  @doc """
-  Returns only the decoded logs list (or `nil` when the row is absent) — port
-  of the old `{:select_task_logs, task_id}` handler (store.ex:738).
-
-  Reads a single column, no full-row decode. The lenient
-  `Codec.decode_logs/1` semantics (nil/undecodable → `[]`) come from the
-  typed schema's `EvoGit.Store.Types.LogsJson` load — same decoder the old
-  handler called directly.
-  """
-  @spec select_task_logs(pid(), String.t()) :: [String.t()] | nil
-  def select_task_logs(repo, task_id) do
-    RepoScope.with_repo(repo, fn ->
-      case Repo.one(from(t in TaskRow, select: t.logs, where: t.id == ^task_id)) do
+      case Repo.one(from(t in TaskRowRaw, select: {t.id, t.status}, where: t.id == ^task_id)) do
+        # No row at all — the one genuinely "absent" answer.
         nil -> nil
-        logs -> logs
+        # A present row whose status cell is NULL is "exists, unreadable" —
+        # never absent.
+        {_id, raw} -> Codec.decode_status(raw) || {:unknown, raw}
       end
     end)
   end

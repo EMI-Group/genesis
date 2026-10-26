@@ -95,9 +95,11 @@ defmodule EvoGit.Repo.Migrations.CoveringIndexes do
       planner picks it for that statement (verified with `EXPLAIN QUERY PLAN`).
     * Anything for `select_task_paths/0`
       (`SELECT DISTINCT project_path … WHERE project_path IS NOT NULL`) — the
-      baseline `idx_tasks_project_path` is already a single-column covering
-      index; the plan is `SCAN t0 USING COVERING INDEX idx_tasks_project_path`
-      before and after this migration.
+      surviving `idx_tasks_project_path_started_at` (see
+      `20260815000003_composite_indexes`) already covers it: its leading
+      `project_path` column answers the read from the index b-tree alone, so the
+      plan stays `SCAN t0 USING COVERING INDEX
+      idx_tasks_project_path_started_at`.
     * `updated_at` alone — the baseline `idx_tasks_updated_at` already serves
       the `updated_at > ?` range read of `Operations.Summaries`.
 

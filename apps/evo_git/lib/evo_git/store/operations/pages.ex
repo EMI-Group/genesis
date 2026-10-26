@@ -23,7 +23,8 @@ defmodule EvoGit.Store.Operations.Pages do
   sorted `ORDER BY started_at DESC` and the page is index-served
   (`idx_tasks_started_at`, or the matching composite when a filter pins a
   leading equality column) with no temp B-tree; `total` is a `COUNT(*)` over
-  the SAME WHERE, independent of pagination.
+  the SAME WHERE, independent of pagination — and restricted to RENDERABLE
+  rows (see below), so it can never exceed the rows the pages actually yield.
 
   `opts` accepts the `EvoGit.Store.Operations.Tasks.safe_select_paginated_tasks/2`
   shape — `:limit`, `:offset`, and the filter set — so a caller can switch
@@ -41,6 +42,18 @@ defmodule EvoGit.Store.Operations.Pages do
   an empty one (the same "clamp to the last page" behaviour the dashboard
   applies today, moved into the read so every caller gets it for free) — with
   the row total unchanged.
+
+  ## `total` and the skip boundary agree
+
+  `Summaries.decode_skipping_bad/1` drops a row whose `opts` column cannot be
+  decoded, so a plain `COUNT(*)` would count rows the page refuses to render —
+  `total` would exceed the renderable rows and the LAST page could come back
+  empty. Both the count and the page selection therefore carry
+  `Summaries.where_renderable/1` (SQLite `json_valid`/`json_type`), the SQL
+  twin of that decode rule: a corrupt row is excluded from the total AND from
+  the rendering, so `total`, the page offsets and the rendered rows always
+  agree. The per-row skip stays as the defence for anything SQLite considers
+  renderable but the Codec still rejects.
 
   ## `get_task_lite/2` — the detail view
 
@@ -84,14 +97,21 @@ defmodule EvoGit.Store.Operations.Pages do
       limit = Filters.clamp_page_limit(Keyword.get(opts, :limit))
       requested_offset = Filters.clamp_offset(Keyword.get(opts, :offset))
 
+      # `total` counts only rows the page can actually RENDER: both the count
+      # and the selection carry `Summaries.where_renderable/1` (the SQL twin of
+      # the Codec's opts decode), so a corrupt `opts` row can neither inflate
+      # the total nor push a renderable row onto a later page. Counting rows
+      # the page drops would let the last page come back EMPTY.
       total =
         TaskRowRaw
         |> Filters.where_filters(filters)
+        |> Summaries.where_renderable()
         |> Repo.aggregate(:count)
 
       rows =
         Summaries.summary_query()
         |> Filters.where_filters(filters)
+        |> Summaries.where_renderable()
         |> order_by([t], desc: t.started_at)
         |> limit(^limit)
         |> offset(^last_page_offset(requested_offset, limit, total))

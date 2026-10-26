@@ -260,6 +260,41 @@ defmodule EvoGit.Store.Operations.PagesTest do
       end
     end
 
+    test "an undecodable row is EXCLUDED from the page AND from the total", %{repo: repo} do
+      # The count and the page must agree: a corrupt `opts` row is not
+      # renderable, so it neither appears in `rows` nor inflates `total` (a
+      # total that counted it could push the last page past the renderable set
+      # and render an EMPTY page).
+      RepoScope.with_repo(repo, fn ->
+        Repo.update_all(from(t in TaskRowRaw, where: t.id == "fail-6"),
+          set: [opts: "not-json-object"]
+        )
+      end)
+
+      %{rows: rows, total: total} = Pages.select_tasks_page(repo, filters: [status: "failed"])
+      assert total == 2
+      refute "fail-6" in Enum.map(rows, & &1.id)
+      assert length(rows) == 2
+      # The LEGACY full-row page keeps its documented "skipped but still
+      # counted" contract; that divergence is exactly why the lightweight page
+      # owns the consistent total.
+      {legacy_rows, 3} = legacy(repo, filters: [status: "failed"], limit: 50, offset: 0)
+      assert Enum.map(rows, & &1.id) == Enum.map(legacy_rows, & &1.id)
+    end
+
+    test "a non-object JSON opts row is excluded too (json_type gate)", %{repo: repo} do
+      # `json_valid/1` alone accepts `"str"` — the Codec rejects any
+      # non-OBJECT JSON, so the SQL twin applies `json_type(...) = 'object'`
+      # as well.
+      RepoScope.with_repo(repo, fn ->
+        Repo.update_all(from(t in TaskRowRaw, where: t.id == "fail-6"), set: [opts: ~s("str")])
+      end)
+
+      %{rows: rows, total: total} = Pages.select_tasks_page(repo, filters: [status: "failed"])
+      assert total == 2
+      refute "fail-6" in Enum.map(rows, & &1.id)
+      assert length(rows) == 2
+    end
     test "an undecodable row is SKIPPED from the page but still COUNTED", %{repo: repo} do
       # Same skip-and-log boundary as the legacy page (the summary decode is
       # shared): a corrupt `opts` JSON drops the row from `rows`, while the

@@ -36,9 +36,10 @@ defmodule EvoGit.Store.MaintenanceTest do
 
   @db_filename "tasks.sqlite"
 
-  # Every shipped store migration (the rejected compression migration 004 no
-  # longer ships, so `schema_migrations` stops at 8 rows).
-  @migration_count 8
+  # Every shipped store migration: baseline adoption, data normalization, the
+  # two index migrations, the archive table and the redundant-index prune — so
+  # `schema_migrations` holds 6 rows.
+  @migration_count 6
 
   # ── Fake store (the maintenance GenServer's `__repo_pid__` peer) ──────────
   #
