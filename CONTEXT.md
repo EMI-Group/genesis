@@ -86,14 +86,10 @@ Users define custom agents declaratively in `<config_dir>/agents.toml` (pure TOM
 An optional `[model_selection] script` is a short user Elixir body evaluated per agent spawn (an `agent` map in scope: `agent_type`, `custom_agent_id`, `depth`, `parent_id`, `task_id`, `objective`; last expression = model profile id, `nil`/`""`/`false` → default) via `EvoGit.CustomAgents` / `EvoGit.Agents.Custom` / `EvoGit.CustomAgents.ModelSelector` (compile-once stat-validated cache, never raises user-code errors).
 Model priority per spawn: user-locked (`-m` / explicit dashboard pick) → script → per-agent default → scheduler default.
 
-**Custom tools** — users can add LLM-callable tools by dropping Elixir source (`.ex`/`.exs`) or compiled BEAM (`.beam`) files into `<config_dir>/tools/`.
-Each file is a plain module implementing the `EvoGit.CustomTools.Tool` behaviour (`schema/0` mirroring the built-in schema, `execute/2`, optional `read_only?/0` defaulting to `false` → WRITE classification).
-A custom agent's `tools` whitelist references custom tools by name alongside built-ins (an absent `tools` yields only the built-in standard set).
-Custom tools load lazily + cached (file fingerprint) and dispatch through the SAME tool-dispatch + write-gating path as built-ins (repo-less / read-only-foreign-repo guards apply).
-Surfaced in dashboard Settings → Agents as a "Custom Tools" panel (loaded tools with read-only/write badge + broken-file load errors).
-Detail: `apps/evo_git/lib/evo_git/custom_tools/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
-
-The dashboard Settings page has a dedicated **Agents** category (custom-agents list editor + model-selection script editor, node-aware), and the task form has an Agent select plus a model "Auto (by rules)" option.
+**Custom tools** — users add LLM-callable tools by dropping Elixir source (`.ex`/`.exs`) or compiled BEAM (`.beam`) into `<config_dir>/tools/`: each file is a module implementing the `EvoGit.CustomTools.Tool` behaviour (`schema/0` mirroring the built-in schema, `execute/2`, optional `read_only?/0` defaulting to `false` → WRITE classification).
+They load lazily + cached by file fingerprint, are opt-in via a custom agent's `tools` whitelist (an absent `tools` yields only the built-in set), and dispatch through the SAME tool-dispatch + write-gating path as built-ins (repo-less / read-only-foreign-repo guards apply); dashboard Settings → Agents shows a "Custom Tools" panel (read-only/write badge + broken-file errors).
+That Agents category also holds the custom-agents list editor + model-selection script editor (node-aware), and the task form has an Agent select plus a model "Auto (by rules)" option.
+Detail: `apps/evo_git/lib/evo_git/custom_tools/CONTEXT.md` + `apps/evo_git/lib/evo_git/custom_agents/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 **Custom task mode** (entry point for custom root agents): a 4th dashboard task mode **"Custom Agent"** (combined-mode string `"custom_agent"`) maps to `{:evolve, mode: "custom", agent: <custom_agent_id>}` — task type stays `:evolve`, mode opt value `"custom"` (a STRING from every entry point; RuntimeOpts normalizes).
 `EvoGit.Runtime.Evolution.run/2` routes `"custom"` to a custom-root path with evolve semantics (reviewable `merge_and_report`); a missing/empty `:agent` raises a descriptive ArgumentError before any repo I/O (mirrors `Helpers.resolve_root_agent/2`'s unknown-id raise); unknown mode values warn + fall back to simple.
