@@ -271,7 +271,10 @@ defmodule EvoDash.DirectoryPickerTest do
       if System.monotonic_time(:millisecond) >= deadline do
         flunk("picker GenServer stayed busy past the await-pick-idle deadline")
       else
-        Process.sleep(10)
+        # 1ms cadence: the picker is already being observed through its OWN
+        # state (a real fence, never a fixed sleep), so a coarse 10ms step was
+        # pure dead wall clock on the critical path of every pick.
+        Process.sleep(1)
         do_await_pick_idle(deadline)
       end
     else

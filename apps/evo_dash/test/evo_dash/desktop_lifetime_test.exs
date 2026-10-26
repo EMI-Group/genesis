@@ -10,7 +10,7 @@ defmodule EvoDash.DesktopLifetimeTest do
 
   @stop_message :lifetime_stopped
   # Small retry budget for the connect-failure tests.
-  @small_opts [connect_retries: 2, connect_retry_delay: 10]
+  @small_opts [connect_retries: 2, connect_retry_delay: 2]
 
   setup do
     # Snapshot and clear the env var + seam so each test starts clean.
@@ -183,9 +183,9 @@ defmodule EvoDash.DesktopLifetimeTest do
           {EvoDash.DesktopLifetime,
            [
              connect_retries: 5,
-             connect_retry_delay: 10,
+             connect_retry_delay: 2,
              recv_retries: 5,
-             recv_retry_delay: 10,
+             recv_retry_delay: 2,
              recv_fun: recv_fun
            ]}
         )
@@ -250,9 +250,9 @@ defmodule EvoDash.DesktopLifetimeTest do
           {EvoDash.DesktopLifetime,
            [
              connect_retries: 5,
-             connect_retry_delay: 10,
+             connect_retry_delay: 2,
              recv_retries: 3,
-             recv_retry_delay: 30,
+             recv_retry_delay: 2,
              recv_fun: recv_fun
            ]}
         )

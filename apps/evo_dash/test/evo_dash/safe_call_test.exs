@@ -184,7 +184,10 @@ defmodule EvoDash.SafeCallTest do
 
       assert {:ok, _pid} = SafeCall.start(parent, tag, fn -> :value end)
 
-      refute_receive {^tag, _}, 200
+      # `parent` is a dead-forever process, so this scan window is only a margin
+      # for a mis-implementation that replied to the CALLER instead; it never
+      # needs to cover any real work.
+      refute_receive {^tag, _}, 25
       Process.exit(parent, :kill)
     end
   end
@@ -260,7 +263,7 @@ defmodule EvoDash.SafeCallTest do
                "expected {:error, _} or an exit, got: #{inspect(outcome)}"
       end
 
-      refute_receive {^tag, _}, 200
+      refute_receive {^tag, _}, 25
     end
   end
 end
