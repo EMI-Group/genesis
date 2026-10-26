@@ -81,6 +81,12 @@ defmodule EvoGit.Store.CoveringIndexTest do
   # `select_cleanup_info/1,3` actually see.
   @terminal_statuses ~w(completed failed cancelled)
 
+  # The header line of ONE captured log entry (see
+  # `assert_seed_warnings_are_ours!/1`). The FAILED_WRITE message is multi-line —
+  # its stacktrace follows — and those continuation lines are indented, so they
+  # deliberately do not match.
+  @log_entry_header ~r/^\d{2}:\d{2}:\d{2}\.\d{3} \[\w+\] .*$/m
+
   # ── setup / helpers ──────────────────────────────────────────────────────
 
   setup_all do
@@ -99,7 +105,25 @@ defmodule EvoGit.Store.CoveringIndexTest do
     template = Path.join(root, "template.sqlite")
     {:ok, pid} = Boot.start_dynamic(template, pool_size: 1)
     Process.unlink(pid)
-    seed_tasks!(pid)
+
+    # The seed writes `:failed` rows, and `Operations.Tasks` deliberately logs a
+    # `Store: FAILED_WRITE …` warning (plus a stacktrace) for EVERY new failed
+    # write — from the STORE's write process, so the suite-wide
+    # `ExUnit.start(capture_log: true)` (test-process only) cannot reach it, and
+    # `setup_all/1` is not inside any per-test capture window either. The
+    # production diagnostic stays as it is; it is captured HERE instead, at the
+    # test boundary.
+    #
+    # `capture_log/2` is WINDOW-based and catches logs from ANY process, so the
+    # window is kept as narrow as the seeding itself: this module is `async: true`,
+    # and a wider window (the whole `setup_all/1`, say) would also swallow a
+    # SIBLING module's concurrently emitted log lines. The assertions below
+    # therefore also pin that every captured line is THIS seed's diagnostic, so a
+    # sibling's line cannot be dropped here silently — it fails the test instead.
+    seed_log = ExUnit.CaptureLog.capture_log([level: :warning], fn -> seed_tasks!(pid) end)
+
+    assert_seed_warnings_are_ours!(seed_log)
+
     query_rows(pid, "PRAGMA wal_checkpoint(TRUNCATE)")
     :ok = Boot.stop(pid)
 
@@ -183,6 +207,31 @@ defmodule EvoGit.Store.CoveringIndexTest do
   end
 
   defp all_ids, do: for(i <- 1..@seed_rows, do: seed_id(i))
+
+  # Pins that the `setup_all/1` capture window saw exactly this seed's own
+  # `FAILED_WRITE` diagnostics — one per newly-`:failed` row, and NOTHING else.
+  # The "nothing else" half is what keeps the (necessarily process-agnostic)
+  # window honest: a sibling module's line reaching it flunks here, with that
+  # line in the failure message, instead of silently vanishing.
+  defp assert_seed_warnings_are_ours!(log) do
+    entries = Regex.scan(@log_entry_header, log) |> List.flatten()
+    expected = ids_with_statuses(["failed"])
+
+    ids =
+      Enum.map(entries, fn entry ->
+        case Regex.run(~r/\A.*\] Store: FAILED_WRITE task_id=(\S+) /, entry) do
+          [_, id] -> id
+          nil -> flunk("captured a log line that is not this seed's diagnostic: #{entry}")
+        end
+      end)
+
+    assert length(entries) == length(expected),
+           "expected one FAILED_WRITE warning per newly-:failed seed row " <>
+             "(#{length(expected)}), captured #{length(entries)}:\n#{log}"
+
+    assert Enum.sort(ids) == Enum.sort(expected),
+           "the captured FAILED_WRITE warnings do not name the seeded :failed rows"
+  end
 
   # ── EXPLAIN QUERY PLAN plumbing ──────────────────────────────────────────
 
