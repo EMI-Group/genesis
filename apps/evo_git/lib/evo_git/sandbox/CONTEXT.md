@@ -75,7 +75,7 @@ Unit naming: `genesis-job-b<beam_os_pid>-<job_id>` (`Background.unit_name/1`) �
 | `inactive` | `0` or absent | `{:unknown, nil}` |
 | `failed` | `2` | `{:exited, nil}` |
 | `failed` | other | `{:exited, ExecMainStatus or nil}` — surfaced as a failed exit, never a crash |
-| unknown / missing / garbled, or a dead systemctl | — | `{:unknown, nil}` |
+| unknown / missing / garbled (incl. a unit systemd already UNLOADED), or a dead systemctl | — | `{:unknown, nil}` |
 
 `kill/1` on a `:port` handle kills the process TREE but LEAVES THE PORT OPEN so the registry still receives the natural `{:exit_status, code}`; the port is closed directly only when no `os_pid` was ever observed.
 `EvoGit.Sandbox.Behaviour` was deliberately NOT extended with `spawn_detached`/`kill_detached`/`detached_status` callbacks: the detached path reuses the existing builders and needs only per-backend argv + `enabled?/0`, so new callbacks would grow every backend's contract for no gain.
