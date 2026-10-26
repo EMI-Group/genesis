@@ -1203,6 +1203,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       tmp_dir: tmp_dir,
       merge_fixtures: fixtures
     } do
+      # A child spawned at ./doc edits ./src/CONTEXT.md (out of scope).
       %{dir: dir, children: children} =
         merge_repo!(fixtures, :out_of_scope, Path.join(tmp_dir, "out_of_scope"))
 
