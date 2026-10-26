@@ -5,7 +5,7 @@ defmodule EvoGit.Store.Types.ArchiveColumns do
   The per-agent archive table stores four JSON payloads (`usage`,
   `llm_settings`, `agent_settings`, `foreign_repos`). They are deliberately
   NOT routed through `EvoGit.Store.Codec` (which owns the legacy `tasks`
-  wire format, its atom whitelists and the `"z1:"` compression envelope) and
+  wire format and its atom whitelists) and
   deliberately NOT modeled as domain structs:
 
     * **no compression, no magic prefixes** — an archive row is written ONCE

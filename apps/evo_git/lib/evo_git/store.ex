@@ -218,12 +218,12 @@ defmodule EvoGit.Store do
   LIGHTWEIGHT single-task read — the detail/review-page variant of
   `get_task/2`.
 
-  Decodes every column exactly like `get_task/2` (same Codec) with two
-  savings: the `archive_metadata` column is never read (`archive_metadata:
-  nil`) and the result's `:archive_records` key is dropped. Use `get_task/2`
-  when the archive really is needed, `list_task_archives/3` +
-  `get_agent_archive/3` to fetch it. Returns `nil` when the row is absent (and
-  on a failed read — see the moduledoc's degradation table).
+  Decodes every task column exactly like `get_task/2` (same Codec), i.e. the
+  returned struct is FIELD-IDENTICAL to `get_task/2`'s. Nothing has to be
+  skipped any more: the per-agent archive is NOT part of the task row, it
+  lives in the relational `task_agent_archives` table
+  (`list_task_archives/3` + `get_agent_archive/3`). Returns `nil` when the row
+  is absent (and on a failed read — see the moduledoc's degradation table).
   """
   def get_task_lite(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:get_task_lite, task_id}, @call_timeout)
@@ -337,7 +337,7 @@ defmodule EvoGit.Store do
   plus the filtered total, `%{rows: [summary_map], total: non_neg_integer}`.
 
   This is the read the dashboard's task list / any reporting surface should
-  use: the heavy JSON blobs (`result`, `archive_metadata`, `logs`, `usage`) are
+  use: the heavy JSON blobs (`result`, `logs`, `usage`) are
   never selected, so a page of 25 rows costs the same whether a row carries
   1 kB or 108 MB of `result`. Rows are `ORDER BY started_at DESC` (index-served)
   and each row is the SAME 16-key map `select_tasks_summary/3` returns.
@@ -403,8 +403,8 @@ defmodule EvoGit.Store do
   @doc """
   Returns lightweight lease info for running/finalizing/cancelling tasks:
   `%{id, status, lease_expires_at}`. Only the `status` column is decoded (a
-  lightweight atom); no heavy JSON fields (logs, result, usage,
-  archive_metadata) are touched. The status filter happens in SQL
+  lightweight atom); no heavy JSON fields (logs, result, usage) are touched.
+  The status filter happens in SQL
   (`WHERE status IN ('running', 'finalizing', 'cancelling')`).
 
   Used by TaskRegistry.lease_sweep and startup reconciliation to avoid a full
@@ -434,8 +434,8 @@ defmodule EvoGit.Store do
   `columns` is a keyword list mapping column name atoms to their new values.
   Only the specified columns are updated; all others are left untouched.
 
-  Column values that need encoding (atoms, datetimes, usage, result,
-  archive_metadata, opts) are encoded through the appropriate `Codec.encode_*`
+  Column values that need encoding (atoms, datetimes, usage, result, opts)
+  are encoded through the appropriate `Codec.encode_*`
   function. Scalar values (strings, integers, nil) are used directly.
 
   Returns `:ok`. Used by TaskRegistry for partial updates like setting
@@ -468,8 +468,8 @@ defmodule EvoGit.Store do
   `%{status: decoded atom, opts: decoded opts, finished_at: decoded datetime,
   lease_expires_at: raw integer}` (or nil if the row is absent).
 
-  Reads only 4 columns — no heavy JSON fields (logs, result, usage,
-  archive_metadata) are decoded. Used by TaskRegistry.handle_update_status to
+  Reads only 4 columns — no heavy JSON fields (logs, result, usage) are
+  decoded. Used by TaskRegistry.handle_update_status to
   replace the full `task_get` read-modify-write.
   """
   def select_task_update_info(store \\ __MODULE__, task_id) do
@@ -479,7 +479,7 @@ defmodule EvoGit.Store do
   @doc """
   Returns lightweight cleanup info for finished tasks: `%{id, finished_at}`.
   Only `id` (raw string) and `finished_at` (decoded DateTime or nil) are returned
-  — no heavy JSON fields (logs, result, usage, archive_metadata) are decoded.
+  — no heavy JSON fields (logs, result, usage) are decoded.
   The filter happens in SQL (`WHERE finished_at IS NOT NULL`).
 
   NOTE: `select_cleanup_info/3` is the SQL-pushdown variant used by cleanup —
@@ -513,8 +513,8 @@ defmodule EvoGit.Store do
 
   @doc """
   Returns lightweight task summaries for all tasks — only columns needed for
-  the dashboard sidebar listing. No heavy JSON fields (logs, usage,
-  archive_metadata) are decoded. Returns a list of plain maps with an :opts key
+  the dashboard sidebar listing. No heavy JSON fields (logs, usage)
+  are decoded. Returns a list of plain maps with an :opts key
   (decoded keyword list containing :objective and :prompt).
 
   `statuses` is a list of status ATOMS; `[]` (default) means all statuses. When
@@ -550,7 +550,7 @@ defmodule EvoGit.Store do
   Returns lightweight task summaries (same 16-key projection as
   select_tasks_summary/1, including the raw `updated_at` string) for all tasks
   whose `updated_at` is strictly newer than the given fixed-precision ISO
-  string. No heavy JSON fields (logs, usage, archive_metadata) are decoded.
+  string. No heavy JSON fields (logs, usage) are decoded.
   Returns `[]` on query failure.
   """
   def select_tasks_changed_since(store \\ __MODULE__, since_iso) do
@@ -753,9 +753,10 @@ defmodule EvoGit.Store do
     end)
   end
 
-  # Offloaded (failure-isolated): the lightweight single-row detail read. Neither
-  # the archive column nor the result's archive_records are decoded; a fault
-  # degrades to `nil` (the "row absent" shape).
+  # Offloaded (failure-isolated): the lightweight single-row detail read. Every
+  # task column is decoded exactly like `get_task/2` (the per-agent archive is
+  # not part of the task row); a fault degrades to `nil` (the "row absent"
+  # shape).
   @impl true
   def handle_call({:get_task_lite, task_id}, from, state) do
     offload(from, state, "get_task_lite", nil, fn ->

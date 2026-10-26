@@ -653,6 +653,59 @@ defmodule EvoGit.Store.TypesTest do
     end
   end
 
+  # ── Plain JSON text columns (no compression envelope) ────────────────────
+
+  # `result`, `logs` and `opts` are stored as PLAIN UTF-8 JSON TEXT whatever
+  # the payload size: no compression layer, no prefix-tagged payload. These
+  # cases were carried over from the retired `codec_compression_test.exs` so
+  # the "no envelope, large values included" contract stays pinned now that
+  # the per-agent archive lives in its own table.
+  describe "plain JSON text columns (no compression envelope)" do
+    defp big_text(reps) do
+      String.duplicate("UNCOMPRESSED_MARKER_TEXT: the agent finished the migration\n", reps)
+    end
+
+    test "a large result stays plain JSON (visible text) and round-trips" do
+      big =
+        {:ok,
+         %{
+           commit_sha: "abc123",
+           branch_name: "genesis/agent_deadbeef",
+           result: big_text(400)
+         }}
+
+      stored = Codec.encode_result(big)
+
+      # Plain JSON: decodable as JSON and the user text is visible in the
+      # stored column (nothing opaque, nothing prefixed).
+      assert {:ok, %{"__result_tag__" => "ok"}} = Jason.decode(stored)
+      assert String.contains?(stored, "UNCOMPRESSED_MARKER_TEXT")
+      assert Codec.decode_result(stored) == big
+      assert Types.ResultJson.load(stored) == {:ok, big}
+    end
+
+    test "large logs stay plain JSON and round-trip" do
+      logs = for i <- 1..400, do: "[info] step #{i}: committed worktree batch"
+
+      stored = Codec.encode_logs(logs)
+
+      assert {:ok, decoded} = Jason.decode(stored)
+      assert length(decoded) == 400
+      assert Codec.decode_logs(stored) == logs
+      assert Types.LogsJson.load(stored) == {:ok, logs}
+    end
+
+    test "opts is never wrapped — task search is a LIKE over the raw text" do
+      opts = [path: "/tmp/repo", mode: "evolve", objective: big_text(50)]
+
+      stored = Codec.encode_opts(opts)
+
+      assert String.starts_with?(stored, "{")
+      assert String.contains?(stored, "UNCOMPRESSED_MARKER_TEXT")
+      assert {:objective, _} = List.keyfind(Codec.decode_opts(stored), :objective, 0)
+    end
+  end
+
   # ── UsageJson ────────────────────────────────────────────────────────────
 
   describe "UsageJson (%Usage{} <-> JSON object)" do
