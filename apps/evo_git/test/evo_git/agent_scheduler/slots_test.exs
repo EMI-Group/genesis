@@ -473,10 +473,8 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       put_agent_state(1, @default_model)
       before = System.monotonic_time(:millisecond)
 
-      # A SHORT supplied duration (20ms) keeps this test off the real 60s
-      # default AND off a long wait: the assertions below are identical in
-      # shape — the stored deadline must be the SUPPLIED value (not 60_000),
-      # and the wakeup timer must land at supplied + epsilon.
+      # A 20ms SUPPLIED duration keeps the wait short; the assertions below are
+      # unchanged in shape (the stored deadline must be the supplied value).
       assert {:reply, :ok, new_state, []} =
                Slots.handle_report_llm_error(1, :rate_limit, 20, base_state([]))
 
@@ -513,13 +511,9 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       from = {self(), ref}
       put_agent_state(2, @default_model)
 
-      # A backoff that is still in the future when the sweep runs (100ms of
-      # headroom) → the queued waiter stays parked and the sweep must schedule
-      # ANOTHER pass (due at ~110ms — the 100ms headroom plus the 10ms sweep
-      # epsilon overridden in `setup_all`). The headroom is only read
-      # synchronously inside `handle_retry_llm_waiting/1` a few microseconds
-      # later, so this is comfortably in the future while keeping the wait
-      # short.
+      # A backoff still in the future when the sweep runs → the waiter stays
+      # parked and the sweep schedules ANOTHER pass at headroom + the 10ms
+      # epsilon (read synchronously, microseconds after this line).
       until = System.monotonic_time(:millisecond) + 100
 
       state =
@@ -560,8 +554,7 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert :queue.is_empty(State.waiting_for(new_state, @default_model))
 
       # No future backoff remains → nothing to reschedule. A wrongly-armed
-      # sweep would land 10ms out (the epsilon overridden in `setup_all`), so a
-      # 100ms window is a 10x margin over the only timer that could exist here.
+      # sweep would land 10ms out (the epsilon seam), so 100ms is a 10x margin.
       refute_receive :retry_llm_waiting, 100
     end
 
