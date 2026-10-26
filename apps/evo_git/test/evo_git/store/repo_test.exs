@@ -1,20 +1,22 @@
 defmodule EvoGit.Store.RepoTest do
   @moduledoc """
   Infra tests for the Ecto foundations of the task store — the `EvoGit.Repo`
-  configuration + the five shipped `priv/repo/migrations` migrations, exercised
+  configuration + the shipped `priv/repo/migrations` migrations, exercised
   through REAL unnamed dynamic instances (`EvoGit.Store.Boot.start_dynamic/1`)
   — exactly the shape per-store instances use in production.
 
   Pinned contracts:
 
-    * `start_dynamic/1` applies exactly the five shipped migration versions
+    * `start_dynamic/1` applies exactly the shipped migration versions
     * the resulting `tasks` table has the exact 20-column shape (names, ORDER,
       DDL types, notnull/pk flags) of the baseline migration, and the physical
       column order matches `TaskRow.columns/0`
     * the 10 named `idx_tasks_*` indexes exist (the baseline 6 + the two
       composite `(equality column, started_at)` indexes + the two covering
-      `(equality column, ordering column, id)` indexes); `projects` carries its
-      TEXT-PK autoindex
+      `(equality column, ordering column, id)` indexes); `task_agent_archives`
+      carries its `(task_id, depth, agent_id)` index and its composite
+      `(task_id, agent_id)` PK autoindex; `projects` carries its TEXT-PK
+      autoindex
     * `Boot.run_migrations/1` is idempotent (a re-run migrates nothing)
     * committed rows survive `Boot.stop/1` → `start_dynamic/1` on the same path
     * two dynamic instances on distinct paths coexist with independent data
@@ -40,6 +42,7 @@ defmodule EvoGit.Store.RepoTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.Store.Schemas.TaskAgentArchiveRow
   alias EvoGit.Store.Schemas.TaskRow
 
   @baseline_version 20_260_815_000_001
@@ -47,6 +50,7 @@ defmodule EvoGit.Store.RepoTest do
   @composite_index_version 20_260_815_000_003
   @compress_rows_version 20_260_815_000_004
   @covering_index_version 20_260_815_000_005
+  @archive_table_version 20_260_815_000_007
   # Ascending, exactly as `schema_migrations` reports it: the compression /
   # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
   # the index walk never crawls the unrewritten blob overflow chains.
@@ -55,7 +59,8 @@ defmodule EvoGit.Store.RepoTest do
     @normalization_version,
     @composite_index_version,
     @compress_rows_version,
-    @covering_index_version
+    @covering_index_version,
+    @archive_table_version
   ]
 
   # `PRAGMA table_info(tasks)` rows — [cid, name, type, notnull, dflt, pk] —
@@ -108,6 +113,13 @@ defmodule EvoGit.Store.RepoTest do
   ]
 
   @all_task_index_names @task_index_names ++ @composite_index_names
+
+  # The per-agent archive added by `20260815000007_create_task_agent_archives`:
+  # the roster index (`WHERE task_id = ? ORDER BY depth, agent_id`) and the
+  # implicit UNIQUE autoindex backing the composite `(task_id, agent_id)` PK.
+  @archive_table "task_agent_archives"
+  @archive_index_name "task_agent_archives_task_depth_idx"
+  @archive_pk_autoindex "sqlite_autoindex_task_agent_archives_1"
 
   # SQLite's implicit UNIQUE backing index for the tasks TEXT PK.
   @tasks_pk_autoindex "sqlite_autoindex_tasks_1"
@@ -188,7 +200,7 @@ defmodule EvoGit.Store.RepoTest do
   # ── Migrations applied ───────────────────────────────────────────────────
 
   describe "boot migrations" do
-    test "start_dynamic/1 applies exactly the five shipped versions" do
+    test "start_dynamic/1 applies exactly the shipped versions" do
       pid = start_repo!(:versions)
 
       assert migration_versions(pid) == @migration_versions
@@ -202,7 +214,7 @@ defmodule EvoGit.Store.RepoTest do
              end) == @migration_versions
     end
 
-    test "the database carries exactly the three expected tables" do
+    test "the database carries exactly the four expected tables" do
       pid = start_repo!(:tables)
 
       # `sqlite_stat%` is excluded: the boot path now runs a best-effort
@@ -212,7 +224,7 @@ defmodule EvoGit.Store.RepoTest do
                pid,
                "SELECT name FROM sqlite_master WHERE type = 'table' " <>
                  "AND name NOT LIKE 'sqlite_stat%' ORDER BY name"
-             ) == [["projects"], ["schema_migrations"], ["tasks"]]
+             ) == [["projects"], ["schema_migrations"], [@archive_table], ["tasks"]]
     end
   end
 
@@ -270,6 +282,46 @@ defmodule EvoGit.Store.RepoTest do
     end
   end
 
+  # ── task_agent_archives table shape ──────────────────────────────────────
+
+  describe "task_agent_archives table shape" do
+    test "exact 23-column shape, matching the schema field order" do
+      pid = start_repo!(:archive_shape)
+
+      rows = query_rows(pid, "PRAGMA table_info(#{@archive_table})")
+
+      assert Enum.map(rows, fn [_cid, name | _] -> name end) == TaskAgentArchiveRow.columns()
+
+      # Only the two PK columns and the two NOT NULL DEFAULT 0 counters are
+      # NOT NULL; the PK flags are 1/2 in declaration order (SQLite numbers a
+      # COMPOSITE primary key).
+      assert for([_cid, name, _type, notnull, _dflt, pk] <- rows, notnull == 1, do: {name, pk}) ==
+               [{"task_id", 1}, {"agent_id", 2}, {"depth", 0}, {"compression_count", 0}]
+    end
+
+    test "the roster index is a plain non-unique index on (task_id, depth, agent_id)" do
+      pid = start_repo!(:archive_index)
+
+      rows = query_rows(pid, "PRAGMA index_list(#{@archive_table})")
+      names = Enum.map(rows, fn [_seq, name | _] -> name end)
+
+      assert MapSet.new(names) == MapSet.new([@archive_index_name, @archive_pk_autoindex])
+
+      for [_seq, name, unique, origin, partial] <- rows, name == @archive_index_name do
+        assert unique == 0
+        assert origin == "c"
+        assert partial == 0
+      end
+
+      assert query_rows(pid, "PRAGMA index_info(#{@archive_index_name})")
+             |> Enum.map(fn [_seqno, _cid, column] -> column end) == [
+               "task_id",
+               "depth",
+               "agent_id"
+             ]
+    end
+  end
+
   # ── Indexes ──────────────────────────────────────────────────────────────
 
   describe "indexes" do
@@ -310,6 +362,8 @@ defmodule EvoGit.Store.RepoTest do
                Enum.sort(
                  Enum.map(@all_task_index_names, &[&1, "tasks"]) ++
                    [
+                     [@archive_index_name, @archive_table],
+                     [@archive_pk_autoindex, @archive_table],
                      ["sqlite_autoindex_projects_1", "projects"],
                      ["sqlite_autoindex_tasks_1", "tasks"]
                    ]

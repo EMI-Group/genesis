@@ -59,6 +59,7 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
   @composite_index_version 20_260_815_000_003
   @compress_rows_version 20_260_815_000_004
   @covering_index_version 20_260_815_000_005
+  @archive_table_version 20_260_815_000_007
 
   # Ascending, exactly as `schema_migrations` reports it: the compression /
   # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
@@ -68,7 +69,8 @@ defmodule EvoGit.Store.OversizedRowMigrationTest do
     @normalization_version,
     @composite_index_version,
     @compress_rows_version,
-    @covering_index_version
+    @covering_index_version,
+    @archive_table_version
   ]
 
   # The canonical 20-column DDL (identical to the baseline migration's CREATE

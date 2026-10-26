@@ -64,6 +64,7 @@ defmodule EvoGit.Store.BootMigrationTest do
   @composite_index_version 20_260_815_000_003
   @compress_rows_version 20_260_815_000_004
   @covering_index_version 20_260_815_000_005
+  @archive_table_version 20_260_815_000_007
   # Ascending, exactly as `schema_migrations` reports it: the compression /
   # archive-dedup rewrite (004) runs BEFORE the covering-index build (005) so
   # the index walk never crawls the unrewritten blob overflow chains.
@@ -72,7 +73,8 @@ defmodule EvoGit.Store.BootMigrationTest do
     @normalization_version,
     @composite_index_version,
     @compress_rows_version,
-    @covering_index_version
+    @covering_index_version,
+    @archive_table_version
   ]
 
   # The canonical 20 column names in physical order — matches the baseline
@@ -454,7 +456,7 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all five migrations (the Ecto migrator saw version 0).
+      # The boot stamped all six migrations (the Ecto migrator saw version 0).
       assert migration_versions(pid) == @migration_versions
 
       # The schema was adopted untouched — the fresh-DB PRAGMA shape.
@@ -502,9 +504,9 @@ defmodule EvoGit.Store.BootMigrationTest do
 
       pid = start_booted_repo!(path)
 
-      # The boot stamped all five migrations (the Ecto migrator saw version 0)...
+      # The boot stamped all six migrations (the Ecto migrator saw version 0)...
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[5]]
+      assert schema_migrations_count(pid) == [[6]]
 
       # ...the appended `error` landed AFTER the pre-existing `updated_at`
       # (SQLite ALTERs can only append) as a NULLABLE add with its declared
@@ -556,7 +558,7 @@ defmodule EvoGit.Store.BootMigrationTest do
       # physical tail order it arrived with is preserved and accepted.
       assert task_table_info(pid) == @adopted_19_col_table_info_rows
       assert migration_versions(pid) == @migration_versions
-      assert schema_migrations_count(pid) == [[5]]
+      assert schema_migrations_count(pid) == [[6]]
 
       row = get_task_row(pid, "r6b1-oldpipe")
       assert {row.id, row.status} == {"r6b1-oldpipe", "completed"}

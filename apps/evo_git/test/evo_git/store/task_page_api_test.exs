@@ -83,7 +83,7 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert last.id == "t-old"
   end
 
-  test "get_task_lite/2 and get_task_archive/2 split the archive out of the detail read" do
+  test "get_task_lite/2 keeps the per-agent archive out of the detail read" do
     store = start_store!()
     :ok = Store.put_task(store, task("t-detail", ~U[2026-02-01 00:00:00.000Z]))
 
@@ -94,12 +94,8 @@ defmodule EvoGit.Store.TaskPageApiTest do
     refute Map.has_key?(data, :archive_records)
     assert data.commit_sha == "sha-t-detail"
 
-    assert Store.get_task_archive(store, "t-detail") ==
-             [%{"role" => "user", "content" => "archived t-detail"}]
-
     # Missing rows keep each read's documented empty shape.
     assert Store.get_task_lite(store, "nope") == nil
-    assert Store.get_task_archive(store, "nope") == []
   end
 
   # The `store \\ __MODULE__` defaults generate arity-1 forms, so a caller can
@@ -110,7 +106,14 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert function_exported?(Store, :select_tasks_page, 2)
     assert function_exported?(Store, :get_task_lite, 1)
     assert function_exported?(Store, :get_task_lite, 2)
-    assert function_exported?(Store, :get_task_archive, 1)
-    assert function_exported?(Store, :get_task_archive, 2)
+    assert function_exported?(Store, :put_task_archive, 1)
+    assert function_exported?(Store, :put_task_archive, 2)
+    assert function_exported?(Store, :list_task_archives, 1)
+    assert function_exported?(Store, :list_task_archives, 2)
+    assert function_exported?(Store, :list_task_archives, 3)
+    assert function_exported?(Store, :get_agent_archive, 2)
+    assert function_exported?(Store, :get_agent_archive, 3)
+    assert function_exported?(Store, :delete_task_archives, 1)
+    assert function_exported?(Store, :delete_task_archives, 2)
   end
 end

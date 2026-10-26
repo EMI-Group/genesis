@@ -14,7 +14,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
 
   Pinned contracts:
 
-    * the seam returns EXACTLY the five shipped migrations, ascending, with
+    * the seam returns EXACTLY the shipped migrations, ascending, with
       their modules loaded (`Code.ensure_loaded?/1` + `__migration__/0`
       exported), the versions agreeing with the REAL
       `priv/repo/migrations/*.exs` filenames
@@ -51,12 +51,14 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   @composite_index_version 20_260_815_000_003
   @compress_rows_version 20_260_815_000_004
   @covering_index_version 20_260_815_000_005
+  @archive_table_version 20_260_815_000_007
 
   @baseline_module EvoGit.Repo.Migrations.BaselineAdoption
   @normalization_module EvoGit.Repo.Migrations.DataNormalization
   @composite_index_module EvoGit.Repo.Migrations.CompositeIndexes
   @compress_rows_module EvoGit.Repo.Migrations.CompressOversizedRows
   @covering_index_module EvoGit.Repo.Migrations.CoveringIndexes
+  @archive_table_module EvoGit.Repo.Migrations.CreateTaskAgentArchives
 
   # The `:persistent_term` memo slot `EvoGit.Store.Boot` fills with the
   # pre-loaded source (documented in `EvoGit.Store.Boot` / the store CONTEXT.md)
@@ -84,7 +86,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
   # ── migration_source/0 ────────────────────────────────────────────────────
 
   describe "migration_source/0" do
-    test "returns exactly the five shipped {version, module} pairs, ascending, modules loaded" do
+    test "returns exactly the shipped {version, module} pairs, ascending, modules loaded" do
       source = Boot.migration_source()
 
       assert source == [
@@ -92,7 +94,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
                {@compress_rows_version, @compress_rows_module},
-               {@covering_index_version, @covering_index_module}
+               {@covering_index_version, @covering_index_module},
+               {@archive_table_version, @archive_table_module}
              ]
 
       versions = Enum.map(source, &elem(&1, 0))
@@ -150,7 +153,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                {@normalization_version, @normalization_module},
                {@composite_index_version, @composite_index_module},
                {@compress_rows_version, @compress_rows_module},
-               {@covering_index_version, @covering_index_module}
+               {@covering_index_version, @covering_index_module},
+               {@archive_table_version, @archive_table_module}
              ]
 
       assert Code.ensure_loaded?(@baseline_module)
@@ -167,7 +171,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                      @normalization_version,
                      @composite_index_version,
                      @compress_rows_version,
-                     @covering_index_version
+                     @covering_index_version,
+                     @archive_table_version
                    ]
 
           assert booted_versions(db_path(root, "fresh_b")) ==
@@ -176,7 +181,8 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
                      @normalization_version,
                      @composite_index_version,
                      @compress_rows_version,
-                     @covering_index_version
+                     @covering_index_version,
+                     @archive_table_version
                    ]
         end)
 
