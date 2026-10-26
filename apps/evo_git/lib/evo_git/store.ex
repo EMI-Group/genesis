@@ -23,7 +23,8 @@ defmodule EvoGit.Store do
       existing user DB is upgraded automatically on first start; a manual
       `mix migrate.store` is never required for the app to boot.
     * **Operations** — `Operations.Tasks`, `Operations.Lightweight`,
-      `Operations.Summaries`, `Operations.Projects`, `Operations.Safety` own
+      `Operations.Summaries`, `Operations.Pages`, `Operations.Filters`,
+      `Operations.Projects`, `Operations.Safety` own
       the actual `EvoGit.Repo.*` + `Ecto.Query` work. Every function takes the
       repo pid FIRST and binds it with `EvoGit.Store.RepoScope.with_repo/2`,
       so it targets THIS store's dynamic instance regardless of the calling
@@ -53,9 +54,10 @@ defmodule EvoGit.Store do
 
   | Read | Degraded value |
   |------|----------------|
-  | `get_task/2`, `get_task_status/2`, `select_task_logs/2`, `select_task_update_info/2`, `get_project/2` | `nil` |
-  | `select_all_tasks/1`, `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1` | `[]` |
+  | `get_task/2`, `get_task_lite/2`, `get_task_status/2`, `select_task_logs/2`, `select_task_update_info/2`, `get_project/2` | `nil` |
+  | `select_all_tasks/1`, `select_task_paths/1`, `select_finished_task_ids/1`, `select_task_ids/2`, `select_running_lease_info/1`, `select_cleanup_info/1,3`, `select_tasks_summary/3`, `select_tasks_summary_by_path/4`, `select_tasks_changed_since/2`, `select_all_projects/1`, `safe_select_all_tasks/1`, `safe_select_all_projects/1`, `get_task_archive/2` | `[]` |
   | `safe_select_paginated_tasks/2` | `{[], 0}` |
+  | `select_tasks_page/2` | `%{rows: [], total: 0}` |
   | `count_tasks/1`, `count_projects/1`, `size/1` | `0` |
 
   The degraded value is passed EXPLICITLY at each call site (`offload/5`'s
@@ -208,6 +210,30 @@ defmodule EvoGit.Store do
     GenServer.call(store, {:get_task, task_id}, @call_timeout)
   end
 
+  @doc """
+  LIGHTWEIGHT single-task read — the detail/review-page variant of
+  `get_task/2`.
+
+  Decodes every column exactly like `get_task/2` (same Codec) with two
+  savings: the `archive_metadata` column is never read (`archive_metadata:
+  nil`) and the result's `:archive_records` key is dropped. Use `get_task/2`
+  when the archive really is needed, `get_task_archive/2` to fetch it
+  separately. Returns `nil` when the row is absent (and on a failed read —
+  see the moduledoc's degradation table).
+  """
+  def get_task_lite(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:get_task_lite, task_id}, @call_timeout)
+  end
+
+  @doc """
+  Returns the decoded `archive_metadata` list for a task (`[]` when the row is
+  missing, the column is NULL, or the payload is undecodable — never raises).
+  Reads ONLY that column.
+  """
+  def get_task_archive(store \\ __MODULE__, task_id) do
+    GenServer.call(store, {:get_task_archive, task_id}, @call_timeout)
+  end
+
   @doc "Deletes a single task by id."
   def delete_task(store \\ __MODULE__, task_id) do
     GenServer.call(store, {:delete_task, task_id}, @call_timeout)
@@ -245,6 +271,28 @@ defmodule EvoGit.Store do
   """
   def safe_select_paginated_tasks(store \\ __MODULE__, opts) do
     GenServer.call(store, {:safe_select_paginated_tasks, opts}, @call_timeout)
+  end
+
+  @doc """
+  LIGHTWEIGHT paginated task read: one page of the 16-key summary projection
+  plus the filtered total, `%{rows: [summary_map], total: non_neg_integer}`.
+
+  This is the read the dashboard's task list / any reporting surface should
+  use: the heavy JSON blobs (`result`, `archive_metadata`, `logs`, `usage`) are
+  never selected, so a page of 25 rows costs the same whether a row carries
+  1 kB or 108 MB of `result`. Rows are `ORDER BY started_at DESC` (index-served)
+  and each row is the SAME 16-key map `select_tasks_summary/3` returns.
+
+  `opts` accepts `:limit` (default 25, capped at 50), `:offset` (never
+  negative; an offset past the end returns the LAST page) and the filter keys
+  `:status`, `:project_path`, `:review_status`, `:search` — either nested under
+  `:filters` (the `safe_select_paginated_tasks/2` shape) or at the top level.
+  See `EvoGit.Store.Operations.Pages.select_tasks_page/2`.
+
+  Degrades to `%{rows: [], total: 0}` on a failed read (see the moduledoc).
+  """
+  def select_tasks_page(store \\ __MODULE__, opts) do
+    GenServer.call(store, {:select_tasks_page, opts}, @call_timeout)
   end
 
   @doc "Deletes all task rows."
@@ -632,6 +680,35 @@ defmodule EvoGit.Store do
   def handle_call({:safe_select_paginated_tasks, opts}, from, state) do
     offload(from, state, "safe_select_paginated_tasks", {[], 0}, fn ->
       Operations.Tasks.safe_select_paginated_tasks(state.repo, opts)
+    end)
+  end
+
+  # Offloaded (failure-isolated): the LIGHTWEIGHT page read — summary
+  # projection only, so the decoded page is small, but it still runs on the
+  # worker's heap and a fault degrades to an empty page rather than killing
+  # this process.
+  @impl true
+  def handle_call({:select_tasks_page, opts}, from, state) do
+    offload(from, state, "select_tasks_page", %{rows: [], total: 0}, fn ->
+      Operations.Pages.select_tasks_page(state.repo, opts)
+    end)
+  end
+
+  # Offloaded (failure-isolated): the lightweight single-row detail read. Neither
+  # the archive column nor the result's archive_records are decoded; a fault
+  # degrades to `nil` (the "row absent" shape).
+  @impl true
+  def handle_call({:get_task_lite, task_id}, from, state) do
+    offload(from, state, "get_task_lite", nil, fn ->
+      Operations.Pages.get_task_lite(state.repo, task_id)
+    end)
+  end
+
+  # Offloaded (failure-isolated): the archive-on-demand read (single column).
+  @impl true
+  def handle_call({:get_task_archive, task_id}, from, state) do
+    offload(from, state, "get_task_archive", [], fn ->
+      Operations.Pages.get_task_archive(state.repo, task_id)
     end)
   end
 
