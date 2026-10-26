@@ -140,8 +140,7 @@ The three umbrella `mix.exs` files read it dynamically via a shared `version/0` 
 
 `mix bump.version 0.2.0` updates `VERSION`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, and `README.md` (shields.io badge), asks whether to commit the touched files (never `git add -A`), then offers to generate the changelog (delegating to `mix changelog`); the CLI also supports `--version` / `-v`.
 
-**AI changelog generation** — `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]` (`Mix.Tasks.Changelog`, `apps/evo_git/lib/mix/tasks/changelog.ex`): PR/merge-aware first-parent collection, docs-only-change suppression via the `__NO_USER_FACING_CHANGES__` marker, two-stage map-reduce summarization into a Keep-a-Changelog section, and `CHANGELOG.md` maintenance; a release-time tool, like `mix translate`.
-Full design detail (collection rules, commit filters, prompts, file-update rules, test seams `:changelog_summarizer`/`:changelog_pr_summarizer`/`:changelog_aggregator`): `apps/evo_git/lib/mix/tasks/CONTEXT.md`.
+**AI changelog generation** — `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]` (`Mix.Tasks.Changelog`, `apps/evo_git/lib/mix/tasks/changelog.ex`): PR/merge-aware first-parent collection, docs-only suppression via the `__NO_USER_FACING_CHANGES__` marker, two-stage map-reduce summarization into a Keep-a-Changelog section, and `CHANGELOG.md` maintenance — a release-time tool, like `mix translate`; full design detail (collection rules, commit filters, prompts, file-update rules, test seams `:changelog_summarizer`/`:changelog_pr_summarizer`/`:changelog_aggregator`): `apps/evo_git/lib/mix/tasks/CONTEXT.md`.
 
 ## Subsystem Overviews
 
