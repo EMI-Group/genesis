@@ -127,7 +127,6 @@ defmodule EvoDashWeb.ArchiveComponents do
     assigns =
       assign(assigns,
         entries: entries,
-        loaded: loaded,
         label_total: label_total,
         archive_first: first,
         archive_last: last,
