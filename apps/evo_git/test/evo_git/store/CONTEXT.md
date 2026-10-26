@@ -9,7 +9,7 @@ The suites that terminate/restart the app-global `EvoGit.Store`/`EvoGit.TaskRegi
 
 ## Routing Table
 
-- `./operations/` → one file per Operation module (`tasks_test.exs`, `lightweight_test.exs`, `summaries_test.exs`, `pages_test.exs`, `projects_test.exs`, `safety_test.exs`) — real dynamic repos, rows seeded through the TYPED schemas, return shapes pinned to the public-API contract.
+- `./operations/` → one file per Operation module (`tasks_test.exs`, `lightweight_test.exs`, `summaries_test.exs`, `pages_test.exs`, `projects_test.exs`, `safety_test.exs`, `archives_test.exs`) — real dynamic repos, rows seeded through the TYPED schemas, return shapes pinned to the public-API contract.
 - `./types_test.exs` → `EvoGit.Store.TypesTest` — Codec-oracle equivalence for every Ecto.Type (`dump/1` byte-identical to `Codec.encode_*/1`, `load/1` equal to `Codec.decode_*/1` incl. raising paths).
 - `./boot_migration_test.exs` → `EvoGit.Store.BootMigrationTest` — SCHEMA adoption coverage of `20260815000001_baseline_adoption` (fresh DB, current 19-col table, 15/17-col legacy prefixes, the real 19-column v0.9.0–v0.12.5 shape incl. the accepted `…,updated_at,error` adopted tail, and the old-pipeline-repaired shape).
 - `./boot_normalization_test.exs` → `EvoGit.Store.BootNormalizationTest` — DATA-normalization coverage of `20260815000002_data_normalization` (timestamps, results, opts, backfills, quarantine drops), seeded RAW via xqlite BEFORE boot so the rewrite runs during it.
