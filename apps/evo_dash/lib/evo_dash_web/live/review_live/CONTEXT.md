@@ -154,7 +154,7 @@ A task/node change (`ArchiveLoad.sync_context/1`, called at the top of `start_as
 There is no polling and no automatic retry anywhere on this path.
 The Export JSON link renders only after a `:loaded`, non-empty archive (`ArchiveLoad.export_available?/1`) — the export endpoint 404s without an archive, so no link can be shown that would fail.
 The archive section's own Export JSON link is node-aware: its href carries `?node=<target_id>` when a remote node is viewed and stays bare `/tasks/<task_id>/export` on the local node.
-The archived tree is capped at 300 records per render (`@archive_max_records` in `review_components.ex`; paging is the real memory bound, and each record's text is still capped by `blob_preview` at 8 KB result / 4 KB objective); beyond that a note points at the JSON export.
+The archived tree is capped at 300 records per render (`@archive_max_records` in `review_components.ex`; the 500-entry retention window is the real memory bound, and each record's text is still capped by `blob_preview` at 8 KB result / 4 KB objective); beyond that a note points at the JSON export.
 Records whose `parent_id` is on an unloaded/broken page are promoted to top-level tree nodes (never dropped) and still count as shown.
 
 ## Consumed-vs-transferred (payload audit)
