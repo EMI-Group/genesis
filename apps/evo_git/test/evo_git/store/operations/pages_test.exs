@@ -295,10 +295,12 @@ defmodule EvoGit.Store.Operations.PagesTest do
       refute "fail-6" in Enum.map(rows, & &1.id)
       assert length(rows) == 2
     end
-    test "an undecodable row is SKIPPED from the page but still COUNTED", %{repo: repo} do
-      # Same skip-and-log boundary as the legacy page (the summary decode is
-      # shared): a corrupt `opts` JSON drops the row from `rows`, while the
-      # SQL-level COUNT still includes it.
+
+    test "an undecodable row is excluded from EVERY page and from the total",
+         %{repo: repo} do
+      # The count and the pages agree: a corrupt `opts` row is not renderable,
+      # so it neither appears in `rows` nor inflates `total`. Walking the whole
+      # renderable set therefore yields exactly `total` rows.
       RepoScope.with_repo(repo, fn ->
         Repo.update_all(from(t in TaskRowRaw, where: t.id == "fail-6"),
           set: [opts: "not-json-object"]
@@ -307,12 +309,56 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
       %{rows: rows, total: total} = Pages.select_tasks_page(repo, filters: [status: "failed"])
 
-      assert total == 3
+      assert total == 2
       refute "fail-6" in Enum.map(rows, & &1.id)
       assert length(rows) == 2
 
+      walked =
+        Enum.flat_map(0..(total - 1), fn offset ->
+          page_ids(repo, filters: [status: "failed"], limit: 1, offset: offset)
+        end)
+
+      assert walked == Enum.map(rows, & &1.id)
+
+      # The LEGACY full-row page keeps its documented "skipped but still
+      # counted" contract; that divergence is exactly why the lightweight page
+      # owns the consistent total.
       {legacy_rows, 3} = legacy(repo, filters: [status: "failed"], limit: 50, offset: 0)
       assert Enum.map(rows, & &1.id) == Enum.map(legacy_rows, & &1.id)
+    end
+
+    test "the last page is never empty when the TRAILING rows are unrenderable" do
+      # `ORDER BY started_at DESC` puts the OLDEST rows last, so "trailing" rows
+      # are the ones with the smallest `started_at`. 5 renderable rows followed
+      # by 3 unrenderable ones: `total` counts only renderable rows, so the
+      # last page (offset 3, limit 3) still holds two rows.
+      repo = start_repo!(:last_page)
+      for i <- 0..4, do: put_timed!(repo, "ok-#{i}", i, status: :failed)
+
+      for {id, i} <- [{"bad-a", -3}, {"bad-b", -2}, {"bad-c", -1}],
+          do: put_timed!(repo, id, i, status: :failed)
+
+      RepoScope.with_repo(repo, fn ->
+        Repo.update_all(from(t in TaskRowRaw, where: t.id in ["bad-a", "bad-b", "bad-c"]),
+          set: [opts: "not-json-object"]
+        )
+      end)
+
+      %{rows: first, total: 5} =
+        Pages.select_tasks_page(repo, filters: [status: "failed"], limit: 3, offset: 0)
+
+      assert Enum.map(first, & &1.id) == ["ok-4", "ok-3", "ok-2"]
+
+      %{rows: last, total: 5} =
+        Pages.select_tasks_page(repo, filters: [status: "failed"], limit: 3, offset: 3)
+
+      assert Enum.map(last, & &1.id) == ["ok-1", "ok-0"]
+
+      # What a total that COUNTED the corrupt tail would do: 8 rows ⇒ offset 5
+      # is in range, so the legacy page renders the three corrupt rows, skips
+      # every one of them and comes back EMPTY.
+      {legacy_last, 8} = legacy(repo, filters: [status: "failed"], limit: 3, offset: 5)
+      assert legacy_last == []
     end
   end
 

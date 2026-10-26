@@ -151,8 +151,8 @@ defmodule EvoGit.StoreDiskFullTest do
       # Reads still work WHILE the store's connection is armed — the
       # read-only connection serves SELECTs normally.
       assert Store.get_task(store, task_id) == nil
+      assert Store.get_task_lite(store, task_id) == nil
       assert Store.select_task_ids(store) == []
-      assert Store.count_tasks(store) == 0
 
       log =
         capture_log(fn ->
@@ -220,7 +220,7 @@ defmodule EvoGit.StoreDiskFullTest do
 
       # ...and reads keep working; nothing was mutated.
       assert %TaskInfo{id: ^task_id} = Store.get_task(store, task_id)
-      assert Store.count_tasks(store) == 1
+      assert Enum.map(Store.select_task_ids(store), & &1.id) == [task_id]
 
       set_query_only(store, "OFF")
     end
