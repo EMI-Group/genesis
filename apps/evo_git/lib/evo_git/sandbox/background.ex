@@ -27,8 +27,15 @@ defmodule EvoGit.Sandbox.Background do
       is NOT a child of the BEAM, so it SURVIVES a BEAM crash or restart, and
       ownership stays provable from the name (the embedded pid is the BEAM that
       created it). Termination is therefore always explicit
-      (`systemctl --user stop`), and the unit is started WITHOUT `--collect` so
-      its exit status stays queryable after it finishes.
+      (`systemctl --user stop`). Completion is observed by the
+      `systemd-run --wait` CLIENT: it stays alive for the unit's whole lifetime
+      and exits with the unit's own status, and its port (kept open in the
+      handle) is owned by the registry, which records the exit. A post-mortem
+      `systemctl --user show <unit>` is NOT a reliable completion source —
+      systemd unloads a successfully-exited transient unit immediately
+      (`CollectMode=inactive`), so only FAILED units remain queryable. A job
+      that outlives its BEAM loses its observer (the client dies with the BEAM)
+      and is garbage-collected by the boot sweep instead.
     * **bwrap (`EvoGit.Sandbox.Bwrap`)** — the bwrap process is a session leader
       (`--new-session`) and, in full capability, the pid-namespace root, so
       killing its process group (`kill -TERM -- -<pgid>` → `-KILL`) takes the
@@ -53,8 +60,11 @@ defmodule EvoGit.Sandbox.Background do
   (`( command ) >> file 2>&1`) breaks any command containing `#`, a heredoc or a
   trailing comment.
 
-  The systemd backend has no port stream: systemd writes the file directly via
-  `-p StandardOutput=append:<path>` / `-p StandardError=append:<path>`.
+  The systemd backend has no port OUTPUT stream: systemd writes the file directly
+  via `-p StandardOutput=append:<path>` / `-p StandardError=append:<path>`. Its
+  port carries no job output at all — it is the `systemd-run --wait` client's
+  port, used only as the exit OBSERVER, so any `{:data, _}` arriving on it is
+  client diagnostics and is discarded by the registry.
 
   ## Boot sweep
 
@@ -77,10 +87,18 @@ defmodule EvoGit.Sandbox.Background do
 
   alias EvoGit.{Platform, Sandbox.Helpers}
 
-  # Upper bound on the ONE blocking spot of `spawn/1` — waiting for the
-  # `systemd-run` client to hand the unit over to systemd. In practice this
-  # returns in milliseconds (the client exits as soon as the unit starts).
-  @systemd_run_timeout 5_000
+  # Upper bound on the START GRACE window of a detached systemd job. The
+  # `systemd-run --wait` client lives for the unit's WHOLE lifetime, so "the
+  # client is still alive after this window" means the unit started and the
+  # client's port is now the job's exit observer; a client that exits INSIDE
+  # the window is either an immediately-finished job or a start failure (see
+  # `spawn_unit/1`). Kept short: it is the one blocking spot of `spawn/1`.
+  @start_grace_ms 1_000
+  # Bounded settle-poll for a unit that is briefly `deactivating` before landing
+  # in `failed` (an immediately-failing background command) — 5 × 50 ms of grace
+  # plus the `systemctl show` round trips themselves.
+  @unit_settle_attempts 5
+  @unit_settle_interval_ms 50
 
   @typedoc """
   A background job request. `output_path`'s parent directory and the file
@@ -96,12 +114,23 @@ defmodule EvoGit.Sandbox.Background do
   @typedoc """
   How a running job is anchored to the OS.
 
-    * `:unit` — a transient systemd user unit (systemd-run backend);
+    * `:unit` — a transient systemd user unit (systemd-run backend). `port` is
+      the still-open `systemd-run --wait` CLIENT port — the completion
+      OBSERVER, owned by the calling registry process: its
+      `{port, {:exit_status, code}}` message carries the UNIT's exit status. It
+      is `nil` only when the unit exited inside the start grace window, in
+      which case `pending_exit_code` carries the already-observed status.
     * `:port` — a directly spawned child (bwrap / sandbox-exec / none), whose
       port belongs to the calling registry process.
   """
   @type handle ::
-          %{kind: :unit, unit: String.t(), backend: module()}
+          %{
+            kind: :unit,
+            unit: String.t(),
+            backend: module(),
+            port: port() | nil,
+            pending_exit_code: integer() | nil
+          }
           | %{kind: :port, port: port(), os_pid: integer() | nil, backend: module()}
 
   @type status :: {:running, nil} | {:exited, integer() | nil} | {:unknown, nil}
@@ -117,7 +146,10 @@ defmodule EvoGit.Sandbox.Background do
 
   Called from the registry GenServer process, so any Port opened here is OWNED
   by the registry: it receives `{port, {:data, chunk}}` and
-  `{port, {:exit_status, code}}` messages.
+  `{port, {:exit_status, code}}` messages. That is true for BOTH handle shapes —
+  a `:unit` handle keeps the `systemd-run --wait` client's port open as the
+  job's exit observer (see `spawn_unit/1`), so a unit job's completion arrives
+  as a port message exactly like a `:port` job's.
 
   Errors are `{:error, term()}` for EVERY backend, including
   `{:error, {:invalid_spec, spec}}` (an incomplete/blank spec) and
@@ -141,7 +173,8 @@ defmodule EvoGit.Sandbox.Background do
   Terminates a background job.
 
   `:unit` handles stop the systemd unit in a spawned `Task` (the registry must
-  never block on `systemctl`) and return `:ok` immediately. `:port` handles kill
+  never block on `systemctl`) and return `:ok` immediately; the unit's exit
+  observer port then closes on its own. `:port` handles kill
   the process TREE via `EvoGit.Sandbox.Helpers.kill_process_tree/1`, leaving the
   port alone so the container's natural `{:exit_status, code}` message still
   reaches the registry.
@@ -154,11 +187,13 @@ defmodule EvoGit.Sandbox.Background do
   @doc """
   Reports whether a background job still runs.
 
-  `:unit` handles are classified from `systemctl --user show` (the unit is
-  retained after exit, so its exit status is still queryable); `:port` handles
-  report `{:running, nil}` only while the port is open — the job's real exit
-  code arrives as the port's own `{:exit_status, code}` message, which the
-  registry owns.
+  `:unit` handles are classified from `systemctl --user show` — which reports a
+  unit only while it runs or after it FAILED (systemd unloads a successfully
+  exited transient unit immediately), so it is a FALLBACK, not the completion
+  source: the job's real exit status arrives as the observer port's own
+  `{:exit_status, code}` message, which the registry owns. `:port` handles
+  report `{:running, nil}` only while the port is open — their exit code
+  arrives through that same port message.
   """
   @spec status(handle()) :: status()
   def status(%{kind: :unit} = handle), do: unit_status(handle)
@@ -239,6 +274,26 @@ defmodule EvoGit.Sandbox.Background do
 
   # -- systemd-run (transient user unit) --------------------------------------
 
+  # The unit runs detached (`--unit=<name>`), but the `systemd-run --wait`
+  # CLIENT stays alive for the unit's whole lifetime and exits with the unit's
+  # OWN exit status. That client — not a post-mortem `systemctl show` — is the
+  # completion signal: its port is kept OPEN and stored in the handle, so the
+  # registry (which calls this from its own process, and therefore owns the
+  # port) receives `{port, {:exit_status, code}}` when the job ends.
+  #
+  # The client therefore does not return at unit START, so the start-failure
+  # contract is recovered from a short START GRACE window on the port:
+  #
+  #   * still running after the grace  → the unit started; keep the port as the
+  #     exit observer (the normal path);
+  #   * exits 0 within the grace       → an immediately-finished job with exit
+  #     code 0 (`pending_exit_code` on the handle, applied by the registry);
+  #   * exits non-zero within the grace → EITHER the unit ran and failed
+  #     immediately (e.g. command not found → 127; a FAILED unit IS retained, so
+  #     its status is queryable) OR `systemd-run` itself could not start the
+  #     unit (no unit exists → `systemctl show` fails). The retained-unit query
+  #     decides, and the client's own stderr (unit output goes to the log file,
+  #     so only systemd-run diagnostics land here) becomes the error detail.
   defp spawn_unit(spec) do
     unit = unit_name(spec.job_id)
 
@@ -251,34 +306,73 @@ defmodule EvoGit.Sandbox.Background do
         unit
       )
 
-    case systemd_run(args) do
-      {:ok, _output} ->
-        {:ok, %{kind: :unit, unit: unit, backend: EvoGit.Sandbox.Linux}}
-
-      {:error, output} ->
-        # A timed-out client may still have started the unit — never leak it.
-        stop_unit_async(%{unit: unit})
-        {:error, {:systemd_run_failed, output}}
-    end
-  end
-
-  # Runs the systemd-run CLIENT and waits (bounded) for it to hand the unit
-  # over to systemd. This is the single blocking spot of the whole module and
-  # lasts milliseconds in practice: without `--wait` the client exits as soon
-  # as the unit has started.
-  defp systemd_run(args) do
-    exec = resolve!("systemd-run")
-
     port =
       Port.open(
-        {:spawn_executable, exec},
+        {:spawn_executable, resolve!("systemd-run")},
         [:binary, :exit_status, :hide, :stderr_to_stdout, {:args, args}]
       )
 
-    result = await_start(port, [], @systemd_run_timeout)
+    case await_start(port, [], @start_grace_ms) do
+      {:running, _diagnostics} ->
+        {:ok, %{kind: :unit, unit: unit, backend: EvoGit.Sandbox.Linux, port: port}}
+
+      {:exited, code, diagnostics} ->
+        immediate_unit_exit(unit, port, code, diagnostics)
+    end
+  end
+
+  # The client exited inside the start grace window: settle whether the unit
+  # really ran (→ an immediate job completion with its exit code) or whether
+  # `systemd-run` itself failed (→ a spawn failure, never a job that can never
+  # complete).
+  defp immediate_unit_exit(unit, port, 0, _diagnostics) do
+    close_observer(port)
+    {:ok, %{kind: :unit, unit: unit, backend: EvoGit.Sandbox.Linux, pending_exit_code: 0}}
+  end
+
+  defp immediate_unit_exit(unit, port, code, diagnostics) do
+    # A unit that FAILED stays retained by systemd, so it is queryable here;
+    # give the state a moment to settle (`deactivating` → `failed`) before
+    # concluding the unit never existed.
+    unit_status = await_settled_unit_status(unit, @unit_settle_attempts)
+
+    close_observer(port)
+
+    case unit_status do
+      {:exited, exit_code} ->
+        {:ok,
+         %{kind: :unit, unit: unit, backend: EvoGit.Sandbox.Linux, pending_exit_code: exit_code}}
+
+      _ ->
+        # No retained unit → `systemd-run` could not start it at all. Stop the
+        # (possibly half-created) unit defensively and report the client's own
+        # output, which carries systemd-run's diagnostic.
+        Logger.warning(
+          "Sandbox.Background: systemd-run could not start unit '#{unit}' (client exit #{code}): #{String.trim(diagnostics)}"
+        )
+
+        stop_unit_async(%{unit: unit})
+        {:error, {:systemd_run_failed, diagnostics}}
+    end
+  end
+
+  defp close_observer(port) do
     Helpers.close_port(port)
     Helpers.drain_port_messages(port)
-    result
+  end
+
+  # Polls `systemctl --user show` a bounded number of times: an immediate unit
+  # failure is briefly `deactivating` before landing in `failed`, and anything
+  # that never becomes readable stays `{:unknown, nil}`.
+  defp await_settled_unit_status(unit, attempts) do
+    case unit_status(%{unit: unit}) do
+      {:unknown, _} when attempts > 0 ->
+        Process.sleep(@unit_settle_interval_ms)
+        await_settled_unit_status(unit, attempts - 1)
+
+      status ->
+        status
+    end
   end
 
   defp await_start(port, acc, timeout) do
@@ -286,14 +380,11 @@ defmodule EvoGit.Sandbox.Background do
       {^port, {:data, data}} ->
         await_start(port, [acc, data], timeout)
 
-      {^port, {:exit_status, 0}} ->
-        {:ok, IO.iodata_to_binary(acc)}
-
       {^port, {:exit_status, code}} ->
-        {:error, "systemd-run exited with status #{code}: #{IO.iodata_to_binary(acc)}"}
+        {:exited, code, IO.iodata_to_binary(acc)}
     after
       timeout ->
-        {:error, "systemd-run did not return within #{timeout}ms: #{IO.iodata_to_binary(acc)}"}
+        {:running, IO.iodata_to_binary(acc)}
     end
   end
 

@@ -17,7 +17,11 @@ defmodule EvoGit.Sandbox.BackgroundTest do
   background). No real systemd unit is ever started — the test environment has
   no systemd **user bus** (`EvoGit.Sandbox.Linux.enabled?/0` is false under
   `Mix.env() == :test`), so `spawn/1` always takes the plain-port path; the
-  systemd/unit shape is pinned at the pure argv level only.
+  systemd/unit shape is pinned at the pure argv level only (`--wait` PRESENT —
+  the `systemd-run` client is the job's exit observer — with `--pipe`/`--collect`
+  absent). The registry-side exit routing for a `:unit` handle (observer port →
+  `:completed`/`:failed`, plus the `{:unknown, _}` floor) is pinned in
+  `test/evo_git/background_jobs_test.exs`.
   """
 
   use ExUnit.Case, async: false
@@ -436,8 +440,12 @@ defmodule EvoGit.Sandbox.BackgroundTest do
       # Exactly ONE unit element — no second (generated) unit name.
       assert Enum.count(detached, &String.starts_with?(&1, "--unit=")) == 1
 
-      # The unit outlives the client: none of the foreground flow-control flags.
-      refute "--wait" in detached
+      # The `systemd-run --wait` CLIENT is the job's exit observer: it must stay
+      # alive for the unit's lifetime so the registry gets the unit's exit
+      # status through the client's port. `--pipe`/`--collect` stay OUT — the
+      # output goes to the `append:` file and the unit must not be GC'd into an
+      # unobservable state.
+      assert "--wait" in detached
       refute "--pipe" in detached
       refute "--collect" in detached
 
@@ -463,7 +471,9 @@ defmodule EvoGit.Sandbox.BackgroundTest do
 
       # Pin BOTH sides in one test so the shapes cannot silently converge.
       assert Enum.count(detached, &String.starts_with?(&1, "--unit=")) == 1
-      refute "--wait" in detached
+      # Both shapes WAIT (the detached one on an exit-OBSERVER port), but only
+      # the foreground shape pipes the output and collects the unit.
+      assert "--wait" in detached
       refute "--pipe" in detached
       refute "--collect" in detached
     end

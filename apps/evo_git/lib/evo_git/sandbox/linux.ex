@@ -150,17 +150,24 @@ defmodule EvoGit.Sandbox.Linux do
   Carries the SAME sandbox fragments as `args/4` — environment (`PATH`, `HOME`,
   `TMPDIR`, git identity), nix env vars, `WorkingDirectory`, `StandardInput`,
   the `[sandbox.linux]` security properties, the resource limits, the writable
-  paths and the inaccessible paths — but shaped for a transient user unit that
-  OUTLIVES the client:
+  paths and the inaccessible paths — but shaped for a transient user unit:
 
     * `--unit=<unit_name>` fixes the unit name (ownership proof) instead of
       `inject_unit/2`'s per-call generated name;
-    * NO `--wait`, `--pipe` or `--collect` — the client returns as soon as the
-      unit STARTS, and the unit (plus its exit status) is RETAINED after it
-      exits, so `systemctl --user show <unit>` stays queryable;
+    * `--wait` (and NOT `--pipe`/`--collect`) — the `systemd-run` CLIENT stays
+      alive for exactly as long as the unit and then exits with the UNIT's own
+      exit status. That client process is the job's completion OBSERVER: the
+      caller (`EvoGit.Sandbox.Background`) keeps the client's port open and the
+      registry (`EvoGit.BackgroundJobs`) turns the port's
+      `{:exit_status, code}` message into a terminal status. A post-mortem
+      `systemctl --user show <unit>` is NOT a completion source — systemd
+      unloads a successfully-exited transient unit immediately (default
+      `CollectMode=inactive`), so only FAILED units stay queryable;
     * `StandardOutput=append:<output_path>` + `StandardError=append:<output_path>`
       instead of piping the output back to the caller (the file and its parent
-      directory are created by the caller — the job only appends).
+      directory are created by the caller — the job only appends). `--pipe` is
+      deliberately NOT used, so the job's output never travels through the
+      observer port — only `systemd-run`'s own (quiet-mode) diagnostics do.
 
   The git metadata dir is resolved from `cwd` via `Helpers.git_metadata_dir/2`
   (following linked-worktree `gitdir:` pointers) because a detached job has no
@@ -176,7 +183,12 @@ defmodule EvoGit.Sandbox.Linux do
       args,
       List.wrap(Helpers.git_metadata_dir(cwd, nil)),
       ["--unit=#{unit_name}"],
-      [],
+      # `--wait` keeps the client alive until the unit exits and makes it exit
+      # with the unit's status — the observer signal the detached registry
+      # listens on. `--pipe`/`--collect` are NOT used: the output goes to the
+      # `append:` file below, and the unit must not be GC'd into an
+      # unobservable state.
+      ["--wait"],
       [
         "-p",
         "StandardOutput=append:#{output_path}",
@@ -192,7 +204,9 @@ defmodule EvoGit.Sandbox.Linux do
   #
   #   * `extra_write_paths` — git metadata dir(s) granted read+write access;
   #   * `unit_args`         — `--unit=<name>` for detached jobs, `[]` otherwise;
-  #   * `mode_args`         — `--wait --pipe --collect` for foreground jobs;
+  #   * `mode_args`         — `--wait --pipe --collect` for foreground jobs,
+  #                           `--wait` alone for detached jobs (the client is
+  #                           the completion observer, see `detached_args/5`);
   #   * `stdio_args`        — stdout/stderr properties for detached jobs
   #                           (foreground pipes the output to the caller).
   defp build_args(cwd, executable, args, extra_write_paths, unit_args, mode_args, stdio_args) do

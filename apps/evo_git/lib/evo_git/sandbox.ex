@@ -160,7 +160,9 @@ defmodule EvoGit.Sandbox do
   ## Returns
 
     * `{:ok, handle}` — where `handle` is
-      `%{kind: :unit, unit: String.t(), backend: module()}` or
+      `%{kind: :unit, unit: String.t(), backend: module(), port: port() | nil, pending_exit_code: integer() | nil}`
+      (the `systemd-run --wait` client port is the job's exit OBSERVER — see
+      `EvoGit.Sandbox.Background`) or
       `%{kind: :port, port: port(), os_pid: integer() | nil, backend: module()}`
     * `{:error, reason}` — the detached process could not be started
   """
@@ -190,8 +192,11 @@ defmodule EvoGit.Sandbox do
   Reports whether a detached process started by `spawn_detached/1` is still alive.
 
   Returns `{:running, nil}`, `{:exited, exit_code | nil}` or `{:unknown, nil}`
-  when the backend cannot tell (the caller must treat `:unknown` as "still
-  running" rather than assuming completion).
+  when the backend cannot tell. `:unknown` must NOT be read as "still running"
+  forever: completion normally arrives as the handle's observer port
+  `{:exit_status, code}` message, and `EvoGit.BackgroundJobs` settles a job that
+  stays `:unknown` beyond a bounded grace as terminally failed instead of
+  leaving it live.
   """
   @spec detached_status(map()) ::
           {:running, nil} | {:exited, integer() | nil} | {:unknown, nil}

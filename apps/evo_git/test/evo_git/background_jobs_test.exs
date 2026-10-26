@@ -237,6 +237,113 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
+  describe "systemd unit exit observer (:unit handles)" do
+    # These tests drive the REAL registry routing: a `:unit` handle keeps the
+    # still-open `systemd-run --wait` client port, and that port's
+    # `{port, {:exit_status, code}}` message is the ONLY completion signal for a
+    # systemd job (systemd unloads a successfully-exited transient unit
+    # immediately, so a post-mortem `systemctl --user show` cannot tell). A REAL
+    # local port stands in for the client, because `EvoGit.Sandbox.Linux.enabled?/0`
+    # is hard-false in the test env (no systemd user bus).
+
+    test "a zero exit reported by the observer port completes the job", %{tmp_dir: tmp_dir} do
+      {job, port} = start_observed_unit_job!(tmp_dir)
+
+      send(registry(), {port, {:exit_status, 0}})
+
+      job = await_status!(job.id, :completed)
+      assert job.exit_code == 0
+      assert job.detail == "exit code: 0"
+      assert %DateTime{} = job.finished_at
+      assert job.handle.kind == :unit
+      assert job.handle.unit == EvoGit.Sandbox.Background.unit_name("bash-observed")
+    end
+
+    test "a non-zero exit reported by the observer port fails the job", %{tmp_dir: tmp_dir} do
+      {job, port} = start_observed_unit_job!(tmp_dir)
+
+      send(registry(), {port, {:exit_status, 3}})
+
+      job = await_status!(job.id, :failed)
+      assert job.exit_code == 3
+      assert job.detail == "exit code: 3"
+      assert %DateTime{} = job.finished_at
+    end
+
+    test "the observer port carries no job output — its :data is dropped", %{tmp_dir: tmp_dir} do
+      {job, port} = start_observed_unit_job!(tmp_dir)
+
+      # A unit writes its OWN output to the `append:` log file; anything arriving
+      # on the client port is systemd-run diagnostics and must never be appended.
+      send(registry(), {port, {:data, "systemd-run: diagnostic noise"}})
+      send(registry(), {port, {:exit_status, 0}})
+
+      job = await_status!(job.id, :completed)
+      assert File.read!(job.output_path) == ""
+    end
+
+    test "an exit observed during the spawn itself is applied immediately", %{tmp_dir: tmp_dir} do
+      # `systemd-run --wait` returns the UNIT's status, so a command that
+      # finishes inside the start grace window hands back `pending_exit_code`
+      # instead of a live observer port — the job must still be terminal at once.
+      for {code, expected} <- [{0, :completed}, {127, :failed}] do
+        handle = %{
+          kind: :unit,
+          unit: EvoGit.Sandbox.Background.unit_name("bash-immediate"),
+          backend: EvoGit.Sandbox.Linux,
+          port: nil,
+          pending_exit_code: code
+        }
+
+        assert {:ok, job} =
+                 BackgroundJobs.start_job_with_handle(
+                   %{command: "echo immediate", cwd: tmp_dir},
+                   handle
+                 )
+
+        assert job.status == expected
+        assert job.exit_code == code
+        assert %DateTime{} = job.finished_at
+
+        # And the recorded state — not just the returned record — is terminal.
+        assert {:ok, %{status: ^expected}} = BackgroundJobs.job(job.id)
+      end
+    end
+
+    test "an unreportable unit with no live observer settles as failed after the grace", %{
+      tmp_dir: tmp_dir
+    } do
+      # `{:unknown, _}` (what `systemctl --user show` answers for a unit systemd
+      # already unloaded) must NEVER mean "running forever".
+      put_unknown_grace(0)
+
+      {job, nil} = start_observed_unit_job!(tmp_dir, :closed)
+
+      job = await_status!(job.id, :failed)
+      assert job.exit_code == nil
+      assert job.detail =~ "exit status unknown"
+      assert %DateTime{} = job.finished_at
+    end
+
+    test "a live observer port outranks the floor — the job is not settled early", %{
+      tmp_dir: tmp_dir
+    } do
+      put_unknown_grace(0)
+
+      {job, port} = start_observed_unit_job!(tmp_dir)
+
+      # Several lazy reconciles — and at least one 1 s reconcile tick — happen
+      # here. The observer port can still deliver the real exit code, so the
+      # floor must yield to it.
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
+      Process.sleep(1_500)
+      assert {:ok, %{status: :running}} = BackgroundJobs.job(job.id)
+
+      send(registry(), {port, {:exit_status, 0}})
+      assert %{status: :completed} = await_status!(job.id, :completed)
+    end
+  end
+
   describe "read/2" do
     test "consumes output as a cursor", %{tmp_dir: tmp_dir} do
       job = start_job!(%{command: "echo hello", cwd: tmp_dir})
@@ -819,6 +926,51 @@ defmodule EvoGit.BackgroundJobsTest do
       {:ok, job} -> job
       {:error, message} -> flunk("start_job/1 failed: #{inspect(message)}")
     end
+  end
+
+  defp registry, do: Process.get(:evogit_background_jobs_server)
+
+  # Registers a job with the SYSTEMD backend's handle shape (`kind: :unit`, plus
+  # the still-open `systemd-run --wait` client port) through the registry's real
+  # start path (`start_job_with_handle/2` is the test seam; everything else —
+  # spec normalization, output file, owner monitor, tick arming — is production
+  # code). `:open` gives the job a live observer port, `:closed` a `port: nil`
+  # handle (an observer-less unit).
+  defp start_observed_unit_job!(tmp_dir, observer \\ :open) do
+    handle = %{
+      kind: :unit,
+      unit: EvoGit.Sandbox.Background.unit_name("bash-observed"),
+      backend: EvoGit.Sandbox.Linux,
+      port: if(observer == :open, do: open_observer_port(), else: nil)
+    }
+
+    case BackgroundJobs.start_job_with_handle(
+           %{command: "echo ignored-by-the-stand-in-handle", cwd: tmp_dir},
+           handle
+         ) do
+      {:ok, job} -> {job, handle.port}
+      {:error, message} -> flunk("start_job_with_handle/2 failed: #{inspect(message)}")
+    end
+  end
+
+  # A REAL port owned by the test process, standing in for the long-lived
+  # `systemd-run --wait` client (the test env disables the systemd backend, so no
+  # client can be spawned). Closed on exit; `close_port/1` is idempotent.
+  defp open_observer_port do
+    port =
+      Port.open(
+        {:spawn_executable, System.find_executable(EvoGit.Platform.shell())},
+        [:binary, :exit_status, :hide, {:args, EvoGit.Platform.shell_args("sleep 30")}]
+      )
+
+    on_exit(fn -> EvoGit.Sandbox.Helpers.close_port(port) end)
+    port
+  end
+
+  # Shortens the registry's defensive `{:unknown, _}` floor for one test.
+  defp put_unknown_grace(ms) do
+    Application.put_env(:evo_git, :background_unknown_grace_ms, ms)
+    on_exit(fn -> Application.delete_env(:evo_git, :background_unknown_grace_ms) end)
   end
 
   # Polls `job/2` until the job's status is `expected`, then returns the returned

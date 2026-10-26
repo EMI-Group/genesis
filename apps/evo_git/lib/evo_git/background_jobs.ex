@@ -4,7 +4,7 @@ defmodule EvoGit.BackgroundJobs do
 
   `start_job/1` starts a command through `EvoGit.Sandbox.spawn_detached/1` (the ONE detached entry point, answered by every sandbox backend) and records it; the command's stdout/stderr accumulate in a per-job log file under the sandbox scratch directory, so callers poll `job/2` for status and drain the log with `read/2`, which returns only the bytes produced since the previous read.
   Job lifetime — every job is bound to its OWNING AGENT process (`:owner_pid`); `start_job/1` installs ONE `Process.monitor/1` per owner, and when that process dies EVERY job it started is killed and the monitor bookkeeping is dropped. Because agent processes are unlinked `Task.Supervisor.async_nolink` children killed by `Lifecycle.cancel_agent/2`, this single monitor covers every way an agent can end — normal completion, crash, graceful cancel AND force kill — so no hooks are needed at `EvoGit.TaskRegistry`'s terminal-write sites. The monitor is deliberately installed on the AGENT pid, never on the short-lived tool task that calls this module.
-  Completion detection — two mechanisms, both cheap and idempotent: **lazy** (every `read/2` / `list/1` reconciles a live job against the backend via `EvoGit.Sandbox.detached_status/1` before answering, so a job that ended reports as finished with no notification) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains, and `:port` handles need no tick because their exit arrives as a port message).
+  Completion detection — ONE primary mechanism plus two cheap, idempotent fallbacks: the **observer port** (every backend keeps a port on the handle that reports the job's exit — a `:port` job's own child, and a `:unit` job's `systemd-run --wait` client, which exits with the UNIT's status), the **lazy reconcile** (every `read/2` / `list/1` / `job/2` re-checks a live job against the backend via `EvoGit.Sandbox.detached_status/1`) and the **periodic tick** (while at least one live job uses a `:unit` handle, ONE `@tick_interval_ms` timer re-reconciles them so `finished_at` / `exit_code` land promptly even if nobody reads; it is disarmed as soon as no such job remains). `{:unknown, nil}` from the backend is never treated as "running forever": a job that stays unreportable with no live observer port is settled terminally as `:failed` after a bounded `@unknown_grace_ms` grace.
   Error vocabulary — failures a caller must act on are returned as ONE actionable prose sentence, never a bare atom: `start_job/1` and `read/2` answer `{:error, message}` for EVERY failure INCLUDING an unreachable registry (the dead-registry fallback is wrapped in that tuple at both call sites, since their callers pattern-match it exactly); the ownership/finished probes in `job/2` and `kill/3` keep the small semantic tuples documented on those functions so a caller can branch on them before formatting prose. No input is ever converted with `String.to_atom/1`.
   """
 
@@ -24,6 +24,13 @@ defmodule EvoGit.BackgroundJobs do
   @max_jobs_per_owner 10
   # Periodic reconcile interval for live `:unit`-handled jobs.
   @tick_interval_ms 1_000
+  # Defensive floor: how long a live job may stay UNREPORTABLE (the backend says
+  # `{:unknown, nil}` and no observer port is open) before it is settled
+  # terminally as `:failed` instead of pretending to run forever. A transient
+  # systemctl failure is tolerated inside this window; the observer port always
+  # wins (see `settle_unknown/2`). Overridable for tests via the app env
+  # `:background_unknown_grace_ms`.
+  @unknown_grace_ms 15_000
   # Suggested polling defaults for callers implementing a `wait: true` loop (this module does NOT block — see `wait_default_ms/0`).
   @wait_default_ms 8_000
   @wait_max_ms 60_000
@@ -112,6 +119,21 @@ defmodule EvoGit.BackgroundJobs do
   def start_job(spec) do
     with {:ok, normalized} <- normalize_start_spec(spec) do
       call_registry({:start_job, normalized}, {:error, registry_down_error()})
+    end
+  end
+
+  @doc false
+  # TEST SEAM — never called by production code. Starts a job whose backend
+  # `handle` is supplied by the caller instead of being spawned, so a suite can
+  # drive the exit-OBSERVER routing (a `:unit` handle carrying the
+  # `systemd-run --wait` client port) without a systemd user bus. Every
+  # remaining step — spec normalization, output file, owner monitor, job record,
+  # tick arming, status transitions — is the production start path.
+  @spec start_job_with_handle(map() | keyword(), map()) ::
+          {:ok, job()} | {:error, String.t()}
+  def start_job_with_handle(spec, handle) when is_map(handle) do
+    with {:ok, normalized} <- normalize_start_spec(spec) do
+      call_registry({:start_job, normalized, handle}, {:error, registry_down_error()})
     end
   end
 
@@ -397,19 +419,18 @@ defmodule EvoGit.BackgroundJobs do
       end)
     end
 
-    {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil}}
+    {:ok, %{jobs: %{}, owners: %{}, tick_timer: nil, unknown_since: %{}}}
   end
 
   @impl true
-  def handle_call({:start_job, spec}, _from, state) do
-    if live_jobs_for_owner(state.jobs, spec.owner_pid) >= @max_jobs_per_owner do
-      {:reply, {:error, limit_error()}, state}
-    else
-      case do_start_job(spec, state) do
-        {:ok, job, state} -> {:reply, {:ok, job}, arm_tick(prune_finished(state))}
-        {:error, message} -> {:reply, {:error, message}, state}
-      end
-    end
+  def handle_call({:start_job, spec}, _from, state), do: handle_start(spec, nil, state)
+
+  def handle_call({:start_job, spec, handle}, _from, state) do
+    # Test seam only (see `start_job_with_handle/2`): the backend handle is
+    # supplied by the caller instead of being spawned, so the exit-OBSERVER
+    # routing can be exercised without a systemd user bus. Everything else is
+    # the production start path.
+    handle_start(spec, handle, state)
   end
 
   def handle_call({:job, id, owner_pid}, _from, state) do
@@ -536,6 +557,11 @@ defmodule EvoGit.BackgroundJobs do
 
   @impl true
   def handle_info({port, {:data, chunk}}, state) when is_port(port) do
+    # OUTPUT only comes from `:port` handles. A `:unit` handle's port is the
+    # `systemd-run --wait` client (the exit observer): the unit writes its own
+    # output to the log file via `-p StandardOutput=append:…`, so anything
+    # arriving on that port is systemd-run's own (quiet-mode) diagnostics and is
+    # deliberately dropped.
     case find_live_job_by_port(state.jobs, port) do
       {:ok, job} -> append_output(job, chunk)
       :error -> :ok
@@ -545,9 +571,16 @@ defmodule EvoGit.BackgroundJobs do
   end
 
   def handle_info({port, {:exit_status, code}}, state) when is_port(port) do
-    case find_live_job_by_port(state.jobs, port) do
-      {:ok, job} -> {:noreply, put_job(state, mark_finished(job, code))}
-      :error -> {:noreply, state}
+    # The ONE completion signal for BOTH handle shapes: a `:port` job's own
+    # child, and a `:unit` job's `systemd-run --wait` observer (which exits with
+    # the UNIT's status). `mark_finished/2` maps it (and a kill request already
+    # in flight → `:killed`).
+    case find_live_job_by_observer_port(state.jobs, port) do
+      {:ok, job} ->
+        {:noreply, put_job(state, mark_finished(job, code)) |> forget_unknown(job.id)}
+
+      :error ->
+        {:noreply, state}
     end
   end
 
@@ -557,7 +590,8 @@ defmodule EvoGit.BackgroundJobs do
     state =
       Enum.reduce(state.jobs, state, fn {_id, job}, acc ->
         if live?(job) and unit_handle?(job.handle) do
-          put_job(acc, reconcile_job(job))
+          {job, acc} = reconcile_job(job, acc)
+          put_job(acc, job)
         else
           acc
         end
@@ -627,13 +661,26 @@ defmodule EvoGit.BackgroundJobs do
 
   ## Start path
 
-  defp do_start_job(spec, state) do
+  # Shared by the public `:start_job` call and the `start_job_with_handle/2`
+  # test seam, so both go through the SAME cap check, start path and tick arming.
+  defp handle_start(spec, handle_override, state) do
+    if live_jobs_for_owner(state.jobs, spec.owner_pid) >= @max_jobs_per_owner do
+      {:reply, {:error, limit_error()}, state}
+    else
+      case do_start_job(spec, handle_override, state) do
+        {:ok, job, state} -> {:reply, {:ok, job}, arm_tick(prune_finished(state))}
+        {:error, message} -> {:reply, {:error, message}, state}
+      end
+    end
+  end
+
+  defp do_start_job(spec, handle_override, state) do
     id = generate_id(state.jobs)
     output_path = Path.join(scratch_dir(), "genesis_job_#{id}.log")
 
     with :ok <- prepare_output_file(output_path),
          {:ok, handle} <-
-           spawn_detached(%{
+           resolve_handle(handle_override, %{
              command: spec.command,
              cwd: spec.cwd,
              output_path: output_path,
@@ -642,30 +689,46 @@ defmodule EvoGit.BackgroundJobs do
       {ref, state} = ensure_owner_monitor(state, spec.owner_pid)
 
       # `spec.repo_root` is accepted for caller context only — the job record has no slot for it (its `cwd` is what `reap_under/1` matches on).
-      job = %{
-        id: id,
-        kind: "bash",
-        label: spec.label,
-        owner_pid: spec.owner_pid,
-        owner_ref: ref,
-        agent_id: spec.agent_id,
-        task_id: spec.task_id,
-        cwd: spec.cwd,
-        output_path: output_path,
-        handle: handle,
-        status: :running,
-        exit_code: nil,
-        detail: nil,
-        started_at: DateTime.utc_now(),
-        finished_at: nil,
-        cursor: 0,
-        lines_read: 0,
-        announced: false
-      }
+      job =
+        %{
+          id: id,
+          kind: "bash",
+          label: spec.label,
+          owner_pid: spec.owner_pid,
+          owner_ref: ref,
+          agent_id: spec.agent_id,
+          task_id: spec.task_id,
+          cwd: spec.cwd,
+          output_path: output_path,
+          handle: handle,
+          status: :running,
+          exit_code: nil,
+          detail: nil,
+          started_at: DateTime.utc_now(),
+          finished_at: nil,
+          cursor: 0,
+          lines_read: 0,
+          announced: false
+        }
+        |> settle_start_exit()
 
       {:ok, job, put_job(add_owner_job(state, spec.owner_pid, id), job)}
     end
   end
+
+  defp resolve_handle(nil, payload), do: spawn_detached(payload)
+  defp resolve_handle(handle, _payload), do: {:ok, handle}
+
+  # A systemd backend may observe the job's exit ALREADY inside the spawn call —
+  # `systemd-run --wait` returns the unit's own status, so a command that
+  # finishes (or fails to start) within the start grace window hands back
+  # `pending_exit_code` instead of a live observer port. Apply it through the
+  # ONE exit mapping so such a job is terminal (and noticeable) immediately
+  # rather than waiting forever for a port message that can never arrive.
+  defp settle_start_exit(%{handle: %{pending_exit_code: code}} = job),
+    do: mark_finished(job, code)
+
+  defp settle_start_exit(job), do: job
 
   # Output destination is decided ONCE, at spawn time, and stored on the job: a detached process has no process dictionary to re-derive it from later.
   defp scratch_dir do
@@ -769,22 +832,84 @@ defmodule EvoGit.BackgroundJobs do
 
   # Reconciles a LIVE job against the backend so a finished job reports finished with no notification. Terminal jobs are returned untouched.
   defp reconcile(job, state) do
-    job = reconcile_job(job)
+    {job, state} = reconcile_job(job, state)
     {job, put_job(state, job)}
   end
 
-  defp reconcile_job(job) do
+  defp reconcile_job(job, state) do
     if live?(job) do
       case detached_status(job.handle) do
-        {:running, _} -> job
-        {:exited, code} -> mark_finished(job, code)
-        {:unknown, _} -> job
-        _other -> job
+        {:running, _} -> {job, forget_unknown(state, job.id)}
+        {:exited, code} -> {mark_finished(job, code), forget_unknown(state, job.id)}
+        {:unknown, _} -> settle_unknown(job, state)
+        _other -> {job, state}
       end
     else
-      job
+      {job, forget_unknown(state, job.id)}
     end
   end
+
+  # `{:unknown, _}` from the backend must NEVER mean "running forever" — that is
+  # exactly the bug that left every systemd job stuck at `:running` (systemd
+  # unloads a successfully-exited transient unit immediately, so the post-mortem
+  # `systemctl show` fails). Completion is normally delivered by the job's
+  # observer port (`handle_info/2` above), so this is a DEFENSIVE FLOOR with a
+  # bounded grace, and it yields to the observer: a handle whose observer port is
+  # still open is left alone (the port message will settle it with the real exit
+  # code), and only a handle with no live observer is settled terminally.
+  defp settle_unknown(job, state) do
+    if observer_alive?(job.handle) do
+      {job, forget_unknown(state, job.id)}
+    else
+      now = System.monotonic_time(:millisecond)
+
+      case Map.fetch(state.unknown_since, job.id) do
+        :error ->
+          # `{:unknown, _}` only means "the backend cannot tell" until the grace
+          # has elapsed (a transient busy/torn-down unit is tolerated).
+          {job, %{state | unknown_since: Map.put(state.unknown_since, job.id, now)}}
+
+        {:ok, since} ->
+          if now - since >= unknown_grace_ms() do
+            Logger.warning(
+              "BackgroundJobs: job #{job.id} has been unreportable for #{now - since}ms; settling it as failed (exit status unknown)"
+            )
+
+            {mark_finished(job, nil), forget_unknown(state, job.id)}
+          else
+            {job, state}
+          end
+      end
+    end
+  end
+
+  defp unknown_grace_ms do
+    case Application.get_env(:evo_git, :background_unknown_grace_ms, @unknown_grace_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _other -> @unknown_grace_ms
+    end
+  end
+
+  # Only a `:unit` handle with an OPEN observer port (or a `:port` handle whose
+  # child still lives) can still deliver a real exit status — everything else is
+  # unreportable and eligible for the floor.
+  defp observer_alive?(%{kind: :port, port: port}), do: port_open?(port)
+  defp observer_alive?(%{kind: :unit, port: port}), do: port_open?(port)
+  defp observer_alive?(_handle), do: false
+
+  defp port_open?(port) when is_port(port) do
+    is_list(Port.info(port))
+  rescue
+    _ -> false
+  end
+
+  defp port_open?(_port), do: false
+
+  defp forget_unknown(%{unknown_since: %{} = unknown_since} = state, id) do
+    %{state | unknown_since: Map.delete(unknown_since, id)}
+  end
+
+  defp forget_unknown(state, _id), do: state
 
   defp detached_status(handle) do
     EvoGit.Sandbox.detached_status(handle)
@@ -1018,9 +1143,21 @@ defmodule EvoGit.BackgroundJobs do
   defp unit_handle?(%{kind: :unit}), do: true
   defp unit_handle?(_handle), do: false
 
+  # OUTPUT routing: only a `:port` handle's chunks are the job's own output.
   defp find_live_job_by_port(jobs, port) do
     Enum.find_value(jobs, :error, fn {_id, job} ->
       if live?(job) and match?(%{kind: :port, port: ^port}, job.handle) do
+        {:ok, job}
+      end
+    end)
+  end
+
+  # EXIT routing: BOTH handle shapes carry a port that reports the job's exit —
+  # a `:port` handle's own child and a `:unit` handle's `systemd-run --wait`
+  # observer client.
+  defp find_live_job_by_observer_port(jobs, port) do
+    Enum.find_value(jobs, :error, fn {_id, job} ->
+      if live?(job) and match?(%{port: ^port}, job.handle) do
         {:ok, job}
       end
     end)
@@ -1041,6 +1178,7 @@ defmodule EvoGit.BackgroundJobs do
 
   # Finished records are retained so a caller can still read the tail after the process exits; the oldest are dropped past the retention cap. Live jobs are never pruned.
   defp prune_finished(state) do
+    state = %{state | unknown_since: prune_unknown_since(state)}
     finished = state.jobs |> Map.values() |> Enum.reject(&live?/1)
     excess = length(finished) - @max_finished_retained
 
@@ -1052,6 +1190,17 @@ defmodule EvoGit.BackgroundJobs do
     else
       state
     end
+  end
+
+  # The floor only ever tracks LIVE jobs: a job that reached a terminal status by
+  # another route (a kill, or its observer port's exit message) drops its marker
+  # here, so the bookkeeping cannot grow without bound.
+  defp prune_unknown_since(state) do
+    state.unknown_since
+    |> Enum.filter(fn {id, _since} ->
+      match?(%{status: status} when status in [:running, :stopping], Map.get(state.jobs, id))
+    end)
+    |> Map.new()
   end
 
   defp finished_key(job) do
