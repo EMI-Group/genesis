@@ -41,6 +41,30 @@ defmodule EvoGit.Store.MaintenanceTest do
   # `schema_migrations` holds 6 rows.
   @migration_count 6
 
+  # One schema-complete, CHECKPOINTED database built per module: a brand-new
+  # file plus the six migrations costs ~12 ms per boot, a byte copy of this
+  # template ~0.1 ms. Every test still gets its own isolated file with the
+  # identical schema, so the isolation semantics are unchanged (same idiom as
+  # `test/evo_git/store_test.exs`).
+  setup_all do
+    stamp =
+      "#{System.unique_integer([:positive])}_#{:os.getpid()}_#{System.system_time(:millisecond)}"
+
+    template = Path.join(System.tmp_dir!(), "evogit_maint_template_#{stamp}.sqlite")
+    {:ok, pid} = Boot.start_dynamic(template)
+    :ok = Boot.stop(pid)
+    checkpoint_and_strip_wal!(template)
+
+    # The copy is only worth anything if the MAIN file is the migrated
+    # database: prove the schema sits in it (and not in a `-wal` sidecar that a
+    # plain `File.cp!/2` would miss).
+    assert [[1]] = raw_query(template, "SELECT count(*) FROM sqlite_master WHERE name = 'tasks'")
+
+    on_exit(fn -> remove_db(template) end)
+
+    {:ok, %{template: template}}
+  end
+
   # ── Fake store (the maintenance GenServer's `__repo_pid__` peer) ──────────
   #
   # Answers the ONE call `EvoGit.Store.Maintenance` makes, and reports it to the
@@ -84,8 +108,11 @@ defmodule EvoGit.Store.MaintenanceTest do
       assert Boot.default_pool_size() == 6
     end
 
-    test "a booted store's real connections run with the tuned budget", %{tmp_dir: dir} do
-      pid = start_repo!(dir, "conn_opts")
+    test "a booted store's real connections run with the tuned budget", %{
+      tmp_dir: dir,
+      template: template
+    } do
+      pid = start_repo!(template, dir, "conn_opts")
       opts = connection_opts!(pid)
 
       # The 15 s Ecto default / 30 s dead default must NOT win any more.
@@ -108,8 +135,11 @@ defmodule EvoGit.Store.MaintenanceTest do
       assert interval == 5_000
     end
 
-    test "the page cache and temp store pragmas are applied per connection", %{tmp_dir: dir} do
-      pid = start_repo!(dir, "conn_pragmas")
+    test "the page cache and temp store pragmas are applied per connection", %{
+      tmp_dir: dir,
+      template: template
+    } do
+      pid = start_repo!(template, dir, "conn_pragmas")
 
       # `-8_000` KiB = 8 MiB per connection (6 × 8 MiB ≈ 47 MiB per store),
       # down from the adapter default `-64_000` (64 MiB per connection).
@@ -121,8 +151,8 @@ defmodule EvoGit.Store.MaintenanceTest do
       assert RepoScope.with_repo(pid, fn -> Repo.query!("PRAGMA temp_store").rows end) == [[2]]
     end
 
-    test "a per-store :pool_size still overrides the default", %{tmp_dir: dir} do
-      pid = start_repo!(dir, "conn_opts_one", pool_size: 1)
+    test "a per-store :pool_size still overrides the default", %{tmp_dir: dir, template: template} do
+      pid = start_repo!(template, dir, "conn_opts_one", pool_size: 1)
       opts = connection_opts!(pid)
 
       assert opts[:pool_size] == 1
@@ -139,7 +169,10 @@ defmodule EvoGit.Store.MaintenanceTest do
   # ── Boot-time PRAGMA optimize ────────────────────────────────────────────
 
   describe "boot-time PRAGMA optimize" do
-    test "runs exactly once, after the migrations, on the boot connection", %{tmp_dir: dir} do
+    test "runs exactly once, after the migrations, on the boot connection", %{
+      tmp_dir: dir,
+      template: template
+    } do
       parent = self()
 
       Application.put_env(:evo_git, :store_boot_optimize_fun, fn pid ->
@@ -149,24 +182,30 @@ defmodule EvoGit.Store.MaintenanceTest do
 
       on_exit(fn -> Application.delete_env(:evo_git, :store_boot_optimize_fun) end)
 
-      pid = start_repo!(dir, "boot_optimize")
+      pid = start_repo!(template, dir, "boot_optimize")
 
       assert_receive {:boot_optimize, boot_pid}, 2_000
       assert is_pid(boot_pid)
-      # Exactly ONCE per boot (the reopened pool must not re-run it).
-      refute_receive {:boot_optimize, _other}, 200
+
+      # Exactly ONCE per boot: the reopened pool must not re-run it. Every
+      # pooled connection reporting READY is the event that proves all of them
+      # have finished connecting (a connect-time optimize would already have
+      # been sent by then) — so the negative check needs no wall-clock window.
+      size = Boot.default_pool_size()
+      assert await_ready_connections(pid, size) == size
+      refute_receive {:boot_optimize, _other}, 0
 
       # The returned instance is usable and migrated.
       assert migration_count(pid) == @migration_count
     end
 
-    test "a raising optimize seam cannot fail boot", %{tmp_dir: dir} do
+    test "a raising optimize seam cannot fail boot", %{tmp_dir: dir, template: template} do
       Application.put_env(:evo_git, :store_boot_optimize_fun, fn _pid -> raise "boom" end)
       on_exit(fn -> Application.delete_env(:evo_git, :store_boot_optimize_fun) end)
 
       log =
         capture_log(fn ->
-          pid = start_repo!(dir, "boot_optimize_raise")
+          pid = start_repo!(template, dir, "boot_optimize_raise")
           assert Process.alive?(pid)
           assert RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1").rows end) == [[1]]
         end)
@@ -175,12 +214,12 @@ defmodule EvoGit.Store.MaintenanceTest do
     end
 
     test "the default seam really runs PRAGMA optimize against the migrated schema",
-         %{tmp_dir: dir} do
+         %{tmp_dir: dir, template: template} do
       # No seam override here: Boot calls `EvoGit.Store.Maintenance.optimize/1`.
       # `PRAGMA optimize` is idempotent and schema-aware — assert the booted
       # database accepts it and keeps working, then that a second explicit call
       # is a no-op rather than an error.
-      pid = start_repo!(dir, "boot_optimize_default")
+      pid = start_repo!(template, dir, "boot_optimize_default")
 
       assert Maintenance.optimize(pid) == :ok
       assert migration_count(pid) == @migration_count
@@ -190,8 +229,11 @@ defmodule EvoGit.Store.MaintenanceTest do
   # ── EvoGit.Store.Maintenance ─────────────────────────────────────────────
 
   describe "EvoGit.Store.Maintenance.optimize/1" do
-    test "returns :ok on a live repo and the database stays readable", %{tmp_dir: dir} do
-      pid = start_repo!(dir, "optimize_live")
+    test "returns :ok on a live repo and the database stays readable", %{
+      tmp_dir: dir,
+      template: template
+    } do
+      pid = start_repo!(template, dir, "optimize_live")
 
       assert Maintenance.optimize(pid) == :ok
 
@@ -221,8 +263,9 @@ defmodule EvoGit.Store.MaintenanceTest do
   end
 
   describe "EvoGit.Store.Maintenance.run/1" do
-    test "optimizes an isolated store's own repo", %{tmp_dir: dir} do
+    test "optimizes an isolated store's own repo", %{tmp_dir: dir, template: template} do
       path = db_path(dir, "run_isolated")
+      File.cp!(template, path)
       store = unique_name(:evogit_maint_store)
 
       {:ok, store_pid} = Store.start_link(data_dir: path, name: store)
@@ -246,8 +289,8 @@ defmodule EvoGit.Store.MaintenanceTest do
   end
 
   describe "EvoGit.Store.Maintenance GenServer" do
-    test "no tick at boot; an explicit tick runs one pass", %{tmp_dir: dir} do
-      repo = start_repo!(dir, "maint_server")
+    test "no tick at boot; an explicit tick runs one pass", %{tmp_dir: dir, template: template} do
+      repo = start_repo!(template, dir, "maint_server")
       parent = self()
 
       fake_store = start_supervised!({FakeStore, {parent, repo}})
@@ -255,11 +298,14 @@ defmodule EvoGit.Store.MaintenanceTest do
       server =
         start_supervised!({Maintenance, name: unique_name(:evogit_maint), store: fake_store})
 
-      # Nothing at boot — the boot path already optimized.
-      refute_receive {:repo_pid_called, _repo}, 200
-
+      # Nothing at boot — the boot path already optimized. `FakeStore` reports
+      # every call it receives to THIS process, and a single sender's messages
+      # arrive in order, so a boot tick's report would sit AHEAD of the one the
+      # explicit tick provokes: receiving exactly one therefore proves there
+      # was no boot tick, with no wall-clock window.
       assert Maintenance.tick(server) == :ok
       assert_receive {:repo_pid_called, ^repo}, 2_000
+      refute_receive {:repo_pid_called, _repo}, 0
       assert Process.alive?(server)
     end
 
@@ -291,9 +337,9 @@ defmodule EvoGit.Store.MaintenanceTest do
 
   describe "mix store.maintenance" do
     test "reports the file size before/after and leaves the database readable",
-         %{tmp_dir: dir} do
+         %{tmp_dir: dir, template: template} do
       path = Path.join(dir, @db_filename)
-      seed_db!(path, 3)
+      seed_db!(template, path, 3)
 
       output =
         capture_io(fn ->
@@ -315,9 +361,10 @@ defmodule EvoGit.Store.MaintenanceTest do
       assert migration_count_on_file(path) == @migration_count
     end
 
-    test "--no-optimize skips the optimizer and still reports", %{tmp_dir: dir} do
+    test "--no-optimize skips the optimizer and still reports",
+         %{tmp_dir: dir, template: template} do
       path = Path.join(dir, @db_filename)
-      seed_db!(path, 1)
+      seed_db!(template, path, 1)
 
       output =
         capture_io(fn ->
@@ -332,9 +379,9 @@ defmodule EvoGit.Store.MaintenanceTest do
     end
 
     test "--vacuum switches auto_vacuum to incremental and keeps the DB readable",
-         %{tmp_dir: dir} do
+         %{tmp_dir: dir, template: template} do
       path = Path.join(dir, @db_filename)
-      seed_db!(path, 2)
+      seed_db!(template, path, 2)
 
       assert auto_vacuum(path) == 0
 
@@ -379,8 +426,12 @@ defmodule EvoGit.Store.MaintenanceTest do
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
-  defp start_repo!(dir, tag, opts \\ []) do
+  # Starts an unnamed dynamic repo on a per-test database file seeded by COPYING
+  # the module's migrated template (only the no-op migration run and the pool
+  # start remain), and stops it on test exit.
+  defp start_repo!(template, dir, tag, opts \\ []) do
     path = db_path(dir, tag)
+    File.cp!(template, path)
     {:ok, pid} = Boot.start_dynamic(path, opts)
     Process.unlink(pid)
 
@@ -403,6 +454,19 @@ defmodule EvoGit.Store.MaintenanceTest do
     File.rm(path <> "-shm")
   end
 
+  # Folds the WAL back into the main file: `Boot.stop/1` checkpoints it as the
+  # last connection closes, but that is asynchronous with respect to the stop
+  # returning, and a `File.cp!/2` of the main file alone would otherwise miss
+  # the schema. `TRUNCATE` leaves the WAL empty, so the sidecars can go.
+  defp checkpoint_and_strip_wal!(path) do
+    {:ok, conn} = Xqlite.open(path)
+    {:ok, _} = Xqlite.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
+    XqliteNIF.close(conn)
+    File.rm(path <> "-wal")
+    File.rm(path <> "-shm")
+    :ok
+  end
+
   defp unique_name(prefix) do
     :"#{prefix}_#{System.unique_integer([:positive, :monotonic])}"
   end
@@ -418,9 +482,10 @@ defmodule EvoGit.Store.MaintenanceTest do
     opts
   end
 
-  # The pool's idle-connection count, polled because connections connect
-  # asynchronously (same seam as `pool_size_test.exs`).
-  defp await_ready_connections(repo_pid, expected, attempts \\ 200) do
+  # The pool's idle-connection count, polled (1 ms — connections connect
+  # asynchronously, so the pool reports each one only once it has connected AND
+  # checked in; same seam as `pool_size_test.exs`).
+  defp await_ready_connections(repo_pid, expected, attempts \\ 2_000) do
     %{pid: pool} = Ecto.Adapter.lookup_meta(repo_pid)
     [%{ready_conn_count: ready} | _] = DBConnection.get_connection_metrics(pool)
 
@@ -429,7 +494,7 @@ defmodule EvoGit.Store.MaintenanceTest do
         ready
 
       attempts > 1 ->
-        Process.sleep(10)
+        Process.sleep(1)
         await_ready_connections(repo_pid, expected, attempts - 1)
 
       true ->
@@ -443,9 +508,11 @@ defmodule EvoGit.Store.MaintenanceTest do
     end)
   end
 
-  # Inserts `count` project rows through the migrated repo, then closes it — a
-  # small, realistic database for the mix task.
-  defp seed_db!(path, count) do
+  # Seeds `count` project rows into a per-test database built from the module's
+  # migrated template, then closes it — a small, realistic database for the mix
+  # task.
+  defp seed_db!(template, path, count) do
+    File.cp!(template, path)
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
 

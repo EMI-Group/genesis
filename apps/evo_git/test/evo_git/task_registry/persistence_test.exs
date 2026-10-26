@@ -1515,14 +1515,21 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       assert_receive {:task_updated, ^task_id, :cancelling, _}, 1_000
 
       # Exactly one broadcast (the :cancelling one) may be emitted FOR THIS TASK.
-      # A single shared 200ms quiet window covers both message shapes so the check
-      # costs one window instead of two — flunking on the FIRST unexpected
-      # message. Broadcasts about OTHER task ids are ignored: the "tasks" topic
-      # is process-global, so another registry instance's traffic must not fail
-      # this test (the assertion is pinned to this task's id either way).
-      deadline = System.monotonic_time(:millisecond) + 200
+      # ZERO-WAIT, on ordering rather than a quiet window: `cancel_task/1` is a
+      # synchronous `GenServer.call` and the handler emits EVERY broadcast it
+      # makes INLINE before replying (the :cancelling transition comes from the
+      # `handle_update_status/6` call at task_registry.ex, the pending-arm
+      # :cancelled one from the branch itself, and the agent notification from
+      # `AgentScheduler.begin_graceful_cancel/1` — all inside the same handler).
+      # Broadcasts are registry → test and the reply is registry → test too, so
+      # signal order guarantees anything the handler broadcast is ALREADY in
+      # this mailbox once the call returns; a `0`-timeout refute is therefore
+      # complete evidence that no second broadcast was emitted, at no wall-clock
+      # cost. Both shapes are pinned to this task's id, so another registry
+      # instance's traffic on the process-global "tasks" topic is ignored.
+      refute_receive {:task_updated, ^task_id, _, _}, 0
+      refute_receive {:task_deleted, ^task_id, _}, 0
 
-      assert_no_extra_task_broadcast(task_id, deadline)
       fetched = TaskRegistry.get_task(task_id)
       assert fetched.status == :cancelling
     end
@@ -1958,39 +1965,6 @@ defmodule EvoGit.TaskRegistry.PersistenceTest do
       _msg -> drain_tasks_mailbox()
     after
       0 -> :ok
-    end
-  end
-
-  # Asserts that no FURTHER `"tasks"`-topic broadcast is emitted for `task_id`
-  # within a bounded quiet window ending at `deadline` (monotonic ms),
-  # flunking on the FIRST unexpected message. Broadcasts about OTHER task ids
-  # come from other registry instances sharing the process-global `"tasks"`
-  # topic and are ignored; a message that is not a `"tasks"` broadcast is
-  # likewise ignored (it belongs to another test's traffic).
-  defp assert_no_extra_task_broadcast(task_id, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining > 0 do
-      receive do
-        {:task_updated, ^task_id, _, _} = m ->
-          flunk("unexpected extra task_updated broadcast: #{inspect(m)}")
-
-        {:task_deleted, ^task_id, _} = m ->
-          flunk("unexpected task_deleted broadcast: #{inspect(m)}")
-
-        {:task_updated, _, _, _} ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-
-        {:task_deleted, _, _} ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-
-        _other ->
-          assert_no_extra_task_broadcast(task_id, deadline)
-      after
-        remaining -> :ok
-      end
-    else
-      :ok
     end
   end
 

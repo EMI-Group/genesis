@@ -473,12 +473,14 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       put_agent_state(1, @default_model)
       before = System.monotonic_time(:millisecond)
 
+      # A 20ms SUPPLIED duration keeps the wait short; the assertions below are
+      # unchanged in shape (the stored deadline must be the supplied value).
       assert {:reply, :ok, new_state, []} =
-               Slots.handle_report_llm_error(1, :rate_limit, 300, base_state([]))
+               Slots.handle_report_llm_error(1, :rate_limit, 20, base_state([]))
 
-      # The stored deadline reflects the SUPPLIED 300ms, not the 60s default.
+      # The stored deadline reflects the SUPPLIED duration, not the 60s default.
       delta = State.backoff_for(new_state, @default_model) - before
-      assert delta >= 300
+      assert delta >= 20
       assert delta < 1_500
 
       # The wakeup timer is due at supplied + epsilon (the sweep epsilon is
@@ -509,11 +511,10 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       from = {self(), ref}
       put_agent_state(2, @default_model)
 
-      # A backoff that is still in the future when the sweep runs (250ms of
-      # headroom) → the queued waiter stays parked and the sweep must schedule
-      # ANOTHER pass (due at ~260ms — the 250ms headroom plus the 10ms sweep
-      # epsilon overridden in `setup_all`).
-      until = System.monotonic_time(:millisecond) + 250
+      # A backoff still in the future when the sweep runs → the waiter stays
+      # parked and the sweep schedules ANOTHER pass at headroom + the 10ms
+      # epsilon (read synchronously, microseconds after this line).
+      until = System.monotonic_time(:millisecond) + 100
 
       state =
         base_state(
@@ -552,8 +553,9 @@ defmodule EvoGit.AgentScheduler.SlotsTest do
       assert State.backoff_for(new_state, @default_model) == nil
       assert :queue.is_empty(State.waiting_for(new_state, @default_model))
 
-      # No future backoff remains → nothing to reschedule.
-      refute_receive :retry_llm_waiting, 200
+      # No future backoff remains → nothing to reschedule. A wrongly-armed
+      # sweep would land 10ms out (the epsilon seam), so 100ms is a 10x margin.
+      refute_receive :retry_llm_waiting, 100
     end
 
     test "a purge still unblocks a waiter parked behind a multi-hour backoff" do

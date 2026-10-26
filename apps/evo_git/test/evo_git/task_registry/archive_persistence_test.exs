@@ -226,16 +226,16 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
       store_name = :"archive_slow_store_#{unique}"
       registry_name = :"archive_slow_registry_#{unique}"
       parent = self()
+      store_mod = EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore
 
       start_supervised!(
         Supervisor.child_spec(
-          {EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore,
-           name: store_name, delay_ms: 2_000, notify: parent},
+          {store_mod, name: store_name, notify: parent},
           id: store_name
         )
       )
 
-      # A registry pointed at the SLOW store: only `put_task_archive` is slow,
+      # A registry pointed at the GATED store: only `put_task_archive` is held,
       # every other call answers the empty projection.
       start_supervised!(
         Supervisor.child_spec(
@@ -250,20 +250,31 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
           TaskRegistry.put_task_archive(%{task_id: "slow", agent_id: 1})
         end)
 
+      # EVENT-DRIVEN, no wall-clock window: the stand-in HOLDS the archive reply
+      # open until released below, so "the write is still in flight" is a state
+      # this test controls rather than a race against a sleep.
       assert_receive {:archive_write_started, ^store_name}, 1_000
 
-      # The registry answers WHILE the multi-second insert is still in flight:
-      # the write runs in the completing agent's process (here `writer`), so
-      # nothing queues behind it in the registry mailbox.
+      # The registry answers WHILE the archive write is held open: the write
+      # runs in the completing agent's process (here `writer`), so nothing
+      # queues behind it in the registry mailbox.
       probe =
         Task.async(fn ->
           Process.put(:evogit_task_registry_server, registry_name)
           TaskRegistry.list_task_ids([])
         end)
 
-      assert {:ok, []} = Task.yield(probe, 500)
+      # A liveness bound, not a latency assertion: the reply is held forever, so
+      # a registry blocked by the in-flight write could never answer at all.
+      assert {:ok, []} = Task.yield(probe, 5_000),
+             "the registry did not answer a read while an archive write was in flight"
+
+      # Still held: the WRITER has not observed its :ok yet.
       assert Task.yield(writer, 0) == nil
-      assert Task.await(writer, 5_000) == :ok
+
+      # Release the held write; its own caller now sees the committed reply.
+      assert :ok = store_mod.release_archive_write(store_name)
+      assert :ok = Task.await(writer, 5_000)
     end
   end
 
@@ -391,29 +402,43 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore do
   archive producer write does not hold the registry.
 
   The registry boot reads (`select_running_lease_info`) and the tiny read
-  projections answer an empty list; `put_task_archive` notifies the test that it
-  is in flight, then sleeps for `:delay_ms` before replying `:ok`.
+  projections answer an empty list. `put_task_archive` notifies the test that it
+  is in flight and then HOLDS the reply until the test calls
+  `release_archive_write/1` — an event-driven handshake, so "still in flight"
+  is a state the test controls instead of a wall-clock race. Meanwhile this
+  GenServer keeps answering every OTHER call, exactly like the real store's
+  write offload (which answers its caller only after the commit).
   """
   use GenServer
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: opts[:name])
 
+  @doc """
+  Replies `:ok` to the archive write currently held open by this stand-in.
+
+  Returns `{:error, :no_pending_archive_write}` when nothing is held, so a test
+  cannot silently release nothing and pass.
+  """
+  def release_archive_write(store), do: GenServer.call(store, :release_archive_write, 5_000)
+
   @impl true
-  def init(opts), do: {:ok, Map.new(opts)}
+  def init(opts), do: {:ok, opts |> Map.new() |> Map.put(:pending_from, nil)}
 
   @impl true
   def handle_call({:put_task_archive, _entry}, from, state) do
     send(state.notify, {:archive_write_started, state.name})
 
-    # Reply LATER — the same shape as the real store's write offload (which
-    # answers its caller only after the commit) — so this stand-in keeps
-    # answering every OTHER call while the archive write is in flight.
-    Task.start(fn ->
-      Process.sleep(state.delay_ms)
-      GenServer.reply(from, :ok)
-    end)
+    # Reply LATER (on release) — never a timer.
+    {:noreply, %{state | pending_from: from}}
+  end
 
-    {:noreply, state}
+  def handle_call(:release_archive_write, _from, %{pending_from: nil} = state) do
+    {:reply, {:error, :no_pending_archive_write}, state}
+  end
+
+  def handle_call(:release_archive_write, _from, state) do
+    GenServer.reply(state.pending_from, :ok)
+    {:reply, :ok, %{state | pending_from: nil}}
   end
 
   def handle_call(_request, _from, state), do: {:reply, [], state}

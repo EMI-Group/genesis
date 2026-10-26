@@ -413,7 +413,14 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
 
       # Held mid-create: no reply yet AND the caller is still alive inside the
       # `:infinity` call — a finite production timeout would have cut it off.
-      refute_receive {:create_result, ^agent_id, _}, 300
+      #
+      # The window is a NO-REPLY probe, not a wait: the injected create fun is
+      # deterministically parked on `receive :release` (nothing can time it
+      # out) and the caller sits in an `:infinity` GenServer.call, so no reply
+      # can exist at ANY moment while the create is held. A spurious reply
+      # would come from the manager on this same node, i.e. arrive within a
+      # millisecond; 100ms only absorbs scheduling latency.
+      refute_receive {:create_result, ^agent_id, _}, 100
       assert Process.alive?(caller)
 
       send(create_task, :release)
