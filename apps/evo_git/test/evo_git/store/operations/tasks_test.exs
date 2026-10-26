@@ -97,7 +97,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
       agent_count: 5,
       base_sha: "base789",
       commit_sha: "head012",
-      archive_metadata: [%{"agent_id" => "a1", "path" => "/archive/a1"}],
       lease_expires_at: 1_767_225_600,
       model_id: "deepseek-chat",
       branch_name: "genesis/agent_beef"
@@ -154,8 +153,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert fetched.usage.input_tokens == 100
       assert fetched.usage.total_cost == 0.03
       assert fetched.usage.cache_creation_tokens == 5
-
-      assert fetched.archive_metadata == [%{"agent_id" => "a1", "path" => "/archive/a1"}]
     end
 
     test "a bare-minimum TaskInfo round-trips with struct defaults intact" do
@@ -196,7 +193,6 @@ defmodule EvoGit.Store.Operations.TasksTest do
       assert fetched.logs == []
       assert fetched.finished_at == nil
       assert fetched.usage == nil
-      assert fetched.archive_metadata == nil
       assert fetched.error == nil
       assert fetched.model_id == nil
       assert fetched.commit_sha == nil
@@ -625,10 +621,9 @@ defmodule EvoGit.Store.Operations.TasksTest do
       {by_path, _} = Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle-dir"])
       assert Enum.map(by_path, & &1.id) == ["by-path"]
 
-      # `result` is deliberately NOT searched any more: it is zlib-compressed
-      # above 4 kB (so a LIKE over it is a full-blob scan that cannot even see
-      # the user-visible text) and the denormalized `branch_name` column took
-      # its place in the OR-LIKE.
+      # `result` is deliberately NOT searched: it is the heaviest per-row
+      # column (a LIKE over it is a full-blob scan) and the denormalized
+      # `branch_name` column took its place in the OR-LIKE.
       {by_result, _} =
         Tasks.safe_select_paginated_tasks(repo, filters: [search: "needle summary"])
 
