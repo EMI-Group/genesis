@@ -466,7 +466,7 @@ defmodule EvoGit.Store.TypesTest do
       results = [
         {:ok, %{}},
         {:ok, %{commit_sha: "abc", branch_name: "genesis/agent_x"}},
-        {:ok, %{commit_sha: "abc", usage: Usage.zero(), archive_records: [%{a: 1}]}},
+        {:ok, %{commit_sha: "abc", usage: Usage.zero(), no_changes: true}},
         # "repos" is NOT in the Codec's @result_data_fields whitelist — the
         # per-repo map deliberately stays STRING-KEYED after decode.
         {:ok, %{repos: %{"primary" => %{"commit_sha" => "s", "branch_name" => "b"}}}},
@@ -497,7 +497,7 @@ defmodule EvoGit.Store.TypesTest do
         nil,
         ~s({"__result_tag__":"ok","data":{}}),
         ~s({"__result_tag__":"ok","data":{"commit_sha":"abc","branch_name":"genesis/agent_x"}}),
-        ~s({"__result_tag__":"ok","data":{"commit_sha":"abc","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3,"input_cost":0.1,"output_cost":0.2,"total_cost":0.3,"cached_tokens":4,"cache_creation_tokens":5},"archive_records":[{"a":1}]}}),
+        ~s({"__result_tag__":"ok","data":{"commit_sha":"abc","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3,"input_cost":0.1,"output_cost":0.2,"total_cost":0.3,"cached_tokens":4,"cache_creation_tokens":5},"no_changes":true}}),
         ~s({"__result_tag__":"ok","data":{"repos":{"primary":{"commit_sha":"s","branch_name":"b"}}}}),
         ~s({"__result_tag__":"error","reason":"boom"}),
         ~s({"__result_tag__":"error","reason":"killed"}),
@@ -736,54 +736,6 @@ defmodule EvoGit.Store.TypesTest do
     end
   end
 
-  # ── ArchiveJson ──────────────────────────────────────────────────────────
-
-  describe "ArchiveJson (list of maps <-> JSON array)" do
-    test "dump is byte-identical to Codec.encode_archive/1" do
-      archives = [
-        nil,
-        [],
-        [%{agent_id: "agent_1", type: :executor}],
-        [%{"string" => "keys"}, %{nested: %{deep: [1, 2]}}]
-      ]
-
-      for archive <- archives do
-        assert Types.ArchiveJson.dump(archive) == {:ok, Codec.encode_archive(archive)}
-      end
-    end
-
-    test "load returns exactly Codec.decode_archive/1 (nil + lenient paths)" do
-      stored = [
-        nil,
-        "[]",
-        ~s([{"agent_id":"agent_1"}]),
-        ~s([1, 2]),
-        "not json",
-        ~s({"object": true})
-      ]
-
-      for text <- stored do
-        assert Types.ArchiveJson.load(text) == {:ok, Codec.decode_archive(text)}
-      end
-    end
-
-    test "round-trip for JSON-safe archives" do
-      archive = [
-        %{"agent_id" => "agent_1", "usage" => %{"total_tokens" => 42}},
-        %{"agent_id" => "agent_2"}
-      ]
-
-      {:ok, dumped} = Types.ArchiveJson.dump(archive)
-      assert {:ok, ^archive} = Types.ArchiveJson.load(dumped)
-    end
-
-    test "cast accepts lists and nil" do
-      assert {:ok, []} = Types.ArchiveJson.cast([])
-      assert Types.ArchiveJson.cast(nil) == {:ok, nil}
-      assert Types.ArchiveJson.cast(%{}) == :error
-    end
-  end
-
   # ── ErrorJson ────────────────────────────────────────────────────────────
 
   describe "ErrorJson (canonical failed-task error payload)" do
@@ -862,7 +814,7 @@ defmodule EvoGit.Store.TypesTest do
   describe "TaskRow schema end-to-end" do
     test "columns/0 matches Codec.task_columns/0 ++ updated_at (physical order)" do
       assert TaskRow.columns() == Codec.task_columns() ++ ["updated_at"]
-      assert length(TaskRow.columns()) == 20
+      assert length(TaskRow.columns()) == 19
     end
 
     test "schema dump of a full task row equals Codec.encode_task/1 + updated_at" do
@@ -880,7 +832,6 @@ defmodule EvoGit.Store.TypesTest do
         agent_count: 4,
         base_sha: "base123",
         commit_sha: "head123",
-        archive_metadata: [%{"agent_id" => "a1"}],
         lease_expires_at: 1_700_000_000_123,
         model_id: "deepseek-chat",
         project_path: "/tmp/repo",
@@ -1029,7 +980,6 @@ defmodule EvoGit.Store.TypesTest do
             Types.ResultJson,
             Types.LogsJson,
             Types.UsageJson,
-            Types.ArchiveJson,
             Types.ErrorJson
           ] do
         assert mod.type() == :string
@@ -1052,7 +1002,6 @@ defmodule EvoGit.Store.TypesTest do
         Types.OptsJson,
         Types.ResultJson,
         Types.UsageJson,
-        Types.ArchiveJson,
         Types.ErrorJson
       ]
 
@@ -1151,7 +1100,7 @@ defmodule EvoGit.Store.TypesTest do
   defp random_result do
     case :rand.uniform(5) do
       1 -> {:ok, %{commit_sha: random_string(), branch_name: "genesis/agent_" <> random_string()}}
-      2 -> {:ok, %{usage: random_usage(), archive_records: [%{"a" => :rand.uniform(10)}]}}
+      2 -> {:ok, %{usage: random_usage(), no_changes: true}}
       3 -> {:error, "boom: " <> random_string()}
       4 -> "plain " <> random_string()
       5 -> {:ok, %{repos: %{"primary" => %{"commit_sha" => random_string()}}}}

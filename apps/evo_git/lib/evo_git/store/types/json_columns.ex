@@ -266,65 +266,6 @@ defmodule EvoGit.Store.Types.UsageJson do
   def embed_as(_format), do: :self
 end
 
-defmodule EvoGit.Store.Types.ArchiveJson do
-  @moduledoc """
-  Ecto.Type for the `tasks.archive_metadata` column — a list of maps ↔ JSON TEXT array.
-
-  This type is a THIN delegation to `EvoGit.Store.Codec` — the Codec is the
-  single source of truth for the on-disk wire format and stays byte-compatible
-  with existing user databases. No encoding logic is duplicated here.
-
-  ## Wire format
-
-    * **dump** (`Codec.encode_archive/1`) is TOTAL: nil → `nil`; a list → its
-      JSON array; a Jason failure logs a warning and stores `nil` — encode
-      never raises.
-    * **load** (`Codec.decode_archive/1`) is LENIENT: nil → `nil`, a JSON
-      array → the list, anything undecodable → `nil`. Never raises.
-
-  ## Glue (documented deviations from pure delegation)
-
-    * `dump/1` returns `:error` (never raises) for a non-nil, non-list value —
-      the Codec has no clause for those and would raise `FunctionClauseError`.
-    * `load/1` returns `:error` for a non-nil, non-binary stored value — the
-      Codec has no clause for those (the column is TEXT, so this cannot occur
-      in a well-formed database).
-
-  Pure module — no Repo, no GenServer, no I/O.
-  """
-
-  use Ecto.Type
-
-  alias EvoGit.Store.Codec
-
-  @impl Ecto.Type
-  def type, do: :string
-
-  @impl Ecto.Type
-  def cast(nil), do: {:ok, nil}
-
-  def cast(archive) when is_list(archive), do: {:ok, archive}
-
-  def cast(_), do: :error
-
-  @impl Ecto.Type
-  def dump(nil), do: {:ok, nil}
-
-  def dump(archive) when is_list(archive), do: {:ok, Codec.encode_archive(archive)}
-
-  def dump(_), do: :error
-
-  @impl Ecto.Type
-  def load(nil), do: {:ok, nil}
-
-  def load(str) when is_binary(str), do: {:ok, Codec.decode_archive(str)}
-
-  def load(_), do: :error
-
-  @impl Ecto.Type
-  def embed_as(_format), do: :self
-end
-
 defmodule EvoGit.Store.Types.ErrorJson do
   @moduledoc """
   Ecto.Type for the `tasks.error` column — the canonical failed-task error

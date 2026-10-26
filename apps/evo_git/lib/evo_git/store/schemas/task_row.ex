@@ -6,7 +6,7 @@ defmodule EvoGit.Store.Schemas.TaskRow do
   `EvoGit.Store` translates `TaskRow ↔ %EvoGit.TaskInfo{}` in wave 2; nothing
   outside the store layer should ever see a `TaskRow`. The field set mirrors
   `Codec.task_columns/0` plus the store-internal `updated_at` (the table's
-  20th column, deliberately NOT in `Codec.task_columns/0` / `%TaskInfo{}`).
+  19th column, deliberately NOT in `Codec.task_columns/0` / `%TaskInfo{}`).
 
   ## Column → type mapping
 
@@ -25,7 +25,6 @@ defmodule EvoGit.Store.Schemas.TaskRow do
   | `agent_count`      | `:integer`                    | plain |
   | `base_sha`         | `:string`                     | plain |
   | `commit_sha`       | `:string`                     | plain |
-  | `archive_metadata` | `ArchiveJson`                 | list of maps ↔ JSON array |
   | `lease_expires_at` | `UnixMs`                      | unix-ms INTEGER |
   | `model_id`         | `:string`                     | plain |
   | `project_path`     | `:string`                     | plain |
@@ -61,7 +60,6 @@ defmodule EvoGit.Store.Schemas.TaskRow do
     field(:agent_count, :integer)
     field(:base_sha, :string)
     field(:commit_sha, :string)
-    field(:archive_metadata, Types.ArchiveJson)
     field(:lease_expires_at, Types.UnixMs)
     field(:model_id, :string)
     field(:project_path, :string)
@@ -71,7 +69,7 @@ defmodule EvoGit.Store.Schemas.TaskRow do
   end
 
   @doc """
-  The 20 task-table column names (strings) in schema-declaration order —
+  The 19 task-table column names (strings) in schema-declaration order —
   equals `Codec.task_columns/0 ++ ["updated_at"]`, the physical table column
   order. Returns strings to mirror `Codec.task_columns/0` exactly.
   """
