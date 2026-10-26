@@ -92,6 +92,87 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "lightweight task reads (local node, real paths)" do
+    # The three summary/lite/archive reads route through
+    # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
+    # so the isolated pair from `setup` serves them with real rows.
+    @summary_keys ~w(
+      id status review_status started_at finished_at type project_path opts
+      branch_name model_id agent_count base_sha commit_sha lease_expires_at
+      updated_at error
+    )a
+    test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
+      id = insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
+      assert %{rows: [row], total: 1} = EvoDash.NodeContext.list_tasks_page(node())
+      assert row.id == id
+      assert row.status == :completed
+      assert row.project_path == "/tmp/proj_a"
+      # The 16-key projection: heavy blobs are never part of a summary row.
+      assert Enum.sort(Map.keys(row)) == Enum.sort(@summary_keys)
+      refute Map.has_key?(row, :result)
+      refute Map.has_key?(row, :usage)
+      refute Map.has_key?(row, :logs)
+      refute Map.has_key?(row, :archive_metadata)
+    end
+
+    test "list_tasks_page/2 forwards limit/offset and the filter opts" do
+      insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
+      keep = insert_fixture!(status: :failed, project_path: "/tmp/proj_b")
+
+      # The core filter expects the status as its on-disk STRING (the summary
+      # rows still decode it back to an atom).
+      assert %{rows: [row], total: 1} =
+               EvoDash.NodeContext.list_tasks_page(node(), status: "failed")
+
+      assert row.id == keep
+      assert row.status == :failed
+
+      assert %{rows: [], total: 0} =
+               EvoDash.NodeContext.list_tasks_page(node(), project_path: "/tmp/nowhere")
+
+      assert %{rows: rows, total: 2} =
+               EvoDash.NodeContext.list_tasks_page(node(), limit: 1, offset: 0)
+
+      assert length(rows) == 1
+    end
+
+    test "get_task_lite/2 nils the archive out and drops :archive_records from the result" do
+      archive = [%{"role" => "user", "content" => "archived"}]
+
+      id =
+        insert_fixture!(
+          result: {:ok, %{commit_sha: "sha1", archive_records: archive}},
+          archive_metadata: archive
+        )
+
+      assert %EvoGit.TaskInfo{id: ^id, archive_metadata: nil} =
+               lite =
+               EvoDash.NodeContext.get_task_lite(node(), id)
+
+      assert {:ok, data} = lite.result
+      refute Map.has_key?(data, :archive_records)
+      assert data.commit_sha == "sha1"
+
+      # The detail read keeps the archive, proving the lite read is the
+      # lightweight variant rather than the same decode.
+      assert %EvoGit.TaskInfo{archive_metadata: ^archive} =
+               EvoDash.NodeContext.get_task(node(), id)
+    end
+
+    test "get_task_lite/2 returns nil for a missing task" do
+      assert EvoDash.NodeContext.get_task_lite(node(), "missing-id") == nil
+    end
+
+    test "get_task_archive/2 returns the decoded archive list, [] when absent" do
+      archive = [%{"role" => "user", "content" => "archived"}]
+      id = insert_fixture!(archive_metadata: archive)
+      assert EvoDash.NodeContext.get_task_archive(node(), id) == archive
+      no_archive = insert_fixture!([])
+      assert EvoDash.NodeContext.get_task_archive(node(), no_archive) == []
+      assert EvoDash.NodeContext.get_task_archive(node(), "missing-id") == []
+    end
+  end
+
   describe "task-review RPC delegates (local node, real paths)" do
     test "get_task/2 returns nil for a missing task" do
       assert EvoDash.NodeContext.get_task(node(), "missing-id") == nil

@@ -439,6 +439,26 @@ defmodule EvoDash.NodeContext do
   end
 
   @doc """
+  Returns one LIGHTWEIGHT page of task summaries plus the filtered total on the
+  given node.
+  Delegates to `EvoGit.RemoteNode.list_tasks_page/2`. Returns
+  `%{rows: [map()], total: non_neg_integer()}`, degrading to
+  `%{rows: [], total: 0}` if the store/remote call fails.
+  This is the summary projection: each row carries the 16 summary keys only
+  (`id`, `status`, `review_status`, `started_at`, `finished_at`, `type`,
+  `project_path`, `opts`, `branch_name`, `model_id`, `agent_count`, `base_sha`,
+  `commit_sha`, `lease_expires_at`, `updated_at`, `error`) — the heavy blobs
+  (`result`, `usage`, `logs`, `archive_metadata`) are never transferred, unlike
+  `list_tasks_paginated/2` which returns full `%EvoGit.TaskInfo{}` rows.
+  `opts` accepts `:limit` (default 25, capped at 50), `:offset` and the filter
+  keys `:status`, `:project_path`, `:review_status`, `:search`.
+  """
+  @spec list_tasks_page(node(), keyword()) :: %{rows: [map()], total: non_neg_integer()}
+  def list_tasks_page(node, opts \\ []) do
+    EvoGit.RemoteNode.list_tasks_page(node, opts)
+  end
+
+  @doc """
   Returns lightweight task summaries updated since an ISO-8601 timestamp on
   the given node.
 
@@ -746,6 +766,32 @@ defmodule EvoDash.NodeContext do
   @spec get_task(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
   def get_task(node, task_id) do
     EvoGit.RemoteNode.get_task(node, task_id)
+  end
+
+  @doc """
+  Fetches a single task by id on the given node WITHOUT the heavy archive blob.
+  Delegates to `EvoGit.RemoteNode.get_task_lite/2`. Returns the
+  `%EvoGit.TaskInfo{}` or `nil` if the task does not exist (or the remote call
+  fails). The struct decodes exactly like `get_task/2` except that
+  `archive_metadata` is `nil` and the result data carries no `:archive_records`
+  key — use `get_task_archive/2` for the archive itself.
+  """
+  @spec get_task_lite(node(), String.t()) :: EvoGit.TaskInfo.t() | nil
+  def get_task_lite(node, task_id) do
+    EvoGit.RemoteNode.get_task_lite(node, task_id)
+  end
+
+  @doc """
+  Returns the decoded archive records for a task on the given node.
+  Delegates to `EvoGit.RemoteNode.get_task_archive/2`. Reads ONLY the
+  `archive_metadata` column, so it is the on-demand archive companion to
+  `get_task_lite/2` (which nils the archive out). Returns `[map()]`,
+  degrading to `[]` when the row is missing, the payload is undecodable, or
+  the remote call fails.
+  """
+  @spec get_task_archive(node(), String.t()) :: [map()]
+  def get_task_archive(node, task_id) do
+    EvoGit.RemoteNode.get_task_archive(node, task_id)
   end
 
   @doc """
