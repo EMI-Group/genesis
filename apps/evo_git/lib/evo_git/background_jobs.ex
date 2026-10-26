@@ -192,6 +192,7 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Claims this owner's finished-but-unannounced jobs in ONE registry call: returns `{:ok, jobs}` (newest first) and marks exactly those jobs `announced: true`, so a second call can never return the same job again.
+  `announced` means "the owner already knows this job's outcome — no completion notice needed": it starts `false`, and is set by this claim, by `read/2` / `list/1` for the terminal jobs they return, and by a successful `kill/3` (including its `{:already_finished, job}` branch).
   `opts[:owner_pid]` defaults to `current_owner_pid/0`; nothing to claim (or an unreachable registry / unknown owner) yields `{:ok, []}`.
   Selection is a state read only — the periodic tick already refreshes `:unit`-handled jobs within about a second — and only TERMINAL statuses (`:completed | :killed | :failed`) are eligible.
   """
@@ -220,6 +221,7 @@ defmodule EvoGit.BackgroundJobs do
   @doc """
   Kills a job (and its detached process) if it is still live. `reason` is recorded in the job's `:detail` as `"killed (<reason>)"`; `nil` becomes `"stopped by request"`.
   Returns `{:ok, job}` (now `:killed`), `{:error, :not_found}` (unknown id, or an unreachable registry), `{:error, :not_owner}` (`opts[:owner_pid]` fences a different owner's job), `{:error, {:already_finished, job}}` (the job already reached a terminal status; nothing was killed) or `{:error, message}` (the backend could not stop the process — one actionable prose sentence; the job is left in `:stopping`).
+  The caller REQUESTED the kill, so both the `{:ok, job}` and `{:error, {:already_finished, job}}` replies come back with `announced: true` — no completion notice is raised for them (`job/2` afterwards returns a record with `announced: true`). The `{:error, message}` branch deliberately does NOT mark it: the process may still be running, so the agent should still learn the final status from a notice. A `read/2` after a kill still returns the output produced before it.
   """
   @spec kill(String.t(), term(), keyword()) ::
           {:ok, job()}
@@ -518,16 +520,24 @@ defmodule EvoGit.BackgroundJobs do
         if live?(job) do
           case stop_job(job, reason) do
             {:ok, job} ->
+              # The CALLER requested this kill, so it already knows the job is ending: suppress the
+              # completion notice (also covers a `:stopping` record a unit observer settles later).
+              job = suppress_notice(job)
               {:reply, {:ok, job}, put_job(state, job)}
 
             {:error, message} ->
+              # Deliberately NOT announced: the backend could not stop the process, so the outcome is
+              # unknown and the agent SHOULD still learn the final status from a later notice.
               Logger.warning("BackgroundJobs: kill of #{job.id} failed: #{message}")
 
               {:reply, {:error, message},
                put_job(state, %{job | status: :stopping, detail: message})}
           end
         else
-          {:reply, {:error, {:already_finished, job}}, state}
+          # Same rule as `read/2` / `list/1`: a terminal job handed back to the caller counts as
+          # announced, because the caller just learned its final status.
+          job = suppress_notice(job)
+          {:reply, {:error, {:already_finished, job}}, put_job(state, job)}
         end
     end
   end
@@ -1139,6 +1149,11 @@ defmodule EvoGit.BackgroundJobs do
       job
     end
   end
+
+  # The kill path's own marking: the caller REQUESTED the stop, so it knows the outcome. Unlike
+  # `mark_announced/1` this also applies to a non-terminal record (a `:stopping` unit handle
+  # settles later), so the later `mark_finished/2` cannot resurrect a notice.
+  defp suppress_notice(job), do: %{job | announced: true}
 
   defp unit_handle?(%{kind: :unit}), do: true
   defp unit_handle?(_handle), do: false
