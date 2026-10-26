@@ -4279,9 +4279,11 @@ defmodule EvoDashWeb.ReviewLiveTest do
 
   describe "multi-repo review — merge all (accept-all shortcut)" do
     # The batch shortcut (#merge-all-repositories, phx-click="merge_all", NO
-    # params) folds EVERY unresolved repo through the SHARED merge_one_repo/3
-    # path (the exact same path as the per-repo "merge" event), best-effort per
-    # repo. It is gated on >= 2 repos AND >= 2 still unresolved.
+    # params) spawns ONE off-process action — spawn_action(socket, :merge_all, …)
+    # → ReviewLive.Actions.merge_all/2 — whose entries fold through the SAME
+    # per-repo merge path as the "merge" event, best-effort per repo; results are
+    # applied in handle_info({:review_action_result, …}). It is gated on >= 2
+    # repos AND >= 2 still unresolved.
 
     test "is hidden for a single-repo task", %{conn: conn} do
       task_id = seed_orphaned_review_task!()

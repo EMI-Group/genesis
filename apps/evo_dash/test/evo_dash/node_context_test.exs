@@ -171,14 +171,14 @@ defmodule EvoDash.NodeContextTest do
   describe "paged task-archive reads (EvoGit.RemoteNode delegation)" do
     setup :setup_isolated_registry
 
-    # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` ship as
-    # parallel core work and do not exist in this tree yet, so the delegation
-    # itself cannot be called here (there is no runner seam for RemoteNode
-    # delegation — the existing tests hit the real local path). What IS asserted
-    # unconditionally is the observable surface that does not need the core:
-    # the documented arities (incl. the `opts \\ []` default form) and the
-    # totality of the two normalization steps NodeContext applies to EVERY
-    # payload, which is what makes the mirrors safe for callers.
+    # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` exist
+    # in this tree; the `Code.ensure_loaded?` check below is only a defensive
+    # availability guard, and there is no runner seam for the delegation — the
+    # existing tests hit the real local path. These tests assert the observable
+    # surface unconditionally: the documented arities (incl. the `opts \\ []`
+    # default form) and the totality of the two normalization steps NodeContext
+    # applies to EVERY payload, which is what makes the mirrors safe for
+    # callers.
     test "list_task_archives/3 and get_agent_archive/3 expose the documented arities" do
       # `function_exported?/3` does NOT load a module, so its answer would
       # depend on whether some other test happened to run first. Load it
@@ -208,8 +208,9 @@ defmodule EvoDash.NodeContextTest do
         assert EvoDash.NodeContext.list_task_archives(node(), "missing-id") ==
                  %{entries: [], total: 0}
       else
-        # Core not in this tree yet: nothing to call. The documented default is
-        # part of the function head, provable through the 2-arity export above.
+        # Defensive branch: EvoGit.RemoteNode is not loaded/available here, so
+        # there is nothing to call. The documented default is part of the
+        # function head, provable through the 2-arity export above.
         assert function_exported?(EvoDash.NodeContext, :list_task_archives, 2)
       end
     end
@@ -558,13 +559,13 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "valid decisions dispatch on the local path" do
-      # EvoGit.CommandApproval ships as parallel core work and does not exist
-      # in this tree, so the guarded local path degrades to
-      # {:error, :command_approval_unavailable}. Guard on the backend's
-      # presence (mirrors home_live_test.exs:63 and the node_context.ex
-      # with_remote_connection/4 pattern) so this stays valid once the core
-      # lands: with the real module present, responding on an unknown request
-      # id must degrade to an error tuple rather than raise.
+      # EvoGit.CommandApproval exists in this tree; the `Code.ensure_loaded?`
+      # guard is a defensive availability check (the module lives on the core
+      # side), mirroring home_live_test.exs:63 and the node_context.ex
+      # with_remote_connection/4 pattern. With the module loaded, responding on
+      # an unknown request id must degrade to an error tuple rather than raise;
+      # without it, the guarded local path answers
+      # {:error, :command_approval_unavailable}.
       if Code.ensure_loaded?(EvoGit.CommandApproval) do
         assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", "approve"))
       else
