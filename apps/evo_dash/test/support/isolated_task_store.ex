@@ -169,7 +169,23 @@ defmodule EvoDash.Test.IsolatedTaskStore do
         strategy: :one_for_one
       )
 
-    # Unlink the isolated supervisor from the TEST PROCESS, deliberately.
+    ExUnit.Callbacks.on_exit(fn ->
+      # The whole stop/restore sequence runs inside a log capture: `on_exit`
+      # callbacks execute OUTSIDE ExUnit's per-test log capture, so anything
+      # the teardown logs would otherwise print straight to the console.
+      capture_teardown_noise(fn ->
+        # Order matters: release the singleton names FIRST, then restore.
+        stop_isolated(sup)
+        File.rm_rf(root)
+        restore_production!()
+      end)
+    end)
+
+    # Unlink the isolated supervisor from the TEST PROCESS, deliberately —
+    # AFTER `on_exit` is registered, so a test process that dies inside this
+    # `setup` leaves a pair that is still LINKED (it dies with the test, as it
+    # always did) rather than an orphaned unlinked pair holding the singleton
+    # names for the rest of the run.
     #
     # ExUnit's test process ends with `exit(:shutdown)` (ExUnit.Runner
     # `spawn_test_monitor/4`) BEFORE `on_exit` callbacks run. A supervisor
@@ -193,18 +209,6 @@ defmodule EvoDash.Test.IsolatedTaskStore do
     # `isolated_supervisor/0`). `Process.put/2` is a dictionary write in the
     # TEST process — nanoseconds, no coordination.
     Process.put(@supervisor_key, sup)
-
-    ExUnit.Callbacks.on_exit(fn ->
-      # The whole stop/restore sequence runs inside a log capture: `on_exit`
-      # callbacks execute OUTSIDE ExUnit's per-test log capture, so anything
-      # the teardown logs would otherwise print straight to the console.
-      capture_teardown_noise(fn ->
-        # Order matters: release the singleton names FIRST, then restore.
-        stop_isolated(sup)
-        File.rm_rf(root)
-        restore_production!()
-      end)
-    end)
 
     :ok
   end
