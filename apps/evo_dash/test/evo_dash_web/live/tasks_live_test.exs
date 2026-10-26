@@ -370,33 +370,35 @@ defmodule EvoDashWeb.TasksLiveTest do
   end
 
   describe "task search" do
-    test "renders the search input", %{conn: conn} do
-      {:ok, view, html} = live(conn, ~p"/tasks")
-
-      assert html =~ "Search by task ID, prompt, objective, or response"
-
-      # Drain the mount's async page load so no offloaded store read is in
-      # flight when this suite's isolated Store is torn down (see
-      # flush_tasks_load/2).
-      flush_tasks_load(view)
-    end
-
-    test "search_tasks handler filters tasks by prompt text", %{conn: conn} do
+    test "search_tasks matches prompt text case-insensitively and clearing restores all", %{
+      conn: conn
+    } do
       insert_fixture!(opts: [prompt: "build a web app", path: "/tmp/proj"])
-      insert_fixture!(opts: [prompt: "write a database migration", path: "/tmp/proj"])
+      insert_fixture!(opts: [prompt: "write a Database migration", path: "/tmp/proj"])
       insert_fixture!(opts: [prompt: "refactor the auth module", path: "/tmp/proj"])
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
       flush_tasks_load(view)
 
+      # Prompt match, lower-case query against mixed-case text (the store filter
+      # is case-insensitive on every searched column — the branch-name test
+      # below covers the same leg for branch_name).
       _html = render_hook(view, "search_tasks", %{"search_query" => "database"})
       flush_tasks_load(view)
 
       # The sidebar now lists every completed task pending review, so
       # list-content assertions must be scoped to the #tasks-list container.
-      assert render_tasks_list(view) =~ "write a database migration"
+      assert render_tasks_list(view) =~ "write a Database migration"
       refute render_tasks_list(view) =~ "build a web app"
       refute render_tasks_list(view) =~ "refactor the auth module"
+
+      # Clearing the query restores every task.
+      _html = render_hook(view, "search_tasks", %{"search_query" => ""})
+      html = flush_tasks_load(view)
+
+      assert html =~ "build a web app"
+      assert html =~ "write a Database migration"
+      assert html =~ "refactor the auth module"
     end
 
     test "search_tasks handler filters tasks by objective text", %{conn: conn} do
@@ -425,36 +427,6 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert render_tasks_list(view) =~ "alpha task"
       refute render_tasks_list(view) =~ "beta task"
-    end
-
-    test "clearing the search query restores all tasks", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "alpha task"])
-      insert_fixture!(opts: [prompt: "beta task"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
-      # First narrow down
-      _html = render_hook(view, "search_tasks", %{"search_query" => "alpha"})
-      flush_tasks_load(view)
-      # Then clear
-      _html = render_hook(view, "search_tasks", %{"search_query" => ""})
-      html = flush_tasks_load(view)
-
-      assert html =~ "alpha task"
-      assert html =~ "beta task"
-    end
-
-    test "search is case-insensitive", %{conn: conn} do
-      insert_fixture!(opts: [prompt: "Build a REST API"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
-      _html = render_hook(view, "search_tasks", %{"search_query" => "rest api"})
-      html = flush_tasks_load(view)
-
-      assert html =~ "Build a REST API"
     end
 
     test "search_tasks handler filters tasks by branch name", %{conn: conn} do
@@ -530,7 +502,7 @@ defmodule EvoDashWeb.TasksLiveTest do
   end
 
   describe "filter selects" do
-    test "filter_tasks handler filters by status", %{conn: conn} do
+    test "filter_tasks handler filters by status and 'all' shows everything", %{conn: conn} do
       insert_fixture!(status: :completed, opts: [prompt: "completed one"])
       insert_fixture!(status: :failed, opts: [prompt: "failed one"])
 
@@ -542,15 +514,8 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert render_tasks_list(view) =~ "failed one"
       refute render_tasks_list(view) =~ "completed one"
-    end
 
-    test "filter_tasks handler 'all' shows everything", %{conn: conn} do
-      insert_fixture!(status: :completed, opts: [prompt: "completed one"])
-      insert_fixture!(status: :failed, opts: [prompt: "failed one"])
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
+      # "all" clears the status filter again.
       _html = render_hook(view, "filter_tasks", %{"status_filter" => "all"})
       html = flush_tasks_load(view)
 
@@ -846,7 +811,7 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html_big =~ "task number 0"
     end
 
-    test "next_page / prev_page events navigate correctly", %{conn: conn} do
+    test "next_page / prev_page / goto_page events navigate correctly", %{conn: conn} do
       for i <- 0..25, do: insert_timed_fixture!(i)
 
       {:ok, view, _html} = live(conn, ~p"/tasks")
@@ -863,18 +828,12 @@ defmodule EvoDashWeb.TasksLiveTest do
       html_prev = flush_tasks_load(view)
       assert html_prev =~ "Page 1 of 2"
       assert html_prev =~ "task number 25"
-    end
 
-    test "goto_page event navigates to a specific page", %{conn: conn} do
-      for i <- 0..25, do: insert_timed_fixture!(i)
-
-      {:ok, view, _html} = live(conn, ~p"/tasks")
-      flush_tasks_load(view)
-
+      # goto_page jumps straight to the requested page.
       _html = render_click(view, "goto_page", %{"page" => "2"})
-      html = flush_tasks_load(view)
-      assert html =~ "Page 2 of 2"
-      assert html =~ "task number 0"
+      html_goto = flush_tasks_load(view)
+      assert html_goto =~ "Page 2 of 2"
+      assert html_goto =~ "task number 0"
     end
 
     test "status filter works across pages (server-side filtering)", %{conn: conn} do
