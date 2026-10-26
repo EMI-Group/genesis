@@ -49,7 +49,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     %{
       git_template: template,
       one_commit_fixture: {one_commit, one_commit_shas},
-      two_commit_fixture: {two_commits, two_commit_shas}
+      two_commit_fixture: {two_commits, two_commit_shas},
+      merge_fixtures: merge_fixtures!(template)
     }
   end
 
@@ -1172,29 +1173,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   describe "subagent result merging (ContextMerge wiring)" do
     test "clean multi-child merge: success note and merged branches deleted", %{
       tmp_dir: tmp_dir,
-      git_template: template
+      merge_fixtures: fixtures
     } do
-      dir = init_repo(template, Path.join(tmp_dir, "clean_merge"))
-
-      base =
-        commit_files(
-          dir,
-          [{"CONTEXT.md", "# Root\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
-          "base"
-        )
-
-      on_branch(dir, "evogit-agent-T1-A0", base)
-      child_one = commit_files(dir, [{"src/b.ex", "defmodule B do\nend\n"}], "child one")
-
-      on_branch(dir, "evogit-agent-T1-A1", base)
-      child_two = commit_files(dir, [{"doc/x.md", "# Doc\n"}], "child two")
-
-      on_branch(dir, "parent", base)
-
-      children = [
-        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
-        child(1, child_two, "./doc", branch: "evogit-agent-T1-A1")
-      ]
+      %{dir: dir, children: children} =
+        merge_repo!(fixtures, :clean, Path.join(tmp_dir, "clean_merge"))
 
       report = SubagentProcessing.perform_merge(dir, children, "./")
 
@@ -1219,31 +1201,12 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "out-of-scope CONTEXT.md edit is dropped in favour of the parent", %{
       tmp_dir: tmp_dir,
-      git_template: template
+      merge_fixtures: fixtures
     } do
-      dir = init_repo(template, Path.join(tmp_dir, "out_of_scope"))
+      %{dir: dir, children: children} =
+        merge_repo!(fixtures, :out_of_scope, Path.join(tmp_dir, "out_of_scope"))
 
-      base =
-        commit_files(
-          dir,
-          [{"src/CONTEXT.md", "base src context\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
-          "base"
-        )
-
-      # A child spawned at ./doc edits ./src/CONTEXT.md (out of scope).
-      on_branch(dir, "evogit-agent-T1-A0", base)
-
-      child_sha =
-        commit_files(
-          dir,
-          [{"src/CONTEXT.md", "child src context\n"}, {"doc/x.md", "# Doc\n"}],
-          "child work"
-        )
-
-      on_branch(dir, "parent", base)
-      commit_files(dir, [{"src/CONTEXT.md", "parent src context\n"}], "parent work")
-
-      children = [child(0, child_sha, "./doc", branch: "evogit-agent-T1-A0")]
+      [%{commit_sha: child_sha}] = children
 
       report = SubagentProcessing.perform_merge(dir, children, "./src")
 
@@ -1265,19 +1228,10 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
 
     test "in-scope child beats an ancestor-level parent edit", %{
       tmp_dir: tmp_dir,
-      git_template: template
+      merge_fixtures: fixtures
     } do
-      dir = init_repo(template, Path.join(tmp_dir, "in_scope"))
-
-      base = commit_files(dir, [{"src/CONTEXT.md", "base src context\n"}], "base")
-
-      on_branch(dir, "evogit-agent-T1-A0", base)
-      child_sha = commit_files(dir, [{"src/CONTEXT.md", "child src context\n"}], "child work")
-
-      on_branch(dir, "parent", base)
-      commit_files(dir, [{"src/CONTEXT.md", "root parent context\n"}], "parent work")
-
-      children = [child(0, child_sha, "./src", branch: "evogit-agent-T1-A0")]
+      %{dir: dir, children: children} =
+        merge_repo!(fixtures, :in_scope, Path.join(tmp_dir, "in_scope"))
 
       report = SubagentProcessing.perform_merge(dir, children, "./")
 
@@ -1294,28 +1248,11 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "same-node CONTEXT.md conflict: reported, worktree clean, no branch deleted",
-         %{tmp_dir: tmp_dir, git_template: template} do
-      dir = init_repo(template, Path.join(tmp_dir, "same_node"))
+         %{tmp_dir: tmp_dir, merge_fixtures: fixtures} do
+      %{dir: dir, children: children} =
+        merge_repo!(fixtures, :same_node, Path.join(tmp_dir, "same_node"))
 
-      base =
-        commit_files(
-          dir,
-          [{"src/CONTEXT.md", "shared line\n"}, {"src/a.ex", "defmodule A do\nend\n"}],
-          "base"
-        )
-
-      on_branch(dir, "evogit-agent-T1-A0", base)
-      child_one = commit_files(dir, [{"src/CONTEXT.md", "child one\n"}], "child one")
-
-      on_branch(dir, "evogit-agent-T1-A1", base)
-      child_two = commit_files(dir, [{"src/CONTEXT.md", "child two\n"}], "child two")
-
-      on_branch(dir, "parent", base)
-
-      children = [
-        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
-        child(1, child_two, "./src", branch: "evogit-agent-T1-A1")
-      ]
+      [child_one, child_two] = Enum.map(children, & &1.commit_sha)
 
       report = SubagentProcessing.perform_merge(dir, children, "./")
 
@@ -1339,28 +1276,9 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     end
 
     test "non-CONTEXT.md conflict is never auto-resolved and keeps both branches",
-         %{tmp_dir: tmp_dir, git_template: template} do
-      dir = init_repo(template, Path.join(tmp_dir, "source_conflict"))
-
-      base =
-        commit_files(
-          dir,
-          [{"CONTEXT.md", "# Root\n"}, {"src/a.ex", "line\n"}],
-          "base"
-        )
-
-      on_branch(dir, "evogit-agent-T1-A0", base)
-      child_one = commit_files(dir, [{"src/a.ex", "one\n"}], "child one")
-
-      on_branch(dir, "evogit-agent-T1-A1", base)
-      child_two = commit_files(dir, [{"src/a.ex", "two\n"}], "child two")
-
-      on_branch(dir, "parent", base)
-
-      children = [
-        child(0, child_one, "./src", branch: "evogit-agent-T1-A0"),
-        child(1, child_two, "./src", branch: "evogit-agent-T1-A1")
-      ]
+         %{tmp_dir: tmp_dir, merge_fixtures: fixtures} do
+      %{dir: dir, children: children} =
+        merge_repo!(fixtures, :source_conflict, Path.join(tmp_dir, "source_conflict"))
 
       report = SubagentProcessing.perform_merge(dir, children, "./")
 
@@ -1387,7 +1305,6 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       git_template: template
     } do
       dir = init_repo(template, Path.join(tmp_dir, "cross_repo_only"))
-      commit_files(dir, [{"CONTEXT.md", "# Root\n"}], "base")
 
       specs = [{0, subagent_spec(0, "./", repo_id: "original")}]
       results = [{:ok, %Result{result: "done", commit_sha: "abc123", branch: "foreign-branch"}}]
@@ -1557,6 +1474,256 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
     EvoGit.GitEnv.prime_config_identity_cache(dir, "Test User", "test@example.com")
   end
 
+  # ---------------------------------------------------------------------------
+  # Merge fixtures — one `git fast-import` per MODULE, one `File.cp_r!/2` per
+  # test (`merge_repo!/3`).
+  #
+  # Every ContextMerge test needs the same tiny commit graph: a merge-target
+  # ("parent") tree plus one commit per child, laid out on named branches.
+  # Building it per test with `git add` + `git commit` + `git checkout` cost 8-9
+  # subprocesses PER TEST — the bulk of each test's body time. The whole graph
+  # (3 bases + 10 child/parent commits, ~1 KB of loose objects) is therefore
+  # imported in a SINGLE `git fast-import` subprocess, each scenario's
+  # repository (parent checked out, child branches already in place) is
+  # snapshotted ONCE in `setup_all/1` — that snapshot does pay ONE `git
+  # checkout` — and a test then only COPIES its snapshot, with no git
+  # subprocess at all. Identities and timestamps are pinned, so the fixture
+  # SHAs are identical on every run.
+  # ---------------------------------------------------------------------------
+
+  # Named commits, PARENTS FIRST: `from <mark>` may only reference a commit
+  # declared earlier. `parent: nil` marks a root commit.
+  @merge_commits [
+    base_root: %{
+      parent: nil,
+      message: "base",
+      files: [{"CONTEXT.md", "# Root\n"}, {"src/a.ex", "defmodule A do\nend\n"}]
+    },
+    base_src: %{
+      parent: nil,
+      message: "base",
+      files: [{"src/CONTEXT.md", "base src context\n"}, {"src/a.ex", "defmodule A do\nend\n"}]
+    },
+    base_src_only: %{
+      parent: nil,
+      message: "base",
+      files: [{"src/CONTEXT.md", "base src context\n"}]
+    },
+    parent_src_edit: %{
+      parent: :base_src,
+      message: "parent work",
+      files: [{"src/CONTEXT.md", "parent src context\n"}]
+    },
+    parent_root_edit: %{
+      parent: :base_src_only,
+      message: "parent work",
+      files: [{"src/CONTEXT.md", "root parent context\n"}]
+    },
+    clean_src: %{
+      parent: :base_root,
+      message: "child one",
+      files: [{"src/b.ex", "defmodule B do\nend\n"}]
+    },
+    clean_doc: %{parent: :base_root, message: "child two", files: [{"doc/x.md", "# Doc\n"}]},
+    out_of_scope_child: %{
+      parent: :base_src,
+      message: "child work",
+      files: [{"src/CONTEXT.md", "child src context\n"}, {"doc/x.md", "# Doc\n"}]
+    },
+    in_scope_child: %{
+      parent: :base_src_only,
+      message: "child work",
+      files: [{"src/CONTEXT.md", "child src context\n"}]
+    },
+    same_node_one: %{
+      parent: :base_root,
+      message: "child one",
+      files: [{"src/CONTEXT.md", "child one\n"}]
+    },
+    same_node_two: %{
+      parent: :base_root,
+      message: "child two",
+      files: [{"src/CONTEXT.md", "child two\n"}]
+    },
+    source_one: %{parent: :base_root, message: "child one", files: [{"src/a.ex", "one\n"}]},
+    source_two: %{parent: :base_root, message: "child two", files: [{"src/a.ex", "two\n"}]}
+  ]
+
+  # Scenario => %{parent: <commit key>, children: [{index, <commit key>, node_path}]}
+  # — the child list is in SPAWN order, which is what `perform_merge/3` wants.
+  @merge_scenarios [
+    clean: %{
+      parent: :base_root,
+      children: [{0, :clean_src, "./src"}, {1, :clean_doc, "./doc"}]
+    },
+    out_of_scope: %{parent: :parent_src_edit, children: [{0, :out_of_scope_child, "./doc"}]},
+    in_scope: %{parent: :parent_root_edit, children: [{0, :in_scope_child, "./src"}]},
+    same_node: %{
+      parent: :base_root,
+      children: [{0, :same_node_one, "./src"}, {1, :same_node_two, "./src"}]
+    },
+    source_conflict: %{
+      parent: :base_root,
+      children: [{0, :source_one, "./src"}, {1, :source_two, "./src"}]
+    }
+  ]
+
+  # Pinned commit identity/timestamp for the fast-import graph: identical on
+  # every run (and on every host), so fixture SHAs never drift.
+  @fixture_epoch 1_600_000_000
+
+  defp merge_fixtures!(template) do
+    scratch = module_scratch_dir!("subagent_processing_merge_fixtures")
+    on_exit(fn -> File.rm_rf!(scratch) end)
+
+    object_store = Path.join(scratch, "objects")
+    init_repo(template, object_store)
+    shas = import_merge_graph!(object_store)
+
+    Map.new(@merge_scenarios, fn {name, scenario} ->
+      dir = Path.join(scratch, "scenario_#{name}")
+      File.mkdir_p!(dir)
+      File.cp_r!(Path.join(object_store, ".git"), Path.join(dir, ".git"))
+      prime_identity!(dir)
+
+      Enum.each(scenario.children, fn {index, commit, _node_path} ->
+        write_branch_ref!(dir, branch_name(index), Map.fetch!(shas, commit))
+      end)
+
+      # The ONE `git checkout` a scenario pays: write the merge target into the
+      # index + worktree (what `git checkout -B` did in the old per-test setup).
+      {:ok, _output} =
+        Git.run(["checkout", "-q", "-B", "parent", Map.fetch!(shas, scenario.parent)], dir)
+
+      children =
+        Enum.map(scenario.children, fn {index, commit, node_path} ->
+          {index, Map.fetch!(shas, commit), node_path}
+        end)
+
+      {name, %{dir: dir, children: children}}
+    end)
+  end
+
+  # One snapshot COPY per test: `File.cp_r!/2` reproduces the whole repository
+  # (objects, refs, index, checked-out files), so the test owns an independent
+  # repo in exactly the state the scenario describes, at zero git subprocesses.
+  defp merge_repo!(fixtures, scenario, dir) do
+    snapshot = Map.fetch!(fixtures, scenario)
+    File.mkdir_p!(Path.dirname(dir))
+    File.cp_r!(snapshot.dir, dir)
+    prime_identity!(dir)
+
+    children =
+      Enum.map(snapshot.children, fn {index, sha, node_path} ->
+        child(index, sha, node_path, [])
+      end)
+
+    %{dir: dir, children: children}
+  end
+
+  defp branch_name(index), do: "evogit-agent-T1-A#{index}"
+
+  defp write_branch_ref!(dir, branch, sha) do
+    path = Path.join([dir, ".git", "refs", "heads", branch])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, sha <> "\n")
+  end
+
+  # Imports `@merge_commits` into `dir`'s object store, returning
+  # `%{commit_key => sha}` (read back from the `--export-marks` report, so no
+  # `git rev-parse` per commit).
+  defp import_merge_graph!(dir) do
+    marks_by_name = @merge_commits |> Keyword.keys() |> Enum.with_index(1) |> Map.new()
+    marks_path = Path.join(dir, "fixture.marks")
+
+    stream =
+      Enum.map(@merge_commits, fn {name, commit} ->
+        fixture_commit_stream(name, commit, marks_by_name)
+      end)
+
+    run_fast_import!(dir, stream, marks_path)
+
+    by_mark =
+      marks_path
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Map.new(fn line ->
+        [":" <> mark, sha] = String.split(line, " ")
+        {String.to_integer(mark), sha}
+      end)
+
+    Map.new(marks_by_name, fn {name, mark} -> {name, Map.fetch!(by_mark, mark)} end)
+  end
+
+  defp fixture_commit_stream(name, commit, marks_by_name) do
+    parent =
+      case commit.parent do
+        nil -> []
+        parent -> ["from :", Integer.to_string(Map.fetch!(marks_by_name, parent)), "\n"]
+      end
+
+    files =
+      Enum.map(commit.files, fn {path, content} ->
+        ["M 100644 inline ", path, "\n", fixture_data(content)]
+      end)
+
+    [
+      "commit refs/fixtures/",
+      Atom.to_string(name),
+      "\n",
+      "mark :",
+      Integer.to_string(Map.fetch!(marks_by_name, name)),
+      "\n",
+      "author Test User <test@example.com> #{@fixture_epoch} +0000\n",
+      "committer Test User <test@example.com> #{@fixture_epoch} +0000\n",
+      fixture_data(commit.message),
+      parent,
+      files,
+      "\n"
+    ]
+  end
+
+  # fast-import's counted `data <n>` form: the byte count frames content with or
+  # without a trailing newline exactly, and costs no escaping.
+  defp fixture_data(content) do
+    ["data ", Integer.to_string(byte_size(content)), "\n", content, "\n"]
+  end
+
+  # `git fast-import` reads its command stream from STDIN, which `System.cmd/3`
+  # cannot write — this Port is the file's only stdin-driven git call. `done`
+  # ends the stream; a non-zero exit raises with git's own diagnostics.
+  defp run_fast_import!(dir, stream, marks_path) do
+    git = System.find_executable("git") || raise "git is not available on PATH"
+
+    port =
+      Port.open({:spawn_executable, git}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: ["fast-import", "--quiet", "--export-marks=#{marks_path}"],
+        cd: dir
+      ])
+
+    Port.command(port, stream)
+    Port.command(port, "done\n")
+    await_fast_import!(port, "")
+  end
+
+  defp await_fast_import!(port, output) do
+    receive do
+      {^port, {:data, data}} ->
+        await_fast_import!(port, output <> data)
+
+      {^port, {:exit_status, 0}} ->
+        :ok
+
+      {^port, {:exit_status, code}} ->
+        raise "git fast-import failed (exit #{code}): #{output}"
+    after
+      30_000 -> raise "git fast-import timed out: #{output}"
+    end
+  end
+
   defp commit_files(dir, files, message) do
     Enum.each(files, fn {path, content} ->
       full_path = Path.join(dir, path)
@@ -1583,11 +1750,6 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
   defp rev_parse!(dir) do
     {:ok, sha} = Git.rev_parse(dir)
     sha
-  end
-
-  defp on_branch(dir, branch, from_sha) do
-    {:ok, _output} = Git.run(["checkout", "-q", "-B", branch, from_sha], dir)
-    :ok
   end
 
   defp clean_worktree?(dir), do: porcelain(dir) == ""
