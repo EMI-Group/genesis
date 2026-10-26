@@ -506,7 +506,8 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   round-trip that must never block the LiveView process — and it lands after
   the genesis.toml `foreign_repos` load, so the async continuation can never
   clobber the task-derived repos (the local flow's task-repos-win precedence,
-  see `ProjectsLive.maybe_restore_foreign_repos_from_task/2`). A missing task
+  see `ProjectsLive.start_foreign_repos_restore/2`).
+  A missing task
   or a task without foreign repos leaves the loaded repos unchanged.
   """
   def spawn_remote_project_activation(socket, expanded, resume_task_id) do
@@ -551,7 +552,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectFlow do
   atom-keyed) — the shape `task.opts[:foreign_repos]` takes after a DB
   round-trip or when read from a remote task via `EvoDash.NodeContext.get_task/2`.
   Extraction mirrors the tolerant semantics of
-  `ProjectsLive.maybe_restore_foreign_repos_from_task/2`: id falls back to
+  `ProjectsLive.convert_task_foreign_repos/1`: id falls back to
   `"primary"`, root may be `"root"`/`"path"`-keyed, `writable` accepts the
   literal `true` OR the string `"true"`, and `base_sha` is threaded only when a
   non-empty binary. Unparseable entries (non-binary/missing root) are dropped.
