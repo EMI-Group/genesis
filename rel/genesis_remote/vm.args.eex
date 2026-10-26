@@ -12,6 +12,5 @@
 +sbwtdcpu none
 +sbwtdio none
 
-## Shrink Pre-allocated Table Limits
-+P 40000
-+t 80000
+## Process/atom limits are deliberately NOT set — the VM uses its OTP defaults.
+## Capping them (+P/+t) caused atom-table exhaustion and a silent, zero-log boot failure.
