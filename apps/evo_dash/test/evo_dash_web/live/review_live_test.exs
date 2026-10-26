@@ -432,6 +432,133 @@ defmodule EvoDashWeb.ReviewLiveTest do
       refute render(view) =~ "showing"
     end
 
+    test "a task that never opted into archiving offers no Archive tab", %{conn: conn} do
+      task_id = seed_task_without_archive!()
+      me = self()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: [], total: 0}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      _html = flush_review_load(view)
+      assert assigns(view).archive_opt_in? == false
+      # No tab, no fetch — and the OTHER four tabs stay reachable.
+      refute has_element?(view, archive_tab_selector())
+      assert has_element?(view, "button[phx-click='switch_tab'][phx-value-tab='conversation']")
+      assert has_element?(view, "button[phx-click='switch_tab'][phx-value-tab='commits']")
+      # Forcing the event cannot open (or fetch) an archive never collected.
+      render_click(view, "switch_tab", %{"tab" => "archive"})
+      assert assigns(view).review_tab == :conversation
+      assert assigns(view).archive_state == :idle
+      refute_receive {:archive_fetch, _, _, _, _}
+      # The panel's own disabled state is what a non-opted-in task would show.
+      assert render_component(&EvoDashWeb.ReviewLive.ArchiveLoad.panel/1, %{
+               state: :idle,
+               task_id: task_id,
+               opt_in?: false
+             }) =~ "Archive data was not collected for this task."
+    end
+
+    test "the retention window bounds the heap and keeps the offset honest", %{conn: conn} do
+      task_id = seed_archive_task!()
+      me = self()
+      entries = archive_page_entries(1..700)
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn node, tid, opts ->
+        send(me, {:archive_fetch, self(), node, tid, opts})
+        %{entries: Enum.slice(entries, Keyword.fetch!(opts, :offset), 100), total: 700}
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      # Page through the WHOLE roster: 700 agents, 7 pages of 100.
+      for page <- 1..6 do
+        wait_until(fn -> assigns(view).archive_fetched == page * 100 end)
+        view |> element("button[phx-click='load_more_archive']") |> render_click()
+      end
+
+      wait_until(fn -> assigns(view).archive_fetched == 700 end)
+      # Every request offset is the number of rows FETCHED so far — never the
+      # retained length (which stops at the window bound).
+      offsets =
+        Stream.repeatedly(fn ->
+          receive do
+            {:archive_fetch, _pid, _node, ^task_id, opts} -> Keyword.fetch!(opts, :offset)
+          after
+            0 -> nil
+          end
+        end)
+        |> Enum.take_while(&(&1 != nil))
+
+      assert offsets == [0, 100, 200, 300, 400, 500, 600]
+      # Only the most recent 500 rows are retained; the rest are counted.
+      assert length(assigns(view).archive_records) == 500
+      assert assigns(view).archive_dropped == 200
+      assert assigns(view).archive_total == 700
+
+      assert Enum.map(assigns(view).archive_records, & &1["agent_id"]) ==
+               archive_page_ids(201..700)
+
+      html = render(view)
+      refute has_element?(view, "button[phx-click='load_more_archive']")
+      # The count line stays honest about the omitted leading rows.
+      assert html =~ "700 agents — showing 201–700"
+      assert html =~ "earlier entries omitted"
+    end
+
+    test "a short page exhausts the archive and clamps the pager", %{conn: conn} do
+      task_id = seed_archive_task!()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, opts ->
+        case Keyword.fetch!(opts, :offset) do
+          0 -> %{entries: archive_page_entries(1..100), total: 250}
+          100 -> %{entries: archive_page_entries(101..137), total: 250}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> length(assigns(view).archive_records) == 100 end)
+      view |> element("button[phx-click='load_more_archive']") |> render_click()
+      wait_until(fn -> length(assigns(view).archive_records) == 137 end)
+      # The server counted 250 rows it will never return: the EFFECTIVE total is
+      # what was fetched, so the pager stops; the label keeps the larger count.
+      assert assigns(view).archive_exhausted? == true
+      assert assigns(view).archive_total == 137
+      assert assigns(view).archive_server_total == 250
+      refute has_element?(view, "button[phx-click='load_more_archive']")
+      html = render(view)
+      assert html =~ "250 agents"
+      assert html =~ "No more archive entries."
+      refute html =~ "showing"
+    end
+
+    test "an empty page at a nonzero offset exhausts the archive", %{conn: conn} do
+      task_id = seed_archive_task!()
+
+      Application.put_env(:evo_dash, :review_archive_runner, fn _node, _tid, opts ->
+        case Keyword.fetch!(opts, :offset) do
+          0 -> %{entries: archive_page_entries(1..100), total: 400}
+          100 -> %{entries: [], total: 400}
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      view |> element(archive_tab_selector()) |> render_click()
+      wait_until(fn -> length(assigns(view).archive_records) == 100 end)
+      view |> element("button[phx-click='load_more_archive']") |> render_click()
+      wait_until(fn -> assigns(view).archive_exhausted? end)
+      assert length(assigns(view).archive_records) == 100
+      assert assigns(view).archive_total == 100
+      refute has_element?(view, "button[phx-click='load_more_archive']")
+      assert render(view) =~ "No more archive entries."
+    end
+
     test "a failed append keeps the loaded page and offers a retry", %{conn: conn} do
       task_id = seed_archive_task!()
       me = self()
@@ -5774,6 +5901,43 @@ defmodule EvoDashWeb.ReviewLiveTest do
   # LITE and never touches the per-agent archive (its own table, served through
   # the paged runner seams), so the records are only reachable through the
   # on-demand fetch. Returns the task id.
+  # The SAME completed task, but started WITHOUT the archive opt-in: the
+  # review page must offer no Archive tab and never page the roster.
+  defp seed_task_without_archive! do
+    task_id = "review_test_no_archive_#{System.unique_integer([:positive])}"
+
+    task = %TaskInfo{
+      id: task_id,
+      type: :evolve,
+      status: :completed,
+      opts: [path: "/nonexistent/repo/path", objective: "Test objective"],
+      ref: nil,
+      started_at: DateTime.utc_now(),
+      finished_at: DateTime.utc_now(),
+      logs: [],
+      review_status: nil,
+      result:
+        {:ok,
+         %{
+           commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+           branch_name: "evogit/test-branch",
+           result: "Agent summary",
+           pr_url: nil,
+           pr_title: nil
+         }}
+    }
+
+    EvoGit.Store.put_task(EvoGit.Store, task)
+
+    on_exit(fn ->
+      TaskRegistry.delete_task(task_id)
+      # Synchronize the deletion cast.
+      TaskRegistry.list_tasks()
+    end)
+
+    task_id
+  end
+
   defp seed_archive_task! do
     task_id = "review_test_lazy_archive_#{System.unique_integer([:positive])}"
 
