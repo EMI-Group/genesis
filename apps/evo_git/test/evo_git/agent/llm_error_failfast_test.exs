@@ -42,6 +42,15 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
   sibling `async: false` suites `llm_retry_policy_test.exs` and
   `tool_dispatch_retry_slot_test.exs`, so it must never run concurrently with
   them.
+
+  `EvoGit.PeakHourEngine` is SUSPENDED for the whole module (`:sys.suspend` in
+  `setup`, `:sys.resume` in `on_exit` AFTER the profile restore), because its
+  "scheduler_config" wakeup re-derives the `model_concurrency` map from
+  `model_profiles` and REPLACES it wholesale: its read and its apply are not
+  atomic, so a profile restore/pin landing between them makes it overwrite the
+  pinned single-profile pool map with one computed from the previous profile
+  set — `@model_id` then vanishes from `get_llm_slot_status/0` and every
+  slot-status wait in this module becomes unreachable.
   """
   use ExUnit.Case, async: false
 
@@ -379,6 +388,18 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
     Application.put_env(:evo_git, :llm_model_exhaustion_backoff_base_ms, @exhaustion_base_ms)
     Application.put_env(:evo_git, :llm_model_exhaustion_backoff_cap_ms, @exhaustion_cap_ms)
 
+    # Suspend the peak-hour engine for the whole test (the `cost_test` /
+    # `tool_dispatch_retry_slot_test` idiom). Its "scheduler_config" wakeup
+    # re-derives the `model_concurrency` map from `model_profiles` and replaces
+    # it WHOLESALE, but its read and its apply are not atomic: a profile
+    # restore or pin landing in between makes it overwrite the pinned
+    # single-profile pool map with a map computed from the PREVIOUS profile set
+    # (the operator's ambient profiles, every capacity floored). `@model_id`
+    # then disappears from `get_llm_slot_status/0` and every slot wait below
+    # becomes unreachable.
+    engine = Process.whereis(EvoGit.PeakHourEngine)
+    if engine, do: :sys.suspend(engine)
+
     # Single-slot "default" pool: the fail-fast test must end with that slot
     # cleanly released, and the 402 test's queued retry is observable per model.
     AgentScheduler.update_config(
@@ -388,6 +409,9 @@ defmodule EvoGit.Agent.LlmErrorFailFastTest do
     on_exit(fn ->
       AgentScheduler.resume()
       AgentScheduler.update_config(model_profiles: original_profiles)
+      # Resumed only AFTER the profile restore, so the engine's queued
+      # broadcasts are re-derived from the restored config.
+      if engine, do: :sys.resume(engine)
       restore_env(:evo_git, :llm_retry_backoff_base_ms, original_backoff_base)
       restore_env(:evo_git, :llm_model_exhaustion_backoff_base_ms, original_exhaustion_base)
       restore_env(:evo_git, :llm_model_exhaustion_backoff_cap_ms, original_exhaustion_cap)
