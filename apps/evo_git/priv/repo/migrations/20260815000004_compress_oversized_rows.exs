@@ -11,14 +11,39 @@ defmodule EvoGit.Repo.Migrations.CompressOversizedRows do
   BUT SQLite can only do that by walking the table, and on a DB whose rows
   still carry multi-MB `result`/`archive_metadata` blobs the `updated_at`/`id`
   columns sit physically AFTER the blob overflow chains, so the walk crawls
-  those pages. Measured on a 442 MiB live copy (one 103 MiB result + 103 MiB
-  archive_metadata): the index build alone was **26.0 s** in that state and
-  **57.8 ms** on the compressed + defragmented DB — the whole difference is
-  this migration's rewrite (~1.1 s of UPDATE/SELECT work).
+  those pages. Measured on a 442 MiB live copy (956 rows, one 103 MiB `result`
+  + an equally large `archive_metadata`): the index build alone was
+  **26 181 ms** in that state and **11–15 ms** after this rewrite — the
+  build must not run first.
 
   Do NOT renumber the two migrations back (or insert a new index migration at
   a lower version). If a future index must be added, give it a version ABOVE
   `20260815000005`.
+
+  ## Measured first boot — what this swap does and does NOT buy
+
+  | order | index build | this rewrite | total boot |
+  |---|---|---|---|
+  | index first (pre-swap) | 26 181 ms | ~0.9 s | 31 982 ms |
+  | rewrite first (this) | 15 ms | ~26 s | 31 400 / 32 091 ms |
+  | index first, WARM page cache | 66 ms | ~0.9 s | 6 306 ms |
+  | rewrite first, WARM page cache | 11 ms | ~1.0 s | 6 208 ms |
+
+  (two cold runs are shown for this order; `EvoGit.Store.Boot.start_dynamic/2`
+  on a copy of the live `tasks.sqlite`.)
+
+  The index build can no longer crawl overflow chains — that is structural. A
+  COLD first boot, however, does not get shorter: the ~26 s is the cold random
+  page-read cost of the giant overflow chains themselves (30 000 random 4 KiB
+  reads of the copied file: 15.3 s cold vs 39 ms once cached), and it simply
+  MOVES here — the candidate sweep (`length()` + `NOT LIKE` read every blob
+  byte: 14.0–14.2 s) plus the blob-freeing UPDATE of the 103 MiB row
+  (11.9–12.1 s) take the time the index build used to take. With the file
+  already in the page cache both orders boot in ~6 s. Making the cold boot
+  fast needs this migration to stop reading the pre-compression blobs during
+  boot (e.g. an O(1) `ALTER TABLE ... ADD COLUMN payload_version` marker that
+  selects candidates from header-only data, or running the rewrite
+  out-of-band) — renumbering cannot do it.
 
   ## Why this migration exists
 

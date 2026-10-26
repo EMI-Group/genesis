@@ -11,10 +11,12 @@ defmodule EvoGit.Repo.Migrations.CoveringIndexes do
   chains to reach the `updated_at`/`id` values stored behind them. Measured on
   a 442 MiB live copy (one row with a 103 MiB result + 103 MiB
   archive_metadata): `CREATE INDEX idx_tasks_status_updated_at_id` took
-  **26.0 s** on the raw pre-migration file and **57.8 ms** on the same file
-  after the compression/dedup rewrite (migration `20260815000004`, whose own
-  work is ~1.1 s). Building the indexes first therefore makes the first boot
-  after an upgrade ~30x slower for exactly the databases that need it most.
+  **26 181 ms** as the first migration on the raw file and **15 ms** when it
+  runs after the compression/dedup rewrite (`20260815000004`). Building the
+  indexes first therefore makes the first boot after an upgrade pay that
+  ~26 s in the index build (it merely relocates: on a COLD page cache the
+  rewrite pays the same cold page reads — see `20260815000004`'s "Measured
+  first boot" table).
 
   Do NOT renumber this migration below the compression rewrite (or insert a
   new index migration between them). Any future index migration belongs at a
