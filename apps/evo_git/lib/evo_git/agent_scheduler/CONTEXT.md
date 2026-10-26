@@ -119,6 +119,7 @@ Two independent pools of agent-ID `MapSet`s; capacity = `capacity - map_size(hol
 ### WorktreeRetry — transient filesystem failure retries
 
 Transient set: `:eacces`, `:eperm`, `:eexist`, `:enotempty`, `:ebusy`, `:again`, `:eintr`; `:enoent` deliberately absent — "not found" means the goal is met (`rm_rf_retry/2` → `{:ok, []}`). Retryable: 2-/3-tuple fs errors, git `{:error, {tag, output}}` and binary error shapes — EXCEPT repo-gone outputs (`repo_gone_output?/1`).
+Delays: `delay_stream/1` precedence is an explicit `:delays` opt → the CALL-TIME app-env seam `Application.get_env(:evo_git, :worktree_retry_delays)` (test-only) → the production default `exponential_backoff(50, 2) |> cap(200) |> take(3)` = `[50, 100, 200]` (a leading `0` "first attempt now" delay is always prepended, so 4 attempts).
 
 ## Persistent Foreign-Repo Worktrees (ForeignWorktree)
 
