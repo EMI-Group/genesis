@@ -10,6 +10,10 @@ defmodule EvoGit.Store.RepoScopeTest do
   database, and the caller's binding is restored afterwards — on the happy
   path, on a raise, and across nesting.
 
+  Each instance's database file starts as a byte copy of the module's
+  schema-complete template (`EvoGit.TestSupport.StoreTemplate`), so the six
+  migrations' DDL is paid once per module instead of once per test.
+
   The default binding of a fresh test process is the canonical NAMED instance
   (the `EvoGit.Repo` module atom — `get_dynamic_repo/0` falls back to it when
   the pdict key is unset), so "restored" means back to that atom here.
@@ -21,8 +25,20 @@ defmodule EvoGit.Store.RepoScopeTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.ProjectRow
+  alias EvoGit.TestSupport.StoreTemplate
 
   @canonical_default Repo
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -49,6 +65,11 @@ defmodule EvoGit.Store.RepoScopeTest do
         "evogit_repo_scope_#{tag}_#{:os.getpid()}_#{System.system_time(:millisecond)}_" <>
           "#{unique}_#{inspect(self())}.sqlite"
       )
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)

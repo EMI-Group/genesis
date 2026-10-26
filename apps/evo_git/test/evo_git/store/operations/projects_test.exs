@@ -10,9 +10,12 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
   (`:ok` / struct-or-nil / list / integer) and the REPLACE semantics of the
   old `INSERT OR REPLACE`.
 
-  Self-contained by design (R4a unit contract): no shared test helper files —
-  the production `EvoGit.Store.Boot` serializes concurrent migration runs
-  globally (`:global.trans`), so parallel async boots are safe.
+  The schema itself is NOT created per test: `EvoGit.TestSupport.StoreTemplate`
+  builds one schema-complete, checkpointed SQLite file per module and every
+  test starts from a byte copy of it (the same per-test isolation, without
+  paying the six migrations' DDL again). The production `EvoGit.Store.Boot`
+  still serializes concurrent migration runs globally (`:global.trans`), so
+  parallel async boots are safe.
   """
 
   use ExUnit.Case, async: true
@@ -20,6 +23,18 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
   alias EvoGit.RecentProject
   alias EvoGit.Store.Boot
   alias EvoGit.Store.Operations.Projects, as: Ops
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -36,6 +51,11 @@ defmodule EvoGit.Store.Operations.ProjectsTest do
         "evogit_r4a_#{tag}_#{:os.getpid()}_#{System.system_time(:millisecond)}_" <>
           "#{System.unique_integer([:positive, :monotonic])}.sqlite"
       )
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)

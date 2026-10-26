@@ -27,7 +27,10 @@ defmodule EvoGit.Store.StoreInvariantsTest do
       `EvoGit.TaskRegistry.Lease` as "renew its lease, never pronounced leaked".
 
   Every test starts its own uniquely-named `EvoGit.Store` GenServer, so nothing
-  here touches the shared application store.
+  here touches the shared application store; its database file is a byte copy of
+  the module's schema-complete template
+  (`EvoGit.TestSupport.StoreTemplate`), so the migrations' DDL is paid once per
+  module instead of once per test.
   """
   use ExUnit.Case, async: true
 
@@ -42,6 +45,18 @@ defmodule EvoGit.Store.StoreInvariantsTest do
   alias EvoGit.Store.Types.Status
   alias EvoGit.TaskInfo
   alias EvoGit.TaskRegistry.Lease
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # The REAL `tasks.status` values the registry persists, enumerated by hand so
   # this is a check, not a tautology: `:pending` (create), `:running` (start),
@@ -289,7 +304,8 @@ defmodule EvoGit.Store.StoreInvariantsTest do
   defp decode_keys(decoded), do: Enum.map(decoded, fn {key, _value} -> to_string(key) end)
 
   # Uniquely-named store GenServer on its own tmp SQLite file (the same shape
-  # `operations/archives_test.exs` uses for its facade section).
+  # `operations/archives_test.exs` uses for its facade section). The file starts
+  # as a copy of the module's schema template.
   defp start_store! do
     unique =
       "#{System.pid()}_#{System.system_time(:millisecond)}_" <>
@@ -297,6 +313,11 @@ defmodule EvoGit.Store.StoreInvariantsTest do
 
     data_dir = Path.join(System.tmp_dir!(), "evogit_invariants_#{unique}.sqlite")
     name = :"invariants_store_#{unique}"
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(data_dir)
 
     {:ok, pid} = Store.start_link(data_dir: data_dir, name: name, pool_size: 1)
     Process.unlink(pid)

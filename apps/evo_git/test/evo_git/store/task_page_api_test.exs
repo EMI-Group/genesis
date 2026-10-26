@@ -10,13 +10,27 @@ defmodule EvoGit.Store.TaskPageApiTest do
   (including the `select_tasks_page(opts)` single-argument form that targets the
   default store), dispatch through the store GenServer, and keep their return
   shapes. Each test starts its OWN uniquely-named store GenServer so it never
-  touches the shared application store.
+  touches the shared application store; its database file is a byte copy of the
+  module's schema-complete template (`EvoGit.TestSupport.StoreTemplate`), so the
+  six migrations' DDL is paid once per module instead of once per test.
   """
 
   use ExUnit.Case, async: true
 
   alias EvoGit.Store
   alias EvoGit.TaskInfo
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   defp start_store! do
     unique =
@@ -25,6 +39,11 @@ defmodule EvoGit.Store.TaskPageApiTest do
 
     data_dir = Path.join(System.tmp_dir!(), "evogit_page_api_#{unique}.sqlite")
     name = :"page_api_store_#{unique}"
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(data_dir)
 
     {:ok, pid} = Store.start_link(data_dir: data_dir, name: name, pool_size: 1)
     Process.unlink(pid)

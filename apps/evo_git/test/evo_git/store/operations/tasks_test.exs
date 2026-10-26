@@ -4,9 +4,12 @@ defmodule EvoGit.Store.Operations.TasksTest do
   operations.
 
   Each test boots its own UNNAMED dynamic repo (`EvoGit.Store.Boot.start_dynamic/1`)
-  on a unique tmp SQLite file, so `async: true` is safe. The production
-  `EvoGit.Store.Boot` serializes concurrent migration runs globally
-  (`:global.trans`), so parallel boots are safe. Raw-column assertions go
+  on a unique tmp SQLite file, so `async: true` is safe. The file starts as a
+  byte copy of the module's schema-complete template
+  (`EvoGit.TestSupport.StoreTemplate`), so the six migrations' DDL is paid once
+  per module instead of once per test. The production `EvoGit.Store.Boot`
+  serializes concurrent migration runs globally (`:global.trans`), so parallel
+  boots are safe. Raw-column assertions go
   through the read-only `TaskRowRaw` projection (exact stored bytes, no type
   casting).
   """
@@ -21,6 +24,18 @@ defmodule EvoGit.Store.Operations.TasksTest do
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskInfo
+  alias EvoGit.TestSupport.StoreTemplate
+
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
 
   # ── Self-contained helpers (no shared files) ─────────────────────────────
 
@@ -35,6 +50,11 @@ defmodule EvoGit.Store.Operations.TasksTest do
       "#{System.system_time(:millisecond)}_#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
 
     path = Path.join(System.tmp_dir!(), "evogit_r2a_#{unique}.sqlite")
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)

@@ -38,14 +38,28 @@ defmodule EvoGit.Store.Operations.LightweightTest do
   alias EvoGit.Store.Operations.Lightweight
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
+  alias EvoGit.TestSupport.StoreTemplate
 
   @cutoff ~U[2024-06-01 00:00:00.000Z]
   @cutoff_iso "2024-06-01T00:00:00.000Z"
 
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   # Starts an unnamed dynamic repo on a UNIQUE tmp database file (per test
-  # process — `async: true` safe), unlinked, stopped AND DELETED on exit.
+  # process — `async: true` safe), unlinked, stopped AND DELETED on exit. The
+  # file starts as a byte copy of the module's schema template, so the six
+  # migrations' DDL is paid once per module instead of once per test.
   #
   # The production `EvoGit.Store.Boot` serializes concurrent migration runs
   # globally (`:global.trans`), so parallel boots are safe.
@@ -63,6 +77,11 @@ defmodule EvoGit.Store.Operations.LightweightTest do
       "#{System.system_time(:millisecond)}_#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}"
 
     path = Path.join(System.tmp_dir!(), "evogit_r3a_#{unique}.sqlite")
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)

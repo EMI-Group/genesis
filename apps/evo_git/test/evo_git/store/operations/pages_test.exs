@@ -27,7 +27,9 @@ defmodule EvoGit.Store.Operations.PagesTest do
   Every test boots its own UNNAMED dynamic repo on a unique tmp SQLite file
   (`async: true` is safe — `EvoGit.Store.Boot` serializes migration runs with a
   `:global` lock), mirroring `operations/summaries_test.exs` +
-  `operations/tasks_test.exs`.
+  `operations/tasks_test.exs`. The file starts as a byte copy of the module's
+  schema-complete template (`EvoGit.TestSupport.StoreTemplate`), so the six
+  migrations' DDL is paid once per module instead of once per test.
   """
 
   use ExUnit.Case, async: true
@@ -41,6 +43,7 @@ defmodule EvoGit.Store.Operations.PagesTest do
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRowRaw
   alias EvoGit.TaskInfo
+  alias EvoGit.TestSupport.StoreTemplate
 
   @summary_keys [
     :id,
@@ -63,6 +66,17 @@ defmodule EvoGit.Store.Operations.PagesTest do
 
   @base_started ~U[2026-01-01 00:00:00.000Z]
 
+  # ONE schema-complete template per module; each test copies it and boots its
+  # OWN database file from the copy.
+  setup_all do
+    {:ok, %{copy_db: StoreTemplate.new!()}}
+  end
+
+  setup %{copy_db: copy_db} do
+    Process.put(:store_template_copy, copy_db)
+    :ok
+  end
+
   # ── Helpers ──────────────────────────────────────────────────────────────
 
   # Unique-per-call database file, then an unnamed dynamic repo. The name embeds
@@ -75,6 +89,11 @@ defmodule EvoGit.Store.Operations.PagesTest do
         "evogit_pages_#{tag}_#{System.pid()}_#{System.system_time(:millisecond)}_" <>
           "#{System.unique_integer([:positive, :monotonic])}_#{inspect(self())}.sqlite"
       )
+
+    # The module's template copy function, put in the test's process dictionary
+    # by `setup/1` (a `setup_all` value cannot reach a helper called from a
+    # test body). Boot then only has to run the probe-guarded no-op migrations.
+    Process.get(:store_template_copy).(path)
 
     {:ok, pid} = Boot.start_dynamic(path)
     Process.unlink(pid)
