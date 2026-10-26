@@ -2,6 +2,10 @@ defmodule EvoGit.Agent.ContextMergeTest do
   @moduledoc """
   `async: true` — every test builds its own real git repositories under the
   ExUnit `:tmp_dir`; no ETS / global process state is touched.
+
+  Repository fixtures start from ONE per-module template (`setup_all`) whose
+  `.git` is copied per test instead of re-running `git init` + the identity
+  config (4 subprocesses) for every test; see `git_template!/0`.
   """
   use ExUnit.Case, async: true
 
@@ -10,6 +14,12 @@ defmodule EvoGit.Agent.ContextMergeTest do
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.ContextMerge
   alias EvoGit.Agent.ContextMerge.Report
+
+  setup_all do
+    template = git_template!()
+    on_exit(fn -> File.rm_rf!(template) end)
+    %{git_template: template}
+  end
 
   describe "file_node_path/1" do
     test "root-level file maps to ./" do
@@ -99,8 +109,8 @@ defmodule EvoGit.Agent.ContextMergeTest do
   end
 
   describe "merge_children/3" do
-    test "multi-child clean octopus merge", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "octopus"))
+    test "multi-child clean octopus merge", %{tmp_dir: tmp_dir, git_template: template} do
+      dir = init_repo(template, Path.join(tmp_dir, "octopus"))
 
       base =
         commit_files(
@@ -137,8 +147,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert clean_worktree?(dir)
     end
 
-    test "out-of-scope CONTEXT.md edit is dropped in favour of the owner", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "out_of_scope"))
+    test "out-of-scope CONTEXT.md edit is dropped in favour of the owner", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "out_of_scope"))
 
       base =
         commit_files(
@@ -197,8 +210,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert clean_worktree?(dir)
     end
 
-    test "in-scope child beats an ancestor-level edit", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "in_scope"))
+    test "in-scope child beats an ancestor-level edit", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "in_scope"))
 
       base = commit_files(dir, [{"src/CONTEXT.md", "base src context\n"}], "base")
 
@@ -228,8 +244,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert clean_worktree?(dir)
     end
 
-    test "two children owning the same CONTEXT.md are a genuine conflict", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "same_owner"))
+    test "two children owning the same CONTEXT.md are a genuine conflict", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "same_owner"))
 
       base =
         commit_files(
@@ -279,8 +298,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       refute note =~ "Branches of merged children were deleted"
     end
 
-    test "a non-CONTEXT.md conflict is never auto-resolved", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "source_conflict"))
+    test "a non-CONTEXT.md conflict is never auto-resolved", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "source_conflict"))
 
       base =
         commit_files(
@@ -319,8 +341,8 @@ defmodule EvoGit.Agent.ContextMergeTest do
       refute note =~ "Auto-resolutions applied"
     end
 
-    test "no changes yields :no_changes and no note", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "no_changes"))
+    test "no changes yields :no_changes and no note", %{tmp_dir: tmp_dir, git_template: template} do
+      dir = init_repo(template, Path.join(tmp_dir, "no_changes"))
       head = commit_files(dir, [{"CONTEXT.md", "# Root\n"}], "base")
 
       report = ContextMerge.merge_children(dir, [child(0, head, "./")])
@@ -336,8 +358,11 @@ defmodule EvoGit.Agent.ContextMergeTest do
       assert clean_worktree?(dir)
     end
 
-    test "success note carries the sentence, resolutions and dropped diff", %{tmp_dir: tmp_dir} do
-      dir = init_repo(Path.join(tmp_dir, "note"))
+    test "success note carries the sentence, resolutions and dropped diff", %{
+      tmp_dir: tmp_dir,
+      git_template: template
+    } do
+      dir = init_repo(template, Path.join(tmp_dir, "note"))
 
       base =
         commit_files(
@@ -394,18 +419,46 @@ defmodule EvoGit.Agent.ContextMergeTest do
   # Helpers
   # ---------------------------------------------------------------------------
 
-  defp init_repo(dir) do
-    File.mkdir_p!(dir)
+  # Builds the per-module repository template ONCE (paid 4 `git` subprocesses
+  # per module instead of per test): `git init` with an EMPTY template dir (no
+  # hook samples / description boilerplate, so the copied `.git` is a handful of
+  # files), the fixture commit identity + `commit.gpgsign=false`, and
+  # `core.abbrev=40` so `git commit` prints the new commit's FULL sha (see
+  # `commit_files/3` — that removes one `git rev-parse` per commit).
+  defp git_template! do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_git_template_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
 
-    for args <- [
-          ["init", "-q"],
-          ["config", "user.email", "test@example.com"],
-          ["config", "user.name", "Test User"],
-          ["config", "commit.gpgsign", "false"]
+    empty_template = Path.join(root, "empty_template")
+    File.mkdir_p!(empty_template)
+    seed = Path.join(root, "seed")
+
+    {_output, 0} =
+      System.cmd("git", ["init", "-q", "--template=#{empty_template}", seed],
+        stderr_to_stdout: true
+      )
+
+    for {key, value} <- [
+          {"user.email", "test@example.com"},
+          {"user.name", "Test User"},
+          {"commit.gpgsign", "false"},
+          {"core.abbrev", "40"}
         ] do
-      {_output, 0} = System.cmd("git", args, cd: dir, stderr_to_stdout: true)
+      {_output, 0} =
+        System.cmd("git", ["config", key, value], cd: seed, stderr_to_stdout: true)
     end
 
+    seed
+  end
+
+  # Copies the template's `.git` into `dir`: a fresh, isolated repository whose
+  # every ref is created by this test.
+  defp init_repo(template, dir) do
+    File.mkdir_p!(dir)
+    File.cp_r!(Path.join(template, ".git"), Path.join(dir, ".git"))
     dir
   end
 
@@ -417,7 +470,22 @@ defmodule EvoGit.Agent.ContextMergeTest do
     end)
 
     {:ok, _output} = Git.add(dir, ".")
-    {:ok, _output} = Git.commit(dir, message)
+    {:ok, output} = Git.commit(dir, message)
+    committed_sha(dir, output)
+  end
+
+  # `git commit` prints "[<branch> <sha>] <subject>" — the template pins
+  # `core.abbrev=40`, so that sha is complete and usable as a merge target
+  # without an extra `rev-parse` spawn. If the output shape ever changes, fall
+  # back to resolving HEAD (correct, only slower).
+  defp committed_sha(dir, commit_output) do
+    case Regex.run(~r/^\[[^\]]* ([0-9a-f]{40})\]/m, commit_output) do
+      [_, sha] -> sha
+      _ -> rev_parse!(dir)
+    end
+  end
+
+  defp rev_parse!(dir) do
     {:ok, sha} = Git.rev_parse(dir)
     sha
   end
