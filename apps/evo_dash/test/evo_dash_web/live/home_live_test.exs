@@ -2519,18 +2519,14 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view)[:pending_approvals] == []
 
       # The outcome is applied ASYNCHRONOUSLY from the responder result (the
-      # responder runs in a `EvoDash.SafeCall` TaskSupervisor child).
-      #
-      # ⚠ WIRING BUG (reported, NOT fixed here — lib is out of scope):
-      # `EvoDash.SafeCall.start/3` sends `{tag, result}`, so with a 3-tuple tag
-      # the message actually delivered to the LiveView is the NESTED
-      # `{{:approval_response_result, request_id, node}, {:ok, {:error, reason}}}`
-      # — the shape `SettingsLive`/`SystemLive` match. HomeLive's clause
-      # (`{:approval_response_result, request_id, node, result}`) is FLATTENED,
-      # so in production the failed-response flash never renders (the message
-      # falls through to the catch-all). Deliver the shape the handler
-      # documents so the HANDLER contract (flash + card gone) stays pinned.
-      send(view.pid, {:approval_response_result, "req-1", node(), {:ok, {:error, :nodedown}}})
+      # responder runs in a `EvoDash.SafeCall` TaskSupervisor child), which
+      # lands as `{{:approval_response_result, request_id, node}, result}`:
+      # `EvoDash.SafeCall.start/4` sends `{tag, run(fun)}` with the tag VERBATIM
+      # as the message's first element, so a 3-element tuple tag stays ONE
+      # nested tuple and is never flattened. Deliver that exact shape (the same
+      # one the real task sends, and the same nesting SettingsLive/SystemLive
+      # match) so the handler contract — flash + card gone — is what is pinned.
+      send(view.pid, {{:approval_response_result, "req-1", node()}, {:ok, {:error, :nodedown}}})
 
       # Bounded poll instead of a fixed sleep: the flash appears once the
       # result message is processed.

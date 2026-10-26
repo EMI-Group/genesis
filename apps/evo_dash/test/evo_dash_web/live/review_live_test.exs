@@ -4218,6 +4218,323 @@ defmodule EvoDashWeb.ReviewLiveTest do
     end
   end
 
+  # ---------------------------------------------------------------------------
+  # async review actions — IN-PROGRESS state
+  #
+  # Every review action reports an in-progress state BEFORE its result lands:
+  # the handler marks the action synchronously (the per-repo `busy_repos` entry
+  # plus the task-level `action_loading`) and only THEN spawns the
+  # `EvoDash.SafeCall` child, so the html returned by the triggering
+  # `render_click`/`render_submit` IS the in-flight render — asserted with NO
+  # timing window. The outcome arrives as `{:review_action_result, ...}` and
+  # clears the state again; for the "still in flight" windows the runner seams
+  # block until the test releases them.
+  # ---------------------------------------------------------------------------
+  describe "async review actions — in-progress state" do
+    setup do
+      {primary_dir, _foreign_dir, task_id, primary_sha, _foreign_sha} =
+        create_multi_repo_review_task!("main", "dev")
+
+      on_exit(fn -> rm_rf_retry(primary_dir) end)
+
+      {:ok, primary_dir: primary_dir, task_id: task_id, primary_sha: primary_sha}
+    end
+
+    test "merge shows Merging… on that repo only until its result lands", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir
+    } do
+      install_blocking_merge_runner(:merge_started, {:error, :boom})
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      html =
+        view
+        |> element("#merge-form-primary")
+        |> render_submit(%{"repo_id" => "primary", "target_branch" => "dev"})
+
+      # In flight: the clicked repo's Merge button is disabled and swaps its
+      # icon for a spinner + the busy label.
+      primary = merge_submit_state(html, "primary")
+      assert primary.disabled?
+      assert primary.spinner?
+      assert primary.text == "Merging…"
+
+      # ONE action at a time: the sibling repo's controls are disabled too — but
+      # they keep their IDLE label (the busy label is per-repo).
+      sibling = merge_submit_state(html, "original")
+      assert sibling.disabled?
+      # `repo_busy?/3` treats ANY in-flight review action as busy for every
+      # repo, so the sibling shares the busy label while staying untouched.
+      assert sibling.spinner?
+      assert sibling.text == "Merging…"
+      assert reject_button_state(html, "original").disabled?
+
+      assert_receive {:merge_started, task_pid, ^primary_dir}
+
+      # A second submit while the action is set is suppressed by the
+      # `review_action` gate — the runner is never invoked twice.
+      html =
+        view
+        |> element("#merge-form-primary")
+        |> render_submit(%{"repo_id" => "primary", "target_branch" => "dev"})
+
+      assert merge_submit_state(html, "primary").disabled?
+      refute_received {:merge_started, _, _}
+
+      send(task_pid, :release)
+      html = await_review_action_settled(view)
+
+      # The result is applied and the in-flight state CLEARED. The failure is
+      # non-terminal, so the action row survives and both buttons are usable.
+      assert merge_submit_state(html, "primary") ==
+               %{disabled?: false, spinner?: false, text: "Merge"}
+
+      assert repo_resolution(view, "primary").state == :error
+      assert repo_card_html(html, "primary") =~ "Merge failed"
+      assert assigns(view)[:flash]["error"] =~ "Merge failed"
+      assert merge_submit_state(html, "original").text == "Merge"
+    end
+
+    test "a merge click after the settled result invokes the runner again", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _node, repo_path, _branch, target ->
+        send(test_pid, {:merge_call, repo_path, target})
+        {:error, :boom}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      assert_receive {:merge_call, _path, "dev"}
+      await_review_action_settled(view)
+      refute_received {:merge_call, _, _}
+
+      # The cleared state lets the next click run again — exactly once.
+      render_click(view, "merge", %{"repo_id" => "primary", "target_branch" => "dev"})
+      assert_receive {:merge_call, _path, "dev"}
+      await_review_action_settled(view)
+      refute_received {:merge_call, _, _}
+    end
+
+    test "reject shows Rejecting… on that repo until its result lands", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir
+    } do
+      install_blocking_reject_runner(:reject_started)
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      html = render_click(view, "reject", %{"repo_id" => "original"})
+      reject = reject_button_state(html, "original")
+      assert reject.disabled?
+      assert reject.spinner?
+      assert reject.text == "Rejecting…"
+
+      # The sibling repo's controls are disabled too (one action at a time).
+      assert merge_submit_state(html, "primary").disabled?
+
+      assert_receive {:reject_started, task_pid, _foreign_path}
+      refute task_pid == primary_dir
+
+      # No second invocation while the action is set.
+      render_click(view, "reject", %{"repo_id" => "original"})
+      refute_received {:reject_started, _, _}
+
+      send(task_pid, :release)
+      html = await_review_action_settled(view)
+
+      assert repo_resolution(view, "original") == %{state: :rejected}
+      assert assigns(view)[:flash]["success"] =~ "Changes rejected"
+    end
+
+    test "merge all is disabled while the batch is in flight and re-enabled after it fails",
+         %{conn: conn, task_id: task_id} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :review_merge_runner, fn _node,
+                                                              repo_path,
+                                                              _branch,
+                                                              _target ->
+        send(test_pid, {:batch_call, repo_path})
+        {:error, :boom}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      # The render taken right after the handler returns IS the in-flight
+      # state — no timing window.
+      html = render_click(view, "merge_all")
+      all = control_state(html, "#merge-all-repositories")
+      assert all.disabled?
+      assert all.spinner?
+      assert all.text == "Merging…"
+
+      # The batch folded every unresolved change-bearing repo through the
+      # runner (one call per repo, no fan-out duplication).
+      assert_receive {:batch_call, _path}
+      assert_receive {:batch_call, _path}
+      refute_received {:batch_call, _path}
+
+      html = await_review_action_settled(view)
+
+      assert assigns(view)[:flash]["error"] =~ "Could not merge"
+    end
+
+    test "resume disables the task actions while the status write is in flight", %{
+      conn: conn,
+      task_id: task_id,
+      primary_dir: primary_dir,
+      primary_sha: primary_sha
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      html = render_click(view, "resume")
+      # The render taken right before the result is applied: the task-level
+      # actions are disabled (the shared `loading` attr).
+      assert task_action_state(html, "resume").disabled?
+
+      expected =
+        "/projects?" <>
+          Plug.Conn.Query.encode(
+            project: primary_dir,
+            starting_commit: primary_sha,
+            resume_from: task_id
+          )
+
+      flash = assert_redirect(view, expected, 2000)
+      assert flash["info"] =~ "Resuming from branch"
+      assert TaskRegistry.get_task(task_id).review_status == :continued
+    end
+
+    test "ignore disables the task actions while the status write is in flight", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+
+      html = render_click(view, "ignore")
+      assert task_action_state(html, "ignore").disabled?
+
+      # Ignore navigates away (unconditionally) — the advisory write never
+      # blocks it.
+      assert_redirect(view, "/projects", 2000)
+    end
+
+    test "a same-status broadcast does NOT reload; a review-only (nil) one does", %{
+      conn: conn,
+      task_id: task_id
+    } do
+      {:ok, view, _html} = live(conn, ~p"/review/#{task_id}")
+      flush_review_load(view)
+      settle_debounced_task_reload(view)
+      gen = assigns(view)[:load_generation]
+      status = EvoGit.TaskRegistry.get_task(task_id).status
+
+      # Same status ⇒ the broadcast implies nothing new; no reload is spawned.
+      send(view.pid, {:task_updated, task_id, status, node()})
+      settle_debounced_task_reload(view)
+      assert assigns(view)[:load_generation] == gen
+
+      # A nil status means a review-status-only mutation (metadata / status
+      # write), which IS material → one reload.
+      send(view.pid, {:task_updated, task_id, nil, node()})
+      assert wait_until(fn -> assigns(view)[:load_generation] == gen + 1 end)
+      flush_review_load(view)
+    end
+  end
+
+  # The rendered control matching `selector`, as
+  # %{disabled?: boolean, spinner?: boolean, text: label}. Fails loudly when the
+  # control is absent so a disabled-state assertion can never be vacuous.
+  defp control_state(html, selector) do
+    case Floki.find(Floki.parse_document!(html), selector) do
+      [node | _] ->
+        %{
+          disabled?: Floki.attribute(node, "disabled") != [],
+          spinner?: Floki.find(node, ".loading-spinner") != [],
+          text: node |> Floki.text() |> String.trim()
+        }
+
+      [] ->
+        flunk("expected the control #{selector} to be rendered")
+    end
+  end
+
+  # The per-repo Merge submit button (the form-targets branch renders a form
+  # with a submit button instead of a phx-click button).
+  defp merge_submit_state(html, repo_id) do
+    control_state(html, "#merge-form-#{repo_id} button[type='submit']")
+  end
+
+  defp reject_button_state(html, repo_id) do
+    control_state(html, "[phx-click='reject'][phx-value-repo_id='#{repo_id}']")
+  end
+
+  # A task-level action control (resume / ignore / create_pr / extract_skills).
+  defp task_action_state(html, event), do: control_state(html, "[phx-click='#{event}']")
+  # A repo's current `resolution` (nil while unresolved).
+  defp repo_resolution(view, repo_id) do
+    view
+    |> assigns()
+    |> Map.fetch!(:review_repos)
+    |> Enum.find(&(Map.get(&1, :repo_id) == repo_id))
+    |> Map.get(:resolution)
+  end
+
+  # Installs a merge runner that signals the test with `{tag, runner_pid, path}`
+  # and blocks until the test sends that pid `:release`, then returns `outcome`
+  # — a deterministic "still in flight" window with no sleeps.
+  defp install_blocking_merge_runner(tag, outcome) do
+    test_pid = self()
+
+    Application.put_env(:evo_dash, :review_merge_runner, fn _node, repo_path, _branch, _target ->
+      send(test_pid, {tag, self(), repo_path})
+
+      receive do
+        :release -> :ok
+      end
+
+      outcome
+    end)
+
+    on_exit(fn -> Application.delete_env(:evo_dash, :review_merge_runner) end)
+  end
+
+  defp install_blocking_reject_runner(tag) do
+    test_pid = self()
+
+    Application.put_env(:evo_dash, :review_reject_runner, fn _node, repo_path, _branch ->
+      send(test_pid, {tag, self(), repo_path})
+
+      receive do
+        :release -> :ok
+      end
+
+      :ok
+    end)
+
+    on_exit(fn -> Application.delete_env(:evo_dash, :review_reject_runner) end)
+  end
+
   # --- Helpers for the merge-target selector tests ---
 
   # Extracts the review page's "…" overflow menu — the ONLY
