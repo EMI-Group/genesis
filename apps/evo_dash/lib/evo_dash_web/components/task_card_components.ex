@@ -86,15 +86,19 @@ defmodule EvoDashWeb.TaskCardComponents do
           </div>
         </div>
 
-        <!-- Middle row: Objective text -->
+        <!-- Middle row: Objective text. DISPLAY-only cap (no limit note — it is
+             a 2-line clamped teaser): a multi-MB objective would otherwise ride
+             the `title` attribute + body of EVERY card render. The full text
+             stays in the Objective card below (capped, with a note) and in the
+             Copy payload (`objective_text/1`, full). -->
         <div class="pr-2 -mt-2">
-          <% objective_text = objective_text(@task.opts) %>
-          <%= if objective_text != "" do %>
+          <% objective_preview = text_preview(objective_text(@task.opts), true) %>
+          <%= if objective_preview.text != "" do %>
             <p
               class="text-base text-base-content/90 font-medium leading-relaxed line-clamp-2"
-              title={objective_text}
+              title={objective_preview.text}
             >
-              {objective_text}
+              {objective_preview.text}
             </p>
           <% else %>
             <p
@@ -484,7 +488,8 @@ defmodule EvoDashWeb.TaskCardComponents do
                 hidden, no KeyError).
               --%>
               <%= if Map.get(@task, :logs) not in [nil, []] do %>
-                <% log_count = length(Map.get(@task, :logs, [])) %>
+                <% logs_preview = log_preview(Map.get(@task, :logs)) %>
+                <% log_count = logs_preview.total %>
                 <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
                   <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
                     <.icon
@@ -498,8 +503,17 @@ defmodule EvoDashWeb.TaskCardComponents do
                         else: gettext("%{count}", count: log_count)}
                     </span>
                   </summary>
+                  <%= if logs_preview.truncated? do %>
+                    <p class="text-xs text-base-content/60 mt-3">
+                      <%!-- zh_CN: log entries → "日志条目"（日志被截断时的说明） --%>{gettext(
+                        "Showing the last %{shown} of %{total} log entries",
+                        shown: format_number(length(logs_preview.items)),
+                        total: format_number(logs_preview.total)
+                      )}
+                    </p>
+                  <% end %>
                   <div class="bg-base-200 text-base-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
-                    <%= for {log, idx} <- Enum.with_index(Enum.reverse(Map.get(@task, :logs, []))) do %>
+                    <%= for {log, idx} <- Enum.with_index(logs_preview.items) do %>
                       <div class={[
                         "flex items-start gap-3 p-1.5 rounded transition-colors",
                         rem(idx, 2) == 0 && "bg-base-content/5",
@@ -643,6 +657,59 @@ defmodule EvoDashWeb.TaskCardComponents do
   defp task_card_tint(%{status: status}), do: task_status_tint(status)
 
   # ---------------------------------------------------------------------------
+  # Private helpers — bounded in-card payload previews
+  # ---------------------------------------------------------------------------
+  #
+  # The EXPANDED card must never hand a multi-MB blob (or an unbounded list) to
+  # the template: one live task carried a 108 MB `result` and a 108 MB
+  # `archive_metadata`, and interpolating the raw value froze the browser/server
+  # on every rerender (a rerender happens on each debounced task reload while
+  # the card stays expanded). Every in-card text payload therefore renders a
+  # CAPPED preview (`Helpers.blob_preview/2`) plus a dim byte-count note, and
+  # the logs list renders only its newest `@in_card_log_limit` entries.
+  #
+  # `truncate: false` is deliberately NOT capped: that is the Full Result /
+  # Full Objective MODAL path (`render_result_full/1` / `render_options_full/1`),
+  # reached only by an explicit user action (`view_full_result` /
+  # `view_full_options`) and scrolled by the modal's own container.
+  @in_card_blob_limit 16_384
+  @in_card_log_limit 200
+
+  # Text preview for an in-card payload; `text` is already stringified by the
+  # caller (a binary result, or `inspect/2` of a non-binary term).
+  defp text_preview(text, true), do: blob_preview(text, @in_card_blob_limit)
+
+  defp text_preview(text, false) when is_binary(text),
+    do: %{text: text, truncated?: false, total_bytes: byte_size(text)}
+
+  defp text_preview(_text, false), do: %{text: "", truncated?: false, total_bytes: 0}
+
+  # Newest-first capped view of the task's logs: one reverse pass, then
+  # `Helpers.list_preview/2` (also yields the total, so no extra `length/1`).
+  # Total for nil/non-list, so a malformed `logs` value renders nothing instead
+  # of crashing `Enum.reverse/1`.
+  defp log_preview(logs) when is_list(logs),
+    do: list_preview(Enum.reverse(logs), @in_card_log_limit)
+
+  defp log_preview(_logs), do: %{items: [], total: 0, truncated?: false}
+
+  # Dim "showing X of Y" note — rendered ONLY when a preview actually dropped
+  # bytes (a complete payload renders no note at all).
+  attr(:preview, :map, required: true)
+
+  defp preview_limit_note(assigns) do
+    ~H"""
+    <p :if={@preview.truncated?} class="text-xs text-base-content/60 mt-2">
+      <%!-- zh_CN: bytes → "字节"（预览被截断时的说明） --%>{gettext(
+        "Showing %{shown} of %{total} bytes",
+        shown: format_number(byte_size(@preview.text)),
+        total: format_number(@preview.total_bytes)
+      )}
+    </p>
+    """
+  end
+
+  # ---------------------------------------------------------------------------
   # Public helpers — render_options/2
   # ---------------------------------------------------------------------------
 
@@ -651,21 +718,26 @@ defmodule EvoDashWeb.TaskCardComponents do
   `:objective`), trimmed of surrounding whitespace. Shared by the collapsed-card
   preview, the expanded Objective card (including its copy button), and
   `render_options/2`.
+
+  Deliberately returns the COMPLETE text — it feeds the Copy button's
+  `data-content` payload, an explicitly user-requested clipboard write. Only
+  the in-card RENDERING path (`render_options/2` with `truncate: true`) caps it.
   """
   def objective_text(opts) do
     (opts[:prompt] || opts[:objective] || "") |> String.trim()
   end
 
   def render_options(opts, render_opts \\ []) do
-    # `truncate: true` = the expanded-card body (scrollable, full text);
-    # `truncate: false` = the zoomed view (the modal's own container scrolls).
+    # `truncate: true` = the expanded-card body (scrollable, CAPPED preview);
+    # `truncate: false` = the zoomed Full Objective modal (own container
+    # scrolls, full text).
     truncate = Keyword.get(render_opts, :truncate, true)
     primary_text = objective_text(opts)
     mode = opts[:mode] || ""
     path = opts[:path] || ""
 
     assigns = %{
-      primary_text: primary_text,
+      primary_text: text_preview(primary_text, truncate),
       mode: mode,
       path: path,
       truncate: truncate
@@ -678,8 +750,9 @@ defmodule EvoDashWeb.TaskCardComponents do
           "text-sm whitespace-pre-wrap break-words",
           if(@truncate, do: "max-h-48 overflow-y-auto", else: "")
         ]}>
-          {@primary_text}
+          {@primary_text.text}
         </div>
+        <.preview_limit_note preview={@primary_text} />
       </div>
       <div class="flex flex-wrap gap-2 text-xs">
         <%= if @mode != "" do %>
@@ -703,6 +776,9 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Public API — render_options_full/1 renders task options without truncation
   # ---------------------------------------------------------------------------
 
+  # `truncate: false` = the Full Objective MODAL body: the complete, uncapped
+  # objective text — reached only by an explicit user action
+  # (`view_full_options`) and scrolled by the modal's own container.
   def render_options_full(opts) do
     render_options(opts, truncate: false)
   end
@@ -823,8 +899,9 @@ defmodule EvoDashWeb.TaskCardComponents do
   end
 
   def render_result({:error, reason}, opts) do
-    # `truncate: true` = expanded-card body (full text, scrollable);
-    # `truncate: false` = zoomed view (the modal's own container scrolls).
+    # `truncate: true` = expanded-card body (capped preview of the inspected
+    # reason); `truncate: false` = zoomed view (the modal's own container
+    # scrolls, full text).
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
@@ -835,7 +912,7 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      reason: inspect(reason, limit: :infinity),
+      reason: text_preview(inspect(reason, limit: :infinity), truncate),
       size_class: size_class,
       wrapper_class: wrapper_class,
       scroll_class: scroll_class
@@ -846,14 +923,16 @@ defmodule EvoDashWeb.TaskCardComponents do
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Error")}
       </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
+      <.preview_limit_note preview={@reason} />
     </div>
     """
   end
 
   def render_result({:exit, reason}, opts) do
-    # `truncate: true` = expanded-card body (full text, scrollable);
-    # `truncate: false` = zoomed view (the modal's own container scrolls).
+    # `truncate: true` = expanded-card body (capped preview of the inspected
+    # reason); `truncate: false` = zoomed view (the modal's own container
+    # scrolls, full text).
     truncate = Keyword.get(opts, :truncate, true)
     size_class = if truncate, do: "text-xs", else: "text-sm"
     scroll_class = if truncate, do: "max-h-48 overflow-y-auto", else: ""
@@ -864,7 +943,7 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-error/10 border border-error/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      reason: inspect(reason, limit: :infinity),
+      reason: text_preview(inspect(reason, limit: :infinity), truncate),
       size_class: size_class,
       wrapper_class: wrapper_class,
       scroll_class: scroll_class
@@ -875,7 +954,8 @@ defmodule EvoDashWeb.TaskCardComponents do
       <h5 class="text-xs font-bold text-error mb-2 uppercase tracking-wide flex items-center gap-1.5">
         <.icon name="hero-x-circle" class="size-3" /> {gettext("Crashed")}
       </h5>
-      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason %></pre>
+      <pre class={["whitespace-pre-wrap break-words", @size_class, @scroll_class]}><%= @reason.text %></pre>
+      <.preview_limit_note preview={@reason} />
     </div>
     """
   end
@@ -884,7 +964,7 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
 
     assigns = %{
-      result: result,
+      result: text_preview(result, truncate),
       repos: result_repos(data),
       truncate: truncate
     }
@@ -894,8 +974,9 @@ defmodule EvoDashWeb.TaskCardComponents do
       <%= if @truncate do %>
         <div class="bg-base-100 p-3 rounded-lg border border-base-200 shadow-inner">
           <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-            {@result}
+            {@result.text}
           </div>
+          <.preview_limit_note preview={@result} />
         </div>
         <div class="bg-warning/10 border border-warning/20 p-3 rounded-lg">
           <h5 class="text-xs font-bold text-warning mb-2 uppercase tracking-wide flex items-center gap-1.5">
@@ -923,7 +1004,7 @@ defmodule EvoDashWeb.TaskCardComponents do
             <.icon name="hero-chat-bubble-left-ellipsis" class="size-3" />
             <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agent Message")}
           </h5>
-          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
+          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result.text %></pre>
         </div>
       <% end %>
       <%= if @repos do %>
@@ -949,7 +1030,7 @@ defmodule EvoDashWeb.TaskCardComponents do
     truncate = Keyword.get(opts, :truncate, true)
 
     assigns = %{
-      result: result,
+      result: text_preview(result, truncate),
       commit_sha: commit_sha,
       tag: Map.get(data, :tag),
       branch_name: Map.get(data, :branch_name),
@@ -1015,10 +1096,11 @@ defmodule EvoDashWeb.TaskCardComponents do
         <% end %>
         <%= if @truncate do %>
           <div class="text-sm whitespace-pre-wrap break-words max-h-48 overflow-y-auto">
-            {@result}
+            {@result.text}
           </div>
+          <.preview_limit_note preview={@result} />
         <% else %>
-          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result %></pre>
+          <pre class="text-sm whitespace-pre-wrap break-words"><%= @result.text %></pre>
         <% end %>
       </div>
       <%= if @truncate do %>
@@ -1079,14 +1161,15 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-success/10 border border-success/20 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      result: inspect(result, pretty: true, limit: :infinity),
+      result: text_preview(inspect(result, pretty: true, limit: :infinity), truncate),
       size_class: size_class,
       wrapper_class: wrapper_class,
       scroll_class: scroll_class
     }
 
     ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result %></pre>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result.text %></pre>
+    <.preview_limit_note preview={@result} />
     """
   end
 
@@ -1101,14 +1184,15 @@ defmodule EvoDashWeb.TaskCardComponents do
         else: "bg-base-200 rounded-lg p-4 max-h-[70vh] overflow-y-auto"
 
     assigns = %{
-      result: inspect(result, pretty: true, limit: :infinity),
+      result: text_preview(inspect(result, pretty: true, limit: :infinity), truncate),
       size_class: size_class,
       wrapper_class: wrapper_class,
       scroll_class: scroll_class
     }
 
     ~H"""
-    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result %></pre>
+    <pre class={["overflow-x-auto", @size_class, @wrapper_class, @scroll_class]}><%= @result.text %></pre>
+    <.preview_limit_note preview={@result} />
     """
   end
 
@@ -1116,6 +1200,9 @@ defmodule EvoDashWeb.TaskCardComponents do
   # Public API — render_result_full/1 renders full task result without truncation
   # ---------------------------------------------------------------------------
 
+  # `truncate: false` = the Full Result MODAL body: THE complete, uncapped text
+  # (no byte cap, no limit note) — reached only by an explicit user action
+  # (`view_full_result`) and scrolled by the modal's own container.
   def render_result_full(assigns) do
     render_result(assigns, truncate: false)
   end
@@ -1127,6 +1214,10 @@ defmodule EvoDashWeb.TaskCardComponents do
   Full Result modal copy button (`tasks_live.ex`). Success/no-changes results
   copy the raw agent message; error/crash results copy the inspected reason
   (unlimited); anything else falls back to a pretty-inspected representation.
+
+  Deliberately returns the COMPLETE text — Copy is an explicit user action and
+  the clipboard payload is exactly what the user asked for. Only the in-card
+  RENDERING path (`render_result/2` with `truncate: true`) caps its output.
   """
   def result_copy_text({:ok, %{result: result}}) when is_binary(result), do: result
   def result_copy_text({:error, reason}), do: inspect(reason, limit: :infinity)
