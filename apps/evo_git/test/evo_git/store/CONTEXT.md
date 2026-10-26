@@ -2,7 +2,7 @@
 
 ## Intent
 
-Tests for the Ecto persistence layer of the SQLite store — the pure Operation modules, the Ecto.Type wire formats (plain JSON TEXT — no compression), the boot/migration machinery (five migrations), the dynamic-repo plumbing, the DBConnection pool size + maintenance, the facade's read fault isolation and write offload, and the error classifier.
+Tests for the Ecto persistence layer of the SQLite store — the pure Operation modules (incl. the relational per-agent archive), the Ecto.Type wire formats (plain JSON TEXT — no compression), the boot/migration machinery (the seven shipped migrations: baseline adoption, data normalization, composite indexes, covering indexes, abandoned `"z1:"`-row unpacking, `task_agent_archives` table creation, and the legacy-archive JSON fan-out + column drop), the dynamic-repo plumbing, the DBConnection pool size + maintenance, the facade's read fault isolation and write offload, and the error classifier.
 All of them drive REAL unnamed dynamic `EvoGit.Repo` instances (`EvoGit.Store.Boot.start_dynamic/2`) on unique tmp SQLite files, except `types_test.exs`/`errors_test.exs`, which open no database at all.
 Eighteen of the twenty-two modules here are `async: true`; `pool_size_test.exs`, `store_write_offload_test.exs`, `maintenance_test.exs` and `read_fault_isolation_test.exs` are deliberately `async: false` (see Constraints).
 The suites that terminate/restart the app-global `EvoGit.Store`/`EvoGit.TaskRegistry` singletons live one level up (`../store_test.exs`, `../store_summary_test.exs`, `../store_disk_full_test.exs`, `../migrate_store_test.exs`); `store_write_offload_test.exs` here is stateful too, but on an ISOLATED `EvoGit.TaskRegistryCase` store.
