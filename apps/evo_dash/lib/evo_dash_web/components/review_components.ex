@@ -146,6 +146,10 @@ defmodule EvoDashWeb.ReviewComponents do
   attr(:more_error, :any, default: nil)
   attr(:agent_results, :map, default: %{})
 
+  # Optional node-aware export href (carries `?node=<target_id>` when a remote
+  # node is viewed); nil falls back to the plain task export path.
+  attr(:export_url, :string, default: nil)
+
   def archive_review_section(assigns) do
     # The record list can be enormous, so cap it BEFORE normalization/grouping
     # and build the review tree exactly ONCE per render.
@@ -202,7 +206,7 @@ defmodule EvoDashWeb.ReviewComponents do
         </div>
         <%= if @task_id do %>
           <.link
-            href={"/tasks/#{@task_id}/export"}
+            href={@export_url || "/tasks/#{@task_id}/export"}
             class="btn btn-sm btn-outline btn-primary gap-2"
             download
           >

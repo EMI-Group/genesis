@@ -415,11 +415,72 @@ defmodule EvoDashWeb.ArchiveTreeTest do
     end
   end
 
+  # The archive "Export JSON" link is node-aware: callers hand in an
+  # `export_url` that already carries `?node=<target_id>` on a remote node, and
+  # a nil `export_url` keeps the bare task export path (local node).
+  describe "archive export link (node-aware)" do
+    test "archive_details/1 uses an explicit export_url" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @string_key_archive,
+          task_id: "task-42",
+          export_url: "/tasks/task-42/export?node=remote-1"
+        )
+
+      [link] = export_links(html)
+      assert Floki.attribute(link, "href") == ["/tasks/task-42/export?node=remote-1"]
+      # The download affordance is untouched by the node-aware href.
+      assert Floki.attribute(link, "download") == ["download"]
+    end
+
+    test "archive_details/1 falls back to the bare task export path" do
+      html =
+        render_component(&EvoDashWeb.ArchiveComponents.archive_details/1,
+          archive_metadata: @string_key_archive,
+          task_id: "task-42"
+        )
+
+      assert export_hrefs(html) == ["/tasks/task-42/export"]
+    end
+
+    test "archive_review_section/1 uses an explicit export_url" do
+      html =
+        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
+          archive_metadata: @string_key_archive,
+          task_id: "task-42",
+          export_url: "/tasks/task-42/export?node=remote-1"
+        )
+
+      [link] = export_links(html)
+      assert Floki.attribute(link, "href") == ["/tasks/task-42/export?node=remote-1"]
+      assert Floki.attribute(link, "download") == ["download"]
+    end
+
+    test "archive_review_section/1 falls back to the bare task export path" do
+      html =
+        render_component(&EvoDashWeb.ReviewComponents.archive_review_section/1,
+          archive_metadata: @string_key_archive,
+          task_id: "task-42"
+        )
+
+      assert export_hrefs(html) == ["/tasks/task-42/export"]
+    end
+  end
+
   # Render a component and extract only its VISIBLE text (raw HTML would also
   # carry attribute payloads). `render_component/2` already returns the rendered
   # HTML string, so no `rendered_to_string/1` is needed here.
   defp rendered_text(html) when is_binary(html),
     do: html |> Floki.parse_document!() |> Floki.text()
+
+  # Every archive export anchor of a rendered component.
+  defp export_links(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s(a[href*="/export"]))
+  end
+
+  defp export_hrefs(html), do: html |> export_links() |> Floki.attribute("href")
 
   describe "normalize_agent_keys/1 with string-keyed nested usage (DB round-trip)" do
     test "atomizes the nested usage sub-map via the real core usage keys" do

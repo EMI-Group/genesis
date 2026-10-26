@@ -768,6 +768,9 @@ defmodule EvoDashWeb.TaskCardComponents do
                               loading_more?={archive_loading_more?(archive)}
                               more_error={archive_more_error(archive)}
                               task_id={@task.id}
+                              export_url={
+                                with_node_param("/tasks/#{@task.id}/export", @current_node_id)
+                              }
                             />
                           </div>
                       <% end %>

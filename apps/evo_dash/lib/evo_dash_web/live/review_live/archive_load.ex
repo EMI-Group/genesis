@@ -237,6 +237,9 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
   attr :agent_results, :map, default: %{}
   attr :error, :any, default: nil
   attr :task_id, :any, default: nil
+  # Remote node target id (`?node=` value); nil on the local node, so the
+  # export href stays the bare task export path.
+  attr :node_id, :string, default: nil
 
   def panel(assigns) do
     message = error_message()
@@ -273,6 +276,7 @@ defmodule EvoDashWeb.ReviewLive.ArchiveLoad do
           more_error={@more_error}
           agent_results={@agent_results}
           task_id={@task_id}
+          export_url={EvoDashWeb.Helpers.with_node_param("/tasks/#{@task_id}/export", @node_id)}
         />
       <% true -> %>
         <div class="flex items-center justify-center py-20">

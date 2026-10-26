@@ -35,6 +35,10 @@ defmodule EvoDashWeb.ArchiveComponents do
   attr(:more_error, :any, default: nil)
   attr(:task_id, :string, default: nil)
 
+  # Optional node-aware export href (carries `?node=<target_id>` when a remote
+  # node is viewed); nil falls back to the plain task export path.
+  attr(:export_url, :string, default: nil)
+
   def archive_details(assigns) do
     entries = List.wrap(assigns.archive_metadata)
     loaded = length(entries)
@@ -57,7 +61,7 @@ defmodule EvoDashWeb.ArchiveComponents do
           </h4>
           <%= if @task_id do %>
             <.link
-              href={"/tasks/#{@task_id}/export"}
+              href={@export_url || "/tasks/#{@task_id}/export"}
               class="btn btn-sm btn-outline btn-primary rounded-md"
               download
             >

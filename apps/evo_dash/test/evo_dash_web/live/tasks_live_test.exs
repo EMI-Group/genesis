@@ -229,6 +229,49 @@ defmodule EvoDashWeb.TasksLiveTest do
     on_exit(fn -> Application.delete_env(:evo_dash, :tasks_task_archive_agent_runner) end)
   end
 
+  # Registers a CONNECTED (fake) remote target and returns its id, so NodeAware
+  # resolves `/tasks?node=<id>` to a remote BEAM node atom. Same pattern as the
+  # review page's remote-node tests: a temp XDG config dir for the target's TOML
+  # plus a Registry-backed stand-in for the connection manager.
+  defp register_remote_target!(prefix) do
+    original = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_config =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_test_config_#{prefix}_" <> to_string(System.unique_integer([:positive]))
+      )
+
+    File.mkdir_p!(tmp_config)
+    System.put_env("XDG_CONFIG_HOME", tmp_config)
+
+    on_exit(fn ->
+      File.rm_rf(tmp_config)
+
+      if original do
+        System.put_env("XDG_CONFIG_HOME", original)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+    end)
+
+    target_id = "#{prefix}-target-#{System.unique_integer([:positive])}"
+
+    {:ok, _target} =
+      EvoGit.RemoteConnections.save(%{
+        ssh_target: "user@host",
+        id: target_id,
+        name: "Tasks Remote Target"
+      })
+
+    start_supervised!(
+      {EvoDashWeb.TasksLiveTest.ConnectionManager,
+       {target_id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+    )
+
+    target_id
+  end
+
   # The per-card detail cache entry for `task_id` (nil when not fetched yet).
   # `:sys.get_state/1` is a synchronous round-trip, so every async result
   # already sitting in the LiveView mailbox is applied by the time it returns.
@@ -2348,9 +2391,20 @@ defmodule EvoDashWeb.TasksLiveTest do
     end
   end
 
+  # Every archive "Export JSON" href of the rendered page.
+  defp export_hrefs(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s(a[href*="/export"]))
+    |> Floki.attribute("href")
+  end
+
   # Simulates NodeAware's `?node=` resolution to a CONNECTED remote target. The
   # suite has no distribution link to a real remote BEAM, so the resolved node
-  # atom is written straight onto the socket exactly as `assign_node/2` does.
+  # atom is written straight onto the socket exactly as `assign_node/2` does
+  # (through `assign/2`, so HEEx change tracking re-renders node-aware markup).
+  # `node_id` (the `?node=` target id) mirrors the second NodeAware assign that
+  # node-aware links read.
   defp set_current_node(view, node) do
     :sys.replace_state(view.pid, fn state ->
       put_in(state.socket.assigns.current_node, node)
@@ -2394,6 +2448,8 @@ defmodule EvoDashWeb.TasksLiveTest do
       assert html =~ "3 agents"
       assert html =~ "objective of agent-1"
       assert html =~ "Export JSON"
+      # LOCAL node: the export href stays byte-for-byte what it always was.
+      assert export_hrefs(html) == ["/tasks/#{id}/export"]
       # Every entry omits its "result" until it is asked for.
       assert html =~ "Show result"
       # Everything is loaded, so there is nothing more to page in.
@@ -2733,6 +2789,40 @@ defmodule EvoDashWeb.TasksLiveTest do
 
       assert render(view) =~ "remote node result"
     end
+
+    test "the Export JSON link carries ?node= on a remote node", %{conn: conn} do
+      target_id = register_remote_target!("tasks-export")
+
+      id = insert_fixture!(opts: [archive: true, prompt: "export link task"])
+
+      # Every node-aware read is served from the LOCAL store: the fake remote
+      # node is unreachable, so the seams keep the page renderable while the
+      # node CONTEXT stays remote.
+      install_tasks_page_load_runner(fn _node, page, page_size, filters ->
+        EvoDashWeb.TasksLive.PageLoad.load(node(), page, page_size, filters)
+      end)
+
+      install_task_detail_runner(fn _node, task_id ->
+        EvoDash.NodeContext.get_task_lite(node(), task_id)
+      end)
+
+      install_task_archive_runner(fn _node, _task_id, _opts ->
+        %{entries: paged_archive(1), total: 1}
+      end)
+
+      {:ok, view, _html} = live(conn, "/tasks?node=" <> target_id)
+      flush_tasks_load(view)
+
+      assert :sys.get_state(view.pid).socket.assigns.current_node_id == target_id
+
+      _html = expand_card(view, id)
+      render_hook(view, "load_task_archive", %{"task_id" => id})
+      wait_for_archive(view, id, &match?(%{state: :ok}, &1))
+
+      # Without the node target id the export controller resolves the task on
+      # the LOCAL node and 404s.
+      assert export_hrefs(render(view)) == ["/tasks/#{id}/export?node=#{target_id}"]
+    end
   end
 
   # --- task detail view helpers ---
@@ -2759,4 +2849,25 @@ defmodule EvoDashWeb.TasksLiveTest do
     |> Floki.find("h4")
     |> Enum.map(fn el -> Floki.text(el) |> String.trim() end)
   end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# `EvoDashWeb.ReviewLiveTest.ConnectionManager`). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.TasksLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

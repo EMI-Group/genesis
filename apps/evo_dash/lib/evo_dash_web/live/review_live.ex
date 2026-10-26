@@ -230,6 +230,7 @@ defmodule EvoDashWeb.ReviewLive do
                       agent_results={@archive_agent_results}
                       error={@archive_error}
                       task_id={@task_id}
+                      node_id={@current_node_id}
                     />
                 <% end %>
 

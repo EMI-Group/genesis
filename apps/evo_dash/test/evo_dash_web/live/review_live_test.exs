@@ -379,6 +379,8 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert html =~ "2 agents"
       refute html =~ "showing"
       refute has_element?(view, "button[phx-click='load_more_archive']")
+      # LOCAL node: the archive export link stays the bare task export path.
+      assert export_hrefs(html) == ["/tasks/#{task_id}/export"]
     end
 
     test "load more appends the next page, dedupes and stops at the total", %{conn: conn} do
@@ -694,6 +696,10 @@ defmodule EvoDashWeb.ReviewLiveTest do
       assert opts[:offset] == 0
       wait_until(fn -> render(view) =~ "agent-1" end)
       assert assigns(view).archive_state == :loaded
+
+      # …and the Archive tab's export link carries the node target id, so the
+      # export controller resolves the task on the viewed node (no 404).
+      assert export_hrefs(render(view)) == ["/tasks/some-remote-task-id/export?node=#{id}"]
     end
 
     test "an orphan record (parent on an unloaded page) still renders and keeps the total", %{
@@ -5835,6 +5841,14 @@ defmodule EvoDashWeb.ReviewLiveTest do
   end
 
   defp archive_page_ids(range), do: Enum.map(range, &"agent-#{&1}")
+
+  # Every archive "Export JSON" href of the rendered page.
+  defp export_hrefs(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(~s(a[href*="/export"]))
+    |> Floki.attribute("href")
+  end
 
   # A minimal LiveView socket carrying the assigns
   # EvoDashWeb.ReviewLive.ArchiveLoad reads. `assigns.__changed__` is required
