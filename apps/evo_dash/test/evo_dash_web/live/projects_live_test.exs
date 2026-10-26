@@ -1707,15 +1707,15 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
       wait_notified_ids_ready(view)
 
-      # The row carries a heavy archive blob; the notification only needs
-      # opts/result/type, so the lite read (archive nilled out) must not
-      # change the pushed content.
+      # The result still carries the legacy `archive_records` payload (older
+      # rows), but the per-agent archive itself is no longer a task-row column.
+      # The notification only needs opts/result/type, so the lite read must not
+      # change the pushed content either way.
       new_task =
         insert_task_fixture!(
           status: :completed,
           opts: [prompt: "notify archived"],
-          result: {:ok, %{pr_title: "Archived PR title", archive_records: [%{"agent_id" => 1}]}},
-          archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}]
+          result: {:ok, %{pr_title: "Archived PR title", archive_records: [%{"agent_id" => 1}]}}
         )
 
       send(view.pid, :node_aware_reload_tasks)
@@ -3454,8 +3454,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
               %{"id" => "orig", "root" => "/Source/original-proj", "description" => "d"}
             ]
           ],
-          result: {:ok, %{result: "done", archive_records: [%{"agent_id" => 1}]}},
-          archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}]
+          result: {:ok, %{result: "done", archive_records: [%{"agent_id" => 1}]}}
         )
 
       {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)

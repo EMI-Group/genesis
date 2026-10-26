@@ -136,27 +136,23 @@ defmodule EvoDash.NodeContextTest do
       assert length(rows) == 1
     end
 
-    test "get_task_lite/2 nils the archive out and drops :archive_records from the result" do
+    test "get_task_lite/2 and get_task/2 carry no archive key (the archive is its own table)" do
       archive = [%{"role" => "user", "content" => "archived"}]
+      id = insert_fixture!(result: {:ok, %{commit_sha: "sha1", archive_records: archive}})
 
-      id =
-        insert_fixture!(
-          result: {:ok, %{commit_sha: "sha1", archive_records: archive}},
-          archive_metadata: archive
-        )
-
-      assert %EvoGit.TaskInfo{id: ^id, archive_metadata: nil} =
+      assert %EvoGit.TaskInfo{id: ^id} =
                lite =
                EvoDash.NodeContext.get_task_lite(node(), id)
 
-      assert {:ok, data} = lite.result
-      refute Map.has_key?(data, :archive_records)
-      assert data.commit_sha == "sha1"
+      # The per-agent archive is NOT a task-row column any more — until the
+      # `task_agent_archives` rebuild the field carried the whole archive. Both
+      # reads decode the row identically and expose no archive key at all; the
+      # archive is read through `list_task_archives/3` / `get_agent_archive/3`.
+      refute Map.has_key?(lite, :archive_metadata)
+      refute Map.has_key?(EvoDash.NodeContext.get_task(node(), id), :archive_metadata)
 
-      # The detail read keeps the archive, proving the lite read is the
-      # lightweight variant rather than the same decode.
-      assert %EvoGit.TaskInfo{archive_metadata: ^archive} =
-               EvoDash.NodeContext.get_task(node(), id)
+      assert {:ok, data} = lite.result
+      assert data.commit_sha == "sha1"
     end
 
     test "get_task_lite/2 returns nil for a missing task" do

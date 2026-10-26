@@ -457,8 +457,7 @@ defmodule EvoDashWeb.TaskExportControllerTest do
       opts: [path: "/tmp/test"],
       started_at: ~U[2026-01-01 00:00:00Z],
       finished_at: ~U[2026-01-01 00:10:00Z],
-      agent_count: 3,
-      archive_metadata: nil
+      agent_count: 3
     ]
 
     struct(TaskInfo, Keyword.merge(defaults, overrides))
