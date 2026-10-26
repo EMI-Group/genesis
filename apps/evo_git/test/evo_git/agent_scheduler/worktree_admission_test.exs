@@ -75,13 +75,25 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
     # prune + orphaned-branch cleanup) and its :DOWN cleanup (rm_rf + prune +
     # branch delete) run cleanly and warning-free. Built exactly like the old
     # per-test setup (no explicit git identity — the commit relies on
-    # EvoGit.GitEnv's fallback via the adapter).
+    # EvoGit.GitEnv's fallback via the adapter); a repo-local identity is
+    # pinned only AFTER that commit (see below), so per-test copies resolve a
+    # host-independent identity.
     File.mkdir_p!(template_dir)
     {:ok, _} = Git.init(template_dir)
     File.write!(Path.join(template_dir, "README.md"), "# test")
     {:ok, _} = Git.add(template_dir, "README.md")
     {:ok, _} = Git.commit(template_dir, "initial commit")
     {:ok, base_sha} = Git.rev_parse(template_dir)
+
+    # Pin a KNOWN repo-local commit identity (two one-off forks; the template's
+    # own commit above is already made, so its sha is unchanged). Every
+    # per-test copy inherits `.git/config`, so `EvoGit.GitEnv` resolves EXACTLY
+    # these values on EVERY host — independent of the developer's global git
+    # config — which makes the setup/1 `prime_config_identity_cache/3` call
+    # byte-identical to the copy's own resolution while skipping the two
+    # `git config` forks (~5 ms) every fresh repo path pays on first use.
+    {:ok, _} = Git.run(["config", "user.name", "Genesis"], template_dir)
+    {:ok, _} = Git.run(["config", "user.email", "noreply@evogit.ai"], template_dir)
 
     # The sample hooks and the reflog are never exercised by these tests; git
     # recreates them on demand. Dropping them shrinks each per-test
@@ -102,6 +114,13 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
     File.rm_rf!(tmp_dir)
     {:ok, _} = File.cp_r(template_dir, tmp_dir)
 
+    # The copy's identity is pinned in the template's `.git/config` (see
+    # setup_all/1), so priming the memoized resolution is byte-identical to
+    # what the copy's first git call would read — minus two `git config` forks
+    # (~5 ms). These tests inject `:worktree_create_fun`, so the copy's only
+    # real git work is the manager's init/cleanup.
+    EvoGit.GitEnv.prime_config_identity_cache(tmp_dir, "Genesis", "noreply@evogit.ai")
+
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
     # The WorktreeManager's persistent per-repo init-marker table. The app owns
@@ -109,6 +128,15 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
     # for an environment where the app did not start.
     create_worktree_repos_ets()
     clear_ets()
+
+    # Mark the fresh per-test repo as ALREADY lazily initialized so the
+    # manager's first create takes the marker-present path
+    # (`ensure_workers_dir` only — no `rm_rf` of the workers dir, no
+    # `git branch --list`, no `git worktree prune`): two git forks (~5 ms) per
+    # test. No test in this file exercises the lazy-init path, and the one
+    # genuinely real create pipeline is bypassed by `:worktree_create_fun`
+    # anyway.
+    :ets.insert(:evogit_worktree_repos, {tmp_dir, 0})
 
     # GLOBAL seams — capture the originals now (before the test body mutates
     # them) and restore them in on_exit.
@@ -119,6 +147,10 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
       restore_app_env(:max_concurrent_worktree_creation, old_cap)
       restore_app_env(:worktree_create_fun, old_fun)
       clear_ets()
+
+      if :ets.whereis(:evogit_worktree_repos) != :undefined do
+        :ets.delete(:evogit_worktree_repos, tmp_dir)
+      end
     end)
 
     {:ok, base_sha: base_sha}
@@ -414,13 +446,14 @@ defmodule EvoGit.AgentScheduler.WorktreeAdmissionTest do
       # Held mid-create: no reply yet AND the caller is still alive inside the
       # `:infinity` call — a finite production timeout would have cut it off.
       #
-      # The window is a NO-REPLY probe, not a wait: the injected create fun is
-      # deterministically parked on `receive :release` (nothing can time it
-      # out) and the caller sits in an `:infinity` GenServer.call, so no reply
-      # can exist at ANY moment while the create is held. A spurious reply
-      # would come from the manager on this same node, i.e. arrive within a
-      # millisecond; 100ms only absorbs scheduling latency.
-      refute_receive {:create_result, ^agent_id, _}, 100
+      # STRUCTURAL no-reply guarantee, so a zero-wait `refute_received` is
+      # exact: the injected create fun is parked on `receive :release` (only
+      # THIS test can release it) and the caller cannot send `:create_result`
+      # until its `:infinity` GenServer.call returns. No reply can therefore
+      # exist at ANY instant while the create is held — there is no window to
+      # wait for. (`agent_status/1` above already round-tripped to the manager,
+      # which proves the create task is admitted and parked.)
+      refute_received {:create_result, ^agent_id, _}
       assert Process.alive?(caller)
 
       send(create_task, :release)
