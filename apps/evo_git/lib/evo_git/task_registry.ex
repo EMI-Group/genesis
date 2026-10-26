@@ -179,10 +179,18 @@ defmodule EvoGit.TaskRegistry do
       column is NOT selected, so the `"result"` key is ABSENT (not `nil`) from
       every entry. The opened agent's full conversation comes from
       `get_agent_archive/2`.
+    * `:include_settings` — default `false`; when false the export-only JSON
+      columns (`"llm_settings"`, `"agent_settings"`, `"foreign_repos"`) are NOT
+      selected, so their keys are ABSENT from every entry. The CSV/JSON export
+      passes `true`.
+    * `:include_total` — default `true`; pass `false` to skip the `count(*)`
+      when the caller already knows the total (`total` is then `nil`).
 
+  Every opt is forwarded UNCHANGED to `EvoGit.Store.list_task_archives/3` — the
+  registry adds nothing, drops nothing and defaults nothing.
   `total` is the task's whole archive row count, independent of
-  `:limit`/`:offset`. Degrades to `%{entries: [], total: 0}` when the store
-  read fails.
+  `:limit`/`:offset` (and `nil` when `:include_total` is `false`). Degrades to
+  `%{entries: [], total: 0}` when the store read fails.
   """
   @spec list_task_archives(String.t(), keyword()) ::
           %{entries: [map()], total: non_neg_integer()}
@@ -463,13 +471,23 @@ defmodule EvoGit.TaskRegistry do
     # currently :cancelling) must never start. There is no in-runtime
     # :pending → :running scheduled transition, so this is the only place a
     # cancelled pending task could slip through.
-    case safe_store_read("start_task get_task_status", nil, fn ->
-           EvoGit.Store.get_task_status(state.task_store, task_id)
-         end) do
+    persisted_status =
+      safe_store_read("start_task get_task_status", nil, fn ->
+        EvoGit.Store.get_task_status(state.task_store, task_id)
+      end)
+
+    # `{:unknown, raw}` — the row EXISTS but its status text is unreadable, so
+    # it is never treated as absent; it also cannot be PROVEN `:cancelled`, so
+    # the guard below deliberately does not fire and the start proceeds. This
+    # handler always allocates a FRESH task id, so refusing here would only
+    # strand a task nothing else could start.
+    log_unreadable_status("start_task", task_id, persisted_status)
+
+    case persisted_status do
       status when status in [:cancelled, :cancelling] ->
         {:reply, {:error, :cancelled}, state}
 
-      _ ->
+      _known_or_absent ->
         task_ref =
           Task.Supervisor.async_nolink(
             EvoGit.TaskSupervisor,
@@ -673,6 +691,15 @@ defmodule EvoGit.TaskRegistry do
         nil ->
           {{:error, :not_found}, state}
 
+        {:unknown, raw} ->
+          # The row EXISTS but its status text is unreadable. Force kill
+          # persists `:failed` — it MARKS the row — so it is only allowed for a
+          # status we can prove is live and killable; refuse conservatively
+          # rather than overwrite a row whose liveness we cannot establish.
+          # Never `{:error, :not_found}`: the row is there.
+          log_unreadable_status("force_kill_task", task_id, {:unknown, raw})
+          {{:error, :not_running}, state}
+
         _status ->
           {{:error, :not_running}, state}
       end
@@ -767,6 +794,16 @@ defmodule EvoGit.TaskRegistry do
 
         nil ->
           {:error, :not_found}
+
+        {:unknown, raw} ->
+          # The row EXISTS with an unreadable status: never `{:error,
+          # :not_found}` (that would claim the row is absent), and neither
+          # cancellation path can be justified — the `:pending` arm would mark a
+          # possibly-live row `:cancelled` and the `:running` arm would push a
+          # cancel to agents that may not exist. Conservative answer: it is not
+          # running (the row keeps its status).
+          log_unreadable_status("cancel_task", task_id, {:unknown, raw})
+          {:error, :not_running}
 
         _status ->
           # :finalizing / :completed / :failed / :cancelled
@@ -968,7 +1005,10 @@ defmodule EvoGit.TaskRegistry do
       nil ->
         :ok
 
-      _status ->
+      # A row that EXISTS — a known status atom OR `{:unknown, raw}` (its status
+      # text is unreadable, but the row is there) — is writable. Only a missing
+      # row is the no-op; review status is independent of the task status.
+      present when not is_nil(present) ->
         case safe_store_write("set_review_status update_task_columns", fn ->
                EvoGit.Store.update_task_columns(state.task_store, task_id, review_status: status)
              end) do
@@ -1001,7 +1041,10 @@ defmodule EvoGit.TaskRegistry do
       nil ->
         :ok
 
-      _status ->
+      # Same tri-state rule as `set_review_status`: `{:unknown, raw}` means the
+      # row EXISTS (only its status text is unreadable), so the SHA columns are
+      # written; only a missing row is a no-op.
+      present when not is_nil(present) ->
         case safe_store_write("set_review_metadata update_task_columns", fn ->
                EvoGit.Store.update_task_columns(state.task_store, task_id,
                  base_sha: base_sha,
@@ -1288,6 +1331,23 @@ defmodule EvoGit.TaskRegistry do
   # always observable — never silent.
   defp safe_store_read(op, degraded, fun), do: StoreGuard.read(op, degraded, fun)
   defp safe_store_write(op, fun), do: StoreGuard.write(op, fun)
+
+  # ── Unreadable persisted status (`{:unknown, raw}`) ──────────────────
+  #
+  # `Store.get_task_status/2` answers THREE shapes: `nil` (no row), a known
+  # status atom, or `{:unknown, raw}` (the row EXISTS but its status text is
+  # outside `Store.Codec.known_statuses/0`; the codec already logged it). Every
+  # consumer above treats `{:unknown, _}` as a PRESENT row and never as absent;
+  # this helper only makes that degradation visible in the log — it changes no
+  # decision.
+  defp log_unreadable_status(op, task_id, {:unknown, raw}) do
+    Logger.warning(
+      "TaskRegistry: #{op} #{task_id} — persisted status #{inspect(raw)} is not a known " <>
+        "status; treating the row as PRESENT (never as absent/leaked)"
+    )
+  end
+
+  defp log_unreadable_status(_op, _task_id, _status), do: :ok
 
   # Resolves this process's registry instance (`server/0`) to the store it was
   # started with, WITHOUT calling the registry — the whole point of the archive
@@ -1729,15 +1789,20 @@ defmodule EvoGit.TaskRegistry do
 
     # Renew leases for owned tasks using lightweight queries — avoids full
     # decode (task_get) + full re-encode (put_task) for every owned task on
-    # every heartbeat. :cancelling is included so a long graceful-cancel keeps
-    # its lease valid while the wrapper is still alive.
+    # every heartbeat. `Lease.lease_renewable?/1` is the ONE renewal
+    # classification: it covers `:running | :pending | :cancelling` (a long
+    # graceful cancel keeps its lease while the wrapper is still alive) AND
+    # `{:unknown, raw}` — a row that EXISTS with status text we cannot read is
+    # renewed, never left to expire, so an unrecognized status spelling can
+    # never make a LIVE task look leaked to the sweep. `nil` (no row) and every
+    # terminal status renew nothing.
     Enum.each(state.task_refs, fn {task_id, _ref} ->
       status =
         safe_store_read("heartbeat get_task_status", nil, fn ->
           EvoGit.Store.get_task_status(state.task_store, task_id)
         end)
 
-      if status in [:running, :pending, :cancelling] do
+      if Lease.lease_renewable?(status) do
         case safe_store_write("heartbeat update_lease_expires_at", fn ->
                EvoGit.Store.update_lease_expires_at(
                  state.task_store,
@@ -1785,9 +1850,17 @@ defmodule EvoGit.TaskRegistry do
         EvoGit.Store.select_running_lease_info(state.task_store)
       end)
       |> Enum.filter(fn %{id: id, status: status, lease_expires_at: lease} ->
-        status == :running and
-          id not in owned_ids and
-          not Lease.lease_valid?(lease)
+        # `Lease.leaked?/3` is the ONE leak classification (the same module the
+        # heartbeat's `lease_renewable?/1` lives in): leaked means a KNOWN
+        # `:running` row, not owned by this instance, with an expired/missing
+        # lease. `{:unknown, raw}` is NEVER leaked — the row exists, its status
+        # is merely unreadable, so a spelling must never fail a live task.
+        #
+        # Defence-in-depth: `Store.select_running_lease_info/1` already pushes
+        # `status IN ('running','finalizing','cancelling')` into SQL, so an
+        # unreadable status text cannot even reach this filter; the classifier
+        # stays the single source of truth rather than an inline re-derivation.
+        Lease.leaked?(status, MapSet.member?(owned_ids, id), lease)
       end)
       |> Enum.reduce({false, []}, fn %{id: id, lease_expires_at: lease}, {changed, failed_ids} ->
         if Lease.sched_meta_has_active_agents?(id) do
