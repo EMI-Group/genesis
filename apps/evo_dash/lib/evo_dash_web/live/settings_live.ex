@@ -949,7 +949,11 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply, socket}
     else
       {:noreply,
-       apply_node_data_results(socket, category_param, node_data_results(result, requested_node, socket))}
+       apply_node_data_results(
+         socket,
+         category_param,
+         node_data_results(result, requested_node, socket)
+       )}
     end
   end
 
@@ -962,7 +966,8 @@ defmodule EvoDashWeb.SettingsLive do
   #     empty config instead of crashing;
   #   * a BARE results map — the pre-`{:ok, _}` message shape, still delivered
   #     by tests that inject a hand-built results map.
-  defp node_data_results({:ok, results}, _requested_node, _socket) when is_map(results), do: results
+  defp node_data_results({:ok, results}, _requested_node, _socket) when is_map(results),
+    do: results
 
   defp node_data_results({:error, reason}, requested_node, socket) do
     EvoDashWeb.SettingsLive.NodeData.error_results(

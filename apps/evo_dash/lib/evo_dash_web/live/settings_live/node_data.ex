@@ -195,7 +195,8 @@ defmodule EvoDashWeb.SettingsLive.NodeData do
   # `load_custom_agents_data/1` keeps its strict match for the save flows).
   defp fetch_custom_agents(node) do
     case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.list_custom_agents(node) end) do
-      {:ok, {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}}} ->
+      {:ok,
+       {:ok, %{agents: agents, model_selection_script: script, script_status: script_status}}} ->
         %{agents: agents, model_selection_script: script || "", script_status: script_status}
 
       _ ->
