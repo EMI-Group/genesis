@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.8] - 2026-10-26
+
+### Added
+
+- Added detached background shell jobs, including new job output, list, and kill tools plus a run-in-background mode for bash; jobs survive context compression and report completion notices so the assistant knows when a job finishes.
+- Added a redesign of the agents Context tile as a context-usage meter showing model context-window fill, a compression-threshold tick, token counts, and compression count.
+- Added per-agent LLM context-window configuration, with compression thresholds derived from each agent's window (taking precedence over node-level settings) and optional tool-result pruning before summarization.
+- Added ownership-aware subagent merging that resolves context-file conflicts by node ownership, preserves branches on failed merges, and reports per-child merge status.
+- Added a current local time line to the agent runtime-context snapshot and its compression refresh message.
+- Added exposure of per-agent context window size in remote API agent summaries.
+
+### Changed
+
+- Reworked context compression into a two-stage design: model-free tool-result pruning followed by checkpoint summarisation with a window-relative trigger and a runtime-context refresh message.
+- Renamed model-facing tools to bash, read, edit, write, and web_search with terse descriptions, switched agent prompts to the inverted finish contract, and made tool-name handling case-insensitive across aliases throughout the UI, dashboard, and custom-agents editor.
+- Added the web_fetch and lsp agent tools, retiring curl; the LSP tool is only advertised and exposed when a language server is enabled in configuration.
+- CONTEXT tool writes and edits now enforce agent node scope, and read-only agents prefer edit_context over write_context to avoid clobbering concurrent updates.
+- Truncated tool output now spills the full text to a temp file with a path notice, and truncation hints derive from the configured caps.
+- Tool failure and notice messages are now standardized with an "Error: " prefix, and agent turns ending in a text-only reply complete the task; omitted shell timeouts default to 120s within the configured maximum.
+- Context meter tick tooltips are now translated instead of always shown in English.
+- Updated req_llm to 1.29.0 and plug_crypto to 2.2.1.
+
+### Fixed
+
+- Fixed path separator boundary checks so foreign-repo paths under non-ASCII repository roots resolve correctly instead of returning not_in_repo errors.
+- Fixed cross-process collisions on git commit message temp files.
+- Fixed agent prompts referencing subagent tools that certain roles cannot access, preventing unknown-tool failures.
+- Fixed Agents page compression bars to handle missing thresholds and use per-agent values.
+- Fixed spurious leading whitespace rendering in the thinking block on the agents page.
+- Fixed tool argument parsing to be more tolerant so malformed or missing inputs no longer abort the run.
+
+### Security
+
+- Fixed a TLS 1.3 handshake encryption-level issue by updating rustls to 0.23.45.
+- Addressed security advisories in the req_llm dependency, covering WebSocket TLS verification and secret key base exposure in stack traces.
+
 ## [0.13.7] - 2026-10-16
 
 ### Added
