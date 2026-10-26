@@ -20,9 +20,10 @@
 
 readonly SMOKE_MARK="[smoke]"
 
-# Cold-boot budget for HTTP 200: the release boot runs migrations, loads the
-# asset manifest and starts the Phoenix endpoint. Deliberately generous so a
-# slow machine is not reported as a failure.
+# Cold-boot budget for a ready dashboard (a final HTTP 200 reached by following
+# redirects): the release boot runs migrations, loads the asset manifest and
+# starts the Phoenix endpoint. Deliberately generous so a slow machine is not
+# reported as a failure.
 readonly READY_TIMEOUT_SECS=180
 readonly SHUTDOWN_TIMEOUT_SECS=45
 readonly PORT_CLOSE_TIMEOUT_SECS=30
@@ -43,6 +44,8 @@ SMOKE_TMP=""
 HEADLESS_PID=""
 SHELL_LOG=""
 BACKEND_LOG=""
+BODY_FILE=""
+EFFECTIVE_URL=""
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -63,6 +66,9 @@ now_secs() {
 # honors $PORT only while that port is free and otherwise picks an ephemeral
 # port of its own — which would leave the readiness poll watching the wrong
 # port — so the port is probed before it is handed over.
+# Deliberately WITHOUT --location: this probe (and the post-shutdown "port
+# closed" check that reuses it) only cares that SOMETHING answers — any HTTP
+# status, including the dashboard's 302 on `/`, proves the socket is live.
 port_taken() {
   curl --silent --output /dev/null --max-time 1 "http://127.0.0.1:$1/" >/dev/null 2>&1
 }
@@ -224,23 +230,45 @@ START_SECS="$(now_secs)"
 "$DESKTOP_BIN" --headless >"$SMOKE_TMP/headless.log" 2>&1 &
 HEADLESS_PID=$!
 
-# Poll for readiness; returns 0 on HTTP 200, 2 when the app died first.
+# Poll for readiness: a FINAL HTTP 200 whose body is the dashboard HTML.
+# Redirects ARE followed (--location): the dashboard's root route `/` answers
+# `302 Found` and maps to `/projects` (see the root CONTEXT.md), so a probe
+# without redirect-following can never observe the 200 the app actually serves.
+# The whole chain is followed rather than hitting a hard-coded `/projects`, so
+# the probe keeps working if routing changes — a redirect to the dashboard is
+# the honest readiness signal.
+# Returns 0 when ready, 2 when the app died first, 3 when something answered 200
+# but the body was not dashboard HTML, 1 on timeout.
 wait_ready() {
-  local deadline status body
+  local deadline response status effective saw_non_html_200
+  saw_non_html_200=0
+  BODY_FILE="$SMOKE_TMP/index.html"
   deadline=$(($(now_secs) + READY_TIMEOUT_SECS))
-  body="$SMOKE_TMP/index.html"
   while [ "$(now_secs)" -lt "$deadline" ]; do
     if ! process_alive "$HEADLESS_PID"; then
       return 2
     fi
-    if status="$(curl --silent --max-time 5 --output "$body" --write-out '%{http_code}' \
+    if response="$(curl --silent --location --max-redirs 10 --max-time 5 \
+      --output "$BODY_FILE" --write-out '%{http_code} %{url_effective}' \
       "http://127.0.0.1:$PORT/" 2>/dev/null)"; then
+      # curl emits `<final status> <final url>`; the effective URL never
+      # contains a space, so the first space is an unambiguous separator.
+      status="${response%% *}"
+      effective="${response#* }"
       if [ "$status" = "200" ]; then
-        return 0
+        if grep -qi '<html' "$BODY_FILE"; then
+          EFFECTIVE_URL="$effective"
+          return 0
+        fi
+        # A 200 alone is not proof of a working dashboard: keep polling (the
+        # asset manifest / router may still be settling), but remember that a
+        # 200 was seen so the eventual failure can say so.
+        saw_non_html_200=1
       fi
     fi
     sleep 2
   done
+  [ "$saw_non_html_200" -eq 0 ] || return 3
   return 1
 }
 
@@ -249,21 +277,21 @@ wait_ready || ready_status=$?
 
 if [ "$ready_status" -ne 0 ]; then
   show_logs
-  if [ "$ready_status" -eq 2 ]; then
-    die "the packaged app exited before serving HTTP on port $PORT — see the logs above"
-  fi
-  die "no HTTP 200 from http://127.0.0.1:$PORT/ within ${READY_TIMEOUT_SECS}s — see the logs above"
+  case "$ready_status" in
+    2)
+      die "the packaged app exited before serving HTTP on port $PORT — see the logs above"
+      ;;
+    3)
+      die "HTTP 200 from http://127.0.0.1:$PORT/ but the response body is not dashboard HTML (no '<html' marker); see $BODY_FILE"
+      ;;
+    *)
+      die "no HTTP 200 (following redirects) from http://127.0.0.1:$PORT/ within ${READY_TIMEOUT_SECS}s — see the logs above"
+      ;;
+  esac
 fi
 
 STARTUP_SECS=$(($(now_secs) - START_SECS))
-info "dashboard served HTTP 200 after ${STARTUP_SECS}s"
-
-# A 200 alone is not proof of a working dashboard: the body must be the
-# dashboard HTML, not an error/placeholder page.
-if ! grep -qi '<html' "$SMOKE_TMP/index.html"; then
-  show_logs
-  die "HTTP 200 but the response body is not dashboard HTML (no '<html' marker); see $SMOKE_TMP/index.html"
-fi
+info "dashboard served HTTP 200 after ${STARTUP_SECS}s at $EFFECTIVE_URL"
 
 # ── 5. The backend really booted the BEAM ───────────────────────────
 
