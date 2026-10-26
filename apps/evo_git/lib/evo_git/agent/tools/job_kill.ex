@@ -10,6 +10,14 @@ defmodule EvoGit.Agent.Tools.JobKill do
       reached a terminal status, so nothing was killed
     * an `Error: ...` line — unknown id (see `job_list`), another agent's job, or
       a backend failure to stop the process
+
+  ## Completion notice
+
+  Killing a job SUPPRESSES its turn-boundary completion notice: the agent itself
+  requested the stop, so `[NOTICE] ... killed ...` would be redundant (this also
+  holds for the already-finished reply). A `job_output` call afterwards still
+  returns the output the job produced before the kill. Only a backend failure to
+  stop the process leaves the notice armed, because the final status is unknown.
   """
 
   alias EvoGit.Agent.Tools.Failure

@@ -825,6 +825,48 @@ defmodule EvoGit.BackgroundJobsTest do
       assert {:ok, []} = BackgroundJobs.claim_finished_notices()
       assert {:ok, _} = BackgroundJobs.kill(job.id)
     end
+
+    test "kill/3 on a live job suppresses the notice", %{tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "sleep 30", cwd: tmp_dir})
+
+      # The agent requested the kill itself, so it already knows the outcome.
+      assert {:ok, killed} = BackgroundJobs.kill(job.id)
+      assert killed.status == :killed
+      assert killed.announced
+
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+      # The registry record carries the mark too, so a later turn cannot re-announce it.
+      assert {:ok, %{announced: true, status: :killed}} = BackgroundJobs.job(job.id)
+    end
+
+    test "kill/3 on an already-finished job returns it announced", %{tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "echo done", cwd: tmp_dir})
+      _ = await_status!(job.id, :completed)
+
+      assert {:error, {:already_finished, finished}} = BackgroundJobs.kill(job.id)
+      assert finished.status == :completed
+      assert finished.announced
+
+      assert {:ok, []} = BackgroundJobs.claim_finished_notices()
+      assert {:ok, %{announced: true}} = BackgroundJobs.job(job.id)
+    end
+
+    test "a killed job's pre-kill output is still readable", %{tmp_dir: tmp_dir} do
+      job = start_job!(%{command: "echo before-kill; sleep 30", cwd: tmp_dir})
+
+      wait_until(
+        fn -> File.read(job.output_path) == {:ok, "before-kill\n"} end,
+        @deadline_ms,
+        "the job never wrote its pre-kill output"
+      )
+
+      assert {:ok, %{status: :killed}} = BackgroundJobs.kill(job.id)
+
+      assert {:ok, %{text: text, job: read_job}} = BackgroundJobs.read(job.id)
+      assert text == "before-kill\n"
+      assert read_job.status == :killed
+      assert read_job.announced
+    end
   end
 
   describe "registry constants and status vocabulary" do
