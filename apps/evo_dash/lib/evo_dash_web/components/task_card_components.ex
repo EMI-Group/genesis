@@ -2,6 +2,38 @@ defmodule EvoDashWeb.TaskCardComponents do
   @moduledoc """
   Task card components for the dashboard — status display, metatags,
   expandable details, result rendering, and option rendering helpers.
+
+  ## Card inputs — summary map + lazily-fetched detail
+
+  `task_card/1` is fed the lightweight 16-key task SUMMARY map
+  (`id, status, review_status, started_at, finished_at, type, project_path,
+  opts, branch_name, model_id, agent_count, base_sha, commit_sha,
+  lease_expires_at, updated_at, error`). It deliberately carries NO
+  `result` / `usage` / `logs` / `archive_metadata` — those heavy payloads
+  arrive separately through the `detail` attr (see below), so a big task blob
+  never rides a task-list render.
+
+  `detail` is `nil` (not requested yet) or:
+
+      %{state: :loading | :ok | :error,
+        task: %EvoGit.TaskInfo{} | nil,      # only meaningful when state == :ok
+        error: term() | nil,                 # only when state == :error
+        seq: pos_integer(),
+        archive: nil | %{state: :loading | :ok | :error,
+                          records: [map()], error: term() | nil,
+                          seq: pos_integer()}}
+
+  Only the EXPANDED view reads `detail.task`; the collapsed card renders from
+  the summary alone (`task_repos/2` derives its repo badges from the summary's
+  `commit_sha`/`branch_name` + `opts[:foreign_repos]`, enriched by the detail
+  result's `repos` map when it has landed).
+
+  ## Why this stays ONE file
+
+  The card template and its bounded-preview helpers (`text_preview/2`,
+  `log_preview/1`, `copy_payload/1`, the byte/row caps) are one contract: the
+  caps exist precisely because this template interpolates the payloads, so
+  they live together instead of being spread across modules.
   """
 
   # zh_CN: Agent → "智能体", Token → "词元"
@@ -15,9 +47,31 @@ defmodule EvoDashWeb.TaskCardComponents do
   attr(:task, :map, required: true)
   attr(:show_details, :boolean, default: false)
   attr(:current_node_id, :any, default: nil)
+  # nil | %{state: :loading | :ok | :error, task:, error:, seq:, archive:} —
+  # the lazily-fetched heavy payload (see the moduledoc). nil = not loaded.
+  attr(:detail, :map, default: nil)
 
   def task_card(assigns) do
     ~H"""
+    <%!-- `lite` = the lazily-fetched FULL %TaskInfo{} (result/usage/logs/
+         archive_metadata). nil until the detail load succeeds — the expanded
+         heavy sections are gated on it, so the card NEVER dot-accesses a nil
+         detail. `archive` = the separately-fetched archive records envelope. --%>
+    <% lite =
+      case @detail do
+        %{state: :ok, task: task} when is_map(task) -> task
+        _ -> nil
+      end %>
+    <% archive =
+      case @detail do
+        %{archive: archive} when is_map(archive) -> archive
+        _ -> nil
+      end %>
+    <% detail_state =
+      case @detail do
+        %{state: state} -> state
+        _ -> nil
+      end %>
     <div class={[
       "bg-base-100 rounded-lg shadow-sm hover:shadow-md transition-shadow border border-base-200/60 relative z-10 group has-[[open]]:z-30",
       task_card_tint(@task)
@@ -112,15 +166,16 @@ defmodule EvoDashWeb.TaskCardComponents do
 
         <!-- Multi-repo indicator — compact per-repo badges on the COLLAPSED
              card only (the expanded detail view shows the full per-repo
-             section). Guarded by result_repos/1: legacy results / summary
-             maps without a `repos` key render nothing. -->
-        <%= if !@show_details do %>
-          <% repos = result_repos(Map.get(@task, :result)) %>
-          <%= if repos do %>
-            <div class="-mt-3">
-              <EvoDashWeb.TaskCardComponents.result_repos_badges repos={repos} />
-            </div>
-          <% end %>
+             section). Derived by `task_repos/2`: primary repo from the SUMMARY
+             (`commit_sha`/`branch_name`), foreign repos from the summary's
+             `opts[:foreign_repos]`, optionally enriched by the detail result's
+             `repos` map once it has landed. nil (single-repo tasks, legacy
+             rows) renders nothing. -->
+        <% collapsed_repos = if @show_details, do: nil, else: task_repos(@task, @detail) %>
+        <%= if collapsed_repos do %>
+          <div class="-mt-3">
+            <EvoDashWeb.TaskCardComponents.result_repos_badges repos={collapsed_repos} />
+          </div>
         <% end %>
 
         <!-- Compact structured-failure line — COLLAPSED failed card only (the
@@ -321,7 +376,11 @@ defmodule EvoDashWeb.TaskCardComponents do
                   </div>
                   {render_options(@task.opts)}
                 </div>
-                <%= if Map.get(@task, :result) do %>
+                <%!-- The result lives on the lazily-fetched FULL TaskInfo
+                     (`detail.task`), never on the summary map — so this grid
+                     cell simply does not render until the detail load lands. --%>
+                <% card_result = if lite, do: Map.get(lite, :result), else: nil %>
+                <%= if card_result do %>
                   <!-- Agent Message card — full result content (scrollable) + badges -->
                   <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
                     <div class="flex items-center justify-between mb-4">
@@ -330,7 +389,7 @@ defmodule EvoDashWeb.TaskCardComponents do
                         <%!-- zh_CN: 智能体的最终消息 --%>{gettext("Agent Message")}
                       </h4>
                       <div class="flex items-center gap-2">
-                        <% result_copy = copy_payload(result_copy_text(@task.result)) %>
+                        <% result_copy = copy_payload(result_copy_text(card_result)) %>
                         <button
                           id={"task-#{@task.id}-result-copy"}
                           phx-hook="ClipboardCopy"
@@ -352,201 +411,314 @@ defmodule EvoDashWeb.TaskCardComponents do
                         </button>
                       </div>
                     </div>
-                    {render_result(@task.result)}
+                    {render_result(card_result)}
                   </div>
                 <% end %>
               </div>
 
-              <%= if Map.get(@task, :usage) do %>
-                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                  <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
-                    <.icon name="hero-currency-dollar" class="size-4.5 text-primary-standalone" />
-                    <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
-                  </h4>
-                  <div class="grid grid-cols-3 gap-3">
-                    <div>
-                      <div class="text-xs text-base-content/70 mb-1">
-                        <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
-                      </div>
-                      <div class="text-sm font-semibold">
-                        {format_number(@task.usage.input_tokens)}
-                      </div>
-                    </div>
-                    <div>
-                      <div class="text-xs text-base-content/70 mb-1">
-                        <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
-                      </div>
-                      <div class="text-sm font-semibold">
-                        {format_number(@task.usage.output_tokens)}
-                      </div>
-                    </div>
-                    <div>
-                      <div class="text-xs text-base-content/70 mb-1">
-                        <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
-                      </div>
-                      <div class="text-sm font-semibold">
-                        {format_number(@task.usage.total_tokens)}
-                      </div>
-                    </div>
+              <%!-- Heavy sections below (usage / agents / logs / archive) all
+                   need the lazily-fetched FULL TaskInfo (`detail.task`). While
+                   it is missing we render exactly ONE compact placeholder:
+                   the retry-able error strip when the load FAILED, otherwise a
+                   spinner — never an endless silent gap, never a crash. --%>
+              <%= cond do %>
+                <% detail_state == :error -> %>
+                  <div
+                    id={"task-#{@task.id}-detail-error"}
+                    class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 min-w-0"
+                  >
+                    <.icon name="hero-exclamation-triangle" class="size-4 text-error shrink-0" />
+                    <span class="text-xs font-medium text-error truncate min-w-0">
+                      {gettext("Could not load task details.")}
+                    </span>
+                    <button
+                      class="btn btn-xs btn-ghost rounded-md ml-auto shrink-0"
+                      phx-click="retry_task_detail"
+                      phx-value-task_id={@task.id}
+                    >
+                      <.icon name="hero-arrow-path" class="size-3.5 mr-1" /> {gettext("Retry")}
+                    </button>
                   </div>
-                  <%= if Map.get(@task.usage, :cached_tokens, 0) > 0 or Map.get(@task.usage, :cache_creation_tokens, 0) > 0 do %>
-                    <div class="mt-4 pt-4 border-t border-base-200">
+                <% lite == nil -> %>
+                  <div
+                    id={"task-#{@task.id}-detail-loading"}
+                    class="flex items-center gap-2 bg-base-200/40 border border-base-200/80 rounded-lg px-3 py-2"
+                  >
+                    <span class="loading loading-spinner loading-xs text-base-content/60 shrink-0"></span>
+                    <span class="text-xs font-medium text-base-content/70">
+                      {gettext("Loading task details…")}
+                    </span>
+                  </div>
+                <% true -> %>
+                  <% usage = Map.get(lite, :usage) %>
+                  <%= if usage do %>
+                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                      <h4 class="text-sm font-bold flex items-center gap-2 mb-4">
+                        <.icon name="hero-currency-dollar" class="size-4.5 text-primary-standalone" />
+                        <%!-- zh_CN: Token → "词元" --%>{gettext("Token & Cost Usage")}
+                      </h4>
                       <div class="grid grid-cols-3 gap-3">
                         <div>
                           <div class="text-xs text-base-content/70 mb-1">
-                            <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
+                            <%!-- zh_CN: Token → "词元" --%>{gettext("Input Tokens")}
                           </div>
                           <div class="text-sm font-semibold">
-                            {format_number(Map.get(@task.usage, :cached_tokens, 0))}
+                            {format_number(usage.input_tokens)}
                           </div>
                         </div>
                         <div>
                           <div class="text-xs text-base-content/70 mb-1">
-                            {gettext("Cache Creation")}
+                            <%!-- zh_CN: Token → "词元" --%>{gettext("Output Tokens")}
                           </div>
                           <div class="text-sm font-semibold">
-                            {format_number(Map.get(@task.usage, :cache_creation_tokens, 0))}
+                            {format_number(usage.output_tokens)}
                           </div>
                         </div>
                         <div>
                           <div class="text-xs text-base-content/70 mb-1">
-                            {gettext("Cache Hit Rate")}
+                            <%!-- zh_CN: Token → "词元" --%>{gettext("Total Tokens")}
                           </div>
-                          <div class="text-sm font-semibold text-success">
-                            {format_cache_hit_rate(@task.usage)}
+                          <div class="text-sm font-semibold">
+                            {format_number(usage.total_tokens)}
                           </div>
-                          <progress
-                            class="progress progress-success w-full mt-1"
-                            value={
-                              if @task.usage.input_tokens > 0,
-                                do:
-                                  min(
-                                    round(
-                                      Map.get(@task.usage, :cached_tokens, 0) /
-                                        @task.usage.input_tokens * 100
-                                    ),
-                                    100
-                                  ),
-                                else: 0
-                            }
-                            max="100"
-                          ></progress>
                         </div>
+                      </div>
+                      <%= if Map.get(usage, :cached_tokens, 0) > 0 or Map.get(usage, :cache_creation_tokens, 0) > 0 do %>
+                        <div class="mt-4 pt-4 border-t border-base-200">
+                          <div class="grid grid-cols-3 gap-3">
+                            <div>
+                              <div class="text-xs text-base-content/70 mb-1">
+                                <%!-- zh_CN: Token → "词元" --%>{gettext("Cached Tokens")}
+                              </div>
+                              <div class="text-sm font-semibold">
+                                {format_number(Map.get(usage, :cached_tokens, 0))}
+                              </div>
+                            </div>
+                            <div>
+                              <div class="text-xs text-base-content/70 mb-1">
+                                {gettext("Cache Creation")}
+                              </div>
+                              <div class="text-sm font-semibold">
+                                {format_number(Map.get(usage, :cache_creation_tokens, 0))}
+                              </div>
+                            </div>
+                            <div>
+                              <div class="text-xs text-base-content/70 mb-1">
+                                {gettext("Cache Hit Rate")}
+                              </div>
+                              <div class="text-sm font-semibold text-success">
+                                {format_cache_hit_rate(usage)}
+                              </div>
+                              <progress
+                                class="progress progress-success w-full mt-1"
+                                value={
+                                  if usage.input_tokens > 0,
+                                    do:
+                                      min(
+                                        round(
+                                          Map.get(usage, :cached_tokens, 0) /
+                                            usage.input_tokens * 100
+                                        ),
+                                        100
+                                      ),
+                                    else: 0
+                                }
+                                max="100"
+                              ></progress>
+                            </div>
+                          </div>
+                        </div>
+                      <% end %>
+                      <div class="mt-4 pt-4 border-t border-base-200">
+                        <div class="grid grid-cols-3 gap-3">
+                          <div>
+                            <div class="text-xs text-base-content/70 mb-1">
+                              {gettext("Input Cost")}
+                            </div>
+                            <div class="text-sm font-semibold">
+                              ${format_cost(usage.input_cost)}
+                            </div>
+                          </div>
+                          <div>
+                            <div class="text-xs text-base-content/70 mb-1">
+                              {gettext("Output Cost")}
+                            </div>
+                            <div class="text-sm font-semibold">
+                              ${format_cost(usage.output_cost)}
+                            </div>
+                          </div>
+                          <div>
+                            <div class="text-xs text-base-content/70 mb-1">
+                              {gettext("Total Cost")}
+                            </div>
+                            <div class="text-sm font-semibold text-primary-standalone">
+                              ${format_cost(usage.total_cost)}
+                            </div>
+                          </div>
+                        </div>
+                        <.cost_estimate_notice />
                       </div>
                     </div>
                   <% end %>
-                  <div class="mt-4 pt-4 border-t border-base-200">
-                    <div class="grid grid-cols-3 gap-3">
-                      <div>
-                        <div class="text-xs text-base-content/70 mb-1">{gettext("Input Cost")}</div>
-                        <div class="text-sm font-semibold">
-                          ${format_cost(@task.usage.input_cost)}
-                        </div>
-                      </div>
-                      <div>
-                        <div class="text-xs text-base-content/70 mb-1">{gettext("Output Cost")}</div>
-                        <div class="text-sm font-semibold">
-                          ${format_cost(@task.usage.output_cost)}
-                        </div>
-                      </div>
-                      <div>
-                        <div class="text-xs text-base-content/70 mb-1">{gettext("Total Cost")}</div>
-                        <div class="text-sm font-semibold text-primary-standalone">
-                          ${format_cost(@task.usage.total_cost)}
-                        </div>
+
+                  <%= if Map.get(@task, :agent_count) do %>
+                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                      <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
+                        <span class="flex items-center gap-2">
+                          <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
+                          <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
+                        </span>
+                        <%= if @task.model_id do %>
+                          <span class="text-xs font-medium text-base-content/70">
+                            {gettext("Model")}: {@task.model_id}
+                          </span>
+                        <% end %>
+                      </h4>
+                      <div class="flex items-center gap-3">
+                        <span class="text-2xl font-bold text-primary-standalone">{format_number(
+                          @task.agent_count
+                        )}</span>
+                        <span class="text-xs text-base-content/70"><%!-- zh_CN: agent → "智能体" --%>{gettext(
+                          "total agents (incl. subagents)"
+                        )}</span>
                       </div>
                     </div>
-                    <.cost_estimate_notice />
-                  </div>
-                </div>
-              <% end %>
-
-              <%= if Map.get(@task, :agent_count) do %>
-                <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
-                  <h4 class="text-sm font-bold flex items-center justify-between gap-2 mb-4">
-                    <span class="flex items-center gap-2">
-                      <.icon name="hero-user-group" class="size-4.5 text-primary-standalone" />
-                      <%!-- zh_CN: Agent → "智能体" --%>{gettext("Agents Spawned")}
-                    </span>
-                    <%= if @task.model_id do %>
-                      <span class="text-xs font-medium text-base-content/70">
-                        {gettext("Model")}: {@task.model_id}
-                      </span>
-                    <% end %>
-                  </h4>
-                  <div class="flex items-center gap-3">
-                    <span class="text-2xl font-bold text-primary-standalone">{format_number(
-                      @task.agent_count
-                    )}</span>
-                    <span class="text-xs text-base-content/70"><%!-- zh_CN: agent → "智能体" --%>{gettext(
-                      "total agents (incl. subagents)"
-                    )}</span>
-                  </div>
-                </div>
-              <% end %>
-
-              <%!--
-                logs is NOT in the summary-map contract (TaskRegistry.list_tasks_summary).
-                Map.get keeps this safe for both full %TaskInfo{} structs (TasksLive,
-                paginated full loads) and summary maps (missing key → nil → section
-                hidden, no KeyError).
-              --%>
-              <%= if Map.get(@task, :logs) not in [nil, []] do %>
-                <% logs_preview = log_preview(Map.get(@task, :logs)) %>
-                <% log_count = logs_preview.total %>
-                <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
-                  <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
-                    <.icon
-                      name="hero-command-line"
-                      class="size-4.5 text-base-content/70 group-hover/logs:text-primary-standalone transition-colors"
-                    />
-                    {gettext("Execution Logs")}
-                    <span class="text-xs font-medium bg-base-200 text-base-content/70 px-2 py-0.5 rounded-md ml-2">
-                      {log_summary_label(log_count)}
-                    </span>
-                  </summary>
-                  <%= if logs_preview.truncated? do %>
-                    <p class="text-xs text-base-content/60 mt-3">
-                      <%!-- zh_CN: log entries → "日志条目"（日志被截断时的说明） --%>{gettext(
-                        "Showing the last %{shown} of %{total} log entries",
-                        shown: format_number(length(logs_preview.items)),
-                        total: format_number(logs_preview.total)
-                      )}
-                    </p>
                   <% end %>
-                  <div class="bg-base-200 text-base-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
-                    <%= for {log, idx} <- Enum.with_index(logs_preview.items) do %>
-                      <div class={[
-                        "flex items-start gap-3 p-1.5 rounded transition-colors",
-                        rem(idx, 2) == 0 && "bg-base-content/5",
-                        log.level == :error && "bg-error/15 text-error",
-                        log.level == :warn && "bg-warning/15 text-warning"
-                      ]}>
-                        <span class="text-base-content/60 shrink-0 select-none">
-                          [{format_datetime(log.timestamp, :time)}]
-                        </span>
-                        <span class={[
-                          "font-bold shrink-0 w-12 select-none",
-                          log.level == :error && "text-error",
-                          log.level == :warn && "text-warning",
-                          log.level == :info && "text-info"
-                        ]}>
-                          {String.upcase(to_string(log.level))}
-                        </span>
-                        <span class="break-words font-medium opacity-90">
-                          {log.message}
-                        </span>
-                      </div>
-                    <% end %>
-                  </div>
-                </details>
-              <% end %>
 
-              <%= if Map.get(@task, :archive_metadata) not in [nil, []] do %>
-                <EvoDashWeb.ArchiveComponents.archive_details
-                  archive_metadata={Map.get(@task, :archive_metadata)}
-                  task_id={@task.id}
-                />
+                  <%!--
+                    logs live on the FULL %TaskInfo{} (`detail.task`) — never on
+                    the summary map. Map.get keeps this total; the section is
+                    only reached when `lite` is present anyway.
+                  --%>
+                  <% logs = Map.get(lite, :logs) %>
+                  <%= if logs not in [nil, []] do %>
+                    <% logs_preview = log_preview(logs) %>
+                    <% log_count = logs_preview.total %>
+                    <details class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors group/logs">
+                      <summary class="cursor-pointer text-sm font-bold flex items-center gap-2 select-none outline-none">
+                        <.icon
+                          name="hero-command-line"
+                          class="size-4.5 text-base-content/70 group-hover/logs:text-primary-standalone transition-colors"
+                        />
+                        {gettext("Execution Logs")}
+                        <span class="text-xs font-medium bg-base-200 text-base-content/70 px-2 py-0.5 rounded-md ml-2">
+                          {log_summary_label(log_count)}
+                        </span>
+                      </summary>
+                      <%= if logs_preview.truncated? do %>
+                        <p class="text-xs text-base-content/60 mt-3">
+                          <%!-- zh_CN: log entries → "日志条目"（日志被截断时的说明） --%>{gettext(
+                            "Showing the last %{shown} of %{total} log entries",
+                            shown: format_number(length(logs_preview.items)),
+                            total: format_number(logs_preview.total)
+                          )}
+                        </p>
+                      <% end %>
+                      <div class="bg-base-200 text-base-content p-4 rounded-md max-h-72 overflow-y-auto text-xs font-mono space-y-1 mt-4 shadow-inner">
+                        <%= for {log, idx} <- Enum.with_index(logs_preview.items) do %>
+                          <div class={[
+                            "flex items-start gap-3 p-1.5 rounded transition-colors",
+                            rem(idx, 2) == 0 && "bg-base-content/5",
+                            log.level == :error && "bg-error/15 text-error",
+                            log.level == :warn && "bg-warning/15 text-warning"
+                          ]}>
+                            <span class="text-base-content/60 shrink-0 select-none">
+                              [{format_datetime(log.timestamp, :time)}]
+                            </span>
+                            <span class={[
+                              "font-bold shrink-0 w-12 select-none",
+                              log.level == :error && "text-error",
+                              log.level == :warn && "text-warning",
+                              log.level == :info && "text-info"
+                            ]}>
+                              {String.upcase(to_string(log.level))}
+                            </span>
+                            <span class="break-words font-medium opacity-90">
+                              {log.message}
+                            </span>
+                          </div>
+                        <% end %>
+                      </div>
+                    </details>
+                  <% end %>
+
+                  <%!--
+                    Archive — LAZY disclosure. The summary map cannot tell
+                    whether archive records exist, so the section appears when
+                    the task was started with the `:archive` opt
+                    (`opts[:archive]`) OR when the archive has already been
+                    fetched. Records are loaded on demand via the
+                    `load_task_archive` event (button below) and render through
+                    ArchiveComponents' own bounded/capped tree markup.
+                  --%>
+                  <%= if archive_opt?(@task.opts) or archive != nil do %>
+                    <div class="bg-base-200/30 p-5 rounded-lg border border-base-200/80 hover:border-base-300 transition-colors">
+                      <div class="flex items-center justify-between gap-2">
+                        <h4 class="text-sm font-bold flex items-center gap-2">
+                          <.icon name="hero-archive-box" class="size-4.5 text-base-content/70" />
+                          <%!-- zh_CN: Agent → "智能体" --%>{gettext("Archived Agent Details")}
+                        </h4>
+                        <%= if archive == nil do %>
+                          <button
+                            class="btn btn-xs btn-ghost rounded-md"
+                            phx-click="load_task_archive"
+                            phx-value-task_id={@task.id}
+                          >
+                            <.icon name="hero-archive-box-arrow-down" class="size-3.5 mr-1" />
+                            <%!-- zh_CN: 加载并展开归档（按需加载） --%>{gettext(
+                              "Show archive"
+                            )}
+                          </button>
+                        <% end %>
+                      </div>
+                      <%= cond do %>
+                        <% archive == nil -> %>
+                          <p class="text-xs text-base-content/60 mt-3">
+                            <%!-- zh_CN: 归档记录按需加载（点击按钮后才读取） --%>{gettext(
+                              "The archive loads on demand."
+                            )}
+                          </p>
+                        <% archive_state(archive) == :loading -> %>
+                          <div class="flex items-center gap-2 mt-3">
+                            <span class="loading loading-spinner loading-xs text-base-content/60 shrink-0"></span>
+                            <span class="text-xs font-medium text-base-content/70">
+                              {gettext("Loading archive…")}
+                            </span>
+                          </div>
+                        <% archive_state(archive) == :error -> %>
+                          <div class="flex items-center gap-2 bg-error/10 border border-error/20 rounded-lg px-3 py-2 mt-3 min-w-0">
+                            <.icon
+                              name="hero-exclamation-triangle"
+                              class="size-4 text-error shrink-0"
+                            />
+                            <span class="text-xs font-medium text-error truncate min-w-0">
+                              {gettext("Could not load the task archive.")}
+                            </span>
+                            <button
+                              class="btn btn-xs btn-ghost rounded-md ml-auto shrink-0"
+                              phx-click="load_task_archive"
+                              phx-value-task_id={@task.id}
+                            >
+                              <.icon name="hero-arrow-path" class="size-3.5 mr-1" /> {gettext("Retry")}
+                            </button>
+                          </div>
+                        <% archive_records(archive) == [] -> %>
+                          <p class="text-xs text-base-content/60 mt-3">
+                            <%!-- zh_CN: 该任务没有任何已归档的智能体记录 --%>{gettext(
+                              "No archived agents for this task."
+                            )}
+                          </p>
+                        <% true -> %>
+                          <% records = archive_records(archive) %>
+                          <div class="mt-4">
+                            <EvoDashWeb.ArchiveComponents.archive_details
+                              archive_metadata={records}
+                              task_id={@task.id}
+                            />
+                          </div>
+                      <% end %>
+                    </div>
+                  <% end %>
               <% end %>
             </div>
           </div>
@@ -623,6 +795,45 @@ defmodule EvoDashWeb.TaskCardComponents do
       message -> truncate_string(message, 160)
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers — lazy archive envelope (`detail.archive`)
+  # ---------------------------------------------------------------------------
+  #
+  # Archive records are NOT on the summary map: they are fetched on demand via
+  # the `load_task_archive` event. The envelope is
+  # `%{state: :loading | :ok | :error, records: [map()], error: term(), seq:
+  # pos_integer()}`. Every read below is TOTAL, so an odd shape falls back to
+  # the empty/on-demand state instead of crashing the card.
+
+  defp archive_state(archive) do
+    case archive do
+      %{state: state} -> state
+      %{"state" => state} -> state
+      _ -> nil
+    end
+  end
+
+  defp archive_records(archive) do
+    case archive do
+      %{records: records} when is_list(records) -> records
+      %{"records" => records} when is_list(records) -> records
+      _ -> []
+    end
+  end
+
+  # `opts[:archive]` is the archive OPT-IN signal (`true` from the dashboard,
+  # `"true"` from the CLI/task data plane). The summary map cannot say whether
+  # records actually exist, so this only decides whether the lazy disclosure
+  # renders at all.
+  defp archive_opt?(opts) when is_list(opts) do
+    Enum.find_value(opts, false, fn
+      {:archive, value} -> value in [true, "true"]
+      _ -> nil
+    end)
+  end
+
+  defp archive_opt?(_opts), do: false
 
   # ---------------------------------------------------------------------------
   # Private helpers — accent color for task_card status bar
@@ -871,6 +1082,147 @@ defmodule EvoDashWeb.TaskCardComponents do
     {primary, foreign} = Enum.split_with(entries, &(&1.id == "primary"))
     primary ++ Enum.sort_by(foreign, & &1.id)
   end
+
+  # ---------------------------------------------------------------------------
+  # Public helpers — task_repos/2 (COLLAPSED card multi-repo indicator)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Derives the collapsed card's per-repo indicator from the task SUMMARY map,
+  enriched by the lazily-fetched `detail` once it has landed.
+
+  Sources, in order:
+
+    1. the primary repo, straight from the summary —
+       `%{id: "primary", commit_sha: task.commit_sha, branch_name: task.branch_name}`;
+    2. one entry per foreign repo in `opts[:foreign_repos]` (structs or maps) —
+       `%{id:, path:, description:, writable:, commit_sha: nil, branch_name: nil}`.
+       Entries without a usable string id, and any entry whose id is
+       `"primary"`, are skipped;
+    3. enrichment from `detail.task`'s result `repos` map (see
+       `result_repos/1`): a NON-nil detail `commit_sha`/`branch_name` overrides
+       the summary value, and detail-only repo ids absent from
+       `opts[:foreign_repos]` are added as badge-only entries.
+
+  Returns `nil` — so the caller renders NOTHING (legacy behaviour) — unless the
+  task is genuinely multi-repo: at least one foreign repo is configured, or the
+  detail result carries more than the primary repo. Otherwise the entries are
+  ordered primary-first, foreign repos sorted by id.
+
+  TOTAL: `task` may be odd, `opts` nil or not a keyword list, entries may be
+  non-maps, `detail` may be nil or `:loading`/`:error` — none of it raises.
+  """
+  def task_repos(task, detail) do
+    task = if is_map(task), do: task, else: %{}
+
+    summary_primary = %{
+      id: "primary",
+      commit_sha: Map.get(task, :commit_sha),
+      branch_name: Map.get(task, :branch_name),
+      path: nil,
+      description: nil,
+      writable: false
+    }
+
+    foreign = foreign_repo_entries(Map.get(task, :opts))
+    detail_repos = detail_result_repos(detail)
+
+    if foreign == [] and not more_than_primary?(detail_repos) do
+      nil
+    else
+      [summary_primary | foreign]
+      |> merge_detail_repos(detail_repos)
+      |> primary_first()
+    end
+  end
+
+  # `detail.task`'s result `repos` entries — nil while the detail is missing,
+  # still loading, or errored out (all treated identically: no enrichment).
+  defp detail_result_repos(%{state: :ok, task: lite}) when is_map(lite),
+    do: result_repos(Map.get(lite, :result))
+
+  defp detail_result_repos(_detail), do: nil
+
+  defp more_than_primary?(repos) when is_list(repos), do: length(repos) > 1
+  defp more_than_primary?(_repos), do: false
+
+  # Merge the detail result's per-repo entries into the summary-derived ones:
+  # a non-nil detail value wins, a nil detail value keeps the summary value,
+  # and detail-only ids are appended (badge-only entries, no path/description).
+  defp merge_detail_repos(entries, detail_repos) when is_list(detail_repos) do
+    Enum.reduce(detail_repos, entries, fn %{id: id} = detail_entry, acc ->
+      case Enum.find_index(acc, &(&1.id == id)) do
+        nil ->
+          [
+            %{
+              id: id,
+              commit_sha: detail_entry.commit_sha,
+              branch_name: detail_entry.branch_name,
+              path: nil,
+              description: nil,
+              writable: false
+            }
+            | acc
+          ]
+
+        index ->
+          List.update_at(acc, index, fn entry ->
+            %{
+              entry
+              | commit_sha: detail_entry.commit_sha || entry.commit_sha,
+                branch_name: detail_entry.branch_name || entry.branch_name
+            }
+          end)
+      end
+    end)
+  end
+
+  defp merge_detail_repos(entries, _detail_repos), do: entries
+
+  # `opts[:foreign_repos]` → normalized badge entries. Tolerant of a nil /
+  # non-keyword `opts` and of non-list / non-map entries.
+  defp foreign_repo_entries(opts) when is_list(opts) do
+    opts
+    |> foreign_repos_list()
+    |> Enum.flat_map(fn entry ->
+      case foreign_repo_entry(entry) do
+        nil -> []
+        entry -> [entry]
+      end
+    end)
+  end
+
+  defp foreign_repo_entries(_opts), do: []
+
+  defp foreign_repos_list(opts) do
+    Enum.find_value(opts, [], fn
+      {:foreign_repos, repos} when is_list(repos) -> repos
+      _ -> nil
+    end)
+  end
+
+  # `%EvoGit.Core.ForeignRepo{}` structs AND plain atom/string-keyed maps are
+  # accepted (settings round-trips hand either shape).
+  defp foreign_repo_entry(entry) when is_map(entry) do
+    case Map.get(entry, :id) || Map.get(entry, "id") do
+      id when is_binary(id) and id != "" and id != "primary" ->
+        %{
+          id: id,
+          commit_sha: nil,
+          branch_name: nil,
+          path:
+            Map.get(entry, :root) || Map.get(entry, "root") || Map.get(entry, :path) ||
+              Map.get(entry, "path"),
+          description: Map.get(entry, :description) || Map.get(entry, "description"),
+          writable: (Map.get(entry, :writable) || Map.get(entry, "writable")) == true
+        }
+
+      _ ->
+        nil
+    end
+  end
+
+  defp foreign_repo_entry(_entry), do: nil
 
   attr(:repos, :list, required: true)
   attr(:size_class, :string, default: "text-xs")

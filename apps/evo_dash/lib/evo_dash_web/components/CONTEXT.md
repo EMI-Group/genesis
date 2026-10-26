@@ -20,7 +20,7 @@ Reusable UI component modules and layout templates for the EvoDash web interface
 | `EvoDashWeb.GitHubComponents` | `github_components.ex` | GitHub issues modal (`issues_modal/1`, root id `github-issues-modal`): state filters (`open`/`closed`/`all` via `phx-click="github_filter_state"`), issue rows (number, state/label badges, author/date, external link, per-row `github_fix_issue` Fix button), loading/empty/error states, public `error_message/1`. Pure presentation — no gh/git calls. |
 | `EvoDashWeb.ProjectComponents` | `project_components.ex` | Command-palette project control (`project_omnibox/1` → centered modal with search-filtered recents + "Open Project by Path" + "Create New Project"; keyboard-first via server-side `palette_keydown`; public `filter_projects/2`) with `palette_menu/1`, `palette_open_path/1` (PathAutocomplete hook), `palette_new_project/1`; plus the project-settings panel/tab (`project_settings_panel/1`, `project_settings_tab/1`, shared `project_settings_body/1` — see "Foreign Repos"). |
 | `EvoDashWeb.TaskFormComponents` | `task_form_components.ex` | Single-card, two-layout objective editor (`task_form/1` — ONE `.input-card` with the prompt textarea (`phx-hook="AdaptiveInput"` + `phx-update="ignore"`, NO `phx-change`) and the bottom toolbar `.input-controls` as its last element), `task_options_tab/1` (Configure-dropdown Task Options; inputs carry `form="task-form"`), legacy `advanced_options/1` — see "Task Form" below. |
-| `EvoDashWeb.TaskCardComponents` | `task_card_components.ex` | Task cards (accent bar, relative timestamps, expandable details) with BOUNDED previews of result/objective/logs (see "Blob & Collection Rendering Caps"), plus the public result/options helpers (`render_result_full/1`, `render_options_full/1`, `objective_text/1`, `result_copy_text/1`, `result_repos/1`, `result_repos_badges/1`). Summary-map safe — see "Task Cards & the Summary-Map Contract". |
+| `EvoDashWeb.TaskCardComponents` | `task_card_components.ex` | Task cards (accent bar, relative timestamps, expandable details) fed by a 16-key task SUMMARY map plus a lazily-fetched `detail` (see "Task Cards & the Summary-Map Contract"), with BOUNDED previews of result/objective/logs (see "Blob & Collection Rendering Caps"), plus the public result/options/repo helpers (`render_result_full/1`, `render_options_full/1`, `objective_text/1`, `result_copy_text/1`, `task_repos/2`, `result_repos/1`, `result_repos_badges/1`). Summary-map safe. |
 | `EvoDashWeb.ArchiveComponents` | `archive_components.ex` | `archive_details/1` + recursive `archive_tree/1` / `archive_tree_node/1` for per-agent archive records (tree via `EvoDashWeb.ArchiveHelpers`, at `../archive_helpers.ex`, outside this node); render paths are capped (see the caps section). |
 | `EvoDashWeb.SettingsComponents` | `settings_components.ex` | Settings page with the VS Code-inspired sidebar+content layout: `setting_card/1` (schema-driven config-key card with input widget, description, default hint, validation error), `category_section/1` (category content area with grouped settings + save), `settings_sidebar/1` (categories with icons, key counts, search). Hosts the LLM Quick Setup flow (see "Settings Quick Setup"). |
 | `EvoDashWeb.SettingsComponents.SaveBar` / `.SectionHeader` / `.CardShell` / `.FormFooter` | `settings_components/{save_bar,section_header,card_shell,form_footer}.ex` | The four shared building blocks consumed by `SettingsComponents`/`SearchResults`/the editors: `save_bar/1` (pinned bottom-right save bar, attrs `:label` + optional `:form` = HTML form-association id), `section_header/1` (sticky section header, attrs `icon`/`title`/`description`), `card_shell/1` (editor card wrapper, attrs `title`/`description`/`class` + `:actions` slot + `:inner_block`), `form_footer/1` (Cancel ghost + primary submit, attrs `cancel_event`/`save_label`). |
@@ -188,39 +188,64 @@ The three directory-picker "Browse" buttons in `project_components.ex` (`project
 
 ## Task Cards & the Summary-Map Contract
 
-The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])`. `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list). Full `%TaskInfo{}` structs are used only on the Tasks page and the Review page.
+The sidebar "Active Tasks" section in `Layouts.app` is fed by `@running_tasks` / `@pending_tasks` — lightweight **summary maps** from the statuses-filtered `EvoGit.TaskRegistry.list_tasks_summary([:running, :pending, :finalizing, :completed])`. `layouts.ex` declares only those two attrs (there is NO `@tasks` attr; the dashboard renders no main task list).
+The Tasks page renders `task_card/1` from the same summary maps and fetches the heavy payload per expanded card into a separate `detail` entry; Review is the only page that still loads full `%TaskInfo{}` structs directly.
 
 ### The summary-map contract
 
 Plain maps with `EvoGit.Store.Operations.Summaries`' 16 keys: `id, status, review_status, started_at, finished_at, type, project_path, opts, branch_name, model_id, agent_count, base_sha, commit_sha, lease_expires_at, updated_at, error`. `opts` is a decoded keyword list; `error` is the lenient atom-keyed failure record (nil unless `:failed`); `updated_at` is a raw ISO string. EXCLUDED: `result`, `logs`, `usage`, `archive_metadata` (and other TaskInfo fields such as `ref`).
 
+### The `detail` attr — lazily-fetched heavy payload
+
+`task_card/1` declares `attr(:detail, :map, default: nil)` next to `task`/`show_details`/`current_node_id`:
+`nil` (nothing requested yet) or `%{state: :loading | :ok | :error, task: %EvoGit.TaskInfo{} | nil, error: term() | nil, seq: pos_integer(), archive: nil | %{state: :loading | :ok | :error, records: [map()], error: term() | nil, seq: pos_integer()}}`.
+`task` is only meaningful when `state == :ok`; `error` only when `state == :error`.
+The template binds `lite = detail.task` when `state == :ok` (else nil) and `archive = detail.archive` (else nil) once at the top, so no template path ever dot-accesses a nil `detail`.
+`state: :loading`/nil with no `lite` renders the loading placeholder; `state: :error` renders the retry-able error strip; neither can crash the card.
+
 ### Field-access rules for task-card components
 
 - **Dot access (`task.field`) is safe ONLY for contract keys** — on a plain map a missing key raises `KeyError`, on a struct it returns nil.
 - **`Map.get(task, field)` is safe for any key** (nil when absent).
-- **Non-contract heavy fields** must be guarded: `Map.get(task, :result)` (never dot access), `Map.get(task, :logs) not in [nil, []]`, `Map.get(task, :usage)`, `Map.get(task, :archive_metadata) not in [nil, []]`. Guarded sections simply hide on summary maps and render on full structs.
+- **Heavy fields live on `detail.task` only**: `Map.get(lite, :result)`, `Map.get(lite, :usage)`, `Map.get(lite, :logs)`; the summary map is never read for them.
+- **The structured failure record `error` stays on the summary** (`task_error(@task)` + `error_field/2`), so both the collapsed strip and the expanded block work before any detail arrives.
 - **Sidebar grouping is deliberately TOTAL against non-map entries** — `group_tasks_by_project/2` filters `running_tasks ++ pending_tasks` to `is_map/1` entries BEFORE `Enum.group_by/3`, so a stray non-map element (the assigns shade `EvoDash.ActiveTasks` ETS snapshots) is omitted instead of crashing the page with `BadMapError`. Do NOT remove this filter.
 
 ### Task detail view — Objective / Agent Message cards (expanded card + zoom modals)
 
 The expanded card detail view (`@show_details`, TasksLive only) shows two direct cards in a 2-column grid (no nested card level), each with a copy button and a "Full" button:
 
-- **Objective card** (when an objective exists): header `gettext("Objective")` + copy (`id="task-<id>-objective-copy"`, `phx-hook="ClipboardCopy"`, `data-content={copy_payload(objective_text(@task.opts)).text}` + hint title) + "Full" (`view_full_options` → Full Objective modal). Body = `render_options(@task.opts)` — the CAPPED objective preview in a `max-h-48 overflow-y-auto` container (byte note when truncated) + mode/path badges.
-- **Agent Message card** (guarded `Map.get(@task, :result)`): header `gettext("Agent Message")` + copy (`id="task-<id>-result-copy"`) + "Full" (`view_full_result` → Full Result modal). Body = `render_result(@task.result)`, always a capped preview, preserving the commit_sha/branch_name/tag/pr_url badges, the No Changes notice and the Error/Crashed sub-headers.
+- **Objective card** (when an objective exists): header `gettext("Objective")` + copy (`id="task-<id>-objective-copy"`, `phx-hook="ClipboardCopy"`, `data-content={copy_payload(objective_text(@task.opts)).text}` + hint title) + "Full" (`view_full_options` → Full Objective modal). Body = `render_options(@task.opts)` — the CAPPED objective preview in a `max-h-48 overflow-y-auto` container (byte note when truncated) + mode/path badges. Reads the SUMMARY's `opts`, so it renders before any detail arrives.
+- **Agent Message card** (only when `lite` is present and `Map.get(lite, :result)` is truthy — the grid cell is simply absent until then): header `gettext("Agent Message")` + copy (`id="task-<id>-result-copy"`) + "Full" (`view_full_result` → Full Result modal). Body = `render_result(Map.get(lite, :result))`, always a capped preview, preserving the commit_sha/branch_name/tag/pr_url badges, the No Changes notice and the Error/Crashed sub-headers.
 - `render_options/2` takes `truncate:` (default `true` = in-card capped preview; `false` = the modal body, full text) — that keyword is the ONLY difference between the two render paths, so a new call site must choose deliberately. `render_options_full/1` and `render_result_full/1` are the `truncate: false` wrappers.
 - Public helpers: `objective_text/1` (`(opts[:prompt] || opts[:objective] || "") |> String.trim()`, COMPLETE — shared with the collapsed preview, bounded only at render time) and `result_copy_text/1` (binary result → the string; `{:error, reason}`/`{:exit, reason}` → `inspect(reason, limit: :infinity)`; fallback → pretty inspect — COMPLETE, capped only by the caller's `copy_payload/1`). Both are reused by the zoom modals in `tasks_live.ex` (Full Result `id="full-result-copy"`, Full Objective `id="full-options-copy"`), whose bodies keep `max-h-[70vh] overflow-y-auto`. TasksLive owns the `"copied"` → "Copied to clipboard" flash handler.
 - **Failed/error-result rendering**: `render_result({:error, reason}, …)` and `{:exit, reason}` inspect the reason (`limit: :infinity`) and preview the inspected STRING in a red "Error"/"Crashed" `<pre>` box (expanded card and Full Result modal alike); `result_copy_text/1` inspects the same way (test-pinned: `result_copy_text({:error, "boom"}) == ~s("boom")` — string reasons come out QUOTE-WRAPPED, atoms as `":killed"`). Any other term falls to the catch-all clauses, which pretty-inspect the whole term and then cap it.
 - **Tuples never survive the Store Codec round trip**: `EvoGit.Store.Codec.encode_result({:error, reason})` stores `inspect(reason)` when `Jason.encode` fails on non-JSON-safe reasons, so `{:error, {128, "fatal: …"}}` arrives as `{:error, "{128, \"fatal: …\"}"}` and the render/copy inspect adds another quote layer — a machine-ish escaped dump. Consequence for core error-term design: persist a human-readable STRING as the reason.
 - The structured failure record `error` (`%{kind:, source:, message:, stacktrace:}`, atom keys after `Codec.decode_error/1`, nil unless the task is `:failed`) is SEPARATE from the legacy `{:error,_}`/`{:exit,_}` result — both may coexist and both render: a compact strip on the COLLAPSED card (`truncate_string(error.message, 160)`, full message in `title`), and a full-detail block on the EXPANDED card (kind/source labels, full message, the LAST ≤8 frames). All reads go through `task_error/1` + `error_field/2` (atom/string-key tolerant, total for nil/non-map/legacy).
 
+### Detail loading / error states (expanded card)
+
+After the Objective/Agent Message grid the expanded card renders EXACTLY ONE of:
+
+- `detail.state == :error` → an inline error-tinted strip `id="task-<id>-detail-error"` with `gettext("Could not load task details.")` and a Retry button (`phx-click="retry_task_detail"` + `phx-value-task_id`). Retry-able by construction — never an endless spinner.
+- `lite == nil` (detail nil or `:loading`) → a compact placeholder `id="task-<id>-detail-loading"`: spinner + `gettext("Loading task details…")`.
+- `lite` present → the heavy sections (Token & Cost Usage from `lite.usage`, Agents Spawned from the summary's `agent_count`/`model_id`, Execution Logs from `lite.logs`, lazy archive — next section).
+
+### Lazy archive disclosure (`load_task_archive`)
+
+The expanded card's archive section renders only when `lite` is present AND (`Keyword.get(@task.opts, :archive) in [true, "true"]` via the private `archive_opt?/1` OR the archive envelope has been fetched) — the summary map cannot tell whether records exist, so `opts[:archive]` is the opt-in signal.
+Header row: `gettext("Archived Agent Details")` + a `phx-click="load_task_archive"` `phx-value-task_id` button (`gettext("Show archive")`) shown only while `archive == nil`.
+Body states (`archive_state/1` + `archive_records/1`, both total): `nil` → muted `gettext("The archive loads on demand.")` hint; `:loading` → spinner + `gettext("Loading archive…")`; `:error` → error-tinted strip `gettext("Could not load the task archive.")` + the same `load_task_archive` retry button; `:ok` with `records == []` → `gettext("No archived agents for this task.")`; `:ok` with records → the existing `<EvoDashWeb.ArchiveComponents.archive_details archive_metadata={records} task_id={@task.id} />` (its own capped tree markup).
+
 ### Multi-repo `repos` result rendering (per-repo commit/branch)
 
 Task results may carry a top-level `repos` map — STRING keys: `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}`; `"primary"` is ALWAYS present (nil branch = no primary changes), writable foreign repos with commits appear, read-only repos are ABSENT. The key stays STRING-keyed after the Codec round trip, so readers must handle atom and string keys.
 
-- **`result_repos/1`** (public pure helper) normalizes the result VALUE (accepts `{:ok, %{…}}` or the data map) into `[%{id:, commit_sha:, branch_name:}]` — `"primary"` first, foreign repos sorted by id. Returns `nil` for legacy / error / crash results and for summary maps without a usable `repos` map, so callers guard with `if repos = result_repos(...) do` and render NOTHING (legacy behavior byte-identical); non-map entries are dropped.
+- **`result_repos/1`** (public pure helper) normalizes the result VALUE (accepts `{:ok, %{…}}` or the data map) into `[%{id:, commit_sha:, branch_name:}]` — `"primary"` first, foreign repos sorted by id. Returns `nil` for legacy / error / crash results and for maps without a usable `repos` map, so callers guard with `if repos = result_repos(...) do` and render NOTHING (legacy behavior byte-identical); non-map entries are dropped. It stays the source for the `render_result/2` paths.
+- **`task_repos(task, detail)`** (public pure helper, TOTAL) derives the COLLAPSED card's indicator from the SUMMARY: the primary entry comes from `task.commit_sha`/`task.branch_name`, foreign entries from `opts[:foreign_repos]` (structs or maps; `:id` string required, `"primary"` skipped, `:root`/`:path` + `:description` + `:writable` carried), and the detail result's `repos` map enriches them once loaded (a NON-nil detail `commit_sha`/`branch_name` overrides the summary value; detail-only repo ids are appended as badge-only entries). Returns `nil` unless the task is genuinely multi-repo (`foreign != []` or the detail carries more than the primary repo), so a single-repo card renders nothing. Ordered primary first, foreign sorted by id.
 - **`result_repos_badges/1`** (component, `attr :repos` + `attr :size_class` default `"text-xs"`) renders one compact badge row per repo: id + short sha (first 7 chars) + branch badge when present; a nil branch renders just the sha plus a muted `gettext("no changes")` hint for `"primary"` only (a foreign repo's nil branch means branch-creation failure, not no-changes).
-- **Render sites** (all `Map.get`-guarded, summary-map safe): the collapsed card's compact indicator row (hidden when `@show_details`), a `gettext("Repositories")` section inside `render_result/2` for both the success-with-commit_sha and the `no_changes: true` clauses, and the Full Result modal. TasksLive itself never reads `repos`.
-- **File-size note**: `task_card_components.ex` sits above the nominal ~1000-line policy threshold — deliberate (extend, don't split; the card surface is cohesive).
+- **Render sites**: the collapsed card's compact indicator row (hidden when `@show_details`) is fed by `task_repos(@task, @detail)`; a `gettext("Repositories")` section inside `render_result/2` (both the success-with-commit_sha and the `no_changes: true` clauses) and the Full Result modal keep using `result_repos/1` on the detail result value. TasksLive itself never reads `repos`.
+- **File-size note**: `task_card_components.ex` is a deliberately large cohesive template module (card template + its bounded-preview helpers) — extend it in place rather than splitting the preview helpers into another module.
 
 ### Task-card Review button candidacy
 
@@ -231,26 +256,26 @@ Task results may carry a top-level `repos` map — STRING keys: `%{repo_id => %{
 | Component / render path | Fields | Access |
 |---|---|---|
 | `Layouts.app` sidebar Active Tasks | `id`, `status`, `started_at`, `finished_at`, `opts`, `project_path` | dot on contract keys only (summary-safe) |
-| `TaskCardComponents.task_card/1` | `type`, `opts`, `id`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `model_id`, `review_status`; `error` | dot on contract keys; `error` only via `task_error/1` + `error_field/2` |
-| `task_card/1` usage/logs/archive sections | `usage` (+ nested `usage.*`), `logs`, `archive_metadata` | `Map.get` guard (`not in [nil, []]`) — hidden on summary maps |
-| `render_result_full/1` | the result VALUE (`Map.get(task, :result)`), not the task map | TasksLive modal only |
+| `TaskCardComponents.task_card/1` | `type`, `opts`, `id`, `status`, `started_at`, `finished_at`, `agent_count`, `model_id`, `review_status`, `commit_sha`, `branch_name`; `error` | dot on contract keys; `error` only via `task_error/1` + `error_field/2` |
+| `task_card/1` Agent Message / usage / logs / archive sections | `detail.task`'s `result`, `usage` (+ nested `usage.*`), `logs`; `detail.archive.records` | `Map.get(lite, …)` + `not in [nil, []]` guards — hidden until the detail load lands |
+| `render_result_full/1` | the result VALUE (`Map.get(lite, :result)`) from TasksLive's detail entry | TasksLive modal only |
 
 - The ONLY dashboard-rendered task-list markup here is the sidebar Active Tasks section, which uses contract keys only — summary-safe.
-- No heavy field (`logs`/`usage`/`archive_metadata`) is needed by any dashboard-rendered card; nothing is fetched lazily.
+- The card never fetches anything itself: `detail` (and its `archive`) is loaded by the owning LiveView, which also owns the `retry_task_detail` / `load_task_archive` events.
 
 ## Render Cost Map — per card / per pane
 
 Every component here is a pure function component that re-executes on EVERY LiveView render (nothing memoizes), so the sites below repeat their work per render — all bounded by the caps above.
 
 - No `Jason.decode` / base64 / regex-over-a-huge-string work lives in this directory: `result` and `archive_metadata` arrive already decoded from the Store Codec and are only re-rendered here.
-- `task_card/1` makes no `System.cmd`/`Port.open`/`File.*`/`GenServer.*`/`:erpc`/`EvoGit.*` calls at render time; the card is fed already-decoded structs.
-- COLLAPSED card: contract fields only; the sole `result` read is `result_repos(Map.get(@task, :result))` (a cheap walk of the already-decoded map). Per-card unconditional calls: `task_card_tint/1`, `task_accent_color/1`, `String.slice(id, 0, 8)`, `task_status_badge/1`, `objective_text/1` (interpolated TWICE — body + `title=` — so a long objective is HTML-escaped twice), `task_description/1` only when the objective is empty, `result_repos/1`, `task_error/1`, `relative_time/1`, and `show_review_button?/1` + `with_node_param/2` when reviewable.
-- Everything else (cost/token/cache formatting, `render_options`, `render_result`, `result_copy_text`, `cost_estimate_notice`, logs, archive) sits INSIDE `if @show_details` and never runs for a collapsed card. There is no cross-card loop inside the component (TasksLive owns `Enum.with_index(@filtered_tasks)` + `animation_delay_class/1`) — no per-card re-sort/re-group/re-parse.
+- `task_card/1` makes no `System.cmd`/`Port.open`/`File.*`/`GenServer.*`/`:erpc`/`EvoGit.*` calls at render time; the card is fed already-decoded maps/structs.
+- COLLAPSED card: contract fields only, and it no longer receives any heavy field at all — its sole repo work is `task_repos(@task, @detail)` (a cheap walk of `opts[:foreign_repos]` plus, once loaded, the detail result's `repos` map). Per-card unconditional calls: `task_card_tint/1`, `task_accent_color/1`, `String.slice(id, 0, 8)`, `task_status_badge/1`, `objective_text/1` (interpolated TWICE — body + `title=` — so a long objective is HTML-escaped twice), `task_description/1` only when the objective is empty, `result_repos/1`, `task_error/1`, `relative_time/1`, and `show_review_button?/1` + `with_node_param/2` when reviewable.
+- Everything else (cost/token/cache formatting, `render_options`, `render_result`, `result_copy_text`, `cost_estimate_notice`, logs, archive) sits INSIDE `if @show_details` and is gated on `detail.state == :ok` — a collapsed card and a loading/errored detail both render in O(1) work. There is no cross-card loop inside the component (TasksLive owns `Enum.with_index(@filtered_tasks)` + `animation_delay_class/1`) — no per-card re-sort/re-group/re-parse.
 - EXPANDED card: work is bounded by the caps (16 KiB text previews, 200 log rows, 1 MiB copy payloads, 100 archive records). Each preview is computed ONCE per render and reused — never recompute it per field or per branch (`agent_summary/1` feeds one preview to both the Markdown and Raw branches).
-- `render_result_full/1` runs only in the TasksLive modal, never on the 25-card page render.
+- `render_result_full/1` runs only in the TasksLive modal, never on the page render.
 - Diff pane re-parses per render: `parse_diff_lines_bounded/1` (≤2000 lines), `build_diff_segments/1`, `build_split_pairs/1`; `file_tree_sidebar/1` rebuilds + sorts the tree and `String.downcase`-filters every path; `split_diff_layout/1` sums stats twice.
 - Commit graph: `commit_list/1` recomputes `Geometry.positions`/`geom`/`lane_chips` per render, each `<.edge_path>` calls `Geometry.edge_geo/3` (a scan of the full edge list — quadratic in edges, bounded by the builder's 100-commit cap), and `lane_header/1` re-filters chips per stagger row.
-- A slow COLLAPSED 25-card page load is not explained by these components — that cost lives in TasksLive's full-struct load/decode path (outside this node).
+- A slow task-card page load is no longer explained by these components — the collapsed render is summary-only; the cost sits in the LiveView's paginated summary load and the per-card detail fetches (outside this node).
 
 ## Token & Cost Usage Display Sites (targets for any cost caveat/notice)
 
@@ -260,7 +285,7 @@ Token counts are provider-reported (usually accurate) but cost is BEST-EFFORT (p
 
 | # | Rendered by | File | Callers |
 |---|---|---|---|
-| 1 | `TaskCardComponents.task_card/1` — "Token & Cost Usage" card (token rows, cache rows gated on a non-zero cache, cost rows) | `task_card_components.ex` | TasksLive only |
+| 1 | `TaskCardComponents.task_card/1` — "Token & Cost Usage" card (token rows, cache rows gated on a non-zero cache, cost rows) | `task_card_components.ex` | TasksLive only — expanded card, rendered once the per-card `detail` load lands (`Map.get(lite, :usage)`) |
 | 2 | `ArchiveComponents.archive_tree_node/1` — 4 tiles: Input/Output/Total Tokens + `Cost` (`total_cost` only) | `archive_components.ex` | `archive_details/1` + `archive_tree/1` |
 | 3 | `ReviewComponents.Header.task_summary/1` — "Token & Cost Usage" definition list | `review_components/header.ex` | ReviewLive; facade `defdelegate` in `review_components.ex` |
 | 4 | `ReviewComponents.archive_tree_node/1` — same 4 tiles, different markup | `review_components.ex` | `archive_review_section/1` (review page Archive tab) |

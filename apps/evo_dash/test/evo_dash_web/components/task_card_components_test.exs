@@ -145,6 +145,10 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "collapsed card shows the multi-repo indicator only when repos is present" do
+      # The collapsed indicator derives from the SUMMARY row
+      # (`opts[:foreign_repos]`, `commit_sha`) enriched by the lazily-fetched
+      # `detail` — the summary itself carries no `result`, so the per-repo
+      # `repos` map only reaches the card through `detail.task`.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: %{
@@ -154,18 +158,27 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
             started_at: DateTime.utc_now(),
             finished_at: DateTime.utc_now(),
             agent_count: 1,
-            opts: [prompt: "multi repo task", mode: "simple"],
-            result:
-              {:ok,
-               %{
-                 result: "done",
-                 commit_sha: "aaaaaaa1",
-                 branch_name: "genesis/agent_1",
-                 repos: %{
-                   "primary" => %{commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
-                   "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "genesis/agent_1"}
-                 }
-               }}
+            opts: [
+              prompt: "multi repo task",
+              mode: "simple",
+              foreign_repos: [%{id: "legacy-api", root: "/tmp/legacy", writable: true}]
+            ]
+          },
+          detail: %{
+            state: :ok,
+            task: %{
+              result:
+                {:ok,
+                 %{
+                   result: "done",
+                   commit_sha: "aaaaaaa1",
+                   branch_name: "genesis/agent_1",
+                   repos: %{
+                     "primary" => %{commit_sha: "aaaaaaa1", branch_name: "genesis/agent_1"},
+                     "legacy-api" => %{commit_sha: "bbbbbbb2", branch_name: "genesis/agent_1"}
+                   }
+                 }}
+            }
           }
         )
 
@@ -354,6 +367,9 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
     end
 
     test "expanded failed card keeps the legacy {:error, _} result box when both records coexist" do
+      # The legacy `{:error, _}` RESULT lives on the lazily-fetched FULL
+      # TaskInfo (`detail.task`), while the structured `error` record is a
+      # summary key — both render in the expanded card.
       html =
         render_component(&TaskCardComponents.task_card/1,
           task:
@@ -361,7 +377,8 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
               error: error_record(),
               result: {:error, "legacy boom"}
             ),
-          show_details: true
+          show_details: true,
+          detail: %{state: :ok, task: %{result: {:error, "legacy boom"}}}
         )
 
       # Structured full-detail block...
@@ -473,7 +490,8 @@ defmodule EvoDashWeb.TaskCardComponentsTest do
       html =
         render_component(&TaskCardComponents.task_card/1,
           task: failed_task(usage: usage),
-          show_details: true
+          show_details: true,
+          detail: %{state: :ok, task: %{usage: usage}}
         )
 
       assert html =~ "Token &amp; Cost Usage"

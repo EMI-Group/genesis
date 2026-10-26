@@ -17,6 +17,12 @@ defmodule EvoDashWeb.TasksLive do
   store) becomes a retry-able `:tasks_error` state, and the user-initiated
   mutating events are SafeCall-wrapped so an exit flashes instead of crashing
   the LiveView.
+
+  The page load transfers the LIGHTWEIGHT summary projection only (no `result`
+  / `usage` / `logs` / `archive_metadata`). The heavy data is fetched per card,
+  on demand, by `EvoDashWeb.TasksLive.TaskDetail` (lite detail + archive),
+  which owns the bounded `:task_details` cache and its `:task_detail_seq`
+  stale-guard.
   """
   use EvoDashWeb, :live_view
   use Gettext, backend: EvoDashWeb.Gettext
@@ -24,6 +30,7 @@ defmodule EvoDashWeb.TasksLive do
 
   alias EvoDash.SafeCall
   alias EvoDashWeb.TasksLive.PageLoad
+  alias EvoDashWeb.TasksLive.TaskDetail
 
   @default_page_size 25
 
@@ -298,6 +305,7 @@ defmodule EvoDashWeb.TasksLive do
                   <EvoDashWeb.TaskCardComponents.task_card
                     task={task}
                     show_details={MapSet.member?(@expanded_task_ids, task.id)}
+                    detail={Map.get(@task_details, task.id)}
                     current_node_id={@current_node_id}
                   />
                 </div>
@@ -371,24 +379,43 @@ defmodule EvoDashWeb.TasksLive do
           </button>
         </div>
 
-        <!-- Full Result Modal -->
+        <!-- Full Result Modal — `@selected_result` is a modal STATE, not a raw
+             result: %{state: :loading} | %{state: :ok, result: result} |
+             %{state: :error, error: reason}. The result itself comes from the
+             lazy per-card detail cache (TasksLive.ModalHelpers.view_full_result/2),
+             so "not loaded yet" is a first-class, non-crashing state. -->
         <%= if @selected_result do %>
           <EvoDashWeb.Helpers.modal on_close="close_result_modal">
             <:title>
               <.icon name="hero-information-circle" class="size-5 text-base-content/70" />
               {gettext("Task Result")}
             </:title>
-            {EvoDashWeb.TaskCardComponents.render_result_full(@selected_result)}
+            <%= case @selected_result do %>
+              <% %{state: :ok, result: result} -> %>
+                {EvoDashWeb.TaskCardComponents.render_result_full(result)}
+              <% %{state: :error} -> %>
+                <p id="full-result-error" class="text-sm text-base-content/70">
+                  {gettext("Could not load the task result.")}
+                </p>
+              <% _ -> %>
+                <p id="full-result-loading" class="text-sm text-base-content/70">
+                  {gettext("Task result is not loaded yet.")}
+                </p>
+            <% end %>
             <:actions>
-              <button
-                id="full-result-copy"
-                phx-hook="ClipboardCopy"
-                data-content={EvoDashWeb.TaskCardComponents.result_copy_text(@selected_result)}
-                class="btn btn-sm btn-ghost rounded-md"
-              >
-                <.icon name="hero-clipboard-document" class="size-4 mr-1.5" />
-                <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
-              </button>
+              <%= if match?(%{state: :ok}, @selected_result) do %>
+                <button
+                  id="full-result-copy"
+                  phx-hook="ClipboardCopy"
+                  data-content={
+                    EvoDashWeb.TaskCardComponents.result_copy_text(Map.get(@selected_result, :result))
+                  }
+                  class="btn btn-sm btn-ghost rounded-md"
+                >
+                  <.icon name="hero-clipboard-document" class="size-4 mr-1.5" />
+                  <%!-- zh_CN: 复制按钮 --%>{gettext("Copy")}
+                </button>
+              <% end %>
             </:actions>
           </EvoDashWeb.Helpers.modal>
         <% end %>
@@ -535,6 +562,16 @@ defmodule EvoDashWeb.TasksLive do
         # active-filters indicator.
         show_reflect_tasks: false,
         expanded_task_ids: MapSet.new(),
+        # Per-card lazy detail cache, owned by EvoDashWeb.TasksLive.TaskDetail:
+        # %{task_id => %{state:, task:, error:, seq:, archive:}}. Bounded to
+        # ONE page's worth of entries (TaskDetail.prune/2 runs on every landed
+        # page load) and seeded empty — nothing is fetched until a card is
+        # expanded.
+        task_details: %{},
+        # Monotonic spawn counter for BOTH detail and archive fetches (the
+        # per-entry stale guard) — deliberately its OWN key, independent of
+        # :page_load_seq and of NodeAware's :tasks_load_seq.
+        task_detail_seq: 0,
         selected_result: nil,
         selected_options: nil,
         confirm_cancel_task_id: nil,
@@ -598,6 +635,10 @@ defmodule EvoDashWeb.TasksLive do
         socket
         |> assign(:confirm_cancel_task_id, nil)
         |> assign(:confirm_force_kill_task_id, nil)
+        # Cached per-card details belong to the OLD node: drop them so the
+        # expanded cards of the new node fetch their own rows (and stale
+        # in-flight results are rejected by TaskDetail's node + entry guards).
+        |> assign(:task_details, %{})
       else
         socket
       end
@@ -616,18 +657,37 @@ defmodule EvoDashWeb.TasksLive do
   end
 
   @impl true
-  def handle_info({:task_updated, _task_id, _status, _node} = msg, socket) do
+  def handle_info({:task_updated, task_id, _status, node} = msg, socket) do
     # New-shape task event from the "tasks" PubSub topic (node-identity
     # contract). NodeAware.handle_task_info/2 applies the node filter (drops
     # foreign-node events BEFORE the debounce) and schedules the 300ms
     # debounced :node_aware_reload_tasks. It already returns {:noreply, socket}.
+    #
+    # The cached per-card detail of the AFFECTED task is stale (status / usage /
+    # result changed), so drop it first — only for the viewed node, and only
+    # before delegating (the delegation result is passed through unchanged). An
+    # expanded card refetches immediately instead of blanking.
+    socket =
+      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+        TaskDetail.invalidate(socket, task_id)
+      else
+        socket
+      end
+
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
-    # New-shape task-deletion event — same node-filter + debounce treatment as
-    # {:task_updated, ...} above.
+  def handle_info({:task_deleted, task_id, node} = msg, socket) do
+    # New-shape task-deletion event — same node filter + cache invalidation +
+    # debounce treatment as {:task_updated, ...} above.
+    socket =
+      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
+        TaskDetail.invalidate(socket, task_id)
+      else
+        socket
+      end
+
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
@@ -681,6 +741,12 @@ defmodule EvoDashWeb.TasksLive do
             |> assign(:project_paths, m.project_paths)
             |> assign(:filtered_tasks, visible)
             |> assign(:tasks_error, nil)
+            # Rows are summary maps now (no result/usage/logs/archive): bound
+            # the per-card detail cache to THIS page, then refetch the detail
+            # of every card that is still expanded so an open card survives a
+            # background refresh / pagination round-trip.
+            |> TaskDetail.prune(visible)
+            |> TaskDetail.ensure_expanded(visible)
 
           {:noreply, socket}
 
@@ -692,6 +758,19 @@ defmodule EvoDashWeb.TasksLive do
           {:noreply, assign(socket, :tasks_error, reason)}
       end
     end
+  end
+
+  # Per-card lazy detail result (EvoDashWeb.TasksLive.TaskDetail). The module
+  # applies the node + entry + seq guards; a stale/foreign result is dropped.
+  @impl true
+  def handle_info({:task_detail_loaded, seq, node, task_id, result}, socket) do
+    {:noreply, TaskDetail.apply_detail(socket, seq, node, task_id, result)}
+  end
+
+  # Per-card lazy archive result — same guarded apply path.
+  @impl true
+  def handle_info({:task_archive_loaded, seq, node, task_id, result}, socket) do
+    {:noreply, TaskDetail.apply_archive(socket, seq, node, task_id, result)}
   end
 
   # Sync-error fallback for initiate_remote_connect/2: the subsystem is
@@ -880,14 +959,37 @@ defmodule EvoDashWeb.TasksLive do
 
   @impl true
   def handle_event("toggle_task_details", %{"task_id" => task_id}, socket) do
-    expanded =
-      if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
-        MapSet.delete(socket.assigns.expanded_task_ids, task_id)
-      else
-        MapSet.put(socket.assigns.expanded_task_ids, task_id)
-      end
+    if MapSet.member?(socket.assigns.expanded_task_ids, task_id) do
+      # COLLAPSE: only drop the id from the expanded set. The cached detail is
+      # kept (a re-expand renders instantly) and nothing is fetched.
+      {:noreply,
+       assign(
+         socket,
+         :expanded_task_ids,
+         MapSet.delete(socket.assigns.expanded_task_ids, task_id)
+       )}
+    else
+      # OPEN: kick off the ONE lazy detail fetch for this card (TaskDetail is
+      # the in-flight/cache guard — a second expand while loading is a no-op).
+      {:noreply,
+       socket
+       |> assign(:expanded_task_ids, MapSet.put(socket.assigns.expanded_task_ids, task_id))
+       |> TaskDetail.ensure(task_id)}
+    end
+  end
 
-    {:noreply, assign(socket, :expanded_task_ids, expanded)}
+  # Inline "could not load this task" strip → force a refetch of that card's
+  # detail (drops the cached :error entry first).
+  @impl true
+  def handle_event("retry_task_detail", %{"task_id" => task_id}, socket) do
+    {:noreply, TaskDetail.retry(socket, task_id)}
+  end
+
+  # The expanded card's archive section asked for its records → lazy, cached
+  # archive fetch (no-op while loading / already loaded).
+  @impl true
+  def handle_event("load_task_archive", %{"task_id" => task_id}, socket) do
+    {:noreply, TaskDetail.load_archive(socket, task_id)}
   end
 
   @impl true
