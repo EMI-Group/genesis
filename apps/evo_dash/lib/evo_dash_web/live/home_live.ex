@@ -323,7 +323,9 @@ defmodule EvoDashWeb.HomeLive do
   #     Seed the cheap default `{[], false}` (the header select then renders no
   #     selector) and, on a connected socket, spawn ONE supervised load with a
   #     monotonic `:model_select_seq` stale-guard; the result lands in the
-  #     `{:model_select_loaded, seq, node, result}` handle_info clause.
+  #     `{{:model_select_loaded, seq, node}, result}` handle_info clause
+  #     (`EvoDash.SafeCall.start/4` always sends `{tag, run(fun)}` — the tag
+  #     stays ONE nested tuple, never flattened).
   defp assign_model_select(socket) do
     node = socket.assigns[:current_node] || node()
 
@@ -591,8 +593,10 @@ defmodule EvoDashWeb.HomeLive do
   # The responder call runs OFF-PROCESS in an `EvoDash.SafeCall` supervised
   # task: it may `:erpc` to a remote node, and a call to an unreachable node
   # EXITS its caller (a `rescue` cannot catch an exit). The outcome lands in
-  # the `{:approval_response_result, request_id, node, result}` handle_info
+  # the `{{:approval_response_result, request_id, node}, result}` handle_info
   # clause, which flashes a failed response and never crashes the page.
+  # (`EvoDash.SafeCall.start/4` always sends `{tag, run(fun)}`, so the tag —
+  # here a 3-tuple — stays nested as the message's first element.)
   @impl true
   def handle_event(
         "approval_response",
@@ -864,8 +868,11 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   # Command-approval response outcome (from the supervised responder task
-  # spawned by the approval_response event). The card was already removed
-  # optimistically, so this only surfaces a FAILED response:
+  # spawned by the approval_response event). `EvoDash.SafeCall.start/4` ALWAYS
+  # sends `{tag, run(fun)}`, so the message arrives as
+  # `{{:approval_response_result, request_id, node}, result}` — the tag is ONE
+  # nested 3-tuple, never flattened into the message. The card was already
+  # removed optimistically, so this only surfaces a FAILED response:
   #
   #   * `{:ok, :ok}` — the backend accepted the decision → no-op.
   #   * `{:ok, {:error, reason}}` — the responder reported a failure (e.g. the
@@ -874,9 +881,11 @@ defmodule EvoDashWeb.HomeLive do
   #     node, a call timeout) → the same error flash.
   #   * anything else — quiet no-op.
   #
-  # TOTAL: every shape keeps the LiveView alive.
+  # The request id is deliberately NOT used as a filter: the card is gone by
+  # now, so a stale/late result for an already-resolved request must still be
+  # allowed to report its failure. TOTAL: every shape keeps the LiveView alive.
   @impl true
-  def handle_info({:approval_response_result, _request_id, _node, result}, socket) do
+  def handle_info({{:approval_response_result, _request_id, _node}, result}, socket) do
     case result do
       {:ok, :ok} ->
         {:noreply, socket}
@@ -905,6 +914,8 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   # Async model-profile load for a REMOTE node (from assign_model_select/1).
+  # The message is `{{:model_select_loaded, seq, node}, result}` — the tag stays
+  # ONE nested tuple (that is exactly what `EvoDash.SafeCall.start/4` sends).
   # Stale-guarded EXACTLY like the chat fetches: dropped when the viewed node
   # changed since the spawn or a newer load was started (monotonic
   # `:model_select_seq`). A well-shaped `{:ok, {profiles, enabled}}` assigns
@@ -912,7 +923,7 @@ defmodule EvoDashWeb.HomeLive do
   # caller already assigned — never crashes and never clears the pinned model
   # (`selected_model_id` is ChatState's, untouched here).
   @impl true
-  def handle_info({:model_select_loaded, seq, node, result}, socket) do
+  def handle_info({{:model_select_loaded, seq, node}, result}, socket) do
     if node != socket.assigns[:current_node] or
          seq < Map.get(socket.assigns, :model_select_seq, 0) do
       {:noreply, socket}
