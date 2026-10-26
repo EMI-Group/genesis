@@ -14,11 +14,17 @@ defmodule EvoGit.Store.PoolSizeTest do
   pool size is therefore purely a READ-parallelism knob.
 
   Measurements run through `DBConnection.get_connection_metrics/1` (the pool's
-  own idle-connection count — Ecto exposes no pool-size API) and through REAL
-  checkouts: a connection held open in a second process must not stop the test
-  process's own query, and at `pool_size: 1` the same query must be stuck.
-  Both directions are asserted, so neither assertion can silently stop
-  testing anything.
+  own idle-connection and checkout-queue counts — Ecto exposes no pool-size
+  API) and through REAL checkouts: a connection held open in a second process
+  must not stop the test process's own query, and at `pool_size: 1` the same
+  query must be QUEUED in the pool's checkout queue instead. Both directions
+  are asserted, so neither assertion can silently stop testing anything.
+
+  The blocked direction is asserted on the pool's `checkout_queue_length`
+  metric (an event: the client really is queued behind the held connection)
+  plus the completion of that very checkout once the connection is released —
+  NOT on a wall-clock window, which would both slow the suite down and assert
+  something weaker (a slow machine could make a served read look queued).
   """
 
   # NOT async: the timing-sensitive concurrency assertions below deserve a
@@ -31,38 +37,76 @@ defmodule EvoGit.Store.PoolSizeTest do
   alias EvoGit.Store.Boot
   alias EvoGit.Store.RepoScope
 
+  # One schema-complete, CHECKPOINTED database built per module: a brand-new
+  # file plus the six migrations costs ~12 ms per boot, a byte copy of this
+  # template ~0.1 ms. Every test still gets its own isolated file with the
+  # identical schema, so the isolation semantics are unchanged (same idiom as
+  # `test/evo_git/store_test.exs`).
+  setup_all do
+    template = db_path(:template)
+    {:ok, pid} = Boot.start_dynamic(template)
+    :ok = Boot.stop(pid)
+    checkpoint_and_strip_wal!(template)
+
+    # The copy is only worth anything if the MAIN file is the migrated
+    # database: prove the schema sits in it (and not in a `-wal` sidecar that a
+    # plain `File.cp!/2` would miss).
+    {:ok, conn} = Xqlite.open(template)
+
+    assert [[1]] =
+             raw_rows!(
+               conn,
+               "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
+             )
+
+    XqliteNIF.close(conn)
+    on_exit(fn -> remove_db(template) end)
+
+    {:ok, %{template: template}}
+  end
+
   describe "EvoGit.Store.Boot.start_dynamic/2 pool size" do
-    test "the default is > 1 connection — reads are not limited to one connection" do
+    test "the default is > 1 connection — reads are not limited to one connection", %{
+      template: template
+    } do
       assert Boot.default_pool_size() > 1
 
-      pid = start_repo!(:default_pool)
+      pid = start_repo!(template, :default_pool)
 
       assert {:ok, ready} = await_pool_size(pid, Boot.default_pool_size())
       assert ready == Boot.default_pool_size()
     end
 
-    test "an explicit :pool_size is honored" do
-      pid = start_repo!(:explicit_two, pool_size: 2)
+    test "an explicit :pool_size is honored", %{template: template} do
+      pid = start_repo!(template, :explicit_two, pool_size: 2)
 
       assert {:ok, 2} = await_pool_size(pid, 2)
     end
 
-    test "pool_size: 1 is honored (the single-connection store the disk-full tests need)" do
-      pid = start_repo!(:explicit_one, pool_size: 1)
+    test "pool_size: 1 is honored (the single-connection store the disk-full tests need)",
+         %{template: template} do
+      pid = start_repo!(template, :explicit_one, pool_size: 1)
 
       assert {:ok, 1} = await_pool_size(pid, 1)
 
-      # A one-connection pool really is one connection: a second checkout is
-      # not served while the first is held (see the serialization test below).
+      # A one-connection pool really is one connection: while the only
+      # connection is held by another client, this client's checkout sits in
+      # the pool's queue (the pool's own metric — an event, not a window) and
+      # is served only once the connection is released.
       holder = hold_connection!(pid)
 
+      task = Task.async(fn -> RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1") end) end)
+
       try do
-        task = Task.async(fn -> RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1") end) end)
-        assert Task.yield(task, 500) == nil
-        Task.shutdown(task, :brutal_kill)
+        assert :ok = await_queued_checkout(pid, 1)
+        assert Task.yield(task, 0) == nil
       after
         release_connection(holder)
       end
+
+      # The queued checkout is not lost: the SAME client completes on the very
+      # connection it was waiting for.
+      assert %{rows: [[1]]} = Task.await(task, 5_000)
     end
 
     test "an invalid :pool_size raises a descriptive ArgumentError before the repo starts" do
@@ -79,21 +123,17 @@ defmodule EvoGit.Store.PoolSizeTest do
   end
 
   describe "EvoGit.Store.start_link/1 pool plumbing" do
-    test "the store's :pool_size opt reaches its own dynamic repo" do
+    test "the store's :pool_size opt reaches its own dynamic repo", %{template: template} do
       store = :"evogit_pool_store_#{System.unique_integer([:positive])}"
       path = db_path(:store_one)
+      File.cp!(template, path)
 
       {:ok, store_pid} = Store.start_link(data_dir: path, name: store, pool_size: 1)
       Process.unlink(store_pid)
 
       on_exit(fn ->
         if Process.alive?(store_pid), do: GenServer.stop(store_pid)
-
-        # Remove the DB AND its WAL sidecars (`File.rm/1` is a no-op for an
-        # already-absent path) so nothing is left behind in the tmpdir.
-        File.rm(path)
-        File.rm(path <> "-wal")
-        File.rm(path <> "-shm")
+        remove_db(path)
       end)
 
       assert Store.select_task_ids(store) == []
@@ -104,8 +144,10 @@ defmodule EvoGit.Store.PoolSizeTest do
   end
 
   describe "concurrent reads" do
-    test "a second connection serves a read while the first is held (the default pool)" do
-      pid = start_repo!(:concurrent)
+    test "a second connection serves a read while the first is held (the default pool)", %{
+      template: template
+    } do
+      pid = start_repo!(template, :concurrent)
       holder = hold_connection!(pid)
 
       try do
@@ -123,20 +165,23 @@ defmodule EvoGit.Store.PoolSizeTest do
       end
     end
 
-    test "with pool_size: 1 the held connection blocks every other reader" do
-      pid = start_repo!(:serial, pool_size: 1)
+    test "with pool_size: 1 the held connection blocks every other reader", %{template: template} do
+      pid = start_repo!(template, :serial, pool_size: 1)
       holder = hold_connection!(pid)
 
-      try do
-        task = Task.async(fn -> RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1") end) end)
+      task = Task.async(fn -> RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1") end) end)
 
-        # Still queued behind the only connection — the contrast that makes the
-        # assertion above meaningful.
-        assert Task.yield(task, 500) == nil
-        Task.shutdown(task, :brutal_kill)
+      try do
+        # Still QUEUED behind the only connection — the contrast that makes the
+        # assertion above meaningful. The pool reports the queue itself, so the
+        # wait is event-driven (no wall-clock window).
+        assert :ok = await_queued_checkout(pid, 1)
+        assert Task.yield(task, 0) == nil
       after
         release_connection(holder)
       end
+
+      assert %{rows: [[1]]} = Task.await(task, 5_000)
     end
   end
 
@@ -153,8 +198,11 @@ defmodule EvoGit.Store.PoolSizeTest do
     # already-migrated file. This asserts exactly that, on EVERY pooled
     # connection (all held at once, so the pool cannot hand the same one out
     # twice), against the ground truth in `sqlite_master`.
+    # This test needs the DDL to be applied by the boot connection itself, so
+    # it deliberately does NOT copy the migrated template: `start_fresh_repo!`
+    # boots against an EMPTY file.
     test "EVERY pooled connection reports the migrated index inventory on its first introspection" do
-      pid = start_repo!(:schema_consistency)
+      pid = start_fresh_repo!(:schema_consistency)
       size = Boot.default_pool_size()
 
       assert size > 1
@@ -184,23 +232,52 @@ defmodule EvoGit.Store.PoolSizeTest do
   # process, per call) and stops it on test exit. The repo is UNLINKED:
   # `Boot.start_dynamic/2` links it to this test process and the `on_exit/1`
   # callback runs after that process is gone.
-  defp start_repo!(tag, opts \\ []) do
+  #
+  # `template` is the module-wide migrated database (its schema is copied, so
+  # only the no-op migration run and the pool start remain). Boots that must
+  # observe the DDL itself use `start_fresh_repo!/1` instead.
+  defp start_repo!(template, tag, opts \\ []) do
     path = db_path(tag)
+    File.cp!(template, path)
+    boot_repo!(path, opts)
+  end
+
+  defp start_fresh_repo!(tag, opts \\ []) do
+    boot_repo!(db_path(tag), opts)
+  end
+
+  defp boot_repo!(path, opts) do
     {:ok, pid} = Boot.start_dynamic(path, opts)
     Process.unlink(pid)
 
     on_exit(fn ->
       if Process.alive?(pid), do: :ok = Boot.stop(pid)
-
-      # Remove the DB AND its WAL sidecars (`File.rm/1` is a no-op for a path
-      # that is already gone) so repeated runs leave nothing behind — a
-      # leftover `-wal` still holds the committed rows.
-      File.rm(path)
-      File.rm(path <> "-wal")
-      File.rm(path <> "-shm")
+      remove_db(path)
     end)
 
     pid
+  end
+
+  # Removes a database AND its WAL sidecars (`File.rm/1` is a no-op for a path
+  # that is already gone) so repeated runs leave nothing behind — a leftover
+  # `-wal` still holds the committed rows.
+  defp remove_db(path) do
+    File.rm(path)
+    File.rm(path <> "-wal")
+    File.rm(path <> "-shm")
+  end
+
+  # Folds the WAL back into the main file: `Boot.stop/1` checkpoints it as the
+  # last connection closes, but that is asynchronous with respect to the stop
+  # returning, and a `File.cp!/2` of the main file alone would otherwise miss
+  # the schema. `TRUNCATE` leaves the WAL empty, so the sidecars can go.
+  defp checkpoint_and_strip_wal!(path) do
+    {:ok, conn} = Xqlite.open(path)
+    {:ok, _} = Xqlite.query(conn, "PRAGMA wal_checkpoint(TRUNCATE)", [])
+    XqliteNIF.close(conn)
+    File.rm(path <> "-wal")
+    File.rm(path <> "-shm")
+    :ok
   end
 
   defp db_path(tag) do
@@ -213,10 +290,10 @@ defmodule EvoGit.Store.PoolSizeTest do
     )
   end
 
-  # The pool's idle-connection count, polled because connections connect
-  # asynchronously: the pool starts in its `:busy` state and reports every
-  # connection only once it has connected AND checked in.
-  defp await_pool_size(repo_pid, expected, attempts \\ 200) do
+  # The pool's idle-connection count, polled (1 ms — the pool connects its
+  # connections asynchronously: it starts in its `:busy` state and reports every
+  # connection only once it has connected AND checked in).
+  defp await_pool_size(repo_pid, expected, attempts \\ 2_000) do
     ready = ready_connections(repo_pid)
 
     cond do
@@ -224,11 +301,31 @@ defmodule EvoGit.Store.PoolSizeTest do
         {:ok, ready}
 
       attempts > 1 ->
-        Process.sleep(10)
+        Process.sleep(1)
         await_pool_size(repo_pid, expected, attempts - 1)
 
       true ->
         {:error, ready}
+    end
+  end
+
+  # Waits until `count` clients are QUEUED in the pool's checkout queue. This
+  # is the pool's own metric, i.e. the event "a client is waiting for a
+  # connection" — asserted instead of a wall-clock window.
+  defp await_queued_checkout(repo_pid, count, attempts \\ 2_000) do
+    %{pid: pool} = Ecto.Adapter.lookup_meta(repo_pid)
+    [%{checkout_queue_length: queued} | _] = DBConnection.get_connection_metrics(pool)
+
+    cond do
+      queued == count ->
+        :ok
+
+      attempts > 1 ->
+        Process.sleep(1)
+        await_queued_checkout(repo_pid, count, attempts - 1)
+
+      true ->
+        flunk("expected #{count} queued checkout(s), got #{queued}")
     end
   end
 
