@@ -190,8 +190,34 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   # ---------------------------------------------------------------------------
 
   # Byte cap for the rendered previews (agent summary + objective). Anything
-  # larger is truncated for DISPLAY; copy buttons still carry the full text.
+  # larger is truncated for DISPLAY; the copy payloads are capped separately
+  # (see @copy_byte_limit / copy_payload/1).
   @preview_byte_limit 16_384
+
+  # Byte cap for the clipboard payload embedded in `data-content`. That
+  # attribute is materialized in the rendered HTML, so an uncapped payload puts
+  # the whole multi-MB blob in the DOM even though Markdown rendering is
+  # bounded. 1 MiB keeps essentially every real task result/copy verbatim while
+  # bounding the pathological case; the untruncated text stays reachable through
+  # the explicit Full Result modal / JSON export.
+  @copy_byte_limit 1_048_576
+
+  # Caps a copy payload at @copy_byte_limit. Total: a non-binary value yields an
+  # empty preview rather than raising.
+  defp copy_payload(text), do: blob_preview(text, @copy_byte_limit)
+
+  # Appends a hint to a copy button's `title` when the payload was truncated, so
+  # the truncation is never silent.
+  defp copy_button_title(base_title, truncated?) do
+    if truncated? do
+      # zh_CN: 复制内容被截断到前 1 MB 时附加的提示（"Full view" 指完整结果弹窗/JSON 导出）
+      base_title <>
+        " — " <>
+        gettext("Copy is limited to the first 1 MB — open the Full view for the complete text")
+    else
+      base_title
+    end
+  end
 
   attr(:summary, :string, required: true)
   attr(:summary_raw, :boolean, default: false)
@@ -202,16 +228,19 @@ defmodule EvoDashWeb.ReviewComponents.Header do
     # The summary IS the task's final agent message and can be enormous
     # (measured: 108 MB) — Markdown-rendering the whole blob on every rerender
     # freezes the page. Build ONE capped preview per render and feed it to both
-    # the markdown and raw branches (never the whole blob). The copy button
-    # deliberately keeps the full payload.
+    # the markdown and raw branches (never the whole blob). The copy payload is
+    # capped separately at @copy_byte_limit.
     preview = blob_preview(assigns.summary, @preview_byte_limit)
+    copy = copy_payload(assigns.summary)
 
     assigns =
       assign(assigns,
         summary_preview: preview.text,
         summary_truncated?: preview.truncated?,
         summary_shown_bytes: byte_size(preview.text),
-        summary_total_bytes: preview.total_bytes
+        summary_total_bytes: preview.total_bytes,
+        summary_copy_text: copy.text,
+        summary_copy_truncated?: copy.truncated?
       )
 
     ~H"""
@@ -264,8 +293,8 @@ defmodule EvoDashWeb.ReviewComponents.Header do
               id="summary-copy-btn"
               class="btn btn-ghost btn-xs btn-square"
               phx-hook="ClipboardCopy"
-              data-content={@summary}
-              title={gettext("Copy agent summary")}
+              data-content={@summary_copy_text}
+              title={copy_button_title(gettext("Copy agent summary"), @summary_copy_truncated?)}
             >
               <.icon name="hero-clipboard" class="size-3.5" />
             </button>
@@ -273,8 +302,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         </div>
       </div>
       <%!-- body: the CAPPED preview only (@summary_preview); the copy button
-           above keeps the full, untruncated payload because Copy is an
-           explicit user action. --%>
+           above carries its own capped payload (@summary_copy_text, 1 MiB). --%>
       <div class="px-4 py-4 sm:px-5">
         <%= if @summary_raw do %>
           <%!-- The <pre> must stay single-line: whitespace-pre-wrap renders any
@@ -287,7 +315,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
         <% end %>
         <%= if @summary_truncated? do %>
           <p class="mt-2 text-xs text-base-content/60">
-            <%!-- zh_CN: 内容过大，仅渲染前若干字节 — 预览截断提示（复制按钮仍是完整内容） --%>
+            <%!-- zh_CN: 内容过大，仅渲染前若干字节 — 预览截断提示（复制按钮上限 1 MiB） --%>
             {gettext("Showing %{shown} of %{total} bytes",
               shown: format_number(@summary_shown_bytes),
               total: format_number(@summary_total_bytes)
@@ -311,15 +339,18 @@ defmodule EvoDashWeb.ReviewComponents.Header do
   def objective_section(assigns) do
     # Same treatment as agent_summary/1: the objective is user/agent-authored and
     # unbounded, so only a capped preview ever reaches MarkdownRender or the
-    # template. The copy button keeps the full payload.
+    # template. The copy payload is capped separately at @copy_byte_limit.
     preview = blob_preview(assigns.objective, @preview_byte_limit)
+    copy = copy_payload(assigns.objective)
 
     assigns =
       assign(assigns,
         objective_preview: preview.text,
         objective_truncated?: preview.truncated?,
         objective_shown_bytes: byte_size(preview.text),
-        objective_total_bytes: preview.total_bytes
+        objective_total_bytes: preview.total_bytes,
+        objective_copy_text: copy.text,
+        objective_copy_truncated?: copy.truncated?
       )
 
     ~H"""
@@ -356,20 +387,20 @@ defmodule EvoDashWeb.ReviewComponents.Header do
                 {gettext("Raw")}
               </button>
             </div>
-            <%!-- zh_CN: 复制目标文本 — 复制按钮始终携带完整（未截断）的目标文本 --%>
+            <%!-- zh_CN: 复制目标文本 — 复制按钮携带的文本上限为 1 MiB（见 copy_payload/1） --%>
             <button
               id="objective-copy-btn"
               class="btn btn-ghost btn-xs btn-square"
               phx-hook="ClipboardCopy"
-              data-content={@objective}
-              title={gettext("Copy objective")}
+              data-content={@objective_copy_text}
+              title={copy_button_title(gettext("Copy objective"), @objective_copy_truncated?)}
             >
               <.icon name="hero-clipboard" class="size-3.5" />
             </button>
           <% end %>
         </div>
       </div>
-      <%!-- body (capped preview only — see the copy button above for the full text) --%>
+      <%!-- body (capped preview only — the copy button carries its own 1 MiB cap) --%>
       <div class="px-4 py-4 sm:px-5">
         <%!-- LoadData normalizes a missing objective to "" (never nil) — the
              empty state covers both. --%>
@@ -396,7 +427,7 @@ defmodule EvoDashWeb.ReviewComponents.Header do
           <% end %>
           <%= if @objective_truncated? do %>
             <p class="mt-2 text-xs text-base-content/60">
-              <%!-- zh_CN: 内容过大，仅渲染前若干字节 — 预览截断提示（复制按钮仍是完整内容） --%>
+              <%!-- zh_CN: 内容过大，仅渲染前若干字节 — 预览截断提示（复制按钮上限 1 MiB） --%>
               {gettext("Showing %{shown} of %{total} bytes",
                 shown: format_number(@objective_shown_bytes),
                 total: format_number(@objective_total_bytes)
