@@ -2,26 +2,36 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   @moduledoc """
   Async node-aware loads for `EvoDashWeb.ProjectsLive`.
 
-  Coordinator for the node-aware loads that used to run synchronously in
-  `handle_params/3` (custom agents, model profiles + the `selected_model_id`
-  switch validation, remote project config/mode, recent
-  projects). All loads run in ONE supervised `EvoDash.TaskSupervisor` task per
-  handle_params run so the LiveView process never blocks on cross-node RPCs —
-  the remote path would otherwise serialize up to 6-8 `:erpc` round-trips on
-  every navigation.
+  Coordinator for the node-aware loads that must NOT run in the LiveView
+  process (custom agents, model profiles + the `selected_model_id` switch
+  validation, remote project config/mode, recent projects, and the
+  notified-terminal-id seed). All loads run in ONE supervised
+  `EvoDash.TaskSupervisor` task per connected handle_params run so the
+  LiveView process never blocks on cross-node RPCs or on the task store — the
+  remote path would otherwise serialize up to 6-8 `:erpc` round-trips on every
+  navigation, and even the LOCAL store reads can take seconds.
+
+  This batch is the SINGLE seed for recent projects and the notified-id set:
+  `mount/3` seeds those assigns EMPTY (`recent_projects: []`,
+  `notified_task_ids: MapSet.new()`, `notified_task_ids_ready?: false`) so the
+  first paint never touches the store, and the continuation fills them a frame
+  later (the mount's project auto-activation is likewise deferred to the
+  continuation — see `ProjectsLive.maybe_auto_activate_recent_project/1`).
+  `terminal_ids` is loaded only for a LOCAL context that has not been seeded
+  yet; a remote/pending context or an already-seeded socket leaves it nil.
 
   Results arrive as a single `{:async_project_load, node, prev_node_id, path,
   results}` message; `handle_result/5` drops stale results (the captured node
-  or active project path no longer matches the current socket) and applies
-  the rest. `mount/3` still seeds every assign synchronously, so the first
-  paint never depends on the async result — the async refresh overrides it a
-  frame later with identical values.
+  or active project path no longer matches the current socket) and reports
+  whether it applied anything, so the caller only runs post-apply follow-ups
+  (auto-activation, GitHub detection) for results that actually landed.
   """
 
   alias EvoGit.Platform
   alias EvoGit.TaskRegistry
 
   alias EvoDash.NodeContext
+  alias EvoDashWeb.ProjectsLive.Notifications
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoDashWeb.ProjectsLive.ProjectFlow
 
@@ -36,7 +46,18 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   continuation can replicate the original node-switch `selected_model_id`
   validation), whether the context is remote, and the active project path at
   spawn time. The task body runs OUTSIDE the LiveView process; dead renders
-  skip the spawn entirely (mount/3 already seeded every assign synchronously).
+  skip the spawn entirely (the assigns are seeded in mount/3 and filled by the
+  connected run).
+
+  Two extra result keys ride along:
+
+    * `terminal_ids` — the notified-task-id SEED, computed inside the task and
+      only when this is a LOCAL context whose set has not been seeded yet
+      (`nil` otherwise, so a remote/pending context and any later refresh
+      never re-seed it).
+    * `auto_activate?` — whether this spawn was the "no project in the URL"
+      candidate run, so the continuation may auto-activate the most recent
+      project.
   """
   def maybe_spawn(socket, prev_node_id) do
     if connected?(socket) do
@@ -44,6 +65,11 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       remote? = socket.assigns[:remote?] == true
       current_node_id = socket.assigns[:current_node_id]
       path = socket.assigns[:active_project_path]
+
+      seed_terminal_ids? =
+        current_node_id == nil and socket.assigns[:notified_task_ids_ready?] != true
+
+      auto_activate? = socket.assigns[:auto_activate_candidate?] == true
       parent = self()
 
       Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
@@ -56,7 +82,9 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
             model_selection_enabled: model_selection_enabled,
             model_profiles: model_profiles,
             default_selected_model_id: default_selected_model_id,
-            recent_projects: load_recent_projects(remote?, current_node_id, node)
+            recent_projects: load_recent_projects(remote?, current_node_id, node),
+            terminal_ids: if(seed_terminal_ids?, do: Notifications.load_terminal_ids()),
+            auto_activate?: auto_activate?
           }
           |> Map.merge(remote_extras(node, remote?, path))
 
@@ -73,12 +101,21 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
   Applies an async load result, dropping stale results (the captured node or
   active project path no longer matches the current socket).
 
+  Returns `{socket, applied?}` — `applied?` is false for a dropped result, so
+  the caller can skip every post-apply follow-up (project auto-activation,
+  GitHub upstream detection) for a result that never landed.
+
   The `selected_model_id` validation — originally synchronous in
   `handle_params/3` — runs HERE in the continuation: when the spawn-time
   handle_params run was a node switch (`prev_node_id` differs from the
   current node id), the carried selection is kept only when it names a
   profile that exists on the (new) node, otherwise the node's default
   selection is used; same-node runs keep the current selection.
+
+  `terminal_ids` (when present as a `MapSet`) seeds/merges the notified-task-id
+  set and marks it READY — the notification scan is skipped entirely until
+  then, so an empty set can never fire a notification for every historical
+  task. `auto_activate?` is not assigned here; the caller reads it.
 
   Resume-restore guard: when the socket carries
   `:resume_foreign_repos_guard` (set by the remote activation continuation in
@@ -93,7 +130,7 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     %{active_project_path: active_path, current_node: current_node} = socket.assigns
 
     if node != current_node or path != active_path do
-      socket
+      {socket, false}
     else
       socket = assign(socket, :model_profiles, results.model_profiles)
 
@@ -103,6 +140,20 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
           :selected_model_id,
           resolve_selected_model_id(socket, prev_node_id, results)
         )
+
+      socket =
+        case Map.get(results, :terminal_ids) do
+          %MapSet{} = terminal_ids ->
+            socket
+            |> assign(
+              :notified_task_ids,
+              MapSet.union(socket.assigns[:notified_task_ids] || MapSet.new(), terminal_ids)
+            )
+            |> assign(:notified_task_ids_ready?, true)
+
+          _ ->
+            socket
+        end
 
       {skip_foreign_repos?, socket} =
         if socket.assigns[:resume_foreign_repos_guard] == true and
@@ -118,7 +169,8 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
       # results map for local nodes and are skipped here — the local
       # activate_project flow owns those assigns. `:foreign_repos` is dropped
       # when the resume-restore guard above fired (its task-derived value must
-      # win over the genesis.toml reload).
+      # win over the genesis.toml reload). `:terminal_ids` / `:auto_activate?`
+      # are consumed above (not assign names).
       results =
         if skip_foreign_repos? do
           Map.delete(results, :foreign_repos)
@@ -126,11 +178,16 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
           results
         end
 
-      Enum.reduce(results, socket, fn
-        {:model_profiles, _}, sock -> sock
-        {:default_selected_model_id, _}, sock -> sock
-        {key, value}, sock -> assign(sock, key, value)
-      end)
+      socket =
+        Enum.reduce(results, socket, fn
+          {:model_profiles, _}, sock -> sock
+          {:default_selected_model_id, _}, sock -> sock
+          {:terminal_ids, _}, sock -> sock
+          {:auto_activate?, _}, sock -> sock
+          {key, value}, sock -> assign(sock, key, value)
+        end)
+
+      {socket, true}
     end
   end
 
@@ -183,10 +240,16 @@ defmodule EvoDashWeb.ProjectsLive.AsyncLoad do
     end)
   end
 
-  # Recent projects for the node being viewed: connected remote → RPC +
-  # node-aware filter; pending/error remote context → [] (local recents must
-  # never leak into a remote view); local → the local TaskRegistry.
-  defp load_recent_projects(remote?, current_node_id, node) do
+  @doc """
+  Recent projects for the node being viewed: connected remote → RPC +
+  node-aware filter; pending/error remote context → `[]` (local recents must
+  never leak into a remote view); local → the local `EvoGit.TaskRegistry`.
+
+  Callers must run this OUTSIDE the LiveView process (it is used by the async
+  load batch here and by `ProjectsLive`'s `{:recent_projects_updated}`
+  handler task) — the local branch is a task-store `GenServer.call`.
+  """
+  def load_recent_projects(remote?, current_node_id, node) do
     cond do
       remote? ->
         filter_absolute_recent_projects_for_node(node, NodeContext.list_recent_projects(node))

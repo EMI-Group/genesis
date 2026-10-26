@@ -17,12 +17,10 @@ defmodule EvoDashWeb.SettingsLive.SearchEvents do
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
-  import EvoDashWeb.Helpers, only: [config_status: 0]
 
   use Gettext, backend: EvoDashWeb.Gettext
 
   alias EvoDashWeb.SettingsLive.ConfigIO
-  alias EvoDash.NodeContext
 
   @doc """
   Handles the search event by updating the `:search_text` socket assign.
@@ -49,8 +47,11 @@ defmodule EvoDashWeb.SettingsLive.SearchEvents do
   Resets a single configuration key to its schema-defined default value.
 
   Parses the key path, validates it against the known schema, resets the key
-  in the file_config to its default, persists the change (locally or via the
-  remote node), and reloads configuration.
+  in the file_config to its default, and persists the change through
+  `EvoDashWeb.SettingsLive.persist_file_config/3` — the single config
+  persistence entry point (LOCAL saves are synchronous but exit-safe, REMOTE
+  saves run in a supervised task with the `config_saving` indicator and a node
+  stale guard).
 
   Called from `SettingsLive.handle_event("reset_key", params, socket)`.
   """
@@ -65,38 +66,12 @@ defmodule EvoDashWeb.SettingsLive.SearchEvents do
       {:noreply, put_flash(socket, :error, gettext("Invalid key path."))}
     else
       config = put_in(socket.assigns.file_config, key_path, schema.default)
-      node = socket.assigns.current_node
 
-      case NodeContext.save_user_config(node, config) do
-        :ok ->
-          {file_config, socket} =
-            if node == node() do
-              fc = ConfigIO.load_file_config()
-              {fc, assign(socket, :config_status, config_status())}
-            else
-              NodeContext.reload_remote_config(node)
-              remote_cfg = NodeContext.get_remote_config(node)
-              fc = EvoDashWeb.SettingsLive.remote_config_to_file_config(remote_cfg)
-              {fc, assign(socket, :config_status, NodeContext.get_remote_config_status(node))}
-            end
-
-          config_file_exists = File.exists?(socket.assigns.config_path)
-
-          {:noreply,
-           socket
-           |> assign(:file_config, file_config)
-           |> assign(:config_file_exists, config_file_exists)
-           |> assign(:per_category_errors, %{})
-           |> put_flash(:info, gettext("Reset %{key} to default.", key: path_str))}
-
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> put_flash(
-             :error,
-             gettext("Failed to reset key: %{reason}", reason: inspect(reason))
-           )}
-      end
+      EvoDashWeb.SettingsLive.persist_file_config(
+        config,
+        socket,
+        gettext("Reset %{key} to default.", key: path_str)
+      )
     end
   end
 end

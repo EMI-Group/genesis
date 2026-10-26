@@ -9,6 +9,8 @@ defmodule EvoDashWeb.ProjectsLive do
   use EvoDashWeb, :live_view
   alias EvoGit.TaskRegistry
 
+  alias EvoDash.SafeCall
+
   alias EvoDashWeb.ProjectsLive.{
     StatePersistence,
     Project,
@@ -17,7 +19,8 @@ defmodule EvoDashWeb.ProjectsLive do
     RemoteView,
     AttachFile,
     GitHub,
-    AsyncLoad
+    AsyncLoad,
+    Notifications
   }
 
   alias EvoDashWeb.ThemeColor
@@ -470,7 +473,14 @@ defmodule EvoDashWeb.ProjectsLive do
         send(self(), :load_config_status)
       end
 
-      recent_projects = filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+      # ZERO task-store calls on the mount path: both recent projects and the
+      # notified-terminal-id seed are loaded by the connected AsyncLoad batch
+      # (AsyncLoad.maybe_spawn/2 in handle_params/3) — a store `GenServer.call`
+      # can take seconds (full-row decode) and EXITS the caller on
+      # timeout/dead server, which would crash the page. The empty seeds below
+      # are replaced a frame later; project auto-activation is likewise
+      # deferred to that continuation (maybe_auto_activate_recent_project/1).
+      recent_projects = []
 
       # Pre-resolve config once and memoize via Process dict so that the
       # deferred :load_config_status handler can reuse this result instead
@@ -538,7 +548,25 @@ defmodule EvoDashWeb.ProjectsLive do
           build_systems: build_systems,
           tauri_detected: false,
           platform: "linux",
-          notified_task_ids: Assigns.build_notified_task_ids(MapSet.new()),
+          # Browser-notification diffing state (LOCAL contexts only). The set
+          # starts EMPTY and `notified_task_ids_ready?` false: notification
+          # detection is skipped entirely until the async seed marks it ready —
+          # scanning against an empty set would fire a notification for every
+          # historical task.
+          notified_task_ids: MapSet.new(),
+          notified_task_ids_ready?: false,
+          # Monotonic stale-guards for the async store reads.
+          task_notifications_seq: 0,
+          recent_projects_seq: 0,
+          # Monotonic stale-guard for the async clear-history batch.
+          clear_history_seq: 0,
+          # True when this handle_params run has no `?project=` and is on the
+          # local node — the async load continuation then auto-activates the
+          # most recent project (replaces the old synchronous mount seed).
+          auto_activate_candidate?: false,
+          # Resume foreign-repos restore in flight for this task id (guards
+          # task_submit until the restore lands).
+          foreign_repos_restoring_from: nil,
           # Prompt snapshot per attach-file picker id, taken when the native
           # file dialog opens (see handle_event("file_pick")) so the picked
           # file's text can be appended even if the user keeps typing while
@@ -588,6 +616,17 @@ defmodule EvoDashWeb.ProjectsLive do
     socket = EvoDashWeb.LiveHooks.NodeAware.assign_node(socket, params)
     socket = assign(socket, :current_path, ~p"/projects")
     socket = assign(socket, :remote?, socket.assigns.current_node != node())
+
+    # Auto-activation candidate: no `?project=` in the URL and a LOCAL context.
+    # The actual activation runs in the AsyncLoad continuation once the recent
+    # projects have been loaded (maybe_auto_activate_recent_project/1) — the
+    # mount seeds no recents, so nothing can be activated synchronously here.
+    socket =
+      assign(
+        socket,
+        :auto_activate_candidate?,
+        is_nil(params["project"]) and is_nil(socket.assigns[:current_node_id])
+      )
 
     # Node-aware refresh (custom agents + model-selection script state, model
     # profiles + the node-switch `selected_model_id` validation, remote
@@ -700,13 +739,10 @@ defmodule EvoDashWeb.ProjectsLive do
               if File.dir?(expanded) do
                 activate_project(socket, expanded)
               else
-                # Project path in URL is invalid, clear it
-                socket
-                |> assign(
-                  :notified_task_ids,
-                  Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
-                )
-                |> assign(
+                # Project path in URL is invalid, clear it. The notified-id set
+                # is owned by the AsyncLoad seed / notification batches — no
+                # store read here.
+                assign(socket,
                   active_project: nil,
                   active_project_path: nil
                 )
@@ -722,44 +758,20 @@ defmodule EvoDashWeb.ProjectsLive do
               socket
           end
         else
-          # No project in URL — try auto-loading most recent project, or load all tasks
-          socket =
-            if is_nil(socket.assigns.active_project) do
-              case List.first(socket.assigns.recent_projects) do
-                %{path: recent_path} when is_binary(recent_path) ->
-                  if File.dir?(recent_path) do
-                    activate_project(socket, recent_path)
-                  else
-                    socket
-                    |> assign(
-                      :notified_task_ids,
-                      Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
-                    )
-                  end
-
-                _ ->
-                  socket
-                  |> assign(
-                    :notified_task_ids,
-                    Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
-                  )
-              end
-            else
-              # We had a project but navigated away and back without it
-              socket
-            end
-
+          # No project in URL — the most recent project is auto-activated by
+          # the async load continuation once the recents land (see
+          # maybe_auto_activate_recent_project/1). Nothing to load here.
           socket
         end
       end
 
     # Spawn the grouped async node-aware load (custom agents, model profiles,
-    # remote project config, recent projects — see the comment above and
-    # EvoDashWeb.ProjectsLive.AsyncLoad). The spawn runs
-    # AFTER the node-switch state clearing AND the project-activation block
-    # above, so it captures the post-clear, post-activation active project
-    # path — the identity the AsyncLoad stale-guard compares against, so a
-    # result spawned for the very activation that just happened is never
+    # remote project config, recent projects + the notified-terminal-id seed —
+    # see the comment above and EvoDashWeb.ProjectsLive.AsyncLoad). The spawn
+    # runs AFTER the node-switch state clearing AND the project-activation
+    # block above, so it captures the post-clear, post-activation active
+    # project path — the identity the AsyncLoad stale-guard compares against,
+    # so a result spawned for the very activation that just happened is never
     # dropped as "stale" (and a remote→local switch can never keep a remote
     # node's model profiles/recents after a local project activates).
     socket = AsyncLoad.maybe_spawn(socket, prev_node_id)
@@ -777,14 +789,16 @@ defmodule EvoDashWeb.ProjectsLive do
     # Preserve resume_from from URL query param (e.g. ?resume_from=task_id)
     # and auto-expand the Advanced Options so the user sees it's filled in.
     # Also restore foreign_repos from the original task so the "continue from
-    # here" workflow preserves multi-repo configuration.
+    # here" workflow preserves multi-repo configuration — loaded in a
+    # supervised task (the previous task's row must never be fetched in the
+    # LiveView process), see start_foreign_repos_restore/2.
     socket =
       case params["resume_from"] do
         task_id when is_binary(task_id) and task_id != "" ->
           socket
           |> assign(:task_resume_from, task_id)
           |> assign(:show_advanced, true)
-          |> maybe_restore_foreign_repos_from_task(task_id)
+          |> start_foreign_repos_restore(task_id)
 
         _ ->
           socket
@@ -924,26 +938,41 @@ defmodule EvoDashWeb.ProjectsLive do
   # opening the project. LOCAL-only: recent-project removal is not exposed
   # over the remote RPC chain, and remote projects are read-only by design —
   # the delete button only renders in local contexts (palette_menu hides it
-  # when `remote`), so this guard is defensive. `remove_recent_project`
-  # broadcasts {:recent_projects_updated} on PubSub, but we also re-read and
-  # re-assign immediately so the list updates on this render cycle; the
-  # broadcast handler then refreshes it again idempotently. The selected
-  # index resets to 0 so keyboard navigation stays in sync with the
+  # when `remote`), so this guard is defensive. ASYNC: the removal + re-read
+  # run in one supervised task (never in the LiveView process — the store call
+  # can hang/exit); the row disappears OPTIMISTICALLY on this render and the
+  # `{:recent_projects_removed, seq, node, result}` continuation assigns the
+  # authoritative (absolute-path-filtered) list. A later
+  # `{:recent_projects_updated}` broadcast corrects a failed removal. The
+  # selected index resets to 0 so keyboard navigation stays in sync with the
   # shortened list.
   @impl true
   def handle_event("remove_recent_project", %{"path" => path}, socket) do
     if socket.assigns[:current_node_id] != nil do
       {:noreply, socket}
     else
-      TaskRegistry.remove_recent_project(path)
+      seq = (socket.assigns[:recent_projects_seq] || 0) + 1
+      node = socket.assigns[:current_node] || node()
+      parent = self()
+
+      Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+        result =
+          SafeCall.run(fn ->
+            TaskRegistry.remove_recent_project(path)
+            TaskRegistry.list_recent_projects()
+          end)
+
+        send(parent, {:recent_projects_removed, seq, node, result})
+      end)
 
       {:noreply,
        socket
        |> assign(
          :recent_projects,
-         filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+         Enum.reject(socket.assigns.recent_projects, &(Map.get(&1, :path) == path))
        )
-       |> assign(:palette_selected_index, 0)}
+       |> assign(:palette_selected_index, 0)
+       |> assign(:recent_projects_seq, seq)}
     end
   end
 
@@ -1166,6 +1195,10 @@ defmodule EvoDashWeb.ProjectsLive do
   def handle_event("task_submit", %{"prompt" => prompt, "mode" => combined_mode} = params, socket) do
     path = socket.assigns[:active_project_path]
     selected_agent_id = socket.assigns[:selected_agent_id]
+    # Resume foreign-repo restore still in flight (async, see
+    # start_foreign_repos_restore/2) — the opts would carry an incomplete
+    # foreign_repos list, so refuse to launch and let the user retry.
+    restoring_from = socket.assigns[:foreign_repos_restoring_from]
 
     cond do
       # All task modes now require an active project (reflect mode was
@@ -1173,6 +1206,14 @@ defmodule EvoDashWeb.ProjectsLive do
       is_nil(path) ->
         {:noreply,
          put_flash(socket, :error, gettext("No project selected. Please open a project first."))}
+
+      not is_nil(restoring_from) and restoring_from == socket.assigns[:task_resume_from] ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Still loading the previous task's settings. Please try again in a moment.")
+         )}
 
       # Custom Agent mode must run a user-defined custom agent as the root
       # agent (the cross-app contract requires the :agent opt) — nil/""/"Auto
@@ -1193,11 +1234,75 @@ defmodule EvoDashWeb.ProjectsLive do
   end
 
   # --- Task Management Events ---
+  #
+  # Store mutations run through `EvoDash.SafeCall`: a `GenServer.call` to the
+  # task store can time out (EXIT, not a rescue-able exception) or hit a dead
+  # server. They stay SYNCHRONOUS because the user is looking at the row they
+  # just acted on — only the reload/notification work is async.
 
   @impl true
   def handle_event("cancel_task", %{"task_id" => task_id}, socket) do
-    case TaskRegistry.cancel_task(task_id) do
-      :ok ->
+    case SafeCall.run(fn -> TaskRegistry.cancel_task(task_id) end) do
+      {:ok, :ok} ->
+        {:noreply,
+         socket
+         |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+         |> assign(
+           :notified_task_ids,
+           MapSet.put(socket.assigns.notified_task_ids, task_id)
+         )}
+
+      {:ok, {:error, reason}} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+         )}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+         )}
+    end
+  end
+
+  # Clearing the history is a store WRITE plus a full terminal-id re-scan — both
+  # run in one supervised task. The notified set is marked NOT READY for the
+  # duration so a `:node_aware_reload_tasks` landing mid-clear can never treat
+  # the not-yet-cleared rows as new and notify for them; the continuation
+  # (`{:task_history_cleared, seq, node, result}`) re-seeds it from the
+  # post-clear scan and flips readiness back on.
+  @impl true
+  def handle_event("clear_task_history", _params, socket) do
+    seq = (socket.assigns[:clear_history_seq] || 0) + 1
+    node = socket.assigns[:current_node] || node()
+    parent = self()
+
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result =
+        SafeCall.run(fn ->
+          TaskRegistry.clear_finished_tasks()
+          Notifications.load_terminal_ids()
+        end)
+
+      send(parent, {:task_history_cleared, seq, node, result})
+    end)
+
+    {:noreply,
+     socket
+     |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
+     |> assign(:notified_task_ids_ready?, false)
+     |> assign(:clear_history_seq, seq)}
+  end
+
+  @impl true
+  def handle_event("delete_task", %{"task_id" => task_id}, socket) do
+    case SafeCall.run(fn -> TaskRegistry.delete_task(task_id) end) do
+      {:ok, _} ->
         {:noreply,
          socket
          |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
@@ -1211,33 +1316,9 @@ defmodule EvoDashWeb.ProjectsLive do
          put_flash(
            socket,
            :error,
-           gettext("Failed to cancel task: %{reason}", reason: inspect(reason))
+           gettext("Failed to delete task: %{reason}", reason: inspect(reason))
          )}
     end
-  end
-
-  @impl true
-  def handle_event("clear_task_history", _params, socket) do
-    notified = Assigns.build_notified_task_ids(socket.assigns.notified_task_ids)
-    TaskRegistry.clear_finished_tasks()
-
-    {:noreply,
-     socket
-     |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-     |> assign(:notified_task_ids, notified)}
-  end
-
-  @impl true
-  def handle_event("delete_task", %{"task_id" => task_id}, socket) do
-    TaskRegistry.delete_task(task_id)
-
-    {:noreply,
-     socket
-     |> EvoDashWeb.LiveHooks.NodeAware.assign_active_tasks()
-     |> assign(
-       :notified_task_ids,
-       MapSet.put(socket.assigns.notified_task_ids, task_id)
-     )}
   end
 
   # --- Project Settings Events ---
@@ -1857,16 +1938,19 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Debounced reload fired by NodeAware after task broadcasts: refreshes the
   # sidebar, reloads project settings when the settings panel is open, and
-  # pushes browser notifications for newly finished tasks. Notification
-  # detection uses the minimal id+status projection — only newly-terminal rows
-  # are fetched in full (get_task per new id), bounding decode cost instead of
-  # scanning the entire terminal history on every broadcast.
+  # spawns the browser-notification scan for newly finished tasks.
+  #
+  # NOTHING here blocks on the store: the notification scan runs in a
+  # supervised task (Notifications.spawn_scan/4 — terminal-id projection + one
+  # full-row read per NEWLY terminal id) and its outcome arrives as
+  # `{:task_notifications, seq, node, result}`. The scan is skipped entirely
+  # until the notified-id set has been SEEDED (`notified_task_ids_ready?`) —
+  # diffing against an unseeded empty set would notify for every historical
+  # task. Notifications are LOCAL-context only.
   #
   # Node-aware: the sidebar reload goes through
   # NodeAware.load_running_and_pending_tasks/1 (remote tasks via RPC, empty
-  # lists in pending/error remote contexts), and browser notifications are
-  # LOCAL-context only — a remote/pending context must never fire local
-  # notifications.
+  # lists in pending/error remote contexts).
   @impl true
   def handle_info(:node_aware_reload_tasks, socket) do
     # Refresh project settings if shown (foreign repos are in-memory, not re-read)
@@ -1884,35 +1968,18 @@ defmodule EvoDashWeb.ProjectsLive do
       end
 
     socket =
-      if socket.assigns[:current_node_id] == nil do
-        # Detect newly finished tasks for browser notifications (local context
-        # only — remote nodes have no local TaskRegistry to scan)
-        terminal_ids = TaskRegistry.list_task_ids([:completed, :failed, :cancelled])
-        previously_notified = socket.assigns.notified_task_ids
+      if socket.assigns[:current_node_id] == nil and
+           socket.assigns[:notified_task_ids_ready?] == true do
+        seq = (socket.assigns[:task_notifications_seq] || 0) + 1
 
-        {new_ids, updated_notified} =
-          Enum.reduce(terminal_ids, {[], previously_notified}, fn %{id: id}, {acc, notified} ->
-            if MapSet.member?(notified, id) do
-              {acc, notified}
-            else
-              {[id | acc], MapSet.put(notified, id)}
-            end
-          end)
+        Notifications.spawn_scan(
+          self(),
+          seq,
+          socket.assigns[:current_node] || node(),
+          socket.assigns.notified_task_ids
+        )
 
-        socket =
-          Enum.reduce(new_ids, socket, fn id, sock ->
-            case TaskRegistry.get_task(id) do
-              %EvoGit.TaskInfo{} = task ->
-                {title, body} = Project.task_notification_content(task)
-                push_event(sock, "task_notification", %{title: title, body: body})
-
-              _ ->
-                # task vanished between queries — still marked notified, no crash
-                sock
-            end
-          end)
-
-        assign(socket, :notified_task_ids, updated_notified)
+        assign(socket, :task_notifications_seq, seq)
       else
         socket
       end
@@ -1922,26 +1989,162 @@ defmodule EvoDashWeb.ProjectsLive do
     {:noreply, EvoDashWeb.LiveHooks.NodeAware.clear_task_reload_pending(socket)}
   end
 
+  # Continuation of the notification scan started above. Stale-guarded on the
+  # captured seq (a newer scan superseded this one), the node (a node switch
+  # happened) and the node context (notifications are local-only). An error
+  # result leaves the state untouched — the next debounced reload retries.
+  @impl true
+  def handle_info({:task_notifications, seq, node, result}, socket) do
+    if seq != socket.assigns[:task_notifications_seq] or
+         node != (socket.assigns[:current_node] || node()) or
+         socket.assigns[:current_node_id] != nil do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, {new_ids, notifications}} ->
+          socket =
+            assign(
+              socket,
+              :notified_task_ids,
+              MapSet.union(socket.assigns.notified_task_ids, MapSet.new(new_ids))
+            )
+
+          socket =
+            Enum.reduce(notifications, socket, fn {_id, title, body}, sock ->
+              push_event(sock, "task_notification", %{title: title, body: body})
+            end)
+
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          {:noreply, socket}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC clear-history batch (see the
+  # `clear_task_history` event): re-seeds the notified-id set from the
+  # post-clear scan and flips readiness back on. `ids` is nil when the
+  # post-clear scan itself failed — the already-notified ids are kept and
+  # readiness is restored so detection resumes.
+  @impl true
+  def handle_info({:task_history_cleared, seq, node, result}, socket) do
+    if seq != socket.assigns[:clear_history_seq] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, ids} ->
+          {:noreply,
+           socket
+           |> assign(
+             :notified_task_ids,
+             MapSet.union(socket.assigns.notified_task_ids, ids || MapSet.new())
+           )
+           |> assign(:notified_task_ids_ready?, true)}
+
+        {:error, reason} ->
+          {:noreply,
+           socket
+           |> assign(:notified_task_ids_ready?, true)
+           |> put_flash(
+             :error,
+             gettext("Failed to clear task history: %{reason}", reason: inspect(reason))
+           )}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC recent-project reload (the
+  # `{:recent_projects_updated}` PubSub broadcast). Stale-guarded on the seq,
+  # the node and the node context; an error leaves the current list alone.
+  @impl true
+  def handle_info({:recent_projects_loaded, seq, node_id, node, result}, socket) do
+    if seq != socket.assigns[:recent_projects_seq] or
+         node_id != socket.assigns[:current_node_id] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, recent_projects} -> {:noreply, assign(socket, :recent_projects, recent_projects)}
+        {:error, _reason} -> {:noreply, socket}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC optimistic recent-project removal (see the
+  # `remove_recent_project` event). The optimistic list already dropped the
+  # row; success replaces it with the authoritative filtered list, an error
+  # keeps the optimistic list and flashes (a later
+  # `{:recent_projects_updated}` broadcast corrects it).
+  @impl true
+  def handle_info({:recent_projects_removed, seq, node, result}, socket) do
+    if seq != socket.assigns[:recent_projects_seq] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      case result do
+        {:ok, recent_projects} ->
+          {:noreply,
+           assign(socket, :recent_projects, filter_absolute_recent_projects(recent_projects))}
+
+        {:error, reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Failed to remove recent project: %{reason}", reason: inspect(reason))
+           )}
+      end
+    end
+  end
+
+  # Continuation of the ASYNC resume foreign-repo restore (see
+  # start_foreign_repos_restore/2). Stale-guarded on the task id (a newer
+  # resume landed) and the node; an empty result keeps the genesis.toml repos
+  # the project load produced.
+  @impl true
+  def handle_info({:foreign_repos_restored, task_id, node, result}, socket) do
+    if task_id != socket.assigns[:task_resume_from] or
+         node != (socket.assigns[:current_node] || node()) do
+      {:noreply, socket}
+    else
+      socket = assign(socket, :foreign_repos_restoring_from, nil)
+
+      case result do
+        {:ok, repos} when is_list(repos) and repos != [] ->
+          {:noreply, assign(socket, :foreign_repos, repos)}
+
+        {:ok, _} ->
+          {:noreply, socket}
+
+        {:error, _reason} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Could not load the previous task's foreign repositories.")
+           )}
+      end
+    end
+  end
+
+  # The recent-projects list is loaded in a supervised task — the store/RPC
+  # read must never run in the LiveView process.
   @impl true
   def handle_info({:recent_projects_updated}, socket) do
-    recent_projects =
-      cond do
-        socket.assigns.remote? ->
-          # Connected remote node — reload the remote node's recents via RPC
-          filter_absolute_recent_projects_for_node(
-            socket.assigns.current_node,
-            EvoDash.NodeContext.list_recent_projects(socket.assigns.current_node)
-          )
+    seq = (socket.assigns[:recent_projects_seq] || 0) + 1
+    node = socket.assigns[:current_node] || node()
+    node_id = socket.assigns[:current_node_id]
+    remote? = socket.assigns.remote? == true
+    parent = self()
 
-        socket.assigns[:current_node_id] != nil ->
-          # Pending/error remote context — never show local recents
-          []
+    Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+      result = SafeCall.run(fn -> AsyncLoad.load_recent_projects(remote?, node_id, node) end)
+      send(parent, {:recent_projects_loaded, seq, node_id, node, result})
+    end)
 
-        true ->
-          filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
-      end
-
-    {:noreply, assign(socket, :recent_projects, recent_projects)}
+    {:noreply, assign(socket, :recent_projects_seq, seq)}
   end
 
   @impl true
@@ -1978,17 +2181,30 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Async node-aware loads spawned by AsyncLoad.maybe_spawn/2 in
   # handle_params/3 (custom agents, model profiles + the selected_model_id
-  # switch validation, remote project config, recent
-  # projects). The handler drops stale results (wrong node or active project)
-  # in AsyncLoad.handle_result/5, then re-runs GitHub.maybe_check/1: the
-  # remote task_mode now arrives via this continuation (it used to be
-  # assigned synchronously before the maybe_check call at the end of
-  # handle_params), so the remote upstream-detection needs this second kick —
-  # maybe_check is self-guarding (no-ops once a status is present), so the
-  # extra call is harmless on every other path.
+  # switch validation, remote project config, recent projects + the
+  # notified-terminal-id seed). The handler drops stale results (wrong node or
+  # active project) in AsyncLoad.handle_result/5, which reports whether it
+  # applied anything, then:
+  #
+  #   * auto-activates the most recent project when this was the
+  #     no-`?project=` local run (maybe_auto_activate_recent_project/1 — this
+  #     replaces the old synchronous mount seed, so the project opens one frame
+  #     later with the same end state);
+  #   * re-runs GitHub.maybe_check/1: the remote task_mode now arrives via this
+  #     continuation, so the remote upstream-detection needs this second kick —
+  #     maybe_check is self-guarding (no-ops once a status is present), so the
+  #     extra call is harmless on every other path.
   @impl true
   def handle_info({:async_project_load, node, prev_node_id, path, results}, socket) do
-    socket = AsyncLoad.handle_result(socket, node, prev_node_id, path, results)
+    {socket, applied?} = AsyncLoad.handle_result(socket, node, prev_node_id, path, results)
+
+    socket =
+      if applied? and Map.get(results, :auto_activate?, false) do
+        maybe_auto_activate_recent_project(socket)
+      else
+        socket
+      end
+
     {:noreply, GitHub.maybe_check(socket)}
   end
 
@@ -2078,83 +2294,112 @@ defmodule EvoDashWeb.ProjectsLive do
     end
   end
 
-  # Restores foreign_repos from a previous task's opts when resuming ("continue from here").
+  # Auto-activates the newest recent project once the async seed has produced
+  # the recents list (replaces the old synchronous mount-time auto-load). Only
+  # for a LOCAL context whose handle_params run carried no `?project=`; a
+  # missing/non-existent path leaves the no-project view untouched.
+  defp maybe_auto_activate_recent_project(socket) do
+    if socket.assigns[:auto_activate_candidate?] == true and
+         is_nil(socket.assigns[:current_node_id]) and
+         is_nil(socket.assigns[:active_project]) do
+      case List.first(socket.assigns[:recent_projects]) do
+        %{path: recent_path} when is_binary(recent_path) ->
+          if File.dir?(recent_path), do: activate_project(socket, recent_path), else: socket
+
+        _ ->
+          socket
+      end
+    else
+      socket
+    end
+  end
+
+  # Restores foreign_repos from a previous task's opts when resuming ("continue
+  # from here") — ASYNC: the previous task's row is fetched in a supervised
+  # task (a full-row `get_task/1` never runs in the LiveView process) and the
+  # converted repos arrive as `{:foreign_repos_restored, task_id, node,
+  # result}`. `foreign_repos_restoring_from` marks the in-flight restore so
+  # task_submit can refuse to launch with a half-restored foreign-repo list.
   #
-  # Looks up the task by id, extracts `task.opts[:foreign_repos]`, and converts the
-  # values to `%ForeignRepo{}` structs. Handles both:
+  # The lookup extracts `task.opts[:foreign_repos]` and converts the values to
+  # `%ForeignRepo{}` structs, tolerating every persisted shape:
   #   - Fresh `%ForeignRepo{}` structs (from an in-memory task)
   #   - Maps with `"root"` key (Jason-decoded from the DB, via `@derive {Jason.Encoder}`)
   #   - Maps with `"path"` key (sessionStorage serialization format, as a fallback)
-  defp maybe_restore_foreign_repos_from_task(socket, task_id) do
-    case TaskRegistry.get_task(task_id) do
-      nil ->
-        socket
+  defp start_foreign_repos_restore(socket, task_id) do
+    node = socket.assigns[:current_node] || node()
+    parent = self()
 
-      task ->
-        case task.opts[:foreign_repos] do
-          nil ->
-            socket
+    case Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
+           result =
+             SafeCall.run(fn ->
+               # the upcoming TaskRegistry.get_task_lite/1 replaces this full-row fetch (only opts are read here)
+               case TaskRegistry.get_task(task_id) do
+                 nil -> []
+                 task -> convert_task_foreign_repos(task.opts[:foreign_repos])
+               end
+             end)
 
-          [] ->
-            socket
-
-          repos when is_list(repos) ->
-            converted =
-              Enum.map(repos, fn
-                %ForeignRepo{} = repo ->
-                  repo
-
-                repo when is_map(repo) ->
-                  id = Map.get(repo, "id") || Map.get(repo, :id) || "primary"
-                  root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
-                  desc = Map.get(repo, "description") || Map.get(repo, :description)
-
-                  # Read-write foreign repos: thread `writable` and `base_sha`
-                  # through the guarded constructor (which for non-UNC inputs
-                  # is `ForeignRepo.new/3` — it coerces/validates them: only
-                  # literal true is writable, blank base_sha → nil). The UNC
-                  # guard keeps `//wsl.localhost/...` / `\\server\share\...`
-                  # roots verbatim on non-Windows nodes — `ForeignRepo.new/3`'s
-                  # `Path.expand` would collapse/cwd-join them (see
-                  # `foreign_repo_new_guarded/3`).
-                  # Tolerant writable check for string-keyed persisted shapes.
-                  writable =
-                    Map.get(repo, "writable", Map.get(repo, :writable, false))
-
-                  base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
-
-                  opts =
-                    if(is_binary(desc) and desc != "",
-                      do: [description: desc],
-                      else: []
-                    )
-                    |> Keyword.put(:writable, writable == true or writable == "true")
-                    |> then(fn o ->
-                      if is_binary(base_sha) and base_sha != "",
-                        do: Keyword.put(o, :base_sha, base_sha),
-                        else: o
-                    end)
-
-                  foreign_repo_new_guarded(id, root, opts)
-
-                _ ->
-                  nil
-              end)
-              |> Enum.reject(&is_nil/1)
-
-            if converted != [] do
-              sorted =
-                Enum.sort_by(converted, fn repo ->
-                  {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
-                end)
-
-              assign(socket, :foreign_repos, sorted)
-            else
-              socket
-            end
-        end
+           send(parent, {:foreign_repos_restored, task_id, node, result})
+         end) do
+      # Only mark the restore in flight when the task really started — a spawn
+      # failure must not wedge the submit guard forever.
+      {:ok, _pid} -> assign(socket, :foreign_repos_restoring_from, task_id)
+      {:error, _reason} -> socket
     end
   end
+
+  defp convert_task_foreign_repos(nil), do: []
+  defp convert_task_foreign_repos([]), do: []
+
+  defp convert_task_foreign_repos(repos) when is_list(repos) do
+    repos
+    |> Enum.map(fn
+      %ForeignRepo{} = repo ->
+        repo
+
+      repo when is_map(repo) ->
+        id = Map.get(repo, "id") || Map.get(repo, :id) || "primary"
+        root = Map.get(repo, "root") || Map.get(repo, "path") || Map.get(repo, :root)
+        desc = Map.get(repo, "description") || Map.get(repo, :description)
+
+        # Read-write foreign repos: thread `writable` and `base_sha`
+        # through the guarded constructor (which for non-UNC inputs
+        # is `ForeignRepo.new/3` — it coerces/validates them: only
+        # literal true is writable, blank base_sha → nil). The UNC
+        # guard keeps `//wsl.localhost/...` / `\\server\share\...`
+        # roots verbatim on non-Windows nodes — `ForeignRepo.new/3`'s
+        # `Path.expand` would collapse/cwd-join them (see
+        # `foreign_repo_new_guarded/3`).
+        # Tolerant writable check for string-keyed persisted shapes.
+        writable = Map.get(repo, "writable", Map.get(repo, :writable, false))
+
+        base_sha = Map.get(repo, "base_sha") || Map.get(repo, :base_sha)
+
+        opts =
+          if(is_binary(desc) and desc != "",
+            do: [description: desc],
+            else: []
+          )
+          |> Keyword.put(:writable, writable == true or writable == "true")
+          |> then(fn o ->
+            if is_binary(base_sha) and base_sha != "",
+              do: Keyword.put(o, :base_sha, base_sha),
+              else: o
+          end)
+
+        foreign_repo_new_guarded(id, root, opts)
+
+      _ ->
+        nil
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(fn repo ->
+      {if(ForeignRepo.primary?(repo.id), do: 0, else: 1), repo.id}
+    end)
+  end
+
+  defp convert_task_foreign_repos(_other), do: []
 
   # ───────────────────────────────────────────────────────────────────────────
   # Command Palette keyboard navigation helpers
@@ -2210,13 +2455,15 @@ defmodule EvoDashWeb.ProjectsLive do
               activate_remote_palette_project(socket, expanded)
             else
               if File.dir?(expanded) do
-                TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
-
-                recent_projects =
-                  filter_absolute_recent_projects(TaskRegistry.list_recent_projects())
+                # Exit-safe write: a store `GenServer.call` can time out/exit
+                # and must never crash the page. The recents list itself is
+                # reloaded by the AsyncLoad batch the push_patch below spawns,
+                # so no synchronous re-read is needed here.
+                SafeCall.run(fn ->
+                  TaskRegistry.add_recent_project(expanded, Path.basename(expanded))
+                end)
 
                 socket
-                |> assign(:recent_projects, recent_projects)
                 |> assign(:project_palette_open, false)
                 |> assign(:palette_mode, :menu)
                 |> push_patch(to: "/projects?project=#{URI.encode(expanded)}")
@@ -2315,16 +2562,13 @@ defmodule EvoDashWeb.ProjectsLive do
     AsyncLoad.filter_absolute_recent_projects(recent_projects)
   end
 
-  # Node-aware variant of the filter above, used ONLY at the remote recents
-  # sites (handle_params remote branch, the :recent_projects_updated handler,
-  # and activate_remote_palette_project). Delegates to the single shared
-  # predicate `ProjectFlow.absolute_path_for_node?/2`: local nodes keep the
-  # strict `Platform.absolute_path?/1` semantics; remote nodes accept POSIX-
-  # or Windows-absolute paths so remote recents survive a dashboard running
-  # on a different OS (e.g. `/home/user/repo` on a Windows dashboard).
-  defp filter_absolute_recent_projects_for_node(node, recent_projects) do
-    AsyncLoad.filter_absolute_recent_projects_for_node(node, recent_projects)
-  end
+  # Node-aware variant of the filter above lives in
+  # EvoDashWeb.ProjectsLive.AsyncLoad (`filter_absolute_recent_projects_for_node/2`)
+  # and is applied inside the async recents loads (`AsyncLoad.load_recent_projects/3`)
+  # — local nodes keep the strict `Platform.absolute_path?/1` semantics; remote
+  # nodes accept POSIX- or Windows-absolute paths via the single shared
+  # predicate `ProjectFlow.absolute_path_for_node?/2`, so remote recents survive
+  # a dashboard running on a different OS (e.g. `/home/user/repo` on Windows).
 
   # The add-foreign-repo form is reachable in remote mode (RemoteView renders
   # it via `show_add_foreign_repo`), so its path must be validated for the
@@ -2518,7 +2762,6 @@ defmodule EvoDashWeb.ProjectsLive do
       # Re-arm the no-project hint so it returns for a future no-project
       # session (dismissal is per no-project session, not permanent).
       no_project_hint_dismissed: false,
-      notified_task_ids: Assigns.build_notified_task_ids(socket.assigns.notified_task_ids),
       task_mode: mode,
       task_mode_info: mode_info,
       project_palette_open: false,

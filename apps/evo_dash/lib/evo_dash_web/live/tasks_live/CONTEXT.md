@@ -11,7 +11,8 @@ task history via `EvoDash.NodeContext` for both the local BEAM node and a remote
 
 ## Routing Table
 
-- (leaf) `tasks_live.ex` — the TasksLive LiveView; no support modules.
+- `tasks_live.ex` — the TasksLive LiveView: filters, pagination, task cards, modals, and the user-initiated mutating events.
+- `page_load.ex` — `EvoDashWeb.TasksLive.PageLoad`, the ONE async, exit-safe page-load path (spawn seam, loader task, pure helpers).
 
 ## Push-based change detection (no polling)
 
@@ -37,12 +38,12 @@ which:
    message + `:tasks_reload_pending` flag) coalescing broadcast bursts into one
    reload.
 
-The `:node_aware_reload_tasks` handler (`:579-598`) then goes entirely through
+The `:node_aware_reload_tasks` handler then goes entirely through
 **off-process paths — it never touches the store**:
 
-- the page refresh is handed to `start_async_page_load(socket,
-  socket.assigns.current_page, false)` (the async path, `show_loading? false`
-  keeps the stale rows visible until the fresh page arrives);
+- the page refresh is handed to `PageLoad.start(socket,
+  socket.assigns.current_page, false)` (async; `show_loading? false` keeps the
+  stale rows visible until the fresh page arrives);
 - the sidebar running/pending reload is `NodeAware.reload_tasks/1` (itself
   async);
 - then `NodeAware.clear_task_reload_pending/1` clears the debounce flag, so the
@@ -60,36 +61,76 @@ independent, see "Two independent load counters" below.
 
 ## Async page load (the only page-load path)
 
-- `start_async_page_load/3` (`:1059-1072`) bumps the monotonic `:page_load_seq`,
-  optionally sets `:tasks_loading`, and hands the work to `spawn_page_load/1` →
-  `run_page_load/6` (`:1087-1117`), which runs the fetch in a supervised
-  `EvoDash.TaskSupervisor` task. The LiveView process NEVER blocks on the store.
-  The result arrives as `{:tasks_page_loaded, seq, node, result}` with
-  `result = {:ok, %{tasks:, current_page:, total_count:, total_pages:, project_paths:}} | {:error, :load_failed}`
-  and is stale-guarded by `:page_load_seq` + the node identity (stale seq or
-  wrong node → dropped). `show_loading?` controls the "Loading tasks..."
-  placeholder (user-initiated loads only). A dropped result leaves
-  `tasks_loading` true until the newest in-flight load applies (every spawned
-  task sends exactly one result, so the loading state can never wedge).
-- **Kickoff is connected-mount-gated** (`handle_params/3`, `:526-538`):
-  `handle_params/3` runs on BOTH the disconnected (static HTTP) render and the
-  connected mount, and a disconnected render's async result is discarded, so
-  the load is spawned ONLY when `connected?(socket)`. The else branch just
-  assigns `:tasks_loading, true` so the static HTML paints the same loading
-  placeholder the connected render replaces. Exactly ONE page load per
-  navigation; connected `push_patch` (pagination) and every filter event still
-  load normally (the guard is `connected?/1`, not a first-only flag).
+Every page load goes through `EvoDashWeb.TasksLive.PageLoad`
+(`tasks_live/page_load.ex`); the LiveView never fetches a page inline.
+
+- `PageLoad.start/3` bumps the monotonic `:page_load_seq` (its only writer),
+  optionally sets `:tasks_loading`, and hands the spawn fun to the
+  `:tasks_page_load_hook` seam.
+- `PageLoad.run/6` runs `PageLoad.load/4` in a supervised
+  `EvoDash.TaskSupervisor` task behind `EvoDash.SafeCall.run/1` and ALWAYS sends
+  exactly one `{:tasks_page_loaded, seq, node, result}` message to the
+  LiveView — even on an exit, a raise, or a remote RPC failure.
+- `result` is
+  `{:ok, %{tasks:, current_page:, total_count:, total_pages:, project_paths:}} | {:error, reason}`;
+  `reason` is a VALUE (`{:exit, reason}` / `{:exception, exception}` / a returned
+  remote error), never a crash.
+- **Stale guards** in `handle_info({:tasks_page_loaded, seq, node, result}, _)`:
+  a `seq` older than `:page_load_seq` or a `node` that no longer matches
+  `socket.assigns.current_node` drops the result (the newest in-flight load
+  applies its own).
+- `show_loading?` controls the "Loading tasks..." placeholder: user-initiated
+  loads (mount/navigation, filters, retry) show it; a background refresh does
+  not.
+- **Kickoff is connected-mount-gated** (`handle_params/3`): `handle_params/3`
+  runs on BOTH the disconnected (static HTTP) render and the connected mount,
+  and a disconnected render's async result is discarded, so the load is spawned
+  ONLY when `connected?(socket)`. The else branch assigns `:tasks_loading, true`
+  so the static HTML paints the same loading placeholder the connected render
+  replaces. Exactly ONE page load per navigation; connected `push_patch`
+  (pagination) and every filter event still load normally (the guard is
+  `connected?/1`, not a first-only flag).
 - **Two independent load counters**: `:page_load_seq` belongs to the page load
-  (`start_async_page_load/3` is its only writer); `:tasks_load_seq` belongs to
+  (`PageLoad.start/3` is its only writer); `:tasks_load_seq` belongs to
   `NodeAware`'s sidebar "Active Tasks" fetch (`request_tasks_load/1` is its only
   writer, and `handle_tasks_result/2` requires an exact match). The debounced
   reload spawns BOTH loads, so a shared counter would make each load's bump
   invalidate the other's in-flight result. Never merge them; never bump
   `:tasks_load_seq` from this file.
-- `spawn_page_load/1` (`:1080-1083`) wraps the spawn in the
-  `:tasks_page_load_hook` app-env seam (1-arity, default identity), resolved at
-  spawn time like EvoDash's other runner seams (`:github_runner`,
-  `:update_check_runner`). It exists so tests can count page-load spawns.
+- **`:tasks_page_load_hook`** is a 1-arity app-env seam (default identity)
+  resolved at spawn time like EvoDash's other runner seams (`:github_runner`,
+  `:update_check_runner`). It fires in whichever process drives the LiveView and
+  exists so tests can count page-load spawns.
+- **`PageLoad.load/4` is the only store-facing function** (pagination clamp +
+  a second fetch on clamp + `get_unique_paths/1`). Swapping its
+  `list_tasks_paginated/2` call for the upcoming
+  `TaskRegistry.select_tasks_page/3` is a ONE-function change: no other module
+  knows the row shape.
+- **Not adopted yet**: `TaskRegistry.select_tasks_page/3`, `get_task_lite/…` and
+  `get_task_archive/…` (summary-first page + per-row heavy fetch on expand) are
+  NOT called here — every load still transfers full `%TaskInfo{}` rows for all
+  25 rows (see the RPC payload audit below).
+
+## Page-load state & failure handling (`:tasks_loading` / `:tasks_error`)
+
+- `:tasks_loading` (seeded `false`, set by `PageLoad.start/3` when
+  `show_loading?`, cleared by every APPLIED `{:tasks_page_loaded, ...}`) drives
+  the "Loading tasks..." placeholder.
+- `:tasks_error` (seeded `nil`) holds the reason of the LAST failed page load.
+  It is NOT interpolated into the DOM; it only selects the error UI.
+- A failed load NEVER clears already-loaded rows: `:tasks` / `:filtered_tasks` /
+  `:total_count` / `:total_pages` / `:project_paths` stay untouched.
+- With nothing on screen (`@filtered_tasks == []`) the list area renders a
+  centered "Could not load tasks." block (`#tasks-load-error`) with a Retry
+  button — never an endless spinner (the spinner only shows while
+  `:tasks_loading` is true).
+- With rows still on screen the list renders normally plus a compact
+  `#tasks-refresh-error` strip above `#tasks-list` ("Could not refresh tasks." +
+  Retry), so a background-refresh failure is visible without blanking the page.
+- The `retry_load` event re-runs `PageLoad.start/3` on the CURRENT page and
+  shows the placeholder only when there is nothing to keep
+  (`assigns[:filtered_tasks] == []`).
+- A successful load assigns `tasks_error: nil` (the strip/block disappear).
 
 ## Load-cost profile (no blocking store work in the LiveView)
 
@@ -102,16 +143,14 @@ independent, see "Two independent load counters" below.
   file read).
 - **`handle_params/3`** issues at most ONE async page load per navigation, and
   none on the disconnected render.
-- **The debounced PubSub reload** routes through `start_async_page_load/3`, so a
+- **The debounced PubSub reload** routes through `PageLoad.start/3`, so a
   `{:task_updated, ...}` burst never puts a query on the LiveView process.
-- The ONLY remaining synchronous store reads are the user-initiated mutating
-  events (cancel / force-kill / delete / clear-history) via
-  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1046`) — low-volume
-  one-shot actions where the inline round-trip buys immediate feedback.
-  `sync_apply_page/2` deliberately does not touch `:tasks_loading` or
-  `:page_load_seq` (the async path owns those).
+- The ONLY store calls made INSIDE the LiveView process are the
+  user-initiated mutating events (cancel / force-kill / delete / clear-history):
+  a single-row `EvoDash.NodeContext` call wrapped in `EvoDash.SafeCall.run/1`
+  (see "Mutating events"), whose page reload is async.
 - The rendered list is a plain assign (`@filtered_tasks`) re-rendered with
-  `Enum.with_index` + `for` (`:245`) — NOT a LiveView stream.
+  `Enum.with_index` + `for` — NOT a LiveView stream.
 - Per-load SQL cost, the pool-backed reads (`EvoGit.Store.Boot.default_pool_size/0`
   = 4 connections) with writes serialized through `EvoGit.Store.Writer`, and the
   inline-Store `get_unique_paths` scan: `apps/evo_git/lib/evo_git/store/CONTEXT.md`.
@@ -147,19 +186,19 @@ list. Page-local filter state `@show_reflect_tasks` (default `false`, seeded in
 gettext label "Show chat tasks") reveals them when checked. The handler parses
 `params["show_reflect_tasks"] not in [nil, "false"]` (a checked box sends
 `"true"`, an unchecked box is absent from FormData) and reloads via
-`start_async_page_load(1, true)`.
+`PageLoad.start(socket, 1, true)`.
 
-The exclusion is applied **client-side post-load** by `visible_tasks/2`
-(`Enum.reject(tasks, &(&1.type == :reflect))` when hiding) at the two choke
-points where loaded page rows become the displayed list: the async
-`{:tasks_page_loaded, ...}` handler and `sync_apply_page/2` (both `:tasks` and
+The exclusion is applied **client-side post-load** by
+`PageLoad.visible_tasks/2` (`Enum.reject(tasks, &(&1.type == :reflect))` when
+hiding) at the single choke point where loaded page rows become the displayed
+list: the `{:tasks_page_loaded, ...}` handler (both `:tasks` and
 `:filtered_tasks` get the post-load filtered list). This is because the SQL
-`filters` keyword (`build_filters_from_assigns/1`) cannot express "exclude
-type" — the WHERE builder lives in the read-only sibling app `evo_git`. Rows
-are full `%TaskInfo{}` structs so `type` is already a decoded atom (no atom
-conversion). `@total_count`/`@total_pages`/pagination stay SQL-truthful and
-untouched — a page may show slightly fewer cards when reflect rows are
-dropped (accepted by design).
+`filters` keyword (`PageLoad.filters/1`) cannot express "exclude type" — the
+WHERE builder lives in the read-only sibling app `evo_git`. Rows are full
+`%TaskInfo{}` structs so `type` is already a decoded atom (no atom conversion).
+`@total_count`/`@total_pages`/pagination stay SQL-truthful and untouched — a
+page may show slightly fewer cards when reflect rows are dropped (accepted by
+design).
 
 The toggle is a **reveal preference, not a narrowing filter**: it survives
 pagination `push_patch`es and filter reloads (it is a plain socket assign,
@@ -174,11 +213,11 @@ adjusting your filters or search query." instead of the start-tasks hint
 All data access goes through `EvoDash.NodeContext` → `EvoGit.RemoteNode` (local
 direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`:
 
-- **`list_tasks_paginated/2`** — page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`build_filters_from_assigns`; `"all"`/`""` passthrough handled in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2`). Returns FULL `%TaskInfo{}` structs + total_count.
-  - **Search surface**: the `search:` filter (the page's search box) is executed in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `error`, `usage`, `model_id`, `logs`, `archive_metadata` — `error` is the structured failure record map read for failed-task display (`nil` unless the task is `:failed`). NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: summary projection + `get_task` on expand — not implemented).
+- **`list_tasks_paginated/2`** — page data; opts `[limit: 25, offset: (page-1)*25, filters: [status:, project_path:, review_status:, search:]]` (`PageLoad.filters/1`; `"all"`/`""` passthrough handled in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2`). Returns FULL `%TaskInfo{}` structs + total_count.
+  - **Search surface**: the `search:` filter (the page's search box) is executed in the store's private SQL WHERE builder `EvoGit.Store.Operations.Tasks.where_filters/2` (evo_git-owned, sibling app) as a case-insensitive raw-JSON SQL LIKE over the `id`, `opts`, `project_path`, and `result` columns — so the search box also matches the agent response message (the result's `"result"` data key). Fields consumed by `task_card_components.ex`: `type`, `opts`, `id`, `review_status`, `status`, `started_at`, `finished_at`, `agent_count`, `result`, `error`, `usage`, `model_id`, `logs`, `archive_metadata` — `error` is the structured failure record map read for failed-task display (`nil` unless the task is `:failed`). NOT consumed: `project_path`, `base_sha`, `commit_sha`, `lease_expires_at`, `updated_at`. Heavy fields are transferred for all 25 rows even when every card is collapsed (known future optimization: `select_tasks_page` summary page + `get_task_lite`/`get_task_archive` on expand — not implemented; `PageLoad.load/4` is the single swap point).
 - **Multi-repo `repos` result key** — task results may carry a top-level `repos` map (STRING keys): `%{repo_id => %{"commit_sha" => sha, "branch_name" => branch | nil}}` — `"primary"` ALWAYS present (branch_name nil when the primary produced no changes), each writable foreign repo that produced commits present, read-only repos ABSENT. Top-level `commit_sha`/`branch_name` remain the PRIMARY repo's. Legacy tasks have NO `repos` key — rendered unchanged. TasksLive does not touch `repos` itself: it loads the full `result` via `list_tasks_paginated/2` (Codec round trip keeps the top-level `"repos"` key STRING-keyed — unknown result keys are never atomized) and `task_card_components.ex` renders it (`result_repos/1` + `result_repos_badges/1`).
-- **`get_unique_paths/1`** — fetched ONCE per page load, inside the async load task (`run_page_load/6`, `:1094`) — `mount/3` does NOT call it (see "Load-cost profile"). Result assigned as `@project_paths` → filter-dropdown options + active-filter badge. The synchronous `sync_apply_page/2` path (`:1044`, mutating events only) re-fetches it inline.
-- **`cancel_task/2` / `force_kill_task/2` / `delete_task/2` / `clear_finished_tasks/1`** — phx-event triggered; return `:ok | {:error, reason}` — only the status consumed (`:ok` → collapse card + sync reload; error → gettext flash with `inspect(reason)`); delete/clear ignore the return.
+- **`get_unique_paths/1`** — fetched ONCE per page load, inside the async load task (`PageLoad.load/4`) — `mount/3` does NOT call it (see "Load-cost profile"). Result assigned as `@project_paths` → filter-dropdown options + active-filter badge.
+- **`cancel_task/2` / `force_kill_task/2` / `delete_task/2` / `clear_finished_tasks/1`** — phx-event triggered and wrapped in `EvoDash.SafeCall.run/1` (see "Mutating events"); they return `:ok | {:error, reason}` — `:ok` → card collapse + ASYNC reload, `{:error, reason}`/a caught exit → gettext flash with `inspect(reason)`.
 - **`list_task_ids/2`** (id/status/updated_at projection) — NOT called from tasks_live.ex; the only dashboard consumer is SystemLive's update card.
 - **`list_tasks_changed_since/2`** — not called anywhere in the dashboard (change detection is broadcast-driven).
 
@@ -191,8 +230,8 @@ direct call or `:erpc`) → `EvoGit.AgentScheduler.RemoteAPI` → `EvoGit.TaskRe
 
 Two two-step server-side confirmation-modal flows (SystemLive warning-modal pattern; NO custom JS — assigns drive visibility):
 
-- **Graceful cancel** (card's inline Cancel button, visible `[:pending, :running]`): `open_cancel_modal` → assign `:confirm_cancel_task_id`; `confirm_cancel_task` → `EvoDash.NodeContext.cancel_task(current_node, task_id)` (GRACEFUL — agents save + exit, result preserved; `:pending` → immediate `:cancelled`); `:ok` → collapse expanded card + `reload_current_page/1`; error → flash `gettext("Failed to cancel task: %{reason}", reason: inspect(reason))`. Modal: title `gettext("Cancel Task?")`, confirm `gettext("Cancel Task")` (`btn-warning`), dismiss `gettext("Keep Running")`.
-- **Force kill** (card's three-dot dropdown, visible `[:running, :cancelling]`, "Danger zone" divider): `open_force_kill_modal` → assign `:confirm_force_kill_task_id`; `confirm_force_kill_task` → `EvoDash.NodeContext.force_kill_task(current_node, task_id)` (BRUTAL — kills all agents, result nil'd; escalation from `:cancelling`); same `:ok` collapse+reload / error-flash handling. Modal: title `gettext("Force Kill Task?")`, confirm `gettext("Force Kill")` (`btn-error`).
+- **Graceful cancel** (card's inline Cancel button, visible `[:pending, :running]`): `open_cancel_modal` → assign `:confirm_cancel_task_id`; `confirm_cancel_task` → `EvoDash.NodeContext.cancel_task(current_node, task_id)` (GRACEFUL — agents save + exit, result preserved; `:pending` → immediate `:cancelled`) inside `EvoDash.SafeCall.run/1`; `:ok` → collapse expanded card + `PageLoad.start(socket, current_page, false)`; error → flash `gettext("Failed to cancel task: %{reason}", reason: inspect(reason))`. Modal: title `gettext("Cancel Task?")`, confirm `gettext("Cancel Task")` (`btn-warning`), dismiss `gettext("Keep Running")`.
+- **Force kill** (card's three-dot dropdown, visible `[:running, :cancelling]`, "Danger zone" divider): `open_force_kill_modal` → assign `:confirm_force_kill_task_id`; `confirm_force_kill_task` → `EvoDash.NodeContext.force_kill_task(current_node, task_id)` (BRUTAL — kills all agents, result nil'd; escalation from `:cancelling`) inside `EvoDash.SafeCall.run/1`; same `:ok` collapse + async reload / error-flash handling. Modal: title `gettext("Force Kill Task?")`, confirm `gettext("Force Kill")` (`btn-error`).
 - **Modal-state lifecycle**: both assigns seeded `nil` in `mount/3`, MUTUALLY EXCLUSIVE (opening one clears the other), cleared on node switch in `handle_params/3`. Nil-guarded confirms are no-ops.
 - **Status filter**: includes `gettext("Cancelling")` (`value="cancelling"`); pure SQL string comparison (`EvoGit.Store.Operations.Tasks.where_filters/2`), so `:cancelling` round-trips — no evo_dash-side atom whitelist.
 - **`:cancelled` reviewability**: gracefully-cancelled tasks ARE reviewable — the card Review button shows for every `:completed`/`:cancelled` task (repo-less `:reflect` excluded); a `:cancelled` task without a branch still opens the review page (no-changes).
@@ -315,6 +354,13 @@ It is `nil` on every non-`:failed` row and rides on BOTH read paths: the full
 - Store fixtures: `insert_fixture!/1` writes `%EvoGit.TaskInfo{}` rows directly
   via `EvoGit.Store.put_task` (bypasses the async task spawn, so it emits no
   broadcast); deletions via `EvoGit.Store.delete_task/2`.
+- **Failure state**: a failed load can be injected with
+  `send(view.pid, {:tasks_page_loaded, seq, node(), {:error, :boom}})` (use the
+  current `:page_load_seq`). With no rows on screen that renders
+  `#tasks-load-error` ("Could not load tasks."); with rows already loaded it
+  renders `#tasks-refresh-error` above `#tasks-list` and leaves the rows
+  untouched. Both offer a Retry button wired to `phx-click="retry_load"`, which
+  spawns exactly one more page load and clears `:tasks_error` on success.
 
 ## Load path & round-trip inventory (per page render)
 
@@ -324,26 +370,25 @@ Every load goes `EvoDash.NodeContext.<f>` (local direct / remote `:erpc`) →
 (`EvoGit.Store.Boot.default_pool_size/0` = 4), so they run concurrently instead
 of serializing with one another, while all writes — heartbeat/lease/cleanup
 included — serialize through the dedicated `EvoGit.Store.Writer` process:
-- **`list_tasks_paginated/2`** — `load_page/4` (`tasks_live.ex:971-997`; opts
-  `[limit: 25, offset: (page-1)*25, filters: build_filters_from_assigns/1]`) →
+- **`list_tasks_paginated/2`** — `PageLoad.load/4` (opts
+  `[limit: 25, offset: (page-1)*25, filters: PageLoad.filters/1]`) →
   `TaskRegistry.list_tasks_paginated/1` → `Store.safe_select_paginated_tasks/2`.
   Issues **TWO SQL statements** (page `SELECT` with `ORDER BY started_at DESC
   LIMIT/OFFSET` **+ a separate `COUNT(*)` re-applying the same filters**) and
   decodes a FULL `%TaskInfo{}` per row (incl. `result`/`usage`/`archive_metadata`
   JSON) for all 25 rows. A `search` filter is a leading-wildcard OR-`LIKE` over
   `id`/`opts`/`project_path`/`result` (full-table scan) executed in BOTH
-  statements. On a stale/clamped page (`:983-993`) the whole paginated call runs
-  a SECOND time (`COUNT` re-run too).
+  statements. On a stale/clamped page the whole paginated call runs a SECOND
+  time (`COUNT` re-run too).
 - **`get_unique_paths/1`** — called ONCE per page load inside the async task
-  (`run_page_load/6:1094`) and synchronously in `sync_apply_page/2:1044`
-  (mutating events only) → `TaskRegistry.get_unique_paths/0` →
+  (`PageLoad.load/4`) → `TaskRegistry.get_unique_paths/0` →
   `Store.select_task_paths/1` (`SELECT DISTINCT project_path`). Handled INLINE
   in BOTH core GenServers (NOT offloaded like the paginated read), so it blocks
   the registry + store while the paginated read may also be in flight — hence
   never issuing it from `mount/3`.
-- **`config_status/0`** — `mount/3:462` → `EvoDashWeb.Helpers.config_status/0`
-  (`helpers.ex:672`) → `EvoGit.Config.config_status/0`: SYNCHRONOUS in mount,
-  re-reads config.toml + credentials.toml.
+- **`config_status/0`** — `mount/3` → `EvoDashWeb.Helpers.config_status/0` →
+  `EvoGit.Config.config_status/0`: SYNCHRONOUS in mount, re-reads config.toml +
+  credentials.toml.
 - **Sidebar load** — `NodeAware.on_mount` spawns
   `TaskRegistry.list_tasks_summary(@active_statuses)` async (its own
   `:tasks_load_seq` counter); `assign_node/2` re-spawns it on a node-context
@@ -351,28 +396,53 @@ included — serialize through the dedicated `EvoGit.Store.Writer` process:
 
 Minimum cost per navigation: 3 SQL statements (page `SELECT` + `COUNT` +
 `DISTINCT paths`) across 2 core RPCs, all OUTSIDE the LiveView process; 4
-statements when `load_page/4` fetches twice. Mutating events add the same 3
-statements inline.
+statements when `PageLoad.load/4` fetches twice. A mutating event adds ONE
+single-row call inline plus the same 3 statements in its async reload.
 
 ## Synchronous vs async in the LiveView
 
-- **ASYNC (`EvoDash.TaskSupervisor`)**: `start_async_page_load/3` (`:1059-1072`)
-  → `run_page_load/6` — the connected mount, `push_patch` pagination, every
-  filter/search/toggle event, AND the debounced PubSub reload. Result arrives as
-  `{:tasks_page_loaded, seq, node, result}`, stale-guarded by `:page_load_seq`.
-- **SYNCHRONOUS in the LiveView process**: `mount/3`'s `config_status/0`; and
-  `reload_current_page/1` → `sync_apply_page/2` (`:1020-1046`), which runs the
-  full paginated query + `get_unique_paths` inline. Used ONLY by the
-  user-initiated mutating events (cancel / force-kill / delete / clear-history).
+- **ASYNC (`EvoDash.TaskSupervisor`, via `PageLoad`)**: the connected mount,
+  `push_patch` pagination, every filter/search/toggle event, `retry_load`, the
+  reload after a successful mutation, AND the debounced PubSub reload. The
+  result arrives as `{:tasks_page_loaded, seq, node, result}`, stale-guarded by
+  `:page_load_seq` + the node identity.
+- **SYNCHRONOUS in the LiveView process** (each wrapped in
+  `EvoDash.SafeCall.run/1`, so an exit becomes a flash, not a crashed page):
+  `mount/3`'s `config_status/0`; and the single-row mutating calls of
+  `confirm_cancel_task` / `confirm_force_kill_task` / `delete_task` /
+  `clear_task_history`.
+- **Nothing else blocks**: there is no inline page fetch anywhere in the
+  LiveView.
+
+## Mutating events (SafeCall-wrapped, async reload)
+
+- `clear_task_history` → `SafeCall.run(fn -> NodeContext.clear_finished_tasks(node) end)`.
+  Success clears `:expanded_task_ids` and starts `PageLoad.start(socket, 1, true)`;
+  failure flashes `gettext("Failed to clear task history: %{reason}", reason: inspect(reason))` and does NOT reload.
+- `confirm_cancel_task` / `confirm_force_kill_task` / `delete_task` → the same
+  `SafeCall.run/1` wrapping around the single-row `NodeContext` call.
+  Success collapses the row's expansion and starts
+  `PageLoad.start(socket, socket.assigns.current_page, false)` (no spinner — the
+  old row stays visible until the fresh page arrives); failure flashes the
+  existing `gettext("Failed to cancel task: %{reason}", …)` /
+  `gettext("Failed to force kill task: %{reason}", …)` /
+  `gettext("Failed to delete task: %{reason}", …)` message.
+- These calls stay in the LiveView process ON PURPOSE: they are user-initiated
+  single-row mutations and the tests assert the store state right after the
+  click; only the resulting page reload is async.
+- `mutation_result/1` (private) normalizes SafeCall's output to
+  `:ok | {:error, reason}`: the NodeContext mutating functions return
+  `:ok | {:error, reason}` (so SafeCall yields `{:ok, :ok}` /
+  `{:ok, {:error, reason}}`) and a caught exit/raise yields `{:error, reason}`.
 
 ## PubSub refetch behaviour
 
 Every node-matching `{:task_updated, _, _, _}` / `{:task_deleted, _, _}`
-triggers a page refresh: `NodeAware.handle_task_info/2` (`node_aware.ex:733-751`)
-node-filters then debounces 300ms (`debounce_task_reload/1`, coalescing bursts),
-and the `:node_aware_reload_tasks` handler (`tasks_live.ex:579-598`) dispatches
-the ASYNC page reload (`start_async_page_load/3`, `show_loading? false`) plus the
-async sidebar reload (`NodeAware.reload_tasks/1`), then clears the debounce flag.
+triggers a page refresh: `NodeAware.handle_task_info/2` node-filters then
+debounces 300ms (`debounce_task_reload/1`, coalescing bursts),
+and the `:node_aware_reload_tasks` handler dispatches the ASYNC page reload
+(`PageLoad.start(socket, current_page, false)`) plus the async sidebar reload
+(`NodeAware.reload_tasks/1`), then clears the debounce flag.
 A source emitting events across ≥300ms windows produces one reload dispatch per
 window (a burst inside an already-in-flight load still spawns a new load whose
 result supersedes the older one via `:page_load_seq`).
@@ -392,9 +462,16 @@ per-visible-task follow-up RPC exists; the per-row cost is the core-side
   or the DirtyTracker module — push events are the single change-detection
   mechanism.
 - Keep the page load ASYNC and connected-gated: `handle_params/3` must only spawn
-  behind `connected?(socket)`, and the debounced reload must go through
-  `start_async_page_load/3` — never `reload_current_page/1`. The synchronous
-  path exists solely for the user-initiated mutating events.
+  behind `connected?(socket)`, and every load — including the debounced reload
+  and the post-mutation reload — must go through `PageLoad.start/3`. Never
+  fetch a page inline in the LiveView.
+- Every store/RPC call is exit-safe: page loads via `PageLoad.run/6`'s
+  `EvoDash.SafeCall.run/1`, mutating events via an explicit `SafeCall.run/1`
+  wrap. Never add a bare `EvoDash.NodeContext` / `EvoGit.TaskRegistry` call to a
+  LiveView event handler.
+- Failure is a VALUE, not a crash: a failed load assigns `:tasks_error` and
+  keeps the already-loaded rows; the UI offers `retry_load`. Never revert to a
+  flash-only failure on the page-load path, and never clear `:tasks` on error.
 - `:page_load_seq` and `:tasks_load_seq` are INDEPENDENT stale-guards (page load
   vs `NodeAware` sidebar fetch). Never merge them and never bump
   `:tasks_load_seq` from this file.

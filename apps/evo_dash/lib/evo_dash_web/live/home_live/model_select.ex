@@ -25,6 +25,12 @@ defmodule EvoDashWeb.HomeLive.ModelSelect do
   (`list_custom_agents/1` — configured-but-broken scripts still count as
   enabled, matching `ModelSelector.enabled?/0` semantics). On RPC failure
   degrades to `{[], false}` — never crashes the page.
+
+  A REMOTE call is cross-node `:erpc` work: callers MUST run it inside a
+  supervised task (the `EvoDashWeb.HomeLive` `assign_model_select/1` path uses
+  `EvoDash.SafeCall.start/4`), never in a LiveView process — an unreachable
+  node makes the call block and then EXIT its caller, which `rescue` cannot
+  catch. The local branch is a plain config-file read and stays synchronous.
   """
   @spec load(node()) :: {[map()], boolean()}
   def load(node) do

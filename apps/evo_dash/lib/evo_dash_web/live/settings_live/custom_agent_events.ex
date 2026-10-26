@@ -7,6 +7,20 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
   config editing and remote-connection management (same pattern as
   `ModelProfileEvents`). All persistence goes through `EvoDash.NodeContext`
   (node-aware: local calls run directly, remote nodes route through `:erpc`).
+
+  EXIT SAFETY: every `EvoDash.NodeContext` call is wrapped in
+  `EvoDash.SafeCall.run/1`, because a cross-node call to a dead/unreachable
+  node EXITS the caller (a `GenServer.call`/`:erpc` timeout is an exit, which
+  `rescue` cannot catch) and would otherwise crash the LiveView. Captured
+  failures become the module's existing error flashes.
+
+  These flows stay SYNCHRONOUS-but-exit-safe on the LiveView process for BOTH
+  local and remote nodes (a ~30s remote agents.toml save blocking this page is
+  accepted here): the module has no result-message plumbing, and inventing a
+  tagged async message would need a `handle_info` clause in SettingsLive that
+  does not exist. The follow-up refreshes already use the established paths —
+  `SettingsLive.load_custom_agents_data/1` (itself `SafeCall`-wrapped) and the
+  ASYNC supervised `SettingsLive.refresh_custom_tools/1`.
   """
 
   # zh_CN: Agent → "智能体", Model → "模型", Script → "脚本",
@@ -44,8 +58,8 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
       {:ok, agent_def} ->
         node = socket.assigns.current_node
 
-        case EvoDash.NodeContext.save_custom_agent(node, agent_def) do
-          {:ok, _saved} ->
+        case save_agent_def(node, agent_def) do
+          :ok ->
             socket =
               socket
               |> assign(:editing_agent_id, nil)
@@ -67,7 +81,7 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
   def delete_custom_agent(socket, %{"id" => id}) do
     node = socket.assigns.current_node
 
-    case EvoDash.NodeContext.delete_custom_agent(node, id) do
+    case delete_agent_def(node, id) do
       :ok ->
         socket =
           socket
@@ -99,12 +113,12 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
     script = params["script"] || ""
     node = socket.assigns.current_node
 
-    case EvoDash.NodeContext.save_model_selection_script(node, script) do
+    case save_script(node, script) do
       :ok ->
         # The core saves broken scripts as :ok — the compile status only
         # surfaces via ModelSelector.status/0. Invalidate the compile cache
         # and reload so script_status reflects the just-saved script.
-        EvoDash.NodeContext.reload_custom_agents(node)
+        reload_custom_agents(node)
 
         socket =
           socket
@@ -125,30 +139,90 @@ defmodule EvoDashWeb.SettingsLive.CustomAgentEvents do
     # Invalidate the compile cache first so the test always reflects the
     # latest saved script (the cache is stat-validated, but a same-second /
     # same-size write could otherwise yield a stale compile).
-    EvoDash.NodeContext.reload_custom_agents(node)
+    reload_custom_agents(node)
 
     results =
       for {label, attrs} <- sample_attrs() do
-        # call_remote wraps the bare result: {:ok, res} on both local (direct
-        # call) and remote (:erpc) paths; transport failures are {:error, _}.
-        result =
-          case EvoDash.NodeContext.call_remote(
-                 node,
-                 EvoGit.CustomAgents.ModelSelector,
-                 :select_model,
-                 [attrs]
-               ) do
-            {:ok, res} -> res
-            {:error, reason} -> {:error, reason}
-          end
-
-        %{label: label, result: result}
+        %{label: label, result: select_model_result(node, attrs)}
       end
 
     socket = assign(socket, :script_test_results, results)
 
     {:noreply, SettingsLive.refresh_custom_tools(socket)}
   end
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Helpers: exit-safe NodeContext calls
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # Saves the agent definition on the viewed node. `NodeContext.save_custom_agent/2`
+  # returns `{:ok, saved} | {:error, reason}`; `SafeCall.run/1` adds an EXIT
+  # (dead remote node) as `{:error, reason}`, so both collapse to the shape the
+  # caller's case already handles.
+  defp save_agent_def(node, agent_def) do
+    case EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.save_custom_agent(node, agent_def) end) do
+      {:ok, {:ok, _saved}} -> :ok
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:ok, other} -> {:error, other}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Deletes the agent on the viewed node (success value is the bare `:ok`).
+  defp delete_agent_def(node, id) do
+    normalize_ok(
+      EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.delete_custom_agent(node, id) end)
+    )
+  end
+
+  # Persists the model-selection script on the viewed node (success value is the
+  # bare `:ok`).
+  defp save_script(node, script) do
+    normalize_ok(
+      EvoDash.SafeCall.run(fn ->
+        EvoDash.NodeContext.save_model_selection_script(node, script)
+      end)
+    )
+  end
+
+  # Invalidates the model-selector compile cache on the viewed node. Exit-safe;
+  # the outcome is deliberately IGNORED (it is pure cache invalidation, and the
+  # `load_custom_agents_data/1` call right after re-reads the script status) —
+  # only the cross-node exit must never reach the LiveView.
+  defp reload_custom_agents(node) do
+    EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.reload_custom_agents(node) end)
+    :ok
+  end
+
+  # Runs one sample `ModelSelector.select_model/1` call on the viewed node.
+  # `NodeContext.call_remote/4` already normalizes transport failures to
+  # `{:error, reason}`; `SafeCall` additionally converts a local EXIT (a dead
+  # local process) into the same value the results renderer expects.
+  defp select_model_result(node, attrs) do
+    case EvoDash.SafeCall.run(fn ->
+           EvoDash.NodeContext.call_remote(
+             node,
+             EvoGit.CustomAgents.ModelSelector,
+             :select_model,
+             [attrs]
+           )
+         end) do
+      {:ok, {:ok, res}} -> res
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:ok, other} -> {:error, other}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Normalizes a `SafeCall.run/1` result around a NodeContext call whose SUCCESS
+  # value is the bare `:ok`: `{:ok, :ok}` → `:ok`; `{:ok, {:error, reason}}`
+  # (core failure) and `{:error, reason}` (an EXIT) → `{:error, reason}`.
+  # Total: an unexpected success payload surfaces as an error instead of a
+  # crash.
+  defp normalize_ok({:ok, :ok}), do: :ok
+  defp normalize_ok({:ok, {:error, reason}}), do: {:error, reason}
+  defp normalize_ok({:ok, other}), do: {:error, other}
+  defp normalize_ok({:error, reason}), do: {:error, reason}
 
   # ───────────────────────────────────────────────────────────────────────────
   # Helpers: params → agent definition

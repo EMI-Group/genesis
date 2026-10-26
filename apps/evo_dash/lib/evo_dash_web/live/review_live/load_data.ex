@@ -34,6 +34,13 @@ defmodule EvoDashWeb.ReviewLive.LoadData do
     live_action = Keyword.get(opts, :live_action)
     inspect_commit_sha = Keyword.get(opts, :inspect_commit_sha)
 
+    # FULL-ROW fetch: `result` and `archive_metadata` are decoded on every call,
+    # which is the heaviest part of this load. This is the SINGLE place the task
+    # row is fetched, so it is the swap point for the upcoming lightweight
+    # `EvoGit.TaskRegistry.get_task_lite/1` API (not implemented yet — do not
+    # call it); `build_assigns/3` must be adapted to that lighter shape when it
+    # lands (it reads `result`, `opts`, `usage`, `archive_metadata`, the SHAs and
+    # the timestamps).
     case EvoDash.NodeContext.get_task(node, task_id) do
       nil ->
         {:error, gettext("Task not found. It may have been deleted.")}

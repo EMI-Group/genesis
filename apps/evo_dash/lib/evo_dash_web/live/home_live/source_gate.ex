@@ -39,7 +39,10 @@ defmodule EvoDashWeb.HomeLive.SourceGate do
 
   `EvoDash.SourceStatus` is the total (never-raising) wrapper over the
   optionally-absent `EvoGit.SelfReflectiveSource` core backend — this module
-  never calls that backend directly.
+  never calls that backend directly. Both spawn helpers still run the runner
+  through `EvoDash.SafeCall.run/2` INSIDE the spawned task, so a stub (or a
+  future backend) that raises or exits can never stop the result message from
+  being sent and wedge `:source_busy` / `:source_check_loading`.
 
   ## Message shapes
 
@@ -77,6 +80,12 @@ defmodule EvoDashWeb.HomeLive.SourceGate do
   @doc """
   Spawns an async availability check on `EvoDash.TaskSupervisor` and reports
   the result to `view_pid` as `{:source_availability_loaded, seq, node, result}`.
+
+  The runner call goes through `EvoDash.SafeCall.run/2` INSIDE the task, so ANY
+  failure (raise, exit, throw) still sends its result message — a dying child
+  would otherwise leave `:source_check_loading` set forever. Failures degrade to
+  the same `{:unavailable, :runner_error}` value the LiveView already treats as
+  "unknown" (the gate simply stays hidden).
   """
   def spawn_availability_check(view_pid, seq, node) do
     runner =
@@ -84,20 +93,13 @@ defmodule EvoDashWeb.HomeLive.SourceGate do
         (&default_availability/0)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        send(view_pid, {:source_availability_loaded, seq, node, runner.()})
-      rescue
-        # (1) Do we expect this error? Yes — this is the untrusted runner
-        # boundary (a test stub or the guarded backend may raise); the spawned
-        # fn must NEVER raise, or the result message would never be sent and
-        # the LiveView would keep `:source_check_loading` set forever.
-        # (2) Is try/rescue the cleanest approach? Yes — a deliberate
-        # async-boundary rescue (same pattern as NodeAware's sidebar fetch and
-        # SystemLive.SourceCard's spawn helpers); `{:unavailable, _}` is treated
-        # as "unknown" by the LiveView, so the gate simply stays hidden.
-        _ ->
-          send(view_pid, {:source_availability_loaded, seq, node, {:unavailable, :runner_error}})
-      end
+      result =
+        case EvoDash.SafeCall.run(fn -> runner.() end) do
+          {:ok, value} -> value
+          {:error, _reason} -> {:unavailable, :runner_error}
+        end
+
+      send(view_pid, {:source_availability_loaded, seq, node, result})
     end)
 
     :ok
@@ -106,18 +108,22 @@ defmodule EvoDashWeb.HomeLive.SourceGate do
   @doc """
   Spawns an async source download (clone) on `EvoDash.TaskSupervisor` and
   reports the result to `view_pid` as `{:source_clone_result, node, result}`.
+
+  Same guarded-task contract as `spawn_availability_check/3`: a failure is
+  normalized to `{:error, reason}` (the LiveView's failed-download flash) and
+  the result message is ALWAYS sent, so `:source_busy` can never stick.
   """
   def spawn_clone(view_pid, node) do
     runner = Application.get_env(:evo_dash, :source_clone_runner) || (&default_clone/0)
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      try do
-        send(view_pid, {:source_clone_result, node, runner.()})
-      rescue
-        # Same async-boundary rationale as spawn_availability_check/3: a
-        # crashing runner would otherwise leave `:source_busy` set forever.
-        _ -> send(view_pid, {:source_clone_result, node, {:unavailable, :runner_error}})
-      end
+      result =
+        case EvoDash.SafeCall.run(fn -> runner.() end) do
+          {:ok, value} -> value
+          {:error, reason} -> {:error, reason}
+        end
+
+      send(view_pid, {:source_clone_result, node, result})
     end)
 
     :ok

@@ -25,6 +25,11 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
   attr(:scheduler_paused, :boolean, required: true)
   attr(:dashboard_path, :string, required: true)
 
+  # In-progress scheduler action (`:pausing | :resuming | nil`), assigned by the
+  # LiveView while the async pause/resume request runs: the button is disabled
+  # and shows the action's spinner label until the result clears it.
+  attr(:scheduler_action, :any, default: nil)
+
   @doc """
   The full System Controls section: light section header + a responsive grid
   (`grid-cols-1 md:grid-cols-2 lg:grid-cols-3`) with the System Dashboard,
@@ -85,12 +90,20 @@ defmodule EvoDashWeb.SystemLive.RuntimeControls do
                 else: "bg-warning/10 hover:bg-warning/20 text-warning"
               )
             ]}
+            disabled={@scheduler_action != nil}
           >
-            <.icon
-              name={if @scheduler_paused, do: "hero-play", else: "hero-pause"}
-              class="size-5 mr-2"
-            />
-            {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+            <%= if @scheduler_action != nil do %>
+              <.icon name="hero-arrow-path" class="size-5 mr-2 animate-spin" />
+              {if @scheduler_action == :resuming,
+                do: gettext("Resuming…"),
+                else: gettext("Pausing…")} <% # zh_CN: "调度器" %>
+            <% else %>
+              <.icon
+                name={if @scheduler_paused, do: "hero-play", else: "hero-pause"}
+                class="size-5 mr-2"
+              />
+              {if @scheduler_paused, do: gettext("Resume Scheduler"), else: gettext("Pause Scheduler")} <% # zh_CN: "调度器" %>
+            <% end %>
           </button>
         </div>
 
