@@ -4,10 +4,11 @@ defmodule EvoGit.TestSupport.StoreTemplate do
   test.
 
   Creating a brand-new SQLite file plus running the six shipped store
-  migrations costs ~12 ms per boot (one real baseline DDL followed by five
-  probe-guarded no-ops); a byte copy of the checkpointed template costs
-  ~0.1 ms. Every test still gets its own isolated database FILE with the
-  identical schema, so isolation semantics are unchanged.
+  migrations costs ~19 ms of store boot (measured here: one real baseline DDL
+  followed by five probe-guarded no-ops); copying the checkpointed template and
+  booting a store on the copy costs ~2 ms. Every test still gets its own
+  isolated database FILE with the identical schema, so isolation semantics are
+  unchanged.
 
   This is the same idiom already pinned in `test/evo_git/store_test.exs`,
   `test/evo_git/store/pool_size_test.exs` and
@@ -27,7 +28,7 @@ defmodule EvoGit.TestSupport.StoreTemplate do
 
   A per-module template is deliberately chosen over a per-BEAM cache: modules
   run concurrently (`async: true`), and a shared cache would need locking for a
-  12 ms one-time win on the modules that do not skip it.
+  ~19 ms one-time win on the modules that do not skip it.
   """
 
   import ExUnit.Assertions, only: [assert: 1]
