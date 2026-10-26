@@ -1118,8 +1118,10 @@ defmodule EvoDashWeb.HomeLive do
   # Spawns a supervised task fetch used to finalize the transcript with the
   # preserved/final result (also the ONE-SHOT mount reconciliation fetch).
   # Bumps :chat_task_fetch_seq (its own counter, so a late history/lookup
-  # fetch can never invalidate the terminal result). A failed/timed-out fetch
-  # degrades to `nil`, which finalize_terminal/2 treats as deleted.
+  # fetch can never invalidate the terminal result). Uses the lite read (no
+  # archive blob — the terminal path reads only status/result/error). A
+  # failed/timed-out fetch degrades to `nil`, which finalize_terminal/2 treats
+  # as deleted.
   defp async_fetch_task(socket, node_override \\ nil) do
     task_id = socket.assigns[:chat_task_id]
     node = node_override || socket.assigns[:current_node] || node()
@@ -1127,7 +1129,7 @@ defmodule EvoDashWeb.HomeLive do
     pid = self()
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
-      task = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_task(node, task_id) end, nil)
+      task = EvoDash.SafeCall.run(fn -> EvoDash.NodeContext.get_task_lite(node, task_id) end, nil)
 
       send(pid, {:chat_task_loaded, node, seq, task_id, task})
     end)

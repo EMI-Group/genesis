@@ -1647,6 +1647,60 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert assigns(view2).chat_task_id == nil
     end
 
+    test "reconciliation finalizes from a terminal row that carries an archive (lite read)", %{
+      conn: conn
+    } do
+      # The row carries a heavy archive blob. The terminal path needs only
+      # status/result/error, so the lite read (archive nilled out, result
+      # without :archive_records) must still finalize the transcript.
+      insert_task_fixture!(
+        id: "t_archived",
+        type: :reflect,
+        status: :completed,
+        opts: [mode: "reflect", objective: "New message: archived"],
+        project_path: nil,
+        archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}],
+        result:
+          {:ok,
+           %{
+             result: "final answer with archive",
+             commit_sha: nil,
+             branch_name: nil,
+             tag: nil,
+             archive_records: [%{"agent_id" => 1, "objective" => "probe"}]
+           }}
+      )
+
+      {:ok, view, _html} = live(conn, "/help")
+      chat_id = assigns(view).chat_id
+
+      seed_chat_state(view, %{
+        chat_status: :running,
+        chat_task_id: "t_archived",
+        chat_agent_id: 1001,
+        chat_node: node(),
+        transcript: [
+          %{id: "1", role: :user, text: "hello", streaming: false},
+          %{id: "2", role: :assistant, text: "", streaming: true}
+        ]
+      })
+
+      # Persist the mid-run state via a REAL persist point (task event).
+      send(view.pid, {:task_updated, "t_archived", :running, node()})
+      render(view)
+      # Leave the page and remount: the ONE-SHOT reconciliation fetch lands
+      # the terminal row and finalizes the transcript from `result`.
+      GenServer.stop(view.pid)
+      {:ok, view2, _html} = live(conn, "/help")
+      assert assigns(view2).chat_id == chat_id
+
+      wait_until(fn -> assigns(view2).chat_status == :idle end)
+      html = render(view2)
+      assert html =~ "final answer with archive"
+      assert assigns(view2).chat_task_status == :completed
+      assert assigns(view2).chat_task_id == nil
+    end
+
     test "mid-run remount reconciles the task ONCE and applies the terminal state", %{
       conn: conn
     } do

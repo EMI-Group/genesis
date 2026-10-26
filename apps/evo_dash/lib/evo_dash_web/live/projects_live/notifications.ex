@@ -3,10 +3,11 @@ defmodule EvoDashWeb.ProjectsLive.Notifications do
   Browser-notification detection for `EvoDashWeb.ProjectsLive`.
 
   Notification detection needs two store reads (the minimal terminal-id
-  projection, then one full row per NEWLY terminal id) and must never run in
+  projection, then one lite row per NEWLY terminal id) and must never run in
   the LiveView process: every `EvoGit.TaskRegistry` call is a `GenServer.call`
-  that can take seconds (`get_task/1` decodes the whole task row, including
-  result + archive metadata) and EXITS the caller on timeout or a dead server.
+  that can take seconds (`get_task_lite/1` decodes the row without the archive
+  blob, but still decodes `opts`/`result`) and EXITS the caller on timeout or a
+  dead server.
   Each entry point here is therefore wrapped in `EvoDash.SafeCall`:
 
     * `load_terminal_ids/0` — the mount/handle_params SEED of the
@@ -62,8 +63,10 @@ defmodule EvoDashWeb.ProjectsLive.Notifications do
 
   # Terminal ids not yet in `known_ids`, plus one `{id, title, body}`
   # notification per id that still resolves to a task row. An id whose
-  # `get_task/1` returns nil is still reported in `new_ids` (it gets marked
-  # notified and produces no notification — the id vanished between queries).
+  # `get_task_lite/1` returns nil is still reported in `new_ids` (it gets
+  # marked notified and produces no notification — the id vanished between
+  # queries). Lite is enough here: `task_notification_content/1` reads only
+  # `opts`/`result`/`type`.
   defp scan_new(known_ids) do
     new_ids =
       TaskRegistry.list_task_ids(@terminal_statuses)
@@ -72,8 +75,7 @@ defmodule EvoDashWeb.ProjectsLive.Notifications do
 
     notifications =
       Enum.flat_map(new_ids, fn id ->
-        # the upcoming TaskRegistry.get_task_lite/1 replaces this full-row fetch (only opts/result are read here)
-        case TaskRegistry.get_task(id) do
+        case TaskRegistry.get_task_lite(id) do
           %EvoGit.TaskInfo{} = task ->
             {title, body} = Project.task_notification_content(task)
             [{id, title, body}]

@@ -2316,7 +2316,7 @@ defmodule EvoDashWeb.ProjectsLive do
 
   # Restores foreign_repos from a previous task's opts when resuming ("continue
   # from here") — ASYNC: the previous task's row is fetched in a supervised
-  # task (a full-row `get_task/1` never runs in the LiveView process) and the
+  # task (a `get_task_lite/1` read never runs in the LiveView process) and the
   # converted repos arrive as `{:foreign_repos_restored, task_id, node,
   # result}`. `foreign_repos_restoring_from` marks the in-flight restore so
   # task_submit can refuse to launch with a half-restored foreign-repo list.
@@ -2333,8 +2333,8 @@ defmodule EvoDashWeb.ProjectsLive do
     case Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
            result =
              SafeCall.run(fn ->
-               # the upcoming TaskRegistry.get_task_lite/1 replaces this full-row fetch (only opts are read here)
-               case TaskRegistry.get_task(task_id) do
+               # Only `opts` is read here, so the lite read (no archive blob) suffices.
+               case TaskRegistry.get_task_lite(task_id) do
                  nil -> []
                  task -> convert_task_foreign_repos(task.opts[:foreign_repos])
                end

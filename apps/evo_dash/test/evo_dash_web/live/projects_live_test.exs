@@ -1698,6 +1698,35 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
+    test "a newly-terminal task that carries an archive still notifies (lite read)", %{
+      conn: conn
+    } do
+      # Terminal before mount -> part of the mount seed -> never notified
+      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      # The row carries a heavy archive blob; the notification only needs
+      # opts/result/type, so the lite read (archive nilled out) must not
+      # change the pushed content.
+      new_task =
+        insert_task_fixture!(
+          status: :completed,
+          opts: [prompt: "notify archived"],
+          result: {:ok, %{pr_title: "Archived PR title", archive_records: [%{"agent_id" => 1}]}},
+          archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}]
+        )
+
+      send(view.pid, :node_aware_reload_tasks)
+      await_async_loads(view)
+      render(view)
+
+      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
+      assert title == "Archived PR title"
+      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
+    end
+
     test "user-initiated delete_task does not notify", %{conn: conn} do
       task = insert_task_fixture!(status: :running)
 
@@ -3413,6 +3442,26 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
       assert %ForeignRepo{writable: true, base_sha: "abc123"} = repo
+    end
+
+    test "resume_from restores foreign repos even when the previous task carries an archive", %{
+      conn: conn
+    } do
+      task =
+        insert_task_fixture!(
+          opts: [
+            foreign_repos: [
+              %{"id" => "orig", "root" => "/Source/original-proj", "description" => "d"}
+            ]
+          ],
+          result: {:ok, %{result: "done", archive_records: [%{"agent_id" => 1}]}},
+          archive_metadata: [%{"agent_id" => 1, "objective" => "probe"}]
+        )
+
+      {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)
+
+      repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
+      assert %ForeignRepo{id: "orig"} = repo
     end
 
     test "resume_from restores a string 'true' writable foreign repo", %{conn: conn} do

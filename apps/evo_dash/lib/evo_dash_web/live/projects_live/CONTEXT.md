@@ -25,7 +25,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 | Module | Key functions | I/O |
 |--------|---------------|-----|
 | `EvoDashWeb.ProjectsLive.AsyncLoad` | `maybe_spawn(socket, prev_node_id)` (connected only), `handle_result(socket, node, prev_node_id, path, results)` → `{socket, applied?}`, `load_recent_projects(remote?, node_id, node)`, `load_custom_agents(node)` | one supervised batch: custom agents + model-selection flag + model profiles + selected model + recent projects (+ terminal ids + auto-activate flag, local only). All calls `SafeCall`-wrapped inside the task |
-| `EvoDashWeb.ProjectsLive.Notifications` | `load_terminal_ids/0` → `MapSet.t() \| nil`, `spawn_scan(parent, seq, node, known_ids)`, `spawn_scan/4` sends `{:task_notifications, seq, node, result}` where result is `{:ok, {new_ids_list, [{id, title, body}]}} \| {:error, reason}` | terminal-id projection + one full-row `TaskRegistry.get_task/1` per NEWLY terminal id |
+| `EvoDashWeb.ProjectsLive.Notifications` | `load_terminal_ids/0` → `MapSet.t() \| nil`, `spawn_scan(parent, seq, node, known_ids)`, `spawn_scan/4` sends `{:task_notifications, seq, node, result}` where result is `{:ok, {new_ids_list, [{id, title, body}]}} \| {:error, reason}` | terminal-id projection + one lite `TaskRegistry.get_task_lite/1` per NEWLY terminal id |
 | `EvoDashWeb.ProjectsLive.Project` | `load_project_config/1`, `load_model_profiles/1`, `path_suggestions/3`, `task_notification_content/1`, `project_url/2` | local TOML/FS reads; `path_suggestions/3` is node-aware (`NodeContext.list_path_suggestions/2` for remote) |
 | `EvoDashWeb.ProjectsLive.ProjectFlow` | `register_and_open_project/2`, `open_project/2`, `select_project/2`, `close_project/1`, `build_foreign_repo/2`, `spawn_remote_project_activation/2,3` | local recent-project writes (small, sync); remote activation async → `{:async_remote_project, node, path, result}` |
 | `EvoDashWeb.ProjectsLive.Assigns` | `assign_form_defaults/1` | none — pure |
@@ -36,7 +36,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 ## The Rule — nothing in the LiveView process blocks
 
-- **Reads** (`list_recent_projects`, `list_task_ids`, `get_task`, `list_tasks_paginated`, `get_resolved_config`, `list_custom_agents`, remote RPCs) never run in `mount/3`, `handle_params/3`, `handle_event/3` or `handle_info/2`. They run inside a `Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> … end)` body, are `EvoDash.SafeCall.run/1`-wrapped there, and `send/2` their result to the LiveView.
+- **Reads** (`list_recent_projects`, `list_task_ids`, `get_task_lite`, `list_tasks_paginated`, `get_resolved_config`, `list_custom_agents`, remote RPCs) never run in `mount/3`, `handle_params/3`, `handle_event/3` or `handle_info/2`. They run inside a `Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn -> … end)` body, are `EvoDash.SafeCall.run/1`-wrapped there, and `send/2` their result to the LiveView.
 - Store calls can take many seconds (a single live `result`/`archive_metadata` blob in the production DB is ~108 MB) and a `GenServer.call` can EXIT (`:timeout`, dead server) — which `rescue` cannot catch, hence `SafeCall`.
 - **Writes** that are part of a click and whose effect must be observable immediately (`start_task`, `clear_finished_tasks`, `delete_task`, `remove_recent_project`, `add_recent_project`, `cancel_task`) stay synchronous in the LiveView process but are `SafeCall`-wrapped; their follow-up reload/scan work is async.
 
@@ -73,7 +73,7 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 - A fresh connected mount starts `ready? == false` with an empty set. Detection is **skipped entirely** while `ready? == false` — diffing against an unseeded empty set would fire a notification for every historical terminal task (~953).
 - The seed arrives with the batch (`:terminal_ids`, local context only, only while `ready? == false`) or, after a clear-history, with `{:task_history_cleared, …}`.
-- Once ready, each `:node_aware_reload_tasks` spawns ONE `Notifications.spawn_scan/4` with the current known set; ids absent from it are the new ones. Ids whose `get_task` returns nil are marked notified without notifying.
+- Once ready, each `:node_aware_reload_tasks` spawns ONE `Notifications.spawn_scan/4` with the current known set; ids absent from it are the new ones. Ids whose `get_task_lite` returns nil are marked notified without notifying.
 - Notifications are **LOCAL-context only** (`current_node_id == nil`); remote contexts never scan, never seed, never push.
 - `clear_task_history` flips `ready?` to false before clearing so the in-flight window cannot notify, then restores it on arrival (error included).
 
@@ -86,14 +86,14 @@ Every store/registry/`EvoDash.NodeContext` read runs in a supervised `EvoDash.Ta
 
 ## Foreign-repo resume restore
 
-`start_foreign_repos_restore/2` replaces the old synchronous `maybe_restore_foreign_repos_from_task/2`: it marks `foreign_repos_restoring_from: task_id` and spawns a `SafeCall.run(TaskRegistry.get_task(task_id))` whose only consumed field is `opts[:foreign_repos]`, arriving as `{:foreign_repos_restored, task_id, node, result}`. The handler drops the message unless the task is still the resume target on the same node. Marker: `# the upcoming TaskRegistry.get_task_lite/1 replaces this full-row fetch`.
-The lookup is deliberately the LOCAL `TaskRegistry.get_task/1` (unchanged semantics from the previous implementation) — the node-aware foreign-repo restore for a remote activation lives in `ProjectFlow.task_foreign_repos_for_resume/2`, inside the supervised remote-activation task.
+`start_foreign_repos_restore/2` replaces the old synchronous `maybe_restore_foreign_repos_from_task/2`: it marks `foreign_repos_restoring_from: task_id` and spawns a `SafeCall.run(TaskRegistry.get_task_lite(task_id))` whose only consumed field is `opts[:foreign_repos]`, arriving as `{:foreign_repos_restored, task_id, node, result}`. The handler drops the message unless the task is still the resume target on the same node.
+The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct as `get_task/1` minus the archive) — the node-aware foreign-repo restore for a remote activation lives in `ProjectFlow.task_foreign_repos_for_resume/2`, inside the supervised remote-activation task.
 
 ## RPC / I/O audit (per module)
 
 - `projects_live.ex` — the only store calls left in the LiveView process are the `SafeCall`-wrapped mutations above plus `TaskRegistry.add_recent_project/2` on a palette Enter (small write, immediately followed by `push_patch`). Everything else is spawned.
 - `async_load.ex` — all reads live in the spawned task body; `handle_result/5` is pure assignment + the `:resume_foreign_repos_guard` drop for `:foreign_repos`.
-- `notifications.ex` — the only place the page reads full task rows for notification titles (`get_task/1`, marker comment for `get_task_lite/1`).
+- `notifications.ex` — the only place the page reads task rows for notification titles; the read is `get_task_lite/1` (no archive blob).
 - `project_flow.ex` — local recent-project writes (`add_recent_project` + `list_recent_projects`) and `File.dir?`/`Path.expand` stay synchronous (cheap, user-initiated); remote activation is async.
 - `project.ex` — local TOML/FS reads; `path_suggestions/3` calls `EvoGit.PathSuggestions.suggest/1` locally and `NodeContext.list_path_suggestions/2` for remote nodes.
 - `github.ex` — all `gh` work runs through the `:github_runner`/`:github_issues_runner`/`:github_issue_markdown_runner` seams in supervised tasks (resolved at spawn time).
@@ -131,9 +131,6 @@ The page keeps summary maps only — `recent_projects` (paths), `notified_task_i
 - No `try/rescue` around store/RPC calls — use `EvoDash.SafeCall`. No `String.to_atom/1`/`to_existing_atom` on client input (whitelist maps only).
 - User-facing strings are `gettext`-wrapped; never run gettext extract/merge during feature work.
 
-## Deferred — the `select_tasks_page` / `get_task_lite` / `get_task_archive` round
+## Deferred — the `select_tasks_page` round
 
-- `Notifications.scan_new/1` still uses full-row `TaskRegistry.get_task/1` to build a title/body; it should read the lightweight projection (`get_task_lite/1`) once available.
-- `start_foreign_repos_restore/2` still fetches a full row for `opts[:foreign_repos]` only (same swap).
 - The Projects page task cards come from the sidebar summary loader (`NodeAware`), not from a dedicated paged selector; if the page ever needs its own paged list, it must use `EvoGit.TaskRegistry.select_tasks_page` rather than `list_tasks_paginated`.
-- Both existing full-row call sites carry an inline marker comment naming the replacement API.
