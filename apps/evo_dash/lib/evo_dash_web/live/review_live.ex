@@ -35,12 +35,17 @@ defmodule EvoDashWeb.ReviewLive do
             <.icon name="hero-exclamation-triangle" class="size-8 text-error mx-auto mb-4" />
             <h2 class="text-xl font-bold text-error mb-2">{gettext("Review Not Available")}</h2>
             <p class="text-sm text-base-content/80 mb-4">{@error}</p>
-            <.link
-              navigate={with_node_param(~p"/projects", @current_node_id)}
-              class="btn btn-primary px-6 gap-2"
-            >
-              <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
-            </.link>
+            <div class="flex items-center justify-center gap-3">
+              <button type="button" phx-click="retry_load" class="btn btn-outline px-6 gap-2">
+                <.icon name="hero-arrow-path" class="size-4" /> {gettext("Retry")}
+              </button>
+              <.link
+                navigate={with_node_param(~p"/projects", @current_node_id)}
+                class="btn btn-primary px-6 gap-2"
+              >
+                <.icon name="hero-arrow-left" class="size-4" /> {gettext("Back to Dashboard")}
+              </.link>
+            </div>
           </div>
         <% else %>
           <%= if @loading do %>
@@ -300,7 +305,13 @@ defmodule EvoDashWeb.ReviewLive do
         review_repos: [],
         active_repo_id: "primary",
         load_generation: 0,
-        last_broadcast_task_id: nil,
+        # Review-data reload debounce (see handle_info({:task_updated, ...}),
+        # handle_info(:review_reload_due, ...)): `review_reload_timer` holds the
+        # pending timer ref, `review_broadcast_status` the status of the latest
+        # reviewed-task broadcast the timer will evaluate (nil = review-only
+        # mutation, the PubSub contract's nil status).
+        review_reload_timer: nil,
+        review_broadcast_status: :none,
         # Resolutions EARNED by this page's own per-repo action tail
         # (set_repo_resolution/3), keyed %{repo_id => resolution}. Deliberately
         # NOT derived from @review_repos — that list is also seeded by the load
@@ -338,6 +349,10 @@ defmodule EvoDashWeb.ReviewLive do
         # resolutions — they belonged to the previous load context and must
         # never be overlaid onto a different node's freshly loaded repos.
         |> assign(:local_repo_resolutions, %{})
+        # A pending broadcast-driven reload belongs to the previous context too:
+        # cancel it so it cannot fire against the new node/route.
+        |> cancel_review_reload_timer()
+        |> assign(:review_broadcast_status, :none)
         |> start_async_load(params["commit_sha"])
         |> assign(
           :tasks_loaded_for,
@@ -470,6 +485,14 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_event("copied", _params, socket) do
     {:noreply, put_flash(socket, :info, gettext("Copied to clipboard"))}
+  end
+
+  @impl true
+  def handle_event("retry_load", _params, socket) do
+    # Retries the async review-data load from the error panel (the load is
+    # exit-safe, so an error is a value the user can recover from without a
+    # page refresh).
+    {:noreply, start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))}
   end
 
   @impl true
@@ -946,16 +969,21 @@ defmodule EvoDashWeb.ReviewLive do
   end
 
   @impl true
-  def handle_info({:task_updated, task_id, _status, node} = msg, socket) do
+  def handle_info({:task_updated, task_id, status, node} = msg, socket) do
     # Node filter FIRST: only a broadcast from the viewed node can be
-    # attributed to the reviewed task. Foreign-node events must NOT stash the
-    # task id — the debounced reload only re-fetches the review data when THIS
-    # task's broadcasts caused it (see the broadcast guard in
-    # :node_aware_reload_tasks). handle_task_info/2 re-applies the same node
-    # filter for the sidebar reload and returns {:noreply, socket}.
+    # attributed to the reviewed task, so a foreign-node event never arms the
+    # review-data reload. For the reviewed task the event only DEBOUNCES a
+    # reload (trailing edge): bursts of status transitions collapse into one
+    # load, and the scheduled reload re-checks materiality when it fires (see
+    # :review_reload_due) so a status the page already shows never re-fetches
+    # the full task row.
     socket =
-      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) do
-        assign(socket, :last_broadcast_task_id, task_id)
+      if EvoDashWeb.LiveHooks.NodeAware.event_from_current_node?(socket.assigns, node) and
+           task_id == socket.assigns.task_id do
+        socket
+        |> cancel_review_reload_timer()
+        |> assign(:review_broadcast_status, status)
+        |> schedule_review_reload()
       else
         socket
       end
@@ -966,36 +994,41 @@ defmodule EvoDashWeb.ReviewLive do
   @impl true
   def handle_info({:task_deleted, _task_id, _node} = msg, socket) do
     # A deleted task can never be the reviewed task (there is nothing left to
-    # review), so the stash is never set here — only the sidebar reload runs,
-    # and only when the event's node matches the viewed node (NodeAware
+    # review), so no review-data reload is armed here — only the sidebar reload
+    # runs, and only when the event's node matches the viewed node (NodeAware
     # filters foreign-node events before scheduling the debounce).
     EvoDashWeb.LiveHooks.NodeAware.handle_task_info(socket, msg)
   end
 
   @impl true
-  def handle_info(:node_aware_reload_tasks, socket) do
-    # Debounce timer fired: always refresh the sidebar's running/pending
-    # tasks (reload_tasks/1 also clears the debounce-pending flag). The
-    # review-data reload is broadcast-guarded — only a `{:task_updated, ...}`
-    # broadcast for the reviewed task itself (stashed by the node-filtered
-    # clause above) warrants re-fetching the page; other tasks' activity only
-    # refreshes the sidebar.
-    socket = EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)
+  def handle_info(:review_reload_due, socket) do
+    # Debounce timer for the reviewed task's own broadcasts fired. The reload
+    # is MATERIAL only when the broadcast can imply changed loaded data: a
+    # review-status-only mutation (nil status), or a status that differs from
+    # the one the page currently shows. Bursts of same-status broadcasts (the
+    # common idle case) never pull the full task row.
+    status = Map.get(socket.assigns, :review_broadcast_status, :none)
 
     socket =
-      if Map.get(socket.assigns, :last_broadcast_task_id, nil) == socket.assigns.task_id do
-        start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))
-      else
-        socket
-      end
+      assign(socket,
+        review_reload_timer: nil,
+        review_broadcast_status: :none
+      )
 
-    # Stash lifecycle: reset after the guarded decision (whether or not it
-    # matched) so each 300ms debounce window evaluates only the latest event's
-    # stash — every event in the new contract carries a task id, so the stash
-    # is unambiguous until this handler consumes it.
-    socket = assign(socket, :last_broadcast_task_id, nil)
+    if review_reload_material?(status, socket.assigns.task_status) do
+      {:noreply, start_async_load(socket, Map.get(socket.assigns, :inspect_commit_sha))}
+    else
+      {:noreply, socket}
+    end
+  end
 
-    {:noreply, socket}
+  @impl true
+  def handle_info(:node_aware_reload_tasks, socket) do
+    # Debounce timer fired: only refresh the sidebar's running/pending tasks
+    # (reload_tasks/1 also clears the debounce-pending flag). Review-data
+    # reloads have their own debounce/guard (:review_reload_due) and must not
+    # be triggered by other tasks' activity.
+    {:noreply, EvoDashWeb.LiveHooks.NodeAware.reload_tasks(socket)}
   end
 
   @impl true
@@ -1015,6 +1048,9 @@ defmodule EvoDashWeb.ReviewLive do
         {:ok, assigns_map} ->
           socket =
             socket
+            # Loading is cleared EXPLICITLY (the loaded map already carries
+            # loading: false) so no result shape can leave the spinner up.
+            |> assign(:loading, false)
             |> assign(carry_local_resolutions(assigns_map, socket.assigns))
 
           # The merge check MUST be sequenced here, after the loaded assigns
@@ -1101,6 +1137,13 @@ defmodule EvoDashWeb.ReviewLive do
   # `{:review_data_loaded, task_id, node, generation, result}` message;
   # `load_generation` is monotonic (incremented per start), so stale results
   # from superseded loads are dropped by the handle_info stale-guard.
+  #
+  # The load runs behind `EvoDash.SafeCall.run/1`: the store/registry/Git calls
+  # inside it can exit (a `GenServer.call` timeout EXITS the caller, which a
+  # rescue cannot catch). Guarding there means the spawned closure never dies
+  # before sending its result — a dead spawned task would wedge the page on the
+  # spinner forever — and the outcome is normalized to the two shapes the
+  # handle_info consumes.
   defp start_async_load(socket, inspect_commit_sha) do
     parent = self()
     node = socket.assigns.current_node
@@ -1112,18 +1155,18 @@ defmodule EvoDashWeb.ReviewLive do
 
     Task.Supervisor.start_child(EvoDash.TaskSupervisor, fn ->
       result =
-        try do
-          EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
-            live_action: live_action,
-            inspect_commit_sha: inspect_commit_sha
-          )
-        rescue
-          # (1) Do we expect this error? YES — the load crosses the node
-          #     boundary: the RPC target may be a dead/disappearing remote
-          #     daemon, or the task may be deleted mid-load.
-          # (2) Is try/rescue the cleanest approach? YES — the alternative is
-          #     the page wedging at the loading state forever with no message;
-          #     mirrors the justified rescue in merge_check.ex:211-218.
+        case EvoDash.SafeCall.run(fn ->
+               EvoDashWeb.ReviewLive.LoadData.load(node, task_id,
+                 live_action: live_action,
+                 inspect_commit_sha: inspect_commit_sha
+               )
+             end) do
+          # LoadData's own outcome: an assigns map, or an already
+          # gettext-wrapped error string.
+          {:ok, {:ok, assigns_map}} -> {:ok, assigns_map}
+          {:ok, {:error, reason}} -> {:error, reason}
+          # Exit/exception/throw around the call, or an unexpected shape: the
+          # page stays retry-able instead of hanging.
           _ -> {:error, gettext("Failed to load review data.")}
         end
 
@@ -1132,6 +1175,40 @@ defmodule EvoDashWeb.ReviewLive do
 
     socket
   end
+
+  # Schedules the reviewed task's trailing-edge review-data reload. Re-arming
+  # always cancels the previous timer, so only the NEWEST broadcast's status is
+  # evaluated (bursts collapse into one load decision).
+  defp schedule_review_reload(socket) do
+    timer = Process.send_after(self(), :review_reload_due, review_reload_debounce_ms())
+    assign(socket, :review_reload_timer, timer)
+  end
+
+  defp cancel_review_reload_timer(socket) do
+    case Map.get(socket.assigns, :review_reload_timer) do
+      nil ->
+        socket
+
+      timer ->
+        Process.cancel_timer(timer)
+        assign(socket, :review_reload_timer, nil)
+    end
+  end
+
+  # Window for the reviewed task's broadcast-driven reload. Read AT CALL TIME
+  # from the `:review_reload_debounce_ms` app-env seam (test seam; the 300 ms
+  # default is the production behaviour).
+  defp review_reload_debounce_ms do
+    Application.get_env(:evo_dash, :review_reload_debounce_ms, 300)
+  end
+
+  # A review-data reload is material only when the broadcast can imply changed
+  # loaded data: `:none` (no broadcast) is never material, a nil status (a
+  # review-status-only mutation) always is, and a concrete status only when it
+  # differs from the status currently on screen (nil loaded status → reload).
+  defp review_reload_material?(:none, _loaded_status), do: false
+  defp review_reload_material?(nil, _loaded_status), do: true
+  defp review_reload_material?(status, loaded_status), do: status != loaded_status
 
   defp format_commit_history([]), do: nil
 
