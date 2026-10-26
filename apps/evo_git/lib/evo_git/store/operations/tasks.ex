@@ -43,7 +43,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   ## put_task replace semantics
 
   ONE `Repo.transaction(..., mode: :immediate)` performing a `delete_all` by
-  id and then an `insert_all` of a FULL 20-key row (nils explicit; struct
+  id and then an `insert_all` of a FULL 19-key row (nils explicit; struct
   fields absent from the caller's struct default to nil). Re-putting a task
   therefore NULLs every column the new struct omits — parity with the old
   `INSERT OR REPLACE`. A changeset upsert (`on_conflict: :replace_all`) would
@@ -70,6 +70,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   alias EvoGit.Repo
   alias EvoGit.Store.Codec
+  alias EvoGit.Store.Operations.Archives
   alias EvoGit.Store.Operations.Filters
   alias EvoGit.Store.RepoScope
   alias EvoGit.Store.Schemas.TaskRow
@@ -99,7 +100,7 @@ defmodule EvoGit.Store.Operations.Tasks do
     RepoScope.with_repo(repo, fn ->
       case Codec.validate_task(task) do
         :ok ->
-          # Replace semantics: the explicit delete + FULL 20-key insert NULLs
+          # Replace semantics: the explicit delete + FULL 19-key insert NULLs
           # every column the new struct omits (an upsert would not). The
           # `:immediate` mode takes the write lock up front, like every other
           # write of this repo (`default_transaction_mode: :immediate`).
@@ -134,11 +135,16 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Returns `:ok` whether or not the row existed (a DELETE of a missing id is a
   successful no-op statement, same as the old raw SQL).
+
+  The task's per-agent archive rows (`task_agent_archives`) are deleted in the
+  same call (`Archives.delete_by_task/2`). The cascade is EXPLICIT — there is
+  no foreign key — so a deleted task never leaks its archived conversations.
   """
   @spec delete_task(pid(), String.t()) :: :ok
   def delete_task(repo, task_id) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(from(t in TaskRow, where: t.id == ^task_id))
+      Archives.delete_by_task(repo, task_id)
       :ok
     end)
   end
@@ -150,6 +156,10 @@ defmodule EvoGit.Store.Operations.Tasks do
   The ids are batched into `WHERE id IN (...)` statements of at most 500 ids
   (under SQLite's 999-parameter limit), one committed statement per chunk.
   Returns `:ok`; an empty id list writes nothing.
+
+  The named tasks' per-agent archive rows (`task_agent_archives`) are deleted
+  too, chunked the same way (`Archives.delete_by_tasks/2`). The cascade is
+  EXPLICIT — there is no foreign key.
   """
   @spec delete_tasks(pid(), [String.t()]) :: :ok
   def delete_tasks(repo, task_ids) do
@@ -160,6 +170,8 @@ defmodule EvoGit.Store.Operations.Tasks do
         Repo.delete_all(from(t in TaskRow, where: t.id in ^chunk))
       end)
 
+      Archives.delete_by_tasks(repo, task_ids)
+
       :ok
     end)
   end
@@ -167,11 +179,16 @@ defmodule EvoGit.Store.Operations.Tasks do
   @doc """
   Deletes all task rows — port of the old `:clear_tasks` handler
   (store.ex:598). Returns `:ok`.
+
+  EVERY per-agent archive row (`task_agent_archives`) is deleted as well
+  (`Archives.delete_all/1`), so a cleared store holds no orphaned archive
+  payloads. The cascade is EXPLICIT — there is no foreign key.
   """
   @spec clear_tasks(pid()) :: :ok
   def clear_tasks(repo) do
     RepoScope.with_repo(repo, fn ->
       Repo.delete_all(TaskRow)
+      Archives.delete_all(repo)
       :ok
     end)
   end
@@ -376,7 +393,7 @@ defmodule EvoGit.Store.Operations.Tasks do
 
   Reads exactly the 4 columns the TaskRegistry `handle_update_status/6` path
   needs (stale-guard, preservation, project_path) — no heavy JSON field
-  (`logs`, `result`, `usage`, `archive_metadata`) is decoded. `status` is the
+  (`logs`, `result`, `usage`) is decoded. `status` is the
   decoded atom (nil on unknown), `opts` the decoded keyword list (nil when the
   column is NULL), `finished_at` the decoded DateTime (nil on corrupt text),
   `lease_expires_at` the raw unix-ms INTEGER.
@@ -439,7 +456,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   end
 
   # %TaskRowRaw{} → %TaskInfo{} via the Codec's positional-list decoder — the
-  # same 19-element `Codec.task_columns/0` order (deliberately WITHOUT
+  # same 18-element `Codec.task_columns/0` order (deliberately WITHOUT
   # `updated_at`, which the old SELECT over those columns never fetched
   # either). Identical to the existing get_task/to_task_info result: decode_task
   # itself applies the `status || :pending` and `ref: nil` fallbacks.
@@ -458,7 +475,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       row.agent_count,
       row.base_sha,
       row.commit_sha,
-      row.archive_metadata,
       row.lease_expires_at,
       row.model_id,
       row.project_path,
@@ -486,7 +502,7 @@ defmodule EvoGit.Store.Operations.Tasks do
   # any column of the physical table could be targeted — and a typo produced a
   # SQLite "no such column" error. Under the schemas the equivalent guard
   # raises here with the unknown name, BEFORE any statement is issued. Every
-  # one of the 20 fields is addressable — the full old surface.
+  # one of the 19 fields is addressable — the full old surface.
   defp validate_update_column!(column) do
     unless column in TaskRow.__schema__(:fields) do
       raise ArgumentError,
@@ -513,12 +529,11 @@ defmodule EvoGit.Store.Operations.Tasks do
   defp encode_column_value(:error, value), do: Codec.encode_error(value)
   defp encode_column_value(:usage, value), do: Codec.encode_usage(value)
   defp encode_column_value(:opts, value), do: Codec.encode_opts(value)
-  defp encode_column_value(:archive_metadata, value), do: Codec.encode_archive(value)
   defp encode_column_value(_col, value), do: value
 
   ## Private — row building (TaskInfo → insert map)
 
-  # The FULL 20-key insert row. Every key is EXPLICIT (nils included) so the
+  # The FULL 19-key insert row. Every key is EXPLICIT (nils included) so the
   # delete+insert replace NULLs columns the struct omits. Values are RUNTIME
   # values; Ecto dumps each through the schema's EvoGit.Store.Types.* field
   # type, which delegates to the Codec wire format — byte-identical to the old
@@ -538,7 +553,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       agent_count: task.agent_count,
       base_sha: task.base_sha,
       commit_sha: task.commit_sha,
-      archive_metadata: task.archive_metadata,
       lease_expires_at: task.lease_expires_at,
       model_id: task.model_id,
       project_path: task.project_path || project_path_from_opts(task.opts),
@@ -586,7 +600,6 @@ defmodule EvoGit.Store.Operations.Tasks do
       agent_count: row.agent_count,
       base_sha: row.base_sha,
       commit_sha: row.commit_sha,
-      archive_metadata: row.archive_metadata,
       lease_expires_at: row.lease_expires_at,
       model_id: row.model_id,
       project_path: row.project_path,

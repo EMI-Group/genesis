@@ -7,12 +7,10 @@ defmodule EvoGit.Agent.Result do
   result string, the commit SHA of any changes made, and optional metadata
   such as tag, branch, base commit, `repo_id` (string identifying which
   repo this result belongs to, `nil` for backward compat), cumulative
-  `usage` (token and cost tracking, `nil` for backward compat), and
+  `usage` (token and cost tracking, `nil` for backward compat),
   `agent_count` (total agents spawned including subagents, `nil` for
-  backward compat), `archive_records` (list of archive record maps for
-  task archiving, `nil` for backward compat), and `foreign_repo_commits`
-  (map of foreign `repo_id` → latest commit SHA for work done in foreign
-  repos, default `%{}`).
+  backward compat), and `foreign_repo_commits` (map of foreign `repo_id`
+  → latest commit SHA for work done in foreign repos, default `%{}`).
   """
 
   alias EvoGit.Agent.Usage
@@ -27,7 +25,6 @@ defmodule EvoGit.Agent.Result do
     repo_id: nil,
     usage: nil,
     agent_count: nil,
-    archive_records: nil,
     foreign_repo_commits: %{}
   ]
 
@@ -40,7 +37,6 @@ defmodule EvoGit.Agent.Result do
           repo_id: String.t() | nil,
           usage: Usage.t() | nil,
           agent_count: pos_integer() | nil,
-          archive_records: [map()] | nil,
           foreign_repo_commits: %{String.t() => String.t()}
         }
 
@@ -51,7 +47,7 @@ defmodule EvoGit.Agent.Result do
 
     * `result`      — human-readable summary of what the agent accomplished
     * `commit_sha`  — SHA of the commit produced by the agent
-    * `opts`        — optional keyword list (`:tag`, `:branch`, `:base_commit`, `:repo_id`, `:usage`, `:agent_count`, `:archive_records`, `:foreign_repo_commits`)
+    * `opts`        — optional keyword list (`:tag`, `:branch`, `:base_commit`, `:repo_id`, `:usage`, `:agent_count`, `:foreign_repo_commits`)
 
   ## Examples
 
@@ -69,7 +65,6 @@ defmodule EvoGit.Agent.Result do
       repo_id: Keyword.get(opts, :repo_id),
       usage: Keyword.get(opts, :usage),
       agent_count: Keyword.get(opts, :agent_count),
-      archive_records: Keyword.get(opts, :archive_records),
       foreign_repo_commits: Keyword.get(opts, :foreign_repo_commits, %{})
     }
   end

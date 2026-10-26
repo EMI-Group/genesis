@@ -1,12 +1,16 @@
 defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   @moduledoc """
   `async: false` — the `complete/5` + archive tests mutate the shared,
-  app-owned named ETS tables: they insert/delete rows in `:evogit_sched_meta` /
-  `:evogit_agent_state` and DELETE + recreate the global `:evogit_archive_records`
-  table (a whole-table operation observable by other modules).
+  app-owned named ETS tables (`:evogit_sched_meta` / `:evogit_agent_state`),
+  which other modules observe.
+
+  Every test additionally gets its OWN isolated `EvoGit.Store` +
+  `EvoGit.TaskRegistry` pair (`EvoGit.TaskRegistryCase`), so the archive
+  assertions read the REAL producer's writes out of a real dynamic store
+  without touching the app-global one.
   """
 
-  use ExUnit.Case, async: false
+  use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.CompleteTask
@@ -502,36 +506,24 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         :ets.new(:evogit_agent_state, [:set, :public, :named_table])
       end
 
-      # Create the archive records ETS table (a :set keyed by {task_id, agent_id} —
-      # at most ONE record per agent per task, so crash-retry double-writes overwrite)
-      if :ets.whereis(:evogit_archive_records) != :undefined do
-        :ets.delete(:evogit_archive_records)
-      end
-
-      :ets.new(:evogit_archive_records, [:named_table, :public, :set])
-
       on_exit(fn ->
         File.rm_rf!(tmp_dir)
-        # Clean up the archive table if it still exists
-        if :ets.whereis(:evogit_archive_records) != :undefined do
-          :ets.delete(:evogit_archive_records)
-        end
       end)
 
       {:ok, %{tmp_dir: tmp_dir, base_commit: base_commit, final_commit: final_commit}}
     end
 
-    test "creates archive refs when archive is enabled", %{
+    test "creates archive refs and persists exactly ONE archive row when archive is enabled", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit,
       final_commit: final_commit
     } do
       Process.put(:repo_path, tmp_dir)
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 1, 1)
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc1", %{task_id: "1", task_number: 1}})
-      :ets.insert(:evogit_agent_state, {"agent_arc1", %{task_local_id: 1}})
-
-      CompleteTask.complete("agent_arc1", "Archive result", final_commit,
+      CompleteTask.complete(agent_id, "Archive result", final_commit,
         base_commit: base_commit,
         archive: true,
         objective: "Test archive",
@@ -539,56 +531,58 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         depth: 0
       )
 
-      ref_start = "refs/genesis/archive/T1-A1-start"
-      ref_final = "refs/genesis/archive/T1-A1-final"
+      ref_start = "refs/genesis/archive/T#{task_id}-A1-start"
+      ref_final = "refs/genesis/archive/T#{task_id}-A1-final"
 
       assert {:ok, ^base_commit} = Git.rev_parse(tmp_dir, ref_start)
       assert {:ok, ^final_commit} = Git.rev_parse(tmp_dir, ref_final)
 
-      # Verify the archive record was written to ETS (keyed by {task_id, agent_id})
-      records = :ets.lookup(:evogit_archive_records, {"1", "agent_arc1"})
-      assert length(records) == 1
+      # The STREAMING write: exactly ONE row in `task_agent_archives`, written
+      # at agent completion (no buffering, no task-end collection).
+      assert %{entries: [entry], total: 1} =
+               TaskRegistry.list_task_archives(task_id, include_results: true)
 
-      {{"1", "agent_arc1"}, record} = hd(records)
-      assert record.agent_id == "agent_arc1"
-      assert record.base_commit == base_commit
-      assert record.final_commit == final_commit
+      assert entry["task_id"] == task_id
+      assert entry["agent_id"] == agent_id
+      assert entry["objective"] == "Test archive"
+      assert entry["result"] == "Archive result"
+      assert entry["base_commit"] == base_commit
+      assert entry["final_commit"] == final_commit
+      assert entry["archive_ref_start"] == ref_start
+      assert entry["archive_ref_final"] == ref_final
+      assert entry["branch_name"] == "evogit-agent-T1-A1"
+      assert entry["depth"] == 0
 
       # model_id defaults to nil when not provided
-      assert record.llm_settings.model_id == nil
+      assert entry["llm_settings"]["model_id"] == nil
 
-      :ets.delete(:evogit_sched_meta, "agent_arc1")
-      :ets.delete(:evogit_agent_state, "agent_arc1")
       Process.delete(:repo_path)
     end
 
-    test "does NOT create archive refs when archive is disabled (default)", %{
+    test "does NOT create archive refs or an archive row when archive is disabled (default)", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit,
       final_commit: final_commit
     } do
       Process.put(:repo_path, tmp_dir)
-
-      :ets.insert(:evogit_sched_meta, {"agent_arc2", %{task_id: "2", task_number: 2}})
-      :ets.insert(:evogit_agent_state, {"agent_arc2", %{task_local_id: 2}})
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 2, 2)
 
       # No archive: true
-      CompleteTask.complete("agent_arc2", "No archive result", final_commit,
-        base_commit: base_commit
-      )
-
-      ref_start = "refs/genesis/archive/T2-A2-start"
-      ref_final = "refs/genesis/archive/T2-A2-final"
+      CompleteTask.complete(agent_id, "No archive result", final_commit, base_commit: base_commit)
 
       # These refs should not exist
-      assert {:error, {_, _}} = Git.rev_parse(tmp_dir, ref_start)
-      assert {:error, {_, _}} = Git.rev_parse(tmp_dir, ref_final)
+      assert {:error, {_, _}} =
+               Git.rev_parse(tmp_dir, "refs/genesis/archive/T#{task_id}-A2-start")
 
-      # No archive records should be written
-      assert :ets.lookup(:evogit_archive_records, {"2", "agent_arc2"}) == []
+      assert {:error, {_, _}} =
+               Git.rev_parse(tmp_dir, "refs/genesis/archive/T#{task_id}-A2-final")
 
-      :ets.delete(:evogit_sched_meta, "agent_arc2")
-      :ets.delete(:evogit_agent_state, "agent_arc2")
+      # No archive row should be persisted either
+      assert %{entries: [], total: 0} = TaskRegistry.list_task_archives(task_id)
+      assert TaskRegistry.get_agent_archive(task_id, agent_id) == nil
+
       Process.delete(:repo_path)
     end
 
@@ -598,9 +592,9 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       final_commit: final_commit
     } do
       Process.put(:repo_path, tmp_dir)
-
-      :ets.insert(:evogit_sched_meta, {"agent_arc3", %{task_id: "3", task_number: 3}})
-      :ets.insert(:evogit_agent_state, {"agent_arc3", %{task_local_id: 3}})
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 3, 3)
 
       usage = %EvoGit.Agent.Usage{
         input_tokens: 100,
@@ -613,7 +607,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         cache_creation_tokens: 20
       }
 
-      CompleteTask.complete("agent_arc3", "Usage result", final_commit,
+      CompleteTask.complete(agent_id, "Usage result", final_commit,
         base_commit: base_commit,
         usage: usage,
         archive: true
@@ -632,54 +626,51 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       refute Map.has_key?(metadata["usage"], "cached_tokens")
       refute Map.has_key?(metadata["usage"], "input_cost")
 
-      # Verify the archive record has the richer usage format
-      records = :ets.lookup(:evogit_archive_records, {"3", "agent_arc3"})
-      assert length(records) == 1
-      {{"3", "agent_arc3"}, arc_record} = hd(records)
-      arc_usage = arc_record.usage
-      assert arc_usage != nil
-      assert arc_usage.input_tokens == 100
-      assert arc_usage.output_tokens == 50
-      assert arc_usage.total_tokens == 150
-      assert arc_usage.input_cost == 0.005
-      assert arc_usage.output_cost == 0.010
-      assert arc_usage.total_cost == 0.015
-      assert arc_usage.cached_tokens == 40
-      assert arc_usage.cache_creation_tokens == 20
-      assert arc_usage.cache_hit_rate == 40.0
+      # The archive row carries the RICHER usage format (plain JSON, so the
+      # keys arrive STRING-keyed after the round trip).
+      assert %{entries: [entry], total: 1} =
+               TaskRegistry.list_task_archives(task_id, include_results: true)
+
+      arc_usage = entry["usage"]
+      assert arc_usage["input_tokens"] == 100
+      assert arc_usage["output_tokens"] == 50
+      assert arc_usage["total_tokens"] == 150
+      assert arc_usage["input_cost"] == 0.005
+      assert arc_usage["output_cost"] == 0.010
+      assert arc_usage["total_cost"] == 0.015
+      assert arc_usage["cached_tokens"] == 40
+      assert arc_usage["cache_creation_tokens"] == 20
+      assert arc_usage["cache_hit_rate"] == 40.0
 
       # The archive usage map is the canonical per-agent cost contract: exactly
       # the keys of Usage.archive_usage_keys/0 — nothing more, and NEVER a
       # legacy note-style `cost` key.
       assert MapSet.new(Map.keys(arc_usage)) ==
-               MapSet.new(EvoGit.Agent.Usage.archive_usage_keys())
+               MapSet.new(Enum.map(EvoGit.Agent.Usage.archive_usage_keys(), &Atom.to_string/1))
 
-      :ets.delete(:evogit_sched_meta, "agent_arc3")
-      :ets.delete(:evogit_agent_state, "agent_arc3")
-      :ets.delete(:evogit_archive_records, {"3", "agent_arc3"})
       Process.delete(:repo_path)
     end
 
-    test "archive record has all required keys", %{
+    test "the persisted archive row carries all 22 archive fields", %{
       tmp_dir: tmp_dir,
       base_commit: base_commit,
       final_commit: final_commit
     } do
       Process.put(:repo_path, tmp_dir)
       Process.put(:evogit_started_at, DateTime.utc_now() |> DateTime.to_iso8601())
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 4, 4)
 
-      :ets.insert(:evogit_sched_meta, {"agent_arc4", %{task_id: "4", task_number: 4}})
-      :ets.insert(:evogit_agent_state, {"agent_arc4", %{task_local_id: 4}})
-
-      CompleteTask.complete("agent_arc4", "Full record test", final_commit,
+      CompleteTask.complete(agent_id, "Full record test", final_commit,
         base_commit: base_commit,
         archive: true,
         objective: "Test record shape",
-        parent_id: "parent_99",
+        parent_id: agent_id - 1,
         depth: 3,
         llm_model: "test:model",
         model_id: "fast",
-        llm_generation_params: [temperature: 0.7, reasoning_effort: :medium],
+        llm_generation_params: [temperature: 0.7],
         compression_threshold: 100_000,
         max_turns: 128,
         max_retries: 15,
@@ -687,168 +678,169 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         foreign_repos: [EvoGit.Core.ForeignRepo.new("ext", "/path/to/ext")]
       )
 
-      records = :ets.lookup(:evogit_archive_records, {"4", "agent_arc4"})
-      assert length(records) == 1
+      entry = TaskRegistry.get_agent_archive(task_id, agent_id)
+      assert is_map(entry)
 
-      {{"4", "agent_arc4"}, record} = hd(records)
+      # EXACTLY the table's columns: 22 producer fields + the task id.
+      expected_keys = EvoGit.Store.Schemas.TaskAgentArchiveRow.columns()
+      assert length(expected_keys) == 23
+      assert Enum.sort(Map.keys(entry)) == Enum.sort(expected_keys)
 
-      # Verify all required keys are present
-      assert Map.has_key?(record, :agent_id)
-      assert Map.has_key?(record, :parent_id)
-      assert Map.has_key?(record, :depth)
-      assert Map.has_key?(record, :objective)
-      assert Map.has_key?(record, :result)
-      assert Map.has_key?(record, :base_commit)
-      assert Map.has_key?(record, :final_commit)
-      assert Map.has_key?(record, :archive_ref_start)
-      assert Map.has_key?(record, :archive_ref_final)
-      assert Map.has_key?(record, :branch_name)
-      assert Map.has_key?(record, :usage)
-      assert Map.has_key?(record, :completed_at)
-      assert Map.has_key?(record, :compression_count)
-      assert Map.has_key?(record, :repo_path)
-      assert Map.has_key?(record, :repo_id)
-      assert Map.has_key?(record, :repo_root)
+      # Every producer field is populated (nothing silently dropped).
+      for field <- expected_keys, field != "task_id" do
+        assert Map.has_key?(entry, field)
+      end
 
-      # Verify the new nested fields are present
-      assert Map.has_key?(record, :llm_settings)
-      assert Map.has_key?(record, :agent_settings)
-      assert Map.has_key?(record, :foreign_repos)
+      assert entry["task_id"] == task_id
+      assert entry["agent_id"] == agent_id
+      assert entry["parent_id"] == agent_id - 1
+      assert entry["depth"] == 3
+      assert entry["objective"] == "Test record shape"
+      assert entry["result"] == "Full record test"
+      assert entry["base_commit"] == base_commit
+      assert entry["final_commit"] == final_commit
+      assert entry["archive_ref_start"] == "refs/genesis/archive/T#{task_id}-A4-start"
+      assert entry["archive_ref_final"] == "refs/genesis/archive/T#{task_id}-A4-final"
+      assert entry["branch_name"] == "evogit-agent-T4-A4"
+      assert entry["repo_path"] == tmp_dir
+      assert entry["compression_count"] == 0
+      assert entry["completed_at"] != nil
+      assert entry["started_at"] != nil
 
-      # Verify llm_settings structure
-      llm_settings = record.llm_settings
-      assert llm_settings.model == "test:model"
-      assert llm_settings.model_id == "fast"
-      assert llm_settings.context_compression_threshold == 100_000
-      assert llm_settings.temperature == 0.7
-      assert llm_settings.reasoning_effort == :medium
+      # llm_settings carries the generation-time configuration
+      llm_settings = entry["llm_settings"]
+      assert llm_settings["model"] == "test:model"
+      assert llm_settings["model_id"] == "fast"
+      assert llm_settings["context_compression_threshold"] == 100_000
+      assert llm_settings["temperature"] == 0.7
 
-      # Verify agent_settings structure
-      agent_settings = record.agent_settings
-      assert agent_settings.max_turns == 128
-      assert agent_settings.max_retries == 15
-      assert agent_settings.max_agent_depth == 8
+      # agent_settings carries the scheduler's caps
+      agent_settings = entry["agent_settings"]
+      assert agent_settings["max_turns"] == 128
+      assert agent_settings["max_retries"] == 15
+      assert agent_settings["max_agent_depth"] == 8
 
-      # Verify foreign_repos structure
-      foreign_repos = record.foreign_repos
-      assert length(foreign_repos) == 1
-      [repo_entry] = foreign_repos
-      assert repo_entry.id == "ext"
-      assert repo_entry.root == "/path/to/ext"
-      assert repo_entry.description == nil
+      # foreign_repos carries the delegation roster
+      assert [repo_entry] = entry["foreign_repos"]
+      assert repo_entry["id"] == "ext"
+      assert repo_entry["root"] == "/path/to/ext"
+      assert repo_entry["description"] == nil
 
-      # Verify values
-      assert record.agent_id == "agent_arc4"
-      assert record.parent_id == "parent_99"
-      assert record.depth == 3
-      assert record.objective == "Test record shape"
-      assert record.result == "Full record test"
-      assert record.base_commit == base_commit
-      assert record.final_commit == final_commit
-      assert record.archive_ref_start == "refs/genesis/archive/T4-A4-start"
-      assert record.archive_ref_final == "refs/genesis/archive/T4-A4-final"
-      assert record.branch_name == "evogit-agent-T4-A4"
-      assert record.completed_at != nil
-      assert record.compression_count == 0
-      assert record.repo_path == tmp_dir
-
-      :ets.delete(:evogit_sched_meta, "agent_arc4")
-      :ets.delete(:evogit_agent_state, "agent_arc4")
       Process.delete(:repo_path)
       Process.delete(:evogit_started_at)
     end
 
-    test "writes a single archive record when the same agent completes twice (crash-retry idempotency)",
-         %{
-           tmp_dir: tmp_dir,
-           base_commit: base_commit,
-           final_commit: final_commit
-         } do
+    test "re-completing the same agent REPLACES its archive row (crash-retry idempotency)", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
       Process.put(:repo_path, tmp_dir)
-
-      :ets.insert(:evogit_sched_meta, {"agent_arc5", %{task_id: "5", task_number: 5}})
-      :ets.insert(:evogit_agent_state, {"agent_arc5", %{task_local_id: 5}})
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent_id = System.unique_integer([:positive])
+      register_agent!(agent_id, task_id, 5, 5)
 
       # Simulate a crash-retry double-completion: the same agent completes twice
-      # with the same task_id. The :set table keyed by {task_id, agent_id} makes
-      # the second insert an idempotent overwrite — at most ONE record.
-      CompleteTask.complete("agent_arc5", "First", final_commit,
+      # with the same task_id. The composite primary key makes the second write
+      # an idempotent upsert — at most ONE row.
+      CompleteTask.complete(agent_id, "First", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      CompleteTask.complete("agent_arc5", "Second", final_commit,
+      CompleteTask.complete(agent_id, "Second", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      records = :ets.lookup(:evogit_archive_records, {"5", "agent_arc5"})
-      assert length(records) == 1
+      assert %{entries: [entry], total: 1} =
+               TaskRegistry.list_task_archives(task_id, include_results: true)
 
-      {{"5", "agent_arc5"}, record} = hd(records)
-      assert record.agent_id == "agent_arc5"
+      assert entry["agent_id"] == agent_id
+      assert entry["result"] == "Second"
 
-      :ets.delete(:evogit_sched_meta, "agent_arc5")
-      :ets.delete(:evogit_agent_state, "agent_arc5")
       Process.delete(:repo_path)
     end
 
-    test "two runs sharing a task_id produce archives with only their own records (no stale leak)",
-         %{
-           tmp_dir: tmp_dir,
-           base_commit: base_commit,
-           final_commit: final_commit
-         } do
+    test "two agents of one task persist one archive row each (no cross-agent leak)", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
       Process.put(:repo_path, tmp_dir)
+      task_id = "ct#{System.unique_integer([:positive])}"
+      agent1 = System.unique_integer([:positive])
+      agent2 = System.unique_integer([:positive])
+      register_agent!(agent1, task_id, 6, 1)
+      register_agent!(agent2, task_id, 6, 2)
 
-      # Run 1: two agents sharing the same task_id
-      :ets.insert(:evogit_sched_meta, {"run1_a1", %{task_id: "shared", task_number: 10}})
-      :ets.insert(:evogit_agent_state, {"run1_a1", %{task_local_id: 1}})
-      :ets.insert(:evogit_sched_meta, {"run1_a2", %{task_id: "shared", task_number: 10}})
-      :ets.insert(:evogit_agent_state, {"run1_a2", %{task_local_id: 2}})
-
-      CompleteTask.complete("run1_a1", "Run1 A1", final_commit,
+      CompleteTask.complete(agent1, "Run1 A1", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      CompleteTask.complete("run1_a2", "Run1 A2", final_commit,
+      CompleteTask.complete(agent2, "Run1 A2", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      records1 = EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared")
-      assert length(records1) == 2
+      # Ordered `depth ASC, agent_id ASC` — both rows, each carrying only its
+      # OWN result.
+      assert %{entries: entries, total: 2} =
+               TaskRegistry.list_task_archives(task_id, include_results: true)
 
-      agent_ids = records1 |> Enum.map(& &1.agent_id) |> MapSet.new()
-      assert MapSet.equal?(agent_ids, MapSet.new(["run1_a1", "run1_a2"]))
+      assert Enum.map(entries, & &1["agent_id"]) |> Enum.sort() ==
+               Enum.sort([agent1, agent2])
 
-      # Consumption clears the collection for this task only.
-      assert :ok = EvoGit.AgentScheduler.Lifecycle.clear_archive_records("shared")
-      assert EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared") == []
+      by_agent = Map.new(entries, &{&1["agent_id"], &1["result"]})
+      assert by_agent[agent1] == "Run1 A1"
+      assert by_agent[agent2] == "Run1 A2"
 
-      # Run 2: a single agent reusing the same task_id — must NOT see run 1's records.
-      :ets.insert(:evogit_sched_meta, {"run2_b1", %{task_id: "shared", task_number: 10}})
-      :ets.insert(:evogit_agent_state, {"run2_b1", %{task_local_id: 3}})
+      # The roster read never selects the heavy `result` column.
+      assert %{entries: roster, total: 2} = TaskRegistry.list_task_archives(task_id)
+      refute Enum.any?(roster, &Map.has_key?(&1, "result"))
 
-      CompleteTask.complete("run2_b1", "Run2 B1", final_commit,
-        base_commit: base_commit,
-        archive: true
-      )
-
-      records2 = EvoGit.AgentScheduler.Lifecycle.collect_archive_records("shared")
-      assert length(records2) == 1
-      assert hd(records2).agent_id == "run2_b1"
-
-      # Cleanup
-      :ets.delete(:evogit_sched_meta, "run1_a1")
-      :ets.delete(:evogit_agent_state, "run1_a1")
-      :ets.delete(:evogit_sched_meta, "run1_a2")
-      :ets.delete(:evogit_agent_state, "run1_a2")
-      :ets.delete(:evogit_sched_meta, "run2_b1")
-      :ets.delete(:evogit_agent_state, "run2_b1")
-      :ets.match_delete(:evogit_archive_records, {{"shared", :_}, :_})
       Process.delete(:repo_path)
+    end
+
+    test "skips the archive row when the task id is unknown (scheduler lookup miss)", %{
+      tmp_dir: tmp_dir,
+      base_commit: base_commit,
+      final_commit: final_commit
+    } do
+      Process.put(:repo_path, tmp_dir)
+      # No sched_meta/agent_state entry for this agent id: `lookup_task_info/1`
+      # misses and yields task id 0, which cannot identify an archive row.
+      agent_id = System.unique_integer([:positive])
+
+      CompleteTask.complete(agent_id, "Unknown task", final_commit,
+        base_commit: base_commit,
+        archive: true
+      )
+
+      # The refs are still written (they only need the derived id pair)…
+      assert {:ok, _} = Git.rev_parse(tmp_dir, "refs/genesis/archive/T0-A0-start")
+      assert {:ok, _} = Git.rev_parse(tmp_dir, "refs/genesis/archive/T0-A0-final")
+
+      # …but NO archive row is persisted and nothing raises.
+      assert %{entries: [], total: 0} = TaskRegistry.list_task_archives("0")
+      assert TaskRegistry.get_agent_archive("0", agent_id) == nil
+
+      Process.delete(:repo_path)
+    end
+
+    # Registers one agent in the scheduler ETS tables so `complete/5` can derive
+    # the task-scoped archive ref/branch names. Agent ids are INTEGERS (the
+    # scheduler's `next_agent_id`) — the archive table's `agent_id` is an
+    # integer primary-key part.
+    defp register_agent!(agent_id, task_id, task_number, task_local_id) do
+      :ets.insert(:evogit_sched_meta, {agent_id, %{task_id: task_id, task_number: task_number}})
+      :ets.insert(:evogit_agent_state, {agent_id, %{task_local_id: task_local_id}})
+
+      on_exit(fn ->
+        :ets.delete(:evogit_sched_meta, agent_id)
+        :ets.delete(:evogit_agent_state, agent_id)
+      end)
     end
   end
 end

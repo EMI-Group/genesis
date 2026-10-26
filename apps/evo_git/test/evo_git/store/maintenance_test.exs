@@ -36,6 +36,10 @@ defmodule EvoGit.Store.MaintenanceTest do
 
   @db_filename "tasks.sqlite"
 
+  # Every shipped store migration (the rejected compression migration 004 no
+  # longer ships, so `schema_migrations` stops at 7 rows).
+  @migration_count 7
+
   # ── Fake store (the maintenance GenServer's `__repo_pid__` peer) ──────────
   #
   # Answers the ONE call `EvoGit.Store.Maintenance` makes, and reports it to the
@@ -152,7 +156,7 @@ defmodule EvoGit.Store.MaintenanceTest do
       refute_receive {:boot_optimize, _other}, 200
 
       # The returned instance is usable and migrated.
-      assert migration_count(pid) == 5
+      assert migration_count(pid) == @migration_count
     end
 
     test "a raising optimize seam cannot fail boot", %{tmp_dir: dir} do
@@ -178,7 +182,7 @@ defmodule EvoGit.Store.MaintenanceTest do
       pid = start_repo!(dir, "boot_optimize_default")
 
       assert Maintenance.optimize(pid) == :ok
-      assert migration_count(pid) == 5
+      assert migration_count(pid) == @migration_count
     end
   end
 
@@ -191,7 +195,7 @@ defmodule EvoGit.Store.MaintenanceTest do
       assert Maintenance.optimize(pid) == :ok
 
       assert RepoScope.with_repo(pid, fn -> Repo.query!("SELECT 1").rows end) == [[1]]
-      assert migration_count(pid) == 5
+      assert migration_count(pid) == @migration_count
     end
 
     test "never raises when the repo is gone — returns {:error, _}" do
@@ -307,7 +311,7 @@ defmodule EvoGit.Store.MaintenanceTest do
       refute output =~ "main file unknown"
 
       assert row_count(path) == 3
-      assert migration_count_on_file(path) == 5
+      assert migration_count_on_file(path) == @migration_count
     end
 
     test "--no-optimize skips the optimizer and still reports", %{tmp_dir: dir} do

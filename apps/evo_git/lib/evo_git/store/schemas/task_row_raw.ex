@@ -47,7 +47,6 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
   | `agent_count`      | `:integer`   | `:integer`                      |
   | `base_sha`         | `:string`    | `:string`                       |
   | `commit_sha`       | `:string`    | `:string`                       |
-  | `archive_metadata` | `:string`    | `ArchiveJson` (JSON TEXT)       |
   | `lease_expires_at` | `:integer`   | `UnixMs` (unix-ms INTEGER)      |
   | `model_id`         | `:string`    | `:string`                       |
   | `project_path`     | `:string`    | `:string`                       |
@@ -77,7 +76,6 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
     field(:agent_count, :integer)
     field(:base_sha, :string)
     field(:commit_sha, :string)
-    field(:archive_metadata, :string)
     field(:lease_expires_at, :integer)
     field(:model_id, :string)
     field(:project_path, :string)
@@ -87,7 +85,7 @@ defmodule EvoGit.Store.Schemas.TaskRowRaw do
   end
 
   @doc """
-  The 20 task-table column names (strings) in schema-declaration order —
+  The 19 task-table column names (strings) in schema-declaration order —
   identical to `EvoGit.Store.Schemas.TaskRow.columns/0` (the physical table
   column order). Returns strings to mirror `Codec.task_columns/0` exactly.
   """

@@ -1,8 +1,9 @@
 defmodule EvoGit.Store.TaskPageApiTest do
   @moduledoc """
   Facade-level coverage for the LIGHTWEIGHT task read API added to
-  `EvoGit.Store` (`select_tasks_page/2`, `get_task_lite/2`,
-  `get_task_archive/2`).
+  `EvoGit.Store` (`select_tasks_page/2`, `get_task_lite/2`) plus the
+  per-agent archive surface (`put_task_archive/2`, `list_task_archives/3`,
+  `get_agent_archive/3`, `delete_task_archives/2`).
 
   The pages_test.exs suite pins the operations' semantics; this file pins the
   FACADE: the public client functions exist with the documented arities
@@ -52,7 +53,6 @@ defmodule EvoGit.Store.TaskPageApiTest do
           finished_at: started_at,
           logs: ["line"],
           result: {:ok, %{commit_sha: "sha-#{id}", branch_name: "genesis/agent_#{id}"}},
-          archive_metadata: [%{"role" => "user", "content" => "archived #{id}"}],
           agent_count: 1
         ],
         overrides
@@ -70,8 +70,9 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert %{rows: rows, total: 2} = Store.select_tasks_page(store, limit: 10)
     assert Enum.map(rows, & &1.id) == ["t-new", "t-old"]
 
-    # A summary row never carries a blob key.
-    for absent <- [:result, :archive_metadata, :logs, :usage] do
+    # A summary row never carries a blob key (and there is no archive column
+    # on the task row any more — it lives in `task_agent_archives`).
+    for absent <- [:result, :logs, :usage] do
       refute Map.has_key?(hd(rows), absent)
     end
 
@@ -83,23 +84,29 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert last.id == "t-old"
   end
 
-  test "get_task_lite/2 and get_task_archive/2 split the archive out of the detail read" do
+  test "get_task_lite/2 is field-identical to get_task/2 (the archive lives in its own table)" do
     store = start_store!()
     :ok = Store.put_task(store, task("t-detail", ~U[2026-02-01 00:00:00.000Z]))
+    :ok = Store.put_task_archive(store, %{task_id: "t-detail", agent_id: 1, objective: "detail"})
 
     lite = Store.get_task_lite(store, "t-detail")
     assert %TaskInfo{id: "t-detail"} = lite
-    assert lite.archive_metadata == nil
+    # Nothing is dropped from the task row: the lite read equals the full read.
+    assert lite == Store.get_task(store, "t-detail")
     assert {:ok, data} = lite.result
-    refute Map.has_key?(data, :archive_records)
     assert data.commit_sha == "sha-t-detail"
 
-    assert Store.get_task_archive(store, "t-detail") ==
-             [%{"role" => "user", "content" => "archived t-detail"}]
+    # The task struct has NO archive field at all; a task's archived agents are
+    # reachable only through the relational `task_agent_archives` reads.
+    refute Map.has_key?(%TaskInfo{}, :archive_metadata)
+
+    assert %{entries: [%{"agent_id" => 1}], total: 1} =
+             Store.list_task_archives(store, "t-detail")
+
+    assert %{"agent_id" => 1} = Store.get_agent_archive(store, "t-detail", 1)
 
     # Missing rows keep each read's documented empty shape.
     assert Store.get_task_lite(store, "nope") == nil
-    assert Store.get_task_archive(store, "nope") == []
   end
 
   # The `store \\ __MODULE__` defaults generate arity-1 forms, so a caller can
@@ -110,7 +117,14 @@ defmodule EvoGit.Store.TaskPageApiTest do
     assert function_exported?(Store, :select_tasks_page, 2)
     assert function_exported?(Store, :get_task_lite, 1)
     assert function_exported?(Store, :get_task_lite, 2)
-    assert function_exported?(Store, :get_task_archive, 1)
-    assert function_exported?(Store, :get_task_archive, 2)
+    assert function_exported?(Store, :put_task_archive, 1)
+    assert function_exported?(Store, :put_task_archive, 2)
+    assert function_exported?(Store, :list_task_archives, 1)
+    assert function_exported?(Store, :list_task_archives, 2)
+    assert function_exported?(Store, :list_task_archives, 3)
+    assert function_exported?(Store, :get_agent_archive, 2)
+    assert function_exported?(Store, :get_agent_archive, 3)
+    assert function_exported?(Store, :delete_task_archives, 1)
+    assert function_exported?(Store, :delete_task_archives, 2)
   end
 end

@@ -95,6 +95,37 @@ defmodule EvoGit.StoreTest do
     {:ok, %{store: Store, sqlite_path: sqlite_path, root: root}}
   end
 
+  # One archived agent's entry in the PRODUCER's shape (atom keys), covering
+  # every column of `task_agent_archives`. `depth` also picks the agent type so
+  # a roster read has something distinct to order by.
+  defp archive_entry(task_id, agent_id, depth) do
+    %{
+      task_id: task_id,
+      agent_id: agent_id,
+      parent_id: if(depth == 0, do: nil, else: agent_id - 1),
+      depth: depth,
+      agent_type: if(depth == 0, do: "manager", else: "executor"),
+      context_node_path: "./",
+      objective: "archive objective #{agent_id}",
+      result: "archived result #{agent_id}",
+      base_commit: "base-#{agent_id}",
+      final_commit: "final-#{agent_id}",
+      branch_name: "evogit-agent-T1-A#{agent_id}",
+      archive_ref_start: "ref-start-#{agent_id}",
+      archive_ref_final: "ref-final-#{agent_id}",
+      repo_id: "primary",
+      repo_root: "/tmp/archive-repo",
+      repo_path: "apps/demo",
+      usage: %{"input_tokens" => 10 * agent_id, "total_cost" => 0.5},
+      llm_settings: %{"model_id" => "test-model"},
+      agent_settings: %{"turns" => 3},
+      foreign_repos: [],
+      compression_count: 1,
+      started_at: "2026-01-01T00:00:00.000Z",
+      completed_at: "2026-01-01T00:10:00.000Z"
+    }
+  end
+
   describe "task put/get round-trip" do
     test "all scalar fields survive a put/get round-trip" do
       task = %TaskInfo{
@@ -244,8 +275,7 @@ defmodule EvoGit.StoreTest do
              pr_url: nil,
              pr_title: nil,
              usage: usage,
-             agent_count: 3,
-             archive_records: [%{"agent_id" => "T1_A1"}]
+             agent_count: 3
            }}
       }
 
@@ -260,7 +290,6 @@ defmodule EvoGit.StoreTest do
       assert data.pr_url == nil
       assert data.pr_title == nil
       assert data.agent_count == 3
-      assert is_list(data.archive_records)
 
       assert %EvoGit.Agent.Usage{} = data.usage
       assert data.usage.input_tokens == 100
@@ -290,8 +319,7 @@ defmodule EvoGit.StoreTest do
              pr_title: nil,
              no_changes: true,
              usage: %EvoGit.Agent.Usage{},
-             agent_count: 1,
-             archive_records: nil
+             agent_count: 1
            }}
       }
 
@@ -433,28 +461,26 @@ defmodule EvoGit.StoreTest do
       assert fetched.usage.cached_tokens == 10
     end
 
-    test "archive_metadata round-trips as list of maps" do
-      archive = [
-        %{"agent_id" => "T1_A1", "role" => "manager", "objective" => "Genesis"}
-      ]
+    test "a task row carries no archive payload (the archive is its own table)" do
+      :ok =
+        Store.put_task(Store, %TaskInfo{
+          id: "rt-no-archive",
+          type: :genesis,
+          status: :completed,
+          opts: [path: "/tmp/test"],
+          started_at: DateTime.utc_now(),
+          finished_at: DateTime.utc_now(),
+          logs: [],
+          result: nil
+        })
 
-      task = %TaskInfo{
-        id: "rt-archive",
-        type: :genesis,
-        status: :completed,
-        opts: [path: "/tmp/test"],
-        started_at: DateTime.utc_now(),
-        finished_at: DateTime.utc_now(),
-        logs: [],
-        result: nil,
-        archive_metadata: archive
-      }
+      fetched = Store.get_task(Store, "rt-no-archive")
 
-      :ok = Store.put_task(Store, task)
-      fetched = Store.get_task(Store, "rt-archive")
-
-      assert is_list(fetched.archive_metadata)
-      assert length(fetched.archive_metadata) == 1
+      # `%TaskInfo{}` has no archive field at all any more: the per-agent
+      # archive lives in the relational `task_agent_archives` table, read
+      # through `list_task_archives/3` (see the archive describes below).
+      refute Map.has_key?(fetched, :archive_metadata)
+      assert Store.list_task_archives(Store, "rt-no-archive") == %{entries: [], total: 0}
     end
 
     test "nil fields stay nil" do
@@ -468,7 +494,6 @@ defmodule EvoGit.StoreTest do
         logs: [],
         result: nil,
         usage: nil,
-        archive_metadata: nil,
         error: nil
       }
 
@@ -478,7 +503,6 @@ defmodule EvoGit.StoreTest do
       assert fetched.finished_at == nil
       assert fetched.result == nil
       assert fetched.usage == nil
-      assert fetched.archive_metadata == nil
       assert fetched.error == nil
     end
 
@@ -901,7 +925,7 @@ defmodule EvoGit.StoreTest do
       }
 
       row = Codec.encode_task(with_error)
-      assert length(row) == 19
+      assert length(row) == 18
       assert Codec.decode_task(row).error == canonical_error()
 
       without_error = %TaskInfo{
@@ -914,7 +938,7 @@ defmodule EvoGit.StoreTest do
       }
 
       row2 = Codec.encode_task(without_error)
-      assert length(row2) == 19
+      assert length(row2) == 18
       decoded2 = Codec.decode_task(row2)
       assert decoded2.error == nil
       assert decoded2.id == "codec-no-err"
@@ -988,6 +1012,181 @@ defmodule EvoGit.StoreTest do
       assert Store.get_task(Store, "batch-1") == nil
       assert Store.get_task(Store, "batch-2") == nil
       assert Store.get_task(Store, "batch-3") != nil
+    end
+
+    # The per-agent archive used to be a COLUMN of `tasks`, so deleting the task
+    # row dropped it implicitly. Now that the archive rows live in their own
+    # table, the task deletes MUST cascade (`Archives.delete_by_task/2`,
+    # `delete_by_tasks/2`, `delete_all/1` — the primitives the store CONTEXT
+    # documents as "the cascade the task deletes use"); otherwise every deleted
+    # task leaks its whole archived-conversation payload.
+    test "delete_task cascades to that task's archive rows only" do
+      for id <- ["casc-one", "casc-two"] do
+        :ok = Store.put_task(Store, %TaskInfo{id: id, type: :evolve, status: :completed})
+        :ok = Store.put_task_archive(Store, archive_entry(id, 1, 0))
+      end
+
+      assert %{total: 1} = Store.list_task_archives(Store, "casc-one")
+
+      :ok = Store.delete_task(Store, "casc-one")
+
+      # The deleted task's archive rows are gone …
+      assert Store.list_task_archives(Store, "casc-one") == %{entries: [], total: 0}
+      assert Store.get_agent_archive(Store, "casc-one", 1) == nil
+
+      # … and another task's archive is untouched.
+      assert %{total: 1} = Store.list_task_archives(Store, "casc-two")
+      assert %{"agent_id" => 1} = Store.get_agent_archive(Store, "casc-two", 1)
+    end
+
+    test "delete_tasks cascades to every named task's archive rows" do
+      for i <- 1..3 do
+        :ok =
+          Store.put_task(Store, %TaskInfo{id: "bcasc-#{i}", type: :evolve, status: :completed})
+
+        :ok = Store.put_task_archive(Store, archive_entry("bcasc-#{i}", 1, 0))
+        :ok = Store.put_task_archive(Store, archive_entry("bcasc-#{i}", 2, 1))
+      end
+
+      :ok = Store.delete_tasks(Store, ["bcasc-1", "bcasc-2"])
+
+      assert Store.list_task_archives(Store, "bcasc-1") == %{entries: [], total: 0}
+      assert Store.list_task_archives(Store, "bcasc-2") == %{entries: [], total: 0}
+      assert %{total: 2} = Store.list_task_archives(Store, "bcasc-3")
+    end
+  end
+
+  # The per-agent archive is a RELATIONAL table (`task_agent_archives`, one row
+  # per agent) read through the Store facade — the replacement for the old
+  # single `tasks.archive_metadata` JSON array. Coverage here pins the facade
+  # surface (`put_task_archive/2`, `list_task_archives/3`,
+  # `get_agent_archive/3`, `delete_task_archives/2`) and its cascade; the
+  # Operations-level contracts live in `store/operations/archives_test.exs`.
+  describe "per-agent archive (task_agent_archives)" do
+    test "put_task_archive/2 + get_agent_archive/3 round-trip every column, string-keyed" do
+      :ok = Store.put_task_archive(Store, archive_entry("arch-rt", 7, 2))
+
+      assert entry = Store.get_agent_archive(Store, "arch-rt", 7)
+
+      # Entries are STRING-KEYED maps (what the dashboard/RPC layers carry).
+      assert entry["task_id"] == "arch-rt"
+      assert entry["agent_id"] == 7
+      assert entry["parent_id"] == 6
+      assert entry["depth"] == 2
+      assert entry["agent_type"] == "executor"
+      assert entry["context_node_path"] == "./"
+      assert entry["objective"] == "archive objective 7"
+      assert entry["result"] == "archived result 7"
+      assert entry["base_commit"] == "base-7"
+      assert entry["final_commit"] == "final-7"
+      assert entry["branch_name"] == "evogit-agent-T1-A7"
+      assert entry["archive_ref_start"] == "ref-start-7"
+      assert entry["archive_ref_final"] == "ref-final-7"
+      assert entry["repo_id"] == "primary"
+      assert entry["repo_root"] == "/tmp/archive-repo"
+      assert entry["repo_path"] == "apps/demo"
+      assert entry["compression_count"] == 1
+
+      # The JSON columns are PLAIN decoded data (no Codec, no compression
+      # envelope) and timestamps keep their stored ISO-8601 spelling.
+      assert entry["usage"] == %{"input_tokens" => 70, "total_cost" => 0.5}
+      assert entry["llm_settings"] == %{"model_id" => "test-model"}
+      assert entry["agent_settings"] == %{"turns" => 3}
+      assert entry["foreign_repos"] == []
+      assert entry["started_at"] == "2026-01-01T00:00:00.000Z"
+      assert entry["completed_at"] == "2026-01-01T00:10:00.000Z"
+    end
+
+    test "get_agent_archive/3 returns nil for an unknown agent or task" do
+      :ok = Store.put_task_archive(Store, archive_entry("arch-miss", 1, 0))
+
+      assert %{"agent_id" => 1} = Store.get_agent_archive(Store, "arch-miss", 1)
+      assert Store.get_agent_archive(Store, "arch-miss", 2) == nil
+      assert Store.get_agent_archive(Store, "no-such-task", 1) == nil
+    end
+
+    test "list_task_archives/3 orders by depth then agent_id and total ignores the page" do
+      # Deliberately scrambled insertion order: the roster is the SPAWN TREE
+      # (root first), ordered depth ASC, agent_id ASC.
+      for {agent_id, depth} <- [{5, 2}, {3, 1}, {1, 0}, {2, 1}] do
+        :ok = Store.put_task_archive(Store, archive_entry("arch-order", agent_id, depth))
+      end
+
+      # Another task's rows never leak into this task's roster.
+      :ok = Store.put_task_archive(Store, archive_entry("arch-other", 9, 0))
+
+      %{entries: entries, total: 4} = Store.list_task_archives(Store, "arch-order")
+      assert Enum.map(entries, & &1["agent_id"]) == [1, 2, 3, 5]
+      assert Enum.map(entries, & &1["depth"]) == [0, 1, 1, 2]
+
+      # `total` counts EVERY row of the task, independent of limit/offset.
+      %{entries: page, total: 4} =
+        Store.list_task_archives(Store, "arch-order", limit: 2, offset: 1)
+
+      assert Enum.map(page, & &1["agent_id"]) == [2, 3]
+
+      assert Store.list_task_archives(Store, "arch-other") |> Map.get(:total) == 1
+      assert Store.list_task_archives(Store, "no-such-task") == %{entries: [], total: 0}
+    end
+
+    test "list_task_archives/3 omits the heavy result unless include_results: true" do
+      :ok = Store.put_task_archive(Store, archive_entry("arch-inc", 1, 0))
+
+      # Default: the `result` column is never SELECTED — the key is ABSENT
+      # (not nil, not ""), so a roster page never pays for the conversation.
+      %{entries: [roster]} = Store.list_task_archives(Store, "arch-inc")
+      refute Map.has_key?(roster, "result")
+      assert roster["objective"] == "archive objective 1"
+
+      %{entries: [with_result]} =
+        Store.list_task_archives(Store, "arch-inc", include_results: true)
+
+      assert with_result["result"] == "archived result 1"
+    end
+
+    test "re-putting the same (task_id, agent_id) replaces the row, never duplicates" do
+      :ok = Store.put_task_archive(Store, archive_entry("arch-reput", 1, 0))
+
+      :ok =
+        Store.put_task_archive(Store, %{
+          archive_entry("arch-reput", 1, 0)
+          | result: "replaced result",
+            objective: "replaced objective"
+        })
+
+      %{entries: entries, total: 1} =
+        Store.list_task_archives(Store, "arch-reput", include_results: true)
+
+      assert [entry] = entries
+      assert entry["result"] == "replaced result"
+      assert entry["objective"] == "replaced objective"
+    end
+
+    test "put_task_archive/2 rejects entries that cannot identify a row" do
+      assert Store.put_task_archive(Store, %{agent_id: 1}) == {:error, :missing_task_id}
+      assert Store.put_task_archive(Store, %{task_id: "arch-bad"}) == {:error, :missing_agent_id}
+      assert Store.put_task_archive(Store, :not_a_map) == {:error, :invalid_entry}
+
+      # Nothing was written for any of them.
+      assert Store.list_task_archives(Store, "arch-bad") == %{entries: [], total: 0}
+    end
+
+    test "delete_task_archives/2 deletes one task's rows and is a no-op otherwise" do
+      for task_id <- ["arch-del", "arch-keep"] do
+        :ok = Store.put_task_archive(Store, archive_entry(task_id, 1, 0))
+        :ok = Store.put_task_archive(Store, archive_entry(task_id, 2, 1))
+      end
+
+      assert :ok = Store.delete_task_archives(Store, "arch-del")
+
+      assert Store.list_task_archives(Store, "arch-del") == %{entries: [], total: 0}
+      assert Store.get_agent_archive(Store, "arch-del", 1) == nil
+
+      # The other task's rows survive, and a second delete of the same task (or
+      # of a task with no archive at all) is a successful no-op.
+      assert %{total: 2} = Store.list_task_archives(Store, "arch-keep")
+      assert :ok = Store.delete_task_archives(Store, "arch-del")
+      assert :ok = Store.delete_task_archives(Store, "never-archived")
     end
   end
 
@@ -1072,6 +1271,24 @@ defmodule EvoGit.StoreTest do
 
       :ok = Store.clear_tasks(Store)
       assert Store.count_tasks(Store) == 0
+    end
+
+    test "clear_tasks cascades to every archive row" do
+      for i <- 1..2 do
+        :ok =
+          Store.put_task(Store, %TaskInfo{id: "clr-arch-#{i}", type: :evolve, status: :completed})
+
+        :ok = Store.put_task_archive(Store, archive_entry("clr-arch-#{i}", 1, 0))
+      end
+
+      assert %{total: 1} = Store.list_task_archives(Store, "clr-arch-1")
+
+      :ok = Store.clear_tasks(Store)
+
+      assert Store.count_tasks(Store) == 0
+      assert Store.list_task_archives(Store, "clr-arch-1") == %{entries: [], total: 0}
+      assert Store.list_task_archives(Store, "clr-arch-2") == %{entries: [], total: 0}
+      assert Store.get_agent_archive(Store, "clr-arch-1", 1) == nil
     end
   end
 
@@ -1417,11 +1634,12 @@ defmodule EvoGit.StoreTest do
       assert total == 1
       assert hd(tasks).id == "result-oauth"
 
-      # `result` is deliberately no longer searched: `result` is zlib-compressed
-      # above 4 kB, so a LIKE over it was both a full-blob scan and unable to see
-      # the user-visible text. A phrase that exists ONLY in the result text no
-      # longer matches (the behaviour change documented on the shared WHERE
-      # builder, `EvoGit.Store.Operations.Filters`).
+      # `result` is deliberately no longer searched: `result` is a plain JSON
+      # TEXT blob (no compression layer), so a LIKE over it was both a
+      # full-blob scan and unable to see the user-visible text inside the JSON.
+      # A phrase that exists ONLY in the result text no longer matches (the
+      # behaviour change documented on the shared WHERE builder,
+      # `EvoGit.Store.Operations.Filters`).
       {by_result_text, by_result_total} =
         Store.safe_select_paginated_tasks(Store,
           limit: 50,
@@ -1981,13 +2199,14 @@ defmodule EvoGit.StoreTest do
     )
     """
 
-    @migration_versions [
-      20_260_815_000_001,
-      20_260_815_000_002,
-      20_260_815_000_003,
-      20_260_815_000_004,
-      20_260_815_000_005
-    ]
+    # The exact migration INVENTORY is pinned in
+    # `store/boot_migration_test.exs`; here the expectation is DERIVED from the
+    # migrations directory, so this end-to-end boot test keeps asserting "every
+    # migration ran, in ascending order" without duplicating (and drifting from)
+    # that inventory.
+    defp expected_versions do
+      EvoGit.Store.Boot.migration_source() |> Enum.map(&elem(&1, 0))
+    end
 
     test "boots cleanly against a legacy 19-column DB, migrates, adopts `error`, and reads the legacy row",
          %{root: root} do
@@ -2060,9 +2279,10 @@ defmodule EvoGit.StoreTest do
         end
       end)
 
-      # All three migration versions are stamped in schema_migrations, observed
-      # through the same test seam the disk-full tests use (__repo_pid__ +
-      # RepoScope/Repo against the store's OWN dynamic instance).
+      # Every migration of the current inventory is stamped in
+      # schema_migrations, ascending, observed through the same test seam the
+      # disk-full tests use (__repo_pid__ + RepoScope/Repo against the store's
+      # OWN dynamic instance).
       repo_pid = Store.__repo_pid__(store)
 
       versions =
@@ -2071,7 +2291,20 @@ defmodule EvoGit.StoreTest do
           |> Enum.map(&hd/1)
         end)
 
-      assert versions == @migration_versions
+      expected = expected_versions()
+      assert length(expected) >= 6
+      assert versions == expected
+
+      # The relational per-agent archive table exists after the boot, with
+      # EXACTLY the columns the schema declares (the archive is no longer a
+      # column of `tasks`).
+      archive_columns =
+        RepoScope.with_repo(repo_pid, fn ->
+          Repo.query!("PRAGMA table_info(task_agent_archives)").rows
+          |> Enum.map(fn [_cid, name | _] -> name end)
+        end)
+
+      assert archive_columns == EvoGit.Store.Schemas.TaskAgentArchiveRow.columns()
 
       # The legacy row is readable through the PUBLIC API — every seeded
       # value round-trips, and the adopted `error` column reads as nil.

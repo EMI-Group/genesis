@@ -2,25 +2,19 @@ defmodule EvoGit.Repo.Migrations.CoveringIndexes do
   @moduledoc """
   Covering indexes for the id-oriented task reads — the incident query first.
 
-  ## ORDERING: this migration MUST run AFTER `20260815000004_compress_oversized_rows`
+  ## Why COVERING indexes
 
-  Both indexes are b-trees over scalar columns, so building them looks like
-  pure index work — but SQLite builds an index by WALKING the table, and on a
-  DB whose rows still carry their pre-compression multi-MB
-  `result`/`archive_metadata` blobs that walk has to crawl the blob overflow
-  chains to reach the `updated_at`/`id` values stored behind them. Measured on
-  a 442 MiB live copy (one row with a 103 MiB result + 103 MiB
-  archive_metadata): `CREATE INDEX idx_tasks_status_updated_at_id` took
-  **26 181 ms** as the first migration on the raw file and **15 ms** when it
-  runs after the compression/dedup rewrite (`20260815000004`). Building the
-  indexes first therefore makes the first boot after an upgrade pay that
-  ~26 s in the index build (it merely relocates: on a COLD page cache the
-  rewrite pays the same cold page reads — see `20260815000004`'s "Measured
-  first boot" table).
-
-  Do NOT renumber this migration below the compression rewrite (or insert a
-  new index migration between them). Any future index migration belongs at a
-  version ABOVE this one.
+  Every read these two indexes serve projects nothing but `id` (plus one
+  timestamp) over a filtered set of rows. A seek on a plain composite index
+  finds the matching rowids cheaply, but the projected columns are NOT in the
+  index entry, so SQLite has to fetch each matching ROW — and a row fetch means
+  reading the full row record, whose trailing heavy columns (`opts`, `logs`,
+  `result`) commonly live in overflow pages. The seek was cheap; the per-row
+  row-fetch was not. Adding the projected columns to the index makes the
+  statement FULLY COVERING: it is answered from the index b-tree alone, with no
+  table access, no row decode and no overflow-page read. That is a structural
+  fix (the plan changes), not a tuning knob — see "The set" below for the
+  measured before/after plans and timings.
 
   ## The incident
 
@@ -37,9 +31,9 @@ defmodule EvoGit.Repo.Migrations.CoveringIndexes do
   The existing composite `idx_tasks_status_started_at` (see
   `20260815000003_composite_indexes`) DOES seek these rows — it just does not
   CARRY `updated_at`, so every matching row needed a table lookup, and
-  `updated_at`/`error` are the physically LAST columns of the 20-column row —
-  behind the multi-MB `logs`/`opts`/`result` blob overflow chains. The seek was
-  cheap; the per-row row-fetch crawled through the blob pages.
+  `updated_at`/`error` are the physically LAST columns of the row — behind the
+  multi-MB `logs`/`opts`/`result` overflow chains. The seek was cheap; the
+  per-row row-fetch crawled through those pages.
 
   ## The set (deliberately minimal — 2 indexes)
 

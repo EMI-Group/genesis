@@ -349,9 +349,10 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
 
   Delegates to `EvoGit.TaskRegistry.list_tasks_page/1` (a `GenServer.call`),
   which reads through `EvoGit.Store.select_tasks_page/2` — the heavy JSON blobs
-  (`result`, `archive_metadata`, `logs`, `usage`) are never selected. `opts`
-  accepts `:limit`, `:offset` and the filter keys `:status`, `:project_path`,
-  `:review_status`, `:search`.
+  (`result`, `logs`, `usage`) are never selected and the per-agent archive
+  lives in its own table (see `list_task_archives/2`). `opts` accepts `:limit`,
+  `:offset` and the filter keys `:status`, `:project_path`, `:review_status`,
+  `:search`.
 
   This runs on the REMOTE node when called via `:erpc.call/5`; both the keyword
   opts and the returned plain map transfer natively. Returns
@@ -485,13 +486,12 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
-  Returns a single task by id WITHOUT the archive payload.
+  Returns a single task by id WITHOUT the heavy payload.
 
   Delegates to `EvoGit.TaskRegistry.get_task_lite/1` (a `GenServer.call`),
-  which reads through `EvoGit.Store.get_task_lite/2`: every column decodes
-  exactly like `get_task/1`, but `archive_metadata` is never read (it is `nil`
-  in the struct) and the result's `:archive_records` key is dropped. Use
-  `get_task_archive/1` to fetch the archive separately.
+  which reads through `EvoGit.Store.get_task_lite/2`: the same task row decoded
+  through an explicit lighter column projection. The per-agent archive is a
+  separate table — use `list_task_archives/2` + `get_agent_archive/2` for it.
 
   This runs on the REMOTE node when called via `:erpc.call/5`. Returns
   `%TaskInfo{}` or `nil` (absent task, or a failed store read).
@@ -502,19 +502,40 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   end
 
   @doc """
-  Returns the decoded archive records for a task.
+  Returns one page of a task's archived agents plus the task's total archive
+  row count, `%{entries: [map()], total: non_neg_integer}`.
 
-  Delegates to `EvoGit.TaskRegistry.get_task_archive/1` (a `GenServer.call`),
-  which reads ONLY the `archive_metadata` column via
-  `EvoGit.Store.get_task_archive/2`.
+  Delegates to `EvoGit.TaskRegistry.list_task_archives/2` (a `GenServer.call`),
+  which reads through `EvoGit.Store.list_task_archives/3`. Entries are
+  STRING-KEYED maps ordered `depth ASC, agent_id ASC`. `opts` accepts `:limit`
+  (default 100, clamped 1..1000), `:offset` and `:include_results` (default
+  `false` — the heavy `result` column is then not selected and the `"result"`
+  key is ABSENT).
 
-  This runs on the REMOTE node when called via `:erpc.call/5`. Returns
-  `[map()]` — `[]` when the row is missing, the column is NULL, the payload is
-  undecodable, or the store read failed.
+  This runs on the REMOTE node when called via `:erpc.call/5`; the plain maps
+  transfer natively. Degrades to `%{entries: [], total: 0}` when the store read
+  fails.
   """
-  @spec get_task_archive(String.t()) :: [map()]
-  def get_task_archive(task_id) do
-    EvoGit.TaskRegistry.get_task_archive(task_id)
+  @spec list_task_archives(String.t(), keyword()) ::
+          %{entries: [map()], total: non_neg_integer()}
+  def list_task_archives(task_id, opts \\ []) do
+    EvoGit.TaskRegistry.list_task_archives(task_id, opts)
+  end
+
+  @doc """
+  Returns ONE archived agent's full entry (including `"result"`), or `nil`.
+
+  Delegates to `EvoGit.TaskRegistry.get_agent_archive/2` (a `GenServer.call`),
+  which reads through `EvoGit.Store.get_agent_archive/3` — the lazy detail read
+  that pairs with the `list_task_archives/2` roster page.
+
+  This runs on the REMOTE node when called via `:erpc.call/5`. Returns a
+  STRING-KEYED `map()`, or `nil` when the task has no such archived agent (and
+  on a failed store read).
+  """
+  @spec get_agent_archive(String.t(), integer()) :: map() | nil
+  def get_agent_archive(task_id, agent_id) do
+    EvoGit.TaskRegistry.get_agent_archive(task_id, agent_id)
   end
 
   @doc """

@@ -28,12 +28,11 @@ defmodule EvoGit.Store.Operations.Filters do
 
   ## Search behaviour change (deliberate)
 
-  `result` is NO LONGER searched. It is a full-blob column that the Codec
-  transparently zlib-compresses above 4 kB (`"z1:" <> base64`), so a LIKE over
-  it is both (a) a scan of the heaviest column in the table — one live row held
-  108 MB of `result` — and (b) semantically wrong for compressed rows, whose
-  stored text is base64 with no user-visible substring in it. The denormalized
-  `branch_name` column replaces it: it is the branch a task produced (already
+  `result` is NO LONGER searched. It is a full-blob column stored as plain
+  JSON text, so a LIKE over it is a scan of the heaviest column in the table
+  — one live row held 108 MB of `result` — and its text is the agent's own
+  prose, not something users search for. The denormalized `branch_name`
+  column replaces it: it is the branch a task produced (already
   exposed on the summary projection and used by the review flow), it is small,
   and it is what users actually search for ("which task produced
   `genesis/agent_ab12`?"). A phrase that exists ONLY inside a task's `result`
