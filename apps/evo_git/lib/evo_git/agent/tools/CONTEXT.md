@@ -80,6 +80,7 @@ Custom tools must return a string (`{:error, "… returned a non-string value…
 - Non-2xx → `Failure.error("<url> returned HTTP <code><reason phrase>")`; 301/302/303/307/308 are followed manually (`redirect: false`), at most 5 hops (the 6th errors), SAME host + scheme (port may change), relative `Location` via `URI.merge/2`.
 - Private-host gate is BEST EFFORT, explicitly not a security boundary: it resolves `:inet`/`:inet6` and refuses non-public addresses (IPv4 loopback/private/link-local incl. `169.254/16`, CGNAT, `0/8`, multicast; IPv6 loopback/unspecified/ULA/link-local/multicast and IPv4-mapped) plus `localhost`/`*.localhost`; the request is issued by NAME (no IP pinning), so DNS rebinding and hostile relays are out of scope.
 - Client is `Req` with a streaming `into:` callback (never a shelled-out client); test seam `:web_fetch_allow_private_hosts` (default `false`, call-time) skips the host gate.
+- A timeout renders the CONFIGURED whole-request `timeout`, never the measured per-hop remainder (that number is timing-dependent and made the message non-deterministic); the per-hop `receive_timeout` still enforces the monotonic deadline.
 
 ### Language Server (`lsp`)
 - READ-ONLY code intelligence over ONE user-configured server (nothing bundled or left running); never a write tool, not serial.
