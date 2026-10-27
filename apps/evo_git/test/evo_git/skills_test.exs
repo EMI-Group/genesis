@@ -95,6 +95,25 @@ defmodule EvoGit.SkillsTest do
       assert metadata["description"] == "Just metadata, no params"
       assert body =~ "Body after frontmatter"
     end
+
+    test "returns a human-readable error string for invalid YAML frontmatter" do
+      content = """
+      ---
+      name: my-skill
+      description: This is: invalid
+      ---
+
+      Body text.
+      """
+
+      assert {:error, reason} = Skills.parse_frontmatter(content)
+      assert is_binary(reason)
+      assert reason =~ "Invalid YAML frontmatter"
+      # The parser's own message and line/column information are surfaced.
+      assert reason =~ "Block mapping value not allowed here"
+      assert reason =~ "line 2"
+      assert reason =~ "column"
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -142,6 +161,16 @@ defmodule EvoGit.SkillsTest do
     test "returns empty map for empty input" do
       assert {:ok, map} = Skills.parse_yaml_simple("")
       assert map == %{}
+    end
+
+    test "returns a binary error reason (never a parser struct) for invalid YAML" do
+      yaml = "name: my-skill\ndescription: This is: invalid"
+
+      assert {:error, reason} = Skills.parse_yaml_simple(yaml)
+      assert is_binary(reason)
+      assert reason =~ "Invalid YAML frontmatter"
+      assert reason =~ "Block mapping value not allowed here"
+      assert reason =~ "line 2"
     end
   end
 
@@ -364,6 +393,21 @@ defmodule EvoGit.SkillsTest do
     test "returns error for content with no frontmatter" do
       content = "Just raw text without any frontmatter"
       assert {:error, _reason} = Skills.validate_skill_text(content)
+    end
+
+    test "returns a binary error reason for invalid YAML frontmatter" do
+      content = """
+      ---
+      name: my-skill
+      description: This is: invalid
+      ---
+
+      Body text.
+      """
+
+      assert {:error, reason} = Skills.validate_skill_text(content)
+      assert is_binary(reason)
+      assert String.starts_with?(reason, "Invalid YAML frontmatter")
     end
   end
 

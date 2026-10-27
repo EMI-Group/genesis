@@ -394,7 +394,9 @@ defmodule EvoGit.Skills do
       ---
       body content...
 
-  Returns `{:ok, metadata_map, body}` or `{:error, reason}`.
+  Returns `{:ok, metadata_map, body}` or `{:error, human_readable_reason}`.
+  Parse failures are reported as a binary that names the YAML parser's message and,
+  when the parser provides them, its line and column — a parser struct is never leaked.
   """
   def parse_frontmatter(content) do
     case Regex.run(~r/\A---\s*\n(.*?)\n---\s*\n(.*)\z/s, content) do
@@ -424,11 +426,43 @@ defmodule EvoGit.Skills do
   - `key: value` (string scalars)
   - `parameters:` followed by list items with `- name: value` sub-maps
 
-  Returns `{:ok, map}` where map has string keys.
+  Returns `{:ok, map}` where map has string keys, or `{:error, human_readable_reason}`.
+  Every parse failure is normalized to a binary naming the parser's message and, when
+  available, its line and column (e.g. `"Invalid YAML frontmatter (line 2, column 45): …"`)
+  — a `YamlElixir` exception struct is never returned as the error reason.
   """
   def parse_yaml_simple(yaml_str) do
-    YamlElixir.read_from_string(yaml_str)
+    case YamlElixir.read_from_string(yaml_str) do
+      {:ok, value} -> {:ok, value}
+      {:error, reason} -> {:error, format_yaml_error(reason)}
+    end
   end
+
+  # Normalizes every `YamlElixir` failure term into a human-readable binary so callers
+  # can interpolate the reason (a leaked struct would raise Protocol.UndefinedError).
+  defp format_yaml_error(%YamlElixir.ParsingError{line: line, column: column, message: msg})
+       when is_integer(line) and is_integer(column) do
+    "Invalid YAML frontmatter (line #{line}, column #{column}): #{yaml_message(msg)}"
+  end
+
+  defp format_yaml_error(%YamlElixir.ParsingError{message: msg}) do
+    "Invalid YAML frontmatter: #{yaml_message(msg)}"
+  end
+
+  defp format_yaml_error(reason) when is_exception(reason) do
+    "Invalid YAML frontmatter: " <> Exception.message(reason)
+  end
+
+  defp format_yaml_error(reason) when is_binary(reason) do
+    "Invalid YAML frontmatter: " <> reason
+  end
+
+  defp format_yaml_error(term) do
+    "Invalid YAML frontmatter: " <> inspect(term)
+  end
+
+  defp yaml_message(msg) when is_binary(msg), do: msg
+  defp yaml_message(msg), do: inspect(msg)
 
   # ---------------------------------------------------------------------------
   # Private Helpers
