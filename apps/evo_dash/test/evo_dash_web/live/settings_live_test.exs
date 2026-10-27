@@ -125,6 +125,20 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
+  # True when the model-profile edit form's advanced-generation-params
+  # disclosure (`<details id="model-profile-advanced">`) is rendered OPEN.
+  # HEEx drops a boolean attribute whose value is false/nil, so the mere
+  # presence of the `open` attribute IS the open state.
+  defp advanced_details_open?(html) do
+    open_attributes =
+      html
+      |> Floki.parse_document!()
+      |> Floki.find(~s(details[id="model-profile-advanced"]))
+      |> Floki.attribute("open")
+
+    open_attributes != []
+  end
+
   describe "settings search" do
     test "renders the search input inside a form (required for phx-change)", %{conn: conn} do
       {:ok, _view, html} = mount_settings(conn, ~p"/settings")
@@ -799,6 +813,105 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert profile.temperature == 0.7
       assert profile.max_tokens == 4096
       assert profile.reasoning_effort == "high"
+    end
+
+    test "save_model_profile persists all advanced generation params, extra and provider_options",
+         %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      html =
+        render_hook(view, "save_model_profile", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "advanced-probe",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "4",
+          "temperature" => "0.7",
+          "max_tokens" => "4096",
+          "top_p" => "0.9",
+          "top_k" => "40",
+          "frequency_penalty" => "0.25",
+          "presence_penalty" => "0.5",
+          "reasoning_effort" => "medium",
+          "extra" => ~s({"wire": {"protocol": "openai_responses"}}),
+          "provider_options" => ~s({"store": false})
+        })
+
+      assert html =~ "Model profile saved."
+      [profile] = current_models(view)
+      assert profile.id == "advanced-probe"
+      assert profile.concurrency == 4
+      assert profile.temperature == 0.7
+      assert profile.max_tokens == 4096
+      assert profile.top_p == 0.9
+      assert profile.top_k == 40
+      assert profile.frequency_penalty == 0.25
+      assert profile.presence_penalty == 0.5
+      assert profile.reasoning_effort == "medium"
+
+      # A non-blank `extra` forces the ReqLLM-native MAP spec instead of the
+      # compact "provider:id" string. Observed shape after the TOML round-trip:
+      # atom keys + atom provider at the top level, the provider-specific JSON
+      # preserved VERBATIM (string keys, nested) under :extra.
+      assert profile.model == %{
+               provider: :anthropic,
+               id: "claude-sonnet-4-6",
+               extra: %{"wire" => %{"protocol" => "openai_responses"}}
+             }
+
+      # provider_options always stays a PROFILE-level field (sibling of
+      # temperature), never inside the model spec.
+      assert profile.provider_options == %{"store" => false}
+    end
+
+    test "advanced disclosure renders closed for a new profile and open for an edited profile with generation params",
+         %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = render_hook(view, "add_model_profile", %{})
+
+      # add_model_profile creates a BARE profile (concurrency only), so the
+      # advanced disclosure renders CLOSED — and at most ONE profile is ever in
+      # edit mode, hence exactly one disclosure on the page.
+      assert [_details] =
+               html
+               |> Floki.parse_document!()
+               |> Floki.find(~s(details[id="model-profile-advanced"]))
+
+      refute advanced_details_open?(html)
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7",
+        "top_k" => "40",
+        "extra" => ~s({"wire": {"protocol": "openai_responses"}}),
+        "provider_options" => ~s({"store": false})
+      })
+
+      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+
+      # A saved generation param auto-opens the disclosure so the user can see
+      # what is already set.
+      assert advanced_details_open?(html)
+
+      # ...and the reopened form pre-fills the advanced values from the profile.
+      # The textareas carry the re-encoded COMPACT JSON, HTML-escaped by HEEx
+      # (&quot; for each quote) — the same escaping the provider_options
+      # pre-fill test above pins.
+      doc = Floki.parse_document!(html)
+
+      assert doc |> Floki.find(~s(input[name="top_k"])) |> Floki.attribute("value") == ["40"]
+
+      assert doc |> Floki.find(~s(textarea[name="extra"])) |> Floki.text() ==
+               "{&quot;wire&quot;:{&quot;protocol&quot;:&quot;openai_responses&quot;}}"
+
+      assert doc |> Floki.find(~s(textarea[name="provider_options"])) |> Floki.text() ==
+               "{&quot;store&quot;:false}"
     end
 
     test "save_model_profile clears editing state after save", %{conn: conn} do
