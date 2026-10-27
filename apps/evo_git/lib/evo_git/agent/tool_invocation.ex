@@ -91,11 +91,18 @@ defmodule EvoGit.Agent.ToolInvocation do
   end
 
   @doc """
-  Renders the standard tool-result string for unusable arguments.
+  Renders the standard tool-result string for unusable arguments:
+  `"Error: invalid arguments: <reason>"`.
+
+  TOTAL: the reason is any term (`arguments/1` produces binaries, but an
+  RPC-decoded or third-party caller may hand over a struct or an atom), rendered
+  through `EvoGit.Agent.Tools.Failure.format_reason/1` — a binary stays
+  byte-identical, an exception renders its message, everything else its
+  `inspect/1`. It never raises on a non-binary reason.
   """
-  @spec invalid_arguments_result(String.t()) :: String.t()
-  def invalid_arguments_result(reason) when is_binary(reason) do
-    "Error: invalid arguments: #{reason}"
+  @spec invalid_arguments_result(term()) :: String.t()
+  def invalid_arguments_result(reason) do
+    "Error: invalid arguments: " <> EvoGit.Agent.Tools.Failure.format_reason(reason)
   end
 
   @doc """

@@ -66,7 +66,7 @@ defmodule EvoGit.Agent.Tools.SkillDisable do
             "Use skill_where to find where it is enabled."
 
         {:error, reason} ->
-          Failure.error("disabling skill: #{reason}")
+          Failure.error("disabling skill: #{Failure.format_reason(reason)}")
       end
     else
       {:error, message} -> Failure.error(message)

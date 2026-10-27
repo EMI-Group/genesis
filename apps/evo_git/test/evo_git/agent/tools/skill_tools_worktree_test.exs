@@ -367,6 +367,103 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
     end
   end
 
+  # A NON-STRING failure reason — here the `%YamlElixir.ParsingError{}` struct the
+  # skills layer returns for unparseable frontmatter — must never crash a tool
+  # call. Every skill tool renders its reason through
+  # `EvoGit.Agent.Tools.Failure.format_reason/1` (an exception → its
+  # `Exception.message/1`), so the tool still answers with a plain `Error: ...`
+  # string and mutates nothing.
+  describe "non-string failure reasons" do
+    test "skill_edit with invalid YAML frontmatter returns a readable error, no write and no commit",
+         %{repo_root: repo_root, repo_path: repo_path} do
+      SkillAdd.execute(
+        %{"content" => skill_content(@skill_name, "Original description")},
+        repo_path,
+        repo_root
+      )
+
+      skill_file = Path.join(repo_path, ".agents/skills/#{@skill_name}.md")
+      original_content = File.read!(skill_file)
+      before_head = head_sha(repo_path)
+      before_status = git!(repo_path, ["status", "--porcelain", "--untracked-files=all"])
+
+      result =
+        SkillEdit.execute(
+          %{"name" => @skill_name, "content" => invalid_yaml_skill_content(@skill_name)},
+          repo_path,
+          repo_root
+        )
+
+      # A plain string, never a raise — and a HUMAN-READABLE reason (the
+      # parser's own message locally; the point is that it is prose, never the
+      # raw `%YamlElixir.ParsingError{}` struct).
+      assert is_binary(result)
+      assert result =~ "Error:"
+      assert result =~ "editing skill:"
+      assert result =~ "Block mapping value not allowed here" or result =~ "YAML"
+      refute result =~ "%YamlElixir.ParsingError"
+
+      # Nothing was written and nothing was committed.
+      assert File.read!(skill_file) == original_content
+      assert head_sha(repo_path) == before_head
+      assert git!(repo_path, ["status", "--porcelain", "--untracked-files=all"]) == before_status
+    end
+
+    test "skill_add with invalid YAML frontmatter returns a readable error, writes no file and commits nothing",
+         %{repo_root: repo_root, repo_path: repo_path} do
+      before_head = head_sha(repo_path)
+
+      result =
+        SkillAdd.execute(
+          %{"content" => invalid_yaml_skill_content(@skill_name)},
+          repo_path,
+          repo_root
+        )
+
+      assert is_binary(result)
+      assert result =~ "Error:"
+      assert result =~ "creating skill:"
+      assert result =~ "Block mapping value not allowed here" or result =~ "YAML"
+      refute result =~ "%YamlElixir.ParsingError"
+
+      refute File.exists?(Path.join(repo_path, ".agents/skills/#{@skill_name}.md"))
+      refute File.exists?(Path.join(repo_path, ".agents"))
+      assert head_sha(repo_path) == before_head
+      assert git!(repo_path, ["status", "--porcelain", "--untracked-files=all"]) == ""
+    end
+
+    test "a valid edit still succeeds and a STRING reason stays verbatim prose",
+         %{repo_root: repo_root, repo_path: repo_path} do
+      SkillAdd.execute(
+        %{"content" => skill_content(@skill_name, "Original description")},
+        repo_path,
+        repo_root
+      )
+
+      skill_file = Path.join(repo_path, ".agents/skills/#{@skill_name}.md")
+
+      edited =
+        SkillEdit.execute(
+          %{"name" => @skill_name, "content" => skill_content(@skill_name, "Edited description")},
+          repo_path,
+          repo_root
+        )
+
+      assert edited =~ "Skill edited successfully"
+      assert edited =~ "Committed:"
+      assert File.read!(skill_file) =~ "Edited description"
+
+      # A binary reason is NOT inspected/quoted — exact rendering preserved.
+      assert SkillEdit.execute(
+               %{"name" => @skill_name, "content" => skill_content("other-name")},
+               repo_path,
+               repo_root
+             ) ==
+               "Error: editing skill: Skill name mismatch: content declares 'other-name' " <>
+                 "but editing '#{@skill_name}'. The name in frontmatter must match."
+    end
+  end
+
   describe "commit argument validation" do
     test "a non-boolean commit is rejected before any write or commit", %{
       repo_root: repo_root,
@@ -444,6 +541,21 @@ defmodule EvoGit.Agent.Tools.SkillToolsWorktreeTest do
     ---
     name: #{name}
     description: #{description}
+    ---
+
+    Body.
+    """
+  end
+
+  # Frontmatter yamerl genuinely REJECTS: `description: This is: invalid` is a
+  # block mapping value in a block mapping value position, so the skills layer
+  # returns `{:error, %YamlElixir.ParsingError{… "Block mapping value not
+  # allowed here" …}}` — the non-string reason these tests exercise.
+  defp invalid_yaml_skill_content(name) do
+    """
+    ---
+    name: #{name}
+    description: This is: invalid
     ---
 
     Body.

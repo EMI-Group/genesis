@@ -20,9 +20,14 @@ defmodule EvoGit.Agent.Tools.Failure do
   blank line (`notice/1`), and guidance accompanying a failure sits after the
   error line, also blank-line separated (`error/2`).
 
-  Every function is TOTAL and never raises: binary input is transformed, any
-  other input is routed through `to_string/1` (a plain clause, deliberately no
-  `try/rescue`).
+  Every function is TOTAL and never raises: binary input goes straight through
+  the text transformation, while any other input is FIRST rendered to a string
+  by `format_reason/1` — binaries verbatim, a real exception (any struct
+  implementing the `Exception` behaviour) via `Exception.message/1`, everything
+  else (tuples, keywords, atoms, numbers, plain maps, non-exception structs) via
+  `inspect/1` — and then transformed the same way. A struct reason such as a
+  `%YamlElixir.ParsingError{}` therefore can never raise out of this module
+  (deliberately no `try/rescue`).
   """
 
   @error_prefix "Error: "
@@ -31,6 +36,28 @@ defmodule EvoGit.Agent.Tools.Failure do
   # Leading markers this helper strips. The `[NOTICE]` / `[WARNING]` forms are
   # matched with or without a trailing space (the space is trimmed after).
   @markers ["⚠️", "💡", "[NOTICE]", "[WARNING]"]
+
+  @doc """
+  Renders an arbitrary REASON term as display text — the total formatter every
+  error path shares.
+
+    * a binary passes through VERBATIM (already-human prose is never quoted);
+    * an exception struct (`is_exception/1`) renders its
+      `Exception.message/1`, so e.g. a `%YamlElixir.ParsingError{}` reason reads
+      as the parser's own message instead of crashing on `String.Chars`;
+    * everything else — tuples, keywords, atoms, numbers, plain maps, a
+      non-exception struct — goes through `inspect/1`.
+
+  TOTAL: never raises, deliberately no `try/rescue`.
+  """
+  @spec format_reason(term()) :: String.t()
+  def format_reason(reason) when is_binary(reason), do: reason
+
+  def format_reason(%_struct{} = reason) do
+    if is_exception(reason), do: Exception.message(reason), else: inspect(reason)
+  end
+
+  def format_reason(reason), do: inspect(reason)
 
   @doc """
   Renders a failure message: `"Error: <message>"`.
@@ -61,7 +88,7 @@ defmodule EvoGit.Agent.Tools.Failure do
     end
   end
 
-  def error(message), do: error(to_string(message))
+  def error(message), do: error(format_reason(message))
 
   @doc """
   Renders a failure message plus a blank-line-separated trailing guidance block:
@@ -86,7 +113,7 @@ defmodule EvoGit.Agent.Tools.Failure do
     end
   end
 
-  def notice(guidance), do: notice(to_string(guidance))
+  def notice(guidance), do: notice(format_reason(guidance))
 
   # Strips leading markers, repeatedly (an input may carry several, in any
   # order) together with the whitespace/newlines they were padded with. Only

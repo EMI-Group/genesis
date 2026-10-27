@@ -138,6 +138,21 @@ defmodule EvoGit.Agent.ToolInvocationTest do
     test "renders the standard tool-result string" do
       assert ToolInvocation.invalid_arguments_result("boom") == "Error: invalid arguments: boom"
     end
+
+    # The reason is a TERM, not necessarily a binary: an exception struct
+    # renders its message (never `Protocol.UndefinedError` from the
+    # interpolation), any other term its `inspect/1`.
+    test "renders an exception struct reason via its message instead of raising" do
+      assert ToolInvocation.invalid_arguments_result(%RuntimeError{message: "boom"}) ==
+               "Error: invalid arguments: boom"
+    end
+
+    test "renders a non-exception term reason via inspect/1 instead of raising" do
+      assert ToolInvocation.invalid_arguments_result(:oops) == "Error: invalid arguments: :oops"
+
+      assert ToolInvocation.invalid_arguments_result({:error, :oops}) ==
+               "Error: invalid arguments: {:error, :oops}"
+    end
   end
 
   # ---------------------------------------------------------------------------

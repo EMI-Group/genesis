@@ -72,7 +72,7 @@ defmodule EvoGit.Agent.Tools.SkillRemove do
           end
 
         {:error, reason} ->
-          Failure.error("removing skill: #{reason}")
+          Failure.error("removing skill: #{Failure.format_reason(reason)}")
       end
     else
       {:error, message} -> Failure.error(message)

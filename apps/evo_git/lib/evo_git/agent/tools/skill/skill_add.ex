@@ -62,7 +62,7 @@ defmodule EvoGit.Agent.Tools.SkillAdd do
           Shared.maybe_commit_result(result, commit, repo_path, repo_root, files, message)
 
         {:error, reason} ->
-          Failure.error("creating skill: #{reason}")
+          Failure.error("creating skill: #{Failure.format_reason(reason)}")
       end
     else
       {:error, message} -> Failure.error(message)

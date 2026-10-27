@@ -62,7 +62,7 @@ defmodule EvoGit.Agent.Tools.SkillEdit do
           )
 
         {:error, reason} ->
-          Failure.error("editing skill: #{reason}")
+          Failure.error("editing skill: #{Failure.format_reason(reason)}")
       end
     else
       {:error, message} -> Failure.error(message)
