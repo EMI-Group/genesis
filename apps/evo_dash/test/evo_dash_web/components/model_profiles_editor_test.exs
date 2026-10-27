@@ -389,7 +389,134 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
     end
   end
 
+  describe "model profile edit form — advanced disclosure & reasoning effort" do
+    test "reasoning_effort renders OUTSIDE the advanced disclosure" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      details = advanced_details(html)
+
+      assert length(find(html, ~s(select[name="reasoning_effort"]))) == 1
+      assert Floki.find(details, ~s(select[name="reasoning_effort"])) == []
+    end
+
+    test "the advanced disclosure is collapsed for a bare/new profile" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      details = advanced_details(html)
+
+      assert Floki.text(details) =~ "Advanced settings"
+      assert attribute(details, "open") == []
+    end
+
+    test "the advanced disclosure stays collapsed when only non-advanced fields are set" do
+      html =
+        render_edit_form(%{
+          id: "profile-1",
+          model: "deepseek:deepseek-v4-pro",
+          concurrency: 3
+        })
+
+      details = advanced_details(html)
+
+      assert Floki.text(details) =~ "Advanced settings"
+      assert attribute(details, "open") == []
+    end
+
+    test "the advanced disclosure opens for a saved advanced parameter" do
+      html =
+        render_edit_form(%{
+          id: "profile-1",
+          model: "deepseek:deepseek-v4-pro",
+          temperature: 0.7
+        })
+
+      details = advanced_details(html)
+
+      assert attribute(details, "open") == ["open"]
+      assert attr(Floki.find(details, ~s(input[name="temperature"])), 0, "value") == ["0.7"]
+    end
+
+    test "the advanced disclosure opens from a draft advanced value on a bare profile" do
+      html =
+        render_edit_form(
+          %{id: "profile-1", model: "deepseek:deepseek-v4-pro"},
+          draft: %{"top_k" => "40"}
+        )
+
+      details = advanced_details(html)
+
+      assert attribute(details, "open") == ["open"]
+      assert attr(Floki.find(details, ~s(input[name="top_k"])), 0, "value") == ["40"]
+    end
+
+    test "a numeric zero counts as a set advanced value" do
+      html =
+        render_edit_form(%{
+          id: "profile-1",
+          model: "deepseek:deepseek-v4-pro",
+          temperature: 0
+        })
+
+      details = advanced_details(html)
+
+      assert attribute(details, "open") == ["open"]
+      assert attr(Floki.find(details, ~s(input[name="temperature"])), 0, "value") == ["0"]
+    end
+
+    test "a draft that clears the only advanced value collapses the disclosure" do
+      html =
+        render_edit_form(
+          %{id: "profile-1", model: "deepseek:deepseek-v4-pro", temperature: 0.7},
+          draft: %{"temperature" => ""}
+        )
+
+      details = advanced_details(html)
+
+      assert attribute(details, "open") == []
+      assert attr(Floki.find(details, ~s(input[name="temperature"])), 0, "value") == [""]
+    end
+
+    test "every advanced input keeps its exact name and lives inside the disclosure" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      details = advanced_details(html)
+
+      selectors = [
+        ~s(input[name="temperature"]),
+        ~s(input[name="max_tokens"]),
+        ~s(input[name="top_p"]),
+        ~s(input[name="top_k"]),
+        ~s(input[name="frequency_penalty"]),
+        ~s(input[name="presence_penalty"]),
+        ~s(textarea[name="extra"]),
+        ~s(textarea[name="provider_options"])
+      ]
+
+      for selector <- selectors do
+        assert length(Floki.find(details, selector)) == 1,
+               "expected exactly one #{selector} inside the advanced disclosure"
+
+        assert length(find(html, selector)) == 1
+      end
+    end
+
+    test "generation parameters are in the disclosure while reasoning_effort is not" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      details = advanced_details(html)
+
+      assert length(Floki.find(details, ~s(input[name="temperature"]))) == 1
+      assert length(Floki.find(details, ~s(input[name="top_k"]))) == 1
+      assert Floki.find(details, ~s(select[name="reasoning_effort"])) == []
+      # The select exists on the page — outside the disclosure.
+      assert length(find(html, ~s(select[name="reasoning_effort"]))) == 1
+    end
+  end
+
   # --- helpers ---
+
+  # The parsed advanced-settings <details> element. Floki.find/2 accepts a
+  # parsed NODE as its first argument, so containment checks need no re-parse.
+  defp advanced_details(html) do
+    assert [details] = find(html, ~s(details[id="model-profile-advanced"]))
+    details
+  end
 
   # Renders the editor with a single profile in edit mode (editing_profile_id
   # must match the profile's id string for the edit form to render). An
