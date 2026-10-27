@@ -1,3 +1,57 @@
+# This helper module MUST stay defined ABOVE the async test module below.
+# `mix test` calls `ExUnit.async_run()` and only THEN requires/loads the test
+# files, so the test module is registered with the ExUnit runner as soon as it
+# compiles and its tests can start while later modules in the same file are
+# still unloaded — which makes `Supervisor.child_spec/2` raise "does not
+# implement child_spec/1" for a helper defined after it.
+defmodule EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore do
+  @moduledoc """
+  A store stand-in whose ONLY slow call is the archive write, used to prove the
+  archive producer write does not hold the registry.
+
+  The registry boot reads (`select_running_lease_info`) and the tiny read
+  projections answer an empty list. `put_task_archive` notifies the test that it
+  is in flight and then HOLDS the reply until the test calls
+  `release_archive_write/1` — an event-driven handshake, so "still in flight"
+  is a state the test controls instead of a wall-clock race. Meanwhile this
+  GenServer keeps answering every OTHER call, exactly like the real store's
+  write offload (which answers its caller only after the commit).
+  """
+  use GenServer
+
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: opts[:name])
+
+  @doc """
+  Replies `:ok` to the archive write currently held open by this stand-in.
+
+  Returns `{:error, :no_pending_archive_write}` when nothing is held, so a test
+  cannot silently release nothing and pass.
+  """
+  def release_archive_write(store), do: GenServer.call(store, :release_archive_write, 5_000)
+
+  @impl true
+  def init(opts), do: {:ok, opts |> Map.new() |> Map.put(:pending_from, nil)}
+
+  @impl true
+  def handle_call({:put_task_archive, _entry}, from, state) do
+    send(state.notify, {:archive_write_started, state.name})
+
+    # Reply LATER (on release) — never a timer.
+    {:noreply, %{state | pending_from: from}}
+  end
+
+  def handle_call(:release_archive_write, _from, %{pending_from: nil} = state) do
+    {:reply, {:error, :no_pending_archive_write}, state}
+  end
+
+  def handle_call(:release_archive_write, _from, state) do
+    GenServer.reply(state.pending_from, :ok)
+    {:reply, :ok, %{state | pending_from: nil}}
+  end
+
+  def handle_call(_request, _from, state), do: {:reply, [], state}
+end
+
 defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
   @moduledoc """
   `EvoGit.TaskRegistry`'s per-agent archive API — the STREAMING write path
@@ -394,52 +448,4 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
     refute Process.alive?(store_pid)
     assert Process.whereis(store) == nil
   end
-end
-
-defmodule EvoGit.TaskRegistry.ArchivePersistenceTest.SlowArchiveStore do
-  @moduledoc """
-  A store stand-in whose ONLY slow call is the archive write, used to prove the
-  archive producer write does not hold the registry.
-
-  The registry boot reads (`select_running_lease_info`) and the tiny read
-  projections answer an empty list. `put_task_archive` notifies the test that it
-  is in flight and then HOLDS the reply until the test calls
-  `release_archive_write/1` — an event-driven handshake, so "still in flight"
-  is a state the test controls instead of a wall-clock race. Meanwhile this
-  GenServer keeps answering every OTHER call, exactly like the real store's
-  write offload (which answers its caller only after the commit).
-  """
-  use GenServer
-
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: opts[:name])
-
-  @doc """
-  Replies `:ok` to the archive write currently held open by this stand-in.
-
-  Returns `{:error, :no_pending_archive_write}` when nothing is held, so a test
-  cannot silently release nothing and pass.
-  """
-  def release_archive_write(store), do: GenServer.call(store, :release_archive_write, 5_000)
-
-  @impl true
-  def init(opts), do: {:ok, opts |> Map.new() |> Map.put(:pending_from, nil)}
-
-  @impl true
-  def handle_call({:put_task_archive, _entry}, from, state) do
-    send(state.notify, {:archive_write_started, state.name})
-
-    # Reply LATER (on release) — never a timer.
-    {:noreply, %{state | pending_from: from}}
-  end
-
-  def handle_call(:release_archive_write, _from, %{pending_from: nil} = state) do
-    {:reply, {:error, :no_pending_archive_write}, state}
-  end
-
-  def handle_call(:release_archive_write, _from, state) do
-    GenServer.reply(state.pending_from, :ok)
-    {:reply, :ok, %{state | pending_from: nil}}
-  end
-
-  def handle_call(_request, _from, state), do: {:reply, [], state}
 end
