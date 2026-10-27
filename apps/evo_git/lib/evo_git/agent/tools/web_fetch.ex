@@ -276,8 +276,10 @@ defmodule EvoGit.Agent.Tools.WebFetch do
             "#{url} returned HTTP #{response.status}#{reason_phrase(response.status)}"
           )
 
-        {:error, {:timeout, budget_ms}} ->
-          Failure.error("the request to #{url} timed out after #{budget_ms} ms")
+        {:error, {:timeout, _budget_ms}} ->
+          # Report the CONFIGURED whole-request budget, not the measured per-hop
+          # remainder, so the message is deterministic and matches hop_budget/3.
+          Failure.error("the request to #{url} timed out after #{timeout} ms")
 
         {:error, {:transport, detail}} ->
           Failure.error("the request to #{url} failed: #{detail}")
