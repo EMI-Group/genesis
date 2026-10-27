@@ -97,11 +97,22 @@ defmodule EvoGit.Agent.Tools.FailureTest do
   describe "error/1 — binary behaviour is unchanged" do
     test "prefixes a plain message" do
       assert Failure.error("boom") == "Error: boom"
+
+      # A plain message never gains an emoji / marker prefix.
+      out = Failure.error("disk full")
+      refute out =~ "⚠️"
+      refute out =~ "💡"
+      refute out =~ "[NOTICE]"
+      refute out =~ "[WARNING]"
     end
 
     test "is idempotent for an already-prefixed message" do
       assert Failure.error("Error: boom") == "Error: boom"
       assert Failure.error(Failure.error("boom")) == "Error: boom"
+      # Idempotency beats whitespace tidying, and nothing AFTER the prefix —
+      # including a marker body — is touched.
+      assert Failure.error("Error:  boom") == "Error:  boom"
+      assert Failure.error("Error: ⚠️ failed") == "Error: ⚠️ failed"
     end
 
     test "canonicalizes an unspaced Error: prefix" do
@@ -114,6 +125,12 @@ defmodule EvoGit.Agent.Tools.FailureTest do
       assert Failure.error("💡 [WARNING] boom") == "Error: boom"
     end
 
+    test "strips several stacked markers in any order, including padded input" do
+      assert Failure.error("⚠️ [NOTICE] failed") == "Error: failed"
+      assert Failure.error("[WARNING]💡 failed") == "Error: failed"
+      assert Failure.error("  \n ⚠️ failed") == "Error: failed"
+    end
+
     test "falls back to a default text for an empty message" do
       assert Failure.error("") == "Error: the tool call failed."
       assert Failure.error("   \n\t") == "Error: the tool call failed."
@@ -122,6 +139,26 @@ defmodule EvoGit.Agent.Tools.FailureTest do
     test "error/2 appends the guidance block" do
       assert Failure.error("boom", "try again") == "Error: boom\n\ntry again"
       assert Failure.error("boom", "") == "Error: boom"
+    end
+
+    test "error/2 keeps exactly one blank line between the error line and the guidance" do
+      out = Failure.error("file not found", "Use list_dir to find the file first.")
+
+      assert out == "Error: file not found\n\nUse list_dir to find the file first."
+      assert String.starts_with?(out, "Error: ")
+      assert [_error_line, guidance] = String.split(out, "\n\n")
+      assert guidance == "Use list_dir to find the file first."
+    end
+
+    test "error/2 strips a marker from the guidance block" do
+      assert Failure.error("boom", "💡 Re-read the file, then retry.") ==
+               "Error: boom\n\nRe-read the file, then retry."
+
+      out = Failure.error("boom", "[WARNING] something")
+      refute out =~ "[WARNING]"
+      refute out =~ "⚠️"
+      refute out =~ "💡"
+      refute out =~ "[NOTICE]"
     end
   end
 
@@ -132,6 +169,13 @@ defmodule EvoGit.Agent.Tools.FailureTest do
 
     test "strips leading markers" do
       assert Failure.notice("⚠️ try again") == "\n\ntry again"
+      assert Failure.notice("💡 Commit first.") == "\n\nCommit first."
+      assert Failure.notice("[NOTICE] Commit first.") == "\n\nCommit first."
+      assert Failure.notice("[WARNING] Commit first.") == "\n\nCommit first."
+    end
+
+    test "is not an error shape" do
+      refute String.starts_with?(Failure.notice("Commit first."), "Error: ")
     end
 
     test "returns an empty string for empty guidance" do

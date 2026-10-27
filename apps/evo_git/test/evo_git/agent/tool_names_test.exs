@@ -1,15 +1,14 @@
 defmodule EvoGit.Agent.ToolNamesTest do
   @moduledoc """
-  `async: true` — `EvoGit.Agent.ToolNames` and `EvoGit.Agent.Tools.Failure` are
-  pure (no global state). The guard-ordering regression uses only the
-  PROCESS-local `:repo_less` process-dictionary flag (cleaned up afterwards), so
-  it does not leak into concurrently running modules.
+  `async: true` — `EvoGit.Agent.ToolNames` is pure (no global state). The
+  guard-ordering regression uses only the PROCESS-local `:repo_less`
+  process-dictionary flag (cleaned up afterwards), so it does not leak into
+  concurrently running modules.
   """
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ToolNames
   alias EvoGit.Agent.Tools
-  alias EvoGit.Agent.Tools.Failure
 
   # The platform shell tool name (POSIX `run_bash` / Windows `run_powershell`).
   @shell_tool_name if(EvoGit.Platform.os() == :windows, do: "run_powershell", else: "run_bash")
@@ -188,118 +187,6 @@ defmodule EvoGit.Agent.ToolNamesTest do
     test "non-list whitelist / non-binary name are total (no raise)" do
       refute ToolNames.matches_any?("read", nil)
       refute ToolNames.matches_any?(nil, ["read"])
-    end
-  end
-
-  describe "Failure.error/1" do
-    test "prefixes a plain message with the literal 'Error: '" do
-      assert Failure.error("file not found") == "Error: file not found"
-    end
-
-    test "starts with the literal 'Error: '" do
-      assert String.starts_with?(Failure.error("boom"), "Error: ")
-    end
-
-    test "is idempotent" do
-      once = Failure.error("boom")
-      assert Failure.error(once) == once
-      assert Failure.error(Failure.error(Failure.error("boom"))) == once
-    end
-
-    test "canonicalises the unspaced 'Error:' prefix" do
-      assert Failure.error("Error:boom") == "Error: boom"
-      # A message that ALREADY starts with the literal "Error: " is returned
-      # unchanged (idempotency beats whitespace tidying).
-      assert Failure.error("Error:  boom") == "Error:  boom"
-    end
-
-    test "strips a leading emoji/marker and still prefixes" do
-      assert Failure.error("⚠️ failed to read file") == "Error: failed to read file"
-      assert Failure.error("💡 try again") == "Error: try again"
-      assert Failure.error("[NOTICE] failed") == "Error: failed"
-      assert Failure.error("[WARNING] failed") == "Error: failed"
-      assert Failure.error("[NOTICE]failed") == "Error: failed"
-    end
-
-    test "strips several stacked markers in any order" do
-      assert Failure.error("⚠️ [NOTICE] failed") == "Error: failed"
-      assert Failure.error("[WARNING]💡 failed") == "Error: failed"
-      assert Failure.error("  \n ⚠️ failed") == "Error: failed"
-    end
-
-    test "the 'Error: ' prefix wins — nothing after it is touched" do
-      assert Failure.error("Error: ⚠️ failed") == "Error: ⚠️ failed"
-    end
-
-    test "an empty message still leads with the prefix" do
-      assert Failure.error("") == "Error: the tool call failed."
-      assert Failure.error("   ") == "Error: the tool call failed."
-    end
-
-    test "non-binary input is routed through to_string/1" do
-      assert Failure.error(:boom) == "Error: boom"
-      assert Failure.error(nil) == "Error: the tool call failed."
-    end
-
-    test "never emits a marker on a plain message" do
-      out = Failure.error("disk full")
-      refute out =~ "⚠️"
-      refute out =~ "💡"
-      refute out =~ "[NOTICE]"
-      refute out =~ "[WARNING]"
-    end
-  end
-
-  describe "Failure.error/2" do
-    test "error line + blank line + trailing guidance block" do
-      out = Failure.error("file not found", "Use list_dir to find the file first.")
-      assert out == "Error: file not found\n\nUse list_dir to find the file first."
-      assert String.starts_with?(out, "Error: ")
-      assert [_error_line, guidance] = String.split(out, "\n\n")
-      assert guidance == "Use list_dir to find the file first."
-    end
-
-    test "the guidance block is marker-stripped" do
-      out = Failure.error("boom", "💡 Re-read the file, then retry.")
-      assert out == "Error: boom\n\nRe-read the file, then retry."
-      refute out =~ "💡"
-    end
-
-    test "blank guidance renders just the error line" do
-      assert Failure.error("boom", "") == "Error: boom"
-      assert Failure.error("boom", "   ") == "Error: boom"
-      assert Failure.error("boom", nil) == "Error: boom"
-    end
-
-    test "no marker leaks into the guidance block" do
-      out = Failure.error("boom", "[WARNING] something")
-      refute out =~ "[WARNING]"
-      refute out =~ "⚠️"
-      refute out =~ "💡"
-      refute out =~ "[NOTICE]"
-    end
-  end
-
-  describe "Failure.notice/1" do
-    test "prefixes a blank line before the guidance block" do
-      assert Failure.notice("Commit before delegating.") == "\n\nCommit before delegating."
-    end
-
-    test "strips a leading marker" do
-      assert Failure.notice("⚠️ Commit first.") == "\n\nCommit first."
-      assert Failure.notice("💡 Commit first.") == "\n\nCommit first."
-      assert Failure.notice("[NOTICE] Commit first.") == "\n\nCommit first."
-      assert Failure.notice("[WARNING] Commit first.") == "\n\nCommit first."
-    end
-
-    test "empty guidance yields an empty string (safe to concatenate)" do
-      assert Failure.notice("") == ""
-      assert Failure.notice("   ") == ""
-      assert Failure.notice(nil) == ""
-    end
-
-    test "is not an error shape" do
-      refute String.starts_with?(Failure.notice("Commit first."), "Error: ")
     end
   end
 
