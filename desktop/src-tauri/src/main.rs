@@ -991,7 +991,7 @@ fn run_gui() {
             //     retry briefly (bounded ~2s, 100ms steps) until the loading
             //     page has been accepted.
             let mut loading_attempts = 0u32;
-            while !manager.show_loading_page(app) && loading_attempts < 20 {
+            while !manager.show_loading_page(app.handle()) && loading_attempts < 20 {
                 loading_attempts += 1;
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
