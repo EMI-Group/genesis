@@ -425,6 +425,20 @@ defmodule EvoGit.Agent.Tools.Lsp do
     end
   end
 
+  @doc false
+  # The ONE renderer for a log-file creation failure (test-pinned so the
+  # non-binary paths are provable without making `stderr_path/0` mockable).
+  # `File.write/2` yields POSIX atoms (`:eacces`, `:enospc`, …), rendered bare so
+  # the message stays byte-identical, while any OTHER reason goes through the
+  # shared TOTAL formatter (`Failure.format_reason/1`) instead of raising
+  # `Protocol.UndefinedError` out of string interpolation.
+  def format_log_file_error(reason) do
+    "could not create the language server log file: " <> log_file_reason(reason)
+  end
+
+  defp log_file_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp log_file_reason(reason), do: Failure.format_reason(reason)
+
   defp stderr_path do
     dir = scratch_dir()
     File.mkdir_p(dir)
@@ -437,7 +451,7 @@ defmodule EvoGit.Agent.Tools.Lsp do
 
     case File.write(path, "") do
       :ok -> {:ok, path}
-      {:error, reason} -> {:error, "could not create the language server log file: #{reason}"}
+      {:error, reason} -> {:error, format_log_file_error(reason)}
     end
   end
 

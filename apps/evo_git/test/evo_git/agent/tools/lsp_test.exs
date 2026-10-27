@@ -380,4 +380,41 @@ defmodule EvoGit.Agent.Tools.LspTest do
       assert output =~ "no Content-Length header"
     end
   end
+
+  describe "log-file error rendering (totality)" do
+    # `stderr_path/0` is private and `File.write/2` only ever yields POSIX atoms,
+    # so the non-binary shapes are pinned on the renderer directly: a raw
+    # interpolation would raise `Protocol.UndefinedError`.
+    test "a POSIX atom keeps the historical bare rendering" do
+      assert Lsp.format_log_file_error(:eacces) ==
+               "could not create the language server log file: eacces"
+
+      assert Lsp.format_log_file_error(:enospc) ==
+               "could not create the language server log file: enospc"
+    end
+
+    test "a binary reason passes through verbatim" do
+      assert Lsp.format_log_file_error("disk went away") ==
+               "could not create the language server log file: disk went away"
+    end
+
+    test "a tuple reason is rendered, not raised" do
+      reason = {:tls_alert, {:handshake_failure, ~c"x"}}
+
+      assert Lsp.format_log_file_error(reason) ==
+               "could not create the language server log file: #{inspect(reason)}"
+    end
+
+    test "a map reason is rendered, not raised" do
+      reason = %{code: 42, detail: "bad record"}
+
+      assert Lsp.format_log_file_error(reason) ==
+               "could not create the language server log file: #{inspect(reason)}"
+    end
+
+    test "an exception reason renders its message" do
+      assert Lsp.format_log_file_error(%RuntimeError{message: "boom"}) ==
+               "could not create the language server log file: boom"
+    end
+  end
 end

@@ -402,4 +402,40 @@ defmodule EvoGit.Agent.Tools.WebFetchTest do
       assert fetch(%{"url" => "http://[::ffff:127.0.0.1]/"}) =~ "resolves to the non-public"
     end
   end
+
+  describe "transport reason rendering (totality)" do
+    # The in-test server can only produce ATOM reasons, so the non-binary shapes
+    # (a TLS alert tuple is the real-world one) are pinned on the renderer
+    # directly: interpolation alone would raise `Protocol.UndefinedError`.
+    test "an atom reason keeps the historical bare rendering" do
+      assert WebFetch.transport_error(:econnrefused) ==
+               {:transport, "transport error (econnrefused)"}
+
+      assert WebFetch.transport_error(:closed) == {:transport, "transport error (closed)"}
+    end
+
+    test "a binary reason passes through verbatim" do
+      assert WebFetch.transport_error("connection reset") ==
+               {:transport, "transport error (connection reset)"}
+    end
+
+    test "a tuple reason (TLS alert) is rendered, not raised" do
+      reason = {:tls_alert, {:handshake_failure, ~c"x"}}
+
+      assert WebFetch.transport_error(reason) ==
+               {:transport, "transport error (#{inspect(reason)})"}
+    end
+
+    test "a map reason is rendered, not raised" do
+      reason = %{code: 42, detail: "bad record"}
+
+      assert WebFetch.transport_error(reason) ==
+               {:transport, "transport error (#{inspect(reason)})"}
+    end
+
+    test "an exception reason renders its message" do
+      assert WebFetch.transport_error(%RuntimeError{message: "boom"}) ==
+               {:transport, "transport error (boom)"}
+    end
+  end
 end

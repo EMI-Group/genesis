@@ -539,10 +539,10 @@ defmodule EvoGit.Agent.Tools.WebFetch do
         {:error, {:timeout, budget}}
 
       {:error, %Req.TransportError{reason: reason}} ->
-        {:error, {:transport, "transport error (#{reason})"}}
+        {:error, transport_error(reason)}
 
       {:error, %Mint.TransportError{reason: reason}} ->
-        {:error, {:transport, "transport error (#{reason})"}}
+        {:error, transport_error(reason)}
 
       {:error, %{__exception__: true} = error} ->
         {:error, {:transport, Exception.message(error)}}
@@ -551,6 +551,21 @@ defmodule EvoGit.Agent.Tools.WebFetch do
         {:error, {:transport, inspect(other)}}
     end
   end
+
+  @doc false
+  # The ONE renderer for a transport failure reason, producing the
+  # `{:transport, message}` payload above (test-pinned so the non-binary paths are
+  # provable: the in-test TCP server can only yield atom reasons).
+  # Mint/Req normally hand back an atom (`:econnrefused`, `:nxdomain`, `:closed`,
+  # …), rendered bare so the message stays byte-identical, while any OTHER reason
+  # — a TLS failure surfaces as a tuple such as
+  # `{:tls_alert, {:handshake_failure, _}}` — goes through the shared TOTAL
+  # formatter (`Failure.format_reason/1`) instead of raising
+  # `Protocol.UndefinedError` out of string interpolation.
+  def transport_error(reason), do: {:transport, "transport error (#{transport_reason(reason)})"}
+
+  defp transport_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp transport_reason(reason), do: Failure.format_reason(reason)
 
   # Streaming collector: reads only what the cap allows and HALTS the socket at
   # the cap. Bodies we are never going to show (non-2xx, binary content types)
