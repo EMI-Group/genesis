@@ -1273,11 +1273,13 @@ defmodule EvoGit.BackgroundJobsTest do
   # final job record. `max_bytes` is the per-call cap: the EXACT cap contract is
   # asserted separately (one 10-byte read), so the drain itself only has to prove
   # nothing is lost — a 10-byte chunk there would mean ~900 registry calls.
+  defp drain(id, acc, max_reads, max_bytes \\ 10)
+
   defp drain(id, acc, 0, _max_bytes) do
     flunk("draining #{id} exhausted the read budget; accumulated #{length(acc)} chunks")
   end
 
-  defp drain(id, acc, max_reads, max_bytes \\ 10) do
+  defp drain(id, acc, max_reads, max_bytes) do
     case BackgroundJobs.read(id, max_bytes: max_bytes) do
       {:ok, %{text: text, job: job}} ->
         cond do
