@@ -360,4 +360,55 @@ defmodule EvoGit.Agent.Tools.MakeDirTest do
       assert result =~ "relative to the repository root"
     end
   end
+
+  describe "format_failure/1 - total reason rendering" do
+    test "renders a binary reason byte-identically in the listing shape" do
+      assert MakeDir.format_failure({:error, "missing/nested", "no such file or directory"}) ==
+               "  - missing/nested: no such file or directory"
+    end
+
+    test "renders a map reason instead of raising" do
+      assert MakeDir.format_failure({:error, "lib", %{code: :eacces}}) ==
+               "  - lib: %{code: :eacces}"
+    end
+
+    test "renders a tuple reason instead of raising" do
+      assert MakeDir.format_failure({:error, "lib", {:enoent, "lib/x"}}) ==
+               "  - lib: {:enoent, \"lib/x\"}"
+    end
+
+    test "renders an atom reason instead of raising" do
+      assert MakeDir.format_failure({:error, "lib", :enoent}) == "  - lib: :enoent"
+    end
+
+    test "renders an exception struct via Exception.message/1 instead of raising" do
+      assert MakeDir.format_failure({:error, "lib", %RuntimeError{message: "boom"}}) ==
+               "  - lib: boom"
+    end
+  end
+
+  describe "format_commit_failure/1 - total reason rendering" do
+    test "renders a binary reason byte-identically as the commit notice" do
+      assert MakeDir.format_commit_failure("disk full") == "\n\nFailed to commit: disk full"
+    end
+
+    test "renders a map reason instead of raising" do
+      assert MakeDir.format_commit_failure(%{code: :eacces}) ==
+               "\n\nFailed to commit: %{code: :eacces}"
+    end
+
+    test "renders a tuple reason instead of raising" do
+      assert MakeDir.format_commit_failure({:error, :boom}) ==
+               "\n\nFailed to commit: {:error, :boom}"
+    end
+
+    test "renders an atom reason instead of raising" do
+      assert MakeDir.format_commit_failure(:enoent) == "\n\nFailed to commit: :enoent"
+    end
+
+    test "renders an exception struct via Exception.message/1 instead of raising" do
+      assert MakeDir.format_commit_failure(%RuntimeError{message: "boom"}) ==
+               "\n\nFailed to commit: boom"
+    end
+  end
 end

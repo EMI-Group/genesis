@@ -56,6 +56,20 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     end
   end
 
+  @doc false
+  # Extracted so tests can pin the TOTAL rendering of a per-file failure: a
+  # non-binary reason must render as text instead of raising.
+  def format_failure({:error, path, reason}) do
+    "  - #{path}: #{Failure.format_reason(reason)}"
+  end
+
+  @doc false
+  # Extracted so tests can pin the TOTAL rendering of a commit-failure reason: a
+  # non-binary reason must render as text instead of raising.
+  def format_commit_failure(reason) do
+    Failure.notice("Failed to commit: #{Failure.format_reason(reason)}")
+  end
+
   defp do_create_files(paths, commit?, parents?, repo_path, repo_root, node_path) do
     results =
       Enum.map(paths, fn path ->
@@ -79,9 +93,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
     message =
       if failures != [] do
         error_details =
-          Enum.map(failures, fn
-            {:error, path, reason} -> "  - #{path}: #{reason}"
-          end)
+          Enum.map(failures, &format_failure/1)
           |> Enum.join("\n")
 
         base_message <> "\nErrors:\n" <> error_details
@@ -94,7 +106,7 @@ defmodule EvoGit.Agent.Tools.FileCreate do
       if commit? and successes != [] do
         case do_commit(repo_path, repo_root, paths) do
           {:ok, output} -> message <> "\n\nChanges committed.\n" <> output
-          {:error, reason} -> message <> Failure.notice("Failed to commit: #{reason}")
+          {:error, reason} -> message <> format_commit_failure(reason)
         end
       else
         message
