@@ -22,6 +22,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   attr(:profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
   attr(:profile_form_draft, :any, default: nil)
+  # User-authoritative state of the edit form's "Advanced settings" disclosure:
+  # nil = follow the auto rule (advanced_open?/3), true/false = the user's
+  # explicit choice (set by the "toggle_profile_advanced" event). Reset to nil
+  # whenever the edit session's identity changes.
+  attr(:profile_advanced_open, :any, default: nil)
 
   def model_profiles_editor(assigns) do
     ~H"""
@@ -66,7 +71,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <%= for {profile, index} <- Enum.with_index(@profiles) do %>
             <% id = profile_id_string(profile) %>
             <%= if @editing_profile_id == id do %>
-              <.model_profile_edit_form profile={profile} draft={@profile_form_draft} />
+              <.model_profile_edit_form
+                profile={profile}
+                draft={@profile_form_draft}
+                advanced_open={@profile_advanced_open}
+              />
             <% else %>
               <.model_profile_row profile={profile} index={index} total={total} id={id} />
             <% end %>
@@ -166,6 +175,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   attr(:profile, :map, required: true)
   attr(:draft, :any, default: nil)
+  attr(:advanced_open, :any, default: nil)
 
   defp model_profile_edit_form(assigns) do
     ~H"""
@@ -478,14 +488,19 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <%!-- Advanced settings: generation parameters + provider-specific JSON.
            A closed <details> keeps its inputs in the DOM (they are still
            submitted), so the draft/parse mechanism is unchanged — the
-           disclosure is purely presentational. Auto-opens when the profile or
-           the in-flight draft already carries an advanced value. --%>
+           disclosure is purely presentational. The open state is
+           USER-AUTHORITATIVE: the `advanced_open?/3` override wins when the
+           user clicked the summary (nil = follow the auto rule, which opens it
+           when the profile or the in-flight draft carries an advanced value). --%>
       <details
         id="model-profile-advanced"
         class="rounded-lg border border-base-300 bg-base-200/20"
-        open={advanced_open?(@draft, @profile, extra_val, provider_options_val)}
+        open={advanced_open?(@advanced_open, @draft, @profile)}
       >
-        <summary class="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs font-semibold text-base-content/80">
+        <summary
+          phx-click="toggle_profile_advanced"
+          class="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs font-semibold text-base-content/80"
+        >
           <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/70 shrink-0" />
           <%!-- zh_CN: Advanced settings → "高级设置" --%>{gettext("Advanced settings")}
           <span class="ml-auto font-normal text-base-content/60 text-right">
@@ -662,12 +677,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     """
   end
 
-  # Advanced-disclosure auto-open rule: the <details> renders `open` when the
-  # in-flight DRAFT or the saved PROFILE already carries ANY advanced value.
-  # The draft wins over the profile, exactly like draft_or_profile/3 (so a
-  # draft key present with "" counts as cleared). `extra_val` /
-  # `provider_options_val` are the template's already-computed JSON strings.
-  # `0` IS a set value — only nil/blank strings count as unset.
+  # The six generation params the auto rule inspects (draft key → profile key).
   @advanced_numeric_keys [
     {"temperature", :temperature},
     {"max_tokens", :max_tokens},
@@ -677,7 +687,25 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     {"presence_penalty", :presence_penalty}
   ]
 
-  defp advanced_open?(draft, profile, extra_val, provider_options_val) do
+  # The disclosure's EFFECTIVE open state, shared by the template and the
+  # "toggle_profile_advanced" event handler (both must agree on what "currently
+  # open" means). `override` is the `:profile_advanced_open` assign: a boolean
+  # is the user's explicit choice and wins; nil follows the auto rule below.
+  def advanced_open?(override, _draft, _profile) when is_boolean(override), do: override
+
+  def advanced_open?(_override, draft, profile) do
+    # Advanced-disclosure auto-open rule: the <details> renders `open` when the
+    # in-flight DRAFT or the saved PROFILE already carries ANY advanced value.
+    # The draft wins over the profile, exactly like draft_or_profile/3 (so a
+    # draft key present with "" counts as cleared). `0` IS a set value — only
+    # nil/blank strings count as unset.
+    {_provider, _model_id, _base_url, profile_extra} = profile_model_fields(profile)
+
+    extra_val = draft_or_profile(draft, "extra", profile_extra)
+
+    provider_options_val =
+      draft_or_profile(draft, "provider_options", profile_provider_options(profile))
+
     numeric_set? =
       Enum.any?(@advanced_numeric_keys, fn {draft_key, profile_key} ->
         not blank?(draft_or_profile(draft, draft_key, profile_param(profile, profile_key)))

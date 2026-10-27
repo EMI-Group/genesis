@@ -60,6 +60,9 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:model_profiles, :list, default: [])
   attr(:editing_profile_id, :any, default: nil)
   attr(:profile_form_draft, :any, default: nil)
+  # User-authoritative open state of the profile edit form's "Advanced settings"
+  # disclosure (nil = follow the auto rule). Threaded straight to the editor.
+  attr(:profile_advanced_open, :any, default: nil)
   # Pending accent-color selection for the :appearance category (set by the
   # `select_appearance_accent` event in SettingsLive; nil = no pending draft).
   # Threaded into the accent card's value only — see card_value/3.
@@ -423,6 +426,7 @@ defmodule EvoDashWeb.SettingsComponents do
               profiles={@model_profiles}
               editing_profile_id={@editing_profile_id}
               profile_form_draft={@profile_form_draft}
+              profile_advanced_open={@profile_advanced_open}
             />
 
             <%!-- LLM Connection Test --%>

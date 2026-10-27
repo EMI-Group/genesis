@@ -914,6 +914,152 @@ defmodule EvoDashWeb.SettingsLiveTest do
                "{&quot;store&quot;:false}"
     end
 
+    test "toggle_profile_advanced closes an auto-opened disclosure and keeps it closed while typing",
+         %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7"
+      })
+
+      # The saved `temperature` makes the auto rule open the disclosure.
+      html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      assert advanced_details_open?(html)
+      assert assigns(view).profile_advanced_open == nil
+
+      # The user closes it: the override now outranks the auto rule.
+      refute advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
+      assert assigns(view).profile_advanced_open == false
+
+      # Typing anywhere re-renders the form (the draft still carries the
+      # advanced `temperature`) — the disclosure must NOT re-open.
+      html =
+        render_hook(view, "model_profile_form_change", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "5",
+          "temperature" => "0.7"
+        })
+
+      refute advanced_details_open?(html)
+      assert assigns(view).profile_advanced_open == false
+
+      # Toggling again re-opens it (still user-authoritative).
+      assert advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
+      assert assigns(view).profile_advanced_open == true
+    end
+
+    test "toggle_profile_advanced opens a bare profile's disclosure and keeps it open while typing",
+         %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      # A new profile carries no advanced value, so the auto rule keeps the
+      # disclosure collapsed.
+      refute advanced_details_open?(render_hook(view, "add_model_profile", %{}))
+
+      assert advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
+      assert assigns(view).profile_advanced_open == true
+
+      # Typing into a NON-advanced field must not snap it shut.
+      html =
+        render_hook(view, "model_profile_form_change", %{
+          "profile_id" => "profile-1",
+          "profile_id_new" => "profile-1",
+          "provider" => "anthropic",
+          "model_id" => "claude-sonnet-4-6",
+          "concurrency" => "5"
+        })
+
+      assert advanced_details_open?(html)
+      assert assigns(view).profile_advanced_open == true
+    end
+
+    test "opening another profile's edit form resets the advanced override", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      # profile-1 and profile-2 BOTH carry an advanced value, so both auto-open;
+      # only a RESET (not a leaked `false`) can render profile-2 open after the
+      # user closed profile-1's disclosure.
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3",
+        "temperature" => "0.7"
+      })
+
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-2",
+        "profile_id_new" => "profile-2",
+        "provider" => "openai",
+        "model_id" => "gpt-5.5",
+        "concurrency" => "3",
+        "top_k" => "40"
+      })
+
+      assert advanced_details_open?(
+               render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+             )
+
+      refute advanced_details_open?(render_hook(view, "toggle_profile_advanced", %{}))
+      assert assigns(view).profile_advanced_open == false
+
+      # Switching edit sessions drops the override → the auto rule applies again.
+      assert advanced_details_open?(
+               render_hook(view, "edit_model_profile", %{"profile_id" => "profile-2"})
+             )
+
+      assert assigns(view).profile_advanced_open == nil
+    end
+
+    test "cancel_edit_model_profile and save_model_profile reset the advanced override", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "add_model_profile", %{})
+
+      render_hook(view, "toggle_profile_advanced", %{})
+      assert assigns(view).profile_advanced_open == true
+
+      render_hook(view, "cancel_edit_model_profile", %{})
+      assert assigns(view).profile_advanced_open == nil
+
+      render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
+      render_hook(view, "toggle_profile_advanced", %{})
+      assert assigns(view).profile_advanced_open == true
+
+      render_hook(view, "save_model_profile", %{
+        "profile_id" => "profile-1",
+        "profile_id_new" => "profile-1",
+        "provider" => "anthropic",
+        "model_id" => "claude-sonnet-4-6",
+        "concurrency" => "3"
+      })
+
+      assert assigns(view).profile_advanced_open == nil
+    end
+
+    test "toggle_profile_advanced is a no-op when no profile is being edited", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      render_hook(view, "toggle_profile_advanced", %{})
+
+      assert assigns(view).profile_advanced_open == nil
+    end
+
     test "save_model_profile clears editing state after save", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       render_hook(view, "add_model_profile", %{})

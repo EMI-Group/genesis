@@ -131,10 +131,11 @@ Render-only coverage of the "Custom tools" chip group in `CustomAgentsEditor.cus
 Built-in names come from `EvoGit.Agent.Tools.schemas() |> Enum.map(&EvoGit.Agent.tool_name/1) |> Enum.reject(&is_nil/1)`.
 The alias describe pins alias-aware comparisons: a legacy `tools: ["read_file", "run_bash"]` renders the read/shell chips as `checked` inputs whose submitted `value` stays the agent's OWN saved spelling (no `value="read"`/`value="bash"` input exists) with NO warning; a `custom_tool_names` entry named after a built-in alias (`read_file`) is dropped from the custom group while a genuinely unknown selected tool still warns.
 
-## `model_profiles_editor_test.exs` (2 describes / 32 tests)
+## `model_profiles_editor_test.exs` (2 describes / 35 tests)
 
 Render-only peak/off-peak form coverage: `peak_concurrency` (incl. `0`), `peak_hours` rows, `timezone`, draft-wins pre-fill, remove-row buttons, plus the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading) and a guard that start/end/remove-row markup coexists.
 The second describe covers the advanced-settings `<details id="model-profile-advanced">`: collapsed for a bare/new profile and for one carrying only non-advanced fields, opened by the `draft_or_profile/3`-consistent rule (saved `temperature: 0.7`, a draft `top_k`, and numeric `0` counting as set) while a draft that clears the only advanced value collapses it again, all eight advanced inputs (`temperature`/`max_tokens`/`top_p`/`top_k`/`frequency_penalty`/`presence_penalty`/`extra`/`provider_options`) found exactly once INSIDE the disclosure, and `select[name="reasoning_effort"]` asserted outside it.
+The advanced describe also pins the user override: `profile_advanced_open: true` opens a bare profile's disclosure, `profile_advanced_open: false` closes one that carries `temperature: 0.7`, and the `<summary>` carries the plain `phx-click="toggle_profile_advanced"` (no submit).
 The file-local `advanced_details/1` helper returns the parsed `<details>` node (Floki's `find/2` accepts a node, so containment checks need no re-parse).
 Row events (`add_peak_hours_row` / `remove_peak_hours_row`) belong to SettingsLive and are not exercised here.
 

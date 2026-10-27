@@ -154,7 +154,7 @@ Where each support module hits the network (NodeContext → RemoteNode → direc
 The LLM model-profile edit form (`components/settings_components/model_profiles_editor.ex`) is organised top-down into visible groups: identity (Profile ID + Provider, then Model ID + Base URL), a performance grid holding Concurrency, Context Window (optional) and Reasoning Effort, and one bordered "Peak / Off-Peak Scheduling (optional)" block holding Peak Concurrency + Timezone side-by-side, the off-peak day chips and the peak-hours window rows.
 Reasoning Effort is a first-class VISIBLE field in that performance grid — it is NOT part of the generation-parameter group any more (it remains the `reasoning_effort` select with the `value=""` "(provider default)" option, so its parse/save semantics are unchanged).
 The six generation parameters (Temperature, Max Tokens, Top P, Top K, Frequency Penalty, Presence Penalty) plus the "Extra Config (JSON)" and "Provider Options (JSON)" textareas live inside a native zero-JS `<details id="model-profile-advanced">` "Advanced settings" disclosure.
-That disclosure starts COLLAPSED unless the profile or the unsaved draft carries any advanced value, and it toggles entirely client-side — no phx event or assign drives it.
+That disclosure's open state is user-authoritative: `@profile_advanced_open` (nil = follow the auto rule, which opens it when the profile or the unsaved draft carries any advanced value) flips via the `toggle_profile_advanced` event wired on the `<summary>`, and every edit-session identity change resets it to nil.
 Because `<details>` only hides its body visually, every advanced input stays in the DOM while collapsed, so the submitted param names — and therefore `parse_model_profile_params/2` — are unchanged.
 This is a markup/layout arrangement only: no key names, validation rules or save behaviour changed.
 
@@ -193,6 +193,7 @@ Each `[[llm.models]]` profile supports OPTIONAL fields for time-based concurrenc
 
 - `add_peak_hours_row` — no params; appends an empty row `%{start: "", end: ""}` to the editing profile's `peak_hours` (creates the key if absent; a fresh row has no days key = every day).
 - `remove_peak_hours_row` — carries `phx-value-index`; removes that row (safe `Integer.parse` index handling); when the list becomes empty the `peak_hours` key is removed from the profile map (absent = disabled).
+- `toggle_profile_advanced` — no params; flips `:profile_advanced_open` to the OPPOSITE of the currently effective disclosure state (the same `ModelProfilesEditor.advanced_open?/3` helper the template uses, so a `nil` override resolves via the auto rule first), no-ops while `editing_profile_id` is nil, and is reset to `nil` by every edit-session identity change.
 
 **Validation semantics** (UI-side UX validation in `parse_model_profile_params/2`; evo_git owns authoritative schema validation):
 

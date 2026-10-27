@@ -10,6 +10,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
   import Phoenix.Component, only: [assign: 2, assign: 3]
   import Phoenix.LiveView, only: [put_flash: 3]
 
+  alias EvoDashWeb.SettingsComponents.ModelProfilesEditor
   alias EvoDashWeb.SettingsLive.{ConfigIO, ModelProfileHelpers}
 
   # ───────────────────────────────────────────────────────────────────────────
@@ -186,6 +187,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       |> assign(:file_config, file_config)
       |> assign(:editing_profile_id, new_id)
       |> assign(:profile_form_draft, nil)
+      |> assign(:profile_advanced_open, nil)
       |> put_flash(:info, gettext("New profile added — fill in the details and save."))
 
     {:noreply, socket}
@@ -193,11 +195,13 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
   def edit_model_profile(socket, %{"profile_id" => id}) do
     # Opening a (different) profile's edit form starts a fresh edit session:
-    # clear any draft from a previous session.
+    # clear any draft from a previous session (and the previous session's
+    # advanced-disclosure toggle, so the auto rule applies again).
     {:noreply,
      assign(socket,
        editing_profile_id: if(socket.assigns.editing_profile_id == id, do: nil, else: id),
-       profile_form_draft: nil
+       profile_form_draft: nil,
+       profile_advanced_open: nil
      )}
   end
 
@@ -205,8 +209,34 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
     {:noreply,
      assign(socket,
        editing_profile_id: nil,
-       profile_form_draft: nil
+       profile_form_draft: nil,
+       profile_advanced_open: nil
      )}
+  end
+
+  # Toggles the edit form's "Advanced settings" disclosure. The open state is
+  # USER-AUTHORITATIVE: `:profile_advanced_open` holds the explicit choice and
+  # nil means "follow the auto rule". Flipping reads the EFFECTIVE state (the
+  # same helper the template uses) and stores its opposite, so the re-render
+  # triggered by every phx-change keystroke can never override the click.
+  # Total: no editing profile → no-op.
+  def toggle_profile_advanced(socket, _params) do
+    case socket.assigns[:editing_profile_id] do
+      nil ->
+        {:noreply, socket}
+
+      editing_id ->
+        profile = find_editing_profile(socket.assigns.file_config, editing_id) || %{}
+
+        currently_open? =
+          ModelProfilesEditor.advanced_open?(
+            socket.assigns[:profile_advanced_open],
+            socket.assigns[:profile_form_draft],
+            profile
+          )
+
+        {:noreply, assign(socket, :profile_advanced_open, not currently_open?)}
+    end
   end
 
   def save_model_profile(socket, params) do
@@ -291,9 +321,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
 
     # The edit session is over either way (saved or rejected): drop the
     # unsaved-typing draft so the next edit session starts from the profile's
-    # saved values (a rejected save re-renders the row list from file_config).
+    # saved values (a rejected save re-renders the row list from file_config),
+    # and forget the advanced-disclosure toggle with it.
     case result do
-      {:noreply, socket} -> {:noreply, assign(socket, :profile_form_draft, nil)}
+      {:noreply, socket} ->
+        {:noreply,
+         socket |> assign(:profile_form_draft, nil) |> assign(:profile_advanced_open, nil)}
     end
   end
 
@@ -305,7 +338,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
       socket.assigns.file_config
       |> ModelProfileHelpers.put_in_model_profiles(new_models)
 
-    socket = socket |> assign(:editing_profile_id, nil) |> assign(:profile_form_draft, nil)
+    socket =
+      socket
+      |> assign(:editing_profile_id, nil)
+      |> assign(:profile_form_draft, nil)
+      |> assign(:profile_advanced_open, nil)
 
     EvoDashWeb.SettingsLive.persist_file_config(
       file_config,

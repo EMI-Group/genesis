@@ -743,6 +743,7 @@ defmodule EvoDashWeb.SettingsLive do
                     model_profiles={@file_config[:llm][:models] || []}
                     editing_profile_id={@editing_profile_id}
                     profile_form_draft={@profile_form_draft}
+                    profile_advanced_open={@profile_advanced_open}
                     appearance_accent_draft={@appearance_accent_draft}
                     test_profile_id={@test_profile_id}
                     credentials={@credentials}
@@ -830,6 +831,10 @@ defmodule EvoDashWeb.SettingsLive do
         llm_test_status: :idle,
         editing_profile_id: nil,
         profile_form_draft: nil,
+        # User-authoritative open state of the profile edit form's "Advanced
+        # settings" disclosure (nil = follow the auto rule). Reset to nil by
+        # every edit-session identity change in ModelProfileEvents.
+        profile_advanced_open: nil,
         # Pending accent-color selection for the :appearance category (nil = no
         # pending draft). Set by `select_appearance_accent`; cleared whenever
         # file_config is replaced by an authoritative load (see
@@ -1618,6 +1623,11 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("move_model_profile", params, socket) do
     ModelProfileEvents.move_model_profile(socket, params)
+  end
+
+  @impl true
+  def handle_event("toggle_profile_advanced", params, socket) do
+    ModelProfileEvents.toggle_profile_advanced(socket, params)
   end
 
   @impl true

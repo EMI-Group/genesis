@@ -507,6 +507,32 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       # The select exists on the page — outside the disclosure.
       assert length(find(html, ~s(select[name="reasoning_effort"]))) == 1
     end
+
+    test "an explicit override opens a bare profile's disclosure" do
+      html =
+        render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"},
+          advanced_open: true
+        )
+
+      assert attribute(advanced_details(html), "open") == ["open"]
+    end
+
+    test "an explicit override closes a profile that carries an advanced value" do
+      html =
+        render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro", temperature: 0.7},
+          advanced_open: false
+        )
+
+      assert attribute(advanced_details(html), "open") == []
+    end
+
+    test "the summary carries a plain phx-click toggle event" do
+      html = render_edit_form(%{id: "profile-1", model: "deepseek:deepseek-v4-pro"})
+      details = advanced_details(html)
+
+      assert [summary] = Floki.find(details, "summary")
+      assert attribute(summary, "phx-click") == ["toggle_profile_advanced"]
+    end
   end
 
   # --- helpers ---
@@ -521,12 +547,14 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
   # Renders the editor with a single profile in edit mode (editing_profile_id
   # must match the profile's id string for the edit form to render). An
   # optional `draft:` keyword sets the profile_form_draft assign (simulates a
-  # phx-change snapshot of the typed form).
+  # phx-change snapshot of the typed form); `advanced_open:` sets the
+  # user-authoritative disclosure override (nil = follow the auto rule).
   defp render_edit_form(profile, opts \\ []) do
     render_component(&ModelProfilesEditor.model_profiles_editor/1,
       profiles: [profile],
       editing_profile_id: to_string(Map.get(profile, :id)),
-      profile_form_draft: Keyword.get(opts, :draft)
+      profile_form_draft: Keyword.get(opts, :draft),
+      profile_advanced_open: Keyword.get(opts, :advanced_open)
     )
   end
 
