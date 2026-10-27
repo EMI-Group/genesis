@@ -30,8 +30,8 @@ None — leaf directory (modules: `skill.ex`, `executor.ex`, `crud.ex`, `context
 | `load_skills/1` | Parse all `.md` files from `.agents/skills/` into `[Skill.t()]` |
 | `to_tool_schemas/1` | Convert skills to `ReqLLM` tool schemas for the LLM |
 | `skill_names/1`, `find_skill/2` | Query loaded skills by name |
-| `parse_frontmatter/1` | Parse YAML frontmatter from skill/CONTEXT.md content |
-| `parse_yaml_simple/1` | Parse a YAML string via `yaml_elixir` |
+| `parse_frontmatter/1` | Parse YAML frontmatter from skill/CONTEXT.md content; parse failures return `{:error, human_readable_string}` including the parser's line/column and message |
+| `parse_yaml_simple/1` | Parse a YAML string via `yaml_elixir`; `{:ok, value}` on success, `{:error, binary}` on failure — the error is ALWAYS a binary naming the parser's line/column and message, never a `YamlElixir` exception struct |
 | `strip_front_matter/1` | Strip YAML frontmatter from CONTEXT.md (used by `ContextNode.build_context/2`) |
 
 ### Execution (delegates to `EvoGit.Skills.Executor`)
@@ -109,6 +109,7 @@ Fields: `name`, `description`, `parameters` (list of `{name, type, description, 
 - The `skill:` frontmatter list is metadata ONLY — `ContextNode.build_context/2` strips all frontmatter via `EvoGit.Skills.strip_front_matter/1` (`core/context_node.ex:188-189`), so agents never see enablement state as text; availability is expressed purely by the injected tool schemas.
 - Skills reload on every `load_skills/1` call (no caching); case-insensitive fallback lookup
 - YAML frontmatter parsed with `yaml_elixir`; bash scripts run in repo root
+- YAML parse failures surface as human-readable strings (`"Invalid YAML frontmatter (line L, column C): <message>"`, or the line/column-less `"Invalid YAML frontmatter: <message>"`); `parse_yaml_simple/1` normalizes every parser error term (including `YamlElixir.FileNotFoundError` and `"malformed yaml"`) and never leaks a `YamlElixir` exception struct, so callers may interpolate the reason safely.
 - Skill tool calls are dispatched dynamically: `EvoGit.Agent.Tools.execute_tool/5` has a catch-all clause that reloads skills via `load_skills/1` and calls `execute/4` when the tool name matches a skill. The statically-named `skill_*` management tools (skill_add, skill_edit, etc.) are dispatched by name first.
 - Skill management tools live in `./lib/evo_git/agent/tools/skill/` (SkillAdd, SkillEdit, SkillRemove, SkillRead, SkillList, SkillEnable, SkillDisable, SkillWhere)
 
