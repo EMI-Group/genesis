@@ -933,8 +933,8 @@ fn run_gui() {
             //    (it binds only after the whole `:evo_git` boot, Ecto
             //    migrations included), so an initial backend load would render
             //    the web engine's own connection-refused page for several
-            //    seconds. Instead, the setup closure immediately navigates to
-            //    the Genesis loading page (step 6a) and the backend URL is
+            //    seconds. Instead, the boot thread shows the Genesis loading
+            //    page as its first action (step 6a) and the backend URL is
             //    navigated ONLY after the readiness probe succeeds (step 6b).
             //    A `data:` URL cannot be the INITIAL `WebviewUrl` here — tauri
             //    2.12.4 rejects it unless the `webview-data-url` feature is
@@ -983,34 +983,32 @@ fn run_gui() {
             })
             .build()?;
 
-            // 6a. Show the Genesis loading page immediately — the very first
-            //     frame the user sees (instead of the web engine's
-            //     connection-refused page while the backend boots). The window
-            //     exists from here on, but `show_loading_page` returns false
-            //     while `get_webview_window("main")` cannot find it yet, so
-            //     retry briefly (bounded ~2s, 100ms steps) until the loading
-            //     page has been accepted.
-            let mut loading_attempts = 0u32;
-            while !manager.show_loading_page(app.handle()) && loading_attempts < 20 {
-                loading_attempts += 1;
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-
+            // 6a. The Genesis loading page is shown by the boot thread (step 6b)
+            //     as its FIRST action, before it waits for the backend — see
+            //     `BackendManager::run_bootstrap`. It is deliberately NOT shown
+            //     here: the window does not necessarily exist yet, so the page
+            //     needs a bounded retry (the boot thread can sleep; this hook
+            //     cannot). The user therefore sees `about:blank` for at most the
+            //     few milliseconds it takes the spawned thread to start — still
+            //     never the web engine's connection-refused page, because the
+            //     backend URL is navigated only after the readiness probe.
+            //
             // 6b. Wait for the backend and, once it serves, drive the webview to
             //    the dashboard — on a DEDICATED THREAD, never on the setup hook.
             //
-            //    These steps (the readiness poll, the ready/dead decision, and
-            //    the latch-gated navigation) used to run right here, blocking
-            //    the main thread — and therefore Tauri's event loop — for up to
-            //    the readiness budget plus the navigation budget. That was not
-            //    merely slow: the webview's `PageLoadEvent::Finished`
-            //    callbacks, the ONLY thing that sets the dashboard-loaded latch
-            //    the gate waits on, may not be delivered while the event loop
-            //    is blocked, in which case the gate could never succeed and a
-            //    HEALTHY backend was dead-ended on the red error page. Running
-            //    the boot sequence on its own thread keeps the event loop live
-            //    (tray / Cmd+Q stay responsive, page-load callbacks are
-            //    certainly delivered) and makes setup return immediately.
+            //    These steps (showing the loading page, the readiness poll, the
+            //    ready/dead decision, and the latch-gated navigation) must never
+            //    run here: blocking the main thread — and therefore Tauri's
+            //    event loop — for up to the readiness budget plus the navigation
+            //    budget is not merely slow, the webview's
+            //    `PageLoadEvent::Finished` callbacks, the ONLY thing that sets
+            //    the dashboard-loaded latch the gate waits on, may not be
+            //    delivered while the event loop is blocked, in which case the
+            //    gate could never succeed and a HEALTHY backend was dead-ended
+            //    on the red error page. Running the boot sequence on its own
+            //    thread keeps the event loop live (tray / Cmd+Q stay responsive,
+            //    page-load callbacks are certainly delivered) and makes setup
+            //    return immediately.
             //
             //    `run_bootstrap` may call reqwest's BLOCKING client directly:
             //    a plain `std::thread` has no async runtime context, which is

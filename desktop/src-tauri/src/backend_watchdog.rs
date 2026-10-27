@@ -83,6 +83,19 @@ const DASHBOARD_NAVIGATE_ATTEMPTS: u32 = 6;
 /// [`tests::dashboard_navigation_budget_is_patient`]).
 const DASHBOARD_NAVIGATE_ATTEMPT_WAIT: Duration = Duration::from_secs(10);
 
+/// How many times the boot thread retries showing the loading page before it
+/// gives up and moves on to the readiness wait (the window may not exist yet).
+/// 20 × [`LOADING_PAGE_ATTEMPT_WAIT`] = a bounded ~2s — it stops as soon as the
+/// navigation is accepted, so this only ever elapses on a pathological boot.
+const LOADING_PAGE_ATTEMPTS: u32 = 20;
+/// How long the boot thread waits between loading-page attempts.
+///
+/// Sleeping is fine here — [`BackendManager::run_bootstrap`] runs on a plain
+/// `std::thread`, NOT the Tauri setup hook (which must never wait: blocking the
+/// event loop can prevent delivery of the webview's `PageLoadEvent::Finished`
+/// callbacks the dashboard-loaded latch depends on).
+const LOADING_PAGE_ATTEMPT_WAIT: Duration = Duration::from_millis(100);
+
 /// Maximum consecutive failures before entering the slow-retry regime.
 const MAX_CONSECUTIVE_FAILURES: u32 = 8;
 
@@ -943,14 +956,15 @@ impl BackendManager {
     /// frame the user sees, and the page that covers the whole readiness wait.
     ///
     /// Returns whether the navigation was accepted — `false` only while the
-    /// `main` window does not exist yet (the setup closure retries briefly),
-    /// exactly like [`Self::navigate`]. Mirrors [`Self::show_error_page`] in
+    /// `main` window does not exist yet, exactly like [`Self::navigate`];
+    /// [`Self::run_bootstrap`] retries briefly (this is a plain thread, so
+    /// sleeping there is harmless). Mirrors [`Self::show_error_page`] in
     /// resetting the latch first: this is a navigation AWAY from the dashboard.
     ///
-    /// `pub` because `crate::run_gui` calls it right after building the window;
-    /// it is also re-invoked at the top of [`Self::run_bootstrap`] so the
-    /// loading page is guaranteed to be the visible page during the wait
-    /// regardless of thread ordering (cheap and idempotent).
+    /// `pub` because [`Self::run_bootstrap`] calls it (and tests may); the boot
+    /// thread calls it FIRST, before the readiness wait, so the loading page is
+    /// the visible page during the wait regardless of thread ordering (cheap
+    /// and idempotent).
     pub fn show_loading_page(&self, app: &AppHandle) -> bool {
         self.reset_dashboard_loaded();
         self.navigate(app, &loading_page_data_url())
@@ -983,6 +997,8 @@ impl BackendManager {
     /// here.
     ///
     /// Outcomes:
+    /// - FIRST, before the readiness wait: the loading page is shown (bounded
+    ///   ~2s retry until the window exists) so the wait is never blank;
     /// - the readiness wait expires with the backend still not answering → kill
     ///   the child so the watchdog sees an unexpected exit and takes over with
     ///   the error page + backoff restart (the self-healing path);
@@ -996,11 +1012,22 @@ impl BackendManager {
     ///   child exit, so handing over without the kill would leave a
     ///   live-but-unresponsive backend parked forever with nothing recovering.
     pub fn run_bootstrap(&self, app: AppHandle) {
-        // Guarantee the loading page is what the user sees while we wait. The
-        // setup closure already navigated there right after building the
-        // window; repeating it here is cheap and idempotent, and covers any
-        // ordering where this thread runs before that navigation landed.
-        let _ = self.show_loading_page(&app);
+        // FIRST action, before the readiness wait: show the loading page so it
+        // is the very first frame the user sees (instead of the web engine's
+        // connection-refused page). The window is built by the setup closure but
+        // `show_loading_page` returns false while `get_webview_window("main")`
+        // cannot find it yet, so retry briefly — bounded ~2s in 100ms steps,
+        // stopping as soon as the navigation is accepted. Sleeping is fine HERE
+        // (plain `std::thread`); it is exactly what the setup hook must never do.
+        let mut loading_attempts = 0u32;
+        while loading_attempts < LOADING_PAGE_ATTEMPTS {
+            if self.show_loading_page(&app) {
+                break;
+            }
+            loading_attempts += 1;
+            std::thread::sleep(LOADING_PAGE_ATTEMPT_WAIT);
+        }
+
         crate::shell_log::log("waiting for the backend to become ready");
         crate::sidecar::wait_for_ready(&self.backend_url, crate::BACKEND_READY_TIMEOUT_SECS);
 

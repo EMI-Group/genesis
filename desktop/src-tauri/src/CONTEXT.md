@@ -36,7 +36,9 @@ Rust side:
 
 ### Backend boot runs OFF the Tauri setup hook, and a healthy backend is never shown the "unavailable" page
 
-The boot sequence (readiness wait → ready/dead decision → latch-gated navigation to the dashboard) lives in `BackendManager::run_bootstrap` (`backend_watchdog.rs`) and is spawned on a dedicated `std::thread` from the setup closure (`main.rs` step 6); setup returns immediately and never blocks.
+The boot sequence (show the loading page → readiness wait → ready/dead decision → latch-gated navigation to the dashboard) lives in `BackendManager::run_bootstrap` (`backend_watchdog.rs`) and is spawned on a dedicated `std::thread` from the setup closure (`main.rs` step 6); setup returns immediately, never blocks and never sleeps.
+
+The loading page is `run_bootstrap`'s FIRST action, retried boundedly (`LOADING_PAGE_ATTEMPTS` 20 × `LOADING_PAGE_ATTEMPT_WAIT` 100ms = ~2s) until `show_loading_page` returns true, because the `main` window may not be findable yet; sleeping is safe there precisely because it is a plain thread. The setup hook must NOT do this — it would delay `app.run` and the event loop, i.e. the exact failure mode described below. The user sees `about:blank` for at most the few milliseconds until that thread starts.
 
 **Why off the setup hook:** `tauri::Builder::setup` runs on the main thread *before* `app.run` starts the event loop. Blocking it for the readiness + navigation budgets kept the webview's `PageLoadEvent::Finished` callbacks — the ONLY thing that sets the `dashboard_loaded` latch the gate waits on — from being delivered, so the gate could never succeed even with a perfectly healthy backend; the app then sat on the red error page with no automatic recovery (the watchdog is parked in `wait_for_exit` because the child never exited, so `show_backend` is unreachable). Running boot off the hook also keeps the tray / Cmd+Q responsive during the wait. A plain thread has no async-runtime context, so `run_bootstrap` may call reqwest's BLOCKING client (`sidecar::wait_for_ready` / `probe_http`) directly — that is why the old extra helper thread + `join()` is gone.
 
