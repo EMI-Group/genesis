@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit suites for the EvoDash LiveView pages and their support modules (960 tests), mirroring `apps/evo_dash/lib/evo_dash_web/live/`.
+ExUnit suites for the EvoDash LiveView pages and their support modules (962 tests), mirroring `apps/evo_dash/lib/evo_dash_web/live/`.
 Every page suite is `async: false` except `agents_live_test.exs`; the pure support-module units under `projects_live/`, `settings_live/`, `system_live/`, `home_live/` and `agents_live/` are `async: true` (see "async policy").
 
 ## Routing Table
