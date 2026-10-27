@@ -5,6 +5,7 @@ defmodule EvoGit.Agent.Tools.ListTasks do
   filtered by status.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @valid_statuses ~w(pending running finalizing completed failed cancelled cancelling)
@@ -28,7 +29,7 @@ defmodule EvoGit.Agent.Tools.ListTasks do
     with {:ok, statuses} <- fetch_statuses(args) do
       case safe_list_tasks(statuses) do
         tasks when is_list(tasks) -> format_tasks(tasks)
-        {:error, reason} -> "task system unavailable: #{reason}"
+        {:error, reason} -> "task system unavailable: #{Failure.format_reason(reason)}"
       end
     else
       {:error, message} -> message

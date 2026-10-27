@@ -96,6 +96,7 @@ Custom tools must return a string (`{:error, "… returned a non-string value…
 
 ### Shared utility helpers (anti-duplication home)
 `EvoGit.Agent.Tools.Shared` owns every cross-tool helper listed in the API-surface row above (datetime formatting, truncation, objective snippets, error description, arg validation, scope checks and the commit glue); new cross-tool helpers belong there.
+Tool failure reasons are rendered through `EvoGit.Agent.Tools.Failure.format_reason/1` — total, so a binary passes verbatim, an exception struct via `Exception.message/1` and anything else via `inspect/1` — meaning a struct/tuple/atom reason can never raise `Protocol.UndefinedError` out of a tool.
 
 ### rg output conventions
 `bare_args?/1` decides the shape: BARE args (`PATTERN [PATH ...]`) get `--line-number` + `--no-heading` injected and a 250-line cap with a narrowing footer; an EXPLICIT flag set (`-l`, `-c`, `--json`, `-A/-B/-C`, `-e`/`-f`) passes VERBATIM under the legacy `Command executed successfully.\nOutput:\n<raw>` envelope. Errors become prose with advisory tips (`build_hint/1`).

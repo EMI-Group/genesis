@@ -5,6 +5,7 @@ defmodule EvoGit.Agent.Tools.ListRecentProjects do
   opened projects from the task registry.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @doc """
@@ -18,7 +19,7 @@ defmodule EvoGit.Agent.Tools.ListRecentProjects do
   def execute(_args, _repo_path, _repo_root) do
     case safe_list_recent_projects() do
       projects when is_list(projects) -> format_projects(projects)
-      {:error, reason} -> "task system unavailable: #{reason}"
+      {:error, reason} -> "task system unavailable: #{Failure.format_reason(reason)}"
     end
   end
 

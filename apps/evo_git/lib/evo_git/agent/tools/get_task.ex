@@ -3,6 +3,7 @@ defmodule EvoGit.Agent.Tools.GetTask do
   Tool for fetching a single task's details from the task registry by id.
   """
 
+  alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
 
   @truncate_length 2000
@@ -15,7 +16,7 @@ defmodule EvoGit.Agent.Tools.GetTask do
       {:ok, task_id} ->
         case safe_get_task(task_id) do
           nil -> "Task #{task_id} not found."
-          {:error, reason} -> "task system unavailable: #{reason}"
+          {:error, reason} -> "task system unavailable: #{Failure.format_reason(reason)}"
           task -> format_task(task)
         end
 

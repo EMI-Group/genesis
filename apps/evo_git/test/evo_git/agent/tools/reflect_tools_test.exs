@@ -69,6 +69,30 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       assert output =~ "pending"
       assert output =~ "cancelling"
     end
+
+    test "reports task system unavailable when the registry is down",
+         %{registry: registry_name} do
+      registry = Process.whereis(registry_name)
+      assert is_pid(registry)
+
+      # Unregistering only removes the name — the isolated registry process
+      # stays alive, so it can be re-registered in the after block. Through
+      # this seam `GenServer.call` exits and `safe_list_tasks/1` renders the
+      # reason through Failure.format_reason/1, so the tool returns prose (and
+      # never raises on a non-binary reason).
+      Process.unregister(registry_name)
+
+      try do
+        output = ListTasks.execute(%{}, nil, nil)
+        assert is_binary(output)
+        assert output =~ "task system unavailable: "
+        refute output == "task system unavailable: "
+      after
+        assert Process.register(registry, registry_name) == true
+      end
+
+      assert Process.whereis(registry_name) == registry
+    end
   end
 
   describe "GetTask" do
@@ -94,6 +118,28 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
 
     test "non-map args return an error without raising" do
       assert GetTask.execute("not-a-map", nil, nil) == "Arguments must be a map/object"
+    end
+
+    test "reports task system unavailable when the registry is down",
+         %{registry: registry_name} do
+      registry = Process.whereis(registry_name)
+      assert is_pid(registry)
+
+      # Same seam as the ListRecentProjects registry-down test: the name is
+      # unregistered (the process survives), so `GenServer.call` exits and
+      # `safe_get_task/1` renders the reason through Failure.format_reason/1.
+      Process.unregister(registry_name)
+
+      try do
+        output = GetTask.execute(%{"task_id" => "ghost"}, nil, nil)
+        assert is_binary(output)
+        assert output =~ "task system unavailable: "
+        refute output == "task system unavailable: "
+      after
+        assert Process.register(registry, registry_name) == true
+      end
+
+      assert Process.whereis(registry_name) == registry
     end
   end
 
