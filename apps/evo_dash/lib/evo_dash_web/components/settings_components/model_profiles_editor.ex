@@ -171,8 +171,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     ~H"""
     <%!-- At most ONE profile is in edit mode at a time (the editor renders this
          form only for the profile whose id == @editing_profile_id), so a
-         constant id stays unique on the page. LiveView requires an id on
-         forms carrying phx-change. --%>
+         constant id stays unique on the page (the same invariant makes the
+         constant `model-profile-advanced` details id unique). LiveView requires
+         an id on forms carrying phx-change. --%>
     <form
       id="model-profile-edit-form"
       phx-submit="save_model_profile"
@@ -185,12 +186,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         value={draft_or_profile(@draft, "profile_id", profile_id_string(@profile))}
       />
 
-      <div class="flex items-center gap-2 mb-1">
+      <div class="flex items-center gap-2">
         <.icon name="hero-pencil-square" class="size-5 text-primary-standalone" />
         <h4 class="font-bold text-sm text-base-content">{gettext("Edit Profile")}</h4>
       </div>
 
-      <%!-- id + provider/model-id/base-url (required fields) ── ── --%>
       <% {provider_val, model_id_val, base_url_val, extra_val} = profile_model_fields(@profile) %>
       <% provider_val = draft_or_profile(@draft, "provider", provider_val) %>
       <% model_id_val = draft_or_profile(@draft, "model_id", model_id_val) %>
@@ -198,481 +198,415 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       <% extra_val = draft_or_profile(@draft, "extra", extra_val) %>
       <% provider_options_val =
         draft_or_profile(@draft, "provider_options", profile_provider_options(@profile)) %>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-semibold text-xs">{gettext("Profile ID")}
-            <span class="text-error">*</span></span>
-          </label>
-          <input
-            type="text"
-            name="profile_id_new"
-            value={draft_or_profile(@draft, "profile_id_new", profile_id_string(@profile))}
-            placeholder="default"
-            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            required
-          />
-          <p class="text-xs text-base-content/70 mt-1">
-            {gettext("A unique identifier for this profile")}
-          </p>
-        </div>
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-semibold text-xs"><%!-- zh_CN: Provider → "服务商" --%>{gettext(
-              "Provider"
-            )}</span>
-          </label>
-          <input
-            type="text"
-            name="provider"
-            value={provider_val}
-            placeholder={gettext("e.g. anthropic, openai")}
-            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-          />
-          <p class="text-xs text-base-content/70 mt-1">
-            <%!-- zh_CN: provider → "服务商" --%>{gettext("The LLM provider name")}
-          </p>
-        </div>
+
+      <%!-- Identity: id + provider, then model + base url ── --%>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <.input_field
+          name="profile_id_new"
+          label={gettext("Profile ID")}
+          type="text"
+          required
+          value={draft_or_profile(@draft, "profile_id_new", profile_id_string(@profile))}
+          placeholder="default"
+          help={gettext("A unique identifier for this profile")}
+        />
+        <%!-- zh_CN: Provider → "服务商" --%>
+        <.input_field
+          name="provider"
+          label={gettext("Provider")}
+          type="text"
+          value={provider_val}
+          placeholder={gettext("e.g. anthropic, openai")}
+          help={gettext("The LLM provider name")}
+        />
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-semibold text-xs">{gettext("Model ID")}
-            <span class="text-error">*</span></span>
-          </label>
-          <input
-            type="text"
-            name="model_id"
-            value={model_id_val}
-            placeholder={gettext("e.g. claude-sonnet-4-6")}
-            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            required
-          />
-          <p class="text-xs text-base-content/70 mt-1">
-            {gettext("The model name")}
-          </p>
-        </div>
-        <div class="form-control">
-          <label class="label pb-1">
-            <span class="label-text font-semibold text-xs">{gettext("Base URL")}</span>
-          </label>
-          <input
-            type="text"
-            name="base_url"
-            value={base_url_val}
-            placeholder={gettext("https://api.my-provider.com/v1")}
-            class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-          />
-          <p class="text-xs text-base-content/70 mt-1">
-            <%!-- zh_CN: provider → "服务商" --%>{gettext(
-              "For proxy/aggregator endpoints; leave empty for standard providers."
-            )}
-          </p>
-        </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <.input_field
+          name="model_id"
+          label={gettext("Model ID")}
+          type="text"
+          required
+          value={model_id_val}
+          placeholder={gettext("e.g. claude-sonnet-4-6")}
+          help={gettext("The model name")}
+        />
+        <%!-- zh_CN: provider → "服务商" --%>
+        <.input_field
+          name="base_url"
+          label={gettext("Base URL")}
+          type="text"
+          value={base_url_val}
+          placeholder={gettext("https://api.my-provider.com/v1")}
+          help={gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
+        />
       </div>
 
-      <%!-- concurrency ── --%>
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs"><%!-- zh_CN: Concurrency → "并发" --%>{gettext(
-            "Concurrency"
-          )}</span>
-        </label>
-        <input
-          type="number"
+      <%!-- Performance: concurrency, context window, reasoning effort ── --%>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <%!-- zh_CN: Concurrency → "并发" --%>
+        <.input_field
           name="concurrency"
+          label={gettext("Concurrency")}
           value={draft_or_profile(@draft, "concurrency", profile_concurrency(@profile) || 3)}
           min="1"
-          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
+          help={gettext("Number of parallel LLM request slots")}
         />
-        <p class="text-xs text-base-content/70 mt-1">
-          {gettext("Number of parallel LLM request slots")}
-        </p>
-      </div>
-
-      <%!-- context window (optional) ── --%>
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Context Window = 模型上下文窗口（单次请求可容纳的最大词元数），留空 = 默认 200000 --%>{gettext(
-              "Context Window (optional)"
-            )}
-          </span>
-        </label>
-        <input
-          type="number"
+        <%!-- zh_CN: Context Window = 模型上下文窗口（单次请求可容纳的最大词元数），留空 = 默认 200000 --%>
+        <.input_field
           name="context_window"
+          label={gettext("Context Window (optional)")}
           value={
             draft_or_profile(@draft, "context_window", profile_param(@profile, :context_window) || "")
           }
           min="1024"
           placeholder="200000"
-          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
+          help={
+            gettext(
+              "Maximum context window of the model in tokens. Leave empty to use the default (200000)."
+            )
+          }
         />
-        <p class="text-xs text-base-content/70 mt-1">
-          {gettext(
-            "Maximum context window of the model in tokens. Leave empty to use the default (200000)."
-          )}
-        </p>
-      </div>
-
-      <%!-- Peak hours (optional) ── --%>
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Peak Concurrency → "高峰并发" --%>{gettext(
-              "Peak Concurrency (optional)"
-            )}
-          </span>
-        </label>
-        <input
-          type="number"
-          name="peak_concurrency"
-          value={draft_or_profile(@draft, "peak_concurrency", profile_peak_concurrency(@profile))}
-          min="0"
-          class="input input-bordered input-sm rounded-md w-full sm:w-44 font-mono text-sm"
-        />
-        <p class="text-xs text-base-content/70 mt-1">
-          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段完全暂停该模型（0 个并发槽位） --%>{gettext(
-            "Optional; used only during peak hours. Leave empty to disable. Enter 0 to fully pause the model during peak hours."
-          )}
-        </p>
-      </div>
-
-      <%!-- Timezone (optional) ── --%>
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Timezone → "时区" --%>{gettext("Timezone (optional)")}
-          </span>
-        </label>
-        <input
-          type="text"
-          name="timezone"
-          value={draft_or_profile(@draft, "timezone", profile_param(@profile, :timezone) || "")}
-          placeholder={gettext("Asia/Shanghai")}
-          class="input input-bordered input-sm rounded-md w-full sm:w-64 font-mono text-sm"
-        />
-        <p class="text-xs text-base-content/70 mt-1">
-          <%!-- zh_CN: IANA 时区名用于解释 peak_hours 时段（如 Asia/Shanghai）；留空表示使用服务器本地时间 --%>{gettext(
-            "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
-          )}
-        </p>
-      </div>
-
-      <%!-- Off-peak days (optional) ── --%>
-      <%!-- normalize_days/1 keeps the render TOTAL: the draft value (or a bare
-           string from any source) is always coerced to the canonical day list
-           before the chip membership test below. --%>
-      <% off_peak_days =
-        ModelProfileHelpers.normalize_days(
-          draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile))
-        ) %>
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Off-peak days → "完全离峰的整天" --%>{gettext(
-              "Off-peak days (optional)"
-            )}
-          </span>
-        </label>
-        <input type="hidden" name="off_peak_days" value="" />
-        <div class="flex flex-wrap gap-2">
-          <%= for {value, label} <- day_options() do %>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input
-                type="checkbox"
-                class="checkbox checkbox-xs"
-                name="off_peak_days"
-                value={value}
-                checked={Enum.member?(off_peak_days, value)}
-              />
-              <span class="text-xs text-base-content/80">{label}</span>
-            </label>
-          <% end %>
-        </div>
-        <p class="text-xs text-base-content/70 mt-1">
-          <%!-- zh_CN: 这些天整天完全离峰——正常并发全天生效，peak 时段与峰值并发均被抑制 --%>{gettext(
-            "On these days the profile is off-peak all day — normal concurrency applies, peak windows and peak concurrency are suppressed."
-          )}
-        </p>
-      </div>
-
-      <div class="form-control">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">
-            <%!-- zh_CN: Peak Hours → "高峰时段" --%>{gettext("Peak Hours (optional)")}
-          </span>
-        </label>
-        <div class="space-y-2">
-          <%= for {window, index} <- Enum.with_index(edit_peak_hours(@draft, @profile)) do %>
-            <div class="border border-base-200 rounded-md p-2 space-y-2">
-              <div class="flex items-center gap-2">
-                <input
-                  type="time"
-                  name={"peak_hours[#{index}][start]"}
-                  value={peak_window_value(window, :start)}
-                  class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
-                />
-                <span class="text-xs text-base-content/60">–</span>
-                <input
-                  type="time"
-                  name={"peak_hours[#{index}][end]"}
-                  value={peak_window_value(window, :end)}
-                  class="input input-bordered input-sm rounded-md w-full sm:w-40 font-mono text-sm"
-                />
-                <button
-                  type="button"
-                  phx-click="remove_peak_hours_row"
-                  phx-value-index={index}
-                  class="btn btn-ghost btn-sm gap-1 text-error"
-                  title={gettext("Remove time window")}
-                  aria-label={gettext("Remove time window")}
-                >
-                  <.icon name="hero-x-mark" class="size-4" />
-                </button>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-xs text-base-content/70 shrink-0">
-                  <%!-- zh_CN: 适用日期 --%>{gettext("Days:")}
-                </span>
-                <div class="flex flex-wrap gap-2">
-                  <%= for {value, label} <- day_options() do %>
-                    <label class="flex items-center gap-1 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        class="checkbox checkbox-xs"
-                        name={"peak_hours[#{index}][days]"}
-                        value={value}
-                        checked={Enum.member?(peak_window_days(window), value)}
-                      />
-                      <span class="text-xs text-base-content/80">{label}</span>
-                    </label>
-                  <% end %>
-                </div>
-                <span class="text-xs text-base-content/70">
-                  <%!-- zh_CN: 不选择 = 每天 --%>{gettext("No selection = every day")}
-                </span>
-              </div>
-            </div>
-          <% end %>
-        </div>
-        <button
-          type="button"
-          phx-click="add_peak_hours_row"
-          class="btn btn-ghost btn-sm gap-1 mt-2 self-start"
-        >
-          <.icon name="hero-plus" class="size-4" />
-          <%!-- zh_CN: Add time window → "添加时段" --%>{gettext("Add time window")}
-        </button>
-        <p class="text-xs text-base-content/70 mt-1">
-          <%!-- zh_CN: 每日时间窗口，24 小时制 HH:MM 本地时间；同一天允许两个窗口，例如 09:00–12:00 与 14:00–18:00 --%>{gettext(
-            "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
-          )}
-        </p>
-      </div>
-
-      <%!-- Generation params ── collapsible-ish section ── --%>
-      <div class="pt-2">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="h-px bg-base-200 flex-1"></div>
-          <span class="text-xs font-bold uppercase tracking-widest text-base-content/60">{gettext(
-            "Generation Parameters"
-          )}</span>
-          <span class="text-xs text-base-content/60">{gettext("optional")}</span>
-          <div class="h-px bg-base-200 flex-1"></div>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          <%!-- Temperature ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Temperature")}</span>
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              name="temperature"
-              value={draft_or_profile(@draft, "temperature", profile_param(@profile, :temperature))}
-              min="0"
-              max="2"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
-          <%!-- Reasoning effort ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Reasoning Effort")}</span>
-            </label>
-            <div class="relative">
-              <select
-                name="reasoning_effort"
-                class="select select-bordered select-sm rounded-md w-full font-mono text-sm appearance-none pr-8"
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">{gettext("Reasoning Effort")}</span>
+          </label>
+          <div class="relative">
+            <select
+              name="reasoning_effort"
+              class="select select-bordered select-sm rounded-md w-full font-mono text-sm appearance-none pr-8"
+            >
+              <option
+                value=""
+                selected={
+                  is_nil(
+                    draft_or_profile(
+                      @draft,
+                      "reasoning_effort",
+                      profile_param(@profile, :reasoning_effort)
+                    )
+                  )
+                }
               >
+                {gettext("(provider default)")}
+              </option>
+              <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
                 <option
-                  value=""
+                  value={opt}
                   selected={
-                    is_nil(
+                    to_string(
                       draft_or_profile(
                         @draft,
                         "reasoning_effort",
                         profile_param(@profile, :reasoning_effort)
                       )
-                    )
+                    ) == opt
                   }
                 >
-                  {gettext("(provider default)")}
+                  {opt}
                 </option>
-                <%= for opt <- ~w(none minimal low medium high xhigh default) do %>
-                  <option
-                    value={opt}
-                    selected={
-                      to_string(
-                        draft_or_profile(
-                          @draft,
-                          "reasoning_effort",
-                          profile_param(@profile, :reasoning_effort)
-                        )
-                      ) == opt
-                    }
-                  >
-                    {opt}
-                  </option>
-                <% end %>
-              </select>
-              <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
-                <.icon name="hero-chevron-down" class="size-4" />
-              </div>
+              <% end %>
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-base-content/70">
+              <.icon name="hero-chevron-down" class="size-4" />
             </div>
           </div>
-          <%!-- Max tokens ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs"><%!-- zh_CN: Token → "词元" --%>{gettext(
-                "Max Tokens"
-              )}</span>
-            </label>
-            <input
-              type="number"
-              name="max_tokens"
-              value={draft_or_profile(@draft, "max_tokens", profile_param(@profile, :max_tokens))}
-              min="1"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
-          <%!-- Top P ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Top P")}</span>
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              name="top_p"
-              value={draft_or_profile(@draft, "top_p", profile_param(@profile, :top_p))}
-              min="0"
-              max="1"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
-          <%!-- Top K ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Top K")}</span>
-            </label>
-            <input
-              type="number"
-              name="top_k"
-              value={draft_or_profile(@draft, "top_k", profile_param(@profile, :top_k))}
-              min="1"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
-          <%!-- Frequency penalty ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Frequency Penalty")}</span>
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              name="frequency_penalty"
-              value={
-                draft_or_profile(
-                  @draft,
-                  "frequency_penalty",
-                  profile_param(@profile, :frequency_penalty)
-                )
-              }
-              min="-2"
-              max="2"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
-          <%!-- Presence penalty ── --%>
-          <div class="form-control">
-            <label class="label pb-1">
-              <span class="label-text font-semibold text-xs">{gettext("Presence Penalty")}</span>
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              name="presence_penalty"
-              value={
-                draft_or_profile(
-                  @draft,
-                  "presence_penalty",
-                  profile_param(@profile, :presence_penalty)
-                )
-              }
-              min="-2"
-              max="2"
-              placeholder={gettext("empty")}
-              class="input input-bordered input-sm rounded-md w-full font-mono text-sm"
-            />
-          </div>
+          <p class="text-xs text-base-content/70 mt-1">
+            <%!-- zh_CN: 模型在作答前进行推理的程度 --%>{gettext(
+              "How much the model reasons before answering."
+            )}
+          </p>
         </div>
       </div>
 
-      <%!-- Extra config ── --%>
-      <div class="form-control pt-2">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">{gettext("Extra Config (JSON)")}</span>
-        </label>
-        <textarea
-          name="extra"
-          placeholder='{"wire": {"protocol": "openai_responses"}}'
-          class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
-          rows="3"
-        ><%= extra_val %></textarea>
-        <p class="text-xs text-base-content/70 mt-1">
-          {gettext("Advanced provider-specific options merged into the model spec map.")}
-        </p>
+      <%!-- Peak / off-peak scheduling (optional) ── --%>
+      <div class="rounded-lg border border-base-300 bg-base-200/20 p-3 space-y-3">
+        <div class="flex items-center gap-2">
+          <.icon name="hero-clock" class="size-4 text-base-content/70" />
+          <h5 class="text-xs font-semibold text-base-content/80">
+            <%!-- zh_CN: Peak / Off-Peak Scheduling (optional) → "高峰 / 离峰调度（可选）" --%>{gettext(
+              "Peak / Off-Peak Scheduling (optional)"
+            )}
+          </h5>
+          <span class="ml-auto text-xs text-base-content/60">{gettext("optional")}</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <%!-- zh_CN: Peak Concurrency → "高峰并发" --%>
+          <%!-- zh_CN: 可选；仅在高并发时段（peak hours）内使用，留空表示禁用，0 表示高峰时段完全暂停该模型（0 个并发槽位） --%>
+          <.input_field
+            name="peak_concurrency"
+            label={gettext("Peak Concurrency (optional)")}
+            value={draft_or_profile(@draft, "peak_concurrency", profile_peak_concurrency(@profile))}
+            min="0"
+            help={
+              gettext(
+                "Optional; used only during peak hours. Leave empty to disable. Enter 0 to fully pause the model during peak hours."
+              )
+            }
+          />
+          <%!-- zh_CN: Timezone → "时区" --%>
+          <%!-- zh_CN: IANA 时区名用于解释 peak_hours 时段（如 Asia/Shanghai）；留空表示使用服务器本地时间 --%>
+          <.input_field
+            name="timezone"
+            label={gettext("Timezone (optional)")}
+            type="text"
+            value={draft_or_profile(@draft, "timezone", profile_param(@profile, :timezone) || "")}
+            placeholder={gettext("Asia/Shanghai")}
+            help={
+              gettext(
+                "IANA timezone for interpreting peak hours (e.g. Asia/Shanghai). Leave empty to use the server's local time."
+              )
+            }
+          />
+        </div>
+
+        <%!-- Off-peak days (optional) ── --%>
+        <%!-- normalize_days/1 keeps the render TOTAL: the draft value (or a bare
+             string from any source) is always coerced to the canonical day list
+             before the chip membership test below. --%>
+        <% off_peak_days =
+          ModelProfileHelpers.normalize_days(
+            draft_or_profile(@draft, "off_peak_days", profile_off_peak_days(@profile))
+          ) %>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">
+              <%!-- zh_CN: Off-peak days → "完全离峰的整天" --%>{gettext(
+                "Off-peak days (optional)"
+              )}
+            </span>
+          </label>
+          <input type="hidden" name="off_peak_days" value="" />
+          <div class="flex flex-wrap gap-x-3 gap-y-1.5">
+            <%= for {value, label} <- day_options() do %>
+              <label class="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-xs"
+                  name="off_peak_days"
+                  value={value}
+                  checked={Enum.member?(off_peak_days, value)}
+                />
+                <span class="text-xs text-base-content/80">{label}</span>
+              </label>
+            <% end %>
+          </div>
+          <p class="text-xs text-base-content/70 mt-1">
+            <%!-- zh_CN: 这些天整天完全离峰——正常并发全天生效，peak 时段与峰值并发均被抑制 --%>{gettext(
+              "On these days the profile is off-peak all day — normal concurrency applies, peak windows and peak concurrency are suppressed."
+            )}
+          </p>
+        </div>
+
+        <%!-- Peak hours (optional) ── --%>
+        <div class="form-control">
+          <label class="label pb-1">
+            <span class="label-text font-semibold text-xs">
+              <%!-- zh_CN: Peak Hours → "高峰时段" --%>{gettext("Peak Hours (optional)")}
+            </span>
+          </label>
+          <div class="space-y-1.5">
+            <%= for {window, index} <- Enum.with_index(edit_peak_hours(@draft, @profile)) do %>
+              <div class="rounded-md border border-base-300/70 bg-base-100 p-2 space-y-1.5">
+                <div class="flex items-center gap-1.5">
+                  <input
+                    type="time"
+                    name={"peak_hours[#{index}][start]"}
+                    value={peak_window_value(window, :start)}
+                    class="input input-bordered input-xs rounded-md w-full sm:w-32 font-mono text-xs"
+                  />
+                  <span class="text-xs text-base-content/60">–</span>
+                  <input
+                    type="time"
+                    name={"peak_hours[#{index}][end]"}
+                    value={peak_window_value(window, :end)}
+                    class="input input-bordered input-xs rounded-md w-full sm:w-32 font-mono text-xs"
+                  />
+                  <button
+                    type="button"
+                    phx-click="remove_peak_hours_row"
+                    phx-value-index={index}
+                    class="btn btn-ghost btn-xs btn-square gap-1 text-error ml-auto"
+                    title={gettext("Remove time window")}
+                    aria-label={gettext("Remove time window")}
+                  >
+                    <.icon name="hero-x-mark" class="size-3.5" />
+                  </button>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span class="text-xs text-base-content/70 shrink-0">
+                    <%!-- zh_CN: 适用日期 --%>{gettext("Days:")}
+                  </span>
+                  <div class="flex flex-wrap gap-x-2 gap-y-1">
+                    <%= for {value, label} <- day_options() do %>
+                      <label class="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          class="checkbox checkbox-xs"
+                          name={"peak_hours[#{index}][days]"}
+                          value={value}
+                          checked={Enum.member?(peak_window_days(window), value)}
+                        />
+                        <span class="text-xs text-base-content/80">{label}</span>
+                      </label>
+                    <% end %>
+                  </div>
+                  <span class="text-xs text-base-content/60">
+                    <%!-- zh_CN: 不选择 = 每天 --%>{gettext("No selection = every day")}
+                  </span>
+                </div>
+              </div>
+            <% end %>
+          </div>
+          <button
+            type="button"
+            phx-click="add_peak_hours_row"
+            class="btn btn-ghost btn-xs gap-1 mt-1.5 self-start"
+          >
+            <.icon name="hero-plus" class="size-3.5" />
+            <%!-- zh_CN: Add time window → "添加时段" --%>{gettext("Add time window")}
+          </button>
+          <p class="text-xs text-base-content/70 mt-1">
+            <%!-- zh_CN: 每日时间窗口，24 小时制 HH:MM 本地时间；同一天允许两个窗口，例如 09:00–12:00 与 14:00–18:00 --%>{gettext(
+              "Daily time windows in 24h HH:MM local time. Two windows for one day are allowed, e.g. 09:00–12:00 and 14:00–18:00."
+            )}
+          </p>
+        </div>
       </div>
 
-      <%!-- Provider Options config ── --%>
-      <div class="form-control pt-2">
-        <label class="label pb-1">
-          <span class="label-text font-semibold text-xs">{gettext("Provider Options (JSON)")}</span>
-        </label>
-        <textarea
-          name="provider_options"
-          placeholder='{"store": false}'
-          class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
-          rows="3"
-        ><%= provider_options_val %></textarea>
-        <p class="text-xs text-base-content/70 mt-1">
-          {gettext(
-            "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
-          )}
-        </p>
-      </div>
+      <%!-- Advanced settings: generation parameters + provider-specific JSON.
+           A closed <details> keeps its inputs in the DOM (they are still
+           submitted), so the draft/parse mechanism is unchanged — the
+           disclosure is purely presentational. Auto-opens when the profile or
+           the in-flight draft already carries an advanced value. --%>
+      <details
+        id="model-profile-advanced"
+        class="rounded-lg border border-base-300 bg-base-200/20"
+        open={advanced_open?(@draft, @profile, extra_val, provider_options_val)}
+      >
+        <summary class="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs font-semibold text-base-content/80">
+          <.icon name="hero-adjustments-horizontal" class="size-4 text-base-content/70 shrink-0" />
+          <%!-- zh_CN: Advanced settings → "高级设置" --%>{gettext("Advanced settings")}
+          <span class="ml-auto font-normal text-base-content/60 text-right">
+            <%!-- zh_CN: 生成参数与厂商专用的 JSON 配置，通常无需修改 --%>{gettext(
+              "Generation parameters and provider-specific JSON. Rarely needed."
+            )}
+          </span>
+          <.icon name="hero-chevron-down" class="size-3.5 text-base-content/60 shrink-0" />
+        </summary>
+
+        <div class="space-y-4 px-3 pb-3">
+          <div class="space-y-2 pt-1">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-bold uppercase tracking-widest text-base-content/60">{gettext(
+                "Generation Parameters"
+              )}</span>
+              <span class="text-xs text-base-content/60">{gettext("optional")}</span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <.input_field
+                name="temperature"
+                label={gettext("Temperature")}
+                step="0.01"
+                value={draft_or_profile(@draft, "temperature", profile_param(@profile, :temperature))}
+                min="0"
+                max="2"
+                placeholder={gettext("empty")}
+              />
+              <%!-- zh_CN: Token → "词元" --%>
+              <.input_field
+                name="max_tokens"
+                label={gettext("Max Tokens")}
+                value={draft_or_profile(@draft, "max_tokens", profile_param(@profile, :max_tokens))}
+                min="1"
+                placeholder={gettext("empty")}
+              />
+              <.input_field
+                name="top_p"
+                label={gettext("Top P")}
+                step="0.01"
+                value={draft_or_profile(@draft, "top_p", profile_param(@profile, :top_p))}
+                min="0"
+                max="1"
+                placeholder={gettext("empty")}
+              />
+              <.input_field
+                name="top_k"
+                label={gettext("Top K")}
+                value={draft_or_profile(@draft, "top_k", profile_param(@profile, :top_k))}
+                min="1"
+                placeholder={gettext("empty")}
+              />
+              <.input_field
+                name="frequency_penalty"
+                label={gettext("Frequency Penalty")}
+                step="0.01"
+                value={
+                  draft_or_profile(
+                    @draft,
+                    "frequency_penalty",
+                    profile_param(@profile, :frequency_penalty)
+                  )
+                }
+                min="-2"
+                max="2"
+                placeholder={gettext("empty")}
+              />
+              <.input_field
+                name="presence_penalty"
+                label={gettext("Presence Penalty")}
+                step="0.01"
+                value={
+                  draft_or_profile(
+                    @draft,
+                    "presence_penalty",
+                    profile_param(@profile, :presence_penalty)
+                  )
+                }
+                min="-2"
+                max="2"
+                placeholder={gettext("empty")}
+              />
+            </div>
+          </div>
+
+          <%!-- Extra config ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Extra Config (JSON)")}</span>
+            </label>
+            <textarea
+              name="extra"
+              placeholder='{"wire": {"protocol": "openai_responses"}}'
+              class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
+              rows="3"
+            ><%= extra_val %></textarea>
+            <p class="text-xs text-base-content/70 mt-1">
+              {gettext("Advanced provider-specific options merged into the model spec map.")}
+            </p>
+          </div>
+
+          <%!-- Provider Options config ── --%>
+          <div class="form-control">
+            <label class="label pb-1">
+              <span class="label-text font-semibold text-xs">{gettext("Provider Options (JSON)")}</span>
+            </label>
+            <textarea
+              name="provider_options"
+              placeholder='{"store": false}'
+              class="textarea textarea-bordered textarea-sm rounded-md w-full font-mono text-sm h-20 resize-y"
+              rows="3"
+            ><%= provider_options_val %></textarea>
+            <p class="text-xs text-base-content/70 mt-1">
+              {gettext(
+                "Provider-specific options passed to the LLM API. For OpenAI, 'store' defaults to false automatically."
+              )}
+            </p>
+          </div>
+        </div>
+      </details>
 
       <.form_footer
         cancel_event="cancel_edit_model_profile"
@@ -681,6 +615,82 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     </form>
     """
   end
+
+  # ── Shared single-line input field ──
+  # Kills the repeated `form-control` + label + input + help-text wrapper.
+  # `value={nil}` and `required={false}` drop their attribute entirely (same as
+  # the hand-written markup this replaced); `class` extends the wrapper and
+  # `input_class` the <input>.
+
+  attr(:name, :string, required: true)
+  attr(:label, :string, required: true)
+  attr(:value, :any, default: nil)
+  attr(:type, :string, default: "number")
+  attr(:step, :any, default: nil)
+  attr(:min, :any, default: nil)
+  attr(:max, :any, default: nil)
+  attr(:placeholder, :string, default: nil)
+  attr(:help, :string, default: nil)
+  attr(:required, :boolean, default: false)
+  attr(:class, :string, default: nil)
+  attr(:input_class, :string, default: nil)
+
+  defp input_field(assigns) do
+    ~H"""
+    <div class={"form-control #{@class}"}>
+      <label class="label pb-1">
+        <span class="label-text font-semibold text-xs">
+          {@label}
+          <%= if @required do %>
+            <span class="text-error">*</span>
+          <% end %>
+        </span>
+      </label>
+      <input
+        type={@type}
+        name={@name}
+        value={@value}
+        step={@step}
+        min={@min}
+        max={@max}
+        placeholder={@placeholder}
+        required={@required}
+        class={"input input-bordered input-sm rounded-md w-full font-mono text-sm #{@input_class}"}
+      />
+      <p :if={@help} class="text-xs text-base-content/70 mt-1">{@help}</p>
+    </div>
+    """
+  end
+
+  # Advanced-disclosure auto-open rule: the <details> renders `open` when the
+  # in-flight DRAFT or the saved PROFILE already carries ANY advanced value.
+  # The draft wins over the profile, exactly like draft_or_profile/3 (so a
+  # draft key present with "" counts as cleared). `extra_val` /
+  # `provider_options_val` are the template's already-computed JSON strings.
+  # `0` IS a set value — only nil/blank strings count as unset.
+  @advanced_numeric_keys [
+    {"temperature", :temperature},
+    {"max_tokens", :max_tokens},
+    {"top_p", :top_p},
+    {"top_k", :top_k},
+    {"frequency_penalty", :frequency_penalty},
+    {"presence_penalty", :presence_penalty}
+  ]
+
+  defp advanced_open?(draft, profile, extra_val, provider_options_val) do
+    numeric_set? =
+      Enum.any?(@advanced_numeric_keys, fn {draft_key, profile_key} ->
+        not blank?(draft_or_profile(draft, draft_key, profile_param(profile, profile_key)))
+      end)
+
+    numeric_set? or not blank?(extra_val) or not blank?(provider_options_val)
+  end
+
+  # nil, non-binary values that stringify to "" and whitespace-only strings are
+  # blank; numbers (incl. 0), maps and lists are NOT blank.
+  defp blank?(nil), do: true
+  defp blank?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank?(_value), do: false
 
   # ── Model profile helpers ──
   # These safely read from profile maps that may have atom OR string keys
