@@ -2,7 +2,7 @@
 
 ## Intent
 
-ExUnit suites for the function components in `apps/evo_dash/lib/evo_dash_web/components/` (one test file per component module, 360 tests total).
+ExUnit suites for the function components in `apps/evo_dash/lib/evo_dash_web/components/` (one test file per component module, 369 tests total).
 All suites are `async: true`, import `Phoenix.LiveViewTest`, and render with `render_component/2` + Floki — Floki is always fed a PARSED tree (each file has its own `parse/1` = `Floki.parse_document!/1`, because `Floki.find/2` + `attribute/2` reject a raw binary).
 There is **no `live(...)` call anywhere in this directory**: every component is rendered in ISOLATION.
 
@@ -20,7 +20,7 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `task_card_components_test.exs` | `EvoDashWeb.TaskCardComponentsTest` | 9 / 35 — copy-text helpers, task card affordances, Review-button candidacy, structured errors, archive pass-through |
 | `setting_card_test.exs` | `EvoDashWeb.SettingCardTest` | 3 / 18 — `setting_card/1` `:list_of_strings` editor, `default_label/1`, appearance accent swatch picker |
 | `remote_gate_components_test.exs` | `EvoDashWeb.RemoteGateComponentsTest` | 5 / 16 — `remote_connection_gate/1` states + `gate_active?/1` truth table |
-| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 1 / 23 — render-only peak/off-peak concurrency form (events belong to SettingsLive) |
+| `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 32 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 1 / 2 — `Layouts.app/1` sidebar "Active Tasks" grouping |
@@ -131,9 +131,12 @@ Render-only coverage of the "Custom tools" chip group in `CustomAgentsEditor.cus
 Built-in names come from `EvoGit.Agent.Tools.schemas() |> Enum.map(&EvoGit.Agent.tool_name/1) |> Enum.reject(&is_nil/1)`.
 The alias describe pins alias-aware comparisons: a legacy `tools: ["read_file", "run_bash"]` renders the read/shell chips as `checked` inputs whose submitted `value` stays the agent's OWN saved spelling (no `value="read"`/`value="bash"` input exists) with NO warning; a `custom_tool_names` entry named after a built-in alias (`read_file`) is dropped from the custom group while a genuinely unknown selected tool still warns.
 
-## `model_profiles_editor_test.exs` (1 describe / 23 tests)
+## `model_profiles_editor_test.exs` (2 describes / 32 tests)
 
-Render-only peak/off-peak form coverage: `peak_concurrency` (incl. `0`), `peak_hours` rows, `timezone`, draft-wins pre-fill, remove-row buttons, plus the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading) and a guard that start/end/remove-row markup coexists. Row events (`add_peak_hours_row` / `remove_peak_hours_row`) belong to SettingsLive and are not exercised here.
+Render-only peak/off-peak form coverage: `peak_concurrency` (incl. `0`), `peak_hours` rows, `timezone`, draft-wins pre-fill, remove-row buttons, plus the days-of-week fields (`off_peak_days` profile chips + per-window `peak_hours[<i>][days]` chips — checked-state derivation, no hidden seed for window days, index threading) and a guard that start/end/remove-row markup coexists.
+The second describe covers the advanced-settings `<details id="model-profile-advanced">`: collapsed for a bare/new profile and for one carrying only non-advanced fields, opened by the `draft_or_profile/3`-consistent rule (saved `temperature: 0.7`, a draft `top_k`, and numeric `0` counting as set) while a draft that clears the only advanced value collapses it again, all eight advanced inputs (`temperature`/`max_tokens`/`top_p`/`top_k`/`frequency_penalty`/`presence_penalty`/`extra`/`provider_options`) found exactly once INSIDE the disclosure, and `select[name="reasoning_effort"]` asserted outside it.
+The file-local `advanced_details/1` helper returns the parsed `<details>` node (Floki's `find/2` accepts a node, so containment checks need no re-parse).
+Row events (`add_peak_hours_row` / `remove_peak_hours_row`) belong to SettingsLive and are not exercised here.
 
 ## `layouts_test.exs` (1 describe / 2 tests)
 
