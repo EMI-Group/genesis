@@ -264,7 +264,7 @@ pub fn tcp_accepting(port: u16, timeout: Duration) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Shell-rendered `data:` pages (error page + startup page)
+// Shell-rendered `data:` pages (loading page + error page + startup page)
 // ---------------------------------------------------------------------------
 
 /// The CSS shared by every shell-rendered `data:` page.
@@ -355,6 +355,34 @@ pub fn error_page_data_url(backend_url: &str) -> String {
 pub fn startup_page_data_url(backend_url: &str) -> String {
     let html = STARTUP_PAGE_HEAD.to_owned() + backend_url + STARTUP_PAGE_TAIL;
     format!("data:text/html;charset=utf-8,{}", percent_encode(&html))
+}
+
+/// The boot LOADING page: the very first frame of a healthy boot, shown from
+/// the moment the window exists until the backend answers an HTTP probe and the
+/// dashboard is navigated to.
+///
+/// It is deliberately NOT the error page — the backend is still starting, so
+/// nothing is wrong and there is no Retry-style button. The spinner is pure CSS
+/// (`@keyframes spin`), and the optional inline script only swaps in a
+/// "taking longer than usual" hint after 15s; without JavaScript the static
+/// startup wording remains. No dynamic content is spliced in (the page needs no
+/// backend URL), so this is one complete document rather than head/tail
+/// constants like the error and startup pages.
+const LOADING_PAGE_HTML: &str = concat!(
+    r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Genesis — Starting</title><style>"#,
+    page_css!(),
+    r#".spinner{width:2.5rem;height:2.5rem;margin:0 auto 1.5rem;border:.25rem solid #3a3a44;border-top-color:#C8383C;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spinner{animation:none;border-top-color:#8a8a94}}
+</style></head><body><div class="card"><div class="spinner" role="status" aria-label="Loading"></div><h1>Genesis</h1><p id="status">Starting Genesis… preparing the workspace. This usually takes a few seconds.</p></div><script>setTimeout(function(){var el=document.getElementById('status');if(el){el.textContent='Still starting — this is taking longer than usual.';}},15000);</script></body></html>"#,
+);
+
+/// Builds the `data:` URL for the boot loading page.
+pub fn loading_page_data_url() -> String {
+    format!(
+        "data:text/html;charset=utf-8,{}",
+        percent_encode(LOADING_PAGE_HTML)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -911,6 +939,23 @@ impl BackendManager {
         self.navigate(app, &startup_page_data_url(&self.backend_url));
     }
 
+    /// Shows the boot LOADING page (Genesis branding + CSS spinner): the first
+    /// frame the user sees, and the page that covers the whole readiness wait.
+    ///
+    /// Returns whether the navigation was accepted — `false` only while the
+    /// `main` window does not exist yet (the setup closure retries briefly),
+    /// exactly like [`Self::navigate`]. Mirrors [`Self::show_error_page`] in
+    /// resetting the latch first: this is a navigation AWAY from the dashboard.
+    ///
+    /// `pub` because `crate::run_gui` calls it right after building the window;
+    /// it is also re-invoked at the top of [`Self::run_bootstrap`] so the
+    /// loading page is guaranteed to be the visible page during the wait
+    /// regardless of thread ordering (cheap and idempotent).
+    pub fn show_loading_page(&self, app: &AppHandle) -> bool {
+        self.reset_dashboard_loaded();
+        self.navigate(app, &loading_page_data_url())
+    }
+
     /// True when the backend child is alive AND answers an HTTP request — the
     /// distinction the boot-failure routing needs ("the app works, the page is
     /// slow" vs "the backend is gone"). Deliberately stricter than the
@@ -922,8 +967,10 @@ impl BackendManager {
     }
 
     /// Waits for the backend to become ready and, once it serves, drives the
-    /// webview to the dashboard. THE BOOT SEQUENCE — run on a dedicated
-    /// [`std::thread`] spawned from the Tauri setup
+    /// webview to the dashboard. While it waits, the webview shows the loading
+    /// page ([`loading_page_data_url`]) — never the error page and never the
+    /// web engine's connection-refused page. THE BOOT SEQUENCE — run on a
+    /// dedicated [`std::thread`] spawned from the Tauri setup
     /// (`crate::run_gui`), NEVER on the setup hook itself, so the event loop is
     /// live throughout (the webview's `PageLoadEvent::Finished` callbacks, the
     /// only signal that sets the dashboard-loaded latch, must be deliverable —
@@ -949,6 +996,11 @@ impl BackendManager {
     ///   child exit, so handing over without the kill would leave a
     ///   live-but-unresponsive backend parked forever with nothing recovering.
     pub fn run_bootstrap(&self, app: AppHandle) {
+        // Guarantee the loading page is what the user sees while we wait. The
+        // setup closure already navigated there right after building the
+        // window; repeating it here is cheap and idempotent, and covers any
+        // ordering where this thread runs before that navigation landed.
+        let _ = self.show_loading_page(&app);
         crate::shell_log::log("waiting for the backend to become ready");
         crate::sidecar::wait_for_ready(&self.backend_url, crate::BACKEND_READY_TIMEOUT_SECS);
 
@@ -1078,8 +1130,8 @@ impl BackendManager {
 /// so callers can retry.
 ///
 /// `pub(crate)`: the single navigation implementation, used by
-/// [`BackendManager::navigate`] (the error and startup pages) and by the
-/// shared [`BackendManager::load_dashboard`] driver, which serves BOTH the
+/// [`BackendManager::navigate`] (the loading, error and startup pages) and by
+/// the shared [`BackendManager::load_dashboard`] driver, which serves BOTH the
 /// boot path ([`BackendManager::run_bootstrap`]) and the crash-recovery path
 /// ([`BackendManager::show_backend`]).
 pub(crate) fn navigate_webview(window: &tauri::WebviewWindow, url: &str) -> bool {
@@ -1743,6 +1795,44 @@ mod tests {
         );
         // The two pages are distinct documents.
         assert_ne!(url, error_page_data_url("http://127.0.0.1:9999"));
+    }
+
+    /// The boot loading page is a valid, self-contained `data:` URL with the
+    /// Genesis startup wording and a CSS-only spinner — and, crucially, it is
+    /// NOT the error page: it must never claim the backend is unavailable or
+    /// promise a restart while the backend is merely still starting.
+    #[test]
+    fn loading_page_data_url_is_parseable_and_has_spinner() {
+        let url = loading_page_data_url();
+        assert!(url.starts_with("data:text/html;charset=utf-8,"));
+        // No raw '#', space, quote or '<' may survive into the data URL.
+        for ch in ['#', ' ', '"', '<'] {
+            assert!(!url.contains(ch), "data URL must not contain raw {ch:?}");
+        }
+        // Must parse as a URL (tauri::Url is the url crate's re-export).
+        let parsed = tauri::Url::parse(&url).expect("data URL parses");
+        assert_eq!(parsed.scheme(), "data");
+
+        let decoded = percent_decode(&url["data:text/html;charset=utf-8,".len()..]);
+        assert!(decoded.contains("Genesis"));
+        assert!(decoded.contains("Starting Genesis"));
+        assert!(decoded.contains("preparing the workspace"));
+        // The spinner must be pure CSS: a keyframes rule and an animation.
+        assert!(decoded.contains("@keyframes"));
+        assert!(decoded.contains("animation:"));
+        // The backend is merely still starting — the error wording would be a
+        // lie (and the exact misleading text of the reported bug).
+        assert!(
+            !decoded.contains("unavailable"),
+            "the loading page must not claim the (still starting) backend is unavailable"
+        );
+        assert!(
+            !decoded.contains("restarted automatically"),
+            "the loading page must not promise a restart that will not happen"
+        );
+        // Distinct from both other shell pages.
+        assert_ne!(url, error_page_data_url("http://127.0.0.1:9999"));
+        assert_ne!(url, startup_page_data_url("http://127.0.0.1:9999"));
     }
 
     /// The dashboard navigation budget must stay patient enough for a COLD

@@ -926,12 +926,23 @@ fn run_gui() {
             //    window). Properties mirror the removed config entry: title,
             //    1280x800, resizable, centered. The window is created BEFORE
             //    the readiness wait so the watchdog's `show_backend` retry loop
-            //    (which waits for the window) behaves as before. The window's
-            //    initial load races the backend boot — the backend is not
-            //    listening yet, so that first navigation typically fails; the
-            //    boot thread runs `BackendManager::run_bootstrap`, which drives
-            //    the webview to the dashboard through the shared
-            //    `load_dashboard` gate once the backend serves.
+            //    (which waits for the window) behaves as before.
+            //
+            //    The INITIAL URL is `about:blank`, never the backend URL: the
+            //    backend was spawned moments earlier and is not listening yet
+            //    (it binds only after the whole `:evo_git` boot, Ecto
+            //    migrations included), so an initial backend load would render
+            //    the web engine's own connection-refused page for several
+            //    seconds. Instead, the setup closure immediately navigates to
+            //    the Genesis loading page (step 6a) and the backend URL is
+            //    navigated ONLY after the readiness probe succeeds (step 6b).
+            //    A `data:` URL cannot be the INITIAL `WebviewUrl` here — tauri
+            //    2.12.4 rejects it unless the `webview-data-url` feature is
+            //    enabled — whereas a runtime `window.navigate(data:…)` has no
+            //    such gate (the path the error/startup pages already use).
+            //    `about:blank` (like every `data:` page) never matches the
+            //    `url_is_backend` predicate, so the latch can only be set by a
+            //    real dashboard load.
             //
             //    The `on_page_load` hook (attached before `.build()`) feeds the
             //    manager's dashboard-loaded latch: `navigate` only proves the
@@ -943,7 +954,7 @@ fn run_gui() {
             tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
-                tauri::WebviewUrl::External(url.parse()?),
+                tauri::WebviewUrl::External("about:blank".parse()?),
             )
             .title("Genesis Dashboard")
             .inner_size(1280.0, 800.0)
@@ -972,7 +983,20 @@ fn run_gui() {
             })
             .build()?;
 
-            // 6. Wait for the backend and, once it serves, drive the webview to
+            // 6a. Show the Genesis loading page immediately — the very first
+            //     frame the user sees (instead of the web engine's
+            //     connection-refused page while the backend boots). The window
+            //     exists from here on, but `show_loading_page` returns false
+            //     while `get_webview_window("main")` cannot find it yet, so
+            //     retry briefly (bounded ~2s, 100ms steps) until the loading
+            //     page has been accepted.
+            let mut loading_attempts = 0u32;
+            while !manager.show_loading_page(app) && loading_attempts < 20 {
+                loading_attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            // 6b. Wait for the backend and, once it serves, drive the webview to
             //    the dashboard — on a DEDICATED THREAD, never on the setup hook.
             //
             //    These steps (the readiness poll, the ready/dead decision, and
