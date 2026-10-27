@@ -3,8 +3,8 @@
 ## Intent
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
-68 test files (`*_test.exs`) + `test_helper.exs`: ~50 200 lines, 1760 statically declared `test` blocks plus 2 doctests (`EvoDash.SettingsUtils`).
-Measured run: 1770 passed (1768 tests + 2 doctests) in 22.8–23.8 s — 3.2–4.0 s async, 19.4–19.8 s sync — ~27 s wall clock, zero stray console lines.
+68 test files (`*_test.exs`) + `test_helper.exs` + `support/`: 51 541 lines, 1771 statically declared `test` blocks plus 2 doctests (`EvoDash.SettingsUtils`).
+Measured run: 1781 passed (1779 tests + 2 doctests) in ~21 s — 3.3 s async, 17.8 s sync — ~25 s wall clock, zero stray console lines.
 Stable across explicit seeds (0, 1, 2, 12345, 533180, 8000147, 987654321) and across back-to-back runs.
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first (~67 s).
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`) live in `:evo_git` and are tested there; no suite here owns them.
