@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.9] - 2026-10-27
+
+### Added
+
+- Add a Nix desktop smoke test app that boots the packaged desktop app, verifies startup readiness and logs, and checks clean shutdown
+- Add paged, lazy, retention-bounded reads for per-agent task archives with streaming JSON export and a dedicated archive table, plus an archive total badge on the Archive tab
+- Add a test suite covering the database upgrade path from the previous release to this version, verifying migrations, resulting schema, archive data handling, and idempotent re-runs
+
+### Changed
+
+- Promptly distinguish background shell calls and subagent reports in chat history, and warn agents against manually backgrounding commands in the bash tool
+- Speed up test suites with deterministic timer seams, configurable short poll intervals, reused git repository templates, and primed git identity caches
+- Rewrite the task-store migration chain into six contiguous versions with the final 19-column schema, split option-key decoding into atomized and string-keyed sets, align page totals with renderable rows, and remove dead store/task APIs
+- Use OTP's default process and atom limits on released nodes instead of stricter custom caps, avoiding atom-table exhaustion and silent boot failures
+
+### Fixed
+
+- Fix detached background jobs on the systemd sandbox backend staying stuck in a running state, so they now reach a terminal completed or failed status
+- Fix the desktop smoke readiness probe to follow HTTP redirects so it passes when the dashboard root responds with a 302
+- Suppress the redundant background-job completion notice when an agent kills its own job
+- Suppress systemctl diagnostic output from leaking to stderr during background-job status probes
+- Fix the dashboard JSON export to request the full-fidelity task archive projection so exported archives remain complete
+- Fix task-archive JSON export for pages with no total count and short final pages, encoding missing fields as null instead of failing or truncating the export
+- Unify archive count and exhaustion reporting across the task card and review page, correct pager bounds when archived rows are dropped, and avoid duplicate store read-failure crash reports
+- Fix legacy archive metadata migration to dump undecodable payloads to a JSON file and abort the migration if the dump cannot be written
+
+### Security
+
+- Bump bandit to 1.14.0 to clear security advisories
+
 ## [0.13.8] - 2026-10-26
 
 ### Added
