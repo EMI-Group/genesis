@@ -8,6 +8,7 @@ Each file mirrors its source module under `apps/evo_git/lib/evo_git/agent/`.
 ## Routing Table
 
 - `./tools/` → Per-tool tests (`Tools.execute/5`, individual tool modules, the command shell) — own node.
+- `./compression/` → Pure compression-module unit suites (`Recency` boundary/tail budget + `shrink_to_budget/2`, `Checkpoint` split/build/prior-summary/oversized-tail regressions, `ToolResultPruner`, `Threshold`, `SummaryPrompt`) — detail: `./compression/CONTEXT.md`.
 
 ## Async-Safety Policy (this directory)
 
