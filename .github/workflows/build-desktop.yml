@@ -49,15 +49,19 @@ permissions:
 #
 # Native builds only (mix release --include_erts + Tauri on the host runner).
 # Desktop jobs stage installers under dist/; the dedicated build-linux-remote
-# job (Linux) plus the macOS/Windows jobs also build genesis_remote tarballs.
+# job (Linux) plus the macOS/Windows jobs also build genesis_remote tarballs,
+# and build-linux-server plus the macOS job also build the headless
+# genesis_server tarballs (dashboard-serving distribution; genesis_remote is a
+# headless daemon with no Phoenix UI).
 #
 # Jobs:
 #   prepare             publish flag, release tag, linux matrix JSON
 #   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
 #   build-linux-remote  ubuntu-22.04 (+ arm) — dedicated genesis_remote glibc build (default)
-#   build-macos-arm64   macos-15 — dmg, app.zip, app.tar.gz updater payload (notarized; all staged desktop artifacts minisign-signed)
+#   build-linux-server  ubuntu-22.04 (+ arm) — headless genesis_server glibc build (serves the dashboard)
+#   build-macos-arm64   macos-15 — dmg, app.zip, app.tar.gz updater payload (notarized; all staged desktop artifacts minisign-signed) + genesis_remote/genesis_server tarballs
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
-#   publish-release     single writer for GitHub Release assets
+#   publish-release     single writer for GitHub Release assets (incl. scripts/install.sh)
 #
 # Shared steps: .github/actions/setup-mix, .github/actions/install-tauri-cli
 #
@@ -71,7 +75,7 @@ permissions:
 # deliberately never signed (EvoGit.RemoteBootstrap does no signature check).
 # Nested ERTS/NIFs: desktop/scripts/sign-macos-nested.sh
 #
-# Artifact names: genesis_{desktop|remote}_{platform}_{arch}.{format}
+# Artifact names: genesis_{desktop|remote|server}_{platform}_{arch}.{format}
 # (unversioned — permanent releases/latest/download/ links; the version comes
 # from the release tag and is baked into the app at build time, not the filename)
 #
@@ -83,6 +87,19 @@ permissions:
 # builds/stages the Linux remote tarball. Non-linux remote tarballs (darwin,
 # windows) are unchanged (genesis_remote_darwin_arm64.tar.xz,
 # genesis_remote_windows_x64.tar.xz).
+#
+# genesis_server naming: glibc only, no suffix — genesis_server_linux_x64.tar.xz
+# and genesis_server_linux_arm64.tar.xz (build-linux-server, ubuntu-22.04 for the
+# same wide glibc 2.35 host range as build-linux-remote) plus
+# genesis_server_darwin_arm64.tar.xz (build-macos-arm64). genesis_server bundles
+# BOTH apps and serves the Phoenix dashboard on http://<PHX_IP>:<PORT>, so its
+# jobs need the dashboard asset build (setup-mix runs assets.setup +
+# assets.deploy/phx.digest) — unlike genesis_remote, which has no UI. Server
+# tarballs are deliberately never minisign-signed (like genesis_remote_*).
+#
+# The repo's one-line installer scripts/install.sh is republished as the release
+# asset `install.sh` by publish-release, so
+# https://genesis.evox.group/dl/install.sh resolves for `curl … | sh`.
 #
 # Triggers: tag push `v*` → all platforms + release (created as a draft,
 # published as the FINAL step after all artifacts are uploaded); workflow_dispatch
@@ -493,6 +510,76 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # ── Linux Server (headless, glibc, ubuntu-22.04) ────────────────────────
+  # Headless genesis_server distribution: BOTH apps (evo_git + evo_dash, no
+  # wx), include_erts, a `bin/genesis` CLI overlay and server_release: true. It
+  # serves the Phoenix dashboard on http://<PHX_IP>:<PORT> (GET /health probe),
+  # so — unlike genesis_remote — it needs the dashboard asset build: the shared
+  # setup-mix action runs `mix deps.get` + `mix assets.setup` + `mix assets.deploy`
+  # (esbuild/tailwind + phx.digest), exactly like the Linux desktop job.
+  # It reuses the remote glibc matrix (ubuntu-22.04 / ubuntu-22.04-arm, glibc
+  # 2.35) for the same wide host compatibility range and the same vendored
+  # ripgrep/git binaries.
+  build-linux-server:
+    name: Linux Server (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.linux_remote_matrix != '[]'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.linux_remote_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Fix ImageOS for ARM runner
+        if: matrix.image_os != ''
+        run: echo "ImageOS=${{ matrix.image_os }}" >> "$GITHUB_ENV"
+
+      - name: Setup Elixir and assets
+        uses: ./.github/actions/setup-mix
+        with:
+          cache-key: linux-server-${{ matrix.arch }}
+
+      - name: Bundle vendor binaries
+        env:
+          VENDOR_PLATFORM: ${{ matrix.vendor_platform }}
+          RG_TARGET: ${{ matrix.rg_target }}
+          RG_SHA256: ${{ matrix.rg_sha256 }}
+        run: |
+          set -euo pipefail
+          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
+          DOWNLOAD_DIR=".build/vendor-downloads"
+          mkdir -p "${VENDOR_DIR}"
+          mkdir -p "${DOWNLOAD_DIR}"
+          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
+          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
+          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
+          cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
+          chmod +x "${VENDOR_DIR}/rg"
+          cp "$(which git)" "${VENDOR_DIR}/git"
+          chmod +x "${VENDOR_DIR}/git"
+
+      - name: Build genesis_server release
+        run: |
+          MIX_ENV=prod mix release genesis_server --overwrite
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -cJf "dist/genesis_server_linux_${{ matrix.arch }}.tar.xz" \
+            -C _build/prod/rel genesis_server
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: genesis-linux-server-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
   # ── macOS ARM64 ────────────────────────────────────────────────────────
   build-macos-arm64:
     name: macOS (ARM64)
@@ -537,6 +624,9 @@ jobs:
         run: |
           MIX_ENV=prod mix release genesis_desktop --overwrite
           MIX_ENV=prod mix release genesis_remote --overwrite
+          # Headless server distribution (both apps, serves the dashboard from
+          # the assets already deployed by setup-mix above).
+          MIX_ENV=prod mix release genesis_server --overwrite
 
       - name: Place desktop release in Tauri resources
         run: |
@@ -678,6 +768,11 @@ jobs:
           mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_darwin_arm64.dmg"
           tar -cJf "dist/genesis_remote_darwin_arm64.tar.xz" \
             -C _build/prod/rel genesis_remote
+          # Headless server distribution (dashboard included). Never signed:
+          # the dist/genesis_desktop_* signing glob below excludes it, like the
+          # genesis_remote tarball.
+          tar -cJf "dist/genesis_server_darwin_arm64.tar.xz" \
+            -C _build/prod/rel genesis_server
           if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
             # Re-create the updater payload from the NOW-STAPLED app — tauri's
             # build-time payload predates notarization and is discarded.
@@ -687,8 +782,9 @@ jobs:
             tauri signer sign "dist/genesis_desktop_darwin_arm64.app.tar.gz"
             # Minisign-sign the remaining staged desktop artifacts that lack a
             # .sig (the .dmg and .app.zip). The .app.tar.gz just signed above
-            # is skipped by the -f .sig guard; genesis_remote_* tarballs are
-            # excluded by the dist/genesis_desktop_* glob.
+            # is skipped by the -f .sig guard; the genesis_remote_* and
+            # genesis_server_* tarballs are excluded by the dist/genesis_desktop_*
+            # glob.
             for artifact in dist/genesis_desktop_*; do
               [[ -f "${artifact}" ]] || continue
               [[ "${artifact}" != *.sig && ! -f "${artifact}.sig" ]] || continue
@@ -864,12 +960,16 @@ jobs:
   # ── Publish release (draft → public) ────────────────────────────────────
   # Single writer for GitHub Release assets: uploads everything to a draft,
   # then flips it public with `gh release edit --draft=false` as the FINAL step.
+  # Asset set = every artifact from the download above (genesis-* pattern:
+  # desktop installers, genesis_remote_* and genesis_server_* tarballs, .sig
+  # files, latest.json) plus scripts/install.sh staged as dist/install.sh.
   publish-release:
     name: Publish GitHub Release
     needs:
       - prepare
       - build-linux
       - build-linux-remote
+      - build-linux-server
       - build-macos-arm64
       - build-windows-x64
     if: >-
@@ -878,6 +978,7 @@ jobs:
       needs.prepare.outputs.publish == 'true' &&
       (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
       (needs.build-linux-remote.result == 'success' || needs.build-linux-remote.result == 'skipped') &&
+      (needs.build-linux-server.result == 'success' || needs.build-linux-server.result == 'skipped') &&
       (needs.build-macos-arm64.result == 'success' || needs.build-macos-arm64.result == 'skipped') &&
       (needs.build-windows-x64.result == 'success' || needs.build-windows-x64.result == 'skipped')
     runs-on: ubuntu-22.04
@@ -896,6 +997,22 @@ jobs:
           pattern: genesis-*
           path: dist
           merge-multiple: true
+
+      - name: Stage install.sh
+        run: |
+          set -euo pipefail
+          # The one-line installer lives in the repo (scripts/install.sh) and is
+          # republished as the release asset `install.sh` so that
+          #   curl -LsSf https://genesis.evox.group/dl/install.sh | sh
+          # works (the /dl/ Cloudflare worker resolves /dl/<asset> against the
+          # latest release). Hard-fail when the script is missing: a release
+          # without the installer breaks the documented install path.
+          if [[ ! -f scripts/install.sh ]]; then
+            echo "scripts/install.sh not found — cannot publish the install.sh asset" >&2
+            exit 1
+          fi
+          install -m 0755 scripts/install.sh dist/install.sh
+          echo "staged dist/install.sh"
 
       - name: Extract release notes from CHANGELOG.md
         env:
@@ -1012,6 +1129,22 @@ jobs:
               f.write("\n")
           print(f"wrote latest.json for version {version}")
           PY
+
+      - name: Append headless server download note to the release body
+        run: |
+          set -euo pipefail
+          # Appended AFTER the latest.json generation so the desktop updater's
+          # `notes` stay the plain CHANGELOG.md section.
+          cat >> release_body.md <<'EOF'
+
+          ### Headless server
+
+          Genesis also ships as a headless server (dashboard included): install it with
+          `curl -LsSf https://genesis.evox.group/dl/install.sh | sh`, or download
+          `genesis_server_linux_x64.tar.xz`, `genesis_server_linux_arm64.tar.xz` or
+          `genesis_server_darwin_arm64.tar.xz` from the assets below.
+          EOF
+          echo "appended headless server note to release_body.md"
 
       # Draft → publish ordering: the draft is invisible to the public and to
       # releases/latest; the FINAL `gh release edit --draft=false` step only

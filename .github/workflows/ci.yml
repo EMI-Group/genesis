@@ -19,9 +19,10 @@ permissions:
 # ── Architecture ────────────────────────────────────────────────────────────
 #
 # A lightweight CI gate that runs on every pull request and push to main.
-# Three jobs: tests, formatting, and compile warnings. The `test` job is a
-# matrix over the two umbrella apps so their suites run in parallel on
-# separate runners (the umbrella `mix test` would run them sequentially).
+# Four jobs: tests, formatting, compile warnings and shell-script syntax. The
+# `test` job is a matrix over the two umbrella apps so their suites run in
+# parallel on separate runners (the umbrella `mix test` would run them
+# sequentially).
 #
 # The NIF dependencies (xqlite, html5ever, lazy_html) use precompiled
 # binaries (rustler_precompiled / cc_precompiler), so no Rust or C/C++
@@ -140,3 +141,27 @@ jobs:
 
       - name: Compile with warnings as errors
         run: MIX_ENV=test mix compile --warnings-as-errors
+
+  shell-lint:
+    name: Shell script syntax
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check shell script syntax
+        # `bash -n` parses without executing — no shellcheck dependency. Covers
+        # the release installer (scripts/install.sh) plus any other repo shell
+        # script, and is a no-op while scripts/ has no .sh file.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(scripts/*.sh)
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "no scripts/*.sh found — nothing to check"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "bash -n ${f}"
+            bash -n "${f}"
+          done
