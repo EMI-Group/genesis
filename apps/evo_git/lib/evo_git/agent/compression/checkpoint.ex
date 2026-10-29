@@ -45,6 +45,13 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
   capped at 40k tokens), so a transcript of huge messages cannot pin an
   unbounded suffix.
 
+  Moving the recency boundary cannot shrink the MINIMAL pairing-safe trailing
+  exchange, so an oversized final tool result (or assistant message) would
+  either stay over budget or be dropped whole. `Recency.shrink_to_budget/2`
+  closes that gap: the tail is truncated head-heavily around a visible marker —
+  role, metadata, `tool_calls`/`tool_call_id` and non-text parts preserved — and
+  only whole leading exchanges are dropped as a last resort.
+
   `build/3` additionally guarantees forward progress: when the transcript
   cannot fit its intended tail (`pre_estimate > budget`), the rebuilt list must
   estimate at `<= 0.9 * pre`, otherwise the leading messages of the retained
@@ -120,7 +127,7 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
   number of messages dropped, `kept` the number retained verbatim after the
   checkpoint, `estimated_tokens` the estimate of the RETURNED list,
   `pre_estimate` the estimate of the input, `budget` the tail budget in tokens
-  and `shrunk` whether the progress guard trimmed the retained tail.
+  and `shrunk` whether the retained tail was shortened or truncated.
 
   `replaced: 0` with the INPUT LIST UNCHANGED means nothing was compacted,
   which is the caller's signal that the LLM call is not worth making — that
@@ -129,9 +136,11 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
   transcript).
 
   The returned list holds exactly ONE checkpoint: every checkpoint message is
-  dropped from the retained tail. When the transcript cannot fit its intended
-  tail (`pre_estimate > budget`) the retained tail is trimmed until the rebuilt
-  list estimates at `<= 0.9 * pre`, so compression always makes room; a
+  dropped from the retained tail. The retained tail is first truncated to the
+  tail budget (`Recency.shrink_to_budget/2` — oversized TEXT content is
+  shortened, pairing and non-text parts preserved) and, when the transcript
+  cannot fit its intended tail (`pre_estimate > budget`), trimmed until the
+  rebuilt list estimates at `<= 0.9 * pre`, so compression always makes room; a
   transcript that fits its budget keeps its full default tail verbatim.
 
   ## Options
@@ -324,13 +333,45 @@ defmodule EvoGit.Agent.Compression.Checkpoint do
   # Forward progress: only a transcript that CANNOT fit its intended tail (pre
   # estimate above the budget) is trimmed, so a small legitimate conversation
   # keeps its full default tail verbatim.
-  defp enforce_progress(head, checkpoint, tail, pre_estimate, budget)
-       when pre_estimate > budget do
-    limit = round(pre_estimate * @progress_target_fraction)
-    shrink_tail(head, checkpoint, tail, limit, false)
+  defp enforce_progress(head, checkpoint, tail, pre_estimate, budget) do
+    # Truncation runs BEFORE the progress trim: when the minimal pairing-safe
+    # trailing exchange is itself over budget, dropping first would discard the
+    # whole exchange and leave nothing for `shrink_to_budget/2` to keep.
+    %{messages: fitted, truncated: truncated} = fit_tail(head, checkpoint, tail, budget)
+    trimmed = trim_for_progress(head, checkpoint, fitted, pre_estimate, budget)
+
+    {trimmed, length(trimmed) < length(tail) or truncated > 0}
   end
 
-  defp enforce_progress(_head, _checkpoint, tail, _pre_estimate, _budget), do: {tail, false}
+  # 1. Shrink the tail to the budget (`Recency.shrink_to_budget/2`): oversized
+  #    TEXT content is truncated head-heavily and only whole leading exchanges
+  #    are dropped as a last resort.
+  # 2. The tail budget alone does not cover the head + checkpoint, so when the
+  #    rebuilt list would still overshoot, truncate once more against the
+  #    REMAINING budget — accepted only when it does not drop further messages,
+  #    because retaining (a truncated) recent work outranks an exact fit.
+  defp fit_tail(head, checkpoint, tail, budget) do
+    primary = Recency.shrink_to_budget(tail, budget: budget)
+    fixed = Recency.estimate_tokens(head ++ [checkpoint])
+    remaining = budget - fixed
+
+    if remaining > 0 and primary.messages != [] and fixed + primary.estimated_tokens > budget do
+      refined = Recency.shrink_to_budget(primary.messages, budget: remaining)
+
+      if length(refined.messages) == length(primary.messages), do: refined, else: primary
+    else
+      primary
+    end
+  end
+
+  defp trim_for_progress(head, checkpoint, tail, pre_estimate, budget)
+       when pre_estimate > budget do
+    limit = round(pre_estimate * @progress_target_fraction)
+    {trimmed, _shrunk?} = shrink_tail(head, checkpoint, tail, limit, false)
+    trimmed
+  end
+
+  defp trim_for_progress(_head, _checkpoint, tail, _pre_estimate, _budget), do: tail
 
   defp shrink_tail(head, checkpoint, tail, limit, shrunk?) do
     if Recency.estimate_tokens(head ++ [checkpoint] ++ tail) <= limit do
