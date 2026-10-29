@@ -76,7 +76,7 @@ Usage is charged wherever the request was billed: the adopted-prune path leaves 
 
 ## Notes for Agents
 
-- **Recency math must never be re-implemented** in a caller — call `Recency.boundary/2`.
+- **Recency math must never be re-implemented** in a caller — call `Recency.boundary/3` (the two-arity form remains for callers outside the compression pipeline).
 - The sub-modules are TOTAL about unexpected MESSAGE shapes (binary legacy `content`, atom- or string-keyed maps/parts, non-integer opts falling back to defaults) because they run in the per-turn path; passing a non-list message list is out of contract and raises a `FunctionClauseError`.
 - The stage-2 attempt budget is the call-time app-env seam `:compression_llm_max_attempts` (default 3) — an operational knob, not a `config.toml` key.
 - Gating config keys belong to the config layer, not this directory: `[:llm, :compression_threshold_tokens]` (nil = derive), `[:llm, :tool_result_pruning]` (default `true`) and `[:llm, :tool_result_pruning_target_fraction]` (default `0.5`); the window itself is the model profile's `context_window`.
