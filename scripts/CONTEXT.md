@@ -3,7 +3,7 @@
 ## Intent
 
 Standalone shell scripts that are run directly by people (or by `curl … | sh`) and are NOT part of the Mix umbrella build.
-Today the directory holds one script: `install.sh`, the one-line installer for the headless Genesis server distribution (`genesis_server` — core + Phoenix dashboard, ERTS bundled, no wx).
+Today the directory holds two scripts: `install.sh`, the one-line installer for the headless Genesis server distribution (`genesis_server` — core + Phoenix dashboard, ERTS bundled, no wx), and `test-genesis-cli.sh`, its self-contained smoke test for the `genesis` CLI shipped in that release (`../rel/overlays/bin/genesis`).
 It installs a released tarball, links the `genesis` shell CLI onto the user's PATH, and prints next steps; it performs no compilation and needs no Elixir toolchain.
 
 ## API Surface
@@ -75,6 +75,7 @@ Printed next steps: `genesis` (foreground server), `genesis start` (service via 
 ## Routing Table
 
 - `./install.sh` → one-line installer for the headless `genesis_server` distribution.
+- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd; run with `bash scripts/test-genesis-cli.sh`, no release build or service manager needed).
 - `../rel/overlays/` → release overlay sources; `../rel/overlays/bin/genesis` is the CLI this installer links.
 - `../.github/workflows/` → builds and uploads the `genesis_server_*` tarballs and the `install.sh` asset.
 - `../apps/evo_git/lib/evo_git/remote_bootstrap.ex` → Elixir mirror of the same `/dl/` asset-URL pattern (`direct_url/1`).
