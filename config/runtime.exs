@@ -17,14 +17,20 @@ import Config
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
 #
-# Server mode detection (headless `genesis_server` distribution): the release
-# bakes `config: [evo_dash: [server_release: true]]` into sys.config, and the
-# `genesis` CLI additionally exports EVOGIT_SERVER=1 to the launched release.
-# Either signal enables server mode. Defined here (script scope) so the
+# Server mode detection (headless `genesis_server` distribution).
+# RELEASE_NAME is the PRIMARY signal: the release launcher always exports it
+# (`bin/genesis_server`: RELEASE_NAME="${RELEASE_NAME:-genesis_server}"), while
+# the `config:` option of a Mix release definition does NOT reach the generated
+# sys.config in this umbrella project — so the baked `server_release` app-env
+# flag below is only a harmless fallback (a future Mix may merge it), exactly
+# like `genesis_desktop`'s unused `desktop_release` flag.
+# The `genesis` CLI additionally exports EVOGIT_SERVER=1 to the launched
+# release. Any signal enables server mode. Defined here (script scope) so the
 # endpoint toggle below and the prod block further down share one definition.
 server_mode =
   Application.get_env(:evo_dash, :server_release, false) or
-    System.get_env("EVOGIT_SERVER") == "1"
+    System.get_env("EVOGIT_SERVER") == "1" or
+    System.get_env("RELEASE_NAME") == "genesis_server"
 
 if (System.get_env("PHX_SERVER") ||
       Application.get_env(:evo_dash, :desktop_release, false)) or server_mode do
