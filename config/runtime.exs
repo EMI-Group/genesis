@@ -16,7 +16,18 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") || Application.get_env(:evo_dash, :desktop_release, false) do
+#
+# Server mode detection (headless `genesis_server` distribution): the release
+# bakes `config: [evo_dash: [server_release: true]]` into sys.config, and the
+# `genesis` CLI additionally exports EVOGIT_SERVER=1 to the launched release.
+# Either signal enables server mode. Defined here (script scope) so the
+# endpoint toggle below and the prod block further down share one definition.
+server_mode =
+  Application.get_env(:evo_dash, :server_release, false) or
+    System.get_env("EVOGIT_SERVER") == "1"
+
+if (System.get_env("PHX_SERVER") ||
+      Application.get_env(:evo_dash, :desktop_release, false)) or server_mode do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
@@ -132,6 +143,78 @@ config :req_llm,
 if config_env() == :prod and
      not (System.get_env("RELEASE_NAME") == "genesis_remote" or
             Application.get_env(:evo_git, :remote_release, false)) do
+  # Detect desktop mode from two independent signals so detection is robust:
+  #   1. The compile-time `:desktop_release` flag baked into sys.config by the
+  #      genesis_desktop release definition in mix.exs (loaded before
+  #      runtime.exs evaluates).
+  #   2. The EVOGIT_DESKTOP env var set by the Tauri sidecar (sidecar.rs).
+  desktop_mode =
+    Application.get_env(:evo_dash, :desktop_release, false) or
+      System.get_env("EVOGIT_DESKTOP") == "1"
+
+  # Server mode persists its secret key base at `<data_dir>/secret_key_base`
+  # (mode 0600) so cookies and sessions keep working across restarts. Boot
+  # must never abort on a filesystem problem: warn and use the freshly
+  # generated in-memory value instead (sessions then end at restart).
+  persist_server_secret_key_base = fn ->
+    generated = Base.encode64(:crypto.strong_rand_bytes(48))
+
+    generated_or_warn = fn message ->
+      IO.warn(message <> "; using an ephemeral key — sessions will not survive a restart.")
+      generated
+    end
+
+    try do
+      path = Path.join(EvoGit.Platform.data_dir(), "secret_key_base")
+
+      persist = fn ->
+        case File.write(path, generated, [:binary]) do
+          :ok ->
+            _ = File.chmod(path, 0o600)
+            generated
+
+          {:error, reason} ->
+            generated_or_warn.(
+              "[server] Could not persist secret key base to #{inspect(path)} " <>
+                "(#{inspect(reason)})"
+            )
+        end
+      end
+
+      case File.mkdir_p(Path.dirname(path)) do
+        :ok ->
+          case File.read(path) do
+            {:ok, persisted} ->
+              case String.trim(persisted) do
+                "" -> persist.()
+                secret -> secret
+              end
+
+            {:error, :enoent} ->
+              persist.()
+
+            {:error, reason} ->
+              generated_or_warn.(
+                "[server] Could not read secret key base from #{inspect(path)} " <>
+                  "(#{inspect(reason)})"
+              )
+          end
+
+        {:error, reason} ->
+          generated_or_warn.(
+            "[server] Could not create data directory #{inspect(Path.dirname(path))} " <>
+              "(#{inspect(reason)})"
+          )
+      end
+    rescue
+      # e.g. the data dir cannot be resolved (no HOME/XDG base dir).
+      error in [ArgumentError, File.Error] ->
+        generated_or_warn.(
+          "[server] Could not resolve the secret key base path (#{Exception.message(error)})"
+        )
+    end
+  end
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want
@@ -141,15 +224,22 @@ if config_env() == :prod and
   # SECRET_KEY_BASE env var). Fall back to the same hardcoded key so the
   # backend can still boot. This is safe for local, single-user desktop usage
   # only and is never used for real prod.
+  # Server releases persist a generated key in the data directory (see above);
+  # SECRET_KEY_BASE still wins when the operator sets it.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
-      if Application.get_env(:evo_dash, :desktop_release, false) do
-        "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890"
-      else
-        raise """
-        environment variable SECRET_KEY_BASE is missing.
-        You can generate one by calling: mix phx.gen.secret
-        """
+      cond do
+        server_mode ->
+          persist_server_secret_key_base.()
+
+        desktop_mode ->
+          "GenesisDesktopLocalSecretKeyBaseDoNotUseInProduction2025abcdef1234567890"
+
+        true ->
+          raise """
+          environment variable SECRET_KEY_BASE is missing.
+          You can generate one by calling: mix phx.gen.secret
+          """
       end
 
   port =
@@ -163,21 +253,14 @@ if config_env() == :prod and
           # arbitrary and never needs to match the WebView.
           9999
         else
+          # Server mode lands here too: PORT is unset, so use the configured
+          # listen port (config.toml [server] listen_port, default 9999).
           EvoGit.Config.resolve([:server, :listen_port])
         end
 
       port_str ->
         String.to_integer(port_str)
     end
-
-  # Detect desktop mode from two independent signals so detection is robust:
-  #   1. The compile-time `:desktop_release` flag baked into sys.config by the
-  #      genesis_desktop release definition in mix.exs (loaded before
-  #      runtime.exs evaluates).
-  #   2. The EVOGIT_DESKTOP env var set by the Tauri sidecar (sidecar.rs).
-  desktop_mode =
-    Application.get_env(:evo_dash, :desktop_release, false) or
-      System.get_env("EVOGIT_DESKTOP") == "1"
 
   # In desktop mode the backend runs as a Tauri sidecar process with no
   # visible console — stdout is captured by the sidecar but the user has no
@@ -186,6 +269,8 @@ if config_env() == :prod and
   # for debugging via the filesystem). The default_formatter configured in
   # config/config.exs is preserved — only the handler destination changes
   # from stdout to a file.
+  # Server mode deliberately keeps console (stdout/stderr) logging: it is a
+  # headless service whose stdout is captured by journald/systemd.
   if desktop_mode do
     log_dir = Path.join(EvoGit.Platform.data_dir(), "logs")
 
@@ -221,8 +306,9 @@ if config_env() == :prod and
     end
   end
 
-  # Bind address for the desktop server. Defaults to loopback (localhost only)
-  # so the dashboard is never exposed to the network without explicit opt-in.
+  # Bind address for the dashboard (desktop and server modes alike). Defaults to
+  # loopback (localhost only) so the dashboard is never exposed to the network
+  # without explicit opt-in.
   # Priority: PHX_IP env var → config.toml [server] listen_ip → loopback default.
   desktop_ip_str =
     System.get_env("PHX_IP") || EvoGit.Config.resolve([:server, :listen_ip])
@@ -251,35 +337,55 @@ if config_env() == :prod and
   # fallback taken above when the configured address was unparseable.
   desktop_host = desktop_ip |> :inet.ntoa() |> to_string()
 
-  if desktop_mode do
-    # Desktop mode: local single-user server accessed via Tauri WebView.
-    # check_origin is disabled because the WebView connects over plain HTTP
-    # to the loopback address, which would otherwise be rejected by Phoenix's
-    # origin check.
-    # The bind address defaults to loopback (127.0.0.1) for security; set
-    # PHX_IP to expose the server on other interfaces (e.g. for remote access).
-    config :evo_dash, EvoDashWeb.Endpoint,
-      url: [host: desktop_host, port: port, scheme: "http"],
-      http: [
-        ip: desktop_ip,
-        port: port
-      ],
-      check_origin: false,
-      secret_key_base: secret_key_base
-  else
-    host = System.get_env("PHX_HOST") || "example.com"
+  cond do
+    desktop_mode ->
+      # Desktop mode: local single-user server accessed via Tauri WebView.
+      # check_origin is disabled because the WebView connects over plain HTTP
+      # to the loopback address, which would otherwise be rejected by Phoenix's
+      # origin check.
+      # The bind address defaults to loopback (127.0.0.1) for security; set
+      # PHX_IP to expose the server on other interfaces (e.g. for remote access).
+      config :evo_dash, EvoDashWeb.Endpoint,
+        url: [host: desktop_host, port: port, scheme: "http"],
+        http: [
+          ip: desktop_ip,
+          port: port
+        ],
+        check_origin: false,
+        secret_key_base: secret_key_base
 
-    config :evo_dash, EvoDashWeb.Endpoint,
-      url: [host: host, port: 443, scheme: "https"],
-      http: [
-        # Enable IPv6 and bind on all interfaces.
-        # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-        # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-        # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-        ip: {0, 0, 0, 0, 0, 0, 0, 0},
-        port: port
-      ],
-      secret_key_base: secret_key_base
+    server_mode ->
+      # Server mode: headless distribution reached over plain HTTP via a LAN
+      # IP / hostname. URL host: PHX_HOST when set, else the resolved bind
+      # address (which may itself be a LAN IP from PHX_IP or config.toml).
+      # check_origin is disabled because the dashboard's LiveView sockets are
+      # opened from a browser origin (LAN IP / hostname) that no fixed
+      # allowlist can cover.
+      server_host = System.get_env("PHX_HOST") || desktop_host
+
+      config :evo_dash, EvoDashWeb.Endpoint,
+        url: [host: server_host, port: port, scheme: "http"],
+        http: [
+          ip: desktop_ip,
+          port: port
+        ],
+        check_origin: false,
+        secret_key_base: secret_key_base
+
+    true ->
+      host = System.get_env("PHX_HOST") || "example.com"
+
+      config :evo_dash, EvoDashWeb.Endpoint,
+        url: [host: host, port: 443, scheme: "https"],
+        http: [
+          # Enable IPv6 and bind on all interfaces.
+          # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
+          # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
+          # for details about using IPv6 vs IPv4 and loopback vs public addresses.
+          ip: {0, 0, 0, 0, 0, 0, 0, 0},
+          port: port
+        ],
+        secret_key_base: secret_key_base
   end
 
   # ## SSL Support
