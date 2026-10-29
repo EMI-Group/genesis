@@ -48,6 +48,18 @@ defmodule EvoGit.Agent.Compression.Recency do
   that would land on a `:tool` result is rewound onto the producing assistant
   message, so a tool result is never orphaned and the protected region stays
   ONE contiguous suffix.
+
+  ## Moving the boundary cannot shrink an oversized message
+
+  The index-only rule above has one blind spot: when the MINIMAL contiguous
+  pairing-safe trailing exchange (one huge tool result, one huge assistant
+  message) is itself larger than the budget, no index can make it fit — the
+  suffix would either stay over budget or be dropped whole, and compression
+  would retrigger immediately. `shrink_to_budget/2` closes that gap: it
+  truncates the oversize TEXT content head-heavily (role, metadata,
+  `tool_calls`/`tool_call_id` and every non-text part preserved) and only drops
+  whole leading exchanges as a last resort, so the returned list always lands
+  at or under the budget whenever that is reachable.
   """
 
   alias ReqLLM.Message
@@ -57,6 +69,22 @@ defmodule EvoGit.Agent.Compression.Recency do
   @default_keep_recent_turns 4
   @default_tail_budget_fraction 0.2
   @default_tail_budget_tokens 40_000
+
+  # Per-message token allowance floor: below it a single message is truncated to
+  # something meaningful instead of being dropped for a handful of tokens.
+  @min_message_allowance 1_000
+
+  # Head-heavy split of the retained text (the tail is where errors, totals and
+  # summaries sit, but the beginning carries the file/command identity).
+  @truncation_head_share 0.75
+
+  # Budgeted worst-case size of the truncation marker (`"\n… [truncated N
+  # characters] …\n"`), so head + marker + tail stays inside the allowance.
+  @truncation_marker_reserve 40
+
+  # Present in the marker of every truncated text part — the detection anchor of
+  # `truncated?/1`.
+  @truncation_tag "[truncated "
 
   @doc """
   The default recency window (in turns) kept intact by both stages.
@@ -147,6 +175,87 @@ defmodule EvoGit.Agent.Compression.Recency do
   """
   @spec estimate_tokens(term()) :: non_neg_integer()
   def estimate_tokens(messages), do: tokens_for(char_count(messages))
+
+  @doc """
+  Shrinks `messages` down to `budget` tokens, KEEPING every message (and its
+  pairing) when truncation alone suffices.
+
+  Returns `%{messages: messages, truncated: n, estimated_tokens: t}` where
+  `truncated` counts the messages whose content was truncated and
+  `estimated_tokens` is the estimate of the RETURNED list.
+
+  The policy, in order:
+
+    1. a list already at or under the budget (or an empty/unusable one) is
+       returned unchanged with `truncated: 0`;
+    2. every message whose own estimate exceeds the per-message allowance
+       (`max(div(budget, message_count), 1_000)` tokens) gets its `:text`
+       content truncated head-heavily (about 75% head / 25% tail of
+       `4 * allowance` characters) around a visible
+       `"\\n… [truncated N characters] …\\n"` marker — role, metadata,
+       `tool_calls`, `tool_call_id` and every non-text part (`:thinking`,
+       `:provider_block`, media) survive untouched, in their original order, and
+       a message is never grown;
+    3. if the list is STILL over budget (too many messages), whole leading
+       exchanges are dropped until it fits or the list is empty — an assistant
+       message carrying `tool_calls` goes together with its following `:tool`
+       results, so the result never STARTS with an orphaned tool result and
+       never holds a `tool_calls` without its results.
+
+  ## Options
+
+    * `:budget` — an explicit token budget; a positive integer wins
+    * `:context_window`, `:tail_budget_fraction`, `:tail_budget_tokens` — the
+      fallback budget, resolved by `tail_budget/1`
+
+  Unusable values fall back to `tail_budget/1`. Pure and total — never raises,
+  never mutates a message that is not over its allowance.
+  """
+  @spec shrink_to_budget(term(), keyword()) :: %{
+          messages: term(),
+          truncated: non_neg_integer(),
+          estimated_tokens: non_neg_integer()
+        }
+  def shrink_to_budget(messages, opts \\ [])
+
+  def shrink_to_budget(messages, opts) when is_list(messages) do
+    budget = budget_from(opts)
+    estimated = estimate_tokens(messages)
+
+    if messages == [] or estimated <= budget do
+      %{messages: messages, truncated: 0, estimated_tokens: estimated}
+    else
+      allowance = max(div(budget, length(messages)), @min_message_allowance)
+      {truncated_messages, truncated} = truncate_all(messages, allowance)
+      kept = drop_to_budget(truncated_messages, budget)
+
+      %{messages: kept, truncated: truncated, estimated_tokens: estimate_tokens(kept)}
+    end
+  end
+
+  def shrink_to_budget(messages, _opts) do
+    %{messages: messages, truncated: 0, estimated_tokens: estimate_tokens(messages)}
+  end
+
+  @doc """
+  True when a message carries a truncation marker — i.e. `shrink_to_budget/2`
+  shortened its text content. Total over any term — never raises.
+  """
+  @spec truncated?(term()) :: boolean()
+  def truncated?(%Message{content: content}) when is_binary(content),
+    do: String.contains?(content, @truncation_tag)
+
+  def truncated?(%Message{content: content}) when is_list(content) do
+    Enum.any?(content, fn
+      %ReqLLM.Message.ContentPart{type: :text, text: text} when is_binary(text) ->
+        String.contains?(text, @truncation_tag)
+
+      _part ->
+        false
+    end)
+  end
+
+  def truncated?(_message), do: false
 
   @doc """
   True when a message was INSERTED by the compressor instead of being part of
@@ -260,11 +369,11 @@ defmodule EvoGit.Agent.Compression.Recency do
     cond do
       base >= count -> base
       tokens_for(suffix_chars(tuple, base, count, 0)) <= budget -> base
-      true -> shrink_to_budget(tuple, base, count, suffix_chars(tuple, base, count, 0), budget)
+      true -> advance_past_budget(tuple, base, count, suffix_chars(tuple, base, count, 0), budget)
     end
   end
 
-  defp shrink_to_budget(tuple, index, count, chars, budget) do
+  defp advance_past_budget(tuple, index, count, chars, budget) do
     cond do
       index >= count - 1 ->
         count - 1
@@ -273,7 +382,7 @@ defmodule EvoGit.Agent.Compression.Recency do
         index
 
       true ->
-        shrink_to_budget(
+        advance_past_budget(
           tuple,
           index + 1,
           count,
@@ -303,6 +412,162 @@ defmodule EvoGit.Agent.Compression.Recency do
   end
 
   defp rewind_off_tool(index, _tuple), do: index
+
+  # --- truncating an oversized tail down to the budget ----------------------
+
+  defp budget_from(opts) when is_list(opts) do
+    case Keyword.get(opts, :budget) do
+      budget when is_integer(budget) and budget > 0 ->
+        budget
+
+      _unusable ->
+        tail_budget(
+          Keyword.take(opts, [:context_window, :tail_budget_fraction, :tail_budget_tokens])
+        )
+    end
+  end
+
+  defp budget_from(_opts), do: tail_budget([])
+
+  defp truncate_all(messages, allowance) do
+    {reversed, truncated} =
+      Enum.reduce(messages, {[], 0}, fn message, {acc, count} ->
+        case truncate_message(message, allowance) do
+          {:truncated, truncated_message} -> {[truncated_message | acc], count + 1}
+          :unchanged -> {[message | acc], count}
+        end
+      end)
+
+    {Enum.reverse(reversed), truncated}
+  end
+
+  # Only a message whose OWN estimate exceeds the allowance is touched: a small
+  # message keeps its bytes byte-identically.
+  defp truncate_message(message, allowance) do
+    if tokens_for(message_chars(message)) > allowance do
+      truncate_content(message, allowance)
+    else
+      :unchanged
+    end
+  end
+
+  defp truncate_content(%Message{content: content} = message, allowance) when is_list(content) do
+    case truncate_parts(content, allowance) do
+      {_parts, 0} -> :unchanged
+      {parts, _truncated} -> {:truncated, %{message | content: parts}}
+    end
+  end
+
+  # Legacy shape: a binary `content` is one text part, rebuilt as a proper
+  # (valid) content-part list only when it actually shrinks.
+  defp truncate_content(%Message{content: content} = message, allowance)
+       when is_binary(content) do
+    case truncate_text(content, 4 * allowance) do
+      {:truncated, text} ->
+        {:truncated, %{message | content: [ReqLLM.Message.ContentPart.text(text)]}}
+
+      :unchanged ->
+        :unchanged
+    end
+  end
+
+  defp truncate_content(_message, _allowance), do: :unchanged
+
+  # The message's `:text` parts SHARE one allowance of `4 * allowance`
+  # characters, split proportionally by size, so a message with several text
+  # parts lands at the same total as one with a single part. Non-text parts
+  # (`:thinking`, `:provider_block`, media) are never touched.
+  defp truncate_parts(parts, allowance) do
+    target_chars = 4 * allowance
+    sizes = Enum.map(parts, &part_text_bytes/1)
+    total = Enum.sum(sizes)
+    text_parts = Enum.count(sizes, &(&1 > 0))
+
+    if total <= target_chars or text_parts == 0 do
+      {parts, 0}
+    else
+      retained = max(target_chars - text_parts * @truncation_marker_reserve, text_parts)
+
+      parts
+      |> Enum.zip(sizes)
+      |> Enum.map_reduce(0, fn {part, size}, truncated ->
+        share =
+          if text_parts == 1 do
+            retained
+          else
+            max(div(size * retained, total), @truncation_marker_reserve)
+          end
+
+        case truncate_part(part, share) do
+          {:truncated, truncated_part} -> {truncated_part, truncated + 1}
+          :unchanged -> {part, truncated}
+        end
+      end)
+    end
+  end
+
+  defp truncate_part(%ReqLLM.Message.ContentPart{type: :text, text: text} = part, allowed)
+       when is_binary(text) do
+    case truncate_text(text, allowed) do
+      {:truncated, truncated_text} -> {:truncated, %{part | text: truncated_text}}
+      :unchanged -> :unchanged
+    end
+  end
+
+  defp truncate_part(_part, _allowed), do: :unchanged
+
+  # Head-heavy rewrite around a visible marker. `String.byte_slice/3` keeps the
+  # byte budget while refusing to cut a multi-byte codepoint in half, so the
+  # truncated text can always be JSON-encoded and replayed to a provider.
+  defp truncate_text(text, allowed)
+       when is_binary(text) and is_integer(allowed) and allowed > 0 do
+    if byte_size(text) <= allowed do
+      :unchanged
+    else
+      keep = max(allowed - @truncation_marker_reserve, 1)
+      head_chars = round(keep * @truncation_head_share)
+      tail_chars = max(keep - head_chars, 0)
+
+      head = String.byte_slice(text, 0, head_chars)
+      tail = if tail_chars > 0, do: String.byte_slice(text, -tail_chars, tail_chars), else: ""
+
+      removed = byte_size(text) - byte_size(head) - byte_size(tail)
+      truncated = head <> truncation_marker(removed) <> tail
+
+      # Never grow: a multi-byte text can lose fewer bytes than budgeted, in
+      # which case there is nothing to gain and the part is left alone.
+      if byte_size(truncated) < byte_size(text), do: {:truncated, truncated}, else: :unchanged
+    end
+  end
+
+  defp truncate_text(_text, _allowed), do: :unchanged
+
+  defp truncation_marker(removed), do: "\n… #{@truncation_tag}#{removed} characters] …\n"
+
+  defp part_text_bytes(%ReqLLM.Message.ContentPart{type: :text, text: text})
+       when is_binary(text),
+       do: byte_size(text)
+
+  defp part_text_bytes(_part), do: 0
+
+  # Last resort: whole leading exchanges go until the list fits. Dropping an
+  # assistant message that carries `tool_calls` also drops the `:tool` results
+  # directly after it, so the list never STARTS on an orphaned tool result and
+  # never holds a `tool_calls` without its results.
+  defp drop_to_budget([], _budget), do: []
+
+  defp drop_to_budget(messages, budget) do
+    if estimate_tokens(messages) <= budget do
+      messages
+    else
+      drop_to_budget(drop_leading(messages), budget)
+    end
+  end
+
+  defp drop_leading([_first | rest]), do: Enum.drop_while(rest, &tool_message?/1)
+
+  defp tool_message?(%Message{role: :tool}), do: true
+  defp tool_message?(_message), do: false
 
   # --- message accounting ----------------------------------------------------
 
