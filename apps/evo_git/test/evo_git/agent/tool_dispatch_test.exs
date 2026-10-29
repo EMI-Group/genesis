@@ -838,4 +838,33 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       end
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # next_turns_since_subagent/3
+  # ---------------------------------------------------------------------------
+
+  describe "next_turns_since_subagent/3" do
+    test "a subagent call always resets the counter to 0" do
+      # Delegation means the work is handed off fresh a subagent branched from a
+      # clean commit, so the counter resets regardless of conflicts or value.
+      assert ToolDispatch.next_turns_since_subagent(0, true, false) == 0
+      assert ToolDispatch.next_turns_since_subagent(14, true, false) == 0
+      assert ToolDispatch.next_turns_since_subagent(14, true, true) == 0
+      assert ToolDispatch.next_turns_since_subagent(45, true, true) == 0
+    end
+
+    test "the counter is FROZEN while the worktree is in conflict" do
+      # Subagents branch from clean commits, so a conflict-resolving parent must
+      # not be nudged to delegate; the counter is returned unchanged.
+      for counter <- [0, 14, 15, 45] do
+        assert ToolDispatch.next_turns_since_subagent(counter, false, true) == counter
+      end
+    end
+
+    test "the counter increments by one otherwise" do
+      for counter <- [0, 14, 15, 45] do
+        assert ToolDispatch.next_turns_since_subagent(counter, false, false) == counter + 1
+      end
+    end
+  end
 end
