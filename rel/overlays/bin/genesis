@@ -1,0 +1,899 @@
+#!/bin/sh
+# Genesis server CLI — manages the Genesis server release this script lives in.
+#
+# This file is a release overlay (`rel/overlays/bin/genesis`) copied into
+# `<release>/bin/` by Mix. Lifecycle commands deliberately avoid booting the
+# BEAM: they talk to systemd/launchd (or a pidfile) and probe the dashboard's
+# `/health` endpoint, so `genesis status` stays fast and still works when the
+# server itself cannot boot.
+set -eu
+
+DEFAULT_IP=127.0.0.1
+DEFAULT_PORT=9999
+SYSTEMD_UNIT=genesis-server
+# Reverse-DNS label for the launchd LaunchAgent written by `start` on macOS.
+LAUNCHD_LABEL=com.genesis.server
+PROBE_TIMEOUT=3
+START_TIMEOUT=30
+
+FLAG_IP=""
+FLAG_PORT=""
+FLAG_HOST=""
+FLAG_FOREGROUND=0
+
+die() {
+  printf 'genesis: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Usage: genesis [command] [options]
+
+A headless Genesis server: the dashboard served over HTTP, no desktop shell.
+
+Commands:
+  serve, run            Run the server in the foreground (the default)
+  start                 Start the server as a background service
+  stop                  Stop the background service
+  restart               Stop, then start (reusing the last ip/port)
+  status                Show service state and probe /health
+  logs [-f]             Show recent logs (-f follows)
+  url                   Print the dashboard URL
+  version               Print the release version
+  help, -h, --help      Show this help
+
+Options (serve/start/restart/status/url):
+  --ip ADDR             Bind address (default 127.0.0.1)
+  --port N              HTTP port (default 9999)
+  --host NAME           Optional external hostname for generated URLs (PHX_HOST)
+
+Both `--flag value` and `--flag=value` are accepted; `start -f` (or
+`--foreground`) behaves like `serve`.
+
+Environment:
+  GENESIS_HOME          Release root (default: the parent of this script's dir)
+  GENESIS_DATA_DIR      State and log directory override
+EOF
+}
+
+# ── Release discovery ────────────────────────────────────────────────────────
+
+# Resolve $0 through symlinks without `readlink -f`, which macOS/BSD readlink
+# does not support. Copies of these scripts are installed as `~/.local/bin`
+# symlinks, so the release root must be found from the real file.
+resolve_self() {
+  _target=$1
+
+  # Invoked through PATH (no slash): locate the actual file first.
+  case $_target in
+    */*) ;;
+    *)
+      _found=$(command -v "$_target" 2>/dev/null || true)
+      if [ -n "$_found" ]; then _target=$_found; fi
+      ;;
+  esac
+
+  # Bound the hop count so a symlink cycle cannot spin forever.
+  _hops=0
+  while [ -L "$_target" ] && [ "$_hops" -lt 40 ]; do
+    _dir=$(cd -P "$(dirname "$_target")" && pwd)
+    _link=$(readlink "$_target")
+    case $_link in
+      /*) _target=$_link ;;
+      *) _target=$_dir/$_link ;;
+    esac
+    _hops=$((_hops + 1))
+  done
+
+  _dir=$(cd -P "$(dirname "$_target")" && pwd)
+  printf '%s/%s\n' "$_dir" "$(basename "$_target")"
+}
+
+if [ -z "${GENESIS_HOME:-}" ]; then
+  _self=$(resolve_self "$0")
+  _self_dir=$(dirname "$_self")
+  # <release>/bin/genesis → the release root is the parent of bin/.
+  if [ "$(basename "$_self_dir")" = bin ]; then
+    GENESIS_HOME=$(dirname "$_self_dir")
+  else
+    GENESIS_HOME=$_self_dir
+  fi
+fi
+
+# Trim a trailing slash (but never turn "/" into an empty string).
+case $GENESIS_HOME in
+  */) [ "$GENESIS_HOME" = / ] || GENESIS_HOME=${GENESIS_HOME%/} ;;
+esac
+export GENESIS_HOME
+
+LAUNCHER=$GENESIS_HOME/bin/genesis_server
+
+require_launcher() {
+  if [ ! -x "$LAUNCHER" ]; then
+    die "not inside a Genesis server release ($LAUNCHER is missing); set GENESIS_HOME=<release root>"
+  fi
+}
+
+# ── Data dir, state file and log file ────────────────────────────────────────
+
+# Mirror EvoGit.Platform.data_dir/0: GENESIS_DATA_DIR wins, then the platform
+# default (XDG on Linux, Application Support on macOS).
+data_dir() {
+  if [ -n "${GENESIS_DATA_DIR:-}" ]; then
+    _dir=$GENESIS_DATA_DIR
+    case $_dir in
+      */) [ "$_dir" = / ] || _dir=${_dir%/} ;;
+    esac
+    printf '%s\n' "$_dir"
+    return 0
+  fi
+
+  case $(uname -s 2>/dev/null || printf 'unknown') in
+    Darwin)
+      printf '%s/Library/Application Support/genesis\n' "${HOME:-/tmp}"
+      ;;
+    *)
+      if [ -n "${XDG_DATA_HOME:-}" ]; then
+        _xdg=$XDG_DATA_HOME
+        case $_xdg in
+          */) [ "$_xdg" = / ] || _xdg=${_xdg%/} ;;
+        esac
+        printf '%s/genesis\n' "$_xdg"
+      else
+        printf '%s/.local/share/genesis\n' "${HOME:-/tmp}"
+      fi
+      ;;
+  esac
+}
+
+state_file() { printf '%s/server.env\n' "$(data_dir)"; }
+pid_file() { printf '%s/server.pid\n' "$(data_dir)"; }
+server_log_file() { printf '%s/server.log\n' "$(data_dir)"; }
+
+# Read KEY from the state file (empty when unset). The file is parsed rather
+# than sourced so a stray line can never execute code.
+state_get() {
+  _file=$(state_file)
+  if [ -f "$_file" ]; then
+    sed -n "s/^$1=//p" "$_file" | tail -n 1
+  fi
+  return 0
+}
+
+state_save() {
+  _dir=$(data_dir)
+  mkdir -p "$_dir"
+  _tmp="$_dir/server.env.tmp.$$"
+  {
+    printf 'GENESIS_IP=%s\n' "$1"
+    printf 'GENESIS_PORT=%s\n' "$2"
+  } >"$_tmp"
+  mv -f "$_tmp" "$_dir/server.env"
+}
+
+effective_ip() {
+  if [ -n "$FLAG_IP" ]; then
+    printf '%s\n' "$FLAG_IP"
+    return 0
+  fi
+  _saved=$(state_get GENESIS_IP)
+  if [ -n "$_saved" ]; then
+    printf '%s\n' "$_saved"
+  else
+    printf '%s\n' "$DEFAULT_IP"
+  fi
+}
+
+effective_port() {
+  if [ -n "$FLAG_PORT" ]; then
+    printf '%s\n' "$FLAG_PORT"
+    return 0
+  fi
+  _saved=$(state_get GENESIS_PORT)
+  if [ -n "$_saved" ]; then
+    printf '%s\n' "$_saved"
+  else
+    printf '%s\n' "$DEFAULT_PORT"
+  fi
+}
+
+# ── URLs and the health probe ────────────────────────────────────────────────
+
+# Display host for a URL: a wildcard bind is only reachable via loopback for
+# the local user, and IPv6 literals must be bracketed inside URLs.
+url_host() {
+  case $1 in
+    0.0.0.0 | :: | '') printf '127.0.0.1' ;;
+    *:*) printf '[%s]' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+dashboard_url() {
+  printf 'http://%s:%s\n' "$(url_host "$1")" "$2"
+}
+
+probe_tool() {
+  if command -v curl >/dev/null 2>&1; then
+    printf 'curl\n'
+  elif command -v wget >/dev/null 2>&1; then
+    printf 'wget\n'
+  else
+    printf 'none\n'
+  fi
+}
+
+# HTTP health probe against <url>/health.
+#   0 = HTTP 2xx, 1 = unreachable/error status, 2 = no curl and no wget.
+# Variables are namespaced: POSIX sh has no `local`, so a shared name would
+# leak back into the caller (e.g. the printed URL).
+probe_health() {
+  _probe_url=$1/health
+  case $(probe_tool) in
+    curl)
+      if curl -fsS -m "$PROBE_TIMEOUT" -o /dev/null "$_probe_url" >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
+    wget)
+      if wget -qO- -T "$PROBE_TIMEOUT" "$_probe_url" >/dev/null 2>&1; then
+        return 0
+      fi
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+  return 1
+}
+
+# Poll until healthy. 0 = healthy, 1 = timed out, 2 = cannot probe.
+wait_for_health() {
+  _wait_url=$1
+  _wait_n=0
+  while [ "$_wait_n" -lt "$START_TIMEOUT" ]; do
+    _wait_rc=0
+    probe_health "$_wait_url" >/dev/null 2>&1 || _wait_rc=$?
+    if [ "$_wait_rc" -eq 0 ]; then return 0; fi
+    if [ "$_wait_rc" -eq 2 ]; then return 2; fi
+    _wait_n=$((_wait_n + 1))
+    sleep 1
+  done
+  return 1
+}
+
+# ── Flag parsing ─────────────────────────────────────────────────────────────
+
+validate_port() {
+  case $1 in
+    '' | *[!0-9]*) die "invalid port: $1" ;;
+  esac
+  if [ "$1" -lt 1 ] || [ "$1" -gt 65535 ]; then
+    die "port out of range (1-65535): $1"
+  fi
+}
+
+# Accept both `--flag value` and `--flag=value`.
+parse_flags() {
+  FLAG_IP=""
+  FLAG_PORT=""
+  FLAG_HOST=""
+  FLAG_FOREGROUND=0
+
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --ip=*)
+        FLAG_IP=${1#--ip=}
+        [ -n "$FLAG_IP" ] || die "--ip requires a value"
+        shift
+        ;;
+      --ip)
+        [ $# -ge 2 ] || die "--ip requires a value"
+        [ -n "$2" ] || die "--ip requires a value"
+        FLAG_IP=$2
+        shift 2
+        ;;
+      --port=*)
+        FLAG_PORT=${1#--port=}
+        [ -n "$FLAG_PORT" ] || die "--port requires a value"
+        shift
+        ;;
+      --port)
+        [ $# -ge 2 ] || die "--port requires a value"
+        [ -n "$2" ] || die "--port requires a value"
+        FLAG_PORT=$2
+        shift 2
+        ;;
+      --host=*)
+        FLAG_HOST=${1#--host=}
+        [ -n "$FLAG_HOST" ] || die "--host requires a value"
+        shift
+        ;;
+      --host)
+        [ $# -ge 2 ] || die "--host requires a value"
+        [ -n "$2" ] || die "--host requires a value"
+        FLAG_HOST=$2
+        shift 2
+        ;;
+      --foreground | -f)
+        FLAG_FOREGROUND=1
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        usage >&2
+        die "unknown option: $1"
+        ;;
+    esac
+  done
+
+  if [ -n "$FLAG_PORT" ]; then
+    validate_port "$FLAG_PORT"
+  fi
+}
+
+# ── Service backends ─────────────────────────────────────────────────────────
+
+is_linux() { [ "$(uname -s 2>/dev/null || printf 'unknown')" = Linux ]; }
+is_darwin() { [ "$(uname -s 2>/dev/null || printf 'unknown')" = Darwin ]; }
+
+# `systemd-run --user` needs a reachable user systemd instance. The binaries
+# exist inside containers without one (where every start fails), so the real
+# signal is a successful `systemctl --user` round-trip plus $XDG_RUNTIME_DIR.
+systemd_usable() {
+  is_linux || return 1
+  command -v systemd-run >/dev/null 2>&1 || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
+    return 1
+  fi
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 5 systemctl --user show-environment >/dev/null 2>&1 || return 1
+  else
+    systemctl --user show-environment >/dev/null 2>&1 || return 1
+  fi
+  return 0
+}
+
+launchd_usable() {
+  is_darwin || return 1
+  command -v launchctl >/dev/null 2>&1 || return 1
+  return 0
+}
+
+# Which supervisor manages the server on this host.
+service_backend() {
+  if systemd_usable; then
+    printf 'systemd\n'
+  elif launchd_usable; then
+    printf 'launchd\n'
+  else
+    printf 'fallback\n'
+  fi
+}
+
+launchd_plist() {
+  printf '%s/Library/LaunchAgents/%s.plist\n' "${HOME:-/tmp}" "$LAUNCHD_LABEL"
+}
+
+launchd_domain() { printf 'gui/%s\n' "$(id -u)"; }
+
+launchd_loaded() {
+  launchctl print "$(launchd_domain)/$LAUNCHD_LABEL" >/dev/null 2>&1
+}
+
+pidfile_active() {
+  _pidf=$(pid_file)
+  if [ ! -f "$_pidf" ]; then return 1; fi
+  _pid=$(sed -n '1p' "$_pidf" | tr -d '[:space:]')
+  if [ -z "$_pid" ]; then return 1; fi
+  case $_pid in
+    *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$_pid" 2>/dev/null
+}
+
+service_active() {
+  case $(service_backend) in
+    systemd) systemctl --user is-active --quiet "$SYSTEMD_UNIT" >/dev/null 2>&1 ;;
+    launchd) launchd_loaded ;;
+    *) pidfile_active ;;
+  esac
+}
+
+# ── Starting and stopping ────────────────────────────────────────────────────
+
+start_systemd() {
+  _ip=$1
+  _port=$2
+  _host=$3
+
+  # Reset first: a previously failed transient unit can linger and block re-use
+  # of the unit name even with --collect (which only collects clean exits on
+  # older systemd versions). Idempotent when there is nothing to reset.
+  systemctl --user reset-failed "$SYSTEMD_UNIT" >/dev/null 2>&1 || true
+
+  # --collect makes systemd garbage-collect the transient unit once the process
+  # exits, so `stop` leaves nothing behind and the name is free for `start`.
+  # Restart=on-failure keeps a crashed server alive without operator action.
+  if [ -n "$_host" ]; then
+    if ! systemd-run --user --unit="$SYSTEMD_UNIT" --collect \
+      --property=Restart=on-failure --property=RestartSec=5 \
+      --setenv=PHX_IP="$_ip" --setenv=PORT="$_port" --setenv=PHX_HOST="$_host" \
+      "$LAUNCHER" start; then
+      die "systemd-run failed to start $SYSTEMD_UNIT"
+    fi
+  else
+    if ! systemd-run --user --unit="$SYSTEMD_UNIT" --collect \
+      --property=Restart=on-failure --property=RestartSec=5 \
+      --setenv=PHX_IP="$_ip" --setenv=PORT="$_port" \
+      "$LAUNCHER" start; then
+      die "systemd-run failed to start $SYSTEMD_UNIT"
+    fi
+  fi
+  return 0
+}
+
+xml_escape() {
+  printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+write_launchd_plist() {
+  _ip=$1
+  _port=$2
+  _host=$3
+
+  _plist=$(launchd_plist)
+  mkdir -p "$(dirname "$_plist")"
+  _log=$(server_log_file)
+  mkdir -p "$(dirname "$_log")"
+
+  _host_env=""
+  if [ -n "$_host" ]; then
+    _host_env="    <key>PHX_HOST</key><string>$(xml_escape "$_host")</string>"
+  fi
+
+  cat >"$_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LAUNCHD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_escape "$LAUNCHER")</string>
+    <string>start</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PHX_IP</key><string>$(xml_escape "$_ip")</string>
+    <key>PORT</key><string>$_port</string>
+$_host_env
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$(xml_escape "$_log")</string>
+  <key>StandardErrorPath</key><string>$(xml_escape "$_log")</string>
+</dict>
+</plist>
+EOF
+}
+
+start_launchd() {
+  _ip=$1
+  _port=$2
+  _host=$3
+
+  # bootstrap fails while the label is loaded; bootout first so `start` stays
+  # idempotent and picks up refreshed ip/port values.
+  if launchd_loaded; then
+    launchctl bootout "$(launchd_domain)/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  fi
+
+  write_launchd_plist "$_ip" "$_port" "$_host"
+
+  if ! launchctl bootstrap "$(launchd_domain)" "$(launchd_plist)"; then
+    die "launchctl bootstrap failed for $LAUNCHD_LABEL"
+  fi
+  return 0
+}
+
+# Last-resort daemonization for hosts with neither systemd user units nor
+# launchd (containers, minimal distros): detach with setsid/nohup and track the
+# pid so `stop`/`status` still work.
+start_fallback() {
+  _ip=$1
+  _port=$2
+  _host=$3
+
+  _dir=$(data_dir)
+  mkdir -p "$_dir"
+  _log="$_dir/server.log"
+  _pidfile="$_dir/server.pid"
+
+  PHX_IP=$_ip
+  PORT=$_port
+  export PHX_IP PORT
+  if [ -n "$_host" ]; then
+    PHX_HOST=$_host
+    export PHX_HOST
+  fi
+
+  # setsid detaches from the controlling terminal; macOS has no setsid, so fall
+  # back to nohup, which is enough to survive the parent shell exiting.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$LAUNCHER" start >>"$_log" 2>&1 </dev/null &
+  else
+    nohup "$LAUNCHER" start >>"$_log" 2>&1 </dev/null &
+  fi
+  printf '%s\n' "$!" >"$_pidfile"
+}
+
+do_start() {
+  _ip=$1
+  _port=$2
+  _host=$3
+
+  case $(service_backend) in
+    systemd) start_systemd "$_ip" "$_port" "$_host" ;;
+    launchd) start_launchd "$_ip" "$_port" "$_host" ;;
+    *) start_fallback "$_ip" "$_port" "$_host" ;;
+  esac
+}
+
+# 0 when something was stopped, 1 when nothing was running.
+do_stop() {
+  case $(service_backend) in
+    systemd)
+      if ! systemctl --user is-active --quiet "$SYSTEMD_UNIT" >/dev/null 2>&1; then
+        systemctl --user reset-failed "$SYSTEMD_UNIT" >/dev/null 2>&1 || true
+        return 1
+      fi
+      if ! systemctl --user stop "$SYSTEMD_UNIT"; then
+        die "systemctl --user stop $SYSTEMD_UNIT failed"
+      fi
+      # Clear the unit state so a later start does not inherit "failed".
+      systemctl --user reset-failed "$SYSTEMD_UNIT" >/dev/null 2>&1 || true
+      return 0
+      ;;
+    launchd)
+      if ! launchd_loaded; then return 1; fi
+      if ! launchctl bootout "$(launchd_domain)/$LAUNCHD_LABEL" >/dev/null 2>&1; then
+        die "launchctl bootout failed for $LAUNCHD_LABEL"
+      fi
+      return 0
+      ;;
+    *)
+      if ! pidfile_active; then
+        rm -f "$(pid_file)"
+        return 1
+      fi
+      _pid=$(sed -n '1p' "$(pid_file)" | tr -d '[:space:]')
+      # TERM first: the VM shuts down cleanly and flushes its SQLite WAL.
+      kill -TERM "$_pid" 2>/dev/null || true
+      _i=0
+      while [ "$_i" -lt 10 ]; do
+        kill -0 "$_pid" 2>/dev/null || break
+        sleep 1
+        _i=$((_i + 1))
+      done
+      rm -f "$(pid_file)"
+      return 0
+      ;;
+  esac
+}
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+
+# launchd writes to the plist's StandardOutPath; everything else uses
+# <data_dir>/server.log (systemd captures stdout in the journal instead).
+log_file() {
+  if [ "$(service_backend)" = launchd ]; then
+    _plist=$(launchd_plist)
+    if [ -f "$_plist" ]; then
+      _out=$(sed -n 's:.*<key>StandardOutPath</key><string>\(.*\)</string>.*:\1:p' "$_plist" | head -n 1)
+      if [ -n "$_out" ]; then
+        printf '%s\n' "$_out"
+        return 0
+      fi
+    fi
+  fi
+  server_log_file
+}
+
+# Print the tail of the log through the same source `logs` uses (used to
+# explain a failed start).
+print_logs_tail() {
+  _tail_lines=${1:-20}
+  if [ "$(service_backend)" = systemd ] && command -v journalctl >/dev/null 2>&1; then
+    journalctl --user -u "$SYSTEMD_UNIT" -n "$_tail_lines" 2>/dev/null || true
+    return 0
+  fi
+  _tail_log=$(log_file)
+  if [ -f "$_tail_log" ]; then
+    tail -n "$_tail_lines" "$_tail_log" || true
+  else
+    printf 'No server log at %s yet.\n' "$_tail_log"
+  fi
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_serve() {
+  parse_flags "$@"
+
+  _ip=$(effective_ip)
+  _port=$(effective_port)
+  state_save "$_ip" "$_port"
+
+  printf 'Genesis server (foreground): %s\n' "$(dashboard_url "$_ip" "$_port")"
+  case $_ip in
+    0.0.0.0 | ::)
+      printf 'Listening on all interfaces (%s); open the URL above from this host.\n' "$_ip"
+      ;;
+  esac
+
+  PHX_IP=$_ip
+  PORT=$_port
+  export PHX_IP PORT
+  if [ -n "$FLAG_HOST" ]; then
+    PHX_HOST=$FLAG_HOST
+    export PHX_HOST
+  fi
+
+  exec "$LAUNCHER" start
+}
+
+cmd_start() {
+  parse_flags "$@"
+
+  # `start --foreground` is just `serve`.
+  if [ "$FLAG_FOREGROUND" = 1 ]; then
+    cmd_serve "$@"
+    return 0
+  fi
+
+  _ip=$(effective_ip)
+  _port=$(effective_port)
+  _url=$(dashboard_url "$_ip" "$_port")
+
+  if service_active; then
+    printf 'Genesis server is already running.\n'
+    printf 'Dashboard: %s\n' "$_url"
+    return 0
+  fi
+
+  state_save "$_ip" "$_port"
+
+  _backend=$(service_backend)
+  do_start "$_ip" "$_port" "$FLAG_HOST"
+  printf 'Genesis server starting (%s backend).\n' "$_backend"
+  printf 'Dashboard: %s\n' "$_url"
+
+  _rc=0
+  wait_for_health "$_url" || _rc=$?
+  case $_rc in
+    0)
+      printf 'Genesis server is healthy: %s\n' "$_url"
+      ;;
+    2)
+      printf 'Cannot verify health: neither curl nor wget is installed.\n'
+      ;;
+    *)
+      printf 'Genesis server did not become healthy within %ss: %s\n' "$START_TIMEOUT" "$_url" >&2
+      printf 'Recent logs:\n' >&2
+      print_logs_tail 20 >&2
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+cmd_stop() {
+  if do_stop; then
+    printf 'Genesis server stopped.\n'
+  else
+    printf 'Genesis server is not running.\n'
+  fi
+  return 0
+}
+
+cmd_restart() {
+  parse_flags "$@"
+
+  if do_stop; then
+    printf 'Stopped the running server.\n'
+    # Wait for the service to disappear before starting again, so the new
+    # health poll cannot succeed against the outgoing process.
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+      service_active || break
+      sleep 1
+      _i=$((_i + 1))
+    done
+  else
+    printf 'Genesis server was not running.\n'
+  fi
+
+  cmd_start "$@"
+}
+
+cmd_status() {
+  parse_flags "$@"
+
+  _ip=$(effective_ip)
+  _port=$(effective_port)
+  _url=$(dashboard_url "$_ip" "$_port")
+  _backend=$(service_backend)
+
+  case $_backend in
+    systemd)
+      _state=$(systemctl --user is-active "$SYSTEMD_UNIT" 2>/dev/null || true)
+      [ -n "$_state" ] || _state=unknown
+      ;;
+    launchd)
+      if launchd_loaded; then _state='loaded'; else _state='not loaded'; fi
+      ;;
+    *)
+      if pidfile_active; then
+        _state="running (pid $(sed -n '1p' "$(pid_file)" | tr -d '[:space:]'))"
+      else
+        _state='not running'
+      fi
+      ;;
+  esac
+
+  _rc=0
+  probe_health "$_url" || _rc=$?
+
+  printf 'Backend: %s\n' "$_backend"
+  printf 'Service: %s\n' "$_state"
+  printf 'URL:     %s\n' "$_url"
+  case $_rc in
+    0) printf 'Health:  ok (HTTP 200)\n' ;;
+    2) printf 'Health:  unknown (neither curl nor wget is installed)\n' ;;
+    *) printf 'Health:  unreachable\n' ;;
+  esac
+
+  if [ "$_rc" -eq 0 ]; then return 0; fi
+  return 1
+}
+
+cmd_logs() {
+  _follow=0
+  _lines=200
+
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -f | --follow)
+        _follow=1
+        shift
+        ;;
+      -n | --lines)
+        [ $# -ge 2 ] || die "$1 requires a value"
+        _lines=$2
+        shift 2
+        ;;
+      --lines=*)
+        _lines=${1#--lines=}
+        shift
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        die "unknown option for logs: $1"
+        ;;
+    esac
+  done
+
+  if [ "$(service_backend)" = systemd ] && command -v journalctl >/dev/null 2>&1; then
+    if [ "$_follow" = 1 ]; then
+      exec journalctl --user -u "$SYSTEMD_UNIT" -n "$_lines" -f
+    fi
+    journalctl --user -u "$SYSTEMD_UNIT" -n "$_lines"
+    return 0
+  fi
+
+  _log=$(log_file)
+  if [ ! -f "$_log" ]; then
+    printf 'No server log at %s yet.\n' "$_log"
+    return 0
+  fi
+  if [ "$_follow" = 1 ]; then
+    exec tail -n "$_lines" -f "$_log"
+  fi
+  tail -n "$_lines" "$_log"
+}
+
+cmd_url() {
+  parse_flags "$@"
+  dashboard_url "$(effective_ip)" "$(effective_port)"
+}
+
+cmd_version() {
+  _v=""
+  if [ -x "$LAUNCHER" ]; then
+    # The release boot script answers `version` without booting the BEAM.
+    _v=$("$LAUNCHER" version 2>/dev/null | head -n 1 || true)
+  fi
+  if [ -z "$_v" ]; then
+    # Fallback: releases/start_erl.data holds "<erts version> <release version>".
+    _data=$GENESIS_HOME/releases/start_erl.data
+    if [ -f "$_data" ]; then
+      _v=$(head -n 1 "$_data" | awk '{print $2}')
+    fi
+  fi
+  if [ -z "$_v" ]; then
+    _v=unknown
+  fi
+  printf 'genesis %s\n' "$_v"
+}
+
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+main() {
+  if [ $# -eq 0 ]; then
+    require_launcher
+    cmd_serve
+    return 0
+  fi
+
+  _cmd=$1
+  shift
+
+  case $_cmd in
+    help | -h | --help)
+      usage
+      return 0
+      ;;
+    serve | run)
+      require_launcher
+      cmd_serve "$@"
+      ;;
+    start)
+      require_launcher
+      cmd_start "$@"
+      ;;
+    stop)
+      require_launcher
+      cmd_stop "$@"
+      ;;
+    restart)
+      require_launcher
+      cmd_restart "$@"
+      ;;
+    status)
+      require_launcher
+      cmd_status "$@"
+      ;;
+    logs)
+      require_launcher
+      cmd_logs "$@"
+      ;;
+    url)
+      require_launcher
+      cmd_url "$@"
+      ;;
+    version | --version)
+      require_launcher
+      cmd_version
+      ;;
+    *)
+      usage >&2
+      printf 'genesis: unknown command: %s\n' "$_cmd" >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

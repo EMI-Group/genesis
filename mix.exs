@@ -40,6 +40,23 @@ defmodule EvoGit.Umbrella.MixProject do
           # Bake a compile-time flag into sys.config so the runtime can detect
           # that it is running as a remote daemon.
           config: [evo_git: [remote_release: true]]
+        ],
+        genesis_server: [
+          # Headless server release: the full dashboard served over HTTP on a
+          # remote box, plus the `genesis` lifecycle CLI from rel/overlays.
+          # Deliberately NO `wx` — headless hosts lack wxWidgets, and the
+          # dashboard's directory picker falls back to manual path entry when
+          # wx is unavailable.
+          applications: [
+            evo_git: :permanent,
+            evo_dash: :permanent
+          ],
+          # Bundle ERTS so the tarball runs on hosts without Erlang installed.
+          include_erts: true,
+          overlays: ["rel/overlays"],
+          # Bake a compile-time flag into sys.config so runtime.exs can detect
+          # server mode without relying on extra env vars.
+          config: [evo_dash: [server_release: true]]
         ]
       ]
     ]
