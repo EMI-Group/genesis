@@ -14,6 +14,7 @@ Classic Phoenix HTTP controllers and error handlers for the EvoDash web interfac
 - **`EvoDashWeb.ErrorJSON`** — JSON error handler returning `%{errors: %{detail: message}}`. Individual status codes can be customized by adding pattern-matched `render/2` clauses.
 - **`EvoDashWeb.PageHTML`** — HTML template module that embeds all templates from `page_html/*` via `use EvoDashWeb, :html`.
 - **`EvoDashWeb.TaskExportController`** — JSON download endpoint for a task's agent archive (`GET /tasks/:task_id/export`); its read/stream/cleanup path is described in "Task Export Path" below.
+- **`EvoDashWeb.HealthController`** — the unauthenticated `GET /health` liveness/readiness probe (mounted in the router OUTSIDE every pipeline: no session, no CSRF, no auth) answered by the headless server CLI (`genesis status`) and the desktop/remote shell; `index/2` renders `200` `application/json` `{"status":"ok","version":"<evo_dash vsn>","uptime_ms":<integer>}`. Every value is read totally — an unreadable app version degrades to `"unknown"` and an unusable VM `start_time` to `0` — so the probe never raises.
 
 ### Task Export Path (`EvoDashWeb.TaskExportController`)
 - **Node-aware** — a `?node=<id>` query param for a CONNECTED remote target resolves to that BEAM node (`resolve_remote_node/1` — mirrors `NodeAware.resolve_node_context/1`) and runs BOTH reads there; a missing param or `?node=local` reads the LOCAL runtime (the historical path).

@@ -16,6 +16,11 @@ defmodule EvoDashWeb.Router do
     plug(:accepts, ["json"])
   end
 
+  # Liveness probe for the headless server CLI / shell — no pipeline (no session, no CSRF, no auth).
+  scope "/", EvoDashWeb do
+    get("/health", HealthController, :index)
+  end
+
   scope "/", EvoDashWeb do
     pipe_through(:browser)
 

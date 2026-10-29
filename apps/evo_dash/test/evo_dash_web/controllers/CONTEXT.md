@@ -19,6 +19,7 @@ Leaf node — all four suites live directly here, none of them calls `live/3` (p
 | `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 96 | 2 | `async: false` (ConnCase default — NO `async:` option is passed; same `XDG_CONFIG_HOME` mutation) |
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 14 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
+| `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 34 | 3 | `async: true` |
 
 ## `task_export_controller_test.exs`
 
@@ -39,3 +40,7 @@ Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param
 ## `error_html_test.exs` / `error_json_test.exs`
 
 Pure render tests (`async: true`, no store, no env): the 404 and 500 templates for both formats via `render_to_string/4`.
+
+## `health_controller_test.exs`
+
+`async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"`; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).
