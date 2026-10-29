@@ -14,7 +14,7 @@ defmodule EvoGit.Agent.TurnWarning do
 
   | Level | Purpose | Trigger |
   |-------|---------|---------|
-  | `:beginning` | Early-stage delegation guidance | ~25% of budget (min 6 turns) |
+  | `:beginning` | Early-stage delegation guidance (suppressed in a merge conflict) | ~25% of budget (min 6 turns) |
   | `:end` | Wrap up and prepare to complete | ≤ N turns remaining (adaptive) |
   | `:critical` | Call complete_task immediately | ≤ M turns remaining (adaptive) |
 
@@ -22,7 +22,7 @@ defmodule EvoGit.Agent.TurnWarning do
 
   | Level | Purpose | Trigger |
   |-------|---------|---------|
-  | `:middle` | Periodic delegation reminder | `turns_since_subagent` ≥ 15 |
+  | `:middle` | Periodic delegation reminder (suppressed in a merge conflict) | `turns_since_subagent` ≥ 15 |
 
   The `:middle` warning is NOT monotonic — it fires repeatedly. It only fires when
   no positional warning fires that turn (positional warnings take priority). The
@@ -37,6 +37,17 @@ defmodule EvoGit.Agent.TurnWarning do
   The end band always opens strictly earlier than the critical band
   (`end_remaining > critical_remaining` holds for every budget), so there is
   always an `:end` warning before the `:critical` one.
+
+  ## Merge-conflict suppression (delegation guidance only)
+
+  `:beginning` and `:middle` are both DELEGATION guidance, so they are SUPPRESSED
+  while the agent's worktree is in a merge conflict (`opts` `in_conflict: true`):
+  a subagent branches from a clean commit and can never resolve conflict markers
+  in the parent's worktree, so nudging the agent to delegate would only burn its
+  budget. The `turns_since_subagent` counter is FROZEN meanwhile (not reset), so
+  the reminder fires normally once the conflict is resolved and the counter
+  reaches its interval again. `:end` and `:critical` are turn-budget urgency and
+  ALWAYS fire, conflict or not.
   """
 
   @min_beginning_turn 6
@@ -116,14 +127,25 @@ defmodule EvoGit.Agent.TurnWarning do
   Returns `{:ok, %__MODULE__{}}` if the current positional level is higher than the
   last warned level, or `:none` otherwise. Each positional level fires at most once
   per agent run — the caller tracks `last_warned_level` to prevent duplicates.
+
+  The `:beginning` level is DELEGATION guidance and is therefore suppressed while
+  the agent's worktree is in a merge conflict (`opts` `in_conflict: true`) —
+  returning `:none` also leaves `last_warned_level` untouched, so it can still
+  fire once the conflict clears. `:end` and `:critical` always fire.
   """
-  @spec check_positional(non_neg_integer(), pos_integer(), level() | :none, :high | :low) ::
-          {:ok, t()} | :none
-  def check_positional(turn, max_turns, last_level, delegation_level \\ :high)
+  @spec check_positional(
+          non_neg_integer(),
+          pos_integer(),
+          level() | :none,
+          :high | :low,
+          keyword()
+        ) :: {:ok, t()} | :none
+  def check_positional(turn, max_turns, last_level, delegation_level \\ :high, opts \\ [])
       when is_integer(turn) and is_integer(max_turns) do
     level = current_positional_level(turn, max_turns, delegation_level)
 
-    if level != :none and level_index(level) > level_index(last_level) do
+    if level != :none and level_index(level) > level_index(last_level) and
+         not suppressed?(level, opts) do
       {:ok, build(level, turn, max_turns)}
     else
       :none
@@ -137,13 +159,23 @@ defmodule EvoGit.Agent.TurnWarning do
   reaches the interval threshold. It does not fire if `turn` is less than 1, or if
   there is not enough budget remaining for delegation to be meaningful.
 
+  The middle warning is DELEGATION guidance and is therefore suppressed while the
+  agent's worktree is in a merge conflict (`opts` `in_conflict: true`) — returning
+  `:none` also leaves `turns_since_subagent` un-reset, so counting simply resumes
+  after the conflict is resolved.
+
   Returns `{:ok, %__MODULE__{}}` if the warning should fire, or `:none`.
   """
-  @spec check_middle(non_neg_integer(), pos_integer(), non_neg_integer(), :high | :low) ::
-          {:ok, t()} | :none
-  def check_middle(turn, max_turns, turns_since_subagent, delegation_level \\ :high)
+  @spec check_middle(
+          non_neg_integer(),
+          pos_integer(),
+          non_neg_integer(),
+          :high | :low,
+          keyword()
+        ) :: {:ok, t()} | :none
+  def check_middle(turn, max_turns, turns_since_subagent, delegation_level \\ :high, opts \\ [])
       when is_integer(turn) and is_integer(max_turns) do
-    if turn < 1 do
+    if turn < 1 or suppressed?(:middle, opts) do
       :none
     else
       interval = middle_interval(delegation_level)
@@ -179,6 +211,15 @@ defmodule EvoGit.Agent.TurnWarning do
   @level_order %{:none => 0, :beginning => 1, :end => 2, :critical => 3}
 
   defp level_index(level), do: Map.fetch!(@level_order, level)
+
+  # Delegation guidance (`:beginning` / `:middle`) is suppressed while the
+  # agent's worktree is in a merge conflict; turn-budget urgency (`:end` /
+  # `:critical`) is never masked.
+  defp suppressed?(level, opts) when level in [:beginning, :middle] do
+    Keyword.get(opts, :in_conflict, false)
+  end
+
+  defp suppressed?(_level, _opts), do: false
 
   defp middle_interval(:high), do: @middle_interval
   defp middle_interval(:low), do: @middle_interval_low

@@ -47,6 +47,7 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   alias EvoGit.Agent.CompletionProtocol
   alias EvoGit.Agent.Compression.Threshold
+  alias EvoGit.Agent.ConflictState
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolInvocation
   alias EvoGit.Agent.Tools.CompleteTask
@@ -906,7 +907,18 @@ defmodule EvoGit.Agent.ToolDispatch do
           SubagentSchemas.subagent_module_for(ReqLLM.ToolCall.name(call), subagent_modules) != nil
         end)
 
-      new_turns_since = if had_subagent_call, do: 0, else: state.turns_since_subagent + 1
+      # One merge-conflict check per turn, taken at the END of the turn: the
+      # snapshot lives in the process dictionary (`EvoGit.Agent.ConflictState`)
+      # and is reused by every consumer in the NEXT turn with zero extra git
+      # calls.
+      conflict_files = ConflictState.refresh(Process.get(:repo_path))
+
+      new_turns_since =
+        next_turns_since_subagent(
+          state.turns_since_subagent,
+          had_subagent_call,
+          conflict_files != []
+        )
 
       tagged_tool_responses =
         Enum.map(
@@ -947,6 +959,27 @@ defmodule EvoGit.Agent.ToolDispatch do
   end
 
   defp consume_grace_turn(%LoopState{} = state), do: state
+
+  # Computes the next `turns_since_subagent` counter after a completed turn.
+  # Three cases:
+  #   1. a subagent call happened this turn → 0 (delegation always resets,
+  #      conflicts or not);
+  #   2. the agent's worktree is in a merge conflict → the counter is FROZEN
+  #      (returned unchanged, NOT incremented), because subagents branch from
+  #      clean commits and therefore can never resolve conflict markers in the
+  #      parent's worktree — nudging the agent to delegate while it is
+  #      conflict-resolving only burns its budget (same rationale as
+  #      `EvoGit.Agent.DelegationHints.filter_child_paths_if_conflicts/2`);
+  #   3. otherwise → increment (today's behaviour).
+  # `@doc false` + public solely so it can be tested directly.
+  @doc false
+  def next_turns_since_subagent(turns_since_subagent, had_subagent_call, in_conflict) do
+    cond do
+      had_subagent_call -> 0
+      in_conflict -> turns_since_subagent
+      true -> turns_since_subagent + 1
+    end
+  end
 
   # Note: `loop/1` and `trigger_recovery/2` are called via passed function
   # references (loop_fn, trigger_recovery_fn) from the agent's quote block.
@@ -1294,8 +1327,11 @@ defmodule EvoGit.Agent.ToolDispatch do
     read_threshold = EvoGit.Agent.DelegationHints.read_delegation_hint_threshold()
     read_initial_hints = Process.get(:read_delegation_hints, %{})
 
-    # Cache conflict files once per batch to avoid repeated git calls
-    conflict_files = cached_conflict_files(repo_path)
+    # ONE merge-conflict check per turn: reuse the snapshot refreshed at the END
+    # of the previous turn (`EvoGit.Agent.ConflictState`) — that is immediately
+    # before this batch, so it is fresher than a pre-batch check and free of any
+    # extra git call. A never-refreshed process dictionary yields `[]`.
+    conflict_files = ConflictState.files()
 
     ctx = %{
       owner: owner,
@@ -1823,14 +1859,6 @@ defmodule EvoGit.Agent.ToolDispatch do
       )
     else
       {output, read_hints}
-    end
-  end
-
-  # Caches conflict files once per batch to avoid repeated git calls.
-  defp cached_conflict_files(repo_path) do
-    case Git.conflict_files(repo_path) do
-      {:ok, files} -> files
-      _ -> []
     end
   end
 

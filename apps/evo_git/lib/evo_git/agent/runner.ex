@@ -419,11 +419,16 @@ defmodule EvoGit.Agent.Runner do
   # Checks and sends turn-limit warnings via the adaptive TurnWarning module.
   # See EvoGit.Agent.TurnWarning for threshold logic and message generation.
   defp check_limit_warnings(%LoopState{} = state) do
+    # Pure process-dictionary read (no git call): the snapshot is refreshed at the
+    # END of every turn by `EvoGit.Agent.ConflictState`.
+    in_conflict = EvoGit.Agent.ConflictState.in_conflict?()
+
     case EvoGit.Agent.TurnWarning.check_positional(
            state.turn,
            state.max_turns,
            state.last_warned_level,
-           state.delegation_level
+           state.delegation_level,
+           in_conflict: in_conflict
          ) do
       {:ok, warning} ->
         msg = EvoGit.Agent.TurnWarning.message(warning)
@@ -436,7 +441,8 @@ defmodule EvoGit.Agent.Runner do
                state.turn,
                state.max_turns,
                state.turns_since_subagent,
-               state.delegation_level
+               state.delegation_level,
+               in_conflict: in_conflict
              ) do
           {:ok, warning} ->
             msg = EvoGit.Agent.TurnWarning.message(warning)
