@@ -55,11 +55,11 @@ defmodule EvoGit.Agent.ContextCompression do
   `refresh_messages/2`) ONLY on the summarising path, where the old span — the
   job's only other trace — is about to be replaced by a summary. The prune-only
   path appends the same plain runtime-context refresh with NO jobs section. On
-  the summarising path EVERY earlier runtime-context refresh message is dropped
-  before the new one is appended (`drop_stale_refreshes/1`), so repeated
-  compressions can never grow the list through refresh messages and exactly ONE
-  current refresh — carrying the current job snapshot — survives, even when an
-  older one sits inside the protected recent tail.
+  BOTH paths EVERY earlier runtime-context refresh message is dropped before the
+  new one is appended (`drop_stale_refreshes/1`), so repeated compressions can
+  never grow the list through refresh messages and exactly ONE current refresh
+  survives — carrying the current job snapshot on the summarising path — even
+  when an older one sits inside the protected recent tail.
 
   ## The retained tail is size-budgeted
 
@@ -321,11 +321,13 @@ defmodule EvoGit.Agent.ContextCompression do
     keep_context(state, agent_id, messages, nil, true)
   end
 
-  # Rebuilds the context with the runtime-context refresh appended as the last
-  # message. `include_background_jobs?` is true ONLY on the summarising path:
-  # there the old span (which may hold the job's only other trace) is being
-  # replaced, so the CURRENT snapshot must be re-injected and stale ones dropped.
-  # The prune-only path keeps the pre-existing plain refresh.
+  # Rebuilds the context with exactly ONE runtime-context refresh appended as the
+  # last message: EVERY earlier refresh is dropped first on BOTH paths, so
+  # repeated compressions can never grow the list through refresh messages.
+  # `include_background_jobs?` is true ONLY on the summarising path: there the old
+  # span (which may hold the job's only other trace) is being replaced, so the
+  # CURRENT snapshot must be re-injected; the prune-only path appends the same
+  # plain refresh with NO jobs section.
   defp keep_context(state, agent_id, messages, compression_usage, include_background_jobs?) do
     AgentScheduler.increment_compression_count(agent_id)
 
@@ -336,11 +338,8 @@ defmodule EvoGit.Agent.ContextCompression do
       end
 
     rebuilt =
-      if include_background_jobs? do
-        drop_stale_refreshes(messages) ++ refresh_messages(state, true)
-      else
-        messages ++ refresh_messages(state, false)
-      end
+      drop_stale_refreshes(messages) ++
+        refresh_messages(state, include_background_jobs?)
 
     %{
       state
