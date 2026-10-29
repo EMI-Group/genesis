@@ -2661,7 +2661,7 @@ defmodule EvoDashWeb.SettingsLive do
     case Map.get(status, :last_error) do
       nil -> nil
       msg when is_binary(msg) -> msg
-      msg -> inspect(msg)
+      msg -> format_remote_reason(msg)
     end
   end
 
@@ -2680,7 +2680,7 @@ defmodule EvoDashWeb.SettingsLive do
     cond do
       is_binary(reason) -> reason
       is_map(reason) and Map.has_key?(reason, :last_error) -> bootstrap_error_message(reason)
-      true -> inspect(reason)
+      true -> format_remote_reason(reason)
     end
   end
 
@@ -2789,7 +2789,7 @@ defmodule EvoDashWeb.SettingsLive do
             case Map.get(status, :last_error) do
               nil -> gettext("Unknown error")
               msg when is_binary(msg) -> msg
-              msg -> inspect(msg)
+              msg -> format_remote_reason(msg)
             end
 
           put_flash(socket, :error, gettext("Connect failed: %{reason}", reason: reason))
@@ -2824,7 +2824,10 @@ defmodule EvoDashWeb.SettingsLive do
         put_flash(
           socket,
           :error,
-          gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
+          gettext("%{action} failed: %{reason}",
+            action: action,
+            reason: format_remote_reason(reason)
+          )
         )
 
       _other ->

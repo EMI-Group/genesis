@@ -1916,7 +1916,7 @@ defmodule EvoDashWeb.ProjectsLive do
           gettext("Remote connect unavailable — the remote connection subsystem is not running.")
 
         _ ->
-          gettext("Remote connect failed: %{reason}", reason: inspect(reason))
+          gettext("Remote connect failed: %{reason}", reason: format_remote_reason(reason))
       end
 
     {:noreply, put_flash(socket, :error, message)}

@@ -3156,6 +3156,30 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ ~s(phx-click="bootstrap_remote_target")
     end
 
+    test "a tail-bearing bootstrap failure reason renders readable text, not a raw tuple",
+         %{conn: conn} do
+      {id, _manager} = bootstrap_target!({:ok, :daemon_started})
+      {:ok, view, _html} = mount_settings(conn, "/settings?category=remote_connections")
+
+      send(
+        view.pid,
+        {:bootstrap_complete, id,
+         {:error, {:staging_failed, 255, "bash: line 1: mkdir: Permission denied"}}}
+      )
+
+      html = render(view)
+      entry = assigns(view)[:bootstrap_progress][id]
+
+      assert %{stage: nil, active: false, status: :error, error: error} = entry
+      assert error =~ "extracting/setting permissions failed (ssh exit 255)"
+      assert error =~ "Permission denied"
+
+      assert html =~ "extracting/setting permissions failed (ssh exit 255)"
+      assert html =~ "Permission denied"
+      # The raw tuple shape must never leak into the UI.
+      refute html =~ "{:staging_failed"
+    end
+
     test "bootstrap_remote_target shows the bar immediately and completes through the manager", %{
       conn: conn
     } do

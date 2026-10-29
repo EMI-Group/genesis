@@ -1071,6 +1071,17 @@ defmodule EvoDashWeb.Helpers do
   def truncate_string(str, len) when byte_size(str) > len, do: String.slice(str, 0, len) <> "..."
   def truncate_string(str, _len), do: str
 
+  @doc """
+  Renders a remote-connection / bootstrap failure reason as readable text.
+  An already-formatted binary passes through unchanged (connect failures arrive
+  formatted); every other term goes through `EvoGit.RemoteConnection.format_reason/1`,
+  which covers the whole bootstrap chain — including the 3-element shapes that
+  carry a remote output tail, e.g. `{:staging_failed, 255, tail}` — and never
+  raises (unknown shapes fall back to `inspect/1`).
+  """
+  def format_remote_reason(reason) when is_binary(reason), do: reason
+  def format_remote_reason(reason), do: EvoGit.RemoteConnection.format_reason(reason)
+
   # ---------------------------------------------------------------------------
   # Preview Helpers (byte / collection caps for rendering)
   # ---------------------------------------------------------------------------
