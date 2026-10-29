@@ -285,6 +285,115 @@ defmodule EvoGit.Agent.TurnWarningTest do
     end
   end
 
+  describe "merge-conflict suppression" do
+    test ":beginning is suppressed while the worktree is in a merge conflict" do
+      # turn 32 = 25% of the 128-turn budget, so :beginning applies (:high only)
+      assert TurnWarning.check_positional(32, 128, :none, :high, in_conflict: true) == :none
+
+      # without the flag the same call still escalates as before
+      assert {:ok, %{level: :beginning}} =
+               TurnWarning.check_positional(32, 128, :none, :high)
+    end
+
+    test ":beginning still fires once the conflict clears (nothing was consumed)" do
+      # suppression returns :none, so the caller never advances last_warned_level
+      assert TurnWarning.check_positional(32, 128, :none, :high, in_conflict: true) == :none
+
+      assert {:ok, warning} =
+               TurnWarning.check_positional(32, 128, :none, :high, in_conflict: false)
+
+      assert warning.level == :beginning
+      assert warning.turn == 32
+      assert warning.turns_remaining == 96
+      assert warning.percent_used == 25
+    end
+
+    test ":middle is suppressed while the worktree is in a merge conflict" do
+      # :high agents get the reminder at 15 turns since the last delegation
+      assert TurnWarning.check_middle(20, 128, 15, :high, in_conflict: true) == :none
+
+      assert {:ok, %{level: :middle, turns_since_subagent: 15}} =
+               TurnWarning.check_middle(20, 128, 15, :high)
+    end
+
+    test ":middle is suppressed at the :low interval too" do
+      # :low agents need 45 turns since the last delegation
+      assert TurnWarning.check_middle(50, 128, 45, :low, in_conflict: true) == :none
+
+      assert {:ok, %{level: :middle, turns_since_subagent: 45}} =
+               TurnWarning.check_middle(50, 128, 45, :low)
+    end
+
+    test ":middle resumes after the conflict clears (counter was frozen, not reset)" do
+      assert TurnWarning.check_middle(20, 128, 15, :high, in_conflict: true) == :none
+
+      assert {:ok, warning} =
+               TurnWarning.check_middle(20, 128, 15, :high, in_conflict: false)
+
+      assert warning.level == :middle
+      assert warning.turns_since_subagent == 15
+    end
+
+    test ":end still fires while in a merge conflict" do
+      # 128-turn budget: :end opens at 10 turns remaining (turn 118)
+      assert {:ok, warning} =
+               TurnWarning.check_positional(118, 128, :none, :high, in_conflict: true)
+
+      assert warning.level == :end
+      assert warning.turn == 118
+      assert warning.turns_remaining == 10
+      assert warning.max_turns == 128
+      # div(118 * 100, 128) = 92
+      assert warning.percent_used == 92
+    end
+
+    test ":critical still fires while in a merge conflict" do
+      # 128-turn budget: :critical opens at 5 turns remaining (turn 123)
+      assert {:ok, warning} =
+               TurnWarning.check_positional(123, 128, :end, :high, in_conflict: true)
+
+      assert warning.level == :critical
+      assert warning.turn == 123
+      assert warning.turns_remaining == 5
+      assert warning.max_turns == 128
+      # div(123 * 100, 128) = 96
+      assert warning.percent_used == 96
+    end
+
+    test "an explicit in_conflict: false behaves exactly like the omitted option" do
+      # check_middle/3 (defaulted) vs. the fully explicit form
+      assert {:ok, default_middle} = TurnWarning.check_middle(20, 128, 15)
+
+      assert {:ok, explicit_middle} =
+               TurnWarning.check_middle(20, 128, 15, :high, in_conflict: false)
+
+      assert default_middle == explicit_middle
+      assert TurnWarning.message(default_middle) == TurnWarning.message(explicit_middle)
+
+      # check_positional/3 (defaulted) vs. the fully explicit form
+      assert {:ok, default_positional} = TurnWarning.check_positional(32, 128, :none)
+
+      assert {:ok, explicit_positional} =
+               TurnWarning.check_positional(32, 128, :none, :high, in_conflict: false)
+
+      assert default_positional == explicit_positional
+
+      assert TurnWarning.message(default_positional) ==
+               TurnWarning.message(explicit_positional)
+    end
+
+    test "in_conflict: false still returns :none when no level applies" do
+      assert TurnWarning.check_positional(5, 128, :none, :high, in_conflict: false) == :none
+      assert TurnWarning.check_middle(10, 128, 14, :high, in_conflict: false) == :none
+    end
+
+    test "suppression does not make :middle fire below its interval" do
+      # 14 < 15 (:high interval) — :none regardless of the conflict flag
+      assert TurnWarning.check_middle(20, 128, 14, :high, in_conflict: true) == :none
+      assert TurnWarning.check_middle(20, 128, 14, :high, in_conflict: false) == :none
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
