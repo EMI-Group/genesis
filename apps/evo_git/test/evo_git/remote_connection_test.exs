@@ -15,6 +15,10 @@ defmodule EvoGit.RemoteConnectionTest do
   # valid members that always differ from the local accent.
   @accent_palette ~w(blue teal green yellow orange red pink purple brown slate)
 
+  # Constructs the remote login shell may not be able to parse (the inner
+  # interpreter is POSIX `sh`, and the OUTER login shell may be anything).
+  @remote_bashisms ["[[", " source ", " local ", " type -t", "pushd"]
+
   # --- Setup: isolate config dir ---
 
   setup do
@@ -961,7 +965,14 @@ defmodule EvoGit.RemoteConnectionTest do
 
           assert output =~ "argv=2\n"
           assert output =~ "arg1=fake@example.com\n"
-          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)}\n"
+          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.sh_wrap(remote_cmd)}\n"
+          # The payload is single-quote-free, so the wrapper stays the plain
+          # `/bin/sh -c '<script>'` form (never the `'\''` fallback that
+          # nushell/tcsh cannot parse).
+          assert output =~
+                   "arg2=/bin/sh -c 'mkdir -p /tmp/g && tar -xJf /tmp/g.tar.xz -C /tmp/g'\n"
+
+          refute output =~ "'\\''"
           refute output =~ "arg3="
         end)
       end
@@ -974,22 +985,30 @@ defmodule EvoGit.RemoteConnectionTest do
                    EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
 
           assert output =~ "argv=2\n"
-          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)}\n"
+          assert output =~ "arg2=#{EvoGit.RemoteBootstrap.sh_wrap(remote_cmd)}\n"
+          # Metacharacters ride inside the single-quoted payload untouched —
+          # never interpreted locally, and no quote escaping is needed.
+          assert output =~
+                   "arg2=/bin/sh -c 'echo hi | cat; test -f /tmp/x && echo yes || echo no'\n"
+
+          refute output =~ "'\\''"
         end)
       end
 
-      test "embedded single quotes round-trip through the bash-wrap escaping" do
+      test "the single-quote-free NixOS detect command arrives verbatim (no escaping)" do
         with_fake_ssh(fn ->
-          remote_cmd =
-            "test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no"
+          remote_cmd = EvoGit.RemoteBootstrap.nixos_detect_command()
 
           assert {:ok, output, 0} =
                    EvoGit.RemoteConnection.run_ssh_command("fake@example.com", remote_cmd, 5_000)
 
-          # Exact pinned form of the wrapped command: every `'` in the raw
-          # command becomes `'\''` (close-quote / escaped-quote / reopen-quote).
+          # Exact pinned form of the wrapped command: a plain command word plus
+          # ONE single-quoted word, with the command text UNCHANGED. The
+          # detection command quotes with `"` only (single-quote-free by
+          # construction), so no `'\''` escaping happens and the wrapper
+          # parses under fish / nushell / tcsh / POSIX login shells alike.
           expected_arg2 =
-            "/usr/bin/env bash -c 'test -d /etc/nixos && echo yes || grep -qi '\\''^ID=nixos'\\'' /etc/os-release 2>/dev/null && echo yes || echo no'"
+            ~S{/bin/sh -c 'test -d /etc/nixos && echo yes || grep -qi "^ID=nixos" /etc/os-release 2>/dev/null && echo yes || echo no'}
 
           assert output == "argv=2\narg1=fake@example.com\narg2=#{expected_arg2}\n"
         end)
@@ -999,9 +1018,10 @@ defmodule EvoGit.RemoteConnectionTest do
     describe "bootstrap/1 with fake ssh" do
       # Writes a fake `ssh` + fake `scp` onto PATH and returns
       # %{log:, marker:, tarball:}. The fake ssh receives $1 = ssh_target and
-      # $2 = the bash-wrapped remote command (ONE argv element —
-      # `/usr/bin/env bash -c '<cmd>'`; the wrapping preserves the command
-      # text verbatim), logs every command to the log file, and dispatches on
+      # $2 = the sh-wrapped remote command (ONE argv element —
+      # `/bin/sh -c '<cmd>'`; the wrapping preserves the command text
+      # verbatim, because every remote command is single-quote-free), logs
+      # every command to the log file, and dispatches on
       # $2 via CONTAINS patterns. Daemon state is emulated via a marker
       # file: `systemd-run` / the deploy `launchctl load` touch it, the stop
       # commands (`systemctl [--user] stop` / pure `launchctl unload`) remove
@@ -1263,6 +1283,35 @@ defmodule EvoGit.RemoteConnectionTest do
         |> File.read!()
         |> String.split("\n", trim: true)
         |> Enum.count(&String.contains?(&1, needle))
+      end
+
+      # Asserts a CAPTURED remote command (the ssh `$2` payload) is login-shell
+      # safe: `sh_wrap/1` must have produced a plain command word plus ONE
+      # single-quoted word, and the command text itself must carry no `'` (and
+      # no bash-ism) — nushell/tcsh cannot parse a single-quoted word that
+      # contains `'`, so the `'\''` fallback would break a real login shell.
+      # Returns the unwrapped command text.
+      defp assert_login_shell_safe_remote_command!(line) do
+        assert String.starts_with?(line, "/bin/sh -c '"),
+               "expected the sh_wrap/1 shape, got: #{inspect(line)}"
+
+        assert String.ends_with?(line, "'"),
+               "expected the sh_wrap/1 shape, got: #{inspect(line)}"
+
+        payload =
+          line
+          |> String.replace_prefix("/bin/sh -c '", "")
+          |> String.replace_suffix("'", "")
+
+        refute String.contains?(payload, "'"),
+               "remote command payload contains a single quote: #{inspect(payload)}"
+
+        for bashism <- @remote_bashisms do
+          refute String.contains?(payload, bashism),
+                 "remote command payload contains the bash-ism #{inspect(bashism)}: #{inspect(payload)}"
+        end
+
+        payload
       end
 
       # Writes a config.toml with a known [node] cookie into the isolated XDG
@@ -1907,6 +1956,39 @@ defmodule EvoGit.RemoteConnectionTest do
             :extracting,
             :setting_permissions
           ])
+
+          cleanup_connections()
+        end)
+      end
+
+      test "every issued remote command stays a single-quote-free sh_wrap payload" do
+        ensure_registry_and_supervisor()
+
+        # A local config.toml makes the :copying_config stage issue its
+        # `test -f ... && echo yes || echo no` existence probe.
+        write_test_config_cookie("known-cookie")
+
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log} ->
+          # No local_binary_path → the remote curl/wget download path runs.
+          target_id = save_test_target()
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          payloads =
+            log
+            |> File.read!()
+            |> String.split("\n", trim: true)
+            |> Enum.map(&assert_login_shell_safe_remote_command!/1)
+
+          # ...and the sweep above actually covered the representative real
+          # commands: the platform/login probe, the remote download, the
+          # one-shot staging chain, the config-existence probe, and the launch.
+          assert Enum.any?(payloads, &String.contains?(&1, "uname -s && uname -m"))
+          assert Enum.any?(payloads, &String.contains?(&1, "curl -fL -o"))
+          assert Enum.any?(payloads, &String.contains?(&1, "tar -xJf"))
+          assert Enum.any?(payloads, &String.contains?(&1, "test -f ~/.config/genesis/"))
+          assert Enum.any?(payloads, &String.contains?(&1, "systemd-run"))
 
           cleanup_connections()
         end)

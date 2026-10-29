@@ -2,6 +2,11 @@ defmodule EvoGit.RemoteBootstrapTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.RemoteBootstrap
+  alias EvoGit.RemoteDaemon
+
+  # Constructs the remote login shell may not be able to parse (the inner
+  # interpreter is POSIX `sh`, and the OUTER login shell may be anything).
+  @bashisms ["[[", " source ", " local ", " type -t", "pushd"]
 
   describe "parse_uname/2" do
     test "maps Linux/x86_64" do
@@ -302,7 +307,7 @@ defmodule EvoGit.RemoteBootstrapTest do
       assert script =~ ~S|for file in $(find "$RELEASE_ROOT" -type f); do|
       assert script =~ ~S|head -c 4 "$file"|
       assert script =~ ~S|od -An -tx1|
-      assert script =~ ~S|tr -d ' \n'|
+      assert script =~ ~S|tr -d " \n"|
       assert script =~ ~S|7f454c46|
 
       assert script =~
@@ -351,28 +356,114 @@ defmodule EvoGit.RemoteBootstrapTest do
     end
   end
 
-  describe "bash_wrap/1" do
-    test "wraps a plain command" do
-      assert RemoteBootstrap.bash_wrap("cmd") == "/usr/bin/env bash -c 'cmd'"
-    end
-
-    test "escapes embedded single quotes (close-quote/escaped-quote/reopen-quote)" do
-      assert RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_detect_command()) ==
-               "/usr/bin/env bash -c 'test -d /etc/nixos && echo yes || grep -qi '\\''^ID=nixos'\\'' /etc/os-release 2>/dev/null && echo yes || echo no'"
-    end
-
-    test "wraps the NixOS patch script, escaping its single quotes" do
-      wrapped = RemoteBootstrap.bash_wrap(RemoteBootstrap.nixos_patch_script(@launcher))
-
-      assert String.starts_with?(wrapped, "/usr/bin/env bash -c '#!/bin/sh")
-      # the script's own single quotes survive as '\'' escape sequences
-      assert String.contains?(wrapped, ~S|tr -d '\'' \n'\''|)
-      refute String.contains?(wrapped, ~S|tr -d ' \n'|)
+  describe "sh_wrap/1" do
+    test "wraps a plain command as a command word + ONE single-quoted word" do
+      assert RemoteBootstrap.sh_wrap("cmd") == "/bin/sh -c 'cmd'"
     end
 
     test "wraps an empty command" do
-      assert RemoteBootstrap.bash_wrap("") == "/usr/bin/env bash -c ''"
+      assert RemoteBootstrap.sh_wrap("") == "/bin/sh -c ''"
     end
+
+    test "wraps the single-quote-free NixOS detection command verbatim" do
+      # The detection command uses double quotes (not `'`) precisely so the
+      # plain `<interpreter> -c '<script>'` form survives nushell/tcsh.
+      assert RemoteBootstrap.sh_wrap(RemoteBootstrap.nixos_detect_command()) ==
+               ~S{/bin/sh -c 'test -d /etc/nixos && echo yes || grep -qi "^ID=nixos" /etc/os-release 2>/dev/null && echo yes || echo no'}
+    end
+
+    test "wraps the NixOS patch script verbatim (no escaping needed)" do
+      wrapped = RemoteBootstrap.sh_wrap(RemoteBootstrap.nixos_patch_script(@launcher))
+
+      assert String.starts_with?(wrapped, "/bin/sh -c '#!/bin/sh")
+      assert String.ends_with?(wrapped, "'")
+      # the script quotes with `"` only, so it rides the wrapper unchanged
+      assert String.contains?(wrapped, ~S|tr -d " \n"|)
+      refute String.contains?(wrapped, "'\\''")
+    end
+
+    test "honours the :remote_shell app-env interpreter override" do
+      # The interpreter is read at CALL time (test seam) — an alternative
+      # POSIX shell keeps the same command-word + single-quoted-word shape.
+      # `async: true` is safe: `sh_wrap/1` is the ONLY reader of this key, and
+      # the other suite that drives it (`remote_connection_test`) is sync.
+      Application.put_env(:evo_git, :remote_shell, "/usr/local/bin/dash")
+      on_exit(fn -> Application.delete_env(:evo_git, :remote_shell) end)
+
+      assert RemoteBootstrap.sh_wrap("cmd") == "/usr/local/bin/dash -c 'cmd'"
+    end
+
+    test "falls back to POSIX close-quote/escaped-quote/reopen-quote escaping" do
+      # Last-resort form for a script that DOES carry a `'` — parses under
+      # POSIX-ish shells and fish, which is why remote commands never carry one.
+      assert RemoteBootstrap.sh_wrap("echo 'hi'") == "/bin/sh -c 'echo '\\''hi'\\'''"
+    end
+  end
+
+  # WHY: sshd hands the remote command to the remote user's LOGIN shell
+  # (`$SHELL -c "<command>"`). The only form that parses identically under
+  # fish / nushell / tcsh / POSIX sh is a plain command word plus ONE
+  # single-quoted word — and nushell/tcsh cannot parse a single-quoted word
+  # that CONTAINS `'` at all (the `'\''` fallback only helps POSIX-ish shells
+  # + fish). Every remote command must therefore stay single-quote-free and
+  # bash-ism-free, or the wrapper breaks on a real login shell.
+  describe "login-shell compatibility contract" do
+    test "bootstrap commands are single-quote-free and bash-ism-free" do
+      commands = [
+        RemoteBootstrap.nixos_detect_command(),
+        RemoteBootstrap.nixos_patch_script("/tmp/genesis_remote/bin/genesis_remote")
+      ]
+
+      for command <- commands, do: assert_login_shell_safe!(command)
+    end
+
+    test "every RemoteDaemon command builder is login-shell safe in BOTH scopes" do
+      unit = "genesis-remote-abc123"
+      node = "genesis_remote_abc123@127.0.0.1"
+      cookie = "s3cret"
+      launcher = "/tmp/genesis_remote/bin/genesis_remote"
+
+      for scope <- [:user, :system] do
+        commands = [
+          RemoteDaemon.login_user_probe_command(),
+          RemoteDaemon.is_active_command(scope, unit),
+          RemoteDaemon.show_environment_command(scope, unit),
+          RemoteDaemon.reset_failed_command(scope, unit),
+          RemoteDaemon.stop_command(scope, unit),
+          RemoteDaemon.status_command(scope, unit),
+          RemoteDaemon.start_command(scope, unit, node, cookie, launcher),
+          RemoteDaemon.show_environment_hint(scope, unit),
+          RemoteDaemon.stop_hint(scope, unit)
+        ]
+
+        for command <- commands, do: assert_login_shell_safe!(command)
+      end
+    end
+  end
+
+  # Asserts a remote command carries no `'` and no bash-ism, and that the
+  # wrapper around it stays the plain `<interpreter> -c '<script>'` form (i.e.
+  # never needs the `'\''` fallback).
+  defp assert_login_shell_safe!(command) do
+    assert is_binary(command)
+
+    refute String.contains?(command, "'"),
+           "remote command contains a single quote: #{inspect(command)}"
+
+    for bashism <- @bashisms do
+      refute String.contains?(command, bashism),
+             "remote command contains the bash-ism #{inspect(bashism)}: #{inspect(command)}"
+    end
+
+    wrapped = RemoteBootstrap.sh_wrap(command)
+
+    assert String.starts_with?(wrapped, "/bin/sh -c '")
+    assert String.ends_with?(wrapped, "'")
+
+    refute String.contains?(wrapped, "'\\''"),
+           "wrapper needed quote escaping: #{inspect(wrapped)}"
+
+    command
   end
 
   describe "parse_unit_environment/1" do
