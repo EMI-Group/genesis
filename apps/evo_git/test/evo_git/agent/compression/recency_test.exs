@@ -1,9 +1,15 @@
 defmodule EvoGit.Agent.Compression.RecencyTest do
   @moduledoc """
-  `async: false` — the recency RULE and the tail-size budget of
-  `EvoGit.Agent.Compression.Recency`, the single source of truth shared by both
-  compression stages (and, until now, covered only through the pruner and
-  checkpoint suites).
+  `async: false` — the recency RULE, the tail-size budget and the tail SHRINK
+  step of `EvoGit.Agent.Compression.Recency`, the single source of truth shared
+  by both compression stages (and, until now, covered only through the pruner
+  and checkpoint suites).
+
+  `shrink_to_budget/2` is the one lever that can shrink a protected suffix whose
+  minimal pairing-safe form is itself over budget (`boundary/3` never protects
+  less than that), so its truncate-then-drop behaviour — and the promise that it
+  never touches the head — is pinned here and wired through `Checkpoint.build/3`
+  in `checkpoint_test`.
 
   Forced serial because the two seam tests mutate the app-env keys
   `:compression_tail_budget_fraction` / `:compression_tail_budget_tokens`, which
@@ -496,6 +502,211 @@ defmodule EvoGit.Agent.Compression.RecencyTest do
       messages = [ReqLLM.Context.tool_result("c", "read_file", "r"), ReqLLM.Context.user("u")]
 
       assert Recency.boundary(messages, 1) == 0
+    end
+  end
+
+  # --- shrink_to_budget/2 ---
+  #
+  # The compaction dead end this covers: `boundary/3` can never protect LESS
+  # than the minimal pairing-safe suffix, so a suffix whose LAST message alone
+  # exceeds the budget used to survive every rebuild untouched and compaction
+  # re-triggered forever. `shrink_to_budget/2` is the step that can actually
+  # shrink such a tail (truncating message text, then dropping whole leading
+  # messages) — and it never touches the head.
+
+  describe "shrink_to_budget/2 — within budget" do
+    test "returns the SAME list untouched when the estimate already fits" do
+      messages = conversation(2)
+
+      for opts <- [[], [budget: 40_000], [context_window: @default_window]] do
+        result = Recency.shrink_to_budget(messages, opts)
+
+        assert result.messages === messages
+        assert result.truncated == 0
+        assert result.estimated_tokens == Recency.estimate_tokens(messages)
+      end
+    end
+  end
+
+  describe "shrink_to_budget/2 — truncating an oversized message" do
+    test "a single huge tool result is head/tail truncated into its allowance" do
+      # One message, so it cannot be dropped without losing the whole tail:
+      # truncation is the ONLY lever.
+      huge = "HEAD:" <> String.duplicate("a", 99_990) <> ":TAIL"
+      assert byte_size(huge) == 100_000
+
+      message = ReqLLM.Context.tool_result("call_big", "bash", huge)
+      result = Recency.shrink_to_budget([message], budget: 8_000)
+
+      assert length(result.messages) == 1
+      assert [shrunk] = result.messages
+
+      # Role, id, metadata and the part shape survive; only the text shrinks.
+      assert shrunk.role == :tool
+      assert shrunk.tool_call_id == "call_big"
+      assert shrunk.metadata == message.metadata
+      assert Enum.map(shrunk.content, & &1.type) == [:text]
+
+      text = text(shrunk)
+
+      assert text =~ ~r/… \[truncated \d+ characters\] …/u
+      assert String.starts_with?(text, "HEAD:")
+      assert String.ends_with?(text, ":TAIL")
+      assert Recency.char_count([shrunk]) < Recency.char_count([message])
+
+      assert result.truncated == 1
+      assert result.estimated_tokens == Recency.estimate_tokens(result.messages)
+      assert result.estimated_tokens <= 8_000
+    end
+  end
+
+  describe "shrink_to_budget/2 — tool pairing survives truncation" do
+    test "a huge assistant message keeps its tool_calls and the following results" do
+      calls = [
+        ReqLLM.ToolCall.new("c1", "read_file", "{}"),
+        ReqLLM.ToolCall.new("c2", "bash", ~s({"cmd":"ls"}))
+      ]
+
+      assistant =
+        ReqLLM.Context.assistant("HEAD:" <> String.duplicate("a", 99_990) <> ":TAIL",
+          tool_calls: calls
+        )
+        |> tag(3)
+
+      messages = [
+        tag(ReqLLM.Context.system("SYSTEM PROMPT"), 0),
+        tag(ReqLLM.Context.user("OBJECTIVE"), 0),
+        assistant,
+        ReqLLM.Context.tool_result("c1", "read_file", "one"),
+        ReqLLM.Context.tool_result("c2", "bash", "two")
+      ]
+
+      result = Recency.shrink_to_budget(messages, budget: 8_000)
+
+      # Nothing was dropped: only the oversized assistant text was truncated.
+      assert length(result.messages) == 5
+      assert result.truncated == 1
+      assert result.estimated_tokens <= 8_000
+
+      shrunk = Enum.at(result.messages, 2)
+
+      assert shrunk.role == :assistant
+      assert shrunk.tool_calls === assistant.tool_calls
+      assert Enum.map(shrunk.tool_calls, & &1.id) == ["c1", "c2"]
+      assert Recency.turn_of(shrunk) == 3
+      assert text(shrunk) =~ ~r/… \[truncated \d+ characters\] …/u
+
+      assert Enum.map(Enum.drop(result.messages, 3), & &1.tool_call_id) == ["c1", "c2"]
+      assert Enum.take(result.messages, 2) === Enum.take(messages, 2)
+    end
+  end
+
+  describe "shrink_to_budget/2 — leading-drop fallback" do
+    test "three moderately large messages truncation cannot fix lose their leading message" do
+      messages = for i <- 1..3, do: ReqLLM.Context.user(String.duplicate("#{i}", 2_000))
+
+      # Every message is far below its allowance (min 1_000 tokens = 4_000
+      # chars), so truncation is a no-op and only a DROP can fit the budget.
+      assert Recency.estimate_tokens(messages) == 1_500
+
+      result = Recency.shrink_to_budget(messages, budget: 1_000)
+
+      assert result.messages == Enum.drop(messages, 1)
+      assert result.truncated == 0
+      assert result.estimated_tokens <= 1_000
+      assert result.estimated_tokens == Recency.estimate_tokens(result.messages)
+    end
+
+    test "a dropped assistant tool call takes its tool results with it" do
+      pairs =
+        for turn <- 1..4 do
+          [
+            assistant_with_call("call_#{turn}", String.duplicate("A", 500)) |> tag(turn),
+            ReqLLM.Context.tool_result("call_#{turn}", "bash", String.duplicate("T", 500))
+            |> tag(turn)
+          ]
+        end
+
+      messages =
+        [tag(ReqLLM.Context.system("SYSTEM"), 0), tag(ReqLLM.Context.user("OBJECTIVE"), 0)] ++
+          Enum.concat(pairs)
+
+      result = Recency.shrink_to_budget(messages, budget: 1_000)
+
+      dropped = length(messages) - length(result.messages)
+      assert dropped > 0
+      assert result.messages == Enum.drop(messages, dropped)
+
+      # A valid conversation: it never STARTS on an orphaned tool result, and no
+      # retained call lost its results (or vice versa).
+      refute match?(%Message{role: :tool}, hd(result.messages))
+
+      call_ids =
+        for %Message{role: :assistant, tool_calls: calls} <- result.messages,
+            call <- List.wrap(calls),
+            do: Map.get(call, :id)
+
+      result_ids =
+        for %Message{role: :tool} = message <- result.messages, do: message.tool_call_id
+
+      assert result_ids -- call_ids == []
+      assert call_ids -- result_ids == []
+
+      assert result.truncated == 0
+      assert result.estimated_tokens <= 1_000
+    end
+  end
+
+  describe "shrink_to_budget/2 — totality" do
+    test "empty and non-list inputs come back untouched with a zero estimate" do
+      assert Recency.shrink_to_budget([]) == %{messages: [], truncated: 0, estimated_tokens: 0}
+
+      for input <- [nil, :nope, %{a: 1}, "a binary"] do
+        assert Recency.shrink_to_budget(input) ==
+                 %{messages: input, truncated: 0, estimated_tokens: 0}
+      end
+    end
+
+    test "an unusable :budget falls back to tail_budget/1" do
+      # 400 chars = 100 tokens: comfortably inside the DEFAULT 40_000 budget and
+      # far outside a literal 0 / negative one, so an untouched list proves the
+      # fallback (a literal reading of 0 would collapse the list).
+      messages = [ReqLLM.Context.user(String.duplicate("x", 400))]
+
+      for budget <- [0, -5, -100_000, :nope, "8000", 1.5, nil] do
+        result = Recency.shrink_to_budget(messages, budget: budget)
+
+        assert result.messages === messages,
+               "budget #{inspect(budget)} did not fall back to tail_budget/1"
+
+        assert result.truncated == 0
+        assert result.estimated_tokens == 100
+      end
+    end
+
+    test "a pathological :context_window falls back to the default window" do
+      messages = [ReqLLM.Context.user(String.duplicate("x", 400))]
+
+      for window <- [0, -1, -100_000, :nope, "8000", 1.5, nil] do
+        result = Recency.shrink_to_budget(messages, context_window: window)
+
+        assert result.messages === messages,
+               "context_window #{inspect(window)} did not fall back to the default"
+
+        assert result.estimated_tokens == 100
+      end
+    end
+
+    test "an impossible budget collapses the list instead of raising" do
+      # 100 tokens of text against a 1-token budget: the message is below its
+      # allowance, so truncation cannot help — the only way to honour the budget
+      # is to drop it, down to `[]`.
+      result =
+        Recency.shrink_to_budget([ReqLLM.Context.user(String.duplicate("x", 400))], budget: 1)
+
+      assert result.messages == []
+      assert result.truncated == 0
+      assert result.estimated_tokens == 0
     end
   end
 

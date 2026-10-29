@@ -79,6 +79,42 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
     [tag(ReqLLM.Context.system("SYSTEM"), 0), tag(ReqLLM.Context.user("OBJECTIVE"), 0)] ++ tail
   end
 
+  # `turn`'s assistant call plus its tool result, the result carrying `chars` of
+  # DISTINCTIVE text so a truncation can be recognised at the head AND the tail.
+  defp giant_tool_turn(turn, chars) do
+    [
+      assistant_with_call("call_giant_#{turn}", "last look") |> tag(turn),
+      ReqLLM.Context.tool_result(
+        "call_giant_#{turn}",
+        "bash",
+        "GIANT-HEAD:" <> String.duplicate("G", chars) <> ":GIANT-TAIL"
+      )
+      |> tag(turn)
+    ]
+  end
+
+  # head + four turns whose OLD-span tool results are huge (so `pre_estimate`
+  # stays far above the budget and the progress guard never trims the tail) + a
+  # FINAL turn whose `:tool` result alone blows the tail budget. The minimal
+  # pairing-safe suffix (assistant + its tool result) is therefore still over
+  # budget when `build/3` reassembles the list — the shape that used to leave
+  # the rebuilt list permanently above the compaction threshold.
+  defp oversized_tail_conversation(giant_chars \\ 120_000) do
+    head = [tag(ReqLLM.Context.system("SYSTEM"), 0), tag(ReqLLM.Context.user("OBJECTIVE"), 0)]
+
+    turns =
+      Enum.flat_map(1..4, fn turn ->
+        filler = if turn >= 2, do: String.duplicate("F", 60_000), else: "result #{turn}"
+
+        [
+          assistant_with_call("call_#{turn}", "work #{turn}") |> tag(turn),
+          ReqLLM.Context.tool_result("call_#{turn}", "bash", filler) |> tag(turn)
+        ]
+      end)
+
+    head ++ turns ++ giant_tool_turn(5, giant_chars)
+  end
+
   defp message_text(%Message{content: content}) do
     content
     |> Enum.filter(&(&1.type == :text))
@@ -559,6 +595,97 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert estimates == Enum.sort(estimates, :desc)
       assert estimates != []
       assert length(final) < length(initial) + 10
+    end
+  end
+
+  # --- build/3 — oversized recent tail (regression) ---
+  #
+  # `Recency.boundary/3` may only protect LESS down to the minimal pairing-safe
+  # suffix, so when that suffix's LAST message alone exceeds the tail budget the
+  # rebuilt list stayed over budget and compaction re-triggered forever. The
+  # retained tail is now additionally shrunk after the existing trimming.
+
+  describe "build/3 — oversized recent tail (regression)" do
+    test "one enormous final tool result is shrunk instead of kept over budget" do
+      messages = oversized_tail_conversation()
+      budget = Recency.tail_budget(context_window: 8_000)
+
+      assert budget == 1_600
+      assert Recency.estimate_tokens(messages) > budget
+
+      result = Checkpoint.build(messages, "SUM", context_window: 8_000)
+
+      assert result.replaced >= 1
+      assert result.budget == budget
+      assert result.estimated_tokens == Recency.estimate_tokens(result.messages)
+      assert result.estimated_tokens <= budget
+      assert result.estimated_tokens <= result.pre_estimate
+      assert result.shrunk
+
+      # The head is still byte-identical and the list holds exactly ONE
+      # checkpoint, right after the head.
+      assert Enum.take(result.messages, 2) === Enum.take(messages, 2)
+      assert checkpoint_index(result.messages) == 2
+      assert length(Enum.filter(result.messages, &Checkpoint.checkpoint?/1)) == 1
+
+      [system, objective, checkpoint | retained] = result.messages
+
+      assert system.role == :system
+      assert objective.role == :user
+      assert Checkpoint.checkpoint?(checkpoint)
+      assert result.kept == length(retained)
+
+      # The retained tail does not start on an orphaned tool result…
+      assert Enum.at(result.messages, 3).role != :tool
+      refute match?(%Message{role: :tool}, Enum.at(result.messages, 3))
+
+      # …and the giant tool result SURVIVED, truncated, with its id intact and
+      # both ends of the original text present.
+      giant = List.last(retained)
+
+      assert giant.role == :tool
+      assert giant.tool_call_id == "call_giant_5"
+
+      text = message_text(giant)
+
+      assert text =~ ~r/… \[truncated \d+ characters\] …/u
+      assert String.starts_with?(text, "GIANT-HEAD:")
+      assert String.ends_with?(text, ":GIANT-TAIL")
+
+      assert_tool_pairings_intact(result.messages)
+      assert_pairing_contiguous(retained)
+      assert Enum.all?(result.messages, &Message.valid?/1)
+    end
+
+    test "repeated builds over a fresh giant tool result stay bounded and never grow" do
+      budget = Recency.tail_budget(context_window: 8_000)
+      initial = oversized_tail_conversation()
+
+      {final, reversed_estimates} =
+        Enum.reduce(1..3, {initial, []}, fn round, {current, estimates} ->
+          # Each round the agent keeps working and produces ANOTHER huge tail.
+          grown = current ++ giant_tool_turn(5 + round, 120_000)
+          result = Checkpoint.build(grown, "SUMMARY #{round}", context_window: 8_000)
+
+          assert result.replaced >= 1
+          assert checkpoint_index(result.messages) == 2
+          assert length(Enum.filter(result.messages, &Checkpoint.checkpoint?/1)) == 1
+          assert Checkpoint.prior_summary(result.messages) == "SUMMARY #{round}"
+          assert Enum.take(result.messages, 2) === Enum.take(initial, 2)
+          assert result.estimated_tokens == Recency.estimate_tokens(result.messages)
+          assert result.estimated_tokens <= budget
+          assert_tool_pairings_intact(result.messages)
+
+          {result.messages, [result.estimated_tokens | estimates]}
+        end)
+
+      estimates = Enum.reverse(reversed_estimates)
+
+      # Bounded every round, and never growing across rounds.
+      assert length(estimates) == 3
+      assert Enum.all?(estimates, &(&1 <= budget))
+      assert estimates == Enum.sort(estimates, :desc)
+      assert length(final) <= length(initial)
     end
   end
 
