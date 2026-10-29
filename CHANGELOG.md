@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.10] - 2026-10-29
+
+### Added
+
+- Desktop app now shows a Genesis-branded loading page from the first frame instead of the backend URL or a connection-refused error page
+
+### Changed
+
+- Compression checkpoints are now untagged and budget-aware, trimming the recent tail to the context window while preserving exactly one runtime-context refresh and keeping tool-message pairs intact
+- Stage-2 compression log lines now report how many retained tail messages were truncated to fit the tail budget
+- Model-profile edit form redesigned with a progressive-disclosure layout that hides advanced generation and JSON options behind an auto-expanding details section
+- Updated translations
+
+### Fixed
+
+- Fixed context compaction looping forever on oversized recent messages by truncating the recency tail to a token budget
+- Fixed stage-2 compression failing to shrink oversized transcripts, and repeated model-free compressions growing the message list by dropping stale context refreshes and keeping only one fresh runtime-context refresh
+- Web fetch timeout errors now report the configured request timeout instead of the measured remaining budget
+- Fixed crashes when rendering non-binary error reasons in LSP, web fetch, file-creation, and task-system tools (ListTasks, GetTask, ListRecentProjects), which now format unavailable reasons safely
+- YAML frontmatter parse failures now return descriptive human-readable error messages instead of raising exceptions
+- Fixed the model-profile advanced section re-opening or closing unexpectedly while editing its form
+- Fixed desktop app startup so the loading page renders without blocking the Tauri setup hook, preventing stalled boot navigation and missing page-load callbacks
+- Fixed flaky, seed-dependent test failures by defining the test helper module before async test modules load
+
 ## [0.13.9] - 2026-10-27
 
 ### Added
