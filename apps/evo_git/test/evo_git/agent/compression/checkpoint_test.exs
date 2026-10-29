@@ -8,6 +8,7 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Compression.Checkpoint
+  alias EvoGit.Agent.Compression.Recency
   alias EvoGit.Agent.Compression.SummaryPrompt
   alias ReqLLM.Message
 
@@ -61,16 +62,35 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
     ]
   end
 
+  # The head is [system, objective] and the rest is `turns` — for tests that
+  # need a tail of a KNOWN, uniform size (the tail budget shrinks by message).
+  defp uniform_tail_conversation(turns, text_chars) do
+    assistant_text = String.duplicate("A", div(text_chars, 4))
+    tool_text = String.duplicate("T", text_chars)
+
+    tail =
+      Enum.flat_map(turns, fn turn ->
+        [
+          assistant_with_call("m#{turn}", assistant_text) |> tag(turn),
+          ReqLLM.Context.tool_result("m#{turn}", "bash", tool_text) |> tag(turn)
+        ]
+      end)
+
+    [tag(ReqLLM.Context.system("SYSTEM"), 0), tag(ReqLLM.Context.user("OBJECTIVE"), 0)] ++ tail
+  end
+
   defp message_text(%Message{content: content}) do
     content
     |> Enum.filter(&(&1.type == :text))
     |> Enum.map_join("", & &1.text)
   end
 
-  defp turns_of(messages), do: Enum.map(messages, &EvoGit.Agent.Compression.Recency.turn_of/1)
+  defp turns_of(messages), do: Enum.map(messages, &Recency.turn_of/1)
 
   defp call_id(%ReqLLM.ToolCall{id: id}), do: id
   defp call_id(%{id: id}), do: id
+
+  defp checkpoint_index(messages), do: Enum.find_index(messages, &Checkpoint.checkpoint?/1)
 
   defp expected_checkpoint_text(summary) do
     @preamble <>
@@ -94,6 +114,36 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
 
     assert call_ids -- result_ids == [],
            "tool calls without a retained result: #{inspect(call_ids -- result_ids)}"
+  end
+
+  # The retained suffix is ONE contiguous conversation: every assistant message
+  # that carries `tool_calls` is IMMEDIATELY followed by its tool results, so a
+  # provider never sees a call whose results live in the replaced span.
+  defp assert_pairing_contiguous(messages) do
+    messages
+    |> Enum.with_index()
+    |> Enum.each(fn {message, index} ->
+      case message do
+        %Message{role: :assistant, tool_calls: calls} when is_list(calls) and calls != [] ->
+          expected = Enum.map(calls, &call_id/1)
+
+          actual =
+            messages
+            |> Enum.drop(index + 1)
+            |> Enum.take(length(expected))
+            |> Enum.map(fn
+              %Message{role: :tool, tool_call_id: id} -> id
+              _other -> :not_a_tool_result
+            end)
+
+          assert actual == expected,
+                 "tool results did not immediately follow their call at index #{index}: " <>
+                   "expected #{inspect(expected)}, got #{inspect(actual)}"
+
+        _other ->
+          :ok
+      end
+    end)
   end
 
   # --- split/2 ---
@@ -181,6 +231,23 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert hd(split.recent).role == :assistant
       assert_tool_pairings_intact(split.recent)
     end
+
+    test "a mid-size conversation still has messages to replace (floor rewinds onto the assistant)" do
+      # 13 messages: the positional floor is index 5 — a tool RESULT — so the
+      # rewind moves the boundary to its producing assistant (index 4) and two
+      # messages legitimately enter `old`. This is the shape that keeps stage 2
+      # from collapsing into a no-op, and it is why a no-op fixture must protect
+      # its WHOLE tail (see build/3 "nothing old to replace").
+      messages = conversation(5)
+      split = Checkpoint.split(messages)
+
+      assert length(messages) == 13
+      assert length(split.old) == 2
+      assert turns_of(split.old) == [0, 0]
+      assert hd(split.recent) == Enum.at(messages, 4)
+      assert hd(split.recent).role == :assistant
+      assert split.head ++ split.old ++ split.recent == messages
+    end
   end
 
   describe "split/2 — tool-pair integrity" do
@@ -208,6 +275,60 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
     end
   end
 
+  describe "split/2 — prior checkpoints (regression)" do
+    test "a checkpoint turn-tagged with the NEWEST turn never pins the boundary" do
+      # The historical bug: the checkpoint was turn-tagged with the conversation's
+      # current turn and inserted at index 2, so `max_turn - keep` pointed AT it
+      # and every later compression found nothing old to replace.
+      messages = conversation(8)
+      legacy_checkpoint = tag(Checkpoint.checkpoint_message("OLD SUMMARY"), 7)
+      inserted = Enum.take(messages, 2) ++ [legacy_checkpoint] ++ Enum.drop(messages, 2)
+
+      assert Checkpoint.checkpoint?(legacy_checkpoint)
+      assert Recency.turn_of(legacy_checkpoint) == 7
+
+      boundary = Recency.boundary(inserted)
+      refute boundary == 2
+      assert boundary > 2
+
+      split = Checkpoint.split(inserted)
+      refute split.old == []
+      assert Enum.any?(split.old, &Checkpoint.checkpoint?/1)
+      assert split.head ++ split.old ++ split.recent == inserted
+
+      # …and the legacy checkpoint is therefore REPLACED on the next compaction.
+      result = Checkpoint.build(inserted, "NEW SUMMARY")
+      assert result.replaced >= 1
+      assert length(Enum.filter(result.messages, &Checkpoint.checkpoint?/1)) == 1
+      assert Checkpoint.prior_summary(result.messages) == "NEW SUMMARY"
+    end
+
+    test "forces the split past a prior checkpoint even when the whole list would be protected" do
+      # A just-compacted transcript plus ONE further turn: five messages, of which
+      # the default recency rule protects all of them.
+      checkpoint = Checkpoint.checkpoint_message("FIRST SUMMARY")
+
+      compacted = [
+        tag(ReqLLM.Context.system("SYSTEM"), 0),
+        tag(ReqLLM.Context.user("OBJECTIVE"), 0),
+        checkpoint,
+        assistant_with_call("call_7", "working on turn 7") |> tag(7),
+        ReqLLM.Context.tool_result("call_7", "read_file", "result 7") |> tag(7)
+      ]
+
+      assert Recency.boundary(compacted) == 0
+      assert checkpoint_index(compacted) == 2
+
+      split = Checkpoint.split(compacted)
+
+      # …yet the split is forced past the checkpoint, so it always lands in old.
+      assert split.old == [checkpoint]
+      assert split.recent == Enum.drop(compacted, 3)
+      assert split.head ++ split.old ++ split.recent == compacted
+      assert Checkpoint.checkpoint?(hd(split.old))
+    end
+  end
+
   # --- build/3 ---
 
   describe "build/3" do
@@ -227,6 +348,20 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert rest == Enum.drop(messages, 10)
     end
 
+    test "reports the seven-field result map" do
+      messages = conversation(8)
+      result = Checkpoint.build(messages, "THE SUMMARY")
+
+      assert result |> Map.keys() |> Enum.sort() ==
+               [:budget, :estimated_tokens, :kept, :messages, :pre_estimate, :replaced, :shrunk]
+
+      assert result.pre_estimate == Recency.estimate_tokens(messages)
+      assert result.estimated_tokens == Recency.estimate_tokens(result.messages)
+      assert result.budget == Recency.tail_budget()
+      assert result.kept == length(result.messages) - 3
+      refute result.shrunk
+    end
+
     test "the checkpoint text carries the pinned preamble and the summary tags" do
       message = Checkpoint.checkpoint_message("SOME SUMMARY")
       text = message_text(message)
@@ -240,28 +375,41 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
 
     test "a blank summary never fabricates a checkpoint" do
       messages = conversation(8)
+      pre_estimate = Recency.estimate_tokens(messages)
 
       for blank <- [nil, "", "   \n\t "] do
         result = Checkpoint.build(messages, blank)
 
         assert result.messages == messages
         assert result.replaced == 0
+        assert result.estimated_tokens == pre_estimate
+        assert result.pre_estimate == pre_estimate
+        refute result.shrunk
       end
     end
 
     test "nothing old to replace returns the input unchanged" do
       two_messages = [tag(ReqLLM.Context.system("SYSTEM"), 0), tag(ReqLLM.Context.user("OBJ"), 0)]
+      estimate = Recency.estimate_tokens(two_messages)
 
+      # A no-op fixture must protect its WHOLE tail: with fewer messages than the
+      # head + positional floor, no index lands on a prunable message.
       assert Checkpoint.build(two_messages, "SUMMARY") == %{
                messages: two_messages,
                replaced: 0,
-               kept: 0
+               kept: 0,
+               estimated_tokens: estimate,
+               pre_estimate: estimate,
+               budget: Recency.tail_budget(),
+               shrunk: false
              }
 
       single_turn = conversation(1)
       result = Checkpoint.build(single_turn, "SUMMARY")
       assert result.messages == single_turn
       assert result.replaced == 0
+      assert result.kept == 3
+      assert result.estimated_tokens == result.pre_estimate
     end
 
     test "honours keep_recent_turns" do
@@ -273,22 +421,144 @@ defmodule EvoGit.Agent.Compression.CheckpointTest do
       assert length(result.messages) == 3 + 3
     end
 
-    test "turn-tags the checkpoint message when :turn is given" do
-      messages = conversation(8)
-      result = Checkpoint.build(messages, "SUM", turn: 5)
+    test "checkpoint_message ignores :turn and stamps metadata[:checkpoint]" do
+      for turn <- [nil, 0, 5] do
+        message = Checkpoint.checkpoint_message("SUM", turn)
+
+        assert message.metadata[:checkpoint] == true
+        refute Map.has_key?(message.metadata, :turn)
+        assert Recency.turn_of(message) == nil
+        assert Recency.synthetic?(message)
+      end
+
+      result = Checkpoint.build(conversation(8), "SUM", turn: 5)
       checkpoint = Enum.at(result.messages, 2)
 
-      assert checkpoint.metadata[:turn] == 5
-      assert EvoGit.Agent.Compression.Recency.turn_of(checkpoint) == 5
+      assert checkpoint.metadata[:checkpoint] == true
+      assert checkpoint.metadata[:turn] == nil
+      assert Recency.turn_of(checkpoint) == nil
+      refute Map.has_key?(checkpoint.metadata, :turn)
+    end
+  end
+
+  describe "build/3 — repeated compactions (regression)" do
+    test "two consecutive compactions keep exactly ONE checkpoint after the head and accumulate" do
+      first = Checkpoint.build(conversation(8), "FIRST SUMMARY")
+      assert first.replaced == 8
+
+      # Keep working, then compact again with a NEW summary.
+      continued =
+        first.messages ++
+          Enum.flat_map(8..11, fn turn ->
+            [
+              assistant_with_call("call_#{turn}", "working on turn #{turn}") |> tag(turn),
+              ReqLLM.Context.tool_result("call_#{turn}", "read_file", "result #{turn}")
+              |> tag(turn)
+            ]
+          end) ++ [tag(ReqLLM.Context.assistant("later done"), 11)]
+
+      second = Checkpoint.build(continued, "FIRST + SECOND SUMMARY")
+
+      assert second.replaced >= 1
+      assert length(Enum.filter(second.messages, &Checkpoint.checkpoint?/1)) == 1
+      assert checkpoint_index(second.messages) == 2
+      assert Checkpoint.prior_summary(second.messages) == "FIRST + SECOND SUMMARY"
+
+      # The head is still byte-identical and the tail is a contiguous suffix.
+      assert Enum.take(second.messages, 2) == Enum.take(conversation(8), 2)
+      assert second.messages |> Enum.drop(3) |> List.last() == List.last(continued)
+      assert_tool_pairings_intact(second.messages)
     end
 
-    test "leaves the checkpoint message untagged when :turn is absent" do
-      messages = conversation(8)
-      result = Checkpoint.build(messages, "SUM")
-      checkpoint = Enum.at(result.messages, 2)
+    test "a prior checkpoint inside the protected tail is REPLACED, not retained" do
+      first = Checkpoint.build(conversation(8), "FIRST SUMMARY")
 
-      refute Map.has_key?(checkpoint.metadata, :turn)
-      assert checkpoint.metadata == %{}
+      # Only one exchange later, and that exchange is enormous: without the
+      # forced split the whole list would be inside the protected tail and the
+      # previous checkpoint would simply be carried forward.
+      huge = String.duplicate("X", 300_000)
+
+      later =
+        first.messages ++
+          [
+            ReqLLM.Context.user("keep going")
+            |> Map.put(:content, [ReqLLM.Message.ContentPart.text(huge)])
+            |> tag(8),
+            tag(ReqLLM.Context.assistant("ok"), 8)
+          ]
+
+      third = Checkpoint.build(later, "THIRD SUMMARY")
+
+      assert third.replaced >= 1
+      assert length(Enum.filter(third.messages, &Checkpoint.checkpoint?/1)) == 1
+      assert checkpoint_index(third.messages) == 2
+      assert Checkpoint.prior_summary(third.messages) == "THIRD SUMMARY"
+      assert Checkpoint.prior_summary(third.messages) != "FIRST SUMMARY"
+      assert Enum.take(third.messages, 2) == Enum.take(conversation(8), 2)
+    end
+
+    test "an oversized tail is budget-bounded and keeps tool pairing" do
+      # 4 enormous turns (8 messages, ~5k tokens of tail) against a window whose
+      # tail budget is 1_600 tokens: the retained suffix must be shrunk.
+      messages = uniform_tail_conversation(4..7, 4_000)
+      budget = Recency.tail_budget(context_window: 8_000)
+
+      assert budget == 1_600
+      assert Recency.estimate_tokens(messages) > budget
+
+      result = Checkpoint.build(messages, "SUM", context_window: 8_000)
+
+      assert result.replaced >= 1
+      assert result.budget == budget
+      assert result.estimated_tokens <= budget
+      assert result.estimated_tokens <= result.pre_estimate
+      assert result.estimated_tokens <= 0.9 * result.pre_estimate
+
+      [head_system, head_objective, checkpoint | retained] = result.messages
+
+      assert head_system == Enum.at(messages, 0)
+      assert head_objective == Enum.at(messages, 1)
+      assert Checkpoint.checkpoint?(checkpoint)
+      assert retained != []
+      assert length(retained) < length(messages) - 2
+      refute match?(%Message{role: :tool}, hd(retained))
+      assert List.last(result.messages) == List.last(messages)
+
+      assert_tool_pairings_intact(result.messages)
+      assert_pairing_contiguous(retained)
+      assert Enum.all?(result.messages, &Message.valid?/1)
+    end
+
+    test "repeated compressions stay bounded" do
+      budget = Recency.tail_budget(context_window: 8_000)
+      initial = uniform_tail_conversation(4..7, 4_000)
+
+      {final, reversed_estimates} =
+        Enum.reduce(1..5, {initial, []}, fn round, {current, estimates} ->
+          # Each round the agent keeps working (a fresh huge tail), then compacts.
+          grown =
+            current ++
+              (uniform_tail_conversation((10 + round)..(11 + round), 4_000) |> Enum.drop(2))
+
+          result = Checkpoint.build(grown, "SUMMARY #{round}", context_window: 8_000)
+
+          assert result.replaced >= 1
+          assert length(Enum.filter(result.messages, &Checkpoint.checkpoint?/1)) == 1
+          assert checkpoint_index(result.messages) == 2
+          assert Checkpoint.prior_summary(result.messages) == "SUMMARY #{round}"
+          assert result.estimated_tokens <= budget
+          assert_tool_pairings_intact(result.messages)
+
+          {result.messages, [result.estimated_tokens | estimates]}
+        end)
+
+      estimates = Enum.reverse(reversed_estimates)
+
+      # Bounded, and never growing across rounds.
+      assert Enum.all?(estimates, &(&1 <= budget))
+      assert estimates == Enum.sort(estimates, :desc)
+      assert estimates != []
+      assert length(final) < length(initial) + 10
     end
   end
 
