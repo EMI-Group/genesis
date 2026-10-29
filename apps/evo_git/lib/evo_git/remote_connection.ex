@@ -186,6 +186,12 @@ defmodule EvoGit.RemoteConnection do
   @cmd_timeout_ms 30_000
   @scp_timeout_ms 120_000
 
+  # Backoff before the single retry of an IDEMPOTENT remote command that failed
+  # with ssh's OWN transport exit code 255 (see `run_ssh_command_retry/4`).
+  # Overridable per call via the app-env seam :remote_ssh_retry_backoff_ms
+  # (tests set it to 0).
+  @remote_ssh_retry_backoff_ms 400
+
   # Timeout for release-tarball downloads (tens of MB) — curl then wget on the
   # remote host, or the local curl fallback. Generous to handle slow links.
   @download_timeout_ms 300_000
@@ -653,7 +659,7 @@ defmodule EvoGit.RemoteConnection do
           :ok
 
         {:error, reason} ->
-          message = format_error({:distribution_failed, reason})
+          message = format_reason({:distribution_failed, reason})
           Logger.error("Remote connection distribution setup failed: #{message}")
           {:error, message}
       end
@@ -765,11 +771,11 @@ defmodule EvoGit.RemoteConnection do
           {:error, reason} ->
             close_port(port)
             error = {:tunnel_not_ready, reason}
-            {:error, format_error(error)}
+            {:error, format_reason(error)}
         end
 
       {:error, reason} ->
-        {:error, format_error(reason)}
+        {:error, format_reason(reason)}
     end
   end
 
@@ -961,7 +967,7 @@ defmodule EvoGit.RemoteConnection do
   defp probe_platform(ssh_target) do
     command = "uname -s && uname -m && #{EvoGit.RemoteDaemon.login_user_probe_command()}"
 
-    case run_ssh_command(ssh_target, command, @cmd_timeout_ms) do
+    case run_ssh_command_retry(ssh_target, command, @cmd_timeout_ms) do
       {:ok, output, 0} ->
         case String.split(String.trim(output), "\n") do
           [os, arch | rest] ->
@@ -975,8 +981,8 @@ defmodule EvoGit.RemoteConnection do
             {:error, {:probe_failed, {:unexpected_output, String.trim(output)}}}
         end
 
-      {:ok, _output, status} ->
-        {:error, {:probe_failed, {:exit_status, status}}}
+      {:ok, output, status} ->
+        {:error, {:probe_failed, {:exit_status, status, output_tail(output)}}}
 
       :timeout ->
         {:error, {:probe_failed, :timeout}}
@@ -987,7 +993,7 @@ defmodule EvoGit.RemoteConnection do
   # field is preset. Best-effort by design: a timeout, a non-zero exit or blank
   # output yields nil (→ `:user` scope) rather than failing the bootstrap.
   defp probe_login_user(ssh_target) do
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.login_user_probe_command(),
            @cmd_timeout_ms
@@ -1065,9 +1071,14 @@ defmodule EvoGit.RemoteConnection do
   # via ssh and maps the result to :ok | {:error, {:download_failed, ...}}.
   defp run_remote_download(ssh_target, tool, args) do
     case run_ssh_command(ssh_target, "#{tool} #{args}", @download_timeout_ms) do
-      {:ok, _output, 0} -> :ok
-      {:ok, _output, status} -> {:error, {:download_failed, {:exit_status, status}}}
-      :timeout -> {:error, {:download_failed, :timeout}}
+      {:ok, _output, 0} ->
+        :ok
+
+      {:ok, output, status} ->
+        {:error, {:download_failed, {:exit_status, status, output_tail(output)}}}
+
+      :timeout ->
+        {:error, {:download_failed, :timeout}}
     end
   end
 
@@ -1100,7 +1111,7 @@ defmodule EvoGit.RemoteConnection do
 
           case run_cmd(cmd, @download_timeout_ms) do
             {:ok, _output, 0} -> :ok
-            {:ok, _output, status} -> {:error, {:exit_status, status}}
+            {:ok, output, status} -> {:error, {:exit_status, status, output_tail(output)}}
             :timeout -> {:error, :timeout}
           end
 
@@ -1111,9 +1122,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Runs the post-staging launch sequence shared by both bootstrap paths:
-  # extract → chmod → config copy → cookie → (NixOS patch) → daemon start →
-  # health verify. `os` is the daemon OS resolved during pre-flight (probed or
-  # platform override) — `:detecting_os` no longer exists as a stage.
+  # extract + chmod (ONE ssh round trip) → config copy → cookie → (NixOS patch)
+  # → daemon start → health verify. `os` is the daemon OS resolved during
+  # pre-flight (probed or platform override) — `:detecting_os` no longer exists
+  # as a stage.
   defp launch_after_staging(
          %__MODULE__{} = state,
          target,
@@ -1124,13 +1136,14 @@ defmodule EvoGit.RemoteConnection do
          remote_tarball
        ) do
     with {:ok, state} <-
-           run_stage(state, target, :extracting, fn ->
-             extract_tarball(ssh_target, remote_tarball, remote_dir)
-           end),
-         {:ok, state} <-
-           run_stage(state, target, :setting_permissions, fn ->
-             chmod_executable(ssh_target, launcher_path)
-           end),
+           stage_extract_and_set_permissions(
+             state,
+             target,
+             ssh_target,
+             remote_tarball,
+             remote_dir,
+             launcher_path
+           ),
          {:ok, state} <-
            run_stage(state, target, :copying_config, fn ->
              copy_config_to_remote(ssh_target, os)
@@ -1178,12 +1191,44 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Constructs the error state, broadcasts it, and returns it.
+  # Extract + chmod in ONE ssh round trip, still broadcast as the two
+  # dashboard progress steps: :extracting is set BEFORE the command, and
+  # :setting_permissions is set after it succeeds (the dashboard maps them to
+  # progress steps 2 and 3).
+  defp stage_extract_and_set_permissions(
+         state,
+         target,
+         ssh_target,
+         remote_tarball,
+         remote_dir,
+         launcher_path
+       ) do
+    state = set_stage(state, target, :extracting)
+
+    case extract_and_set_permissions(ssh_target, remote_tarball, remote_dir, launcher_path) do
+      :ok -> {:ok, set_stage(state, target, :setting_permissions)}
+      {:error, reason} -> {:error, reason, error_state(state, target, reason)}
+    end
+  end
+
+  # Constructs the error state, LOGS the failure once (with the remote output
+  # tail carried by the reason) and broadcasts it. The `{:error, reason}` tuple
+  # returned to callers keeps its shape — only `last_error` becomes the
+  # readable message.
   defp error_state(state, target, reason) do
-    error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: format_error(reason)}
+    message = format_reason(reason)
+
+    Logger.error(
+      "RemoteConnection: bootstrap failed for target #{target_label(target)}: #{message}"
+    )
+
+    error_state = %{state | phase: :error, bootstrap_stage: nil, last_error: message}
     broadcast_status(target, error_state)
     error_state
   end
+
+  defp target_label(%{id: id}), do: to_string(id)
+  defp target_label(_target), do: "?"
 
   # Resolves the remote paths shared by both staging paths. The tarball is
   # uploaded to a temp path, then extracted into remote_path's parent (the
@@ -1214,30 +1259,27 @@ defmodule EvoGit.RemoteConnection do
 
     case run_cmd(cmd, @scp_timeout_ms) do
       {:ok, _output, 0} -> :ok
-      {:ok, _output, status} -> {:error, {:scp_failed, status}}
+      {:ok, output, status} -> {:error, {:scp_failed, status, output_tail(output)}}
       :timeout -> {:error, {:scp_failed, :timeout}}
     end
   end
 
-  # Extracts the uploaded tarball on the remote host.
-  defp extract_tarball(ssh_target, remote_tarball, extract_dir) do
-    case run_ssh_command(
-           ssh_target,
-           "mkdir -p #{extract_dir} && tar -xJf #{remote_tarball} -C #{extract_dir}",
-           @scp_timeout_ms
-         ) do
-      {:ok, _output, 0} -> :ok
-      {:ok, _output, status} -> {:error, {:extract_failed, status}}
-      :timeout -> {:error, {:extract_failed, :timeout}}
-    end
-  end
+  # Extracts the uploaded tarball AND makes the launcher executable in ONE ssh
+  # round trip. Two separate round trips (tar then chmod) let a dropped ssh
+  # session surface as an opaque `chmod` failure (ssh's own 255) against a
+  # half-extracted tree; here the chain stops at the FIRST failing step and the
+  # final `test -x` self-verifies the result. `chmod` only runs when the
+  # extracted launcher is not already executable, so the tarball's own exec bit
+  # is respected.
+  defp extract_and_set_permissions(ssh_target, remote_tarball, remote_dir, launcher_path) do
+    command =
+      "mkdir -p #{remote_dir} && tar -xJf #{remote_tarball} -C #{remote_dir} && " <>
+        "{ test -x #{launcher_path} || chmod +x #{launcher_path}; } && test -x #{launcher_path}"
 
-  # Sets the remote launcher executable via `ssh <target> 'chmod +x <path>'`.
-  defp chmod_executable(ssh_target, launcher_path) do
-    case run_ssh_command(ssh_target, "chmod +x #{launcher_path}", @cmd_timeout_ms) do
+    case run_ssh_command_retry(ssh_target, command, @scp_timeout_ms) do
       {:ok, _output, 0} -> :ok
-      {:ok, _output, status} -> {:error, {:chmod_failed, status}}
-      :timeout -> {:error, {:chmod_failed, :timeout}}
+      {:ok, output, status} -> {:error, {:staging_failed, status, output_tail(output)}}
+      :timeout -> {:error, {:staging_failed, :timeout}}
     end
   end
 
@@ -1256,7 +1298,7 @@ defmodule EvoGit.RemoteConnection do
     remote_config_dir = remote_config_dir(os)
 
     # Ensure the remote config directory exists.
-    run_ssh_command(ssh_target, "mkdir -p #{remote_config_dir}", @cmd_timeout_ms)
+    run_ssh_command_retry(ssh_target, "mkdir -p #{remote_config_dir}", @cmd_timeout_ms)
 
     for path <- [EvoGit.Config.config_path(), EvoGit.Config.credentials_path()] do
       if File.exists?(path) do
@@ -1286,7 +1328,7 @@ defmodule EvoGit.RemoteConnection do
 
   # Checks whether a file exists on the remote host.
   defp remote_file_exists?(ssh_target, remote_file) do
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            "test -f #{remote_file} && echo yes || echo no",
            @cmd_timeout_ms
@@ -1552,7 +1594,7 @@ defmodule EvoGit.RemoteConnection do
     if daemon_running?(ssh_target, state.daemon_scope, "Linux", target) do
       {:ok, state}
     else
-      case run_ssh_command(
+      case run_ssh_command_retry(
              ssh_target,
              EvoGit.RemoteBootstrap.nixos_detect_command(),
              @cmd_timeout_ms
@@ -1612,13 +1654,25 @@ defmodule EvoGit.RemoteConnection do
     String.slice(String.trim(output), -n, n)
   end
 
+  # Number of output characters carried on error tuples — enough for the remote
+  # command's own error line(s) without flooding a toast/`last_error`.
+  @output_tail_chars 600
+
+  # Last ~600 characters of the remote command output (stdout+stderr merged by
+  # `run_ssh_command/3`), trimmed; `""` when the output is blank or absent.
+  defp output_tail(output) when is_binary(output) do
+    output |> String.trim() |> String.slice(-@output_tail_chars, @output_tail_chars)
+  end
+
+  defp output_tail(_output), do: ""
+
   # Checks if the genesis-remote daemon is already running on the remote.
   # `scope` selects the systemd manager (`:user` for non-root logins, `:system`
   # for root — see `EvoGit.RemoteDaemon`); it is unused on macOS.
   defp daemon_running?(ssh_target, scope, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
 
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.is_active_command(scope, unit),
            @cmd_timeout_ms
@@ -1659,7 +1713,7 @@ defmodule EvoGit.RemoteConnection do
   defp stop_daemon(ssh_target, scope, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
 
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.stop_command(scope, unit),
            @cmd_timeout_ms
@@ -1723,7 +1777,7 @@ defmodule EvoGit.RemoteConnection do
     unit = "genesis-remote-#{target.id}"
     expected_node = remote_node_name(target)
 
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.show_environment_command(scope, unit),
            @cmd_timeout_ms
@@ -1866,7 +1920,7 @@ defmodule EvoGit.RemoteConnection do
   defp fetch_daemon_status(ssh_target, scope, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
 
-    case run_ssh_command(
+    case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.status_command(scope, unit),
            @cmd_timeout_ms
@@ -1898,12 +1952,15 @@ defmodule EvoGit.RemoteConnection do
     # Clear any stale failed/inactive unit so systemd-run can create a fresh one.
     # reset-failed is idempotent: exits 0 if nothing to clear, non-zero if unit
     # never existed — both are acceptable here.
-    run_ssh_command(
+    run_ssh_command_retry(
       ssh_target,
       EvoGit.RemoteDaemon.reset_failed_command(scope, unit),
       @cmd_timeout_ms
     )
 
+    # NOT retried: starting the daemon is not idempotent (a retry could launch a
+    # second unit/process). `systemd-run` itself is the transport-sensitive step
+    # whose failure is surfaced with its output tail.
     case run_ssh_command(
            ssh_target,
            EvoGit.RemoteDaemon.start_command(scope, unit, node, cookie, launcher_path),
@@ -1912,8 +1969,8 @@ defmodule EvoGit.RemoteConnection do
       {:ok, _output, 0} ->
         :ok
 
-      {:ok, _output, status} ->
-        {:error, {:daemon_launch_failed, status}}
+      {:ok, output, status} ->
+        {:error, {:daemon_launch_failed, status, output_tail(output)}}
 
       :timeout ->
         # systemd-run may keep the SSH channel open; assume success.
@@ -1991,12 +2048,15 @@ defmodule EvoGit.RemoteConnection do
              @cmd_timeout_ms
            ) do
         {:ok, _output, 0} -> :ok
-        {:ok, _output, status} -> {:error, {:daemon_launch_failed, status}}
+        {:ok, output, status} -> {:error, {:daemon_launch_failed, status, output_tail(output)}}
         :timeout -> {:error, {:daemon_launch_failed, :timeout}}
       end
     else
-      {:ok, _output, status} -> {:error, {:daemon_launch_failed, {:scp_plist, status}}}
-      :timeout -> {:error, {:daemon_launch_failed, {:scp_plist, :timeout}}}
+      {:ok, output, status} ->
+        {:error, {:daemon_launch_failed, {:scp_plist, status, output_tail(output)}}}
+
+      :timeout ->
+        {:error, {:daemon_launch_failed, {:scp_plist, :timeout}}}
     end
   end
 
@@ -2102,6 +2162,58 @@ defmodule EvoGit.RemoteConnection do
       )
 
     collect_port_output(port, timeout, "")
+  end
+
+  # Runs an IDEMPOTENT remote command, retrying ONCE when the first attempt
+  # fails with ssh's OWN exit code 255 (dropped session / too-many-fast
+  # connections — ssh's transport-level errors; chmod itself exits 1, so 255 is
+  # never the remote command's own status). A `:timeout` is NOT retried: the
+  # command may still be running remotely.
+  #
+  # The backoff is read per call from the app-env seam
+  # :remote_ssh_retry_backoff_ms (default 400ms; tests set it to 0) and can be
+  # overridden with `backoff_ms: <ms>` in `opts`.
+  #
+  # ONLY idempotent / read-only commands go through here — never `systemd-run`
+  # (starting the daemon is not idempotent), `launchctl load`, `scp`, the
+  # download commands or the NixOS patch script.
+  @doc false
+  @spec run_ssh_command_retry(String.t(), String.t(), non_neg_integer(), keyword()) ::
+          {:ok, String.t(), non_neg_integer()} | :timeout
+  def run_ssh_command_retry(ssh_target, remote_cmd, timeout, opts \\ []) do
+    case run_ssh_command(ssh_target, remote_cmd, timeout) do
+      {:ok, output, 255} ->
+        Logger.warning(
+          "RemoteConnection: ssh #{ssh_target} exited 255 (transport error) running " <>
+            "#{truncate_command(remote_cmd)}#{tail_suffix(output)} — retrying once"
+        )
+
+        backoff = Keyword.get(opts, :backoff_ms, remote_ssh_retry_backoff_ms())
+
+        if is_integer(backoff) and backoff > 0, do: Process.sleep(backoff)
+
+        run_ssh_command(ssh_target, remote_cmd, timeout)
+
+      result ->
+        result
+    end
+  end
+
+  defp remote_ssh_retry_backoff_ms do
+    Application.get_env(:evo_git, :remote_ssh_retry_backoff_ms, @remote_ssh_retry_backoff_ms)
+  end
+
+  # Shortens a remote command for a log line (NixOS/staging commands are long).
+  defp truncate_command(command) when is_binary(command) do
+    if String.length(command) > 120, do: String.slice(command, 0, 120) <> "…", else: command
+  end
+
+  # ": <tail>" for a non-blank output excerpt, "" otherwise.
+  defp tail_suffix(output) do
+    case output_tail(output) do
+      "" -> ""
+      tail -> ": " <> tail
+    end
   end
 
   defp collect_port_output(port, timeout, acc) do
@@ -2398,9 +2510,206 @@ defmodule EvoGit.RemoteConnection do
     :ok
   end
 
-  defp format_error(reason) do
-    inspect(reason)
+  @doc """
+  Renders a bootstrap/connect failure reason as a human-readable message.
+
+  Every reason the bootstrap chain can return is covered, including the remote
+  output tail (stdout+stderr merged by `run_ssh_command/3`) carried by the
+  3-element error shapes:
+
+    * `{:scp_failed, 1, tail}` → `"scp upload failed (exit 1): <tail>"`
+    * `{:staging_failed, 255, tail}` →
+      `"extracting/setting permissions failed (ssh exit 255): <tail>"`
+    * `{:chmod_failed, 255, tail}` → `"setting permissions failed (ssh exit 255): <tail>"`
+    * `{:daemon_launch_failed, 1, tail}` → `"daemon launch failed (exit 1): <tail>"`
+    * `{:probe_failed, {:exit_status, 9, tail}}` →
+      `"platform probe failed (exit 9): <tail>"`
+    * `{:download_failed, ...}` → a nested download / scp / local-curl message
+
+  The older 2-element shapes are accepted too. An unknown reason falls back to
+  `inspect/1` — this function never raises.
+  """
+  @spec format_reason(term()) :: String.t()
+  def format_reason({:distribution_failed, reason}) do
+    "distribution setup failed: " <> format_reason(reason)
   end
+
+  def format_reason({:tunnel_not_ready, reason}) do
+    "SSH tunnel did not become ready: " <> tunnel_failure(reason)
+  end
+
+  def format_reason({:port_bind_failed, reason}) do
+    "could not find a free local port (#{inspect(reason)})"
+  end
+
+  # ── staging / upload ────────────────────────────────────────────────
+
+  def format_reason({:staging_failed, status, tail}) do
+    append_tail("extracting/setting permissions failed (ssh exit #{status})", tail)
+  end
+
+  def format_reason({:staging_failed, :timeout}), do: "extracting/setting permissions timed out"
+
+  def format_reason({:staging_failed, status}) do
+    "extracting/setting permissions failed (ssh exit #{status})"
+  end
+
+  # Legacy chmod/extract reasons (the two former separate round trips).
+  def format_reason({:chmod_failed, status, tail}) do
+    append_tail("setting permissions failed (ssh exit #{status})", tail)
+  end
+
+  def format_reason({:chmod_failed, :timeout}), do: "setting permissions timed out"
+
+  def format_reason({:chmod_failed, status}),
+    do: "setting permissions failed (ssh exit #{status})"
+
+  def format_reason({:extract_failed, status, tail}) do
+    append_tail("extracting the release tarball failed (ssh exit #{status})", tail)
+  end
+
+  def format_reason({:extract_failed, :timeout}), do: "extracting the release tarball timed out"
+
+  def format_reason({:extract_failed, status}) do
+    "extracting the release tarball failed (ssh exit #{status})"
+  end
+
+  def format_reason({:scp_failed, status, tail}) do
+    append_tail("scp upload failed (exit #{status})", tail)
+  end
+
+  def format_reason({:scp_failed, :timeout}), do: "scp upload timed out"
+  def format_reason({:scp_failed, status}), do: "scp upload failed (exit #{status})"
+
+  # ── download ────────────────────────────────────────────────────────
+
+  def format_reason({:download_failed, detail}), do: download_failure(detail)
+
+  # ── daemon launch ───────────────────────────────────────────────────
+
+  def format_reason({:daemon_launch_failed, status, tail}) when is_integer(status) do
+    append_tail("daemon launch failed (exit #{status})", tail)
+  end
+
+  def format_reason({:daemon_launch_failed, status}) when is_integer(status) do
+    "daemon launch failed (exit #{status})"
+  end
+
+  def format_reason({:daemon_launch_failed, {:scp_plist, status, tail}})
+      when is_integer(status) do
+    append_tail(
+      "daemon launch failed: uploading the launchd plist failed (scp exit #{status})",
+      tail
+    )
+  end
+
+  def format_reason({:daemon_launch_failed, {:scp_plist, :timeout}}) do
+    "daemon launch failed: uploading the launchd plist timed out"
+  end
+
+  def format_reason({:daemon_launch_failed, {:scp_plist, status}}) when is_integer(status) do
+    "daemon launch failed: uploading the launchd plist failed (scp exit #{status})"
+  end
+
+  def format_reason({:daemon_launch_failed, :timeout}), do: "daemon launch timed out"
+
+  def format_reason({:daemon_launch_failed, :plist_write_failed}) do
+    "daemon launch failed: could not write the launchd plist locally"
+  end
+
+  # ── platform probe ──────────────────────────────────────────────────
+
+  def format_reason({:probe_failed, {:exit_status, status, tail}}) do
+    append_tail("platform probe failed (exit #{status})", tail)
+  end
+
+  def format_reason({:probe_failed, {:exit_status, status}}) do
+    "platform probe failed (exit #{status})"
+  end
+
+  def format_reason({:probe_failed, {:unexpected_output, output}}) do
+    "platform probe returned unexpected output: #{output}"
+  end
+
+  def format_reason({:probe_failed, :timeout}), do: "platform probe timed out"
+
+  def format_reason({:probe_failed, reason}),
+    do: "platform probe failed: #{format_reason(reason)}"
+
+  # ── reasons that already carry their own actionable text ────────────
+
+  def format_reason({:daemon_running, details}) when is_binary(details), do: details
+
+  def format_reason({:daemon_identity_mismatch, details}) when is_binary(details), do: details
+
+  def format_reason({:daemon_not_healthy, details}) when is_binary(details) do
+    "daemon did not become healthy after launch: " <> details
+  end
+
+  def format_reason({:nixos_patch_failed, details}) when is_binary(details), do: details
+
+  # ── platform resolution ─────────────────────────────────────────────
+
+  def format_reason({:invalid_platform, platform}), do: "invalid platform #{inspect(platform)}"
+  def format_reason(:unsupported_platform), do: "unsupported platform"
+  def format_reason(:target_not_found), do: "remote target not found"
+
+  def format_reason(reason), do: inspect(reason)
+
+  # Appends a remote-output excerpt to a human message; a blank tail adds
+  # nothing.
+  defp append_tail(message, tail) when is_binary(tail) do
+    case String.trim(tail) do
+      "" -> message
+      trimmed -> "#{message}: #{trimmed}"
+    end
+  end
+
+  defp append_tail(message, _tail), do: message
+
+  # Tunnel-readiness failure detail (`wait_for_tunnel/4` reasons).
+  defp tunnel_failure({:timeout, output}), do: append_tail("timed out", output)
+
+  defp tunnel_failure({:ssh_exited, status, output}) when is_integer(status) do
+    append_tail("ssh exited with status #{status}", output)
+  end
+
+  defp tunnel_failure({:ssh_exited, reason, output}) do
+    append_tail("ssh exited (#{inspect(reason)})", output)
+  end
+
+  defp tunnel_failure(other), do: format_reason(other)
+
+  # Download failure detail shapes: remote curl/wget exit, local curl exit,
+  # the local scp arm and the local cache mkdir arm.
+  defp download_failure({:exit_status, status, tail}) do
+    append_tail("download failed (exit #{status})", tail)
+  end
+
+  defp download_failure({:exit_status, status}), do: "download failed (exit #{status})"
+  defp download_failure(:timeout), do: "download timed out"
+
+  defp download_failure({:local, reason}) do
+    case reason do
+      {:exit_status, status, tail} ->
+        append_tail("local download failed (exit #{status})", tail)
+
+      {:exit_status, status} ->
+        "local download failed (exit #{status})"
+
+      :timeout ->
+        "local download timed out"
+
+      {:mkdir_failed, why} ->
+        "local download failed: could not create the cache directory (#{inspect(why)})"
+
+      other ->
+        "local download failed: #{inspect(other)}"
+    end
+  end
+
+  defp download_failure({:local_scp, reason}), do: format_reason(reason)
+  defp download_failure(other), do: "download failed: #{inspect(other)}"
 
   # Builds an actionable multi-line diagnostics string for a failed
   # Node.connect — assigned to `last_error` (what the dashboard's connection
