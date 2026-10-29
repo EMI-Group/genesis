@@ -100,6 +100,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
   alias EvoGit.Agent.Compression.Checkpoint
   alias EvoGit.Agent.Compression.LlmRetry
+  alias EvoGit.Agent.Compression.Recency
   alias EvoGit.Agent.Compression.SummaryPrompt
   alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.Compression.ToolResultPruner
@@ -390,15 +391,31 @@ defmodule EvoGit.Agent.ContextCompression do
   def drop_stale_refreshes(messages), do: messages
 
   # ONE log line per applied Stage-2 compaction naming what was replaced, what was
-  # kept and how the size budget shaped the retained tail.
+  # kept and how the size budget shaped the retained tail — including how many
+  # retained messages had to be TRUNCATED (`Recency.shrink_to_budget/2`) rather
+  # than dropped to fit it. Every field goes through `Map.get/3` so the helper
+  # stays total: a built map missing a key renders its zero value, never raises.
   defp log_compression_decision(agent_id, built) do
+    truncated_tail = count_truncated_tail(Map.get(built, :messages, []))
+
     Logger.info(
-      "Agent #{agent_id}: stage 2 applied — replaced #{built.replaced} message(s) with ONE " <>
-        "checkpoint, kept #{built.kept} message(s) verbatim, " <>
-        "estimated #{built.estimated_tokens} tokens (pre-compression #{built.pre_estimate}, " <>
-        "tail budget #{built.budget}, tail shrunk: #{built.shrunk})."
+      "Agent #{agent_id}: stage 2 applied — replaced #{Map.get(built, :replaced, 0)} message(s) with ONE " <>
+        "checkpoint, kept #{Map.get(built, :kept, 0)} message(s) verbatim " <>
+        "(#{truncated_tail} truncated to fit the tail budget), " <>
+        "estimated #{Map.get(built, :estimated_tokens, 0)} tokens (pre-compression " <>
+        "#{Map.get(built, :pre_estimate, 0)}, tail budget #{Map.get(built, :budget, 0)}, " <>
+        "tail shrunk: #{Map.get(built, :shrunk, false)})."
     )
   end
+
+  # How many rebuilt messages carry a truncation marker — i.e. how many retained
+  # tail messages `Recency.shrink_to_budget/2` shortened in place instead of
+  # dropping. Total over a malformed/absent message list (counts as zero).
+  defp count_truncated_tail(messages) when is_list(messages) do
+    Enum.count(messages, &Recency.truncated?/1)
+  end
+
+  defp count_truncated_tail(_messages), do: 0
 
   # --- Stage-1 gating config ---
 
