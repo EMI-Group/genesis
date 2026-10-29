@@ -81,6 +81,8 @@ Smoke test: `scripts/test-genesis-cli.sh` (bash) builds a temp release with a st
 - Shell env templates: use `export` for variables consumed by the VM/release boot scripts.
 - EEx conditionals use string comparison on `@release.name`: `@release.name == :genesis_remote` (atom comparison).
 - `overlays/bin/genesis` must stay POSIX `sh` (no bash arrays/`local`/`[[ ]]`), `set -eu`, quoted expansions, and rely only on coreutils plus a curl-or-wget health probe.
+- A `genesis_server` release must be built AFTER `mix assets.deploy` (in `apps/evo_dash`): the prod endpoint loads `priv/static/cache_manifest.json` and boot aborts without it, so a bare local `mix release genesis_server` produces an unstartable release (the CI server job runs the shared `setup-mix` action that deploys assets).
+- Server mode is detected at runtime from `RELEASE_NAME=genesis_server` (exported by the generated launcher), not from the release definition's `config:` — that option does not reach the generated sys.config in this umbrella project.
 
 ## Design Decisions
 
