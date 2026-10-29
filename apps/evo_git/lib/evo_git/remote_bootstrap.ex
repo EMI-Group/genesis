@@ -23,9 +23,11 @@ defmodule EvoGit.RemoteBootstrap do
       `vscode-remote-ssh` extension patch pattern): dynamic executables get
       interpreter + rpath, shared libraries get rpath only, and truly static
       binaries are skipped,
-    * building the remote shell wrapper (`bash_wrap/1`) that makes every
-      remote command execute under bash regardless of the remote user's login
-      shell (fixes bootstrap failures on hosts whose login shell is fish).
+    * building the remote shell wrapper (`sh_wrap/1`) that makes every remote
+      command execute under `/bin/sh` regardless of the remote user's login
+      shell — the wrapper is a plain command word plus ONE single-quoted word,
+      so fish / nushell / tcsh / POSIX login shells all pass it through, and
+      `/bin/sh` (not `/usr/bin/env`) because NixOS has no `/usr/bin/env`.
 
   **Linux asset rule:** glibc is the default and ONLY published Linux variant.
   Remote tarball names are NEVER suffixed (`genesis_remote_linux_x64.tar.xz`,
@@ -44,6 +46,12 @@ defmodule EvoGit.RemoteBootstrap do
 
   @valid_os ["linux", "darwin", "windows"]
   @valid_arch ["x64", "arm64"]
+  # Default interpreter for the remote command wrapper (`sh_wrap/1`). `/bin/sh`
+  # is the one POSIX-mandated absolute path — present on every POSIX
+  # Linux/macOS host and on NixOS (`environment.binsh`), unlike
+  # `/usr/bin/env`, which NixOS does not have. The ACTUAL interpreter is read
+  # per call from the app env `:remote_shell` (test seam).
+  @default_remote_shell "/bin/sh"
 
   # Matches a single `KEY=value` token: a run of non-whitespace, non-quote
   # characters, OR a double-quoted section (which may contain spaces). This
@@ -165,7 +173,13 @@ defmodule EvoGit.RemoteBootstrap do
   is the primary marker) and `no` otherwise, with `/etc/os-release` as a
   secondary marker:
 
-      test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no
+      test -d /etc/nixos && echo yes || grep -qi "^ID=nixos" /etc/os-release 2>/dev/null && echo yes || echo no
+
+  The `"..."` grouping is deliberate: the pattern carries no `'`, so the whole
+  command is a single-quote-free string and survives the login-shell wrapper
+  (`sh_wrap/1`) verbatim on fish / nushell / tcsh / POSIX shells alike. The
+  double quotes are literal to the OUTER login shell and group the regex for
+  the INNER `sh`.
 
   Note: shell `&&`/`||` left-associativity makes the `/etc/nixos` branch echo
   `yes` twice — `EvoGit.RemoteConnection` treats any output containing `yes`
@@ -176,7 +190,7 @@ defmodule EvoGit.RemoteBootstrap do
   """
   @spec nixos_detect_command() :: String.t()
   def nixos_detect_command do
-    "test -d /etc/nixos && echo yes || grep -qi '^ID=nixos' /etc/os-release 2>/dev/null && echo yes || echo no"
+    "test -d /etc/nixos && echo yes || grep -qi \"^ID=nixos\" /etc/os-release 2>/dev/null && echo yes || echo no"
   end
 
   # The script template. `__LAUNCHER__` is interpolated at build time by
@@ -227,7 +241,7 @@ defmodule EvoGit.RemoteBootstrap do
   count=0
   rpath_count=0
   for file in $(find "$RELEASE_ROOT" -type f); do
-    magic="$(head -c 4 "$file" | od -An -tx1 | tr -d ' \n')"
+    magic="$(head -c 4 "$file" | od -An -tx1 | tr -d " \n")"
     if [ "$magic" = "7f454c46" ]; then
       if "$PATCH_DIR/patchelf/bin/patchelf" --print-interpreter "$file" >/dev/null 2>&1; then
         echo "nixos-patch: patching $file"
@@ -281,7 +295,7 @@ defmodule EvoGit.RemoteBootstrap do
       `<patch_dir>/cc/lib:<patch_dir>/openssl/lib:<patch_dir>/zlib/lib:<patch_dir>/ncurses/lib:<patch_dir>/pcre2/lib`,
     * loops over every regular file under the release root and detects ELF
       binaries via the `\\x7fELF` magic (`7f454c46` from
-      `head -c 4 | od -An -tx1 | tr -d ' \\n'`). Each ELF file is handled three
+      `head -c 4 | od -An -tx1 | tr -d " \\n"`). Each ELF file is handled three
       ways:
         - **dynamic executables** (have a PT_INTERP segment — probed with
           `patchelf --print-interpreter`): patched as before with
@@ -306,6 +320,10 @@ defmodule EvoGit.RemoteBootstrap do
   REMOTE shell when `EvoGit.RemoteConnection` passes the whole script as a
   single ssh argv element.
 
+  The script deliberately contains NO single quote — an invariant of the
+  `sh_wrap/1` wrapper (use double quotes instead): nushell/tcsh cannot parse
+  the `'\''` escaping fallback.
+
   Pure builder — performs no I/O.
   """
   @spec nixos_patch_script(String.t()) :: String.t()
@@ -314,25 +332,50 @@ defmodule EvoGit.RemoteBootstrap do
   end
 
   @doc """
-  Wraps a remote command so it executes under bash regardless of the remote
-  user's login shell.
+  Wraps a remote command so it executes under a POSIX shell regardless of the
+  remote user's login shell.
 
   OpenSSH executes the remote command via the remote user's login shell
-  (`$SHELL -c "<command>"`). On hosts whose login shell is not POSIX-ish
-  (e.g. fish on NixOS), POSIX constructs like `VAR=...` assignments are
-  rejected at PARSE time and the command fails before it ever runs. Wrapping
-  as `/usr/bin/env bash -c '<escaped>'` forces execution under bash.
+  (`$SHELL -c "<command>"`), so the wrapper itself must be parseable by THAT
+  shell — fish, nushell, tcsh, zsh, bash or a plain POSIX sh. The only
+  construction that parses identically everywhere is a plain command word
+  followed by ONE single-quoted word: `<interpreter> -c '<script>'`.
 
-  Single quotes inside the command are escaped as `'\\''` — the standard
-  close-quote / escaped-quote / reopen-quote idiom — which parses correctly
-  under fish, zsh, and any POSIX-ish remote shell.
+  The interpreter is `/bin/sh`, overridable via the app env `:remote_shell`
+  (read at CALL time, so tests can override it without recompiling):
+
+    * `/usr/bin/env` does not exist on NixOS, so the previous
+      `/usr/bin/env bash -c ...` wrapper failed on every NixOS host,
+    * `/bin/sh` is the one POSIX-mandated absolute path and every POSIX
+      Linux/macOS host provides it; on NixOS it is `environment.binsh`
+      (bash's sh by default). A PATH lookup is deliberately NOT used — the
+      remote command may run before the login profile sets `PATH`.
+
+  **Single-quote-free by construction:** every remote command built in this
+  codebase (and every `EvoGit.RemoteDaemon` command) contains no `'`, which is
+  what makes the plain `'<script>'` form safe: nushell single-quoted strings
+  cannot contain a single quote at all, and tcsh is equally picky. Double
+  quoting is not an alternative either (nushell rejects `\\$` and the scripts
+  contain `$`, `$(...)`, `2>/dev/null`).
+
+  As a last-resort fallback a script that DOES contain a `'` is escaped with
+  the standard POSIX close-quote / escaped-quote / reopen-quote idiom
+  (`'\\''`). Be honest about its reach: that form parses under POSIX-ish
+  shells and fish only — nushell and tcsh cannot parse it — which is exactly
+  why remote commands must never contain a single quote.
 
   Pure builder — performs no I/O; the wrapping happens only at the ssh
-  boundary in `EvoGit.RemoteConnection.run_ssh_command/3`.
+  boundary in `EvoGit.RemoteConnection.run_ssh_command/4`.
   """
-  @spec bash_wrap(String.t()) :: String.t()
-  def bash_wrap(remote_cmd) do
-    "/usr/bin/env bash -c '" <> String.replace(remote_cmd, "'", "'\\''") <> "'"
+  @spec sh_wrap(String.t()) :: String.t()
+  def sh_wrap(remote_cmd) do
+    interpreter = Application.get_env(:evo_git, :remote_shell, @default_remote_shell)
+
+    if String.contains?(remote_cmd, "'") do
+      interpreter <> " -c '" <> String.replace(remote_cmd, "'", "'\\''") <> "'"
+    else
+      interpreter <> " -c '" <> remote_cmd <> "'"
+    end
   end
 
   @doc """

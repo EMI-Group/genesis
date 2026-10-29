@@ -24,10 +24,11 @@ defmodule EvoGit.RemoteDaemon do
   under a different name.
 
   Everything here is a pure string builder — no I/O, no ports. The commands are
-  executed on the remote host by `EvoGit.RemoteConnection.run_ssh_command/3`,
-  which additionally bash-wraps them. For `:user` scope every emitted command
-  is byte-identical to the pre-root-support form, so non-root bootstrap
-  behavior is unchanged.
+  executed on the remote host by `EvoGit.RemoteConnection.run_ssh_command/4`,
+  which additionally wraps them (`sh_wrap/1`, `/bin/sh -c '<script>'`). Every
+  command below is single-quote-free so it survives any remote login shell. For
+  `:user` scope every emitted command is byte-identical to the pre-root-support
+  form, so non-root bootstrap behavior is unchanged.
   """
 
   @type scope :: :user | :system

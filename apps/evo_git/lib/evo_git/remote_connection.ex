@@ -2159,14 +2159,16 @@ defmodule EvoGit.RemoteConnection do
   # command verbatim.
   #
   # Because OpenSSH executes the command via the REMOTE user's login shell
-  # (`$SHELL -c "<command>"`), the command is additionally wrapped as
-  # `/usr/bin/env bash -c '<escaped>'` by `EvoGit.RemoteBootstrap.bash_wrap/1`
-  # (single quotes escaped as `'\''`), so it executes under bash regardless of
-  # the remote login shell — fixing the NixOS bootstrap failure where a fish
-  # login shell rejects the POSIX `VAR=...` assignments in the patch script at
-  # parse time. This is safe for all commands: the remote commands used here
-  # (incl. the NixOS patch script, which contains `$`, `$(...)` and single
-  # quotes) are POSIX-ish scripts that bash parses identically.
+  # (`$SHELL -c "<command>"`), the command is additionally wrapped by
+  # `EvoGit.RemoteBootstrap.sh_wrap/1` as `/bin/sh -c '<script>'` — a plain
+  # command word plus ONE single-quoted word, the only construction that parses
+  # identically in a fish, nushell, tcsh, zsh, bash or plain POSIX login shell.
+  # The inner script is POSIX sh and SINGLE-QUOTE-FREE BY CONSTRUCTION (a
+  # single quote would be unparseable in nushell/tcsh), which is what makes the
+  # plain quoted form safe. The interpreter is `/bin/sh` and NOT
+  # `/usr/bin/env bash`: NixOS has no `/usr/bin/env`, while `/bin/sh` is the
+  # POSIX-mandated absolute path and is NixOS's `environment.binsh`. The
+  # interpreter string comes from the app env `:remote_shell` (test seam).
   #
   # Options:
   #   * `:merge_stderr` (default `false`) — capture the child's stderr into the
@@ -2183,7 +2185,7 @@ defmodule EvoGit.RemoteConnection do
   @doc false
   def run_ssh_command(ssh_target, remote_cmd, timeout, opts \\ []) do
     ssh = System.find_executable("ssh") || "ssh"
-    remote_cmd = EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)
+    remote_cmd = EvoGit.RemoteBootstrap.sh_wrap(remote_cmd)
 
     port_opts =
       if Keyword.get(opts, :merge_stderr, false),
