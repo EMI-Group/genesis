@@ -561,6 +561,36 @@ defmodule EvoGit.RemoteConnectionTest do
     end
   end
 
+  describe "format_reason/1" do
+    test "an already-formatted binary passes through unchanged" do
+      # No inspect/1 quoting: a caller re-rendering a message must get the
+      # same human text back.
+      assert EvoGit.RemoteConnection.format_reason("boom") == "boom"
+
+      assert EvoGit.RemoteConnection.format_reason("ssh: connect to host: broken pipe") ==
+               "ssh: connect to host: broken pipe"
+
+      assert EvoGit.RemoteConnection.format_reason("") == ""
+    end
+
+    test "the previously covered shapes still render as before" do
+      assert EvoGit.RemoteConnection.format_reason({:staging_failed, 255, "Connection reset"}) ==
+               "extracting/setting permissions failed (ssh exit 255): Connection reset"
+
+      assert EvoGit.RemoteConnection.format_reason({:scp_failed, 1}) ==
+               "scp upload failed (exit 1)"
+
+      assert EvoGit.RemoteConnection.format_reason({:distribution_failed, "boom"}) ==
+               "distribution setup failed: boom"
+
+      assert EvoGit.RemoteConnection.format_reason(:unsupported_platform) ==
+               "unsupported platform"
+
+      # Unknown terms still fall back to inspect/1 — never a raise.
+      assert EvoGit.RemoteConnection.format_reason({:unknown, 42}) == "{:unknown, 42}"
+    end
+  end
+
   describe "remote_accent_for/2 — accent-variant picker" do
     # Distinct ssh_target shapes: user@host, host:port, dotted/internal hosts,
     # an IPv6 literal and a non-ASCII user — the picker must be stable across

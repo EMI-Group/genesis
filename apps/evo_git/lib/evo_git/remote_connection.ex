@@ -2558,10 +2558,16 @@ defmodule EvoGit.RemoteConnection do
       `"platform probe failed (exit 9): <tail>"`
     * `{:download_failed, ...}` → a nested download / scp / local-curl message
 
-  The older 2-element shapes are accepted too. An unknown reason falls back to
-  `inspect/1` — this function never raises.
+  The older 2-element shapes are accepted too. An already-formatted binary
+  reason is returned unchanged, and an unknown reason falls back to `inspect/1`
+  — this function never raises.
   """
   @spec format_reason(term()) :: String.t()
+
+  # An already-formatted message (e.g. a reason rendered by a nested formatter)
+  # passes through verbatim — quoting it via `inspect/1` would mangle the text.
+  def format_reason(reason) when is_binary(reason), do: reason
+
   def format_reason({:distribution_failed, reason}) do
     "distribution setup failed: " <> format_reason(reason)
   end
