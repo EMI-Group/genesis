@@ -240,7 +240,13 @@ defmodule EvoGit.RemoteBootstrap do
 
   count=0
   rpath_count=0
-  for file in $(find "$RELEASE_ROOT" -type f); do
+  # A file list read through a `while IFS= read -r` loop (never a word-split
+  # `for` loop over command substitution): file names containing whitespace
+  # stay intact. The list goes through a temp file rather than a `find | while`
+  # pipeline because a pipeline runs the loop in a subshell, where the
+  # count/rpath_count increments would be lost.
+  find "$RELEASE_ROOT" -type f > "$PATCH_DIR/files.txt"
+  while IFS= read -r file; do
     magic="$(head -c 4 "$file" | od -An -tx1 | tr -d " \n")"
     if [ "$magic" = "7f454c46" ]; then
       if "$PATCH_DIR/patchelf/bin/patchelf" --print-interpreter "$file" >/dev/null 2>&1; then
@@ -256,7 +262,7 @@ defmodule EvoGit.RemoteBootstrap do
         echo "nixos-patch: skipping static binary $file"
       fi
     fi
-  done
+  done < "$PATCH_DIR/files.txt"
 
   echo "nixos-patch: patched $count executables, set rpath on $rpath_count ELF files"
   """
@@ -293,7 +299,11 @@ defmodule EvoGit.RemoteBootstrap do
       `<patch_dir>/bintools/nix-support/dynamic-linker`,
     * sets `RPATH` to
       `<patch_dir>/cc/lib:<patch_dir>/openssl/lib:<patch_dir>/zlib/lib:<patch_dir>/ncurses/lib:<patch_dir>/pcre2/lib`,
-    * loops over every regular file under the release root and detects ELF
+    * lists every regular file under the release root (`find "$RELEASE_ROOT"
+      -type f > "$PATCH_DIR/files.txt"`) and loops over that list with
+      `while IFS= read -r file; ... done < "$PATCH_DIR/files.txt"` — never a
+      `for file in $(find …)` word-split loop, so file names containing
+      whitespace survive — then detects ELF
       binaries via the `\\x7fELF` magic (`7f454c46` from
       `head -c 4 | od -An -tx1 | tr -d " \\n"`). Each ELF file is handled three
       ways:

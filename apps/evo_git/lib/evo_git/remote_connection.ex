@@ -1301,8 +1301,10 @@ defmodule EvoGit.RemoteConnection do
   defp copy_config_to_remote(ssh_target, os) do
     remote_config_dir = remote_config_dir(os)
 
-    # Ensure the remote config directory exists.
-    run_ssh_command_retry(ssh_target, "mkdir -p #{remote_config_dir}", @cmd_timeout_ms)
+    # Ensure the remote config directory exists. The path is DOUBLE-quoted
+    # because macOS's `Library/Application Support/genesis` contains a space;
+    # `$HOME` (never `~`, which does not expand inside quotes) roots it.
+    run_ssh_command_retry(ssh_target, "mkdir -p \"#{remote_config_dir}\"", @cmd_timeout_ms)
 
     for path <- [EvoGit.Config.config_path(), EvoGit.Config.credentials_path()] do
       if File.exists?(path) do
@@ -1322,25 +1324,42 @@ defmodule EvoGit.RemoteConnection do
 
   # Computes the remote config directory for a given OS. Mirrors the
   # platform logic in `EvoGit.Config.config_dir/0`.
+  #
+  # `$HOME`-rooted, NOT `~`: every caller interpolates this into a remote
+  # command inside double quotes (macOS's `Application Support` makes the path
+  # contain a space), and `~` does not expand inside quotes.
   defp remote_config_dir("Darwin") do
-    Path.join(["~", "Library", "Application Support", "genesis"])
+    Path.join(["$HOME", "Library", "Application Support", "genesis"])
   end
 
   defp remote_config_dir(_os) do
-    Path.join("~/.config", "genesis")
+    Path.join(["$HOME", ".config", "genesis"])
   end
 
-  # Checks whether a file exists on the remote host.
+  # Checks whether a file exists on the remote host. The path is
+  # double-quoted so a space in it (macOS) cannot word-split the probe.
   defp remote_file_exists?(ssh_target, remote_file) do
     case run_ssh_command_retry(
            ssh_target,
-           "test -f #{remote_file} && echo yes || echo no",
+           "test -f \"#{remote_file}\" && echo yes || echo no",
            @cmd_timeout_ms
          ) do
       {:ok, output, 0} -> String.trim(output) == "yes"
       _ -> false
     end
   end
+
+  # Rewrites a `$HOME`-rooted remote path into the `~` form for the scp
+  # destination. scp re-parses the destination on the REMOTE side, and the
+  # modern SFTP-speaking scp sends the path verbatim (no shell expansion), so
+  # `$HOME` would be taken literally; `~` is expanded by scp itself. This keeps
+  # the scp command byte-identical to the pre-quoting-fix behavior.
+  #
+  # Known limitation (deliberate, out of scope): a remote path containing a
+  # space (macOS) is still not handled for scp — see the limits note in
+  # `lib/evo_git/CONTEXT.md`.
+  defp scp_remote_path("$HOME" <> rest), do: "~" <> rest
+  defp scp_remote_path(remote_file), do: remote_file
 
   # ── Accent-variant config.toml copy ───────────────────────────────
   #
@@ -1427,9 +1446,10 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # SCPs `source` to the remote config file. Returns :ok on success, :error
-  # on scp failure/timeout (never raises).
+  # on scp failure/timeout (never raises). The destination goes through
+  # `scp_remote_path/1` so it stays in scp's `~` form (behavior unchanged).
   defp scp_config_file(ssh_target, source, remote_file) do
-    cmd = "scp #{source} #{ssh_target}:#{remote_file}"
+    cmd = "scp #{source} #{ssh_target}:#{scp_remote_path(remote_file)}"
 
     case run_cmd(cmd, @cmd_timeout_ms) do
       {:ok, _output, 0} -> :ok

@@ -301,10 +301,17 @@ defmodule EvoGit.RemoteBootstrapTest do
                ~S|RPATH="$PATCH_DIR/cc/lib:$PATCH_DIR/openssl/lib:$PATCH_DIR/zlib/lib:$PATCH_DIR/ncurses/lib:$PATCH_DIR/pcre2/lib"|
     end
 
-    test "loops over release files with an ELF magic check and invokes patchelf" do
+    test "loops over a find file list with while IFS= read -r and invokes patchelf" do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
 
-      assert script =~ ~S|for file in $(find "$RELEASE_ROOT" -type f); do|
+      # The file list is read line-by-line with the POSIX `IFS= read -r`
+      # idiom, NOT word-split by `for file in $(find ...)` — file names under
+      # the release root may contain whitespace.
+      refute script =~ "$(find"
+      assert script =~ ~S|find "$RELEASE_ROOT" -type f > "$PATCH_DIR/files.txt"|
+      assert script =~ ~S|while IFS= read -r file; do|
+      assert script =~ ~S|done < "$PATCH_DIR/files.txt"|
+
       assert script =~ ~S|head -c 4 "$file"|
       assert script =~ ~S|od -An -tx1|
       assert script =~ ~S|tr -d " \n"|
@@ -312,6 +319,10 @@ defmodule EvoGit.RemoteBootstrapTest do
 
       assert script =~
                ~S|"$PATCH_DIR/patchelf/bin/patchelf" --set-interpreter "$INTERPRETER" --set-rpath "$RPATH" "$file"|
+
+      # Still single-quote-free (comments included) — the whole script rides
+      # the `sh_wrap/1` single-quoted word with no escaping.
+      refute script =~ "'"
     end
 
     test "guards the full patch behind a PT_INTERP probe" do

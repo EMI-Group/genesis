@@ -1727,8 +1727,9 @@ defmodule EvoGit.RemoteConnectionTest do
 
             assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-            # The remote-existence probe was actually issued for the config...
-            assert File.read!(log) =~ "test -f ~/.config/genesis/config.toml"
+            # The remote-existence probe was actually issued for the config
+            # (double-quoted `$HOME` path — survives a login shell).
+            assert File.read!(log) =~ ~S|test -f "$HOME/.config/genesis/config.toml"|
 
             # ...but the ONLY scp payload that landed is the tarball: the
             # remote keeps its existing config file untouched.
@@ -1739,6 +1740,48 @@ defmodule EvoGit.RemoteConnectionTest do
             cleanup_connections()
           end
         )
+      end
+
+      test "macOS config paths are double-quoted and $HOME-rooted (the space survives)" do
+        ensure_registry_and_supervisor()
+
+        # A local config.toml makes the :copying_config stage reach its
+        # `mkdir -p` + `test -f` commands; the fake reports the remote has
+        # none, so both commands are issued.
+        write_test_config_cookie("known-cookie")
+
+        with_fake_ssh_tools([os: "Darwin"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          lines = log |> File.read!() |> String.split("\n", trim: true)
+
+          darwin_dir = ~S|"$HOME/Library/Application Support/genesis"|
+
+          assert Enum.any?(lines, &String.contains?(&1, "mkdir -p #{darwin_dir}")),
+                 "expected a quoted mkdir -p on the Darwin config dir, got: #{inspect(lines)}"
+
+          assert Enum.any?(
+                   lines,
+                   &String.contains?(
+                     &1,
+                     ~S|test -f "$HOME/Library/Application Support/genesis/config.toml"|
+                   )
+                 ),
+                 "expected a quoted test -f on the Darwin config file, got: #{inspect(lines)}"
+
+          # The pre-fix bug: the path was interpolated UNQUOTED, so the space in
+          # `Application Support` word-split `mkdir -p` into two junk dirs.
+          refute Enum.any?(
+                   lines,
+                   &String.contains?(&1, "mkdir -p $HOME/Library/Application Support")
+                 ),
+                 "the Darwin config dir must never be interpolated unquoted"
+
+          cleanup_connections()
+        end)
       end
 
       test "fresh remote without config.toml receives an accent variant differing from the local accent" do
@@ -1987,7 +2030,7 @@ defmodule EvoGit.RemoteConnectionTest do
           assert Enum.any?(payloads, &String.contains?(&1, "uname -s && uname -m"))
           assert Enum.any?(payloads, &String.contains?(&1, "curl -fL -o"))
           assert Enum.any?(payloads, &String.contains?(&1, "tar -xJf"))
-          assert Enum.any?(payloads, &String.contains?(&1, "test -f ~/.config/genesis/"))
+          assert Enum.any?(payloads, &String.contains?(&1, ~S|test -f "$HOME/.config/genesis/|))
           assert Enum.any?(payloads, &String.contains?(&1, "systemd-run"))
 
           cleanup_connections()
