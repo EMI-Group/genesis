@@ -121,7 +121,7 @@ Genesis takes it from there.
 
 ## 📦 Install
 
-Genesis ships as a native desktop app.
+Genesis ships as a native desktop app — and, for servers, as a headless release with the same dashboard (see **Headless server** below).
 
 💡 **Prefer a guided download?** Visit [genesis.evox.group/#download](https://genesis.evox.group/#download) — it detects your platform automatically and points you to the right installer.
 
@@ -135,6 +135,33 @@ Or use the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** 
 | **FreeBSD**                       | From source                       |
 
 Download, install, and launch **Genesis**.
+
+### Headless server
+
+Prefer a server, VM or NAS over the desktop app? Genesis also runs **headless**: the same dashboard and agent runtime behind a plain HTTP port, with no desktop window.
+
+```bash
+# Install the release (~/.local/share/genesis/server) and symlink ~/.local/bin/genesis:
+curl -LsSf https://genesis.evox.group/dl/install.sh | sh
+
+genesis                 # try it in the foreground → http://127.0.0.1:9999
+genesis start           # run it as a background service (systemd user unit / launchd agent)
+genesis status          # service state + GET /health probe (exit 0 only when healthy)
+genesis logs -f         # follow the server log
+genesis stop            # stop the service
+```
+
+Configure your LLM provider and keys in the dashboard's **Settings** page on first visit — the server reads the same `~/.config/genesis/config.toml` as the desktop app and keeps its state (task database, logs) in the platform data directory (`~/.local/share/genesis` on Linux).
+
+To reach it from other machines on your LAN, bind an explicit interface:
+
+```bash
+genesis start --ip 0.0.0.0 --port 9999
+```
+
+The server binds `127.0.0.1` by default and has no authentication of its own — only bind a public interface on a trusted network or behind a reverse proxy.
+
+If a systemd user service should survive logout, run `loginctl enable-linger $USER` once. Windows headless hosting is not supported — use the desktop app there.
 
 ### For AI agents
 
@@ -161,7 +188,6 @@ curl -LO "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_
 # Linux:   sudo rpm -i <file>.rpm   OR   tar xzf <file>.tar.gz
 # Windows: msiexec /i <file>.msi
 ```
-
 #### Run from source
 
 ```bash

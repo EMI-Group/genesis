@@ -32,10 +32,11 @@ The full design specification is documented across the CONTEXT.md tree.
 - CONTEXT.md conflict handling — writes are node-scope-enforced (own node + descendants; `nil` = allow-all; root `./` = anywhere); on subagent conflicts `EvoGit.Agent.ContextMerge` aborts the octopus merge and re-merges children sequentially in spawn order, resolving ONLY `CONTEXT.md` conflicts by node-path ownership (own `CONTEXT.md` outranks an ancestor's edit; out-of-scope edits are dropped and reported with their diff; equal-ownership and non-CONTEXT conflicts are never auto-picked) and returns a per-child report (node path, agent type, branch, final commit, status) with unmerged branches preserved → `./apps/evo_git/` (`agent/context_merge.ex`, `agent/subagent_processing.ex`, `agent/tools/context.ex`, `task_registry/merge_context.ex`)
 - `./docs/` → Long-form design records & reference documentation (`auto-update.md` — desktop auto-update design record; `experiments.md` — per-regime experimental results + figures, linked from the README; `harness-alignment.md` — Genesis-vs-DeepSeek-Harness diff + alignment proposals)
 - `./config/` → Environment-based Elixir configuration
-- `./rel/` → Mix release overlays (`rel/genesis/`, `rel/genesis_remote/` — vm.args + env scripts per release; distribution config for SSH remote dev)
+- `./rel/` → Mix release overlays (`rel/genesis/`, `rel/genesis_remote/`, `rel/genesis_server/` — vm.args + env scripts per release; distribution config for SSH remote dev) plus `rel/overlays/bin/genesis`, the headless-server CLI shipped as `bin/genesis` in the release
+- `./scripts/` → Headless-server installer (`install.sh`, published at `https://genesis.evox.group/dl/install.sh`; `curl | sh` installs the `genesis_server` release into `~/.local/share/genesis/server` and symlinks `~/.local/bin/genesis`) — detail: `scripts/CONTEXT.md`
 - `./desktop/` → Tauri desktop shell (native WebView wrapper, sidecar lifecycle management)
 - `./nix/` → NixOS build support (vendor bundling helper for local desktop builds)
-- `./.github/workflows/` → CI/CD pipelines (desktop app build on release)
+- `./.github/workflows/` → CI/CD pipelines (desktop app build on release; also publishes the `genesis_server_linux_x64.tar.xz` / `genesis_server_linux_arm64.tar.xz` / `genesis_server_darwin_arm64.tar.xz` artifacts and the `install.sh` asset)
 
 ## API Surface
 
@@ -43,7 +44,7 @@ The full design specification is documented across the CONTEXT.md tree.
 
 | File | Purpose |
 |------|---------|
-| `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as a Tauri resource), `genesis_remote` (headless evo_git-only daemon tarball for SSH remote dev). Reads the version from `VERSION`. |
+| `mix.exs` | Umbrella Mix project — apps_path, four releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as a Tauri resource), `genesis_remote` (headless evo_git-only daemon tarball for SSH remote dev), `genesis_server` (headless server for non-desktop hosts: both apps, `include_erts`, deliberately no `wx`, baked `server_release: true`). Reads the version from `VERSION`. |
 | `VERSION` | Single source of truth for the project version; all umbrella `mix.exs` files read it, the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps), `packages.default` via `genesis.nix` (`nix build`), `apps.default` (`nix run`). |
 | `genesis.nix` | Nix derivation — builds the Genesis Mix release with `beamPackages.mixRelease`, pre-fetched Rustler NIFs and vendored ripgrep/git. |
@@ -201,7 +202,7 @@ Details: `apps/evo_git/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 The dashboard's directory picker (Browse buttons on the project/new-project/foreign-repo pickers) is implemented **on the Elixir backend with Erlang's `:wx`** (`wxDirDialog`), NOT via Tauri: the JS `DirectoryPicker` hook pushes `"directory_pick"` → `ProjectsLive` (current node local only) → `EvoDash.DirectoryPicker` (a GenServer in `apps/evo_dash` serializing wx dialog usage) runs the modal → result pushed back as `"picker_result:<picker_id>"`; wx picks are absolute paths and auto-submit the forms.
 Tauri's `pick_directory` command is not used (unstable: Windows invoke fails after picking, macOS NSOpenPanel never presents); when wx is unavailable (headless server, remote node, OTP built without wx) the hook shows the manual-entry fallback.
-Because `wx` is not a dependency of any umbrella app it is listed explicitly in the `applications:` list of the `genesis` and `genesis_desktop` releases in `./mix.exs` (`wx: :load`) — `genesis_remote` intentionally stays wx-free; the wx NIFs link against wxWidgets 3.2 sonames, so AppImage bundling installs the wx 3.2 runtime via plain apt on ubuntu-24.04 (`libwxbase3.2-1t64` etc., x64-gated — no PPA).
+Because `wx` is not a dependency of any umbrella app it is listed explicitly in the `applications:` list of the `genesis` and `genesis_desktop` releases in `./mix.exs` (`wx: :load`) — `genesis_remote` and `genesis_server` intentionally stay wx-free; the wx NIFs link against wxWidgets 3.2 sonames, so AppImage bundling installs the wx 3.2 runtime via plain apt on ubuntu-24.04 (`libwxbase3.2-1t64` etc., x64-gated — no PPA).
 Details: `desktop/src-tauri/CONTEXT.md` + `apps/evo_dash/CONTEXT.md`.
 
 ### ReqLLM Finch Connection Pool (LLM HTTP concurrency)
@@ -237,10 +238,18 @@ Details: `apps/evo_git/CONTEXT.md`.
 ### Desktop App Build Pipeline
 
 `.github/workflows/build-desktop.yml` builds native desktop installers on every release (version tag push `v*` or manual `workflow_dispatch`) and creates the release itself: all platform builds finish first, then `publish-release` creates a **draft** release with every artifact attached and flips it public with `gh release edit --draft=false` as its FINAL step — so `releases/latest` never points at a release whose assets are still uploading.
-Each platform job runs `mix release genesis_desktop` (native, `include_erts` bundles host ERTS) → copies the release dir to `desktop/src-tauri/resources/genesis-backend/` → `tauri build`; the headless `genesis_remote` release is also built and uploaded as a `.tar.xz`.
+Each platform job runs `mix release genesis_desktop` (native, `include_erts` bundles host ERTS) → copies the release dir to `desktop/src-tauri/resources/genesis-backend/` → `tauri build`; the headless `genesis_remote` and `genesis_server` releases are also built and uploaded as `.tar.xz` (`genesis_server` only for linux x64/arm64 and darwin arm64).
 **Five job groups** on native runners: `build-linux` (desktop, ubuntu-24.04 x64/arm64 → `.deb`/`.rpm`/AppImage/`.tar.gz`; AppImage excluded on ARM64 — linuxdeploy is x86_64-only; Flatpak not built), `build-linux-remote` (dedicated glibc `genesis_remote` on ubuntu-22.04 x64/arm64 — glibc 2.35 = wider host compatibility; **musl build disabled**), `build-macos-arm64` (`macos-15` → `.dmg`/`.app`), `build-windows-x64` (`windows-2022` → `.msi`/`.exe` NSIS), `publish-release`.
 Toolchains pinned via `OTP_VERSION`/`ELIXIR_VERSION` (OTP 29, Elixir 1.20.4); the Tauri CLI comes from npm `@tauri-apps/cli` (never `cargo install`); ARM partner runners get an `ImageOS` fix before `erlef/setup-beam`; ripgrep/git (MinGit on Windows) are vendored into `apps/evo_git/priv/vendor/{platform}/`; caches: Mix deps, Mix build, Rust target, Tauri CLI.
 Details (incl. musl revival notes): `.github/workflows/CONTEXT.md`.
+
+### Headless Server (CLI + install script)
+
+Genesis also ships as a **headless server** for machines without a desktop: the `genesis_server` release runs BOTH apps under plain http (no Tauri shell, no `wx`), driven by the `genesis` CLI (`rel/overlays/bin/genesis` → `bin/genesis` in the release).
+CLI: bare `genesis` / `genesis serve [--ip A] [--port P]` runs in the foreground; `genesis start [--ip A] [--port P]` runs it as a daemon (`systemd-run --user --unit=genesis-server` on Linux, launchd LaunchAgent `com.genesis.server` on macOS, setsid/nohup + pidfile fallback) and waits for health; `genesis status` (service state + `GET /health` probe, exit 0 only when healthy), `genesis logs [-f]`, `stop`, `restart`, `url`, `version`, `help`. Defaults are `127.0.0.1:9999`; service state lives in `<data dir>/server.env`.
+**Server mode** is baked (`server_release: true`) or forced by `EVOGIT_SERVER=1`: the endpoint binds `PHX_IP` (default `127.0.0.1`) and `PORT` (default `9999` = config `[server] listen_port`), the URL host comes from `PHX_HOST` else the bind address, plain http with `check_origin: false`, `SECRET_KEY_BASE` from env or a persisted `<data dir>/secret_key_base`, logs to stdout/journald.
+Installer: `curl -LsSf https://genesis.evox.group/dl/install.sh | sh` installs the release into `~/.local/share/genesis/server` and symlinks `~/.local/bin/genesis`; assets are `genesis_server_linux_x64.tar.xz`, `genesis_server_linux_arm64.tar.xz`, `genesis_server_darwin_arm64.tar.xz` — Windows headless is NOT supported in v1 (desktop app only).
+Details: `rel/CONTEXT.md` + `config/CONTEXT.md` + `scripts/CONTEXT.md` + `apps/evo_dash/CONTEXT.md` + `.github/workflows/CONTEXT.md`.
 
 ### Auto-Update / Push-Update (tauri-plugin-updater v2 — implemented)
 
