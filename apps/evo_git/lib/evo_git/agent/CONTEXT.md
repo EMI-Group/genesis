@@ -7,7 +7,7 @@ Agent TYPE implementations live in `../agents/`; per-tool contracts `tools/CONTE
 
 ## Routing Table
 - `./tools/` → `EvoGit.Agent.Tools` (schema lists, the `execute/5` gate chain + dispatch, `serial_tool?/1`, `write_tool?/1`, `read_only_schemas/0`, `default_timeout_ms/1`) + the tool modules — `tools/CONTEXT.md`.
-- `./compression/` → `Recency` (last-K-turns boundary), `ToolResultPruner` (stage 1), `Threshold` (trigger + stage-1 target), `SummaryPrompt`, `Checkpoint` (stage 2), `LlmRetry` — `compression/CONTEXT.md`.
+- `./compression/` → `Recency` (last-K-turns boundary + size-budgeted tail, shared token estimator), `ToolResultPruner` (stage 1), `Threshold` (trigger + stage-1 target), `SummaryPrompt`, `Checkpoint` (stage 2, synthetic untagged checkpoint), `LlmRetry` — `compression/CONTEXT.md`.
 - `./runner.ex` → `EvoGit.Agent.Runner` — the loop, grace/recovery, pending-message drain, background-job notices, `setup_dispatch_context/1`, `refresh_commit_sha/1` (`@doc false`); lifecycle detail below.
 - `./tool_dispatch.ex` → `EvoGit.Agent.ToolDispatch` (~1800 lines, cohesive — do not split without a plan): per-turn LLM call + retries, call routing, serial-then-parallel batches, timeouts, the sanitize call site, the completion builder; sole caller of `Tools.execute/5`.
 - `./context_compression.ex` → the two stages behind `compress_if_needed/2`.
