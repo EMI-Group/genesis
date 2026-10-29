@@ -79,6 +79,7 @@ Standard calls in one batch are PARTITIONED by `EvoGit.Agent.Tools.serial_tool?/
 | `:repo_path`, `:repo_less` | `runner.ex` | agent worktree path / repo-less marker |
 | `:evogit_task_tmpdir` | agent proc + tool task | `TaskTmpdir.current/0` |
 | `:delegation_hints`, `:read_delegation_hints`, `:redundant_cd_warned` | runner / tool_dispatch | per-dir counters, once-per-run flag (AGENT process only) |
+| `:conflict_files` | `ConflictState.refresh/1` (tool_dispatch, turn END) | `ConflictState.files/0` / `in_conflict?/0` — the ONE per-turn conflict snapshot read by the next turn's hint suppression + `Runner.check_limit_warnings/1` (AGENT process only; default `[]`) |
 
 No `:parent_id`, `:model_id` or `:depth` pd keys — those live on `AgentState` (ETS); depth is `:evogit_agent_depth`. From inside a tool the agent pid is `hd($callers)` (serial) / `Enum.at($callers, 1)` (parallel), or `:ets.lookup(:evogit_sched_meta, agent_id)` → `%SchedMeta{task_ref: %Task{pid: agent_pid}}` (tables `:public`).
 
