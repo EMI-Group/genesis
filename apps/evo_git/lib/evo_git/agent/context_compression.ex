@@ -55,11 +55,21 @@ defmodule EvoGit.Agent.ContextCompression do
   `refresh_messages/2`) ONLY on the summarising path, where the old span — the
   job's only other trace — is about to be replaced by a summary. The prune-only
   path appends the same plain runtime-context refresh with NO jobs section. On
-  the summarising path every earlier refresh message that carries a
-  `## Background Jobs` section is dropped before the new one is appended
-  (`drop_stale_background_job_refreshes/1`), so exactly ONE section — the
-  CURRENT snapshot — survives a compression, even when an older snapshot sits
-  inside the protected recent tail.
+  the summarising path EVERY earlier runtime-context refresh message is dropped
+  before the new one is appended (`drop_stale_refreshes/1`), so repeated
+  compressions can never grow the list through refresh messages and exactly ONE
+  current refresh — carrying the current job snapshot — survives, even when an
+  older one sits inside the protected recent tail.
+
+  ## The retained tail is size-budgeted
+
+  The protected suffix is bounded (`EvoGit.Agent.Compression.Recency.tail_budget/1`,
+  `0.2 * context_window` capped at 40_000 tokens), so a handful of huge messages
+  cannot pin an unbounded amount of text in the "recent" region. The budget may
+  only SHRINK the suffix, and the checkpoint replaces exactly ONE span holding
+  exactly ONE checkpoint message: a prior checkpoint is always part of the span
+  being replaced, never part of the retained tail, and compression can therefore
+  never wedge itself into "nothing to replace".
 
   ## Token reset
 
@@ -189,7 +199,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "(summarising) runs over the ORIGINAL #{length(messages)} message(s)."
       )
 
-      summarise(agent_id, llm_model, llm_gen_opts, state, messages)
+      summarise(agent_id, llm_model, llm_gen_opts, info, state, messages)
     end
   end
 
@@ -197,7 +207,7 @@ defmodule EvoGit.Agent.ContextCompression do
   # history and therefore invalidates the provider's cached prefix, so a small
   # saving is not worth it. Otherwise Stage 2 runs over the ORIGINAL list.
   defp prune_or_summarise(agent_id, llm_model, llm_gen_opts, info, target, state, messages) do
-    pruned = ToolResultPruner.prune(messages)
+    pruned = ToolResultPruner.prune(messages, context_window: Map.get(info, :window))
     projected = Threshold.project(state.total_tokens, pruned.chars_before, pruned.chars_after)
 
     if adopt_pruned?(pruned, projected, target, state.total_tokens) do
@@ -217,7 +227,7 @@ defmodule EvoGit.Agent.ContextCompression do
           "Stage 2 (summarising) runs over the ORIGINAL context."
       )
 
-      summarise(agent_id, llm_model, llm_gen_opts, state, messages)
+      summarise(agent_id, llm_model, llm_gen_opts, info, state, messages)
     end
   end
 
@@ -231,8 +241,9 @@ defmodule EvoGit.Agent.ContextCompression do
   # there is nothing older than the protected last-K-turns suffix: an LLM call
   # would have nothing to replace (`Checkpoint.build/3` would report
   # `replaced: 0`), so paying for it is pure waste.
-  defp summarise(agent_id, llm_model, llm_gen_opts, state, messages) do
-    split = Checkpoint.split(messages)
+  defp summarise(agent_id, llm_model, llm_gen_opts, info, state, messages) do
+    window = Map.get(info, :window)
+    split = Checkpoint.split(messages, context_window: window)
 
     if split.old == [] do
       Logger.info(
@@ -242,11 +253,11 @@ defmodule EvoGit.Agent.ContextCompression do
 
       finish_without_checkpoint(state, agent_id, messages)
     else
-      summarise_old_span(agent_id, llm_model, llm_gen_opts, state, messages)
+      summarise_old_span(agent_id, llm_model, llm_gen_opts, info, state, messages)
     end
   end
 
-  defp summarise_old_span(agent_id, llm_model, llm_gen_opts, state, messages) do
+  defp summarise_old_span(agent_id, llm_model, llm_gen_opts, info, state, messages) do
     # The summarising model reads the ORIGINAL transcript plus ONE appended
     # instruction message. Deliberately NOT the pruned list: pruning would make
     # this request cheaper but would hide from the summariser exactly what the
@@ -262,7 +273,7 @@ defmodule EvoGit.Agent.ContextCompression do
         # Read the usage map ONCE — it feeds both the token counts
         # (`Usage.from_response_usage/1`) and the self-computed cost.
         usage_map = ReqLLM.Response.usage(response)
-        built = Checkpoint.build(messages, summary, turn: state.turn)
+        built = Checkpoint.build(messages, summary, context_window: Map.get(info, :window))
 
         compression_usage =
           Usage.from_response_usage(usage_map)
@@ -274,8 +285,10 @@ defmodule EvoGit.Agent.ContextCompression do
           # the request WAS billed, so its usage is still accounted for.
           keep_context(state, agent_id, messages, compression_usage, true)
         else
+          log_compression_decision(agent_id, built)
+
           rebuilt =
-            drop_stale_background_job_refreshes(built.messages) ++
+            drop_stale_refreshes(built.messages) ++
               refresh_messages(state, true)
 
           AgentScheduler.increment_compression_count(agent_id)
@@ -324,7 +337,7 @@ defmodule EvoGit.Agent.ContextCompression do
 
     rebuilt =
       if include_background_jobs? do
-        drop_stale_background_job_refreshes(messages) ++ refresh_messages(state, true)
+        drop_stale_refreshes(messages) ++ refresh_messages(state, true)
       else
         messages ++ refresh_messages(state, false)
       end
@@ -362,39 +375,31 @@ defmodule EvoGit.Agent.ContextCompression do
     end
   end
 
-  # The exact section marker rendered by
-  # `EvoGit.Agent.BackgroundJobNotice.section/1`.
-  @background_jobs_marker "## Background Jobs"
-
   @doc false
-  # Drops every runtime-context refresh message that carries a
-  # `## Background Jobs` section, preserving the ORDER and every non-matching
-  # message (system prompt, first user message, checkpoint, recent tail, tool
-  # messages, `[NOTICE]` messages). TOTAL: a non-list input is returned as-is,
-  # and a malformed message simply never matches.
-  @spec drop_stale_background_job_refreshes([term()]) :: [term()]
-  def drop_stale_background_job_refreshes(messages) when is_list(messages) do
-    Enum.reject(messages, &stale_background_job_refresh?/1)
+  # Drops EVERY runtime-context refresh message (`ContextBuilder.refresh_message?/1`),
+  # preserving the ORDER and every other message (system prompt, first user
+  # message, checkpoint, recent tail, tool messages, `[NOTICE]` messages).
+  # Called before a freshly built refresh is appended, so repeated compressions can
+  # never GROW the list through refresh messages and exactly ONE current refresh
+  # survives. TOTAL: a non-list input is returned as-is, and a malformed message
+  # simply never matches.
+  @spec drop_stale_refreshes([term()]) :: [term()]
+  def drop_stale_refreshes(messages) when is_list(messages) do
+    Enum.reject(messages, &ContextBuilder.refresh_message?/1)
   end
 
-  def drop_stale_background_job_refreshes(messages), do: messages
+  def drop_stale_refreshes(messages), do: messages
 
-  defp stale_background_job_refresh?(message) do
-    ContextBuilder.refresh_message?(message) and
-      String.contains?(message_text(message), @background_jobs_marker)
+  # ONE log line per applied Stage-2 compaction naming what was replaced, what was
+  # kept and how the size budget shaped the retained tail.
+  defp log_compression_decision(agent_id, built) do
+    Logger.info(
+      "Agent #{agent_id}: stage 2 applied — replaced #{built.replaced} message(s) with ONE " <>
+        "checkpoint, kept #{built.kept} message(s) verbatim, " <>
+        "estimated #{built.estimated_tokens} tokens (pre-compression #{built.pre_estimate}, " <>
+        "tail budget #{built.budget}, tail shrunk: #{built.shrunk})."
+    )
   end
-
-  # The `:text` content parts of a message, joined. Total over malformed shapes.
-  defp message_text(%ReqLLM.Message{content: content}) when is_list(content) do
-    content
-    |> Enum.map(fn
-      %{type: :text, text: text} when is_binary(text) -> text
-      _part -> ""
-    end)
-    |> Enum.join("")
-  end
-
-  defp message_text(_message), do: ""
 
   # --- Stage-1 gating config ---
 

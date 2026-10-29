@@ -15,12 +15,13 @@ defmodule EvoGit.Agent.Compression.ToolResultPruner do
   ## What it touches
 
   Only `:tool` messages OLDER than the recency boundary
-  (`EvoGit.Agent.Compression.Recency.boundary/2`) are candidates: the last K
+  (`EvoGit.Agent.Compression.Recency.boundary/3`) are candidates: the last K
   turns of work (default
-  `EvoGit.Agent.Compression.Recency.default_keep_recent_turns/0`) are never
-  touched. The system prompt, the first user message (objective + context
-  tree), every `:user` and `:assistant` message, and every `:thinking` /
-  `:provider_block` part inside a candidate all pass through byte-identically.
+  `EvoGit.Agent.Compression.Recency.default_keep_recent_turns/0`) AND the
+  size-budgeted tail (`Recency.tail_budget/1`) are never touched. The system
+  prompt, the first user message (objective + context tree), every `:user` and
+  `:assistant` message, and every `:thinking` / `:provider_block` part inside a
+  candidate all pass through byte-identically.
 
   Inside a candidate `:tool` message:
 
@@ -54,6 +55,11 @@ defmodule EvoGit.Agent.Compression.ToolResultPruner do
 
     * `:keep_recent_turns` — turns protected at the end of the conversation
       (default `Recency.default_keep_recent_turns/0`)
+    * `:context_window` — the CONFIGURED context window driving the protected
+      tail's size budget (`Recency.tail_budget/1`); absent/unusable falls back
+      to the schema default
+    * `:tail_budget_fraction` / `:tail_budget_tokens` — overrides for the
+      tail-budget fraction and cap, forwarded to `Recency.boundary/3`
     * `:threshold_chars` — a `:text` part must exceed this many bytes to be
       pruned (default 8192)
     * `:head_chars` — bytes kept from the start of a pruned text part
@@ -93,7 +99,7 @@ defmodule EvoGit.Agent.Compression.ToolResultPruner do
   @spec prune([Message.t()], keyword()) :: result()
   def prune(messages, opts \\ []) when is_list(messages) and is_list(opts) do
     policy = policy(opts)
-    boundary = Recency.boundary(messages, policy.keep_recent_turns)
+    boundary = Recency.boundary(messages, policy.keep_recent_turns, boundary_opts(opts))
     chars_before = char_count(messages)
 
     {pruned_messages, pruned} = prune_all(messages, boundary, policy)
@@ -115,11 +121,7 @@ defmodule EvoGit.Agent.Compression.ToolResultPruner do
   `content` counts as its own byte size. Total — never raises.
   """
   @spec char_count([Message.t()] | term()) :: non_neg_integer()
-  def char_count(messages) when is_list(messages) do
-    Enum.reduce(messages, 0, fn message, total -> total + message_chars(message) end)
-  end
-
-  def char_count(_messages), do: 0
+  def char_count(messages), do: Recency.char_count(messages)
 
   ## Pruning
 
@@ -223,39 +225,13 @@ defmodule EvoGit.Agent.Compression.ToolResultPruner do
       "#{media_parts} attachment part(s) ...]"
   end
 
-  ## Character accounting
-
-  defp message_chars(%Message{content: content}), do: content_chars(content)
-  defp message_chars(%{content: content}), do: content_chars(content)
-  defp message_chars(_message), do: 0
-
-  defp content_chars(content) when is_binary(content), do: byte_size(content)
-
-  defp content_chars(content) when is_list(content) do
-    Enum.reduce(content, 0, fn part, total -> total + part_chars(part) end)
-  end
-
-  defp content_chars(_content), do: 0
-
-  defp part_chars(%ContentPart{type: :text, text: text}), do: text_bytes(text)
-  defp part_chars(%ContentPart{type: :thinking, text: text}), do: text_bytes(text)
-  defp part_chars(%ContentPart{} = part), do: payload_bytes(part)
-  defp part_chars(text) when is_binary(text), do: byte_size(text)
-  defp part_chars(_part), do: 0
-
-  defp text_bytes(text) when is_binary(text), do: byte_size(text)
-  defp text_bytes(_text), do: 0
-
-  defp payload_bytes(part) do
-    cond do
-      is_binary(part.data) -> byte_size(part.data)
-      is_binary(part.url) -> byte_size(part.url)
-      is_binary(part.file_id) -> byte_size(part.file_id)
-      true -> 0
-    end
-  end
-
   ## Options
+
+  # The tail size budget is owned by `Recency`: only the keys that module
+  # understands are forwarded, so the pruner never invents its own budget math.
+  defp boundary_opts(opts) do
+    Keyword.take(opts, [:context_window, :tail_budget_fraction, :tail_budget_tokens])
+  end
 
   defp policy(opts) do
     %{
