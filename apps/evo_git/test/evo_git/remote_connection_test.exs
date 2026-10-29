@@ -312,7 +312,9 @@ defmodule EvoGit.RemoteConnectionTest do
                          5_000
 
           assert is_binary(le) and le != ""
-          assert le =~ "tunnel_not_ready"
+          # `last_error` is the READABLE message (format_reason/1), not the raw
+          # `{:tunnel_not_ready, _}` tag.
+          assert le =~ "SSH tunnel did not become ready"
 
           # The worker runs ensure_epmd_module() before opening the tunnel, so
           # even a failed connect must leave the env at EpmdDist.
@@ -457,7 +459,9 @@ defmodule EvoGit.RemoteConnectionTest do
                          5_000
 
           assert is_binary(le) and le != ""
-          assert le =~ "tunnel_not_ready"
+          # `last_error` is the READABLE message (format_reason/1), not the raw
+          # `{:tunnel_not_ready, _}` tag.
+          assert le =~ "SSH tunnel did not become ready"
 
           # The manager survives in :error phase (no crash/restart) and a
           # status read exposes the failure.
@@ -970,10 +974,13 @@ defmodule EvoGit.RemoteConnectionTest do
       # text verbatim), logs every command to the log file, and dispatches on
       # $2 via CONTAINS patterns. Daemon state is emulated via a marker
       # file: `systemd-run` / the deploy `launchctl load` touch it, the stop
-      # commands (`systemctl --user stop` / pure `launchctl unload`) remove
-      # it, and `systemctl --user is-active` / `launchctl list` report
+      # commands (`systemctl [--user] stop` / pure `launchctl unload`) remove
+      # it, and `systemctl [--user] is-active` / `launchctl list` report
       # active / non-empty only when it exists — so the post-start health
-      # check succeeds after the daemon is "started". Options: :os (default
+      # check succeeds after the daemon is "started". The systemd patterns
+      # match the OPERATION WORD (`stop`, `is-active`, `show`, `reset-failed`)
+      # rather than the `--user` prefix, so a root login's SYSTEM-scope
+      # commands are served by the same fake. Options: :os (default
       # Linux), :detect ("yes"/"no" for the NixOS detection command),
       # :patch_exit, :patch_output, :daemon_active? (pre-create the marker),
       # :daemon_active_after (N — the fake reports the daemon active only
@@ -983,8 +990,14 @@ defmodule EvoGit.RemoteConnectionTest do
       # remote config.toml/credentials.toml as already present, so the
       # :copying_config stage skips their upload), :probe_exit (the pre-flight
       # `uname -s && uname -m` probe exits non-zero, simulating an unreachable
-      # remote) and :scp_exit (the fake scp exits non-zero, simulating a failed
-      # upload). The fake `scp` captures
+      # remote), :scp_exit (the fake scp exits non-zero, simulating a failed
+      # upload), :login_user (the probed remote login user, which selects the
+      # systemd scope: `root` → SYSTEM, anything else → `--user`; absent = the
+      # historical two-line probe output with no user line), :staging_exit /
+      # :staging_stderr (the one-shot `tar -xJf` extract+chmod command exits
+      # :staging_exit after printing :staging_stderr to stderr) and
+      # :fail_255_once (that command exits 255 on its FIRST invocation only,
+      # so the single transport retry is observable). The fake `scp` captures
       # every uploaded payload into the tmp dir under its DESTINATION basename
       # (config.toml / credentials.toml / genesis_remote.tar.xz) — the tmp dir
       # is returned as `:scp_dir` — so tests can assert what actually "landed
@@ -1008,10 +1021,39 @@ defmodule EvoGit.RemoteConnectionTest do
         log = Path.join(tmp, "ssh.log")
         marker = Path.join(tmp, "daemon.marker")
         counter = Path.join(tmp, "is-active.count")
+        staging_fail_counter = Path.join(tmp, "staging-fail.count")
 
         if Keyword.get(opts, :daemon_active?, false) do
           File.touch!(marker)
         end
+
+        # The `id -un` output of both probe shapes: the configured login user,
+        # or nothing at all (default = today's behavior).
+        login_user_print =
+          case Keyword.get(opts, :login_user) do
+            user when is_binary(user) and user != "" -> "printf '%s\\n' '#{user}'"
+            _ -> ":"
+          end
+
+        # stderr emitted by the one-shot extract+chmod staging command.
+        staging_stderr_print =
+          case Keyword.get(opts, :staging_stderr, "") do
+            "" -> ""
+            stderr -> "printf '%s\\n' '#{stderr}' >&2;"
+          end
+
+        # :fail_255_once — the staging command exits 255 (ssh's own transport
+        # code) on its FIRST invocation only, so the single retry is provable.
+        fail_once_guard =
+          if Keyword.get(opts, :fail_255_once, false) do
+            ~S"""
+            n=$(cat "$staging_fail_counter" 2>/dev/null || echo 0)
+            n=$((n + 1)); echo "$n" > "$staging_fail_counter"
+            if [ "$n" -le 1 ]; then exit 255; fi
+            """
+          else
+            ""
+          end
 
         script =
           ~S"""
@@ -1019,14 +1061,25 @@ defmodule EvoGit.RemoteConnectionTest do
           log="__LOG__"
           marker="__MARKER__"
           counter="__COUNTER__"
+          staging_fail_counter="__STAGING_FAIL_COUNTER__"
           printf '%s\n' "$2" >> "$log"
           case "$2" in
-            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; exit __PROBE_EXIT__ ;;
+            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; __LOGIN_USER_PRINT__; exit __PROBE_EXIT__ ;;
+            # A preset-`platform` target probes ONLY the login user.
+            *"id -un"*) __LOGIN_USER_PRINT__; exit 0 ;;
             *"uname -s"*) printf '__OS__\n'; exit 0 ;;
-            *"systemctl --user stop"*) rm -f "$marker"; exit 0 ;;
-            *"systemctl --user is-active"*) if [ -n "__DAEMON_ACTIVE_AFTER__" ]; then count=$(cat "$counter" 2>/dev/null || echo 0); count=$((count + 1)); echo "$count" > "$counter"; if [ "$count" -gt __DAEMON_ACTIVE_AFTER__ ]; then printf 'active\n'; else printf 'inactive\n'; fi; elif [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
-            *"systemctl --user show"*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf 'RELEASE_NODE=%s RELEASE_COOKIE=%s\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
-            *"systemctl --user reset-failed"*) exit 0 ;;
+            # The ONE extract+chmod staging command (it contains `mkdir`, `tar`
+            # AND `chmod`), matched BEFORE the generic mkdir/tar/chmod branch so
+            # the :staging_exit / :staging_stderr / :fail_255_once knobs apply
+            # to it and nothing else.
+            *"tar -xJf"*) __STAGING_STDERR__ __FAIL_ONCE_GUARD__exit __STAGING_EXIT__ ;;
+            # systemd: match the OPERATION WORD, never the `--user` prefix — a
+            # root login's SYSTEM-scope command (`systemctl <op> <unit>`) must be
+            # served exactly like the user-scope one.
+            *systemctl*stop*) rm -f "$marker"; exit 0 ;;
+            *systemctl*is-active*) if [ -n "__DAEMON_ACTIVE_AFTER__" ]; then count=$(cat "$counter" 2>/dev/null || echo 0); count=$((count + 1)); echo "$count" > "$counter"; if [ "$count" -gt __DAEMON_ACTIVE_AFTER__ ]; then printf 'active\n'; else printf 'inactive\n'; fi; elif [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
+            *systemctl*show*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf 'RELEASE_NODE=%s RELEASE_COOKIE=%s\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
+            *systemctl*reset-failed*) exit 0 ;;
             *"systemd-run"*) touch "$marker"; exit 0 ;;
             *"launchctl load"*) touch "$marker"; exit 0 ;;
             *"launchctl unload"*) rm -f "$marker"; exit 0 ;;
@@ -1047,6 +1100,14 @@ defmodule EvoGit.RemoteConnectionTest do
           |> String.replace("__LOG__", log)
           |> String.replace("__MARKER__", marker)
           |> String.replace("__COUNTER__", counter)
+          |> String.replace("__STAGING_FAIL_COUNTER__", staging_fail_counter)
+          |> String.replace("__LOGIN_USER_PRINT__", login_user_print)
+          |> String.replace("__STAGING_STDERR__", staging_stderr_print)
+          |> String.replace("__FAIL_ONCE_GUARD__", fail_once_guard)
+          |> String.replace(
+            "__STAGING_EXIT__",
+            Integer.to_string(Keyword.get(opts, :staging_exit, 0))
+          )
           |> String.replace(
             "__DAEMON_ACTIVE_AFTER__",
             case Keyword.get(opts, :daemon_active_after) do
@@ -1165,6 +1226,15 @@ defmodule EvoGit.RemoteConnectionTest do
         assert indices == Enum.sort(indices), "stages out of order: #{inspect(stages)}"
       end
 
+      # Number of logged ssh commands whose remote command contains `needle` —
+      # the assertion surface for "issued exactly once / retried exactly once".
+      defp count_commands(log, needle) do
+        log
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.count(&String.contains?(&1, needle))
+      end
+
       # Writes a config.toml with a known [node] cookie into the isolated XDG
       # config dir so `ensure_cookie!` returns the known value during bootstrap
       # (instead of generating a random one) — making the fake unit env
@@ -1253,6 +1323,11 @@ defmodule EvoGit.RemoteConnectionTest do
           log_content = File.read!(log)
           assert log_content =~ "test -d /etc/nixos"
           refute log_content =~ "nix-build"
+
+          # A non-root login user (the fake prints no user line) keeps the
+          # historical USER-manager commands — guard against scope regressions.
+          assert log_content =~ "systemctl --user is-active genesis-remote-#{target_id}"
+          assert log_content =~ "systemd-run --user --unit=genesis-remote-#{target_id}"
 
           stages = collect_stages(target_id)
           refute :patching_binaries in stages
@@ -1646,8 +1721,13 @@ defmodule EvoGit.RemoteConnectionTest do
           target_id = save_test_target()
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          assert {:error, {:probe_failed, {:exit_status, 9}}} =
+          # The 3-element shape carries the trimmed remote output tail
+          # (stdout+stderr merged by `run_ssh_command/3`) — the fake probe
+          # printed the two platform lines before exiting 9.
+          assert {:error, {:probe_failed, {:exit_status, 9, tail}}} =
                    EvoGit.RemoteConnection.bootstrap(target_id)
+
+          assert tail =~ "Linux"
 
           # No staging stage was ever broadcast — only the terminal error
           # status (bootstrap_stage: nil) is pushed.
@@ -1664,7 +1744,10 @@ defmodule EvoGit.RemoteConnectionTest do
           target_id = save_test_target(local_binary_path: tarball)
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          assert {:error, {:scp_failed, 1}} = EvoGit.RemoteConnection.bootstrap(target_id)
+          # The 3-element shape carries the trimmed upload output tail (empty
+          # here — the fake scp prints nothing).
+          assert {:error, {:scp_failed, 1, tail}} = EvoGit.RemoteConnection.bootstrap(target_id)
+          assert is_binary(tail)
 
           # The probe + daemon check ran, the upload was attempted, but the
           # fake scp failed — so no extract/patch/start followed.
@@ -1673,6 +1756,229 @@ defmodule EvoGit.RemoteConnectionTest do
           refute log_content =~ "tar -xJf"
 
           cleanup_connections()
+        end)
+      end
+
+      # ── Root logins → SYSTEM systemd scope ───────────────────────────
+
+      test "root login user (probed) → SYSTEM scope: systemd-run --system, plain systemctl, no --user" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux", login_user: "root"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          # The ssh_target really carries `root@` — the SCOPE, however, comes
+          # from the probed login user, not from this string.
+          assert {:ok, %{ssh_target: "root@example.com"}} =
+                   EvoGit.RemoteConnections.get(target_id)
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          unit = "genesis-remote-#{target_id}"
+
+          # The per-target unit name is IDENTICAL in both scopes; only the
+          # manager changes.
+          assert log_content =~ "systemd-run --system --collect --unit=#{unit}"
+          assert log_content =~ "systemctl is-active #{unit}"
+          assert log_content =~ "systemctl reset-failed #{unit}"
+
+          # No command anywhere targets the user manager.
+          refute log_content =~ "--user"
+
+          cleanup_connections()
+        end)
+      end
+
+      test "root login user → identity read + remediation are plain systemctl (no --user)" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("root-scope-cookie")
+
+        with_fake_ssh_tools(
+          [os: "Linux", login_user: "root", daemon_active_after: 1],
+          fn %{log: log, tarball: tarball} ->
+            target_id =
+              save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
+
+            # The pre-flight check (#1) sees the daemon inactive so staging
+            # proceeds; the later checks see it active, so the launch-identity
+            # verification runs — and reports a STALE cookie.
+            System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
+            System.put_env("FAKE_UNIT_RELEASE_COOKIE", "old-stale-cookie")
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:daemon_identity_mismatch, details}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            unit = "genesis-remote-#{target_id}"
+
+            # The unit environment is read from the SYSTEM manager...
+            assert File.read!(log) =~ "systemctl show #{unit} -p Environment --value"
+            # ...and the remediation names the scope-correct stop command.
+            assert details =~ "systemctl stop #{unit}"
+            refute details =~ "--user"
+            refute File.read!(log) =~ "--user"
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "a `root@` ssh_target whose PROBED login user is not root keeps the --user scope" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux", login_user: "bill"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+          unit = "genesis-remote-#{target_id}"
+
+          # Scope is decided by `id -un` alone — never by the ssh_target string.
+          assert log_content =~ "systemd-run --user --unit=#{unit}"
+          assert log_content =~ "systemctl --user is-active #{unit}"
+          assert log_content =~ "systemctl --user reset-failed #{unit}"
+          refute log_content =~ "--system"
+
+          cleanup_connections()
+        end)
+      end
+
+      # ── Staging: one round trip, self-diagnosing failures ────────────
+
+      test "extract + chmod is ONE ssh round trip (no second chmod step)" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          staging_lines =
+            log
+            |> File.read!()
+            |> String.split("\n", trim: true)
+            |> Enum.filter(&String.contains?(&1, "tar -xJf"))
+
+          assert length(staging_lines) == 1,
+                 "expected exactly one extract+chmod command, got: #{inspect(staging_lines)}"
+
+          [line] = staging_lines
+          assert line =~ "mkdir -p"
+          assert line =~ "chmod +x"
+          assert line =~ "test -x"
+
+          # Both dashboard progress steps still fire off that ONE command.
+          assert_stage_subsequence(collect_stages(target_id), [
+            :extracting,
+            :setting_permissions
+          ])
+
+          cleanup_connections()
+        end)
+      end
+
+      test "staging failure carries the stderr tail: {:staging_failed, 255, tail}" do
+        ensure_registry_and_supervisor()
+
+        envs = put_test_env(remote_ssh_retry_backoff_ms: 0)
+        on_exit(fn -> restore_test_env(envs) end)
+
+        with_fake_ssh_tools(
+          [os: "Linux", staging_exit: 255, staging_stderr: "Connection reset by peer"],
+          fn %{tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:staging_failed, 255, tail}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            assert tail =~ "Connection reset by peer"
+
+            message = EvoGit.RemoteConnection.format_reason({:staging_failed, 255, tail})
+            assert message =~ "255"
+            assert message =~ "Connection reset by peer"
+            # Human text, never a raw inspect/1 dump of the tuple.
+            refute message =~ "staging_failed"
+            refute message =~ ":error"
+
+            # The readable text is what lands in `last_error`.
+            assert %{phase: :error, last_error: ^message} =
+                     EvoGit.RemoteConnection.status(target_id)
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      # ── Bounded transport retry (ssh exit 255) ───────────────────────
+
+      test "ssh exit 255 is retried exactly ONCE for the idempotent staging command" do
+        ensure_registry_and_supervisor()
+
+        envs = put_test_env(remote_ssh_retry_backoff_ms: 0)
+        on_exit(fn -> restore_test_env(envs) end)
+
+        with_fake_ssh_tools([os: "Linux", fail_255_once: true], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(local_binary_path: tarball)
+
+          # First attempt: exit 255 (transport); the one retry succeeds, so the
+          # bootstrap completes instead of failing.
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          assert count_commands(log, "tar -xJf") == 2
+
+          cleanup_connections()
+        end)
+      end
+
+      test "a permanent ssh 255 is attempted exactly TWICE, then the bootstrap fails" do
+        ensure_registry_and_supervisor()
+
+        envs = put_test_env(remote_ssh_retry_backoff_ms: 0)
+        on_exit(fn -> restore_test_env(envs) end)
+
+        with_fake_ssh_tools(
+          [os: "Linux", staging_exit: 255, staging_stderr: "ssh: connect to host: broken pipe"],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+
+            assert {:error, {:staging_failed, 255, tail}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            assert tail =~ "broken pipe"
+
+            # Exactly one retry — never a retry storm.
+            assert count_commands(log, "tar -xJf") == 2
+
+            # The failure stops the chain: no daemon launch attempt.
+            refute File.read!(log) =~ "systemd-run"
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "a :timeout is never retried (the command may still be running remotely)" do
+        # Reuses the connect harness's `:sleep` fake ssh (30s) with a 100ms
+        # command timeout so the wrapper sees a genuine :timeout.
+        with_fake_ssh_connect([mode: :sleep], fn log ->
+          assert :timeout =
+                   EvoGit.RemoteConnection.run_ssh_command_retry(
+                     "fake@example.com",
+                     "sleep forever",
+                     100,
+                     backoff_ms: 0
+                   )
+
+          # A (wrongly) retried invocation would land immediately after the
+          # timeout, so a short grace window makes the count assertion robust.
+          Process.sleep(100)
+          assert ssh_invocation_count(log) == 1
         end)
       end
     end

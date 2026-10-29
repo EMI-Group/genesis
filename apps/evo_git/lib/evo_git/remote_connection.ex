@@ -1271,12 +1271,16 @@ defmodule EvoGit.RemoteConnection do
   # final `test -x` self-verifies the result. `chmod` only runs when the
   # extracted launcher is not already executable, so the tarball's own exec bit
   # is respected.
+  #
+  # `merge_stderr: true` — the failure tail is the whole point of the 3-element
+  # `{:staging_failed, status, tail}`: tar/chmod errors AND ssh's own transport
+  # diagnostics ("Connection reset by peer") are written to stderr.
   defp extract_and_set_permissions(ssh_target, remote_tarball, remote_dir, launcher_path) do
     command =
       "mkdir -p #{remote_dir} && tar -xJf #{remote_tarball} -C #{remote_dir} && " <>
         "{ test -x #{launcher_path} || chmod +x #{launcher_path}; } && test -x #{launcher_path}"
 
-    case run_ssh_command_retry(ssh_target, command, @scp_timeout_ms) do
+    case run_ssh_command_retry(ssh_target, command, @scp_timeout_ms, merge_stderr: true) do
       {:ok, _output, 0} -> :ok
       {:ok, output, status} -> {:error, {:staging_failed, status, output_tail(output)}}
       :timeout -> {:error, {:staging_failed, :timeout}}
@@ -1658,8 +1662,9 @@ defmodule EvoGit.RemoteConnection do
   # command's own error line(s) without flooding a toast/`last_error`.
   @output_tail_chars 600
 
-  # Last ~600 characters of the remote command output (stdout+stderr merged by
-  # `run_ssh_command/3`), trimmed; `""` when the output is blank or absent.
+  # Last ~600 characters of the remote command output (`stdout`, plus `stderr`
+  # for the calls that pass `merge_stderr: true`), trimmed; `""` when the output
+  # is blank or absent.
   defp output_tail(output) when is_binary(output) do
     output |> String.trim() |> String.slice(-@output_tail_chars, @output_tail_chars)
   end
@@ -1713,10 +1718,13 @@ defmodule EvoGit.RemoteConnection do
   defp stop_daemon(ssh_target, scope, "Linux", target) do
     unit = "genesis-remote-#{target.id}"
 
+    # `merge_stderr: true` — the output only feeds the warning tail below, and
+    # a stop failure's useful text (permission denied, no such unit) is on stderr.
     case run_ssh_command_retry(
            ssh_target,
            EvoGit.RemoteDaemon.stop_command(scope, unit),
-           @cmd_timeout_ms
+           @cmd_timeout_ms,
+           merge_stderr: true
          ) do
       {:ok, _output, 0} ->
         :ok
@@ -1960,11 +1968,14 @@ defmodule EvoGit.RemoteConnection do
 
     # NOT retried: starting the daemon is not idempotent (a retry could launch a
     # second unit/process). `systemd-run` itself is the transport-sensitive step
-    # whose failure is surfaced with its output tail.
+    # whose failure is surfaced with its output tail — `merge_stderr: true` so
+    # that tail carries ssh's own transport diagnostics ("Connection reset by
+    # peer", "Permission denied (publickey)") as well as systemd-run's stderr.
     case run_ssh_command(
            ssh_target,
            EvoGit.RemoteDaemon.start_command(scope, unit, node, cookie, launcher_path),
-           @launch_receive_timeout_ms
+           @launch_receive_timeout_ms,
+           merge_stderr: true
          ) do
       {:ok, _output, 0} ->
         :ok
@@ -2122,11 +2133,17 @@ defmodule EvoGit.RemoteConnection do
   # Runs a command via Port.open and collects stdout output, waiting for the
   # exit status. Returns {:ok, output, exit_status} or :timeout.
   #
+  # stderr is merged into the captured output (`:stderr_to_stdout`): every caller
+  # here (scp of the tarball / the launchd plist / the config files, the local
+  # curl download) discards stdout on success and only reports a failure TAIL,
+  # and scp/curl write their diagnostics to stderr — without the merge that tail
+  # is always empty.
+  #
   # The port is linked to this process (trap_exit is set in init/1), but we
   # explicitly receive data and exit_status messages rather than relying on
   # EXIT messages, so we can collect stdout.
   defp run_cmd(cmd, timeout) do
-    port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream])
+    port = Port.open({:spawn, cmd}, [:binary, :exit_status, :stream, :stderr_to_stdout])
     collect_port_output(port, timeout, "")
   end
 
@@ -2150,16 +2167,30 @@ defmodule EvoGit.RemoteConnection do
   # parse time. This is safe for all commands: the remote commands used here
   # (incl. the NixOS patch script, which contains `$`, `$(...)` and single
   # quotes) are POSIX-ish scripts that bash parses identically.
+  #
+  # Options:
+  #   * `:merge_stderr` (default `false`) — capture the child's stderr into the
+  #     returned output. ssh sends BOTH its own transport diagnostics
+  #     ("Permission denied (publickey)", "Connection reset by peer", a
+  #     first-connect "Warning: Permanently added ...") and the remote
+  #     command's stderr there, so without it a failure tail is empty. It is
+  #     OPT-IN because the merged text is noise to a caller that
+  #     content-matches stdout (the platform probe, `is-active`, `launchctl
+  #     list`, `test -f` + echo, `show -p Environment`), so only the diagnostic
+  #     paths that consume the tail (staging, `systemd-run`, `systemctl stop`)
+  #     enable it. `status_command/2` merges remotely (`2>&1 | tail -20`), and
+  #     the local `run_cmd/2` always merges (`:stderr_to_stdout`).
   @doc false
-  def run_ssh_command(ssh_target, remote_cmd, timeout) do
+  def run_ssh_command(ssh_target, remote_cmd, timeout, opts \\ []) do
     ssh = System.find_executable("ssh") || "ssh"
     remote_cmd = EvoGit.RemoteBootstrap.bash_wrap(remote_cmd)
 
-    port =
-      Port.open(
-        {:spawn_executable, ssh},
-        [:binary, :exit_status, :stream, {:args, [ssh_target, remote_cmd]}]
-      )
+    port_opts =
+      if Keyword.get(opts, :merge_stderr, false),
+        do: [:binary, :exit_status, :stream, :stderr_to_stdout],
+        else: [:binary, :exit_status, :stream]
+
+    port = Port.open({:spawn_executable, ssh}, port_opts ++ [{:args, [ssh_target, remote_cmd]}])
 
     collect_port_output(port, timeout, "")
   end
@@ -2172,7 +2203,8 @@ defmodule EvoGit.RemoteConnection do
   #
   # The backoff is read per call from the app-env seam
   # :remote_ssh_retry_backoff_ms (default 400ms; tests set it to 0) and can be
-  # overridden with `backoff_ms: <ms>` in `opts`.
+  # overridden with `backoff_ms: <ms>` in `opts`. Every other `opts` key is
+  # forwarded to `run_ssh_command/4` (notably `merge_stderr: true`).
   #
   # ONLY idempotent / read-only commands go through here — never `systemd-run`
   # (starting the daemon is not idempotent), `launchctl load`, `scp`, the
@@ -2181,7 +2213,7 @@ defmodule EvoGit.RemoteConnection do
   @spec run_ssh_command_retry(String.t(), String.t(), non_neg_integer(), keyword()) ::
           {:ok, String.t(), non_neg_integer()} | :timeout
   def run_ssh_command_retry(ssh_target, remote_cmd, timeout, opts \\ []) do
-    case run_ssh_command(ssh_target, remote_cmd, timeout) do
+    case run_ssh_command(ssh_target, remote_cmd, timeout, opts) do
       {:ok, output, 255} ->
         Logger.warning(
           "RemoteConnection: ssh #{ssh_target} exited 255 (transport error) running " <>
@@ -2192,7 +2224,7 @@ defmodule EvoGit.RemoteConnection do
 
         if is_integer(backoff) and backoff > 0, do: Process.sleep(backoff)
 
-        run_ssh_command(ssh_target, remote_cmd, timeout)
+        run_ssh_command(ssh_target, remote_cmd, timeout, opts)
 
       result ->
         result
