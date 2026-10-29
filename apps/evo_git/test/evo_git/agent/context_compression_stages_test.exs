@@ -174,6 +174,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.Compression.Checkpoint
+  alias EvoGit.Agent.Compression.Recency
   alias EvoGit.Agent.Compression.SummaryPrompt
   alias EvoGit.Agent.Compression.Threshold
   alias EvoGit.Agent.Compression.ToolResultPruner
@@ -219,9 +220,18 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   @jobs_agent 9_208
   @jobs_stage2_agent 9_209
   @jobs_accumulation_agent 9_210
+  @repeat_agent 9_211
+  @prefix_agent 9_212
+  @oversized_agent 9_213
 
   @huge_tool_output String.duplicate("tool-output-line\n", 14_000) <>
                       "FINAL LINE: 42 tests, 0 failures"
+  # ~20 KB: far above the 8 KiB `ToolResultPruner` threshold (so Stage 1 WOULD
+  # prune it if it were old) but comfortably inside `Recency.tail_budget/1` at
+  # the 128k window (26_214 tokens), so a conversation can carry it inside the
+  # protected tail without the budget pushing the boundary past it.
+  @large_tool_output String.duplicate("tool-output-line\n", 1_200) <>
+                       "FINAL LINE: 42 tests, 0 failures"
 
   # Sits ~100_000 characters into a 200_000-character tool output, i.e. far past
   # the 4 KiB head Stage 1 keeps — so Stage 1 would delete it, and finding it in
@@ -317,28 +327,36 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   end
 
   # A conversation whose OLD span is EMPTY (`Checkpoint.split/2` reports
-  # `old: []`, so Stage 2 is skipped) yet which DOES contain a huge prunable tool
-  # result — the shape that makes "Stage 1 never ran" observable rather than
-  # vacuous.
+  # `old: []`, so Stage 2 is skipped and no summarising call is reachable) while
+  # still carrying a LARGE tool result, so "the transcript was left alone" is
+  # observable on a real payload rather than on a trivial one.
   #
-  # Why the odd double tool result: the recency boundary here is 3 (11 messages,
-  # so the positional floor `count - 2 * K` = 3 wins over the turn boundary 4),
-  # which leaves the tool result at index 2 OLD for the pruner. `Checkpoint`'s
-  # candidate boundary (index 3) lands on the second `:tool` message, so its
-  # rewind walks back to the head and the old span stays empty.
+  # Why the message count is small: the recency boundary is the SMALLER of the
+  # turn boundary and the positional floor (`count - 2 * K`). With 10 messages
+  # and turns 0..3 the positional floor is 2 and the turn boundary is 1 (every
+  # tagged message is inside the last K turns); the tail-size budget keeps that
+  # index (the suffix is far below `Recency.tail_budget/1`), so `Checkpoint`'s
+  # candidate index is 1 and `split_index/2` floors it at the head
+  # (`@head_size`, 2) — the old span is empty.
+  #
+  # NOTE (new contract): "old span is empty" and "a tool result Stage 1 could
+  # prune" are MUTUALLY EXCLUSIVE under the current recency rules. A prunable
+  # tool result has to sit before the boundary, and any boundary above the head
+  # makes the old span non-empty (`split_index/2` = `max(@head_size, boundary)`),
+  # so the large tool result here lives INSIDE the protected tail. Neither stage
+  # may touch it; the byte-identity assertion pins exactly that.
   defp conversation_without_old_span do
     [
       ReqLLM.Context.system(@system_text),
       ReqLLM.Context.user(@objective) |> tag(0),
-      tool_result("call_a", @huge_tool_output) |> tag(0),
-      tool_result("call_b", "short second result") |> tag(0),
+      assistant_with_call("reading the build log", "call_a") |> tag(0),
+      tool_result("call_a", @large_tool_output),
       ReqLLM.Context.assistant("turn 1") |> tag(1),
       ReqLLM.Context.user("note 1") |> tag(1),
       ReqLLM.Context.assistant("turn 2") |> tag(2),
       ReqLLM.Context.user("note 2") |> tag(2),
       ReqLLM.Context.assistant("turn 3") |> tag(3),
-      ReqLLM.Context.user("note 3") |> tag(3),
-      ReqLLM.Context.assistant("turn 4") |> tag(4)
+      ReqLLM.Context.user("note 3") |> tag(3)
     ]
   end
 
@@ -723,7 +741,7 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   # ---------------------------------------------------------------------------
 
   describe "tool_result_pruning disabled by config" do
-    test "a conversation with NO old span keeps the huge tool result BYTE-IDENTICALLY and calls no LLM",
+    test "a conversation with NO old span keeps the large tool result BYTE-IDENTICALLY and calls no LLM",
          %{repo_path: repo_path, config_dir: config_dir} do
       register_agent(@pruning_off_agent)
       write_config!(config_dir, "[llm]\ntool_result_pruning = false\n")
@@ -733,12 +751,15 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       original = conversation_without_old_span()
 
       # Precondition: Stage 2 has NOTHING to replace (so no summarising call is
-      # reachable) while Stage 1 — when enabled — WOULD rewrite the huge tool
-      # result. That contrast is what makes the byte-identity below meaningful.
+      # reachable) and Stage 1 finds nothing OLD to prune either: the large tool
+      # result sits inside the protected tail (see the fixture comment), so even
+      # with pruning enabled this conversation is a no-op. The byte-identity
+      # below therefore proves BOTH stages left the transcript alone.
       assert Checkpoint.split(original).old == []
-      pruned = ToolResultPruner.prune(original)
-      assert pruned.pruned == 1
-      assert pruned.chars_after < pruned.chars_before
+
+      pruned = ToolResultPruner.prune(original, context_window: @window_128k)
+      assert pruned.pruned == 0
+      assert pruned.chars_after == pruned.chars_before
 
       st = state(@pruning_off_agent, original, repo_path: repo_path, total_tokens: 120_000)
 
@@ -757,10 +778,10 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert length(messages) == length(original) + 1
       assert Enum.take(messages, length(original)) == original
 
-      tool_message = Enum.at(messages, 2)
+      tool_message = Enum.at(messages, 3)
       assert tool_message.role == :tool
       assert tool_message.tool_call_id == "call_a"
-      assert text_of(tool_message) == @huge_tool_output
+      assert text_of(tool_message) == @large_tool_output
       refute text_of(tool_message) =~ "tool result middle pruned"
 
       assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 0
@@ -860,8 +881,15 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert checkpoint_text =~ SummaryPrompt.close_tag()
       assert checkpoint_text =~ "Implemented the parser and ran the suite."
       assert checkpoint_text =~ "do NOT acknowledge this checkpoint"
-      # Turn-tagged like every other appended message.
-      assert checkpoint.metadata[:turn] == 7
+
+      # NEVER turn-tagged: the checkpoint sits at index 2 while the real
+      # conversation's turns keep growing, so a turn tag on it would pin the
+      # recency boundary here and every later compression would find nothing old
+      # to replace. It carries `metadata[:checkpoint]` instead, which
+      # `Recency.synthetic?/1` excludes from recency math.
+      assert checkpoint.metadata[:turn] == nil
+      assert checkpoint.metadata[:checkpoint] == true
+      assert EvoGit.Agent.Compression.Recency.synthetic?(checkpoint)
 
       # The last K=4 turns survive VERBATIM (turn numbers, metadata and
       # tool_call_id pairing intact) — they are the working set.
@@ -1058,11 +1086,16 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   end
 
   # ---------------------------------------------------------------------------
-  # drop_stale_background_job_refreshes/1 — the stale-snapshot cleanup
+  # drop_stale_refreshes/1 — the stale runtime-context cleanup
   # ---------------------------------------------------------------------------
-
-  describe "drop_stale_background_job_refreshes/1" do
-    test "drops refreshes carrying a Background Jobs section, keeps every other message in order",
+  # Both rebuild paths (stage-1 prune-only and stage-2 summarising) call this
+  # BEFORE appending the freshly built refresh, so exactly ONE refresh — and
+  # therefore exactly one `## Background Jobs` section — survives a compression.
+  # It is deliberately NOT selective: a plain (job-free) refresh is dropped too,
+  # because leaving one behind inside the protected tail is exactly how the list
+  # used to grow on every compression.
+  describe "drop_stale_refreshes/1" do
+    test "drops EVERY refresh message (jobs-carrying or plain), keeps everything else in order",
          %{repo_path: repo_path} do
       plain_refresh =
         ContextBuilder.build_context_refresh_message(
@@ -1083,12 +1116,13 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert ContextBuilder.refresh_message?(plain_refresh)
       assert ContextBuilder.refresh_message?(jobs_refresh)
       assert text_of(jobs_refresh) =~ "## Background Jobs"
+      refute text_of(plain_refresh) =~ "## Background Jobs"
 
       system = ReqLLM.Context.system(@system_text)
       first_user = ReqLLM.Context.user(@objective)
       assistant = ReqLLM.Context.assistant("working")
       tool = tool_result("call_x", "tool output")
-      checkpoint = Checkpoint.checkpoint_message(@summary, 3)
+      checkpoint = Checkpoint.checkpoint_message(@summary)
       notice = ReqLLM.Context.user("[NOTICE] 1 background shell job finished:\n- `bash-x`")
 
       messages = [
@@ -1102,8 +1136,13 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
         notice
       ]
 
-      assert ContextCompression.drop_stale_background_job_refreshes(messages) ==
-               [system, first_user, assistant, tool, checkpoint, plain_refresh, notice]
+      kept = ContextCompression.drop_stale_refreshes(messages)
+
+      assert kept == [system, first_user, assistant, tool, checkpoint, notice]
+      # Exactly ONE refresh can survive a compression: this function leaves NONE
+      # behind and the caller appends the fresh one afterwards.
+      assert Enum.count(kept, &ContextBuilder.refresh_message?/1) == 0
+      refute Enum.any?(kept, &(text_of(&1) =~ "## Background Jobs"))
 
       # TOTAL: malformed message shapes never match and never raise.
       malformed = [
@@ -1115,10 +1154,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
         %ReqLLM.Message{role: :assistant, content: [%{type: :text, text: @summary}]}
       ]
 
-      assert ContextCompression.drop_stale_background_job_refreshes(malformed ++ [jobs_refresh]) ==
-               malformed
+      assert ContextCompression.drop_stale_refreshes(malformed ++ [jobs_refresh]) == malformed
 
-      assert ContextCompression.drop_stale_background_job_refreshes(:not_a_list) == :not_a_list
+      assert ContextCompression.drop_stale_refreshes(:not_a_list) == :not_a_list
     end
   end
 
@@ -1277,6 +1315,262 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
       assert result == st
       assert compression_count(@window_agent) == 0
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Regression: repeated compression always makes forward progress
+  # ---------------------------------------------------------------------------
+  #
+  # The shipped bug: `Checkpoint.build/3` used to turn-tag the checkpoint it
+  # inserted at index 2 with the NEWEST turn, so `Recency.boundary/3` pinned the
+  # split there forever, every later Stage 2 saw `old == []`, logged "nothing to
+  # replace", kept the ORIGINAL list and the context grew without bound.
+  #
+  # The tests below drive `compress_if_needed/2` end-to-end through the existing
+  # loopback SSE stub, round after round, so a regression shows up as growth or
+  # as a second checkpoint / refresh message.
+
+  describe "repeated compression progress (regression)" do
+    test "four rounds each replace the previous checkpoint and drop the stale refresh",
+         %{repo_path: repo_path} do
+      register_agent(@repeat_agent)
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      {final, final_turn} =
+        Enum.reduce(1..4, {conversation_with_huge_old_span(), 5}, fn round, {messages, turn} ->
+          {messages, turn} =
+            if round == 1 do
+              {messages, turn}
+            else
+              # Grow the transcript between rounds with turns that cannot fit the
+              # tail budget, so a compression that does NOT progress shows up as
+              # unbounded growth instead of a stable size.
+              {messages ++ big_turn_pairs((turn + 1)..(turn + 3)), turn + 3}
+            end
+
+          before_tokens = Recency.estimate_tokens(messages)
+
+          result =
+            ContextCompression.compress_if_needed(
+              state(@repeat_agent, messages,
+                repo_path: repo_path,
+                total_tokens: 60_000,
+                turn: turn
+              ),
+              agent_id: @repeat_agent,
+              llm_model: llm_model,
+              llm_context_window: @window_128k
+            )
+
+          messages = messages_of(result)
+          after_tokens = Recency.estimate_tokens(messages)
+
+          # Exactly ONE checkpoint: the previous round's is REPLACED, never kept
+          # alongside the new one.
+          assert Enum.count(messages, &Checkpoint.checkpoint?/1) == 1,
+                 "round #{round}: expected ONE checkpoint, got " <>
+                   inspect(Enum.count(messages, &Checkpoint.checkpoint?/1))
+
+          # Exactly ONE runtime-context refresh: the stale one is dropped on the
+          # rebuild path before the fresh one is appended.
+          assert Enum.count(messages, &ContextBuilder.refresh_message?/1) == 1,
+                 "round #{round}: expected ONE refresh, got " <>
+                   inspect(Enum.count(messages, &ContextBuilder.refresh_message?/1))
+
+          # The checkpoint is synthetic — never turn-tagged — and sits at index 2.
+          checkpoint = Enum.find(messages, &Checkpoint.checkpoint?/1)
+          assert checkpoint.metadata[:turn] == nil
+          assert checkpoint.metadata[:checkpoint] == true
+          assert Enum.at(messages, 2) == checkpoint
+
+          # The refresh is still LAST.
+          assert ContextBuilder.refresh_message?(List.last(messages))
+
+          # Forward progress: smaller than the input, and under the trigger for
+          # this window — never a context that keeps growing round after round.
+          assert after_tokens < before_tokens,
+                 "round #{round}: #{after_tokens} >= #{before_tokens} (no progress)"
+
+          assert after_tokens < @threshold_128k,
+                 "round #{round}: #{after_tokens} >= threshold #{@threshold_128k}"
+
+          {messages, turn}
+        end)
+
+      assert Enum.count(final, &Checkpoint.checkpoint?/1) == 1
+      assert Enum.count(final, &ContextBuilder.refresh_message?/1) == 1
+      assert final_turn == 14
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 4
+    end
+
+    test "a checkpoint tagged with the NEWEST turn (the pre-fix shape) is replaced, not protected",
+         %{repo_path: repo_path} do
+      register_agent(@prefix_agent)
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      # The PRE-FIX composition: the checkpoint sits at index 2 AND carries the
+      # newest turn tag (the old `build/3` threaded `state.turn` through), which
+      # pinned the recency boundary at 2 — `old == []`, "nothing to replace",
+      # original list kept, context growing forever.
+      seed =
+        [
+          ReqLLM.Context.system(@system_text),
+          ReqLLM.Context.user(@objective) |> tag(0),
+          Checkpoint.checkpoint_message("## Earlier Work\npre-fix checkpoint body.") |> tag(20)
+        ] ++ turn_pairs(1..5) ++ turn_pairs(16..19)
+
+      assert length(seed) == 21
+
+      seeded_checkpoint = Enum.at(seed, 2)
+      assert Checkpoint.checkpoint?(seeded_checkpoint)
+      assert seeded_checkpoint.metadata[:turn] == 20
+
+      # `Recency.synthetic?/1` excludes it from recency math, so an old span to
+      # replace DOES exist under the shipped rules.
+      assert Recency.synthetic?(seeded_checkpoint)
+      assert Checkpoint.split(seed).old != []
+
+      result =
+        ContextCompression.compress_if_needed(
+          state(@prefix_agent, seed,
+            repo_path: repo_path,
+            total_tokens: 60_000,
+            turn: 20
+          ),
+          agent_id: @prefix_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      messages = messages_of(result)
+
+      # 2 head + 1 checkpoint + the 8 retained recent messages + 1 refresh: the
+      # pre-fix checkpoint is GONE and the list is strictly smaller.
+      assert length(messages) == 12
+      assert length(messages) < length(seed)
+      assert Enum.count(messages, &Checkpoint.checkpoint?/1) == 1
+      assert Enum.count(messages, &ContextBuilder.refresh_message?/1) == 1
+
+      # The surviving checkpoint is the FRESH one, untagged, carrying the new
+      # summary (the old body only survives through the accumulation prompt).
+      checkpoint = Enum.at(messages, 2)
+      assert Checkpoint.checkpoint?(checkpoint)
+      assert text_of(checkpoint) =~ "Implemented the parser and ran the suite."
+      refute text_of(checkpoint) =~ "pre-fix checkpoint body."
+      assert checkpoint.metadata[:turn] == nil
+      assert checkpoint.metadata[:checkpoint] == true
+
+      # The oldest real turns (2-5) went with the checkpoint; the recent 8 stay.
+      assert Enum.slice(messages, 3, 8) == Enum.slice(seed, 13, 8)
+      assert_no_orphaned_tools(messages)
+
+      assert_received {:stub_llm_request, request_body}
+      assert request_body =~ "pre-fix checkpoint body."
+
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
+    end
+
+    test "an oversized recent tail is trimmed, keeps tool pairing and appends the refresh last",
+         %{repo_path: repo_path, config_dir: config_dir} do
+      register_agent(@oversized_agent)
+      # Stage 1 would prune the huge tool results model-free and be ADOPTED, so
+      # this test pins the SUMMARISING path deliberately.
+      write_config!(config_dir, "[llm]\ntool_result_pruning = false\n")
+
+      server = EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.start!(@summary)
+      llm_model = %{provider: :openai, id: "stub-model", base_url: server.url, api_key: "k"}
+
+      seed = conversation_with_oversized_recent_turns()
+      assert length(seed) == 16
+      # The four recent turns are each ~75k tokens: far beyond the tail budget.
+      assert Recency.estimate_tokens(seed) > 4 * @threshold_128k
+
+      result =
+        ContextCompression.compress_if_needed(
+          state(@oversized_agent, seed,
+            repo_path: repo_path,
+            total_tokens: 400_000,
+            turn: 20
+          ),
+          agent_id: @oversized_agent,
+          llm_model: llm_model,
+          llm_context_window: @window_128k
+        )
+
+      messages = messages_of(result)
+      tokens = Recency.estimate_tokens(messages)
+
+      # Budget-fitted tail: bounded by `Recency.tail_budget/1` (0.2 * window,
+      # capped at 40k), so the rebuilt context is far under both the trigger and
+      # the window even though the input was enormous.
+      assert Recency.tail_budget(context_window: @window_128k) == 26_214
+      assert tokens < @threshold_128k
+      assert tokens < 40_000
+
+      assert Enum.count(messages, &Checkpoint.checkpoint?/1) == 1
+      assert Checkpoint.checkpoint?(Enum.at(messages, 2))
+      assert Enum.count(messages, &ContextBuilder.refresh_message?/1) == 1
+
+      # The trimmed suffix never starts with an orphaned `:tool` result.
+      refute Enum.at(messages, 3).role == :tool
+      assert_no_orphaned_tools(messages)
+
+      # The appended runtime-context refresh is still the LAST message.
+      assert ContextBuilder.refresh_message?(List.last(messages))
+      assert EvoGit.Agent.ContextCompressionStagesTest.StubLlmServer.request_count(server) == 1
+    end
+  end
+
+  # A seed whose OLD span is enormous (two ~100k-token messages) and whose last
+  # four turns are small, so round 1 already has to shrink.
+  defp conversation_with_huge_old_span do
+    [
+      ReqLLM.Context.system(@system_text),
+      ReqLLM.Context.user(@objective) |> tag(0),
+      ReqLLM.Context.assistant("old analysis " <> String.duplicate("a", 400_000)) |> tag(0),
+      ReqLLM.Context.user("old note " <> String.duplicate("b", 400_000)) |> tag(1)
+    ] ++ turn_pairs(2..5)
+  end
+
+  # Two tagged messages per turn, the assistant one large enough that three
+  # appended turns (~150k tokens) dwarf the 26_214-token tail budget at the 128k
+  # window.
+  defp big_turn_pairs(turns) do
+    Enum.flat_map(turns, fn turn ->
+      [
+        ReqLLM.Context.assistant("turn #{turn} analysis " <> String.duplicate("x", 200_000))
+        |> tag(turn),
+        ReqLLM.Context.user("note #{turn}") |> tag(turn)
+      ]
+    end)
+  end
+
+  # Four recent turns that are EACH ~75k tokens (a 300 KB tool result), i.e. far
+  # beyond the 26_214-token tail budget at the 128k window.
+  defp conversation_with_oversized_recent_turns do
+    [
+      ReqLLM.Context.system(@system_text),
+      ReqLLM.Context.user(@objective) |> tag(0),
+      ReqLLM.Context.assistant("old work") |> tag(0),
+      assistant_with_call("reading the old log", "call_old") |> tag(1),
+      tool_result("call_old", "OLD TOOL OUTPUT") |> tag(1),
+      ReqLLM.Context.user("old note") |> tag(1)
+    ] ++
+      Enum.flat_map(2..5, fn turn ->
+        [
+          assistant_with_call("turn #{turn} probe", "call_#{turn}") |> tag(turn),
+          tool_result("call_#{turn}", String.duplicate("z", 300_000) <> "\nFINAL: #{turn}")
+          |> tag(turn)
+        ]
+      end) ++
+      [
+        assistant_with_call("turn 6 probe", "call_6") |> tag(6),
+        tool_result("call_6", "turn 6 output") |> tag(6)
+      ]
   end
 
   # Every retained `:tool` message must still have the assistant `tool_calls`

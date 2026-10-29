@@ -36,9 +36,17 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
   # 1..9. With the default 4-turn window the boundary is index 12, so the tool
   # results at indices 3, 5, 7, 9, 11 are "old" and 13, 15, 17, 19 are recent.
   defp conversation(tool_text) do
+    conversation_with(fn turn -> tool_result(turn, tool_text.(turn)) end)
+  end
+
+  # The same 20-message shape, with the tool result of each turn supplied by the
+  # caller — the fixture a media test needs so the interesting message sits in
+  # the OLD region (turn 1, index 3) while every tool result keeps its producing
+  # assistant `tool_calls`.
+  defp conversation_with(tool_result_fun) do
     turns =
       Enum.flat_map(1..9, fn turn ->
-        [assistant_with_call(turn), tool_result(turn, tool_text.(turn))]
+        [assistant_with_call(turn), tool_result_fun.(turn)]
       end)
 
     [
@@ -47,10 +55,13 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
     ]
   end
 
-  # A conversation whose tool results all sit in the old region, for building
-  # fixtures with a single interesting message at a known index.
-  defp short_tool_results(range) do
-    Enum.map(range, fn turn -> tool_result(turn, "short output #{turn}") end)
+  # A conversation whose turn-1 tool result carries `parts` (so it is OLD and a
+  # pruning candidate) and whose remaining results are short and unprunable.
+  defp media_conversation(parts) do
+    conversation_with(fn
+      1 -> Context.tool_result("call_1", "read_file", parts) |> tag(1)
+      turn -> tool_result(turn, "short output #{turn}")
+    end)
   end
 
   defp text_parts(message) do
@@ -121,13 +132,34 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
 
       result = ToolResultPruner.prune(messages)
 
+      # The tail BUDGET now shrinks the protected suffix (8 huge messages are
+      # ~100k tokens against a 40k budget), so the boundary lands later than the
+      # 12 the turn/positional rule alone yields — hidden here as index 16,
+      # rewound off the `:tool` result at 17.
+      boundary = Recency.boundary(messages)
+      assert boundary == 16
+      assert Recency.tail_budget() == 40_000
+
+      # Every non-`:tool` message is byte-identical, whatever the boundary.
+      messages
+      |> Enum.with_index()
+      |> Enum.each(fn {message, index} ->
+        if message.role != :tool do
+          assert Enum.at(result.messages, index) == message,
+                 "non-tool message at index #{index} was modified"
+        end
+      end)
+
+      # Only the OLD tool results are candidates.
+      assert result.pruned == 7
       assert Enum.at(result.messages, 0) == Enum.at(messages, 0)
       assert Enum.at(result.messages, 1) == Enum.at(messages, 1)
       assert Enum.at(result.messages, 2) == Enum.at(messages, 2)
 
-      # Only the five OLD tool results are candidates; every huge text part of a
-      # non-tool message is untouched.
-      assert result.pruned == 5
+      Enum.each([17, 19], fn index ->
+        assert Enum.at(result.messages, index) == Enum.at(messages, index),
+               "recent tool result at index #{index} was modified"
+      end)
     end
   end
 
@@ -135,23 +167,21 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
     test "(e) a tool result carrying an image loses the payload and gains one placeholder" do
       image_payload = String.duplicate("z", 5_000)
 
-      media =
-        Context.tool_result("call_1", "read_file", [
+      messages =
+        media_conversation([
           ContentPart.text("see attached"),
           ContentPart.image(image_payload, "image/png"),
           ContentPart.thinking("deep thought"),
           ContentPart.text("done")
         ])
-        |> tag(1)
-
-      messages = [
-        tag(Context.system("s"), 0),
-        tag(Context.user("u"), 0),
-        media | short_tool_results(2..11)
-      ]
 
       result = ToolResultPruner.prune(messages)
-      pruned_message = Enum.at(result.messages, 2)
+      # The media result sits in the OLD region (index 3) …
+      assert hd(messages).role == :system
+      assert Enum.at(messages, 3).role == :tool
+      assert Enum.at(result.messages, 2) == Enum.at(messages, 2)
+
+      pruned_message = Enum.at(result.messages, 3)
 
       assert result.pruned == 1
       assert Enum.map(pruned_message.content, & &1.type) == [:text, :text, :thinking, :text]
@@ -172,64 +202,45 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
     end
 
     test "(e) several media parts collapse into one placeholder naming the count" do
-      multi =
-        Context.tool_result("call_1", "read_file", [
+      messages =
+        media_conversation([
           ContentPart.image("aaaa", "image/png"),
           ContentPart.image_url("http://example.test/y.png"),
           ContentPart.text("tail")
         ])
-        |> tag(1)
 
-      messages = [
-        tag(Context.system("s"), 0),
-        tag(Context.user("u"), 0),
-        multi | short_tool_results(2..11)
-      ]
+      result = ToolResultPruner.prune(messages)
+      pruned_message = Enum.at(result.messages, 3)
 
-      pruned_message =
-        messages |> then(&ToolResultPruner.prune(&1)) |> Map.get(:messages) |> Enum.at(2)
-
+      assert result.pruned == 1
       assert Enum.map(pruned_message.content, & &1.type) == [:text, :text]
       assert hd(pruned_message.content).text =~ "2 attachment part(s)"
       assert List.last(pruned_message.content).text == "tail"
     end
 
     test "(e) media inside the recent window survives untouched" do
-      media =
-        Context.tool_result("call_1", "read_file", [
+      messages =
+        media_conversation([
           ContentPart.image(String.duplicate("z", 5_000), "image/png")
         ])
-        |> tag(1)
-
-      messages = [
-        tag(Context.system("s"), 0),
-        tag(Context.user("u"), 0),
-        media | short_tool_results(2..11)
-      ]
 
       result = ToolResultPruner.prune(messages, keep_recent_turns: 12)
 
       assert result.pruned == 0
-      assert Enum.at(result.messages, 2) == Enum.at(messages, 2)
+      assert Enum.at(result.messages, 3) == Enum.at(messages, 3)
     end
 
     test "(e) a message with BOTH oversized text and media gets both treatments" do
-      combo =
-        Context.tool_result("call_1", "read_file", [
+      messages =
+        media_conversation([
           ContentPart.text(head_middle_tail()),
           ContentPart.image(String.duplicate("q", 1_000), "image/png")
         ])
-        |> tag(1)
 
-      messages = [
-        tag(Context.system("s"), 0),
-        tag(Context.user("u"), 0),
-        combo | short_tool_results(2..11)
-      ]
+      result = ToolResultPruner.prune(messages)
+      pruned_message = Enum.at(result.messages, 3)
 
-      pruned_message =
-        messages |> then(&ToolResultPruner.prune(&1)) |> Map.get(:messages) |> Enum.at(2)
-
+      assert result.pruned == 1
       assert Enum.map(pruned_message.content, & &1.type) == [:text, :text]
       assert Enum.at(pruned_message.content, 0).text =~ @marker
 
@@ -331,6 +342,73 @@ defmodule EvoGit.Agent.Compression.ToolResultPrunerTest do
 
       assert ToolResultPruner.prune(messages, keep_recent_turns: 0).pruned == 5
       assert ToolResultPruner.prune(messages, keep_recent_turns: :nope).pruned == 5
+    end
+  end
+
+  describe "prune/2 tail budget" do
+    test "(j) a smaller :context_window shrinks the protected tail and prunes more" do
+      messages = conversation(fn _turn -> head_middle_tail() end)
+
+      # The default window (200_000 → a 40_000-token budget, capped) leaves the
+      # four-turn tail intact: boundary 12, five old tool results.
+      assert Recency.tail_budget() == 40_000
+      assert Recency.boundary(messages) == 12
+      assert ToolResultPruner.prune(messages).pruned == 5
+
+      # A tiny window's 1_600-token budget cannot hold the four huge recent tool
+      # results, so the boundary moves later and MORE old results are candidates.
+      assert Recency.tail_budget(context_window: 8_000) == 1_600
+
+      result = ToolResultPruner.prune(messages, context_window: 8_000)
+
+      assert result.pruned == 8
+      assert result.pruned > ToolResultPruner.prune(messages).pruned
+
+      # The budget may only shrink the suffix: the retained region still ends at
+      # the last message and the boundary never orphans a tool result.
+      boundary =
+        Recency.boundary(messages, Recency.default_keep_recent_turns(), context_window: 8_000)
+
+      assert boundary > 12
+
+      Enum.each(boundary..(length(messages) - 1), fn index ->
+        assert Enum.at(result.messages, index) == Enum.at(messages, index),
+               "tool result at index #{index} (>= boundary #{boundary}) was modified"
+      end)
+
+      assert List.last(result.messages) == List.last(messages)
+      assert Enum.all?(result.messages, &Message.valid?/1)
+    end
+
+    test "(j) a LARGER :context_window keeps the default behaviour" do
+      messages = conversation(fn _turn -> head_middle_tail() end)
+
+      # 0.2 * 1_000_000 is 200_000 tokens, so the fixed 40_000 cap governs and the
+      # budget is identical to the default.
+      assert Recency.tail_budget(context_window: 1_000_000) == Recency.tail_budget()
+      assert ToolResultPruner.prune(messages, context_window: 1_000_000).pruned == 5
+    end
+
+    test "(j) a pathological window never raises and falls back to the default" do
+      messages = conversation(fn _turn -> head_middle_tail() end)
+
+      for window <- [0, -1, -100_000, :nope, "8000", 1.5, nil] do
+        assert ToolResultPruner.prune(messages, context_window: window).pruned == 5,
+               "unexpected pruning for context_window: #{inspect(window)}"
+
+        assert Recency.tail_budget(context_window: window) == Recency.tail_budget()
+      end
+    end
+
+    test "(j) an explicit :tail_budget_tokens / :tail_budget_fraction override the window" do
+      messages = conversation(fn _turn -> head_middle_tail() end)
+
+      # A 1-token cap leaves only the last message protected — every old tool
+      # result is then a candidate EXCEPT the ones the rewind keeps.
+      assert ToolResultPruner.prune(messages, tail_budget_tokens: 1).pruned == 8
+
+      # A fraction big enough for the whole tail restores the default boundary.
+      assert ToolResultPruner.prune(messages, tail_budget_fraction: 0.9).pruned == 5
     end
   end
 
