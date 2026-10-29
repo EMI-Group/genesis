@@ -54,8 +54,11 @@ defmodule EvoGit.Umbrella.MixProject do
           # Bundle ERTS so the tarball runs on hosts without Erlang installed.
           include_erts: true,
           overlays: ["rel/overlays"],
-          # Bake a compile-time flag into sys.config so runtime.exs can detect
-          # server mode without relying on extra env vars.
+          # Intended compile-time server flag. NOTE: the `config:` release option
+          # does not reach the generated sys.config in this umbrella project, so
+          # runtime.exs detects server mode from `RELEASE_NAME=genesis_server`
+          # (the signal the release launcher always exports). Kept for forward
+          # compatibility with Mix releases that merge it.
           config: [evo_dash: [server_release: true]]
         ]
       ]
