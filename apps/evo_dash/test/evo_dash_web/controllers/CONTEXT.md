@@ -43,4 +43,4 @@ Pure render tests (`async: true`, no store, no env): the 404 and 500 templates f
 
 ## `health_controller_test.exs`
 
-`async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"`; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).
+`async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"` that is strictly `> 0` and below a 24 h sanity bound (the regression guard: the field used to always degrade to `0`), plus a monotonicity check that a second probe after `Process.sleep(20)` reports `>=` the first; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).

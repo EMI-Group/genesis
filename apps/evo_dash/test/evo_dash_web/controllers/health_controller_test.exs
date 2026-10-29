@@ -17,6 +17,31 @@ defmodule EvoDashWeb.HealthControllerTest do
       assert body["uptime_ms"] >= 0
     end
 
+    # The regression this guards: the old implementation read the VM start time
+    # from the wrong clock/unit and always degraded to `0`. The test VM has been
+    # up for a while, so a real (non-zero) uptime is deterministic here.
+    test "reports the real VM uptime in milliseconds", %{conn: conn} do
+      body = json_response(get(conn, "/health"), 200)
+
+      assert is_integer(body["uptime_ms"])
+      assert body["uptime_ms"] > 0
+      # Sane upper bound: a fresh test VM is minutes old at most, and certainly
+      # not near an epoch-value (~1.7e12 ms) or a native-unit leak (~1e17 ms).
+      assert body["uptime_ms"] < :timer.hours(24)
+    end
+
+    test "uptime is monotonic across calls", %{conn: conn} do
+      first = json_response(get(conn, "/health"), 200)["uptime_ms"]
+
+      Process.sleep(20)
+
+      second = json_response(get(conn, "/health"), 200)["uptime_ms"]
+
+      assert is_integer(first)
+      assert is_integer(second)
+      assert second >= first
+    end
+
     test "needs no session, CSRF token or authentication", %{conn: conn} do
       # A bare connection (no browser pipeline, no cookies) is enough.
       conn = get(conn, "/health")

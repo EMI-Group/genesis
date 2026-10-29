@@ -11,6 +11,15 @@ defmodule EvoDashWeb.HealthController do
 
   Response: `200` with `application/json`,
   `{"status":"ok","version":"<vsn>","uptime_ms":<integer>}`.
+
+  `uptime_ms` is the elapsed VM time measured on the Erlang **monotonic** clock:
+  `:erlang.system_info(:start_time)` and `:erlang.monotonic_time/0` are two
+  readings of the SAME clock, so their difference is the uptime. The
+  non-obvious part is the unit — `:start_time` is an INTEGER in the runtime's
+  native time unit (nanoseconds on every supported platform), NOT an epoch
+  timestamp, a timestamp tuple or a millisecond value, so it must be subtracted
+  from a native-unit reading and converted with `:erlang.convert_time_unit/3`
+  (mixing it with a millisecond reading yields a nonsensical value).
   """
 
   use EvoDashWeb, :controller
@@ -32,13 +41,17 @@ defmodule EvoDashWeb.HealthController do
     end
   end
 
-  # `system_info(:start_time)` is an Erlang epoch timestamp, so `:timer.now_diff/2`
-  # against `:os.timestamp/0` yields elapsed native time. Clamped at 0 so clock
-  # skew (a start time in the "future") can never produce a negative uptime.
+  # Both readings are on the Erlang monotonic clock and therefore on the same
+  # time base: `system_info(:start_time)` is the native-unit monotonic reading
+  # of VM start, `monotonic_time/0` the native-unit reading of now. Converting
+  # the difference keeps us on one clock (an epoch/monotonic mix or a
+  # native/millisecond mix would be wrong). Clamped at 0 so clock adjustments
+  # can never produce a negative uptime.
   defp uptime_ms do
     case :erlang.system_info(:start_time) do
-      start_time when is_tuple(start_time) ->
-        max(div(:timer.now_diff(:os.timestamp(), start_time), 1000), 0)
+      started_at when is_integer(started_at) ->
+        elapsed = :erlang.monotonic_time() - started_at
+        max(:erlang.convert_time_unit(elapsed, :native, :millisecond), 0)
 
       _other ->
         0
