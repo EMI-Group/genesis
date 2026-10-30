@@ -3,9 +3,9 @@
 ## Intent
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
-69 test files (`*_test.exs`) + `test_helper.exs` + `support/`: 52 433 lines (51 423 in the test files, 1 010 in `support/*.ex`).
-1 785 statically declared `test` blocks (the four `for`-generated declarations in `components/remote_gate_components_test.exs` expand to 12) plus 2 doctests (`EvoDash.SettingsUtils`) → 1 793 tests at runtime.
-Measured run on a quiet host: 1 795 passed (1 793 tests + 2 doctests) in 17.7–18.5 s — 3.4–3.9 s async, 13.9–15.1 s sync — ~22 s wall clock, zero stray console lines.
+70 test files (`*_test.exs`) + `test_helper.exs` + `support/`: 52 782 lines (51 545 in the test files, 1 146 in `support/*.ex`).
+1 788 statically declared `test` blocks (the four `for`-generated declarations in `components/remote_gate_components_test.exs` expand to 12) plus 2 doctests (`EvoDash.SettingsUtils`) → 1 796 tests at runtime.
+Measured run: 1 798 passed (1 796 tests + 2 doctests) in 18.8–19.4 s — 4.2–4.8 s async, 14.0–15.1 s sync — ~23 s wall clock, zero stray console lines.
 The ~3–4 s gap between ExUnit's total and the wall clock is the umbrella's app boot, paid once per `mix test` invocation.
 Stable across explicit seeds (0, 1, 2, 12345, 533180, 8000147, 987654321) and across back-to-back runs.
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first (~67 s).
