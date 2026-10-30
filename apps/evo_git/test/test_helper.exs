@@ -7,10 +7,15 @@ File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 # --- Suite-wide fast test constants ---------------------------------------
 # Set ONCE here because EVERY test in the suite wants this same fast/fake value.
 # A per-test mutation of one of these keys is a BEAM-global write that a
-# concurrently running module would observe, so it forces that module to
-# `async: false`; holding the shared value here keeps the affected modules
-# concurrent. Production defaults are untouched — these `Application.put_env/3`
-# calls exist only in the test VM's helper (never in `config/`).
+# concurrently running module would observe, so a module that writes it must be
+# `async: false`. Holding the shared value here removes that one mutation from
+# every module that used to repeat it — the key itself is then never a reason to
+# stay sync (whatever else still forces sync in such a module is named in its own
+# `@moduledoc`). Only add a key whose value is identical for EVERY writer in
+# `test/`; a key with two or more required values must stay a local, restored
+# `on_exit` write. Production defaults are untouched — these
+# `Application.put_env/3` calls exist only in the test VM's helper (never in
+# `config/`).
 #
 # Default nix integration OFF. EvoGit.Nix.enabled?/0 reads this app env first;
 # when unset it falls back to the developer's REAL ~/.config/genesis config and
