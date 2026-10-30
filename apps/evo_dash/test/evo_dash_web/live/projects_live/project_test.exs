@@ -20,10 +20,11 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
   is no injectable override), while every test in this module runs inside the
   per-test isolated dir and the local-node tests WRITE into it
   (`write_model_profile_config/0`, `CustomAgents.save_model_selection_script/1`).
-  An async config reader (the async page-mounting suites read config through the
-  NodeAware/Appearance hooks) could therefore observe a temp dir. Splitting the
-  six config-free tests out would require moving the file-local helpers into
-  `test/support/`, which this suite may not touch.
+  `LiveHooks.Appearance` resolves config at every page mount, so a concurrent
+  async mount would observe this temp dir. Only the three local-node tests truly
+  need the isolation; the six pure/remote ones could form an async module, but
+  that would duplicate (or extract to `test/support/`, out of scope) the shared
+  fixtures to recover ~4 ms — not worth it.
   """
 
   use ExUnit.Case, async: false
