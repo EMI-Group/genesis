@@ -266,6 +266,16 @@ The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDA
 - `save_user_config/1` does NOT auto-reload scheduler state — the dashboard (SettingsLive) calls `reload_remote_config` but IGNORES its return → a silent stale-config window until a manual reload.
 - `RemoteConnections` does NOT auto-create an empty `remote_connections.toml` (unlike the config skeleton) — the file appears only when a target is saved.
 
+## Test Seam — per-process config dir (`:config_dir_fun`)
+
+- `EvoGit.Platform.config_dir/1` consults the app-env seam `:evo_git, :config_dir_fun` at CALL time before the XDG resolution.
+- The seam accepts a zero-arity fun or an `{m, f, a}` tuple; the result must be a non-empty binary (garbage falls through to the production default, no `try/rescue`).
+- It is **default-inert**: production never sets `:config_dir_fun`, so production paths are byte-identical to the XDG/APPDATA/Library resolution.
+- `test/test_helper.exs` installs `{EvoGit.TestSupport.ConfigDir, :resolve, []}` (compiled from `test/support/config_dir.ex`).
+- Helpers: `resolve/0` (own process dict → `$callers` pids on the local node → `nil`), `activate/1` (put in the calling process, e.g. from `setup`), `isolate_module!/1` (`setup_all`; unique tmp dir + `on_exit` cleanup, no process dict) and `isolate!/1` (`isolate_module!/1` + `activate/1`).
+- `$callers` reaches `GenServer`/`Task`/`Supervisor` children started FROM the test process (OTP 24+ `proc_lib`), NOT boot-time singletons (`AgentScheduler`, `TaskRegistry`, `Store`, `PeakHourEngine`) — a module reading config inside those must stay `async: false`.
+- The `:persistent_term` file cache is keyed by path, so a unique dir per test is cache-safe.
+
 ## Web Search Provider Config
 
 Web search (`[tools.search]`) supports providers `[:tavily, :perplexity, :exa, :bing, :brave]`. The **single source of truth** for that list is `EvoGit.Config.Schema.Definitions.search_providers/0` (module attribute `@search_providers`) — do NOT hardcode it elsewhere. It feeds BOTH the schema `in:` validation (`[:tools, :search, :provider]`) and `EvoGit.Config.atomize_enum_values/1`, which atomizes `provider` and each provider section's `search_depth` against `[:basic, :advanced]` via that accessor. `tools_search_enabled?/0` is provider-generic: it resolves the SELECTED provider's own `api_key_credential_key` (with a tavily fallback).
