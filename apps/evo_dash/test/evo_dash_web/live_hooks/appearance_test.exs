@@ -28,54 +28,47 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
   #    local one. Whole-page mounts assert data-accent-color; bare-socket
   #    unit tests drive on_mount/handle_params/handle_info directly.
   #
-  # async: false — the module-wide setup below redirects `XDG_CONFIG_HOME` at a
-  # per-test temp dir, which is the ONLY config-dir seam
-  # (`EvoGit.Platform.config_dir/1` → `base_dir/3` reads the env var at call
-  # time; there is no injectable override, and a `Process.get` seam cannot work
-  # because LiveView page processes do not inherit the test process's process
-  # dictionary). Mutating that env var is PROCESS-GLOBAL, so any concurrently
-  # running `async: true` module that reads config (every mounted page resolves
-  # `EvoGit.Config.resolve/1`; NodeAware reads `EvoGit.RemoteConnections`) would
-  # observe this test's temp dir instead of the run-wide one. Same pattern — and
-  # same non-negotiable reason — as settings_live_test.exs / node_aware_test.exs.
+  # async: true — this suite mutates NO process-global state.
   #
-  # The per-test dir is itself REQUIRED by the tests that WRITE config (a shared
-  # run-wide dir would make them order-dependent, and tests inside one async
-  # module run concurrently):
+  # The config directory is isolated PER PROCESS through the test-only
+  # `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by
+  # test/test_helper.exs), never through a BEAM-global `XDG_CONFIG_HOME` write.
+  # The override lives in the TEST process' dictionary and reaches the mounted
+  # LiveView plus its supervised load tasks through the OTP `:"$callers"` chain
+  # (`support/config_dir_test.exs` proves all three levels), so every test gets
+  # its OWN empty `<temp dir>/genesis` config dir — the exact layout the old
+  # env-var redirect produced, with zero assertion changes.
+  #
+  # The per-test dir is still REQUIRED by the tests that WRITE config (a shared
+  # run-wide dir would make them order-dependent):
   #   * "connected render — data-accent-color on #app-layout (local node)" —
   #     seed_config/1 writes `<temp dir>/genesis/config.toml` with
   #     `accent_color = "teal"`; its sibling "fresh (empty) user config" test
   #     asserts the schema default "blue" and would see that teal file.
   #   * "remote node accents — the per-node accent cache (flash fix)" —
   #     save_target!/1 writes `remote_connections.toml` in the same temp dir.
-  # The pure-seam and dead-render describes write nothing, but the setup is
-  # module-wide.
-  use EvoDashWeb.ConnCase, async: false
+  #
+  # The two shared hubs this file touches are safe concurrently:
+  #   * `EvoDash.AccentCache.reset()` below is HYGIENE, not a concurrency
+  #     requirement: every key this file writes is per-test unique (and no other
+  #     suite in `apps/evo_dash/test` references `EvoDash.AccentCache` at all),
+  #     and the cache is a pure memo of resolved accents — a concurrent mount
+  #     that misses it simply re-resolves from its own config.
+  #   * `EvoDash.ActiveTasks` (the sidebar hub seeded on every mount) is already
+  #     reset by `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, and
+  #     no test here reads it.
+  # No app-env seam is written anywhere in this file.
+  use EvoDashWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
 
   alias EvoDashWeb.LiveHooks.Appearance
 
   setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_appearance_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
+    # Per-process config dir (see the module comment). `isolate!/1` creates a
+    # unique temp dir, activates it for this process and registers the
+    # `File.rm_rf!` cleanup itself.
+    EvoDash.Test.ConfigDir.isolate!("evogit_appearance_test_config")
 
     # `EvoDash.ActiveTasks` (the sidebar hub seeded on every mount) is already
     # reset by `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, so it
@@ -177,7 +170,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
   describe "connected render — data-accent-color on #app-layout (local node)" do
     # Seeds config.toml with the given TOML body BEFORE mounting. The file-level
-    # setup has already redirected XDG_CONFIG_HOME to a per-test temp dir, so
+    # setup has already activated a per-process config-dir override
+    # (`EvoDash.Test.ConfigDir.isolate!/1` → `<temp dir>/genesis`), so
     # EvoGit.Config.config_path() is unique to this test and resolve() picks the
     # file up via its mtime+size-validated persistent_term cache (keyed by path)
     # — no explicit cache reset is needed when the file is written before the
@@ -240,7 +234,8 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
 
     test "fresh (empty) user config resolves the schema default \"blue\" on another page",
          %{conn: conn} do
-      # No config.toml is written in this test (the isolated XDG dir is empty).
+      # No config.toml is written in this test (the isolated config dir is
+      # empty).
       # /system is a different LiveView than /welcome — proving the hook is
       # registered GLOBALLY (every live_view/0 mount) and the default flows
       # through Layouts.app unchanged.
