@@ -3,10 +3,10 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   Tests for CoW (copy-on-write) optimized worktree creation.
 
   Uses `async: false` because `:persistent_term` (`:evogit_cow_worktree_enabled`)
-  is global state shared across all tests — concurrent flag mutations would race
-  — and because `setup_all` redirects the process-wide `XDG_CONFIG_HOME` env var
-  via `System.put_env/2` (so `Config.resolve([:git, :cow_worktree_creation])`
-  sees only the schema default).
+  is global state shared across all tests — concurrent flag mutations would race.
+  The config dir is isolated PER PROCESS through the
+  `EvoGit.TestSupport.ConfigDir` seam (never `XDG_CONFIG_HOME`), so
+  `Config.resolve([:git, :cow_worktree_creation])` sees only the schema default.
 
   Every fixture repository is a `File.cp_r!` COPY of one per-module git
   TEMPLATE built in `setup_all` (`git init` with an EMPTY template dir, a
@@ -23,6 +23,7 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   alias EvoGit.Adapters.Git
   alias EvoGit.Adapters.CowWorktree
   alias EvoGit.GitEnv
+  alias EvoGit.TestSupport.ConfigDir
   alias EvoGit.TestSupport.Submodule
 
   @flag_key :evogit_cow_worktree_enabled
@@ -42,36 +43,21 @@ defmodule EvoGit.Adapters.CowWorktreeTest do
   # -------------------------------------------------------------------------
 
   setup_all do
-    # Isolate config so Config.resolve([:git, :cow_worktree_creation]) returns
-    # the schema default (:auto) — no user TOML interferes. The redirect lives
-    # for the whole module (async: false, so no other module runs alongside),
-    # which also keeps EvoGit.Config's mtime+size cache warm across tests.
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "cow-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
+    # ONE module-unique config dir, activated per test in `setup` below
+    # (`setup_all` runs in a different process than the tests), so
+    # Config.resolve([:git, :cow_worktree_creation]) returns the schema default
+    # (:auto) with no user TOML interference.
     :persistent_term.put(@template_key, git_template!())
 
-    on_exit(fn ->
-      :persistent_term.erase(@template_key)
+    on_exit(fn -> :persistent_term.erase(@template_key) end)
 
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    :ok
+    {:ok, config_dir: ConfigDir.isolate_module!("cow-test")}
   end
 
-  setup do
+  setup %{config_dir: config_dir} do
+    # Per-process config-dir override (never a process-wide env var).
+    ConfigDir.activate(config_dir)
+
     # Erase the global flag so each test starts from a known state, and leave it
     # unset for subsequent test files.
     :persistent_term.erase(@flag_key)

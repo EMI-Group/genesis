@@ -2,7 +2,8 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirTestHelpers do
   @moduledoc false
 
   # Shared fixtures for the managed per-task tmpdir suite in this file. The
-  # suite runs `async: false` on `EvoGit.TaskRegistryCase`, so the "current"
+  # suite runs `async: false` on `EvoGit.TaskRegistryCase` (the registry's tmpdir
+  # config read goes through the process-wide XDG_CONFIG_HOME), so the "current"
   # isolated Store is resolved from the test process dictionary via
   # `EvoGit.TaskRegistryCase.store/0`.
 
@@ -85,12 +86,20 @@ defmodule EvoGit.TaskRegistry.TaskTmpdirReclaimTest do
   also exactly what exercises the registry's per-task path resolution
   (`opts[:path]` → `TaskTmpdir.reclaim/2`).
 
-  ## `async: false` — forcing globals
+  ## `async: false` — forcing global (VERIFIED, do not "fix")
 
-  `setup_all/1` mutates the process-wide `XDG_CONFIG_HOME` env var, read live by
-  `EvoGit.Config.resolve/1` (through `EvoGit.Platform.config_dir/1`) on every
-  concurrently running module — isolating it is precisely what keeps this
-  module off the real `/tmp/genesis`.
+  `setup_all/1` must mutate the process-wide `XDG_CONFIG_HOME` env var, read live
+  by `EvoGit.Config.resolve/1` (through `EvoGit.Platform.config_dir/1`) on every
+  concurrently running module — isolating it is precisely what keeps this module
+  off the real `/tmp/genesis`.
+
+  The per-process `EvoGit.TestSupport.ConfigDir` seam does NOT work here: the
+  reclaim runs inside the isolated registry GenServer that
+  `EvoGit.TaskRegistryCase` starts via `start_supervised!/1`, and that process
+  does not inherit the test's `:evogit_config_dir` override (verified
+  empirically — with the seam the test process resolves `:per_repo` while the
+  registry falls back to the default `:system` mode and reclaims nothing). The
+  BEAM-global env var is therefore load-bearing for the REGISTRY's config read.
   """
 
   import EvoGit.TaskRegistry.TaskTmpdirTestHelpers,

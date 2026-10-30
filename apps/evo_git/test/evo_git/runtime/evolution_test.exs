@@ -1,8 +1,10 @@
 defmodule EvoGit.Runtime.EvolutionTest do
   @moduledoc """
   Mutates process-global state observable by concurrently running modules → `async: false`:
-  the `XDG_CONFIG_HOME` env var (read by `EvoGit.Config`/`EvoGit.CustomAgents`), the live
-  scheduler's `model_profiles` (`AgentScheduler.update_config/1`), and the global `Logger` level.
+  the live scheduler's `model_profiles` (`AgentScheduler.update_config/1`) and the global
+  `Logger` level. The config dir itself is isolated PER PROCESS through the
+  `EvoGit.TestSupport.ConfigDir` seam (never `XDG_CONFIG_HOME`) so `EvoGit.Config` /
+  `EvoGit.CustomAgents` never read the real `~/.config/genesis/`.
   """
   use ExUnit.Case, async: false
 
@@ -11,29 +13,13 @@ defmodule EvoGit.Runtime.EvolutionTest do
   alias EvoGit.Adapters.Git
   alias EvoGit.Runtime.Evolution
   alias EvoGit.Runtime.Genesis
+  alias EvoGit.TestSupport.ConfigDir
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
-  # touches the real ~/.config/genesis/ directory (same pattern as
-  # test/evo_git/runtime/root_agent_helpers_test.exs).
+  # The config dir is a per-process override, so CustomAgents/config reads in
+  # this (and any process this test starts) never touch the real
+  # ~/.config/genesis/ directory.
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-evolution")
     :ok
   end
 

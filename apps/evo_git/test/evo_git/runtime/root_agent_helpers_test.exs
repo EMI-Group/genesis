@@ -1,35 +1,21 @@
 defmodule EvoGit.Runtime.RootAgentHelpersTest do
   @moduledoc """
-  Mutates the process-global `XDG_CONFIG_HOME` env var (read by `EvoGit.CustomAgents`) → `async: false`.
+  `async: true` — `EvoGit.CustomAgents` reads its config dir PER PROCESS through
+  the `EvoGit.TestSupport.ConfigDir` seam (`EvoGit.Platform.config_dir/1`), so
+  no BEAM-global state (no `XDG_CONFIG_HOME` env var, no app-env key) is
+  mutated and the real `~/.config/genesis/` is never touched.
   """
-  use ExUnit.Case, async: false
-
-  # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
-  # touches the real ~/.config/genesis/ directory (same pattern as
-  # test/evo_git/custom_agents_test.exs).
-  setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    :ok
-  end
+  use ExUnit.Case, async: true
 
   alias EvoGit.Runtime.Helpers
+  alias EvoGit.TestSupport.ConfigDir
+
+  # Point this process' config dir at a fresh temp dir so CustomAgents never
+  # touches the real ~/.config/genesis/ directory.
+  setup do
+    ConfigDir.isolate!("evogit-root-agent-helpers")
+    :ok
+  end
 
   defmodule DefaultRoot do
   end
