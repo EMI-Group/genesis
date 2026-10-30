@@ -1,60 +1,100 @@
-defmodule EvoDashWeb.NodeAwareTest do
-  # Tests requiring global mutation (isolated Store/TaskRegistry swap,
-  # XDG_CONFIG_HOME, the EvoDash.ActiveTasks hub, and fake connection managers
-  # registered in the shared EvoGit.RemoteConnection.Registry).
+# A minimal GenServer that stands in for a real connection manager in
+# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
+# resolves a configured status for a target id without starting any SSH
+# machinery. The process dies (and its Registry entry is auto-removed) at
+# test end via `start_supervised!`.
+#
+# Defined FIRST in this file: an `async: true` test module starts running as
+# soon as it is registered by the compiler, so a fake defined further down
+# would not be loaded yet when the async tests call `start_supervised!/1`.
+#
+# Start args: `{target_id, status}` (status-only manager, kept for existing
+# call sites), or `{target_id, status, connect_result}` where `connect_result`
+# is what `handle_call(:connect, ...)` replies with (default
+# `{:ok, :connecting}`, e.g. `{:ok, :connected}` or `{:error, reason}`).
+#
+# `:connect` records `{:connect, caller_pid}` (`elem(from, 0)`) in a `calls`
+# list — BEFORE replying, so a polling test observes the caller even after the
+# spawned Task has exited — and leaves the stored status untouched; tests drive
+# phase transitions explicitly via `{:set_status, status}` (no broadcast).
+# Getters: `:status` (current stored status), `:calls` (recorded
+# `{:connect, pid}` entries), and `:callers` (just the recorded pids).
+defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    init({target_id, status, {:ok, :connecting}})
+  end
+
+  def init({target_id, status, connect_result}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+
+    {:ok,
+     %{
+       target_id: target_id,
+       status: status,
+       connect_result: connect_result,
+       calls: []
+     }}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state), do: {:reply, state.status, state}
+
+  def handle_call(:connect, from, state) do
+    caller = elem(from, 0)
+
+    {:reply, state.connect_result, %{state | calls: [{:connect, caller} | state.calls]}}
+  end
+
+  def handle_call({:set_status, status}, _from, state) do
+    {:reply, :ok, %{state | status: status}}
+  end
+
+  def handle_call(:calls, _from, state), do: {:reply, Enum.reverse(state.calls), state}
+
+  def handle_call(:callers, _from, state) do
+    callers = Enum.map(state.calls, fn {_call, pid} -> pid end)
+    {:reply, Enum.reverse(callers), state}
+  end
+end
+
+defmodule EvoDashWeb.NodeAwareRunWideTest do
+  # NodeAware hook tests that mutate NO process-global, so they run
+  # `async: true`.
   #
-  # The pure socket-only / pure-function tests were split into the
-  # `async: true` EvoDashWeb.NodeAwarePureTest module: the
-  # handle_connection_status/2 transition detection, partition_active_tasks/1,
-  # the handle_task_info/2 node-filtered debounce, and
-  # event_from_current_node?/2.
+  # ISOLATION TECHNIQUE — the run-wide store + unique fixtures: every task a
+  # test needs is inserted into the RUN-WIDE per-run sqlite store (`EvoGit.Store`,
+  # started once for the whole run and never terminated) under a per-test unique
+  # id, deleted again from `on_exit`, and every assertion is scoped through
+  # `mine/2` to the ids THIS test inserted — never to the store's global
+  # contents, which the other async suites also use.
   #
-  # The sidebar Active Tasks load is ASYNC: `load_running_and_pending_tasks/1`
-  # / `assign_node/2` spawn a fetch on `EvoDash.TaskSupervisor` whose captured
-  # `view_pid` IS the test process, so tests assert on the tagged
-  # `{:node_aware_active_tasks, seq, node_id, node,
-  #   {:ok, {running, pending}} | {:error, reason}}`
-  # message via `assert_receive`/`refute_receive` (send-pattern), and the
-  # stale-guard seam `handle_tasks_result/2` is tested directly (pure socket
-  # in/out).
+  # Sidebar loads are ASYNC: `load_running_and_pending_tasks/1` / `assign_node/2`
+  # spawn a fetch on `EvoDash.TaskSupervisor` whose captured `view_pid` IS the
+  # test process, so tests assert on the tagged
+  # `{:node_aware_active_tasks, seq, node_id, node, {:ok, {running, pending}} |
+  # {:error, reason}}` message (`assert_receive`/`refute_receive`), and the
+  # stale-guard seam `handle_tasks_result/2` is exercised as a pure socket
+  # in/out function.
   #
-  # A CONNECTED `on_mount/4` ALSO spawns one node-context load
-  # (`{:node_aware_remote_context, seq, node_id, node,
-  #   {:ok, {targets, statuses}} | {:error, reason}}`), so connected-mount
-  # tests consume that message explicitly (`assert_remote_context_loaded/0`)
-  # instead of leaving it to leak into a bare `assert_receive`.
+  # The fake ConnectionManager registers in the SHARED
+  # `EvoGit.RemoteConnection.Registry`, but only under target ids unique to this
+  # file, so no concurrently running suite can resolve one.
   #
-  # The hub-seeded on_mount describes (added with the EvoDash.ActiveTasks hub)
-  # invoke `on_mount/4` directly on a boot-shaped socket — `mount_socket/1`
-  # (dead render, transport_pid nil) and `connected_mount_socket/1` (a non-nil
-  # transport_pid makes Phoenix.LiveView.connected?/1 true — see
-  # deps/phoenix_live_view/lib/phoenix_live_view.ex) — and pin the sidebar
-  # no-blink / no-leak / staleness-catch-up contract: synchronous hub seeding
-  # per node context, the connected-mount LOCAL fetch firing UNCONDITIONALLY
-  # (it is the catch-up that heals a warm-but-stale hub after a missed one-shot
-  # terminal task broadcast), remote/pending pages never fetching on mount,
-  # applied `handle_tasks_result/2` results writing the hub (stale ones never),
-  # and node switches to unseen remote contexts still fetching via assign_node.
-  #
-  # async: false — the assign_node remote-target tests mutate the global
-  # XDG_CONFIG_HOME env var (to isolate EvoGit.RemoteConnections, same pattern
-  # as evo_git's remote_connections_test.exs) and register a fake connection
-  # manager in the shared EvoGit.RemoteConnection.Registry, so they must not
-  # run concurrently with other test files.
-  use ExUnit.Case, async: false
+  # Everything that must MUTATE a process-global — `XDG_CONFIG_HOME`, the
+  # LOCAL `EvoDash.ActiveTasks` hub key, the `EvoGit.TaskRegistry` name, the
+  # production Store/TaskRegistry pair — lives in the `async: false`
+  # `EvoDashWeb.NodeAwareTest` module below.
+  use ExUnit.Case, async: true
 
   alias EvoDashWeb.LiveHooks.NodeAware
   alias EvoGit.TaskInfo
-
-  setup do
-    # Reset the shared EvoDash.ActiveTasks hub (a supervised GenServer shared
-    # across all evo_dash tests in the OS process — same isolation pattern as
-    # home_live_test.exs's ChatHistory.reset and update_status_test.exs's
-    # UpdateStatus.reset) so an applied handle_tasks_result/2 from one test can
-    # never warm the hub for the next.
-    EvoDash.ActiveTasks.reset()
-    :ok
-  end
 
   # Build a minimal LiveView socket with the assigns the helper reads.
   # `redirected: nil` is required for push_patch to work (it raises if already
@@ -86,59 +126,13 @@ defmodule EvoDashWeb.NodeAwareTest do
   defp patch_to(%Phoenix.LiveView.Socket{redirected: {:live, :patch, %{to: to}}}), do: to
   defp patch_to(_), do: nil
 
-  # ── Boot-shaped mount sockets (for the hub-seeded on_mount describes) ──
-  #
-  # on_mount/4 needs more than the bare socket/1 helper provides: it attaches
-  # a :handle_info interceptor, and Phoenix.LiveView.attach_hook/4 reads the
-  # boot-time :lifecycle key from socket.private (same boot internals as
-  # appearance_test.exs's hook_socket). Unlike socket/1, these do NOT preset
-  # :running_tasks/:pending_tasks — the whole point is that on_mount seeds
-  # them from the EvoDash.ActiveTasks hub via assign_new.
-
-  # Dead-render mount socket: transport_pid nil → connected?(socket) == false
-  # (the on_mount dead-render path never queries the registry).
-  defp mount_socket(overrides \\ %{}) do
-    assigns = Map.merge(%{__changed__: %{}}, overrides)
-
-    %Phoenix.LiveView.Socket{
-      assigns: assigns,
-      router: EvoDashWeb.Router,
-      private: %{lifecycle: %Phoenix.LiveView.Lifecycle{}, live_temp: %{}},
-      transport_pid: nil
-    }
-  end
-
-  # Connected (websocket) mount socket. Phoenix.LiveView.connected?/1 is
-  # `transport_pid != nil` (deps/phoenix_live_view/lib/phoenix_live_view.ex:
-  # `def connected?(%Socket{transport_pid: transport_pid}), do: transport_pid
-  # != nil`) — a non-nil transport_pid fakes a connected mount.
-  defp connected_mount_socket(overrides \\ %{}) do
-    %{mount_socket(overrides) | transport_pid: self()}
-  end
-
-  # Consumes the connected-mount node-context load result
-  # (`{:node_aware_remote_context, seq, node_id, node,
-  #   {:ok, {targets, statuses}} | {:error, reason}}`) that `on_mount/4` spawns
-  # on EVERY connected mount (never on a dead render). Returns the payload
-  # result. Tests that only care about the sidebar still call this so the
-  # message never lingers in the test process's mailbox.
-  defp assert_remote_context_loaded do
-    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 1000
-    result
-  end
-
-  # Saves a connection target into the (per-test isolated) config dir so
-  # remote/pending `?node=` resolution finds it. Same helper shape as the
-  # "assign_node/2 — :remote_status assign" describe's setup.
-  defp save_target!(id, ssh_target \\ "test-host") do
-    {:ok, target} = EvoGit.RemoteConnections.save(%{ssh_target: ssh_target, id: id})
-    target
-  end
-
-  # Inserts a task directly into the SQLite store so the local
-  # TaskRegistry.list_tasks_summary/1 picks it up.
-  defp insert_fixture!(store, overrides) do
+  # Inserts a task DIRECTLY into the run-wide store under a per-test unique id,
+  # and registers its removal in `on_exit` as a direct Store delete (never a
+  # `TaskRegistry` cast, so no broadcast can reach a concurrently running
+  # suite). Returns the task so tests reference `task.id` instead of a literal.
+  defp insert_fixture!(overrides) do
     id = "fixture_#{System.unique_integer([:positive])}"
+    on_exit(fn -> EvoGit.Store.delete_task(EvoGit.Store, id) end)
 
     task =
       %TaskInfo{
@@ -154,95 +148,19 @@ defmodule EvoDashWeb.NodeAwareTest do
       }
       |> Map.merge(Enum.into(overrides, %{}))
 
-    EvoGit.Store.put_task(store, task)
+    EvoGit.Store.put_task(EvoGit.Store, task)
     task
   end
 
-  # Sets up an isolated Store + TaskRegistry against a temp sqlite file. The
-  # helper owns teardown: it stops the isolated pair FIRST, then restores and
-  # VERIFIES the production children. Used by describe blocks that need a real
-  # TaskRegistry backing the local node path.
-  def setup_isolated_registry(_context) do
-    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_aware")
-  end
-
-  # Isolates the config dir via XDG_CONFIG_HOME so EvoGit.RemoteConnections
-  # never touches the developer's real ~/.config/genesis/ directory. Same
-  # pattern as evo_git's remote_connections_test.exs. Requires async: false
-  # (mutates a global env var).
-  defp isolate_config_dir(_context) do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_test_node_aware_xdg_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    :ok
-  end
-
-  # The `EvoDash.TaskSupervisor` children spawned by `owner` — `Task.Supervisor`
-  # records the spawning process in each child's `:"$callers"` process-dictionary
-  # entry (same idiom as tasks_live_test.exs's drain helpers), so this lists
-  # exactly the async work `owner` started. `Task.Supervisor.start_child/2` is a
-  # synchronous call, so the child is already visible when the spawning function
-  # returns: an empty list right after a call deterministically proves NO spawn.
-  defp spawned_view_tasks(owner) when is_pid(owner) do
-    EvoDash.TaskSupervisor
-    |> Task.Supervisor.children()
-    |> Enum.filter(fn
-      pid when is_pid(pid) ->
-        case Process.info(pid, :dictionary) do
-          {:dictionary, dict} -> owner in Keyword.get(dict, :"$callers", [])
-          nil -> false
-        end
-
-      _other ->
-        false
-    end)
-  end
-
-  # Polls `fun` every 1ms until it returns truthy or the timeout (default
-  # 2000ms) elapses. Used to observe the fake ConnectionManager's recorded
-  # calls without fixed sleeps — the spawned connect Task's timing is
-  # nondeterministic. The 1 ms tick only bounds how long a satisfied predicate
-  # takes to be noticed (the deadline, not the tick, is the safety margin).
-  defp await_until(fun, timeout \\ 2000) do
-    deadline = System.monotonic_time(:millisecond) + timeout
-    await_until_loop(fun, deadline, timeout)
-  end
-
-  defp await_until_loop(fun, deadline, timeout) do
-    cond do
-      fun.() ->
-        :ok
-
-      System.monotonic_time(:millisecond) >= deadline ->
-        flunk("await_until/2 did not become true within #{timeout}ms")
-
-      true ->
-        Process.sleep(1)
-        await_until_loop(fun, deadline, timeout)
-    end
-  end
+  # The summaries of THIS test's fixture ids, in the given bucket. Every
+  # classification assertion goes through it: filtering keeps the assertion
+  # exact for the rows this test owns while the run-wide store also carries
+  # other async suites' rows.
+  defp mine(summaries, ids) when is_list(ids), do: Enum.filter(summaries, &(&1.id in ids))
 
   describe "handle_connection_status/2 — recomputes :remote_status" do
     # A fake connection manager is registered in the shared
-    # EvoGit.RemoteConnection.Registry under a unique target id, so
+    # EvoGit.RemoteConnection.Registry under a target id unique to this file, so
     # EvoDash.NodeContext.connection_status/1 resolves the manager's status
     # instead of the disconnected default. The process dies (and its Registry
     # entry is cleaned up) at test end.
@@ -318,17 +236,10 @@ defmodule EvoDashWeb.NodeAwareTest do
     # fails fast (noconnection) when the target node doesn't exist, so it
     # returns [] quickly without a timeout.
 
-    setup :setup_isolated_registry
-
     test "local node: reads from TaskRegistry.list_tasks_summary/1" do
-      # Insert a running task and a completed task with a branch (reviewable)
-      insert_fixture!(EvoGit.Store, status: :running)
-
-      insert_fixture!(EvoGit.Store,
-        status: :completed,
-        result: {:ok, %{branch_name: "feature-1"}},
-        review_status: nil
-      )
+      # A running task and a completed task with a branch (reviewable)
+      running_task = insert_fixture!(status: :running)
+      reviewable = insert_fixture!(status: :completed, result: {:ok, %{branch_name: "feature-1"}})
 
       # current_node_id: nil marks a pure-local context — the socket builder
       # default ("gpu-server") would be a pending remote context (empty lists).
@@ -346,19 +257,19 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
                      1000
 
-      # The running task appears in running_tasks
-      assert length(running) == 1
-      assert hd(running).status == :running
+      # Each fixture lands in exactly ONE bucket — the correct one.
+      assert [%{status: :running}] = mine(running, [running_task.id])
+      assert mine(pending, [running_task.id]) == []
 
-      # The completed task with a branch appears in pending_tasks (reviewable)
-      assert length(pending) == 1
-      assert hd(pending).status == :completed
+      assert [%{status: :completed}] = mine(pending, [reviewable.id])
+      assert mine(running, [reviewable.id]) == []
     end
 
     test "local node: pending, running, and finalizing all go to running_tasks" do
-      insert_fixture!(EvoGit.Store, id: "p1", status: :pending)
-      insert_fixture!(EvoGit.Store, id: "r1", status: :running)
-      insert_fixture!(EvoGit.Store, id: "f1", status: :finalizing)
+      p1 = insert_fixture!(status: :pending)
+      r1 = insert_fixture!(status: :running)
+      f1 = insert_fixture!(status: :finalizing)
+      ids = [p1.id, r1.id, f1.id]
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -368,16 +279,16 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
                      1000
 
-      ids = Enum.map(running, & &1.id) |> Enum.sort()
-      assert ids == ["f1", "p1", "r1"]
-      assert pending == []
+      ids_in_running = running |> mine(ids) |> Enum.map(& &1.id) |> Enum.sort()
+      assert ids_in_running == Enum.sort(ids)
+      assert mine(pending, ids) == []
     end
 
     test "local node: a :cancelling task shows in running_tasks" do
       # :cancelling is non-terminal — the task stays visible in the sidebar
       # while it winds down, so it must land in running_tasks. finished_at must
       # be nil for in-flight statuses (the fixture helper defaults it to now).
-      insert_fixture!(EvoGit.Store, id: "c1", status: :cancelling, finished_at: nil)
+      c1 = insert_fixture!(status: :cancelling, finished_at: nil)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -387,17 +298,17 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "c1"))
-      assert hd(running).status == :cancelling
-      assert pending == []
+      assert [%{status: :cancelling}] = mine(running, [c1.id])
+      assert mine(pending, [c1.id]) == []
     end
 
     test "remote node: uses EvoDash.NodeContext.list_tasks_summary/2 (RPC), not local" do
-      # Insert local tasks that should NOT appear when viewing a remote node.
-      insert_fixture!(EvoGit.Store, id: "local-only", status: :running)
+      # Insert a local task that must NOT appear when viewing a remote node.
+      insert_fixture!(status: :running)
 
       # A non-existent remote node — :erpc.call fails fast with :noconnection,
-      # so NodeContext.list_tasks_summary/2 returns [] quickly (no 10s timeout).
+      # so NodeContext.list_tasks_summary/2 returns [] quickly (no 10s timeout),
+      # whatever the local store holds.
       remote_node = :"nonexistent_remote_test@127.0.0.1"
       sock = socket(%{current_node: remote_node})
 
@@ -414,7 +325,7 @@ defmodule EvoDashWeb.NodeAwareTest do
 
     test "fallback to node() when current_node assign is absent" do
       # When current_node is not set, it should fall back to node() (local).
-      insert_fixture!(EvoGit.Store, id: "should-show", status: :running)
+      should_show = insert_fixture!(status: :running)
 
       current_node = node()
       sock = socket(%{current_node: nil, current_node_id: nil})
@@ -425,15 +336,17 @@ defmodule EvoDashWeb.NodeAwareTest do
                       {:ok, {running, _pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "should-show"))
+      assert [%{status: :running}] = mine(running, [should_show.id])
     end
 
     test "pending remote context: assigns empty running/pending (local tasks hidden)" do
       # A remote context was requested (`?node=<id>`) but the connection hasn't
       # completed yet — current_node_id is set but current_node is still the
-      # local BEAM node. Local tasks must NEVER appear in the sidebar.
-      insert_fixture!(EvoGit.Store, id: "local-hidden", status: :running)
-      insert_fixture!(EvoGit.Store, id: "local-hidden-2", status: :completed)
+      # local BEAM node. Local tasks must NEVER appear in the sidebar. The
+      # guard short-circuits BEFORE any store read, so the empty lists hold
+      # whatever else the run-wide store contains.
+      insert_fixture!(status: :running)
+      insert_fixture!(status: :completed)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: "gpu-server"})
@@ -456,10 +369,8 @@ defmodule EvoDashWeb.NodeAwareTest do
     # `{:node_aware_active_tasks, seq, node_id, node, {:ok, {running, pending}}}`
     # message payload instead of the returned socket's assigns.
 
-    setup :setup_isolated_registry
-
     test "loads tasks when resolving to local node" do
-      insert_fixture!(EvoGit.Store, id: "running-1", status: :running)
+      running_1 = insert_fixture!(status: :running)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -475,12 +386,12 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "running-1"))
-      assert pending == []
+      assert [%{status: :running}] = mine(running, [running_1.id])
+      assert mine(pending, [running_1.id]) == []
     end
 
     test "loads tasks when resolving to local via node=local param" do
-      insert_fixture!(EvoGit.Store, id: "running-2", status: :running)
+      running_2 = insert_fixture!(status: :running)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -491,11 +402,11 @@ defmodule EvoDashWeb.NodeAwareTest do
                       {:ok, {running, _pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "running-2"))
+      assert [%{status: :running}] = mine(running, [running_2.id])
     end
 
     test "unknown node param falls back to local and loads local tasks" do
-      insert_fixture!(EvoGit.Store, id: "local-only-assign", status: :running)
+      local_only = insert_fixture!(status: :running)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -508,26 +419,21 @@ defmodule EvoDashWeb.NodeAwareTest do
                       {:ok, {running, _pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "local-only-assign"))
+      assert [%{status: :running}] = mine(running, [local_only.id])
     end
   end
 
   describe "async sidebar delivery + stale-guard" do
     # End-to-end async pipeline: load → `{:node_aware_active_tasks, ...}`
     # message → `handle_tasks_result/2` (the attached `:handle_info` hook's
-    # stale-guard seam) → assigns.
-
-    setup :setup_isolated_registry
+    # stale-guard seam) → assigns. NOTE: an APPLIED local result also writes the
+    # LOCAL `EvoDash.ActiveTasks` key — tolerated here because no concurrently
+    # running suite asserts on that key's contents (agents_live_test and
+    # guide_test only ever render whatever rows it holds).
 
     test "async delivery populates the sidebar (previous content kept until the result arrives)" do
-      # Insert a running task and a completed task with a branch (reviewable)
-      insert_fixture!(EvoGit.Store, status: :running)
-
-      insert_fixture!(EvoGit.Store,
-        status: :completed,
-        result: {:ok, %{branch_name: "feature-1"}},
-        review_status: nil
-      )
+      running_task = insert_fixture!(status: :running)
+      reviewable = insert_fixture!(status: :completed, result: {:ok, %{branch_name: "feature-1"}})
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -542,10 +448,9 @@ defmodule EvoDashWeb.NodeAwareTest do
       assert_receive {:node_aware_active_tasks, 1, nil, ^current_node, {:ok, {running, pending}}},
                      1000
 
-      assert length(running) == 1
-      assert hd(running).status == :running
-      assert length(pending) == 1
-      assert hd(pending).status == :completed
+      assert [%{status: :running}] = mine(running, [running_task.id])
+      assert [%{status: :completed}] = mine(pending, [reviewable.id])
+      assert mine(running, [reviewable.id]) == []
 
       # Applying the message through the stale-guard populates the assigns.
       socket =
@@ -554,10 +459,8 @@ defmodule EvoDashWeb.NodeAwareTest do
           {:node_aware_active_tasks, 1, nil, current_node, {:ok, {running, pending}}}
         )
 
-      assert length(socket.assigns[:running_tasks]) == 1
-      assert hd(socket.assigns[:running_tasks]).status == :running
-      assert length(socket.assigns[:pending_tasks]) == 1
-      assert hd(socket.assigns[:pending_tasks]).status == :completed
+      assert [%{status: :running}] = mine(socket.assigns[:running_tasks], [running_task.id])
+      assert [%{status: :completed}] = mine(socket.assigns[:pending_tasks], [reviewable.id])
     end
 
     test "stale result for a different node is dropped (assigns unchanged)" do
@@ -606,7 +509,7 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
 
     test "node switch triggers a fresh load; same context does not re-spawn" do
-      insert_fixture!(EvoGit.Store, id: "running-1", status: :running)
+      running_1 = insert_fixture!(status: :running)
 
       current_node = node()
       sock = socket(%{current_node: current_node, current_node_id: nil})
@@ -619,7 +522,7 @@ defmodule EvoDashWeb.NodeAwareTest do
                       {:ok, {running, _pending}}},
                      1000
 
-      assert Enum.any?(running, &(&1.id == "running-1"))
+      assert [%{status: :running}] = mine(running, [running_1.id])
 
       # A second assign_node with the SAME context must NOT re-spawn (the
       # :tasks_node_loaded dedup guard skips it — the seq stays 1, so no new
@@ -634,11 +537,246 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
   end
 
+  describe "handle_tasks_result/2 — an applied REMOTE result writes the hub; a stale one never does" do
+    # handle_tasks_result/2 is the testable stale-guard seam of the attached
+    # :handle_info hook. Every APPLIED result (matching seq + node context)
+    # ALSO writes the EvoDash.ActiveTasks hub — keyed by the MESSAGE's own node
+    # context (the authoritative context of the fetch) — so a remounting
+    # LiveView on that context seeds last-known state. Stale/dropped results
+    # NEVER write the hub.
+    #
+    # Only the REMOTE-context half lives here: each test keys the hub by its own
+    # per-test UNIQUE context, which no other suite can touch. The
+    # local-context half (a stale write must leave the LOCAL key cold) stays in
+    # the `async: false` module — every concurrently mounting page writes that
+    # key.
+
+    test "an applied result (matching seq + node context) writes the hub under the message's context" do
+      # A remote context key — proves the write is keyed by the message's node
+      # context, not by any local default.
+      target = "hub-target-#{System.unique_integer([:positive])}"
+      remote_node = :"hub_remote_#{System.unique_integer([:positive])}@127.0.0.1"
+      running = [%{id: "applied-running", status: :running}]
+      pending = [%{id: "applied-pending", status: :completed, branch_name: "applied-b"}]
+
+      sock = socket(%{current_node: remote_node, current_node_id: target, tasks_load_seq: 2})
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 2, target, remote_node, {:ok, {running, pending}}}
+        )
+
+      assert result.assigns.running_tasks == running
+      assert result.assigns.pending_tasks == pending
+      assert EvoDash.ActiveTasks.get(target, remote_node) == {:ok, {running, pending}}
+    end
+
+    test "a stale result (superseded seq) is dropped and never writes the hub" do
+      target = "hub-target-#{System.unique_integer([:positive])}"
+      remote_node = :"hub_remote_#{System.unique_integer([:positive])}@127.0.0.1"
+      sock = socket(%{current_node: remote_node, current_node_id: target, tasks_load_seq: 4})
+
+      result =
+        NodeAware.handle_tasks_result(
+          sock,
+          {:node_aware_active_tasks, 2, target, remote_node, {:ok, {[%{id: "stale"}], []}}}
+        )
+
+      assert result == sock
+      assert EvoDash.ActiveTasks.get(target, remote_node) == :empty
+    end
+  end
+end
+
+defmodule EvoDashWeb.NodeAwareTest do
+  # NodeAware hook tests that MUST mutate a process-global, so they run
+  # `async: false`:
+  #
+  #   * `XDG_CONFIG_HOME` (`isolate_config_dir/1`) — process-global with NO
+  #     app-env seam (`EvoGit.Platform.base_dir/3` reads it at call time), so a
+  #     suite that WRITES a connection target must not overlap another module's
+  #     config reads.
+  #   * the LOCAL `EvoDash.ActiveTasks` hub key (`{nil, node()}`) — every
+  #     concurrently mounting page seeds AND writes it, so only a sync suite can
+  #     assert it is cold.
+  #   * the `EvoGit.TaskRegistry` NAME — one test unregisters it to make a
+  #     `GenServer.call` EXIT deterministic.
+  #   * `EvoDash.Test.IsolatedTaskStore.isolate!/1` — terminates the
+  #     process-global Store/TaskRegistry pair, for the describes whose
+  #     assertions depend on a store that holds NOTHING.
+  #
+  # These describes invoke `on_mount/4` directly on a boot-shaped socket
+  # (`mount_socket/1` = dead render, `connected_mount_socket/1` = connected) and
+  # pin the sidebar no-blink / no-leak / staleness-catch-up contract plus the
+  # hub-write rules (details on each describe). A connected mount also spawns
+  # ONE node-context load, consumed explicitly via
+  # `assert_remote_context_loaded/0` so it never leaks into a bare
+  # `assert_receive`.
+  use ExUnit.Case, async: false
+
+  alias EvoDashWeb.LiveHooks.NodeAware
+
+  setup do
+    # Reset the shared EvoDash.ActiveTasks hub (a boot-created named ETS table
+    # shared by every evo_dash suite in the OS process — same isolation pattern
+    # as home_live_test's ChatHistory reset) so a warm local snapshot can never
+    # leak into the next test's hub-exactness assertion.
+    EvoDash.ActiveTasks.reset()
+    :ok
+  end
+
+  # Build a minimal LiveView socket with the assigns the helper reads.
+  # `redirected: nil` is required for push_patch to work (it raises if already
+  # set). `assigns.__changed__` is required by Phoenix.LiveView.Socket's default.
+  defp socket(overrides) do
+    assigns =
+      %{
+        __changed__: nil,
+        current_node: node(),
+        current_node_name: "Local",
+        current_node_id: "gpu-server",
+        current_path: "/agents",
+        connection_statuses: %{},
+        remote_targets: [],
+        remote_context_seq: 0,
+        running_tasks: [],
+        pending_tasks: [],
+        tasks_load_seq: 0,
+        tasks_reload_pending: false
+      }
+      |> Map.merge(overrides)
+
+    %Phoenix.LiveView.Socket{assigns: assigns, redirected: nil}
+  end
+
+  # Dead-render mount socket: transport_pid nil → connected?(socket) == false
+  # (the on_mount dead-render path never queries the registry).
+  defp mount_socket(overrides \\ %{}) do
+    assigns = Map.merge(%{__changed__: %{}}, overrides)
+
+    %Phoenix.LiveView.Socket{
+      assigns: assigns,
+      router: EvoDashWeb.Router,
+      private: %{lifecycle: %Phoenix.LiveView.Lifecycle{}, live_temp: %{}},
+      transport_pid: nil
+    }
+  end
+
+  # Connected (websocket) mount socket. Phoenix.LiveView.connected?/1 is
+  # `transport_pid != nil`, so a non-nil transport_pid fakes a connected mount.
+  # on_mount/4 also needs the boot-time :lifecycle private key (attach_hook/4).
+  defp connected_mount_socket(overrides \\ %{}) do
+    %{mount_socket(overrides) | transport_pid: self()}
+  end
+
+  # Consumes the connected-mount node-context load result
+  # (`{:node_aware_remote_context, seq, node_id, node,
+  #   {:ok, {targets, statuses}} | {:error, reason}}`) that `on_mount/4` spawns
+  # on EVERY connected mount (never on a dead render). Returns the payload
+  # result. Tests that only care about the sidebar still call this so the
+  # message never lingers in the test process's mailbox.
+  defp assert_remote_context_loaded do
+    assert_receive {:node_aware_remote_context, 1, _node_id, _node, result}, 1000
+    result
+  end
+
+  # Saves a connection target into the (per-test isolated) config dir so
+  # remote/pending `?node=` resolution finds it.
+  defp save_target!(id, ssh_target \\ "test-host") do
+    {:ok, target} = EvoGit.RemoteConnections.save(%{ssh_target: ssh_target, id: id})
+    target
+  end
+
+  # Sets up an isolated Store + TaskRegistry against a temp sqlite file. The
+  # helper owns teardown: it stops the isolated pair FIRST, then restores and
+  # VERIFIES the production children. Used by describe blocks that need a real
+  # TaskRegistry backing the local node path.
+  def setup_isolated_registry(_context) do
+    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_aware")
+  end
+
+  # Isolates the config dir via XDG_CONFIG_HOME so EvoGit.RemoteConnections
+  # never touches the developer's real ~/.config/genesis/ directory. Same
+  # pattern as evo_git's remote_connections_test.exs. Requires async: false
+  # (mutates a global env var).
+  defp isolate_config_dir(_context) do
+    original_xdg = System.get_env("XDG_CONFIG_HOME")
+
+    tmp_xdg =
+      Path.join(
+        System.tmp_dir!(),
+        "evogit_test_node_aware_xdg_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(tmp_xdg)
+    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+
+    on_exit(fn ->
+      if original_xdg do
+        System.put_env("XDG_CONFIG_HOME", original_xdg)
+      else
+        System.delete_env("XDG_CONFIG_HOME")
+      end
+
+      File.rm_rf!(tmp_xdg)
+    end)
+
+    :ok
+  end
+
+  # The `EvoDash.TaskSupervisor` children spawned by `owner` — `Task.Supervisor`
+  # records the spawning process in each child's `:"$callers"` process-dictionary
+  # entry (same idiom as tasks_live_test.exs's drain helpers), so this lists
+  # exactly the async work `owner` started. `Task.Supervisor.start_child/2` is
+  # a synchronous call, so the child is already visible when the spawning
+  # function returns: an empty list right after a call deterministically proves
+  # NO spawn.
+  defp spawned_view_tasks(owner) when is_pid(owner) do
+    EvoDash.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.filter(fn
+      pid when is_pid(pid) ->
+        case Process.info(pid, :dictionary) do
+          {:dictionary, dict} -> owner in Keyword.get(dict, :"$callers", [])
+          nil -> false
+        end
+
+      _other ->
+        false
+    end)
+  end
+
+  # Polls `fun` every 1ms until it returns truthy or the timeout (default
+  # 2000ms) elapses. Used to observe the fake ConnectionManager's recorded
+  # calls without fixed sleeps — the spawned connect Task's timing is
+  # nondeterministic. The 1 ms tick only bounds how long a satisfied predicate
+  # takes to be noticed (the deadline, not the tick, is the safety margin).
+  defp await_until(fun, timeout \\ 2000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    await_until_loop(fun, deadline, timeout)
+  end
+
+  defp await_until_loop(fun, deadline, timeout) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("await_until/2 did not become true within #{timeout}ms")
+
+      true ->
+        Process.sleep(1)
+        await_until_loop(fun, deadline, timeout)
+    end
+  end
+
   describe "assign_node/2 — :remote_status assign" do
     # assign_node's remote resolution reads connection targets from
     # EvoGit.RemoteConnections (a TOML file under the config dir), so these
     # tests isolate XDG_CONFIG_HOME to avoid touching the developer's real
-    # ~/.config/genesis/ and save a dedicated test target.
+    # ~/.config/genesis/ and save a dedicated test target — a config WRITE,
+    # hence async: false even for the two tests that only read.
     #
     # The node-context assigns (current_node_id/current_node/remote_status) are
     # set synchronously and asserted directly. Each assign_node call ALSO
@@ -728,11 +866,9 @@ defmodule EvoDashWeb.NodeAwareTest do
     #   at all. LOCAL pages DO fetch on every connected mount — the
     #   staleness catch-up covered in the next describe.
     #
-    # A CONNECTED mount ALSO spawns ONE node-context load (saved targets +
-    # connection statuses → `{:node_aware_remote_context, ...}`, applied by the
-    # attached :handle_info hook); the dead render never queries the registry.
-    # It reads remote_connections.toml, so the config dir is isolated per test
-    # (same convention as the assign_node remote-target describes).
+    # async: false — the LOCAL-key seed assertions here are exact, and the
+    # config dir is isolated per test (`save_target!` writes it) because
+    # resolve_node_context reads remote_connections.toml.
     setup :isolate_config_dir
 
     test "warm LOCAL hub seeds running/pending synchronously on the dead render (no blink premise)" do
@@ -891,17 +1027,16 @@ defmodule EvoDashWeb.NodeAwareTest do
   end
 
   describe "on_mount/4 — connected-mount LOCAL fetch is unconditional (staleness catch-up)" do
-    # The connected-mount fetch fires on EVERY connected LOCAL mount,
-    # warm hub or not. Terminal task broadcasts are one-shot fire-and-forget
-    # (no replay, no polling backstop), so a LiveView generation that missed
-    # the terminal event leaves the hub warm-but-stale — the mount fetch is
-    # the catch-up that heals it (stale-guarded apply + hub write-back).
-    # The sync hub seed still paints the first render blink-free; the fresh
-    # result lands via the attached :handle_info hook. Remote/pending pages
-    # NEVER fetch on mount (the fetch would target the pre-assign_node LOCAL
-    # assigns; assign_node/2's context-change reload is guaranteed to fire the
-    # correct remote fetch).
-
+    # The connected-mount fetch fires on EVERY connected LOCAL mount, warm hub
+    # or not. Terminal task broadcasts are one-shot fire-and-forget (no replay,
+    # no polling backstop), so a LiveView generation that missed the terminal
+    # event leaves the hub warm-but-stale — the mount fetch is the catch-up that
+    # heals it (stale-guarded apply + hub write-back). The sync hub seed still
+    # paints the first render blink-free; the fresh result lands via the
+    # attached :handle_info hook. Remote/pending pages NEVER fetch on mount.
+    #
+    # async: false — `save_target!` writes the config dir, and the payload
+    # assertions require a store that holds NOTHING (the isolated pair).
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
@@ -1057,7 +1192,8 @@ defmodule EvoDashWeb.NodeAwareTest do
     # statuses}} | {:error, reason}}`, applied by the attached `:handle_info`
     # hook (`handle_remote_context_result/2` — seq-stale-guarded only, since a
     # node switch must not throw the target list away).
-
+    #
+    # async: false — `save_target!` writes the config dir.
     setup :isolate_config_dir
 
     test "the dead render spawns NO node-context load (:remote_context_seq stays 0)" do
@@ -1104,6 +1240,10 @@ defmodule EvoDashWeb.NodeAwareTest do
     # `rescue` cannot catch) and ALWAYS clears `:tasks_reload_pending` for an
     # APPLIED (non-stale) result, so the debounce flag can never stay set and
     # suppress every later broadcast's reload.
+    #
+    # async: false — these are the pure-seam tests that also assert the LOCAL
+    # `EvoDash.ActiveTasks` key stays `:empty`, which only a sync suite can
+    # check (any concurrently mounting page writes that key).
 
     test "an {:error, {:exit, _}} result through the attached hook keeps the lists and clears the flag" do
       running = [%{id: "keep-running", status: :running}]
@@ -1246,6 +1386,10 @@ defmodule EvoDashWeb.NodeAwareTest do
   end
 
   describe "exit-safety — an EXITing sidebar fetch (unregistered store) reports back" do
+    # async: false — the test unregisters the PROCESS-GLOBAL
+    # `EvoGit.TaskRegistry` name, which would break any concurrently running
+    # suite. The isolated pair makes the restore deterministic (no
+    # kill/restart race once the name is re-registered).
     setup :setup_isolated_registry
 
     test "a GenServer.call to a dead/unregistered TaskRegistry yields an {:error, {:exit, _}} result" do
@@ -1306,48 +1450,11 @@ defmodule EvoDashWeb.NodeAwareTest do
     end
   end
 
-  describe "handle_tasks_result/2 — applied results write the hub; stale never do" do
-    # handle_tasks_result/2 is the testable stale-guard seam of the attached
-    # :handle_info hook. Every APPLIED result (matching seq + node context)
-    # ALSO writes the EvoDash.ActiveTasks hub — keyed by the MESSAGE's own
-    # node context (the authoritative context of the fetch) — so a remounting
-    # LiveView on that context seeds last-known state. Stale/dropped results
-    # (superseded seq, or a node context that no longer matches the socket
-    # assigns after a mid-flight switch) NEVER write the hub.
-
-    test "an applied result (matching seq + node context) writes the hub under the message's context" do
-      # A remote context key — proves the write is keyed by the message's node
-      # context, not by any local default.
-      remote_node = :"hub_remote_a@127.0.0.1"
-      running = [%{id: "applied-running", status: :running}]
-      pending = [%{id: "applied-pending", status: :completed, branch_name: "applied-b"}]
-
-      sock = socket(%{current_node: remote_node, current_node_id: "target-1", tasks_load_seq: 2})
-
-      result =
-        NodeAware.handle_tasks_result(
-          sock,
-          {:node_aware_active_tasks, 2, "target-1", remote_node, {:ok, {running, pending}}}
-        )
-
-      assert result.assigns.running_tasks == running
-      assert result.assigns.pending_tasks == pending
-      assert EvoDash.ActiveTasks.get("target-1", remote_node) == {:ok, {running, pending}}
-    end
-
-    test "a stale result (superseded seq) is dropped and never writes the hub" do
-      remote_node = :"hub_remote_b@127.0.0.1"
-      sock = socket(%{current_node: remote_node, current_node_id: "target-1", tasks_load_seq: 4})
-
-      result =
-        NodeAware.handle_tasks_result(
-          sock,
-          {:node_aware_active_tasks, 2, "target-1", remote_node, {:ok, {[%{id: "stale"}], []}}}
-        )
-
-      assert result == sock
-      assert EvoDash.ActiveTasks.get("target-1", remote_node) == :empty
-    end
+  describe "handle_tasks_result/2 — the LOCAL hub key: stale results never write it" do
+    # The local-context half of the hub-write contract (the remote-context half
+    # lives in the `async: true` module above, keyed by unique contexts). Both
+    # tests assert the LOCAL `{nil, node()}` key exactly, which requires
+    # `async: false`: every concurrently mounting page writes that key.
 
     test "a stale result (node context no longer matches) is dropped and never writes the hub" do
       # The socket is viewing a DIFFERENT context than the in-flight fetch's —
@@ -1401,7 +1508,8 @@ defmodule EvoDashWeb.NodeAwareTest do
     # warm remote hub makes that first render instant, but the reload heals any
     # gap; this pins that the reload fires for an UNSEEN (hub-cold) remote
     # context with the correct node_id/node in the fetch message.
-
+    #
+    # async: false — `save_target!` writes the config dir.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
@@ -1447,11 +1555,11 @@ defmodule EvoDashWeb.NodeAwareTest do
     # blocks the LiveView/LiveComponent process. The spawned Task runs the real
     # resolution chain (EvoDash.NodeContext.connect/1 →
     # EvoGit.RemoteConnection.connect/1 → fetch_target → ensure_started →
-    # GenServer.call(manager, :connect)), so the config dir is isolated and a
-    # test target saved per test (same convention as the assign_node remote
-    # describes) while the fake ConnectionManager stands in for the real
-    # manager in EvoGit.RemoteConnection.Registry. The isolated registry keeps
-    # the global TaskRegistry/Store out of play for the connect round-trip.
+    # GenServer.call(manager, :connect)), so a test target is saved per test
+    # while the fake ConnectionManager stands in for the real manager in
+    # EvoGit.RemoteConnection.Registry.
+    #
+    # async: false — `save_target!` writes the config dir.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
@@ -1566,67 +1674,5 @@ defmodule EvoDashWeb.NodeAwareTest do
       refute_receive {:remote_connect_result, _, _}, 0
       assert GenServer.call(manager, :calls) == []
     end
-  end
-end
-
-# A minimal GenServer that stands in for a real connection manager in
-# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
-# resolves a configured status for a target id without starting any SSH
-# machinery. The process dies (and its Registry entry is auto-removed) at
-# test end via `start_supervised!`.
-#
-# Start args: `{target_id, status}` (status-only manager, kept for existing
-# call sites), or `{target_id, status, connect_result}` where `connect_result`
-# is what `handle_call(:connect, ...)` replies with (default
-# `{:ok, :connecting}`, e.g. `{:ok, :connected}` or `{:error, reason}`).
-#
-# `:connect` records `{:connect, caller_pid}` (`elem(from, 0)`) in a `calls`
-# list — BEFORE replying, so a polling test observes the caller even after the
-# spawned Task has exited — and leaves the stored status untouched; tests drive
-# phase transitions explicitly via `{:set_status, status}` (no broadcast).
-# Getters: `:status` (current stored status), `:calls` (recorded
-# `{:connect, pid}` entries), and `:callers` (just the recorded pids).
-defmodule EvoDashWeb.NodeAwareTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    init({target_id, status, {:ok, :connecting}})
-  end
-
-  def init({target_id, status, connect_result}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-
-    {:ok,
-     %{
-       target_id: target_id,
-       status: status,
-       connect_result: connect_result,
-       calls: []
-     }}
-  end
-
-  @impl true
-  def handle_call(:status, _from, state), do: {:reply, state.status, state}
-
-  def handle_call(:connect, from, state) do
-    caller = elem(from, 0)
-
-    {:reply, state.connect_result, %{state | calls: [{:connect, caller} | state.calls]}}
-  end
-
-  def handle_call({:set_status, status}, _from, state) do
-    {:reply, :ok, %{state | status: status}}
-  end
-
-  def handle_call(:calls, _from, state), do: {:reply, Enum.reverse(state.calls), state}
-
-  def handle_call(:callers, _from, state) do
-    callers = Enum.map(state.calls, fn {_call, pid} -> pid end)
-    {:reply, Enum.reverse(callers), state}
   end
 end
