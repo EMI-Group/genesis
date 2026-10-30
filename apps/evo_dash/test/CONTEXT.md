@@ -29,7 +29,7 @@ Web-layer tests reference those singletons directly; per-test Store/TaskRegistry
 
 `XDG_DATA_HOME` → `<tmp>/evogit_test_data`; the real per-run database dir comes from `config/test.exs`'s `:evo_git, :data_dir` (`.../evogit_test_data/genesis-<os pid>-<unique int>`), shared by both umbrella apps within one run and unique per BEAM across runs.
 `XDG_CONFIG_HOME` → a run-unique EMPTY dir (`.../evogit_test_config/genesis-<os pid>-<unique int>`), so nothing reads or writes the developer's real `~/.config/genesis`; this redirect is a no-op on macOS (`EvoGit.Platform.base_dir/3` ignores XDG there).
-Suites that WRITE config point `XDG_CONFIG_HOME` at their own per-test temp dir and restore the prior value in `on_exit` (which is why those modules are `async: false`).
+Suites that WRITE config point `XDG_CONFIG_HOME` at their own per-test temp dir and restore the prior value in `on_exit` (which is why those modules are `async: false`); the async-safe alternative is the per-process seam below (`EvoDash.Test.ConfigDir.isolate!/1` inside `setup`).
 `ExUnit.after_suite/1` removes ONLY this run's own data dir and config dir, never the shared `<tmp>/evogit_test_data` / `<tmp>/evogit_test_config` parents (a concurrent run owns siblings).
 Directory picker disabled (`Application.put_env(:evo_dash, :directory_picker, enabled: false)`, mirrored by `config/test.exs`) so no native modal dialog can hang the suite.
 `:evo_git, :nix_enabled` pinned `false` so `EvoGit.Nix.enabled?/0` never reads the developer's config or shells out to real nix; suites needing nix enable it explicitly.
