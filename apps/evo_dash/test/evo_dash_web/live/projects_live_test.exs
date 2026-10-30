@@ -1945,29 +1945,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "no notification for a task already terminal before mount", %{conn: conn} do
-      insert_task_fixture!(status: :completed)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      # The terminal-id SEED is part of the connected mount's async batch and
-      # notification scanning is skipped until it lands — wait for it instead
-      # of racing the continuation.
-      wait_notified_ids_ready(view)
-
-      # The seed pre-notifies terminal ids, so a reload must not push a
-      # browser notification for them.
-      send(view.pid, :node_aware_reload_tasks)
-      # The scan runs off-process; settle it (and the diff that would carry a
-      # pushed notification) before asserting, so the zero-timeout refute is
-      # conclusive instead of a 100 ms observation window.
-      html = drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-      # No active project in this describe (recent projects cleared, fixture
-      # inserted directly into the store), so the launch panel is hidden
-      refute html =~ "task-launch-button"
-    end
-
+    # The two tests LEFT in this describe are content-pinned POSITIVE
+    # assertions: `assert_push_event` scans the mailbox for the exact
+    # `{title, body}` pair derived from this test's OWN fixture (a unique
+    # prompt / `pr_title`), so a concurrent module's notification — which
+    # carries different content — cannot satisfy or break them. A zero-timeout
+    # `refute_push_event` could not stay here.
     test "notification fires only for newly-terminal ids with matching content", %{conn: conn} do
       # Terminal before mount -> part of the mount seed -> never notified
       insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
@@ -2018,13 +2001,18 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
-    # MOVED: "user-initiated delete_task does not notify" and "user-initiated
-    # clear_task_history does not notify" live in
+    # MOVED: "user-initiated delete_task does not notify", "user-initiated
+    # clear_task_history does not notify" AND "no notification for a task
+    # already terminal before mount" live in
     # `EvoDashWeb.ProjectsLiveSyncTest` below — each zero-timeout refute is a
-    # claim about GLOBAL quiet (no `task_notification` at all), and the mutation
-    # itself publishes a `"tasks"` event from the process-global registry (the
-    # delete) or sweeps every FINISHED task from the RUN-WIDE store (the clear,
-    # which would delete another async module's live fixture mid-test).
+    # claim about GLOBAL quiet (no `task_notification` at all). The scan behind
+    # it (`EvoDashWeb.ProjectsLive.Notifications`) diffs terminal ids read from
+    # the RUN-WIDE `EvoGit.Store`, so any `:completed` row a concurrent async
+    # module inserts after this view's mount seed is "newly terminal" here and
+    # pushes its own `task_notification`; the delete/clear mutations add a
+    # `"tasks"` broadcast from the process-global registry (and the clear sweeps
+    # every FINISHED task out of the RUN-WIDE store, which would delete another
+    # async module's live fixture mid-test).
   end
 
   describe "async mount loads + notification scan (exit-safe)" do
@@ -4572,6 +4560,12 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     fixture mid-test (seen once: `ReviewLiveArchiveTest`'s task disappeared
   #     between insert and `LoadData.load/2`). Its refute is also the same
   #     GLOBAL-quiet claim as the delete test.
+  #   * the store-global notification scan — `EvoDashWeb.ProjectsLive.Notifications`
+  #     diffs terminal ids against the RUN-WIDE `EvoGit.Store`, so a `:completed`
+  #     row a concurrent async module inserts after a view's mount seed is
+  #     "newly terminal" for that view and pushes its own `task_notification`.
+  #     Every zero-timeout `refute_push_event(view, "task_notification", %{}, 0)`
+  #     is therefore a GLOBAL-quiet claim and belongs here.
   #   * `:directory_picker` (`enabled`) — `test/evo_dash/directory_picker_test.exs`
   #     is `async: true` and flips it to `enabled: true` for its own module; a
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
@@ -4747,6 +4741,45 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       drain_task_reload(view)
 
       refute_push_event(view, "task_notification", %{}, 0)
+    end
+  end
+
+  # Moved here from the async module: `EvoDashWeb.ProjectsLive.Notifications`
+  # scans terminal ids in the RUN-WIDE `EvoGit.Store` and notifies every id the
+  # view's mount seed did not already contain, so a `:completed` row any
+  # concurrent `async: true` module inserts between this view's seed and its
+  # reload is "newly terminal" for THIS view and pushes its own
+  # `task_notification` (observed intermittently as `%{title: "Evolution task
+  # completed", body: "Test objective"}` — a review-suite task fixture). The
+  # zero-timeout refute below claims NOTHING pushes, which is only conclusive
+  # once ExUnit has drained every async module; assertions are unchanged.
+  describe "notification scan is store-global (refute needs global quiet)" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "no notification for a task already terminal before mount", %{conn: conn} do
+      insert_task_fixture!(status: :completed)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      # The terminal-id SEED is part of the connected mount's async batch and
+      # notification scanning is skipped until it lands — wait for it instead
+      # of racing the continuation.
+      wait_notified_ids_ready(view)
+
+      # The seed pre-notifies terminal ids, so a reload must not push a
+      # browser notification for them.
+      send(view.pid, :node_aware_reload_tasks)
+      # The scan runs off-process; settle it (and the diff that would carry a
+      # pushed notification) before asserting, so the zero-timeout refute is
+      # conclusive instead of a 100 ms observation window.
+      html = drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+      # No active project in this describe (recent projects cleared, fixture
+      # inserted directly into the store), so the launch panel is hidden
+      refute html =~ "task-launch-button"
     end
   end
 
