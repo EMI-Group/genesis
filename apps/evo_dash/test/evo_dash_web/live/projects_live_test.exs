@@ -5,13 +5,77 @@
 # render gate, palette, per-node state persistence) from the `aa4605cc`
 # workstream.
 defmodule EvoDashWeb.ProjectsLiveTest do
-  use EvoDashWeb.ConnCase
+  # Deliberately sync (the `ConnCase` default, stated explicitly): this suite
+  # writes the process-global `XDG_CONFIG_HOME` (config + project settings),
+  # installs app-env seams (`:directory_picker`, `:directory_picker_module`,
+  # `:github_runner`, `:remote_path_expand_runner`,
+  # `:projects_async_load_runner`), starts real tasks through the task data
+  # plane, and mutates the shared `EvoDash.ActiveTasks` hub that async
+  # page-mounting suites also reset.
+  use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
   setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
+
+  # Every git fixture in this file (see `git_repo_fixture!/2` and
+  # `make_git_repo!/1`) needs the SAME thing — a real repository with one
+  # (empty) commit — and `git init` + `git commit` cost ~13ms of subprocess
+  # time per fixture (~28 fixtures per run). Build that repository ONCE for
+  # the module and copy it per test instead (`File.cp_r!` is ~3.5ms).
+  #
+  # Each copy stays a REAL, INDEPENDENT repository: it is a plain recursive
+  # BYTE copy — never `cp -l`/hard links and never `git clone --shared` into
+  # the template's object store — so a test may freely commit into or mutate
+  # its copy (one does: a second commit feeding an updated base_sha). The
+  # template is quiescent when copied (no index.lock, no in-flight process)
+  # and its `.git/hooks` sample scripts are dropped: they are inert samples
+  # and the biggest part of the copy cost.
+  setup_all do
+    template = Path.join(System.tmp_dir!(), "evogit_git_template_#{System.unique_integer()}")
+    File.mkdir_p!(template)
+    {_, 0} = System.cmd("git", ["init", template], stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd(
+        "git",
+        [
+          "-c",
+          "user.email=t@example.com",
+          "-c",
+          "user.name=t",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init"
+        ],
+        cd: template,
+        stderr_to_stdout: true
+      )
+
+    File.rm_rf!(Path.join(template, ".git/hooks"))
+    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: template)
+    key = {__MODULE__, :git_template}
+    :persistent_term.put(key, {template, String.trim(sha)})
+
+    on_exit(fn ->
+      :persistent_term.erase(key)
+
+      # Teardown-only rescue: a cleanup failure must never mask a test failure.
+      try do
+        File.rm_rf!(template)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  # `{template_dir, head_sha}` of the module-wide git fixture template.
+  defp git_template!, do: :persistent_term.get({__MODULE__, :git_template})
 
   defp setup_temp_dir(%{} = context) do
     tmp_dir =
@@ -84,6 +148,20 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     :ok
+  end
+
+  # Opens `path` as the active project in ONE event turn.
+  #
+  # This is the SAME handler the palette's open-path form submits to
+  # (`open_project_palette` → `palette_mode "open_path"` → form submit is only
+  # a way of REACHING `handle_event("open_project", %{"path" => ...})`), and
+  # its render already carries the post-`push_patch` (activated) DOM, so the
+  # tests that merely need an active project — so the task form renders —
+  # save the two palette-opening round-trips. Tests that assert palette UI
+  # (the "opening a project" / "project palette" describes) keep driving the
+  # clicks themselves.
+  defp open_project!(view, path) do
+    render_click(view, "open_project", %{"path" => path})
   end
 
   # Seeds a recent project via the public TaskRegistry API and registers
@@ -205,6 +283,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # still-spawning port and ERTS prints an uncatchable "spawn: Could not cd to
   # <tmp_dir>" line on stderr. Best-effort: on timeout the test proceeds (the
   # on_exit cleanups are rescued).
+  #
+  # DEADLINE based, not attempt based, exactly like `wait_assigns/3`: the poll
+  # cadence is 2ms, so a wrapper that has already gone terminal is seen on the
+  # next tick instead of eating a fixed sleep, while the 10s budget — the part
+  # that protects against a wedge — is unchanged.
   defp wait_for_task_terminal(id, timeout_ms \\ 10_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
@@ -218,7 +301,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
         _ ->
           if System.monotonic_time(:millisecond) < deadline do
-            Process.sleep(20)
+            Process.sleep(2)
             loop.(loop)
           else
             :ok
@@ -286,31 +369,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # initial commit, returning `{path, head_sha}`. The new foreign-repo
   # validation checks git-ness via `EvoGit.Adapters.Git.rev_parse/1` (runs
   # `git rev-parse HEAD`, which FAILS on an empty repo), so fixture repos MUST
-  # contain at least one commit — hence the `--allow-empty` initial commit.
-  # Registers on_exit cleanup.
+  # contain at least one commit — the module-wide template in `setup_all`
+  # carries that `--allow-empty` commit. Registers on_exit cleanup.
   defp git_repo_fixture!(tmp_dir, name) do
     path = Path.join(tmp_dir, name)
-
-    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
-
-    {_, 0} =
-      System.cmd(
-        "git",
-        [
-          "-c",
-          "user.email=t@example.com",
-          "-c",
-          "user.name=t",
-          "commit",
-          "--allow-empty",
-          "-m",
-          "init"
-        ],
-        cd: path,
-        stderr_to_stdout: true
-      )
-
-    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+    {template, head_sha} = git_template!()
+    File.cp_r!(template, path)
 
     on_exit(fn ->
       # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
@@ -321,11 +385,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       end
     end)
 
-    {path, String.trim(sha)}
+    {path, head_sha}
   end
 
   # Seeds `path` as a REAL git repository with an initial (empty) commit —
-  # synchronously, in the test process — before a task is launched against it.
+  # synchronously, in the test process (a byte copy of the module-wide template
+  # built in `setup_all`) — before a task is launched against it.
   # This is the quiet-launch contract shared by every launch test in this file.
   #
   # The task-form launch tests submit `node_path: "./nonexistent-dir"`: the
@@ -347,24 +412,8 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # rm_rf! printed uncatchable "spawn: Could not cd to <tmp_dir>" lines, and
   # the repo mutation bought no assertion anything.
   defp make_git_repo!(path) do
-    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
-
-    {_, 0} =
-      System.cmd(
-        "git",
-        [
-          "-c",
-          "user.email=t@example.com",
-          "-c",
-          "user.name=t",
-          "commit",
-          "--allow-empty",
-          "-m",
-          "init"
-        ],
-        cd: path,
-        stderr_to_stdout: true
-      )
+    {template, _head_sha} = git_template!()
+    File.cp_r!(template, path)
 
     path
   end
@@ -712,9 +761,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Project should be active — task form enabled
       assert html =~ "task-launch-button"
@@ -764,9 +813,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Empty directory has no genesis.toml — shows defaults message
       assert html =~ "No genesis.toml" or html =~ "using global defaults"
@@ -782,9 +831,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # No foreign repos registered (scheduler not running in tests)
       assert html =~ "No foreign repositories registered"
@@ -891,9 +940,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         ]
       })
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Foreign repos should be restored and visible in the project settings.
       # The component renders repo.id and repo.root for each foreign repo.
@@ -911,9 +960,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         "foreign_repos" => []
       })
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # No repos restored — shows the empty state message
       assert html =~ "No foreign repositories registered"
@@ -935,12 +984,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project so the task form renders
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed the prompt the way the client does, then assert the textarea is
       # client-owned: phx-update="ignore" means LiveView re-renders (on model /
@@ -1912,12 +1956,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project via the palette (open-path mode)
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed the prompt the way the client does (restore_state is the
       # still-supported way to set the persisted prompt).
@@ -2011,12 +2050,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       await_async_loads(view)
 
       # Open a local project and fill in form state
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # task_prompt_change no longer exists (per-keystroke server event removed);
       # restore_state is the still-supported way to set the persisted prompt.
@@ -3276,12 +3310,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_click(view, "add_foreign_repo", %{
         "repo_id" => "repo1",
@@ -3741,12 +3770,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       stub_github_upstream_check!()
       clear_recent_projects()
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       assert assigns(view)[:active_project_path] == tmp_dir
       view
@@ -4153,14 +4177,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # No project open → controls row hidden; open one so the select renders.
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
 
       assert html =~ ~s(name="agent")
       assert html =~ "Auto (recommended)"
@@ -4173,12 +4190,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       assert assigns(view)[:selected_agent_id] == nil
 
@@ -4194,12 +4206,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
 
@@ -4229,12 +4236,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed a real git repo so the doomed wrapper's life is pure validation
       # (make_git_repo!/1) — see "task_submit clears the prompt".
@@ -4258,12 +4260,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "renders the Custom Agent mode option", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # 4th mode option next to genesis_new / genesis_existing / evolve_simple.
       assert render(view) =~ "Custom Agent"
@@ -4275,12 +4272,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       assert assigns(view)[:selected_agent_id] == nil
 
@@ -4300,12 +4292,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
       render_change(view, "task_change", %{"mode" => "evolve_simple"})
@@ -4320,12 +4307,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Submit DIRECTLY (no task_change first — it would auto-select the first
       # agent) so the selected_agent_id assign is still nil.
@@ -4348,12 +4330,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
 
@@ -4386,12 +4363,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "custom_agent mode persists/restores across form state", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Simulate a sessionStorage restore on reload: the node gate passes and
       # the already-active project skips activate_project's mode re-detection,
@@ -4436,14 +4408,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "agent select is absent", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
 
       refute html =~ ~s(name="agent")
       refute html =~ "Auto (recommended)"
@@ -4483,14 +4448,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:selected_model_id] == ""
       assert assigns(view)[:model_selection_enabled] == true
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
       assert html =~ "Auto (by rules)"
       assert html =~ ~s(<option value="" selected)
 
@@ -4530,12 +4488,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
       assert assigns(view)[:selected_model_id] == ""
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_change(view, "select_model", %{"model_id" => "profile-a"})
       assert assigns(view)[:selected_model_id] == "profile-a"
@@ -4576,14 +4529,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:selected_model_id] == "profile-a"
       assert assigns(view)[:model_selection_enabled] == false
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
       refute html =~ "Auto (by rules)"
       assert html =~ ~s(<option value="profile-a" selected)
 
@@ -4729,13 +4675,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     # Opens `path` through the project palette (open-path mode) — the same
     # flow as the "opening a project" tests. Activating a project with a
     # non-genesis_new mode spawns the async GitHub-upstream check.
+    #
+    # Driven as ONE `open_project` event: that is the exact handler the
+    # open-path form submits to, and its render already carries the
+    # post-`push_patch` (activated) DOM. The two palette-opening clicks only
+    # exist to reach the form, and nothing here asserts on them.
     defp open_project(view, path) do
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: path})
+      render_click(view, "open_project", %{"path" => path})
 
       view
     end
@@ -5141,13 +5087,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      html =
-        view
-        |> element("form[phx-submit='open_project']")
-        |> render_submit(%{path: tmp_dir})
+      html = open_project!(view, tmp_dir)
 
       # Default state: the middle (balanced) step is the active one.
       assert assigns(view)[:quality_level] == "balanced"
@@ -5179,12 +5119,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_click(view, "select_quality_level", %{"level" => "fast"})
       assert assigns(view)[:quality_level] == "fast"
@@ -5207,12 +5142,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed a real git repo so the doomed wrapper's life is pure validation
       # (make_git_repo!/1): the invalid node_path kills it at validation,
@@ -5246,12 +5176,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Never touched → the assign keeps its "balanced" default.
       assert assigns(view)[:quality_level] == "balanced"
