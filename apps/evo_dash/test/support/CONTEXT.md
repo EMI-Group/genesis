@@ -16,11 +16,13 @@ Leaf directory — no child directories.
 ### `EvoDashWeb.ConnCase` (`conn_case.ex`)
 
 ExUnit `CaseTemplate` for tests needing a Phoenix connection: sets `@endpoint EvoDashWeb.Endpoint`, `use EvoDashWeb, :verified_routes`, imports `Plug.Conn` + `Phoenix.ConnTest`, and its default setup returns `{:ok, conn: build_conn()}`.
-Its setup also resets the shared `EvoDash.ActiveTasks` sidebar hub (`EvoDash.ActiveTasks.reset()` plus an `on_exit` reset), so a snapshot or junk sentinel leaked by an earlier suite never seeds a later whole-page mount and this suite's own writes never leak onward.
+Its setup also clears the shared `EvoDash.ActiveTasks` sidebar hub for the LOCAL context only (`EvoDash.ActiveTasks.invalidate(nil, node())` plus the same call in `on_exit`), so a snapshot or junk sentinel leaked by an earlier suite never seeds a later whole-page mount and this suite's own writes never leak onward.
+`EvoDash.ActiveTasks` is a process-less pure-ETS module (NOT a GenServer) over the boot-created public table `:evo_dash_active_tasks`, owned by the long-lived application process and shared by every suite in one `mix test` run.
+`{nil, node()}` is the only context a local whole-page mount seeds from (`NodeAware.hub_snapshot/2`), and the only key shape a junk sentinel from `active_tasks_test` / `page_controller_test` lands in.
+The clear is deliberately NOT a table-wide wipe: the suite runs dozens of `async: true` ConnCase modules concurrently, so a whole-table `reset/0` lets one module delete another module's per-test-unique remote-key snapshot between its `put` and its `get` — the proven cause of the `EvoDashWeb.NodeAwareRunWideTest` "an applied result writes the hub" flake.
+Remote/pending contexts need no clearing: the NodeAware pending guard only ever writes `{[], []}`, and task-bearing remote keys are per-test-unique; a caller needing a FOREIGN context cold must `invalidate/2` that specific context itself.
 `async:` is NOT set by the template, so `use EvoDashWeb.ConnCase` without an option yields `async: false` — and every user states it explicitly: 34 case modules across 20 files, 23 `async: true` and 11 `async: false`.
-The per-test reset is NOT safe for the 23 async ConnCase case modules: it is a whole-table `:ets.delete_all_objects` running concurrently with `EvoDashWeb.NodeAwareRunWideTest` (async), whose `node_aware_test.exs:577` exact-asserts a hub key it just wrote — a concurrent wipe makes that read `:empty` (intermittent failure).
-A scoped clear of every context whose node is `node()` (`{nil, node()}` local plus `{target_id, node()}` pending/local-node-remote) already covers everything the reset protects for the LOCAL page mounts; the remote/pending keys are per-test-unique (or `{[], []}`, the pending guard's value), so no current assertion needs a whole-table wipe.
-The synchronous hub-exactness suites (`NodeAwareTest`, `ProjectsLiveSyncTest`, `ReviewLiveSyncTest`, `active_tasks_test`, `page_controller_test`) work with either form.
+The local-context-only clear is what makes those 23 async ConnCase modules safe; module-level whole-table `reset/0` survives only in `async: false` modules (and in `active_tasks_test`, which asserts cold foreign contexts).
 
 ### `EvoDashWeb.TestHelpers` (`test_helpers.ex`)
 
