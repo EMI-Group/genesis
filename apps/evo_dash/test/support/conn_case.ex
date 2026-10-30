@@ -32,20 +32,28 @@ defmodule EvoDashWeb.ConnCase do
   end
 
   setup _tags do
-    # `EvoDash.ActiveTasks` is a boot-created (idempotent), process-wide public
-    # ETS table (`:evo_dash_active_tasks`, owned by the long-lived application
-    # process) shared by ALL suites in one `mix test` run. A whole-page mount
-    # through ConnCase seeds the sidebar from it, so reset it here: a snapshot
-    # (or junk sentinel value) leaked by an earlier suite would otherwise be
-    # inherited by a later mount — `reset/0` is a no-op before the app boots.
-    # Reset again in `on_exit` so this suite's own writes never leak onward.
+    # `EvoDash.ActiveTasks` is a process-less pure-ETS module (NOT a GenServer)
+    # over the boot-created public table `:evo_dash_active_tasks`, which is
+    # owned by the long-lived application process and shared by ALL suites in
+    # one `mix test` run.
+    # A whole-page mount through ConnCase seeds the sidebar from the LOCAL
+    # `{nil, node()}` context, so clear exactly that one here: a snapshot (or
+    # junk sentinel value) leaked by an earlier suite would otherwise be
+    # inherited by a later mount.
+    # Clear it again in `on_exit` so this suite's own writes never leak onward.
     #
-    # Safe with the `async: true` ConnCase users (error_html_test /
-    # error_json_test): ExUnit runs `async: false` modules only after all
-    # `async: true` ones finish (never concurrently), and those two async users
-    # are pure render tests that never read the hub.
-    EvoDash.ActiveTasks.reset()
-    on_exit(fn -> EvoDash.ActiveTasks.reset() end)
+    # This deliberately does NOT wipe the table: the suite runs dozens of
+    # `async: true` ConnCase modules concurrently, so a whole-table wipe lets
+    # one module's reset delete another module's per-test-unique remote-key
+    # snapshot between its `put` and its `get` (the proven cause of the
+    # `NodeAwareRunWideTest` "an applied result writes the hub" flake).
+    # Remote/pending contexts need no clearing: the NodeAware pending guard
+    # only ever writes `{[], []}`, and task-bearing remote keys are
+    # per-test-unique.
+    # A caller that needs a FOREIGN context cold must `invalidate/2` that
+    # specific context itself.
+    EvoDash.ActiveTasks.invalidate(nil, node())
+    on_exit(fn -> EvoDash.ActiveTasks.invalidate(nil, node()) end)
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end

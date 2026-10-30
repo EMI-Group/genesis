@@ -222,11 +222,15 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 
-  # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-  # terminated by the per-test isolation above — reset it so one test's
-  # sidebar snapshot never leaks into the next.
+  # ActiveTasks is a process-less public ETS table shared by the whole run and
+  # NOT terminated by the per-test isolation above — clear it so one test's
+  # sidebar snapshot never leaks into the next. Scoped to the LOCAL
+  # `{nil, node()}` context because this callback also runs in the `async: true`
+  # module, where a whole-table `reset/0` would delete a concurrent module's
+  # per-test snapshot between its put and its get; the sync module's hub
+  # assertions are local-context only, so one clear serves both.
   def reset_active_tasks_hub(_context) do
-    EvoDash.ActiveTasks.reset()
+    EvoDash.ActiveTasks.invalidate(nil, node())
     :ok
   end
 
@@ -908,9 +912,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # concurrently running `async: true` module also touches. The tests that DO
   # (the frozen `EvoGit.TaskRegistry` probes, the real task launches whose
   # `{:task_updated, ...}` broadcast arms every mounted page's NodeAware
-  # debounce, the run-wide-store `clear_task_history` sweep, and the app-env
-  # keys shared with `directory_picker_test` / `project_flow_test`) live in
-  # `EvoDashWeb.ProjectsLiveSyncTest` below.
+  # debounce, the run-wide-store `clear_task_history` sweep, the `/help` mount
+  # that writes the process-wide `EvoDash.ChatHistory`, and the app-env keys
+  # shared with `directory_picker_test` / `project_flow_test`) live in
+  # `EvoDashWeb.ProjectsLiveSyncTest` below. The per-test `ActiveTasks` clear is
+  # node-scoped (`invalidate(nil, node())`), so it can only touch the LOCAL
+  # `{nil, node()}` context — the same async-safe contract `EvoDashWeb.ConnCase`
+  # uses.
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import EvoDashWeb.ProjectsLiveTest.Helpers
@@ -1000,13 +1008,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
       assert Floki.text(link) =~ "Projects"
-    end
-
-    test "mounts HomeLive at /help", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/help")
-
-      assert html =~ "Chat with Genesis"
-      assert html =~ ~s(id="chat-form")
     end
   end
 
@@ -4576,6 +4577,11 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
   #   * `:remote_path_expand_runner` — `projects_live/project_flow_test.exs` is
   #     `async: true` and stubs the same key.
+  #   * mounting `/help` — a connected `EvoDash.HomeLive` mount calls
+  #     `EvoDash.ChatHistory.current_chat_id() || new_chat()` + `put_state`,
+  #     i.e. it WRITES the process-wide ChatHistory ETS table, while the
+  #     `async: true` `EvoDash.ChatHistoryTest` asserts exact GLOBAL contents
+  #     (`list_chats()`, `current_chat_id()`).
   #
   # The `:github_runner` / `:github_issues_runner` /
   # `:github_issue_markdown_runner` / `:projects_async_load_runner` /
@@ -4590,6 +4596,19 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
 
   setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
   setup_all [:install_git_template]
+
+  # Moved here from the async module: a connected `HomeLive` mount writes the
+  # process-wide `EvoDash.ChatHistory` table, which the async
+  # `EvoDash.ChatHistoryTest` asserts on by exact global contents. Sync
+  # placement keeps those two from overlapping; the assertions are unchanged.
+  describe "Home chat route (/help)" do
+    test "mounts HomeLive at /help", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/help")
+
+      assert html =~ "Chat with Genesis"
+      assert html =~ ~s(id="chat-form")
+    end
+  end
 
   describe "async mount loads + notification scan (exit-safe)" do
     setup do

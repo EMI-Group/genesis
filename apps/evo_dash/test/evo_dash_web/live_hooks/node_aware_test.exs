@@ -551,10 +551,14 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
     # NEVER write the hub.
     #
     # Only the REMOTE-context half lives here: each test keys the hub by its own
-    # per-test UNIQUE context, which no other suite can touch. The
-    # local-context half (a stale write must leave the LOCAL key cold) stays in
-    # the `async: false` module — every concurrently mounting page writes that
-    # key.
+    # per-test UNIQUE context, and every async-visible wipe is node-scoped
+    # (`EvoDash.ActiveTasks.invalidate(nil, node())` — ConnCase and every async
+    # module), so a concurrently running module can only ever clear the LOCAL
+    # `{nil, node()}` context. A whole-table `reset/0` survives only in
+    # `async: false` modules, which never run concurrently.
+    # The local-context half (a stale write must leave the LOCAL key cold)
+    # therefore stays in the `async: false` module below — every concurrently
+    # mounting page writes that key.
 
     test "an applied result (matching seq + node context) writes the hub under the message's context" do
       # A remote context key — proves the write is keyed by the message's node
@@ -598,9 +602,15 @@ defmodule EvoDashWeb.NodeAwareTest do
   # NodeAware hook tests that MUST mutate a process-global, so they run
   # `async: false`:
   #
-  #   * the LOCAL `EvoDash.ActiveTasks` hub key (`{nil, node()}`) — every
-  #     concurrently mounting page seeds AND writes it, so only a sync suite can
-  #     assert it is cold.
+  #   * `EvoDash.ActiveTasks` — a process-less pure-ETS module over the
+  #     boot-created process-wide `:evo_dash_active_tasks` table (no process).
+  #     The LOCAL `{nil, node()}` hub key half stays sync because its exact
+  #     LOCAL-context assertions need the key provably cold, and because its own
+  #     whole-table `reset/0` (needed for the cold
+  #     `{"other-target", :"other_remote@127.0.0.1"}` assertion) would delete a
+  #     concurrently running module's per-test snapshot. A whole-table
+  #     `reset/0` is sync-only; async modules wipe ONLY the local context via
+  #     `EvoDash.ActiveTasks.invalidate(nil, node())`.
   #   * the `EvoGit.TaskRegistry` NAME — one test unregisters it to make a
   #     `GenServer.call` EXIT deterministic.
   #   * `EvoDash.Test.IsolatedTaskStore.isolate!/1` — terminates the
@@ -632,7 +642,9 @@ defmodule EvoDashWeb.NodeAwareTest do
     # Reset the shared EvoDash.ActiveTasks hub (a boot-created named ETS table
     # shared by every evo_dash suite in the OS process — same isolation pattern
     # as home_live_test's ChatHistory reset) so a warm local snapshot can never
-    # leak into the next test's hub-exactness assertion.
+    # leak into the next test's hub-exactness assertion. This whole-table
+    # `reset/0` is legitimate HERE only because `async: false` never overlaps
+    # another module; async modules wipe just `invalidate(nil, node())`.
     EvoDash.ActiveTasks.reset()
     :ok
   end
@@ -1457,8 +1469,10 @@ defmodule EvoDashWeb.NodeAwareTest do
   describe "handle_tasks_result/2 — the LOCAL hub key: stale results never write it" do
     # The local-context half of the hub-write contract (the remote-context half
     # lives in the `async: true` module above, keyed by unique contexts). Both
-    # tests assert the LOCAL `{nil, node()}` key exactly, which requires
-    # `async: false`: every concurrently mounting page writes that key.
+    # tests assert the LOCAL `{nil, node()}` key exactly — every concurrently
+    # mounting page writes that key, and the cold
+    # `{"other-target", :"other_remote@127.0.0.1"}` assertion needs this
+    # module's own whole-table `EvoDash.ActiveTasks.reset/0` (sync-only).
 
     test "a stale result (node context no longer matches) is dropped and never writes the hub" do
       # The socket is viewing a DIFFERENT context than the in-flight fetch's —

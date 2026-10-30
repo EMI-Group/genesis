@@ -1,3 +1,32 @@
+# A minimal GenServer that stands in for a real connection manager in
+# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
+# resolves a configured status for a target id without starting any SSH
+# machinery (same idiom as node_aware_test.exs's
+# EvoDashWeb.NodeAwareTest.ConnectionManager — duplicated here so this suite
+# compiles standalone). The process dies (and its Registry entry is
+# auto-removed) at test end via `start_supervised!`.
+#
+# Definition order inside a test file is load-bearing: this fake MUST sit ABOVE
+# the `async: true` test module, which starts running as soon as its own
+# `defmodule` is evaluated — a fake defined lower can still be `:non_existing`
+# when a test `start_supervised!`s it.
+defmodule EvoDashWeb.AppearanceTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.LiveHooks.AppearanceTest do
   # Tests for the global Appearance on-mount hook (EvoDashWeb.LiveHooks.Appearance):
   #
@@ -409,28 +438,4 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
       assert Map.get(assigns(view), :accent_fetch_seq, 0) == 0
     end
   end
-end
-
-# A minimal GenServer that stands in for a real connection manager in
-# `EvoGit.RemoteConnection.Registry`, so `EvoGit.RemoteConnection.status/1`
-# resolves a configured status for a target id without starting any SSH
-# machinery (same idiom as node_aware_test.exs's
-# EvoDashWeb.NodeAwareTest.ConnectionManager — duplicated here so this suite
-# compiles standalone). The process dies (and its Registry entry is
-# auto-removed) at test end via `start_supervised!`.
-defmodule EvoDashWeb.AppearanceTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
