@@ -13,6 +13,12 @@ File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 # Tests that specifically need nix enable it explicitly (e.g. sandbox/bwrap_test.exs).
 Application.put_env(:evo_git, :nix_enabled, false)
 
+# Resolve the config dir PER PROCESS during tests so a module can isolate
+# ~/.config/genesis without repointing the BEAM-global XDG_CONFIG_HOME env var
+# (which is racy across async tests). The seam is default-inert: production
+# never sets :config_dir_fun, so production resolution is unchanged.
+Application.put_env(:evo_git, :config_dir_fun, {EvoGit.TestSupport.ConfigDir, :resolve, []})
+
 # Load-robust default per-test timeout. The suite drives real git/subprocess work
 # from up to ~28 concurrent tests, and every `System.cmd/3` / `System.find_executable/1`
 # PATH lookup is a round trip to the BEAM's SINGLE `:file` server. Under heavy host CPU
