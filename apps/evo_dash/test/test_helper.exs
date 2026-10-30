@@ -46,6 +46,23 @@ Application.put_env(:evo_dash, :directory_picker, enabled: false)
 # Tests that specifically need nix enable it explicitly.
 Application.put_env(:evo_git, :nix_enabled, false)
 
+# Resolve the config dir PER PROCESS during tests, exactly as `:evo_git`'s own
+# helper does (same `{m, f, a}` shape, same process-dictionary key
+# `:evogit_config_dir`, so a root `mix test` running both umbrella apps resolves
+# identically whichever helper installed the fun last). Modules can then isolate
+# the config directory for ONE test with
+# `EvoDash.Test.ConfigDir.isolate!/1` instead of repointing the BEAM-global
+# `XDG_CONFIG_HOME` env var (a process-wide write that forces `async: false`).
+#
+# The seam is DEFAULT-INERT: production never sets `:config_dir_fun`, so
+# `EvoGit.Platform.config_dir/1` falls back to its unchanged XDG/platform
+# resolution. The run-unique `XDG_CONFIG_HOME` boot redirect above therefore
+# STAYS in place as the fallback — a test (or a process outside the test's
+# `$callers` chain, e.g. a boot-time app-global singleton) that carries no
+# override keeps resolving exactly as before, so nothing regresses if the seam
+# is ever removed.
+Application.put_env(:evo_git, :config_dir_fun, {EvoDash.Test.ConfigDir, :resolve, []})
+
 # Test-only perf tuning. These five keys are all CALL-TIME seams — production
 # code reads them at the call site via `Application.get_env(:evo_dash, key, <prod
 # default>)`, so leaving them unset keeps the production timings intact; setting

@@ -2,7 +2,7 @@
 
 ## Intent
 
-Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, and the Store/TaskRegistry isolation helper.
+Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, and the per-process config-dir seam.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
 Modules here carry setup, helpers and fakes only — never test logic or assertions.
 
@@ -53,6 +53,15 @@ Every other store-touching suite uses the run-wide store idiom — per-test uniq
 **Measured cost: ≈6.5 ms per `isolate!/1` call end-to-end** — ≈1.7 ms for the production-pair restart, ≈4–5 ms for the teardown's `ExUnit.CaptureLog.capture_log/2` window (the log-window setup/teardown dominates), and sub-millisecond terminate/boot/restore work.
 That figure is the reason nobody should "optimize" the helper further: at ≈174 calls per run it is ≈1.1 s of a ~18 s suite, so an `async: false` module's serialisation cost dwarfs its isolation cost.
 
+### `EvoDash.Test.ConfigDir` (`config_dir.ex`)
+
+Per-process config-dir isolation — the `:evo_dash` MIRROR of `EvoGit.TestSupport.ConfigDir` (which lives in `:evo_git`'s support dir and is not on this app's compile path).
+It is the resolver behind the DEFAULT-INERT `:config_dir_fun` seam of `EvoGit.Platform.config_dir/1`, installed suite-wide by `test_helper.exs`; production never sets that key, so production resolution is unchanged.
+API: `resolve/0` (the installed fun — own `:evogit_config_dir` dictionary entry, then the first override found in the `$callers` chain of LOCAL-node pids), `activate/1`, `isolate_module!/1` (unique `<tmp>/<prefix>-<int>` dir + `on_exit` cleanup, no dictionary write), `isolate!/1` (`isolate_module!` + `activate`, i.e. the plain-`setup` convenience) and `config_dir/0` (`EvoGit.Platform.config_dir/0`, the concrete `<override>/genesis` path).
+Both apps' helpers share the same process-dictionary key, so a root `mix test` resolves identically whichever helper installed the fun last.
+`$callers` inheritance covers `GenServer`/`Task`/`Supervisor` children started from the test process (`Task.Supervisor.start_child/2` included — the `EvoDash.SafeCall` path) and a `Phoenix.LiveViewTest` view (its channel sets `$callers` to the test pid, `deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`); it does NOT cover a raw `spawn/1` or the boot-time app-global singletons (`EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`), so modules whose config reads happen inside those stay `async: false`.
+Proof + usage contract, all three levels asserted empirically: `config_dir_test.exs` (`EvoDash.Test.ConfigDirTest`, `async: true`).
+
 ### Migrated-sqlite template
 
 `EvoGit.Store` always runs the Ecto migrations at boot (`EvoGit.Store.Boot.start_dynamic/2` → `Ecto.Migrator.run(…, all: true)`), which on a brand-new file means the whole baseline-adoption DDL (~10 ms of the ~11 ms fresh boot, the dominant term); the same boot against an already-migrated file is ~0.9 ms.
@@ -65,6 +74,7 @@ Measured per-call breakdown: ~0.9 ms already-migrated boot + ~0.07 ms copy + ~1.
 ## Constraints
 
 - Keep support modules free of test logic and assertions.
+- `config_dir_test.exs` is a TEST file placed here because it proves this directory's support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so the `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
 - Keep the isolation helper's shutdown ORDER (registry → read-worker drain → store → supervisor) and the unlink; both are load-bearing for zero stray console output.
 - **Two concurrent runs of the same suite under one `TMPDIR` collide**: isolated roots are `<tmp>/evogit_test_<prefix>_<unique_integer>`, and `System.unique_integer/1` is unique only WITHIN one BEAM.
   Symptoms look unrelated — `isolated_task_store_test.exs`'s `assert [^root] = isolated_root_dirs()` failing, a `File.CopyError` while seeding, then a cascade of `EvoGit.Store`/`EvoGit.TaskRegistry` "no process" failures (a failed `isolate!/1` leaves the production children terminated for the rest of that run).
