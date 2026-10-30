@@ -544,7 +544,13 @@ defmodule EvoGit.BackgroundJobsTest do
       # asynchronous (`systemctl --user stop`), so the term→grace→KILL cycle is
       # paid ONCE (for the real job) instead of ten times. The cap itself is
       # registry bookkeeping — it never inspects the handle kind.
-      real = start_job!(%{command: "sleep 5", cwd: tmp_dir})
+      #
+      # The child's OWN lifetime is a liveness WINDOW, not a deadline: it must
+      # still be running while the other nine slots are filled and the cap is
+      # probed. It is killed explicitly below, so a long sleep costs no wall
+      # clock — a short one would let a heavily loaded host finish it mid-test and
+      # silently drop the live count to nine (the 11th start then succeeds).
+      real = start_job!(%{command: "sleep 30", cwd: tmp_dir})
 
       synthetic =
         for n <- 1..(BackgroundJobs.max_jobs_per_owner() - 1) do
