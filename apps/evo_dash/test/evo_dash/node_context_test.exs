@@ -1,26 +1,32 @@
+# Two modules live in this file so the bulk of the suite can run in the ASYNC
+# phase:
+#
+#   * `EvoDash.NodeContextTest` (`async: true`) — every describe that never
+#     touches process-global state. It writes into the RUN-WIDE per-run store
+#     with UNIQUE ids/paths (the idiom already used by the task-review
+#     describe), so nothing has to be swapped or isolated.
+#   * `EvoDash.NodeContextConfigTest` (`async: false`) — the two describes that
+#     must set `XDG_CONFIG_HOME` to a temp dir. That env var is
+#     process-global and has no app-env seam (`EvoGit.Platform.base_dir/3`
+#     reads it at call time), and a process-dictionary seam cannot work because
+#     LiveView/page processes do not inherit the test process's dictionary.
 defmodule EvoDash.NodeContextTest do
-  use EvoDashWeb.ConnCase, async: false
+  use EvoDashWeb.ConnCase, async: true
 
   import ExUnit.CaptureLog
 
   alias EvoGit.TaskInfo
 
-  # Isolated Store + TaskRegistry against a temp sqlite file. The helper owns
-  # teardown: it stops the isolated pair FIRST, then restores and VERIFIES the
-  # production children (no start_supervised/on_exit racing).
+  # Fixtures go into the RUN-WIDE test store (a per-run unique sqlite DB, see
+  # `config/test.exs`). Every row is identified by an id (and, for the paged
+  # reads, a project path) from `System.unique_integer/1`, so assertions can
+  # stay EXACT on a shared table and no leftover row can ever satisfy a
+  # "not_found"/"total: 0" assertion.
   #
-  # Attached ONLY to the describes that actually reach the store/registry (the
-  # summary/lite/cancel/archive reads): the pure delegation-shape describes
-  # (GitHub adapter errors, resolved config, system samples, custom agents
-  # tools + approvals) never touch SQLite, and an isolation round-trip per test
-  # is pure overhead for them.
-  def setup_isolated_registry(_context) do
-    :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_context")
-  end
-
-  # Inserts a task directly into the SQLite store (bypasses the async
-  # task spawn that `start_task/2` triggers). Deterministic fixture for
-  # the cancellation round-trip.
+  # `insert_fixture!/1` registers its own teardown: an `on_exit` callback
+  # deletes exactly the id this test created (`EvoGit.Store.delete_task/2`
+  # also drops that task's `task_agent_archives` rows), so no row of this
+  # module's can leak into a peer suite's read.
   defp insert_fixture!(overrides) do
     id = "fixture_#{System.unique_integer([:positive])}"
 
@@ -39,55 +45,29 @@ defmodule EvoDash.NodeContextTest do
       |> Map.merge(Enum.into(overrides, %{}))
 
     EvoGit.Store.put_task(EvoGit.Store, task)
+    on_exit(fn -> EvoGit.Store.delete_task(EvoGit.Store, id) end)
     id
   end
 
-  # Writes a MINIMAL valid custom-tool source module (a `.ex` file exporting
-  # `schema/0`, `read_only?/0` and `execute/2`) into the ISOLATED temp
-  # `<config_dir>/tools/` dir — mirrors the fixture shape used by evo_git's
-  # custom_tools_rpc_test.exs. Returns `{module, path}`.
-  defp custom_tool_fixture!(tool_name) do
-    module =
-      Module.concat([:"NodeContextCustomToolFixture#{System.unique_integer([:positive])}"])
+  # Unique project path = the exact-count anchor for the paged-read tests
+  # (`list_tasks_page/2` applies `status` and `project_path` as AND-ed WHERE
+  # clauses, so a filtered read sees only this test's rows).
+  defp unique_project_path do
+    "/tmp/node_ctx_#{System.unique_integer([:positive])}"
+  end
 
-    dir = EvoGit.CustomTools.tools_dir()
-    File.mkdir_p!(dir)
-    path = Path.join(dir, "#{tool_name}.ex")
-
-    File.write!(path, """
-    defmodule #{inspect(module)} do
-      @behaviour EvoGit.CustomTools.Tool
-
-      @impl true
-      def schema do
-        ReqLLM.tool(
-          name: #{inspect(tool_name)},
-          description: "node_context_test custom-tool fixture",
-          parameter_schema: %{"type" => "object", "properties" => %{}},
-          callback: fn _ -> {:ok, nil} end
-        )
-      end
-
-      @impl true
-      def read_only?, do: true
-
-      @impl true
-      def execute(_args, _ctx), do: "custom-tool-ran"
-    end
-    """)
-
-    {module, path}
+  # An id that provably matches no row in the shared store.
+  defp missing_id do
+    "missing-#{System.unique_integer([:positive])}"
   end
 
   describe "task-cancellation RPC delegates (local node, real paths)" do
-    setup :setup_isolated_registry
-
     test "cancel_task/2 returns {:error, :not_found} for a missing task" do
-      assert EvoDash.NodeContext.cancel_task(node(), "missing-id") == {:error, :not_found}
+      assert EvoDash.NodeContext.cancel_task(node(), missing_id()) == {:error, :not_found}
     end
 
     test "force_kill_task/2 returns {:error, :not_found} for a missing task" do
-      assert EvoDash.NodeContext.force_kill_task(node(), "missing-id") == {:error, :not_found}
+      assert EvoDash.NodeContext.force_kill_task(node(), missing_id()) == {:error, :not_found}
     end
 
     test "cancel_task/2 on a :pending task marks it :cancelled immediately" do
@@ -99,22 +79,25 @@ defmodule EvoDash.NodeContextTest do
   end
 
   describe "lightweight task reads (local node, real paths)" do
-    setup :setup_isolated_registry
-
     # The summary/lite reads route through
     # `EvoGit.RemoteNode` → `RemoteAPI` → `EvoGit.TaskRegistry` → `EvoGit.Store`,
-    # so the isolated pair from `setup` serves them with real rows.
+    # so they are served by the run-wide store with real rows. Each test pins
+    # its own unique `project_path`, which keeps every count assertion exact.
     @summary_keys ~w(
       id status review_status started_at finished_at type project_path opts
       branch_name model_id agent_count base_sha commit_sha lease_expires_at
       updated_at error
     )a
     test "list_tasks_page/2 returns summary rows + the filtered total (no heavy blobs)" do
-      id = insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
-      assert %{rows: [row], total: 1} = EvoDash.NodeContext.list_tasks_page(node())
+      project_path = unique_project_path()
+      id = insert_fixture!(status: :completed, project_path: project_path)
+
+      assert %{rows: [row], total: 1} =
+               EvoDash.NodeContext.list_tasks_page(node(), project_path: project_path)
+
       assert row.id == id
       assert row.status == :completed
-      assert row.project_path == "/tmp/proj_a"
+      assert row.project_path == project_path
       # The 16-key projection: heavy blobs are never part of a summary row.
       assert Enum.sort(Map.keys(row)) == Enum.sort(@summary_keys)
       refute Map.has_key?(row, :result)
@@ -124,29 +107,45 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "list_tasks_page/2 forwards limit/offset and the filter opts" do
-      insert_fixture!(status: :completed, project_path: "/tmp/proj_a")
-      keep = insert_fixture!(status: :failed, project_path: "/tmp/proj_b")
+      project_path = unique_project_path()
+      insert_fixture!(status: :completed, project_path: project_path)
+      keep = insert_fixture!(status: :failed, project_path: project_path)
 
       # The core filter expects the status as its on-disk STRING (the summary
-      # rows still decode it back to an atom).
+      # rows still decode it back to an atom); `status` and `project_path` are
+      # AND-ed, so this sees only the failed row of THIS test's project.
       assert %{rows: [row], total: 1} =
-               EvoDash.NodeContext.list_tasks_page(node(), status: "failed")
+               EvoDash.NodeContext.list_tasks_page(node(),
+                 status: "failed",
+                 project_path: project_path
+               )
 
       assert row.id == keep
       assert row.status == :failed
 
       assert %{rows: [], total: 0} =
-               EvoDash.NodeContext.list_tasks_page(node(), project_path: "/tmp/nowhere")
+               EvoDash.NodeContext.list_tasks_page(node(),
+                 project_path: unique_project_path()
+               )
 
       assert %{rows: rows, total: 2} =
-               EvoDash.NodeContext.list_tasks_page(node(), limit: 1, offset: 0)
+               EvoDash.NodeContext.list_tasks_page(node(),
+                 project_path: project_path,
+                 limit: 1,
+                 offset: 0
+               )
 
       assert length(rows) == 1
     end
 
     test "get_task_lite/2 and get_task/2 carry no archive key (the archive is its own table)" do
       archive = [%{"role" => "user", "content" => "archived"}]
-      id = insert_fixture!(result: {:ok, %{commit_sha: "sha1", archive_records: archive}})
+
+      id =
+        insert_fixture!(
+          status: :completed,
+          result: {:ok, %{commit_sha: "sha1", archive_records: archive}}
+        )
 
       assert %EvoGit.TaskInfo{id: ^id} =
                lite =
@@ -164,13 +163,11 @@ defmodule EvoDash.NodeContextTest do
     end
 
     test "get_task_lite/2 returns nil for a missing task" do
-      assert EvoDash.NodeContext.get_task_lite(node(), "missing-id") == nil
+      assert EvoDash.NodeContext.get_task_lite(node(), missing_id()) == nil
     end
   end
 
   describe "paged task-archive reads (EvoGit.RemoteNode delegation)" do
-    setup :setup_isolated_registry
-
     # `EvoGit.RemoteNode.list_task_archives/3` and `get_agent_archive/3` exist
     # in this tree; the `Code.ensure_loaded?` check below is only a defensive
     # availability guard, and there is no runner seam for the delegation — the
@@ -178,7 +175,7 @@ defmodule EvoDash.NodeContextTest do
     # surface unconditionally: the documented arities (incl. the `opts \\ []`
     # default form) and the totality of the two normalization steps NodeContext
     # applies to EVERY payload, which is what makes the mirrors safe for
-    # callers.
+    # callers. None of them writes a row, so no isolation is needed.
     test "list_task_archives/3 and get_agent_archive/3 expose the documented arities" do
       # `function_exported?/3` does NOT load a module, so its answer would
       # depend on whether some other test happened to run first. Load it
@@ -201,11 +198,11 @@ defmodule EvoDash.NodeContextTest do
         # task id yields the empty page instead of an error for any opts).
         opts = [limit: 5, offset: 10, include_results: true]
 
-        assert EvoDash.NodeContext.list_task_archives(node(), "missing-id", opts) ==
+        assert EvoDash.NodeContext.list_task_archives(node(), missing_id(), opts) ==
                  %{entries: [], total: 0}
 
         # The `opts \\ []` default form delegates with the same shape.
-        assert EvoDash.NodeContext.list_task_archives(node(), "missing-id") ==
+        assert EvoDash.NodeContext.list_task_archives(node(), missing_id()) ==
                  %{entries: [], total: 0}
       else
         # Defensive branch: EvoGit.RemoteNode is not loaded/available here, so
@@ -281,19 +278,21 @@ defmodule EvoDash.NodeContextTest do
 
   describe "task-review RPC delegates (local node, real paths)" do
     test "get_task/2 returns nil for a missing task" do
-      assert EvoDash.NodeContext.get_task(node(), "missing-id") == nil
+      assert EvoDash.NodeContext.get_task(node(), missing_id()) == nil
     end
 
     test "get_task/2 returns the stored %TaskInfo{} for an existing task" do
-      id = insert_fixture!(status: :pending)
+      # `:completed` keeps the row out of the sidebar's active-task projection
+      # (`:running`/`:pending`/`:cancelling`) while this async test is running.
+      id = insert_fixture!(status: :completed)
 
       assert %EvoGit.TaskInfo{id: ^id} = EvoDash.NodeContext.get_task(node(), id)
     end
 
     test "set_review_status/3 and set_review_metadata/4 are fire-and-forget casts (:ok)" do
-      assert EvoDash.NodeContext.set_review_status(node(), "missing-id", :completed) == :ok
+      assert EvoDash.NodeContext.set_review_status(node(), missing_id(), :completed) == :ok
 
-      assert EvoDash.NodeContext.set_review_metadata(node(), "missing-id", "base", "commit") ==
+      assert EvoDash.NodeContext.set_review_metadata(node(), missing_id(), "base", "commit") ==
                :ok
     end
 
@@ -360,10 +359,122 @@ defmodule EvoDash.NodeContextTest do
     end
   end
 
+  describe "approval_response/3 (interactive command approvals)" do
+    test "non-approve/deny decisions are rejected before any dispatch (whitelist is total)" do
+      # The decision whitelist normalizes "approve"|"deny" binaries AND
+      # :approve|:deny atoms; anything else returns the error tuple without
+      # ever dispatching (never String.to_atom on raw input). node() is
+      # irrelevant here — the invalid decision short-circuits first.
+      assert EvoDash.NodeContext.approval_response(node(), "r1", "maybe") ==
+               {:error, {:invalid_decision, "maybe"}}
+
+      assert EvoDash.NodeContext.approval_response(node(), "r1", 42) ==
+               {:error, {:invalid_decision, 42}}
+    end
+
+    test "valid decisions dispatch on the local path" do
+      # EvoGit.CommandApproval exists in this tree; the `Code.ensure_loaded?`
+      # guard is a defensive availability check (the module lives on the core
+      # side), mirroring home_live_test.exs:63 and the node_context.ex
+      # with_remote_connection/4 pattern. With the module loaded, responding on
+      # an unknown request id must degrade to an error tuple rather than raise;
+      # without it, the guarded local path answers
+      # {:error, :command_approval_unavailable}.
+      if Code.ensure_loaded?(EvoGit.CommandApproval) do
+        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", "approve"))
+      else
+        assert EvoDash.NodeContext.approval_response(node(), "r1", "approve") ==
+                 {:error, :command_approval_unavailable}
+      end
+
+      # The atom-decision form is idempotent — same dispatch shape as the
+      # binary form (whitelist maps :deny -> :deny unchanged).
+      if Code.ensure_loaded?(EvoGit.CommandApproval) do
+        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", :deny))
+      else
+        assert EvoDash.NodeContext.approval_response(node(), "r1", :deny) ==
+                 {:error, :command_approval_unavailable}
+      end
+    end
+
+    test "remote path transport failure is normalized and never raises" do
+      # No distribution to that node in the test env. The exact failure shape
+      # depends on whether the LOCAL node is distributed (some dev machines
+      # boot with [node] enabled + a free dist port — the boot attempt is
+      # skipped/fails on CI and here, where port 9000 is busy):
+      #   * non-distributed local node (:nonode@nohost) — :erpc.call RAISES
+      #     {:erpc, :noconnection}, which the catch clause normalizes into
+      #     {:error, {:error, {:erpc, :noconnection}}} (the same fast-fail
+      #     :noconnection the node_aware_test.exs remote-node tests rely on);
+      #   * distributed local node — :erpc.call returns {:badrpc, :nodedown},
+      #     which the case unwraps to {:error, :nodedown}.
+      # Either way the function is total: it returns an error tuple, never
+      # raises from a LiveView call path.
+      # Wrapped in CaptureLog: same between-test console-noise rationale as the
+      # unreachable-remote custom_tools_status case in the config module below.
+      {result, _log} =
+        with_log(fn ->
+          EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
+        end)
+
+      if node() == :nonode@nohost do
+        assert result == {:error, {:error, {:erpc, :noconnection}}}
+      else
+        assert result == {:error, :nodedown}
+      end
+    end
+  end
+end
+
+# Stays in the SYNC phase: both describes redirect `XDG_CONFIG_HOME` to a temp
+# dir, which is process-global and cannot be scoped to one test process.
+defmodule EvoDash.NodeContextConfigTest do
+  use EvoDashWeb.ConnCase, async: false
+
+  import ExUnit.CaptureLog
+
+  # Writes a MINIMAL valid custom-tool source module (a `.ex` file exporting
+  # `schema/0`, `read_only?/0` and `execute/2`) into the ISOLATED temp
+  # `<config_dir>/tools/` dir — mirrors the fixture shape used by evo_git's
+  # custom_tools_rpc_test.exs. Returns `{module, path}`.
+  defp custom_tool_fixture!(tool_name) do
+    module =
+      Module.concat([:"NodeContextCustomToolFixture#{System.unique_integer([:positive])}"])
+
+    dir = EvoGit.CustomTools.tools_dir()
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "#{tool_name}.ex")
+
+    File.write!(path, """
+    defmodule #{inspect(module)} do
+      @behaviour EvoGit.CustomTools.Tool
+
+      @impl true
+      def schema do
+        ReqLLM.tool(
+          name: #{inspect(tool_name)},
+          description: "node_context_test custom-tool fixture",
+          parameter_schema: %{"type" => "object", "properties" => %{}},
+          callback: fn _ -> {:ok, nil} end
+        )
+      end
+
+      @impl true
+      def read_only?, do: true
+
+      @impl true
+      def execute(_args, _ctx), do: "custom-tool-ran"
+    end
+    """)
+
+    {module, path}
+  end
+
   describe "custom-agents RPC delegates (local node, real paths)" do
     # The local path reads/writes the REAL agents.toml at
     # EvoGit.Config.config_dir(). Never touch the user's real file: isolate
-    # with the same XDG pattern as evo_git's custom_agents_test.exs.
+    # with the same XDG pattern as evo_git's custom_agents_test.exs. This is
+    # why the module is `async: false` — `XDG_CONFIG_HOME` is process-global.
     setup do
       original_xdg = System.get_env("XDG_CONFIG_HOME")
 
@@ -464,8 +575,9 @@ defmodule EvoDash.NodeContextTest do
     # The local path reads the VIEWED node's own `<config_dir>/tools/`
     # directory. Never touch the user's real config: isolate with the same XDG
     # pattern as the custom-agents describe above (and evo_git's
-    # custom_tools_rpc_test.exs). A fresh temp config dir has no `tools/`
-    # subdirectory, so the hermetic status is the empty shape.
+    # custom_tools_rpc_test.exs) — again, the `async: false` reason. A fresh
+    # temp config dir has no `tools/` subdirectory, so the hermetic status is
+    # the empty shape.
     setup do
       original_xdg = System.get_env("XDG_CONFIG_HOME")
 
@@ -542,72 +654,6 @@ defmodule EvoDash.NodeContextTest do
 
       assert match?({:error, _}, result)
       refute result == %{ok: [], errors: []}
-    end
-  end
-
-  describe "approval_response/3 (interactive command approvals)" do
-    test "non-approve/deny decisions are rejected before any dispatch (whitelist is total)" do
-      # The decision whitelist normalizes "approve"|"deny" binaries AND
-      # :approve|:deny atoms; anything else returns the error tuple without
-      # ever dispatching (never String.to_atom on raw input). node() is
-      # irrelevant here — the invalid decision short-circuits first.
-      assert EvoDash.NodeContext.approval_response(node(), "r1", "maybe") ==
-               {:error, {:invalid_decision, "maybe"}}
-
-      assert EvoDash.NodeContext.approval_response(node(), "r1", 42) ==
-               {:error, {:invalid_decision, 42}}
-    end
-
-    test "valid decisions dispatch on the local path" do
-      # EvoGit.CommandApproval exists in this tree; the `Code.ensure_loaded?`
-      # guard is a defensive availability check (the module lives on the core
-      # side), mirroring home_live_test.exs:63 and the node_context.ex
-      # with_remote_connection/4 pattern. With the module loaded, responding on
-      # an unknown request id must degrade to an error tuple rather than raise;
-      # without it, the guarded local path answers
-      # {:error, :command_approval_unavailable}.
-      if Code.ensure_loaded?(EvoGit.CommandApproval) do
-        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", "approve"))
-      else
-        assert EvoDash.NodeContext.approval_response(node(), "r1", "approve") ==
-                 {:error, :command_approval_unavailable}
-      end
-
-      # The atom-decision form is idempotent — same dispatch shape as the
-      # binary form (whitelist maps :deny -> :deny unchanged).
-      if Code.ensure_loaded?(EvoGit.CommandApproval) do
-        assert match?({:error, _}, EvoDash.NodeContext.approval_response(node(), "r1", :deny))
-      else
-        assert EvoDash.NodeContext.approval_response(node(), "r1", :deny) ==
-                 {:error, :command_approval_unavailable}
-      end
-    end
-
-    test "remote path transport failure is normalized and never raises" do
-      # No distribution to that node in the test env. The exact failure shape
-      # depends on whether the LOCAL node is distributed (some dev machines
-      # boot with [node] enabled + a free dist port — the boot attempt is
-      # skipped/fails on CI and here, where port 9000 is busy):
-      #   * non-distributed local node (:nonode@nohost) — :erpc.call RAISES
-      #     {:erpc, :noconnection}, which the catch clause normalizes into
-      #     {:error, {:error, {:erpc, :noconnection}}} (the same fast-fail
-      #     :noconnection the node_aware_test.exs remote-node tests rely on);
-      #   * distributed local node — :erpc.call returns {:badrpc, :nodedown},
-      #     which the case unwraps to {:error, :nodedown}.
-      # Either way the function is total: it returns an error tuple, never
-      # raises from a LiveView call path.
-      # Wrapped in CaptureLog: same between-test console-noise rationale as the
-      # unreachable-remote custom_tools_status case above.
-      {result, _log} =
-        with_log(fn ->
-          EvoDash.NodeContext.approval_response(:"nonexistent-node@nowhere", "r1", "approve")
-        end)
-
-      if node() == :nonode@nohost do
-        assert result == {:error, {:error, {:erpc, :noconnection}}}
-      else
-        assert result == {:error, :nodedown}
-      end
     end
   end
 end
