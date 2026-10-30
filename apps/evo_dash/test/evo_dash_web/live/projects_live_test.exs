@@ -2017,23 +2017,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
-    test "user-initiated delete_task does not notify", %{conn: conn} do
-      task = insert_task_fixture!(status: :running)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_notified_ids_ready(view)
-
-      render_hook(view, "delete_task", %{"task_id" => task.id})
-
-      # delete_task is a cast — a synchronous registry call afterwards
-      # guarantees the store deletion was processed before the reload snapshot.
-      EvoGit.TaskRegistry.list_tasks()
-
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
+    # MOVED: "user-initiated delete_task does not notify" lives in
+    # `EvoDashWeb.ProjectsLiveSyncTest` below — its zero-timeout refute is a
+    # claim about GLOBAL quiet (no `task_notification` at all), and the delete
+    # itself publishes a `"tasks"` event from the process-global registry.
 
     test "user-initiated clear_task_history does not notify", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/projects")
@@ -4223,7 +4210,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # handle_params spawns the grouped async load; mount/3 seeds the LOCAL
       # profiles first, so wait for the async (degraded) result to apply.
-      render_async(view)
+      # `render_async/2` does NOT await `EvoDash.TaskSupervisor` children (only
+      # `start_async`/`assign_async`), so it never proved the result had landed.
+      # `await_async_loads/1` waits for THIS view's supervised batch to exit and
+      # drains its queued `{:async_project_load, ...}` apply instead.
+      await_async_loads(view)
 
       # The fake BEAM node can never answer :erpc (fails immediately with
       # {:erpc, :noconnection}) — get_resolved_config fails fast and
@@ -4586,6 +4577,10 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     mounted page in the BEAM (the documented `agents_live_test`
   #     `:tasks_reload_pending` canary), plus the `on_exit` cancel/delete of the
   #     launched row.
+  #   * user-initiated `delete_task` — the SAME process-global `"tasks"`
+  #     broadcast (`{:task_deleted, ...}`), and the test it drives asserts that
+  #     NO `task_notification` is pushed at all, which is only conclusive while
+  #     no concurrent module can publish one.
   #   * `:directory_picker` (`enabled`) — `test/evo_dash/directory_picker_test.exs`
   #     is `async: true` and flips it to `enabled: true` for its own module; a
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
@@ -4682,6 +4677,39 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # The old (seeded) task produced no second notification.
       refute_push_event(view, "task_notification", %{}, 0)
       assert MapSet.member?(assigns(view)[:notified_task_ids], new_task.id)
+    end
+  end
+
+  # Moved here from the async module: this test's refute is a claim about
+  # GLOBAL quiet (no `task_notification` at all), and the `delete_task` it
+  # drives publishes `{:task_deleted, ...}` on the process-global `"tasks"`
+  # topic — which both reaches this view through `NodeAware` and arms every
+  # OTHER mounted page's reload debounce in the BEAM. `async: true` would let a
+  # concurrently running module's newly-terminal task push its own
+  # `task_notification` into this view between the drain and the refute. Sync
+  # placement keeps the assertion (and its zero window) exactly as it was.
+  describe "user-initiated task mutations do not notify" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "user-initiated delete_task does not notify", %{conn: conn} do
+      task = insert_task_fixture!(status: :running)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      render_hook(view, "delete_task", %{"task_id" => task.id})
+
+      # delete_task is a cast — a synchronous registry call afterwards
+      # guarantees the store deletion was processed before the reload snapshot.
+      EvoGit.TaskRegistry.list_tasks()
+
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
     end
   end
 
