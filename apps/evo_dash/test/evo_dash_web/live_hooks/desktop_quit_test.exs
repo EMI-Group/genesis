@@ -9,7 +9,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
   # System.stop/0 (which would shut down the test VM) is NEVER invoked. The
   # prior value is SAVED and RESTORED in on_exit (never a blind delete_env) so
   # a sibling suite relying on that seam is unaffected. This file does NOT
-  # isolate TaskRegistry/Store nor XDG_CONFIG_HOME, so it may run concurrently.
+  # isolate TaskRegistry/Store nor the config dir, so it may run concurrently.
   use EvoDashWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest

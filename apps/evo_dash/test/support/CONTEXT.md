@@ -4,7 +4,8 @@
 
 Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, and the per-process config-dir seam.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
-Modules here carry setup, helpers and fakes only — never test logic or assertions.
+Six compiled `.ex` modules carry setup, helpers and fakes only — never test logic or assertions.
+The directory also holds ONE test script, `config_dir_test.exs`, which is NOT compiled (only `*.ex` is) but loaded by ExUnit like any other suite; it lives here because it is the proof module for this directory's config-dir seam.
 
 ## Routing Table
 
@@ -16,8 +17,8 @@ Leaf directory — no child directories.
 
 ExUnit `CaseTemplate` for tests needing a Phoenix connection: sets `@endpoint EvoDashWeb.Endpoint`, `use EvoDashWeb, :verified_routes`, imports `Plug.Conn` + `Phoenix.ConnTest`, and its default setup returns `{:ok, conn: build_conn()}`.
 Its setup also resets the shared `EvoDash.ActiveTasks` sidebar hub (`EvoDash.ActiveTasks.reset()` plus an `on_exit` reset), so a snapshot or junk sentinel leaked by an earlier suite never seeds a later whole-page mount and this suite's own writes never leak onward.
-`async:` is NOT set by the template, so `use EvoDashWeb.ConnCase` without an option yields `async: false` — 27 modules use the template: 12 `async: true`, 14 explicit `async: false`, and exactly one that relies on the default (`controllers/page_controller_test.exs`, which writes `XDG_CONFIG_HOME`).
-The 12 async ConnCase users are safe with that reset: ExUnit drains every async module before starting a sync one, so no `async: false` module runs concurrently with them, and the async suites that mount whole pages never assert on sidebar contents.
+`async:` is NOT set by the template, so `use EvoDashWeb.ConnCase` without an option yields `async: false` — and every user states it explicitly: 34 case modules across 20 files, 23 `async: true` and 11 `async: false`.
+The async ConnCase users are safe with that per-test reset: ExUnit drains every async module before starting a sync one, and the only suites that ASSERT on hub contents (`NodeAwareTest`, `ProjectsLiveSyncTest`, `ReviewLiveSyncTest`, `active_tasks_test`, `page_controller_test`) are all `async: false` — the async page-mounting suites write the hub but never assert on it.
 
 ### `EvoDashWeb.TestHelpers` (`test_helpers.ex`)
 
@@ -59,8 +60,8 @@ Per-process config-dir isolation — the `:evo_dash` MIRROR of `EvoGit.TestSuppo
 It is the resolver behind the DEFAULT-INERT `:config_dir_fun` seam of `EvoGit.Platform.config_dir/1`, installed suite-wide by `test_helper.exs`; production never sets that key, so production resolution is unchanged.
 API: `resolve/0` (the installed fun — own `:evogit_config_dir` dictionary entry, then the first override found in the `$callers` chain of LOCAL-node pids), `activate/1`, `isolate_module!/1` (unique `<tmp>/<prefix>-<int>` dir + `on_exit` cleanup, no dictionary write), `isolate!/1` (`isolate_module!` + `activate`, i.e. the plain-`setup` convenience) and `config_dir/0` (`EvoGit.Platform.config_dir/0`, the concrete `<override>/genesis` path).
 Both apps' helpers share the same process-dictionary key, so a root `mix test` resolves identically whichever helper installed the fun last.
-`$callers` inheritance covers `GenServer`/`Task`/`Supervisor` children started from the test process (`Task.Supervisor.start_child/2` included — the `EvoDash.SafeCall` path) and a `Phoenix.LiveViewTest` view (its channel sets `$callers` to the test pid, `deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`); it does NOT cover a raw `spawn/1` or the boot-time app-global singletons (`EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`), so modules whose config reads happen inside those stay `async: false`.
-Proof + usage contract, all three levels asserted empirically: `config_dir_test.exs` (`EvoDash.Test.ConfigDirTest`, `async: true`).
+`$callers` inheritance covers `GenServer`/`Task`/`Supervisor` children started from the test process (`Task.Supervisor.start_child/2` included — the `EvoDash.SafeCall` path) and a `Phoenix.LiveViewTest` view (its channel sets `$callers` to the test pid, `deps/phoenix_live_view/lib/phoenix_live_view/channel.ex:1297`); it does NOT cover a raw `spawn/1` or the boot-time app-global singletons (`EvoGit.AgentScheduler`, `EvoGit.TaskRegistry`, `EvoGit.Store`, `EvoGit.PeakHourEngine`, `EvoDash.ChatHistory`, `EvoDash.UpdateStatus`), so modules whose config reads happen inside those stay `async: false`.
+Proof + usage contract, all three levels asserted empirically: `config_dir_test.exs` (`EvoDash.Test.ConfigDirTest`, `async: true`, 3 tests) — the view process' `$callers` contains the test pid, a temp-dir-only config file changes a real page render, `EvoDash.SafeCall`/`Task.Supervisor` children (nested ones included) resolve the override, and both a raw `spawn/1` and the no-override case fall back to the ambient dir.
 
 ### Migrated-sqlite template
 

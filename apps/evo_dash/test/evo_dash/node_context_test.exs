@@ -6,11 +6,9 @@
 #     with UNIQUE ids/paths (the idiom already used by the task-review
 #     describe), so nothing has to be swapped or isolated.
 #   * `EvoDash.NodeContextConfigTest` (`async: true`) — the two describes that
-#     WRITE the viewed node's config dir (`agents.toml`, `tools/`). They used to
-#     redirect `XDG_CONFIG_HOME` to a temp dir — a process-global env var, the
-#     reason this module was `async: false`. They now isolate PER PROCESS
-#     through the test-only `:config_dir_fun` seam installed by
-#     test/test_helper.exs (`EvoDash.Test.ConfigDir.isolate!/1`): the override
+#     WRITE the viewed node's config dir (`agents.toml`, `tools/`). They isolate
+#     the dir PER PROCESS through the test-only `:config_dir_fun` seam installed
+#     by test/test_helper.exs (`EvoDash.Test.ConfigDir.isolate!/1`): the override
 #     lives in the TEST process' dictionary and both the RPC code under test and
 #     anything it spawns reach it through the OTP `:"$callers"` chain. Nothing
 #     process-global is mutated, so both modules run in the async phase.
@@ -485,7 +483,8 @@ defmodule EvoDash.NodeContextConfigTest do
     # The local path reads/writes the REAL agents.toml at
     # EvoGit.Config.config_dir(). Never touch the user's real file: give this
     # test its OWN `<temp dir>/genesis` through the per-process
-    # `:config_dir_fun` seam (same directory layout as the old XDG redirect).
+    # `:config_dir_fun` seam (`<temp dir>/genesis`, the same layout a platform
+    # config dir has).
     # A fresh dir has no agents.toml, which is exactly the hermetic "no
     # definition yet" state.
     #
@@ -574,8 +573,8 @@ defmodule EvoDash.NodeContextConfigTest do
   describe "custom_tools_status/1 (node-first custom-tools RPC)" do
     # The local path reads the VIEWED node's own `<config_dir>/tools/`
     # directory. Never touch the user's real config: give this test its OWN
-    # `<temp dir>/genesis` through the per-process `:config_dir_fun` seam (same
-    # directory layout as the old XDG redirect, so evo_git's
+    # `<temp dir>/genesis` through the per-process `:config_dir_fun` seam (the
+    # same layout a platform config dir has, so evo_git's
     # custom_tools_rpc_test.exs behaviour is mirrored). A fresh dir has no
     # `tools/` subdirectory, so the hermetic status is the empty shape.
     #

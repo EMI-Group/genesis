@@ -15,8 +15,8 @@ Leaf node — all five suites live directly here, none of them calls `live/3` (p
 
 | File | Module | Lines | Tests | async |
 |------|--------|-------|-------|-------|
-| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 489 | 11 | `async: false` (explicit — its `?node=` describe isolates the process-global `XDG_CONFIG_HOME`; carries `@moduletag :capture_log`) |
-| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 96 | 2 | `async: false` (ConnCase default — NO `async:` option is passed; same `XDG_CONFIG_HOME` mutation) |
+| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 489 | 11 | `async: true` (per-test `setup` isolates the config dir PER PROCESS; carries `@moduletag :capture_log`) |
+| `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 96 | 2 | `async: false` (explicit — the malformed-hub test writes junk shapes into the `{nil, node()}` `EvoDash.ActiveTasks` key) |
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 14 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
 | `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 60 | 5 | `async: true` |
@@ -28,13 +28,14 @@ Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param
 - **Seams, not the Store**: the suite writes NOTHING to the task store. Both reads are injected through module-level app-env seams restored in `on_exit` — `:task_export_task_runner` (2-arity `fn node, task_id -> TaskInfo.t() | nil end`) and `:task_export_archive_runner` (3-arity `fn node, task_id, opts -> %{entries: [...], total: n} end`) — so it needs no `EvoDash.Test.IsolatedTaskStore` and cannot leak rows into `evo_git`'s task-list tests.
 - **Coverage (main describe)**: the flat envelope (head fields + `archive_records`, export-only settings columns shipped verbatim); paging order with `offset` 0 → 200, `limit: 200`, `include_results: true`, `include_settings: true` asserted on EVERY page plus `:include_total` asserted ABSENT (the count default is what stops the loop); the three paging stops (reported `total`, a short page, an empty page); `normalize_for_json/1` on non-JSON record terms; a failing page mid-pagination (truncated but valid 200 document); a failing FIRST page or an unexpected page shape (→ empty-archive 404); an unencodable record or head field (500, no temp file left behind); and the 404 paths (missing task, no archive data, no archive read at all for the missing-task case).
 - **`?node=` describe**: unknown node id → 404 WITHOUT calling either runner; a saved-but-disconnected target → 404 likewise; a connected target (suite-local fake `ConnectionManager` registered in `EvoGit.RemoteConnection.Registry`) → both runners receive the remote node atom; `?node=local` → the local path.
-- `async: false` is required by the `?node=` describe, which points the process-global `XDG_CONFIG_HOME` at a per-test temp dir so its `EvoGit.RemoteConnections.save/1` call cannot pollute the developer's real `~/.config/genesis` — that env var is the ONLY config-dir seam (`EvoGit.Config.config_dir/0` derives the path from it, with no injectable override), so a concurrently running async module reading config could observe this suite's temp dir.
-- The two module-level runner seams (`:task_export_task_runner` / `:task_export_archive_runner`) are NOT a blocker: they live in the shared `:evo_dash` app env but are read only by this controller, which no other suite exercises.
+- `async: true` — the `?node=` describe SAVES a connection target with `EvoGit.RemoteConnections.save/1`, but the per-test `setup` isolates the config dir PER PROCESS through the `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`); the request runs in the TEST process, so the override applies directly and no concurrent mount can observe this suite's temp dir.
+- The two module-level runner seams (`:task_export_task_runner` / `:task_export_archive_runner`) are NOT a blocker: they live in the shared `:evo_dash` app env but are read only by this controller, which no other suite exercises; each test restores the previous value in `on_exit`.
+- The suite's fake `ConnectionManager` GenServer is defined ABOVE the test module (an `async: true` module's tests can run while the rest of the file is still loading).
 
 ## `page_controller_test.exs`
 
-`async: false` by ConnCase default (no `async:` option) because it isolates `XDG_CONFIG_HOME` and writes the shared `EvoDash.ActiveTasks` hub.
-- Setup points `XDG_CONFIG_HOME` at a per-test temp dir and calls `EvoGit.Config.VersionState.complete_onboarding/0` so `/` and `/help` render instead of redirecting to `/welcome`.
+`async: false` because it writes junk shapes into the shared `EvoDash.ActiveTasks` hub (config isolation is NOT a reason: `setup` isolates the dir per process through the `:config_dir_fun` seam).
+- Setup isolates the config dir PER PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`) and calls `EvoGit.Config.VersionState.complete_onboarding/0` so `/` and `/help` render instead of redirecting to `/welcome`.
 - Test 1: `GET /` renders ProjectsLive (palette + `AdaptiveInput`, no `chat-form`) and `GET /help` renders HomeLive (`#chat-form`, "Chat with Genesis").
 - Test 2: a whole-page render survives malformed `EvoDash.ActiveTasks` hub entries (`:junk_atom`, a bare binary) — the mount hook's `hub_snapshot/2` sanitizes them, so `Layouts.group_tasks_by_project/2` cannot `BadMapError`; the test clears the shared hub before AND after itself.
 

@@ -209,9 +209,8 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # (`EvoDash.Test.ConfigDir.isolate!/1` -> `EvoGit.Platform.config_dir/0`,
   # inherited by the mounted view and its supervised load tasks through
   # `$callers`) and mark onboarding complete by writing a version-state file
-  # there. The layout is unchanged (`<dir>/genesis/...`, exactly what
-  # `XDG_CONFIG_HOME=<dir>` produced); only the mechanism is per-process
-  # instead of BEAM-global.
+  # there. The layout is `<dir>/genesis/...` (what `EvoGit.Platform.config_dir/0`
+  # expects); the mechanism is per-process, never a BEAM-global env var.
   def set_onboarding_completed(%{conn: conn} = _context) do
     dir = EvoDash.Test.ConfigDir.isolate!("evogit_dashboard_test_config")
 
@@ -525,9 +524,9 @@ defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
   # put_github_seams/1 and must not be clobbered; an empty tmp_dir
   # auto-detects genesis_new, which never checks). Conflict-free: nothing
   # else in this file reads :github_runner, the assertion surface is
-  # unchanged (an :error status renders no GitHub UI), and the file's
-  # mounting suites are all async: false so the global env stub cannot
-  # race another suite.
+  # unchanged (an :error status renders no GitHub UI), and no other suite in
+  # the tree touches the key (it is this file family's own seam), so the
+  # global stub cannot race a peer.
   def stub_github_upstream_check! do
     Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
       {:error, :no_github_upstream}

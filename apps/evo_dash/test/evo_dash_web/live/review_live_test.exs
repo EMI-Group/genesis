@@ -5893,9 +5893,8 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     #
     # The config dir is isolated PER PROCESS (test-only `:config_dir_fun` seam →
     # `EvoDash.Test.ConfigDir.isolate!/1`) so the saved target never touches the
-    # developer's real ~/.config/genesis/ — never through the BEAM-global
-    # `XDG_CONFIG_HOME` (the seam gives this test a unique `<temp dir>/genesis`,
-    # the same layout the old env-var redirect produced).
+    # developer's real ~/.config/genesis/ — never through a BEAM-global env var
+    # (the seam gives this test a unique `<temp dir>/genesis`).
     #
     # Still `async: false`: the "unknown node param falls back to local" test
     # mounts a LOCAL page, whose connected-mount sidebar fetch writes the

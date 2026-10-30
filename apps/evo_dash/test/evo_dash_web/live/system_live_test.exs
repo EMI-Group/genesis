@@ -45,8 +45,8 @@
 # CONFIG DIR: every test that WRITES the config dir (remote-connection targets)
 # isolates it PER PROCESS through the test-only `:config_dir_fun` seam
 # (`EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs) —
-# never a BEAM-global `XDG_CONFIG_HOME` write. `<override>/genesis` is the same
-# layout the old env-var redirect produced, so no assertion changed.
+# never a BEAM-global `XDG_CONFIG_HOME` write. `<override>/genesis` is the
+# config dir the mounted page and its supervised tasks resolve.
 #
 # DEFINITION ORDER IS LOAD-BEARING: an `async: true` module's tests can run
 # while the REST of this file is still being loaded, so a module defined BELOW

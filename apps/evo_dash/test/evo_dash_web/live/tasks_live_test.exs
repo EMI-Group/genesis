@@ -6,8 +6,7 @@
 # process' dictionary and reaches the mounted LiveView plus its supervised load
 # tasks through the OTP `:"$callers"` chain
 # (`support/config_dir_test.exs` proves all three levels), so every test that
-# needs one gets its OWN `<temp dir>/genesis` config dir — the exact layout the
-# old env-var redirect produced.
+# needs one gets its OWN `<temp dir>/genesis` config dir.
 #
 # async: false — the module-wide setup calls
 # `EvoDash.Test.IsolatedTaskStore.isolate!/1`, which TERMINATES and re-registers

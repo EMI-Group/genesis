@@ -401,8 +401,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # (e.g. nix.enabled = false) are used — making the tests deterministic
     # regardless of host env.
     # `isolate!/1` writes the per-process override (`<dir>/genesis` is the
-    # concrete config dir, the same layout the old `XDG_CONFIG_HOME` write
-    # produced), so nothing is BEAM-global and no env restore is needed.
+    # concrete config dir), so nothing is BEAM-global and no env restore is
+    # needed.
     dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
     on_exit(fn -> File.rm_rf!(dir) end)
 

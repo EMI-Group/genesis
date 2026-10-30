@@ -21,7 +21,7 @@ defmodule EvoDashWeb.PageControllerTest do
   setup do
     # `isolate!/1` creates a unique temp dir, activates it for this process and
     # registers the `File.rm_rf!` cleanup itself. The layout is
-    # `<temp dir>/genesis` — byte-identical to the old `XDG_CONFIG_HOME` redirect.
+    # `<temp dir>/genesis`, the layout `EvoGit.Platform.config_dir/0` expects.
     EvoDash.Test.ConfigDir.isolate!("evogit_page_test_config")
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do

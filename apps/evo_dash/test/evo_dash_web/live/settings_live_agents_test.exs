@@ -20,10 +20,10 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest.ConnectionManager do
 end
 
 defmodule EvoDashWeb.SettingsLiveAgentsTest do
-  # async: true — this module's only shared-state concern was the BEAM-global
-  # XDG_CONFIG_HOME, replaced by the PER-PROCESS config-dir seam
-  # (`EvoDash.Test.ConfigDir.isolate!/1`, resolved through `$callers` so the
-  # mounted LiveView and its supervised load tasks see THIS test's dir). It
+  # async: true — this module's only shared-state concern, the config dir, is
+  # PER-PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`, resolved through
+  # `$callers` so the mounted LiveView and its supervised load tasks see THIS
+  # test's dir). It
   # touches no app-env seam (`:nix_available_override` / `:platform_os_override`
   # belong to settings_live_test.exs' sync module), no AgentScheduler state and
   # no ETS hub; `EvoDash.ActiveTasks` is per-test data that ConnCase resets

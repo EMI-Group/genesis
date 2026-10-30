@@ -55,8 +55,8 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   setup do
     # Per-test config dir (see the module comment). `isolate!/1` creates a unique
     # temp dir, activates it for this process and registers the `File.rm_rf!`
-    # cleanup itself; the layout is `<temp dir>/genesis`, identical to the old
-    # `XDG_CONFIG_HOME` redirect.
+    # cleanup itself; the layout is `<temp dir>/genesis`, the shape
+    # `EvoGit.Platform.config_dir/0` resolves for this process.
     EvoDash.Test.ConfigDir.isolate!("evogit_test_config_export")
     :ok
   end
