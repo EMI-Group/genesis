@@ -28,10 +28,28 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
   #    local one. Whole-page mounts assert data-accent-color; bare-socket
   #    unit tests drive on_mount/handle_params/handle_info directly.
   #
-  # async: false — every test isolates the user config via a per-test
-  # XDG_CONFIG_HOME env var (the hook reads config.toml there; so does
-  # NodeAware for remote_connections.toml), so the host's real config can never
-  # leak in (same pattern as settings_live_test.exs / node_aware_test.exs).
+  # async: false — the module-wide setup below redirects `XDG_CONFIG_HOME` at a
+  # per-test temp dir, which is the ONLY config-dir seam
+  # (`EvoGit.Platform.config_dir/1` → `base_dir/3` reads the env var at call
+  # time; there is no injectable override, and a `Process.get` seam cannot work
+  # because LiveView page processes do not inherit the test process's process
+  # dictionary). Mutating that env var is PROCESS-GLOBAL, so any concurrently
+  # running `async: true` module that reads config (every mounted page resolves
+  # `EvoGit.Config.resolve/1`; NodeAware reads `EvoGit.RemoteConnections`) would
+  # observe this test's temp dir instead of the run-wide one. Same pattern — and
+  # same non-negotiable reason — as settings_live_test.exs / node_aware_test.exs.
+  #
+  # The per-test dir is itself REQUIRED by the tests that WRITE config (a shared
+  # run-wide dir would make them order-dependent, and tests inside one async
+  # module run concurrently):
+  #   * "connected render — data-accent-color on #app-layout (local node)" —
+  #     seed_config/1 writes `<temp dir>/genesis/config.toml` with
+  #     `accent_color = "teal"`; its sibling "fresh (empty) user config" test
+  #     asserts the schema default "blue" and would see that teal file.
+  #   * "remote node accents — the per-node accent cache (flash fix)" —
+  #     save_target!/1 writes `remote_connections.toml` in the same temp dir.
+  # The pure-seam and dead-render describes write nothing, but the setup is
+  # module-wide.
   use EvoDashWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -59,14 +77,15 @@ defmodule EvoDashWeb.LiveHooks.AppearanceTest do
       File.rm_rf!(tmp_config)
     end)
 
-    # ActiveTasks is a global hub under EvoDashboard.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
+    # `EvoDash.ActiveTasks` (the sidebar hub seeded on every mount) is already
+    # reset by `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, so it
+    # needs no reset here.
 
-    # Same discipline for the per-node accent cache (a boot-created named ETS
-    # table shared across all evo_dash tests in the OS process): one test's
-    # warm remote accent must never leak into the next test's cold mounts.
+    # The accent cache is a separate boot-created named ETS table shared by the
+    # whole run (`EvoDash.AccentCache`, no process); clear it so the local
+    # (`nil`-key) entry can never carry another suite's accent into these cold
+    # mounts. This file's own keys are per-test unique, so this is hygiene, not
+    # a concurrency requirement.
     EvoDash.AccentCache.reset()
 
     :ok
