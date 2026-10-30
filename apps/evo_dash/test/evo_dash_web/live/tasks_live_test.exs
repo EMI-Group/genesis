@@ -1,3 +1,24 @@
+# TasksLive (task history) test suite.
+#
+# Config isolation goes through the test-only `:config_dir_fun` seam
+# (`EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs) and
+# NOT through the BEAM-global `XDG_CONFIG_HOME`: the override lives in the TEST
+# process' dictionary and reaches the mounted LiveView plus its supervised load
+# tasks through the OTP `:"$callers"` chain
+# (`support/config_dir_test.exs` proves all three levels), so every test that
+# needs one gets its OWN `<temp dir>/genesis` config dir — the exact layout the
+# old env-var redirect produced.
+#
+# async: false — the module-wide setup calls
+# `EvoDash.Test.IsolatedTaskStore.isolate!/1`, which TERMINATES and re-registers
+# the process-global `EvoGit.Store` / `EvoGit.TaskRegistry` SINGLETON NAMES
+# against a temp sqlite file (every fixture below is written through that
+# pair). A (re)start of a name cannot overlap another module's use of the same
+# name, so the whole module must stay in ExUnit's serial phase; the isolated
+# pair is also why the page's async store reads must be drained before teardown
+# (see `flush_tasks_load/2`). No test here needs config isolation at the file
+# level — the one helper that does (`register_remote_target!/1`) isolates its
+# own dir through the per-process seam.
 defmodule EvoDashWeb.TasksLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -239,29 +260,14 @@ defmodule EvoDashWeb.TasksLiveTest do
 
   # Registers a CONNECTED (fake) remote target and returns its id, so NodeAware
   # resolves `/tasks?node=<id>` to a remote BEAM node atom. Same pattern as the
-  # review page's remote-node tests: a temp XDG config dir for the target's TOML
-  # plus a Registry-backed stand-in for the connection manager.
+  # review page's remote-node tests: a per-test config dir (through the
+  # test-only `:config_dir_fun` seam — `EvoDash.Test.ConfigDir.isolate!/1`,
+  # activated in THIS process and inherited by the mounted view + its supervised
+  # load tasks through `$callers`) for the target's TOML, plus a
+  # Registry-backed stand-in for the connection manager.
   defp register_remote_target!(prefix) do
-    original = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_test_config_#{prefix}_" <> to_string(System.unique_integer([:positive]))
-      )
-
-    File.mkdir_p!(tmp_config)
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      File.rm_rf(tmp_config)
-
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-    end)
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_test_config_#{prefix}")
+    on_exit(fn -> File.rm_rf!(dir) end)
 
     target_id = "#{prefix}-target-#{System.unique_integer([:positive])}"
 

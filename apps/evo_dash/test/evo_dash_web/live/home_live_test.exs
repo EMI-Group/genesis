@@ -11,11 +11,34 @@
 # remounts, the production-mimicking crash-reproduction flow, sidebar
 # robustness, stop/cancel, and node-awareness.
 #
-# EvoDash.ChatHistory is PROCESS-SHARED (a global GenServer under
-# EvoDash.Application that survives the per-test Store/TaskRegistry isolation
-# below), so the setup calls EvoDash.ChatHistory.reset() — chats never leak
-# across tests. The module is async: false for the same reason (shared store
-# + shared scheduler ETS tables).
+# The config directory is isolated PER PROCESS through the test-only
+# `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by
+# test/test_helper.exs), never through a BEAM-global `XDG_CONFIG_HOME` write.
+# The override lives in the TEST process' dictionary and reaches the mounted
+# LiveView plus its supervised load tasks through the OTP `:"$callers"` chain
+# (`support/config_dir_test.exs` proves all three levels), so every test gets its
+# OWN empty `<temp dir>/genesis` config dir — the exact layout the old env-var
+# redirect produced, with zero assertion changes.
+#
+# async: false — FOUR process-global dependencies, and every test in this file
+# mounts `/help`, so no contained subset can escape them:
+#
+#   1. `EvoDash.Test.IsolatedTaskStore.isolate!/1` (module-wide setup) terminates
+#      and re-registers the process-global `EvoGit.Store` / `EvoGit.TaskRegistry`
+#      SINGLETON NAMES. A (re)start cannot overlap another module's use of those
+#      names, so this alone forces the sync phase.
+#   2. `EvoDash.ChatHistory` — a boot-created global GenServer + named ETS table
+#      (`EvoDash.Application`) with NO per-process seam. This suite resets it,
+#      and the HomeLive mount itself calls `ChatHistory.new_chat/1` +
+#      `put_state/2`, while the ASYNC `EvoDash.ChatHistoryTest` asserts ABSOLUTE
+#      contents (`list_chats() == [id]`); running concurrently would make both
+#      flaky (that suite's own module comment states the same invariant).
+#   3. The boot-global `EvoGit.AgentScheduler` config is forced to the fail-fast
+#      `model_profiles: []` for every test (the documented seam that keeps a
+#      real send from reaching an LLM endpoint), then restored in `on_exit`.
+#   4. Per-test app-env seams (`:approval_responder`,
+#      `:source_availability_runner`, `:source_clone_runner`) are written and
+#      restored by the tests that use them.
 defmodule EvoDashWeb.HomeLiveTest do
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
@@ -69,19 +92,17 @@ defmodule EvoDashWeb.HomeLiveTest do
     EvoDash.ActiveTasks.reset()
 
     # Onboarding (pattern from projects_live_test.set_onboarding_completed):
-    # isolate XDG_CONFIG_HOME to a temp dir and mark onboarding complete so the
-    # HomeLive dead render does NOT redirect first-time users to /welcome. The
-    # "onboarding redirect" describe re-isolates to a fresh empty dir in its
-    # own test body.
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_home_live_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # isolate the config dir to a per-test temp dir and mark onboarding complete
+    # so the HomeLive dead render does NOT redirect first-time users to
+    # /welcome. The "onboarding redirect" describe re-isolates to a fresh empty
+    # dir in its own test body.
+    #
+    # `isolate!/1` creates the temp dir, activates it in THIS process and
+    # registers the `File.rm_rf!` cleanup itself; the explicit `on_exit` below
+    # keeps the dir lifetime visible at the call site (both removals are
+    # idempotent).
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_test_config")
+    on_exit(fn -> File.rm_rf!(dir) end)
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
       EvoGit.Config.VersionState.complete_onboarding()
@@ -93,14 +114,6 @@ defmodule EvoDashWeb.HomeLiveTest do
       # eviction sweep in State.do_update_config reads :evogit_sched_meta via
       # :ets.whereis, so a missing table is a safe no-op).
       restore_model_profiles(original_model_profiles)
-
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
     end)
 
     :ok
@@ -690,29 +703,13 @@ defmodule EvoDashWeb.HomeLiveTest do
 
   describe "onboarding redirect" do
     test "dead render redirects first-time users to /welcome", %{conn: conn} do
-      # The setup completed onboarding under ITS temp XDG_CONFIG_HOME. Re-isolate
-      # to a brand-new empty temp dir here so VersionState's path-keyed
-      # :persistent_term cache re-reads from disk, finds no version-state file,
-      # and reports onboarding_needed?() == true again.
-      tmp_config =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_home_live_onboarding_#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(tmp_config)
-      original = System.get_env("XDG_CONFIG_HOME")
-      System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-      on_exit(fn ->
-        if original do
-          System.put_env("XDG_CONFIG_HOME", original)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_config)
-      end)
+      # The setup completed onboarding under ITS temp config dir. Re-isolate to
+      # a brand-new empty temp dir here (a SECOND `isolate!/1` — it returns a
+      # fresh directory and re-activates this process) so VersionState's
+      # path-keyed :persistent_term cache re-reads from disk, finds no
+      # version-state file, and reports onboarding_needed?() == true again.
+      dir = EvoDash.Test.ConfigDir.isolate!("evogit_home_live_onboarding")
+      on_exit(fn -> File.rm_rf!(dir) end)
 
       assert {:error, {:live_redirect, %{to: "/welcome"}}} = live(conn, "/help")
     end
@@ -1774,11 +1771,11 @@ defmodule EvoDashWeb.HomeLiveTest do
     # NodeContext.start_task before the runtime ever sees the task.
     #
     # Writes a config.toml with a single model profile into the test's isolated
-    # XDG_CONFIG_HOME (set per test by the file-level setup) so
+    # config dir (per-process override set by the file-level setup) so
     # ModelSelect.load/1 — called from mount's assign_model_select — sees a
     # profile to render and pin. Pattern copied from projects_live_test.exs
     # ("model selection auto/lock semantics" describe): EvoGit.Config caches by
-    # config_path, and the per-test fresh XDG_CONFIG_HOME makes the path unique
+    # config_path, and the per-test fresh config dir makes the path unique
     # so the new file is re-read.
     defp write_model_profile_config do
       config_path = EvoGit.Config.config_path()
@@ -1827,7 +1824,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     end
 
     test "selector is absent when no model profiles are configured", %{conn: conn} do
-      # NO config written — the fresh empty XDG_CONFIG_HOME dir means
+      # NO config written — the fresh empty per-test config dir means
       # ModelSelect.load/1 sees zero profiles. The contract renders the select
       # hidden/absent when @model_profiles == [] (there is nothing to choose).
       {:ok, _view, html} = live(conn, "/help")
@@ -2718,11 +2715,12 @@ defmodule EvoDashWeb.HomeLiveTest do
   end
 
   describe "node-awareness" do
-    # The file-level setup already isolates XDG_CONFIG_HOME per test, so saving
-    # a dedicated target here never touches the developer's real config. The
+    # The file-level setup already isolates the config dir per test (per-process
+    # `:config_dir_fun` override), so saving a dedicated target here never
+    # touches the developer's real config. The
     # fake connection manager (defined below the module) makes
     # ?node=test-remote resolve to a connected remote BEAM node. async: false
-    # is already set at the module level.
+    # is already set at the module level (see the module header).
     setup do
       {:ok, _target} =
         EvoGit.RemoteConnections.save(%{
