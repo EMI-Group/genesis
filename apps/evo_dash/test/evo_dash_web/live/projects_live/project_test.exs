@@ -15,19 +15,21 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
   `load_model_profiles_from_config/2` seam (its moduledoc explicitly exposes
   it for unit testing with an injected config map).
 
-  NOTE: `async: false` — `XDG_CONFIG_HOME` is process-global and is the ONLY
-  config-dir seam (`EvoGit.Config.config_dir/0` derives the path from it; there
-  is no injectable override), while every test in this module runs inside the
-  per-test isolated dir and the local-node tests WRITE into it
-  (`write_model_profile_config/0`, `CustomAgents.save_model_selection_script/1`).
-  `LiveHooks.Appearance` resolves config at every page mount, so a concurrent
-  async mount would observe this temp dir. Only the three local-node tests truly
-  need the isolation; the six pure/remote ones could form an async module, but
-  that would duplicate (or extract to `test/support/`, out of scope) the shared
-  fixtures to recover ~4 ms — not worth it.
+  async: true — this module mutates NO process-global state.
+
+  The config dir is isolated PER PROCESS through the test-only `:config_dir_fun`
+  seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs),
+  never through a BEAM-global `XDG_CONFIG_HOME` write: the local-node tests WRITE
+  `config.toml` (`write_model_profile_config/0`) and `agents.toml`
+  (`EvoGit.CustomAgents.save_model_selection_script/1`) into this test's OWN
+  `<temp dir>/genesis`, so a concurrent async mount can never observe them.
+  `EvoGit.Config`, `EvoGit.CustomAgents` and `EvoGit.RemoteConnections` are pure
+  file stores (nothing cached per module; the `:persistent_term` config caches
+  are keyed by FILE PATH, so a unique dir per test is cache-safe), and the
+  `:memo_config_resolve` memo the third test uses is a PROCESS-dict entry.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoDashWeb.ProjectsLive.Project
   alias EvoGit.Config
@@ -43,35 +45,19 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
     %{llm: %{models: [%{id: "profile-a", model: "anthropic:claude-sonnet-5"}]}}
   end
 
-  # Isolates XDG_CONFIG_HOME per test: the config.toml (and agents.toml) that
-  # Config.resolve/0 and EvoGit.CustomAgents read resolve into a fresh temp
-  # dir, so the tests are deterministic regardless of the host's real config.
+  # Isolates the config dir per test (see the moduledoc): the config.toml (and
+  # agents.toml) that Config.resolve/0 and EvoGit.CustomAgents read resolve into
+  # a fresh `<temp dir>/genesis`, so the tests are deterministic regardless of
+  # the host's real config and of any concurrent suite's config writes.
   defp isolate_config_dir do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_project_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
-
+    # `isolate!/1` creates a unique temp dir, activates it for this process and
+    # registers the `File.rm_rf!` cleanup itself.
+    EvoDash.Test.ConfigDir.isolate!("evogit_project_test_config")
     :ok
   end
 
   # Writes a config.toml with a single model profile into the isolated
-  # XDG_CONFIG_HOME so Config.resolve/0 has a profile to expose. Mirrors the
+  # config dir so Config.resolve/0 has a profile to expose. Mirrors the
   # same-named helper in projects_live_test.exs.
   defp write_model_profile_config do
     config_path = Config.config_path()
@@ -114,7 +100,7 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
   end
 
   describe "load_model_profiles/0,1 (local node)" do
-    test "reads the resolved config from the isolated XDG_CONFIG_HOME and selects the first profile" do
+    test "reads the resolved config from the isolated config dir and selects the first profile" do
       write_model_profile_config()
 
       assert {profiles, "profile-a"} = Project.load_model_profiles()
