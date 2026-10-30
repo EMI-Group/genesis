@@ -269,10 +269,30 @@ defmodule EvoGit.AgentSchedulerTest do
   test "get_foreign_repo_commits returns the foreign repo commits from SchedMeta" do
     agent_id = :erlang.unique_integer([:positive])
 
-    # Plain map with the key: Store.get_sched_meta matches `%{} = meta` and the
-    # lib dot-accesses meta.foreign_repo_commits, so a full %SchedMeta{} struct
-    # is not required (its @enforce_keys would demand depth + spec).
-    :ets.insert(:evogit_sched_meta, {agent_id, %{foreign_repo_commits: %{"orig" => "abc"}}})
+    # PRODUCTION SHAPE: whole-table scans (`agent_ids_for_task/1`,
+    # `RemoteAPI.build_agent_summary/3`) pattern-match `%SchedMeta{}`, so a
+    # plain-map row here would crash ANY concurrent module's scan with a
+    # FunctionClauseError. Build a real struct with its real required fields.
+    :ets.insert(
+      :evogit_sched_meta,
+      {agent_id,
+       %SchedMeta{
+         id: agent_id,
+         depth: 0,
+         spec: %AgentSpec{
+           context_node: %ContextNode{path: "./", repo: "/tmp/sched-meta"},
+           phylo_node: %PhyloGraphNode{
+             repo: "/tmp/sched-meta",
+             base_commit: "abc",
+             current_commit: "abc"
+           },
+           agent_module: nil,
+           objective: "test"
+         },
+         foreign_repo_commits: %{"orig" => "abc"}
+       }}
+    )
+
     on_exit(fn -> :ets.delete(:evogit_sched_meta, agent_id) end)
 
     assert AgentScheduler.get_foreign_repo_commits(agent_id) == %{"orig" => "abc"}

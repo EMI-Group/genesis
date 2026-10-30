@@ -22,6 +22,9 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.CompleteTask
+  alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
+  alias EvoGit.AgentSpec
+  alias EvoGit.Core.{ContextNode, PhyloGraphNode}
 
   setup_all do
     {:ok, repos: git_templates!()}
@@ -736,9 +739,44 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     # the task-scoped archive ref/branch names. Agent ids are INTEGERS (the
     # scheduler's `next_agent_id`) — the archive table's `agent_id` is an
     # integer primary-key part.
+    #
+    # PRODUCTION SHAPE is mandatory: the scheduler's whole-table scans
+    # (`AgentScheduler.agent_ids_for_task/1`, `RemoteAPI.build_agent_summary/3`)
+    # pattern-match `%SchedMeta{}` / `%AgentState{}`, so a plain map written here
+    # would crash a CONCURRENT module's scan with a FunctionClauseError. Both
+    # rows therefore carry their struct's real required fields.
     defp register_agent!(agent_id, task_id, task_number, task_local_id) do
-      :ets.insert(:evogit_sched_meta, {agent_id, %{task_id: task_id, task_number: task_number}})
-      :ets.insert(:evogit_agent_state, {agent_id, %{task_local_id: task_local_id}})
+      repo = Path.join(System.tmp_dir!(), "evogit_complete_task_meta")
+      context_node = %ContextNode{path: "./", repo: repo}
+
+      :ets.insert(
+        :evogit_sched_meta,
+        {agent_id,
+         %SchedMeta{
+           id: agent_id,
+           depth: 0,
+           spec: %AgentSpec{
+             context_node: context_node,
+             phylo_node: %PhyloGraphNode{repo: repo, base_commit: "abc", current_commit: "abc"},
+             agent_module: nil,
+             objective: "complete_task fixture"
+           },
+           task_id: task_id,
+           task_number: task_number
+         }}
+      )
+
+      :ets.insert(
+        :evogit_agent_state,
+        {agent_id,
+         %AgentState{
+           context_node: context_node,
+           llm_model: "test:model",
+           max_retries: 3,
+           max_depth: 8,
+           task_local_id: task_local_id
+         }}
+      )
 
       on_exit(fn ->
         :ets.delete(:evogit_sched_meta, agent_id)
