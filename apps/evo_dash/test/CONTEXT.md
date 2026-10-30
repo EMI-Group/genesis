@@ -36,6 +36,7 @@ Directory picker disabled (`Application.put_env(:evo_dash, :directory_picker, en
 Five CALL-TIME timer seams are shrunk: `:agents_live_flush_ms` (10), `:agents_live_commit_graph_tick_ms` (10), `:system_samples_seed_retry_ms` (10), `:flush_loading_poll_ms` (1), `:node_aware_reload_debounce_ms` (10).
 Each seam is read at the call site via `Application.get_env(:evo_dash, key, <prod default>)`, so production timings (e.g. the 300 ms reload debounce and AgentsLive flush) are untouched when the block is absent.
 `ExUnit.start(capture_log: true)` keeps the default `max_cases` (28).
+It also installs the DEFAULT-INERT per-process config-dir seam — `Application.put_env(:evo_git, :config_dir_fun, {EvoDash.Test.ConfigDir, :resolve, []})`, the same `{m, f, a}` shape and process-dictionary key (`:evogit_config_dir`) `:evo_git`'s own helper installs, so a root `mix test` resolves identically whichever helper loaded last and production (which never sets the key) is byte-identical.
 `config/test.exs` additionally disables the system sampler (`:system_sample_interval_ms` 86 400 000) and shortens the finalizing watchdog grace to 1 minute.
 
 ## Notes for Agents — cross-cutting rules
