@@ -36,10 +36,14 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     :ok
   end
 
-  # Bounded-poll cadence: the mount funnel below returns the instant the
-  # async node-data task is gone, so a finer cadence only removes overshoot
+  # Bounded-poll cadence: the mount funnel below returns the instant this
+  # mount's async tasks are gone, so a finer cadence only removes overshoot
   # (same idiom as `tasks_live_test.exs`'s `@wait_poll_ms`).
   @wait_poll_ms 2
+
+  # Generous best-effort deadline for that funnel: past it the wait simply stops
+  # and the test's own synchronous call drains whatever is still queued.
+  @settle_timeout_ms 5_000
 
   defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
@@ -52,21 +56,75 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
   # test's own hook would clobber what that hook just set (the source of a rare
   # full-suite flake: `script_test_results` reads back as `[]`).
   #
+  # OWNER-AWARE: only the `EvoDash.TaskSupervisor` children THIS mount spawned
+  # are awaited. A supervised task records the process that started it in its
+  # `$callers` process-dictionary entry, so matching that against the view pid
+  # targets exactly this mount's tasks (`settings_live_test.exs`'s
+  # `mount_async_task_pids/1` and `tasks_live_test.exs`'s `drain_async_loads/2`
+  # use the same idiom). A blanket `Task.Supervisor.children/1` scan is NOT
+  # safe: `EvoDash.TaskSupervisor` never kills children per test, so a
+  # long-lived child another test left behind (e.g. a runner stub parked on
+  # `receive`) made every mount here pay the whole deadline.
+  #
   # A task leaves the supervisor only AFTER its `send(parent, ...)` ran, so once
-  # the tasks observed at mount are gone, the result message is already queued
-  # in the LiveView's mailbox — and every request the test sends afterwards is
-  # therefore processed AFTER it, making the assertion race-free without a fixed
-  # sleep. Only the tasks present at mount are waited for, so an unrelated
-  # lingering task can never stall the suite.
+  # this mount's tasks are gone the result message is already queued in the
+  # LiveView's mailbox — and the trailing `render/1` is a synchronous round-trip
+  # that drains it, so every request the test sends afterwards is processed
+  # AFTER it and the assertion stays race-free without a fixed sleep.
   defp mount_settings(conn, url \\ "/settings?category=agents") do
-    result = live(conn, url)
-    mounted_tasks = Task.Supervisor.children(EvoDash.TaskSupervisor)
-    wait_until(fn -> Enum.all?(mounted_tasks, &(not Process.alive?(&1))) end, 2_000)
-    result
+    {:ok, view, html} = live(conn, url)
+    await_view_async_loads(view)
+    {:ok, view, html}
+  end
+
+  # Bounded poll on "this view owns no live supervised task" (returns
+  # immediately when the mount's load already finished), then a synchronous
+  # `render/1` round-trip to flush the queued result messages into the view.
+  defp await_view_async_loads(view) do
+    wait_until(fn -> view_async_loads_idle?(view.pid) end, @settle_timeout_ms)
+    render(view)
+    :ok
+  end
+
+  defp view_async_loads_idle?(view_pid) do
+    EvoDash.TaskSupervisor
+    |> DynamicSupervisor.which_children()
+    |> Enum.all?(fn
+      {_, pid, _, _} when is_pid(pid) -> not waitable_view_child?(pid, view_pid)
+      _ -> true
+    end)
+  end
+
+  # A live child is one this funnel still has to wait for when `view` started it.
+  # An unset `$callers` is NOT proof that it is foreign — a freshly spawned child
+  # may not have run its first instruction yet — so it counts as waitable and the
+  # poll continues. That converges: every `Task.Supervised` child puts `$callers`
+  # in its process dictionary before running the function it was given.
+  defp waitable_view_child?(pid, view_pid) do
+    case task_callers(pid) do
+      :unset -> true
+      callers -> view_pid in callers
+    end
+  end
+
+  defp task_callers(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} ->
+        case Keyword.fetch(dict, :"$callers") do
+          {:ok, callers} -> callers
+          :error -> :unset
+        end
+
+      _ ->
+        # The child exited between the enumeration and this read: nothing left
+        # to wait for.
+        []
+    end
   end
 
   # Best-effort bounded poll on an observable end state: returns as soon as
-  # `fun` holds (or the deadline passes, leaving the previous behavior).
+  # `fun` holds, and otherwise stops at the deadline (the caller then proceeds
+  # with whatever the test's own synchronous call can still drain).
   defp wait_until(fun, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_until(fun, deadline)
@@ -377,12 +435,12 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert refresh_button_tag(html) =~ "disabled"
 
       # The click's own task delivers an (empty) status that could arrive
-      # before or after our injected one. Wait for it to leave the supervisor
-      # (its `send` has run by then) and drain it, so the sentinel below is the
-      # last status applied.
-      spawned = Task.Supervisor.children(EvoDash.TaskSupervisor)
-      wait_until(fn -> Enum.all?(spawned, &(not Process.alive?(&1))) end, 2_000)
-      render(view)
+      # before or after our injected one. Wait for THIS view's task to leave the
+      # supervisor (its `send` has run by then) and drain it, so the sentinel
+      # below is the last status applied. Owner-scoped like the mount funnel:
+      # any unrelated child still parked on the supervisor is none of our
+      # business (and must not cost this test its deadline).
+      await_view_async_loads(view)
 
       send(view.pid, {:custom_tools_loaded, node(), ok_tool_status("sentinel_tool")})
 
