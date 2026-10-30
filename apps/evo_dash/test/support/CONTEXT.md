@@ -2,7 +2,7 @@
 
 ## Intent
 
-Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, and the Store/TaskRegistry isolation helper.
+Shared, production-free support modules for the EvoDash suite: the connection case template, the async-load flush helper, the two directory-picker fakes, the Store/TaskRegistry isolation helper, and the per-process config-dir seam.
 Compiled only in `:test` via `elixirc_paths(:test) = ["lib", "test/support"]` (`apps/evo_dash/mix.exs`).
 Modules here carry setup, helpers and fakes only — never test logic or assertions.
 
