@@ -1,10 +1,11 @@
 defmodule EvoDash.UpdateStatusTest do
-  # async: true — the only other consumers of the shared EvoDash.UpdateStatus
-  # hub / the :update_notify_only_override + :desktop_release app-env seams and
-  # the EVOGIT_DESKTOP env var (live_hooks/update_status_test, system_live_test)
+  # async: true — no async module WRITES the hub or these seams. The only other
+  # writers (live_hooks/update_status_test, system_live_test, node_aware_test)
   # are async: false, so ExUnit never runs them concurrently with this module.
-  # No async: true module touches any of them; every seam is snapshot-restored
-  # in on_exit below.
+  # Async peers only READ the hub through the global LiveHooks.UpdateStatus
+  # on-mount hook (a navigation-dot seed that no async suite asserts on) while
+  # `desktop?/0` is transiently true. Every seam and env var this module mutates
+  # is snapshot-restored in on_exit below.
   use ExUnit.Case, async: true
 
   alias EvoDash.UpdateStatus
