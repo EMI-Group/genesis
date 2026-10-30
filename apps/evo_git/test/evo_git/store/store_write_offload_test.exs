@@ -24,13 +24,15 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
       and any OTHER failing statement still crashes the store with the
       operation's own reason.
 
-  ## Why `async: false`
+  ## Why `async: true` is safe
 
-  A deliberate deviation from the default in this suite's other store tests.
-  The in-flight assertions read the store's own pool metrics and assert bounded
-  latencies, so they must not compete for CPU with sibling tests; and the
-  crash-semantics test deliberately takes the store (and its writer) down, which
-  is only sane in isolation.
+  Every test runs against its OWN isolated store (a unique SQLite file plus its
+  own registered name, from `EvoGit.TaskRegistryCase`), so the crash-semantics
+  test taking its store and writer down touches nothing a sibling module can
+  see, and nothing here mutates a BEAM-global. The in-flight assertions are
+  events the test itself holds open (`hold_write_lock!/1`), never wall-clock
+  races, and every wait budget is a load-robust 30 s ceiling that only absorbs
+  scheduling latency.
 
   ## Why the store under test is pinned to a single connection
 
@@ -82,7 +84,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   genuinely multi-megabyte row (JSON encode + insert + WAL commit), it no
   longer TIMES anything.
   """
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   import ExUnit.CaptureLog
 
@@ -458,7 +460,7 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # in the writer's mailbox: while the writer is blocked inside SQLite this is
   # the event that proves the second write was issued WHILE the first was still
   # executing.
-  defp wait_for_queued_write(writer, budget_ms \\ 5_000) do
+  defp wait_for_queued_write(writer, budget_ms \\ 30_000) do
     assert wait_until(fn -> queued_writes(writer) >= 1 end, budget_ms),
            "expected the next write to be queued in the writer's mailbox"
 
@@ -486,14 +488,14 @@ defmodule EvoGit.Store.StoreWriteOffloadTest do
   # The pool starts its connections eagerly but the metric is only meaningful
   # once at least one exists — every test that relies on it seeds a write and
   # waits here first, so a `0` observed later really means "write in flight".
-  defp assert_connection_ready!(repo_pid, budget_ms \\ 5_000) do
+  defp assert_connection_ready!(repo_pid, budget_ms \\ 30_000) do
     assert wait_until(fn -> ready_conn_count(repo_pid) >= 1 end, budget_ms),
            "expected the store's pool to have a ready connection"
 
     :ok
   end
 
-  defp wait_for_inflight_write(repo_pid, budget_ms \\ 5_000) do
+  defp wait_for_inflight_write(repo_pid, budget_ms \\ 30_000) do
     assert wait_until(fn -> ready_conn_count(repo_pid) == 0 end, budget_ms),
            "expected a write to be in flight (the writer holding the pooled connection)"
 

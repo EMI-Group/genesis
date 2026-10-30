@@ -12,12 +12,14 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     * a map is canonicalized through `EvoGit.Attachments.message/1` before it is
       stored, and a malformed map raises the descriptive `ArgumentError`.
 
-  Uses `async: false` because the tests manipulate the global named
-  `:evogit_agent_state` ETS table and subscribe to the shared `"agents"` PubSub
-  topic of the global `EvoGit.PubSub`.
+  Uses `async: true`: the rows it seeds live in the app-global named
+  `:evogit_agent_state` ETS table, so every test uses its own
+  `unique_agent_id/0` (its 9_950_000+ range) and never wipes the table. The
+  `"agents"` PubSub topic of the global `EvoGit.PubSub` is shared, but every
+  assertion matches on the agent id, so a sibling module's broadcast is benign.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.PubSub
@@ -58,13 +60,10 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
   end
 
-  defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
-
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete_all_objects(:evogit_sched_meta)
-  end
+  # Per-test-unique agent id: `:evogit_agent_state` is app-global and shared
+  # with every concurrently running `async: true` module, so this module never
+  # reuses a small literal id and never wipes the table (see the moduledoc).
+  defp unique_agent_id, do: 9_950_000 + System.unique_integer([:positive])
 
   defp drain_mailbox do
     receive do
@@ -82,8 +81,6 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    clear_ets()
-    on_exit(fn -> clear_ets() end)
     :ok
   end
 
@@ -91,7 +88,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
 
   describe "append_pending_user_message/2 — legacy binary" do
     test "append+drain returns the SAME binary (byte-identical legacy behavior)" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       # Legacy bytes, incl. an embedded newline and multi-byte UTF-8: nothing
@@ -106,7 +103,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "the stored value in ETS is the identical binary (not wrapped in a map)" do
-      agent_id = 2
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       legacy = "cancel requested"
@@ -119,7 +116,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "a legacy binary materializes byte-identically to the legacy path" do
-      agent_id = 3
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       legacy = "with media? no.\n"
@@ -132,7 +129,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "draining resets the queue (a second drain returns [])" do
-      agent_id = 4
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert :ok = Store.append_pending_user_message(agent_id, "first")
@@ -142,8 +139,10 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "unknown agent → {:error, :not_found} (unchanged legacy behavior)" do
-      assert {:error, :not_found} = Store.append_pending_user_message(999, "hello")
-      assert Store.drain_pending_user_messages(999) == []
+      unknown = unique_agent_id()
+
+      assert {:error, :not_found} = Store.append_pending_user_message(unknown, "hello")
+      assert Store.drain_pending_user_messages(unknown) == []
     end
   end
 
@@ -151,7 +150,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
 
   describe "append_pending_user_message/2 — %{text:, attachments:} map" do
     test "appends and drains as the canonical map, media intact" do
-      agent_id = 11
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       message = %{text: "Look at this screenshot", attachments: [image_attachment()]}
@@ -162,7 +161,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "the stored value is exactly `EvoGit.Attachments.message/1` of the input" do
-      agent_id = 12
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       message = %{text: "canonical please", attachments: [image_attachment()]}
@@ -173,7 +172,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "a STRING-keyed map is canonicalized to the atom-keyed canonical shape" do
-      agent_id = 13
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       message = %{"text" => "string keys in", "attachments" => [image_attachment()]}
@@ -185,7 +184,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "`attachments: nil` and `attachments: []` are equivalent (no media)" do
-      agent_id = 14
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert :ok = Store.append_pending_user_message(agent_id, %{text: "nil media"})
@@ -206,7 +205,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "mixed legacy + map appends drain in order, each in its own shape" do
-      agent_id = 15
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert :ok = Store.append_pending_user_message(agent_id, "legacy first")
@@ -227,12 +226,14 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "unknown agent + valid map → {:error, :not_found}" do
+      unknown = unique_agent_id()
+
       assert {:error, :not_found} =
-               Store.append_pending_user_message(999, %{text: "hi", attachments: nil})
+               Store.append_pending_user_message(unknown, %{text: "hi", attachments: nil})
     end
 
     test "appending a map preserves the rest of the agent state" do
-      agent_id = 16
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state(objective: "keep me", turn: 4))
 
       assert :ok =
@@ -255,7 +256,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
 
   describe "append_pending_user_message/2 — malformed map" do
     test "an unknown attachment type raises a descriptive ArgumentError and queues nothing" do
-      agent_id = 21
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       bad = %{text: "video?", attachments: [Map.put(image_attachment(), "type", "video")]}
@@ -269,7 +270,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "non-base64 attachment data raises and queues nothing" do
-      agent_id = 22
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       bad = %{text: "x", attachments: [Map.put(image_attachment(), "data", "not base64!!")]}
@@ -282,7 +283,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "a blank media_type raises and queues nothing" do
-      agent_id = 23
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       bad = %{text: "x", attachments: [Map.put(image_attachment(), "media_type", "  ")]}
@@ -295,7 +296,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "a non-string text raises and queues nothing" do
-      agent_id = 24
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert_raise ArgumentError, ~r/message: text must be a string/, fn ->
@@ -306,7 +307,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "more than the cap of attachments raises and queues nothing" do
-      agent_id = 25
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       too_many = List.duplicate(image_attachment(), Attachments.max_count() + 1)
@@ -319,7 +320,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "a rejected map leaves an already-queued message untouched" do
-      agent_id = 26
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert :ok = Store.append_pending_user_message(agent_id, "keep me")
@@ -345,7 +346,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "appending a canonical message map broadcasts it in the :agent_updated delta" do
-      agent_id = 31
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       # The insert path broadcasts the initial tracked fields.
@@ -360,7 +361,7 @@ defmodule EvoGit.AgentScheduler.PendingUserMessagesTest do
     end
 
     test "appending a legacy binary broadcasts it verbatim (never dropped)" do
-      agent_id = 32
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}
