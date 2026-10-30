@@ -18,7 +18,9 @@ Leaf directory — no child directories.
 ExUnit `CaseTemplate` for tests needing a Phoenix connection: sets `@endpoint EvoDashWeb.Endpoint`, `use EvoDashWeb, :verified_routes`, imports `Plug.Conn` + `Phoenix.ConnTest`, and its default setup returns `{:ok, conn: build_conn()}`.
 Its setup also resets the shared `EvoDash.ActiveTasks` sidebar hub (`EvoDash.ActiveTasks.reset()` plus an `on_exit` reset), so a snapshot or junk sentinel leaked by an earlier suite never seeds a later whole-page mount and this suite's own writes never leak onward.
 `async:` is NOT set by the template, so `use EvoDashWeb.ConnCase` without an option yields `async: false` — and every user states it explicitly: 34 case modules across 20 files, 23 `async: true` and 11 `async: false`.
-The async ConnCase users are safe with that per-test reset: ExUnit drains every async module before starting a sync one, and the only suites that ASSERT on hub contents (`NodeAwareTest`, `ProjectsLiveSyncTest`, `ReviewLiveSyncTest`, `active_tasks_test`, `page_controller_test`) are all `async: false` — the async page-mounting suites write the hub but never assert on it.
+The per-test reset is NOT safe for the 23 async ConnCase case modules: it is a whole-table `:ets.delete_all_objects` running concurrently with `EvoDashWeb.NodeAwareRunWideTest` (async), whose `node_aware_test.exs:577` exact-asserts a hub key it just wrote — a concurrent wipe makes that read `:empty` (intermittent failure).
+A scoped clear of every context whose node is `node()` (`{nil, node()}` local plus `{target_id, node()}` pending/local-node-remote) already covers everything the reset protects for the LOCAL page mounts; the remote/pending keys are per-test-unique (or `{[], []}`, the pending guard's value), so no current assertion needs a whole-table wipe.
+The synchronous hub-exactness suites (`NodeAwareTest`, `ProjectsLiveSyncTest`, `ReviewLiveSyncTest`, `active_tasks_test`, `page_controller_test`) work with either form.
 
 ### `EvoDashWeb.TestHelpers` (`test_helpers.ex`)
 
