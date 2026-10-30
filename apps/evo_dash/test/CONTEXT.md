@@ -87,7 +87,7 @@ Every other store-touching suite writes into the RUN-WIDE per-run store instead 
 Suites using that idiom: `node_context_test`'s async module (its config module writes only config), `NodeAwareRunWideTest`, every `ReviewLive*Test` module (fixture cleanup via `delete_seeded_task!/1`), `projects_live_test`, and `agents_live_test`'s per-test agent ids.
 `review_live_test` runs on the production pair and asserts it with `IsolatedTaskStore.assert_production!/0` in every module's `setup`.
 Prefer unique task ids plus explicit cleanup over assumptions about global emptiness.
-`XDG_CONFIG_HOME` is process-global and has no `Application.get_env` override seam, so any suite that SETS it is `async: false`.
+`XDG_CONFIG_HOME` is process-global; the per-process alternative is the `:config_dir_fun` seam the helper installs (`EvoDash.Test.ConfigDir.isolate!/1` in `setup` — own process dictionary, then the `$callers` chain), proven end-to-end by `support/config_dir_test.exs` (test process, a real page render in the mounted view, `Task.Supervisor` children via `EvoDash.SafeCall.start/4`; a raw `spawn/1` and the boot-time app-global singletons are the documented escape classes). Any suite that still SETS `XDG_CONFIG_HOME` is `async: false`.
 
 ### Async policy
 Census by MODULE (the unit ExUnit parallelises), not by file — three files hold both kinds (`review_live_test.exs` 8 modules, `node_context_test.exs` 2, `node_aware_test.exs` 2): 78 test modules across the 69 files, 58 `async: true` and 20 `async: false`.
