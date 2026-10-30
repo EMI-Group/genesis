@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.11] - 2026-10-30
+
+### Added
+
+- Add a headless `genesis_server` release for Linux x64/arm64 and macOS arm64, with a `genesis` CLI for serving, starting/stopping, checking status/logs/health, and version reporting
+- Add a first-class server mode for the headless release, with plain-HTTP LAN access, a persistent secret key base, and stdout logging
+- Add an unauthenticated `GET /health` endpoint returning status, version, and uptime for liveness and readiness checks
+- Add a one-line `install.sh` script that installs and upgrades the headless server release, verifying checksums and linking the `genesis` binary
+- Add an automatic commit fallback for the agent when completing changes
+
+### Changed
+
+- Remote bootstrap commands now run through a POSIX `sh` login-shell wrapper, working in fish, nushell, tcsh, zsh, bash, and on NixOS
+- Remote connection failures now show human-readable reasons in the dashboard instead of raw error tuples
+- Remote bootstrap staging is now atomic with self-verifying extract and chmod, with clearer remote error output and retries for transient SSH failures on idempotent commands
+- Subagent delegation reminders are now frozen while the worktree has merge conflicts, with the conflicted-file list cached once per turn instead of running git per batch
+
+### Fixed
+
+- Fix remote config paths containing spaces (such as macOS `~/Library/Application Support/genesis`) being word-split and creating junk directories, and stop word-splitting the NixOS patch file list
+- Fix `/health` `uptime_ms` always returning 0 by reporting the real VM uptime on the Erlang monotonic clock
+- Fix server mode detection using `RELEASE_NAME` so `genesis_server` releases boot instead of failing with a missing `SECRET_KEY_BASE` error
+- Fix remote daemon SSH diagnostics by capturing stderr in failure messages and report already-formatted error reasons without extra quoting
+- Fix starting the remote daemon for root SSH targets by using the systemd system scope instead of user scope
+
 ## [0.13.10] - 2026-10-29
 
 ### Added
