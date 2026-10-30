@@ -86,9 +86,12 @@ defmodule EvoDashWeb.HomeLiveTest do
     # node_aware_test.exs / chat_history_test.exs convention).
     EvoDash.ChatHistory.reset()
 
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the Store/TaskRegistry isolation above — reset it so one
-    # test's sidebar snapshot never leaks into the next.
+    # `EvoDash.ActiveTasks` is a process-less public-ETS module (NOT a GenServer) over
+    # the boot-created, process-wide `:evo_dash_active_tasks` table, so it is shared by
+    # the whole run and untouched by the `EvoDash.Test.IsolatedTaskStore.isolate!/1` above.
+    # This module is `async: false`, so its whole-table `EvoDash.ActiveTasks.reset()`
+    # cannot race another module: it clears the previous test's sidebar snapshot so it
+    # cannot seed the next whole-page mount or dead render.
     EvoDash.ActiveTasks.reset()
 
     # Onboarding (pattern from projects_live_test.set_onboarding_completed):
