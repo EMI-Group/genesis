@@ -909,8 +909,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # concurrently running `async: true` module also touches. The tests that DO
   # (the frozen `EvoGit.TaskRegistry` probes, the real task launches whose
   # `{:task_updated, ...}` broadcast arms every mounted page's NodeAware
-  # debounce, and the app-env keys shared with `directory_picker_test` /
-  # `project_flow_test`) live in `EvoDashWeb.ProjectsLiveSyncTest` below.
+  # debounce, the run-wide-store `clear_task_history` sweep, and the app-env
+  # keys shared with `directory_picker_test` / `project_flow_test`) live in
+  # `EvoDashWeb.ProjectsLiveSyncTest` below.
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
   import EvoDashWeb.ProjectsLiveTest.Helpers
@@ -2017,29 +2018,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
-    # MOVED: "user-initiated delete_task does not notify" lives in
-    # `EvoDashWeb.ProjectsLiveSyncTest` below — its zero-timeout refute is a
-    # claim about GLOBAL quiet (no `task_notification` at all), and the delete
-    # itself publishes a `"tasks"` event from the process-global registry.
-
-    test "user-initiated clear_task_history does not notify", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      # Terminal AFTER mount — would be newly-terminal on reload if the user
-      # had not cleared the history.
-      insert_task_fixture!(status: :completed, opts: [prompt: "cleared task"])
-
-      render_hook(view, "clear_task_history", %{})
-
-      # The clear re-seeds the notified-id set asynchronously; wait for that
-      # readiness before triggering the scan.
-      wait_notified_ids_ready(view)
-
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
+    # MOVED: "user-initiated delete_task does not notify" and "user-initiated
+    # clear_task_history does not notify" live in
+    # `EvoDashWeb.ProjectsLiveSyncTest` below — each zero-timeout refute is a
+    # claim about GLOBAL quiet (no `task_notification` at all), and the mutation
+    # itself publishes a `"tasks"` event from the process-global registry (the
+    # delete) or sweeps every FINISHED task from the RUN-WIDE store (the clear,
+    # which would delete another async module's live fixture mid-test).
   end
 
   describe "async mount loads + notification scan (exit-safe)" do
@@ -4581,6 +4566,12 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
   #     broadcast (`{:task_deleted, ...}`), and the test it drives asserts that
   #     NO `task_notification` is pushed at all, which is only conclusive while
   #     no concurrent module can publish one.
+  #   * user-initiated `clear_task_history` — `TaskRegistry.clear_finished_tasks/0`
+  #     sweeps EVERY finished task out of the RUN-WIDE `EvoGit.Store` all suites
+  #     share, so under `async: true` it deletes another async module's live
+  #     fixture mid-test (seen once: `ReviewLiveArchiveTest`'s task disappeared
+  #     between insert and `LoadData.load/2`). Its refute is also the same
+  #     GLOBAL-quiet claim as the delete test.
   #   * `:directory_picker` (`enabled`) — `test/evo_dash/directory_picker_test.exs`
   #     is `async: true` and flips it to `enabled: true` for its own module; a
   #     concurrent `enabled: false` here (or a real pick there) is the conflict.
@@ -4705,6 +4696,34 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # delete_task is a cast — a synchronous registry call afterwards
       # guarantees the store deletion was processed before the reload snapshot.
       EvoGit.TaskRegistry.list_tasks()
+
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+
+    # Same reasoning as the delete test above, plus a second, sharper hazard:
+    # `clear_task_history` runs `TaskRegistry.clear_finished_tasks/0`, which
+    # sweeps EVERY finished task out of the RUN-WIDE store the whole suite
+    # shares — under `async: true` that deletes another module's live fixture
+    # mid-test (observed once: `ReviewLiveArchiveTest`'s task vanished between
+    # its fixture insert and its `LoadData.load/2`). Serial placement means the
+    # sweep can only ever see fixtures of tests that already finished.
+    # The refute also stays conclusive: no concurrent module can push its own
+    # `task_notification` into this view between the drain and the refute.
+    test "user-initiated clear_task_history does not notify", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Terminal AFTER mount — would be newly-terminal on reload if the user
+      # had not cleared the history.
+      insert_task_fixture!(status: :completed, opts: [prompt: "cleared task"])
+
+      render_hook(view, "clear_task_history", %{})
+
+      # The clear re-seeds the notified-id set asynchronously; wait for that
+      # readiness before triggering the scan.
+      wait_notified_ids_ready(view)
 
       send(view.pid, :node_aware_reload_tasks)
       drain_task_reload(view)
