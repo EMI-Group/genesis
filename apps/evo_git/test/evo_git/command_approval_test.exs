@@ -20,9 +20,13 @@ defmodule EvoGit.CommandApprovalTest do
 
   # async: false is FORCED by the BEAM-global app-env key
   # `[:evo_git, :command_approval_timeout]`: the setup below (and one test)
-  # writes it, and `EvoGit.CommandApproval` reads it per request — any
+  # writes it, and `EvoGit.CommandApproval.timeout/0` is read per request (and
+  # by `EvoGit.Agent.ToolDispatch` to size approval tool timeouts), so a
   # concurrently running module that opens an approval request would observe
-  # the perturbed window.
+  # the perturbed window. The key cannot be hoisted into the suite-wide
+  # `test_helper.exs` constants because this module needs TWO windows — 5_000 ms
+  # as the fail-fast safety net and 100 ms for the unresponded-request timeout
+  # test — and `command_shell_test.exs` (also `async: false`) shares the key.
   use EvoGit.TaskRegistryCase, async: false
 
   alias EvoGit.CommandShell
@@ -185,8 +189,10 @@ defmodule EvoGit.CommandApproval.RequestTest do
   """
 
   # async: false is FORCED: the tests mutate the BEAM-global app env
-  # `[:evo_git, :command_approval_timeout]` and one briefly unregisters the
-  # app-booted `EvoGit.CommandApproval` process name.
+  # `[:evo_git, :command_approval_timeout]` — two different windows (5_000 ms
+  # safety net / 100 ms timeout test), so there is no single value to hoist —
+  # and one briefly unregisters the app-booted `EvoGit.CommandApproval` process
+  # name.
   use ExUnit.Case, async: false
 
   alias EvoGit.CommandApproval

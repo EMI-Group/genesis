@@ -6,9 +6,14 @@ defmodule EvoGit.Agent.LlmRetryPolicyTest do
 
   The backoff base/cap are read at call time from the app-env seams
   `:llm_model_exhaustion_backoff_base_ms` / `:llm_model_exhaustion_backoff_cap_ms`,
-  so this module mutates that shared app env (restored via `on_exit`) — and
-  `agent/tool_dispatch_retry_slot_test.exs` (also `async: false`) mutates the
-  same keys, so this module must never run concurrently with it.
+  so this module mutates that shared app env (restored via `on_exit`). The keys
+  cannot be hoisted into the suite-wide `test_helper.exs` constants: the
+  "timing seams" tests need 10/80 (and the invalid-value cases), while
+  `agent/llm_error_failfast_test.exs` (also `async: false`) pins 5_000/30_000 and
+  `agent/tool_dispatch_retry_slot_test.exs` asserts the production 60 s/8 h
+  defaults — one value cannot serve all three. The per-test writes are therefore
+  BEAM-global and read at CALL time by `LlmRetryPolicy` (the HTTP-402 arms of
+  `ToolDispatch` and `Compression.LlmRetry`).
   """
 
   use ExUnit.Case, async: false

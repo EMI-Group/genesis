@@ -7,11 +7,16 @@ defmodule EvoGit.Agent.Compression.ThresholdTest do
   catalog supplies ONLY the output reservation. `[:llm, :compression_threshold_tokens]`
   is an optional positive-integer OVERRIDE (`source: :config`).
 
-  `async: false` — the module swaps the BEAM-global `:llm_model_metadata_fun` seam
-  and redirects the process-wide `XDG_CONFIG_HOME` so the operator's real
-  `~/.config/genesis/config.toml` (which may carry a
-  `compression_threshold_tokens` override) can never leak into a window-derived
-  assertion.
+  `async: false` — the module swaps the BEAM-global `:llm_model_metadata_fun`
+  seam (the model catalog's output reservation). That seam is read at CALL time
+  by `EvoGit.Config.Schema.LLM.model_metadata/1`, which every agent spawn reaches
+  through `profile_generation_params/1` → `LLMConstraints.filter/3`, so a
+  concurrently running async suite (or the global `EvoGit.AgentScheduler`) would
+  observe the stub. The config dir is isolated PER PROCESS through
+  `EvoGit.TestSupport.ConfigDir` (no `XDG_CONFIG_HOME` mutation), so the
+  operator's real `~/.config/genesis/config.toml` — which may carry a
+  `compression_threshold_tokens` override — still cannot leak into a
+  window-derived assertion without forcing serialization.
   """
 
   use ExUnit.Case, async: false
@@ -54,28 +59,16 @@ defmodule EvoGit.Agent.Compression.ThresholdTest do
     Application.put_env(:evo_git, @seam, fn _model -> metadata end)
   end
 
-  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir and returns
-  # the config directory the runtime then resolves (so the write below always
-  # lands where `EvoGit.Config` reads). `on_exit` restores the env var and
-  # removes the temp dir, so no `:persistent_term` file cache entry survives.
+  # Isolates the config dir for the CURRENT process through the
+  # `EvoGit.TestSupport.ConfigDir` seam (installed suite-wide by
+  # `test/test_helper.exs`), so `EvoGit.Config` resolves the fresh temp dir
+  # instead of the operator's real `~/.config/genesis`. This is a
+  # process-dictionary override, NOT `System.put_env("XDG_CONFIG_HOME")` — the
+  # BEAM-global env var stays untouched. The returned directory is what
+  # `EvoGit.Config.config_path/0` writes into; `on_exit` (registered by the
+  # seam) removes it, so no unique-path `:persistent_term` cache entry survives.
   defp isolate_config! do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-threshold-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      case original_xdg do
-        nil -> System.delete_env("XDG_CONFIG_HOME")
-        value -> System.put_env("XDG_CONFIG_HOME", value)
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-threshold")
     config_dir = EvoGit.Config.config_dir()
     File.mkdir_p!(config_dir)
     config_dir

@@ -4,14 +4,39 @@
 System.put_env("XDG_DATA_HOME", Path.join(System.tmp_dir!(), "evogit_test_data"))
 File.mkdir_p!(Path.join(System.tmp_dir!(), "evogit_test_data"))
 
-# Default nix integration OFF for the whole suite. EvoGit.Nix.enabled?/0 reads this
-# app env first; when unset it falls back to the developer's REAL ~/.config/genesis
-# config and shells out to real `nix print-dev-env`, leaking its inherited stderr
-# progress ("evaluating derivation ..." + dots) to the test console. Nix is only
-# consulted LAZILY during tests (sandbox/None paths), so setting it here — after app
-# boot but before any test runs — is effective and race-free for every async module.
+# --- Suite-wide fast test constants ---------------------------------------
+# Set ONCE here because EVERY test in the suite wants this same fast/fake value.
+# A per-test mutation of one of these keys is a BEAM-global write that a
+# concurrently running module would observe, so a module that writes it must be
+# `async: false`. Holding the shared value here removes that one mutation from
+# every module that used to repeat it — the key itself is then never a reason to
+# stay sync (whatever else still forces sync in such a module is named in its own
+# `@moduledoc`). Only add a key whose value is identical for EVERY writer in
+# `test/`; a key with two or more required values must stay a local, restored
+# `on_exit` write. Production defaults are untouched — these
+# `Application.put_env/3` calls exist only in the test VM's helper (never in
+# `config/`).
+#
+# Default nix integration OFF. EvoGit.Nix.enabled?/0 reads this app env first;
+# when unset it falls back to the developer's REAL ~/.config/genesis config and
+# shells out to real `nix print-dev-env`, leaking its inherited stderr progress
+# ("evaluating derivation ..." + dots) to the test console. Nix is only consulted
+# LAZILY during tests (sandbox/None paths), so setting it here — after app boot
+# but before any test runs — is effective and race-free for every async module.
 # Tests that specifically need nix enable it explicitly (e.g. sandbox/bwrap_test.exs).
 Application.put_env(:evo_git, :nix_enabled, false)
+
+# Fake OpenAI credential for every module that drives the real ReqLLM stack.
+# `ReqLLM.Keys.get/2` resolves a provider key from
+# `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY` env
+# var) before a request is built, so a stub local endpoint needs one — and every
+# module that pins it (agent/implicit_completion_test,
+# agent/context_compression_stages_test, agent/context_compression_fail_fast_test,
+# agent/tool_dispatch_retry_slot_test, agent/llm_error_failfast_test) pins
+# exactly this `"test-key"`, restored-or-deleted around its own tests. One
+# suite-wide value makes those per-test pins redundant and keeps the developer's
+# real credential from leaking into any request-shape assertion.
+Application.put_env(:req_llm, :openai_api_key, "test-key")
 
 # Resolve the config dir PER PROCESS during tests so a module can isolate
 # ~/.config/genesis without repointing the BEAM-global XDG_CONFIG_HOME env var
