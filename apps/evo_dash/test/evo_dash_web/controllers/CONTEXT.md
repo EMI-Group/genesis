@@ -3,7 +3,7 @@
 ## Intent
 
 ExUnit suites for the classic (non-LiveView) HTTP controllers and error templates of `EvoDashWeb`: the task-archive JSON export endpoint and the router/error responses.
-Leaf node — all four suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
+Leaf node — all five suites live directly here, none of them calls `live/3` (pure HTTP requests plus `render_to_string/4`).
 
 ## Routing Table
 
@@ -15,11 +15,11 @@ Leaf node — all four suites live directly here, none of them calls `live/3` (p
 
 | File | Module | Lines | Tests | async |
 |------|--------|-------|-------|-------|
-| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 489 | 11 | `async: false` (explicit — mutates the process-global `XDG_CONFIG_HOME` plus two app-env seams; carries `@moduletag :capture_log`) |
+| `task_export_controller_test.exs` | `EvoDashWeb.TaskExportControllerTest` | 489 | 11 | `async: false` (explicit — its `?node=` describe isolates the process-global `XDG_CONFIG_HOME`; carries `@moduletag :capture_log`) |
 | `page_controller_test.exs` | `EvoDashWeb.PageControllerTest` | 96 | 2 | `async: false` (ConnCase default — NO `async:` option is passed; same `XDG_CONFIG_HOME` mutation) |
 | `error_html_test.exs` | `EvoDashWeb.ErrorHTMLTest` | 14 | 2 | `async: true` |
 | `error_json_test.exs` | `EvoDashWeb.ErrorJSONTest` | 12 | 2 | `async: true` |
-| `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 34 | 3 | `async: true` |
+| `health_controller_test.exs` | `EvoDashWeb.HealthControllerTest` | 60 | 5 | `async: true` |
 
 ## `task_export_controller_test.exs`
 
@@ -28,7 +28,8 @@ Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param
 - **Seams, not the Store**: the suite writes NOTHING to the task store. Both reads are injected through module-level app-env seams restored in `on_exit` — `:task_export_task_runner` (2-arity `fn node, task_id -> TaskInfo.t() | nil end`) and `:task_export_archive_runner` (3-arity `fn node, task_id, opts -> %{entries: [...], total: n} end`) — so it needs no `EvoDash.Test.IsolatedTaskStore` and cannot leak rows into `evo_git`'s task-list tests.
 - **Coverage (main describe)**: the flat envelope (head fields + `archive_records`, export-only settings columns shipped verbatim); paging order with `offset` 0 → 200, `limit: 200`, `include_results: true`, `include_settings: true` asserted on EVERY page plus `:include_total` asserted ABSENT (the count default is what stops the loop); the three paging stops (reported `total`, a short page, an empty page); `normalize_for_json/1` on non-JSON record terms; a failing page mid-pagination (truncated but valid 200 document); a failing FIRST page or an unexpected page shape (→ empty-archive 404); an unencodable record or head field (500, no temp file left behind); and the 404 paths (missing task, no archive data, no archive read at all for the missing-task case).
 - **`?node=` describe**: unknown node id → 404 WITHOUT calling either runner; a saved-but-disconnected target → 404 likewise; a connected target (suite-local fake `ConnectionManager` registered in `EvoGit.RemoteConnection.Registry`) → both runners receive the remote node atom; `?node=local` → the local path.
-- `async: false` is required by the env mutation and the app-env seams, not by the Store: `XDG_CONFIG_HOME` is process-global and is the ONLY config-dir seam (`EvoGit.Config.config_dir/0` derives the path from it), and the runner seams live in the shared `:evo_dash` app env.
+- `async: false` is required by the `?node=` describe, which points the process-global `XDG_CONFIG_HOME` at a per-test temp dir so its `EvoGit.RemoteConnections.save/1` call cannot pollute the developer's real `~/.config/genesis` — that env var is the ONLY config-dir seam (`EvoGit.Config.config_dir/0` derives the path from it, with no injectable override), so a concurrently running async module reading config could observe this suite's temp dir.
+- The two module-level runner seams (`:task_export_task_runner` / `:task_export_archive_runner`) are NOT a blocker: they live in the shared `:evo_dash` app env but are read only by this controller, which no other suite exercises.
 
 ## `page_controller_test.exs`
 
@@ -43,4 +44,4 @@ Pure render tests (`async: true`, no store, no env): the 404 and 500 templates f
 
 ## `health_controller_test.exs`
 
-`async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"` that is strictly `> 0` and below a 24 h sanity bound (the regression guard: the field used to always degrade to `0`), plus a monotonicity check that a second probe after `Process.sleep(20)` reports `>=` the first; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).
+`async: true`, pure HTTP: `GET /health` answers `200` `application/json` with `"status" == "ok"`, a non-empty `"version"` (pinned to `Application.spec(:evo_dash, :vsn)`), and a non-negative integer `"uptime_ms"` that is strictly `> 0` and below a 24 h sanity bound (the regression guard against the field degrading to `0`), plus a monotonicity check that a second probe after `Process.sleep(20)` reports `>=` the first; a bare connection with no session/cookies is enough and the probe never redirects (`conn.state == :sent`).

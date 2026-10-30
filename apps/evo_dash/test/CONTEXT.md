@@ -3,12 +3,14 @@
 ## Intent
 
 ExUnit suite for the `:evo_dash` app: the runner bootstrap, shared support modules, and suites that mirror `apps/evo_dash/lib/`.
-68 test files (`*_test.exs`) + `test_helper.exs` + `support/`: 51 541 lines, 1771 statically declared `test` blocks plus 2 doctests (`EvoDash.SettingsUtils`).
-Measured run: 1781 passed (1779 tests + 2 doctests) in ~21 s — 3.3 s async, 17.8 s sync — ~25 s wall clock, zero stray console lines.
+69 test files (`*_test.exs`) + `test_helper.exs` + `support/`: 52 433 lines (51 423 in the test files, 1 010 in `support/*.ex`).
+1 785 statically declared `test` blocks (the four `for`-generated declarations in `components/remote_gate_components_test.exs` expand to 12) plus 2 doctests (`EvoDash.SettingsUtils`) → 1 793 tests at runtime.
+Measured run on a quiet host: 1 795 passed (1 793 tests + 2 doctests) in 17.7–18.5 s — 3.4–3.9 s async, 13.9–15.1 s sync — ~22 s wall clock, zero stray console lines.
+The ~3–4 s gap between ExUnit's total and the wall clock is the umbrella's app boot, paid once per `mix test` invocation.
 Stable across explicit seeds (0, 1, 2, 12345, 533180, 8000147, 987654321) and across back-to-back runs.
 `mix test apps/evo_dash/test` from the umbrella root runs exactly this app's suite; bare root `mix test` also runs the `evo_git` suite first (~67 s).
 The domain singletons (`EvoGit.Store`, `EvoGit.TaskRegistry`, `EvoGit.TaskInfo`, `EvoGit.RecentProject`) live in `:evo_git` and are tested there; no suite here owns them.
-Web-layer tests reference those singletons directly; per-test isolation is owned by `EvoDash.Test.IsolatedTaskStore` (they are children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
+Web-layer tests reference those singletons directly; per-test Store/TaskRegistry isolation is `EvoDash.Test.IsolatedTaskStore` (they are children of `EvoGit.Supervisor`, NOT `EvoDash.Supervisor`).
 
 ## Routing Table
 
@@ -27,7 +29,7 @@ Web-layer tests reference those singletons directly; per-test isolation is owned
 
 `XDG_DATA_HOME` → `<tmp>/evogit_test_data`; the real per-run database dir comes from `config/test.exs`'s `:evo_git, :data_dir` (`.../evogit_test_data/genesis-<os pid>-<unique int>`), shared by both umbrella apps within one run and unique per BEAM across runs.
 `XDG_CONFIG_HOME` → a run-unique EMPTY dir (`.../evogit_test_config/genesis-<os pid>-<unique int>`), so nothing reads or writes the developer's real `~/.config/genesis`; this redirect is a no-op on macOS (`EvoGit.Platform.base_dir/3` ignores XDG there).
-Suites that WRITE config point `XDG_CONFIG_HOME` at their own per-test temp dir and restore the prior value in `on_exit` (which is why they are `async: false`).
+Suites that WRITE config point `XDG_CONFIG_HOME` at their own per-test temp dir and restore the prior value in `on_exit` (which is why those modules are `async: false`).
 `ExUnit.after_suite/1` removes ONLY this run's own data dir and config dir, never the shared `<tmp>/evogit_test_data` / `<tmp>/evogit_test_config` parents (a concurrent run owns siblings).
 Directory picker disabled (`Application.put_env(:evo_dash, :directory_picker, enabled: false)`, mirrored by `config/test.exs`) so no native modal dialog can hang the suite.
 `:evo_git, :nix_enabled` pinned `false` so `EvoGit.Nix.enabled?/0` never reads the developer's config or shells out to real nix; suites needing nix enable it explicitly.
@@ -55,16 +57,17 @@ Per-suite wait contracts: `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `evo_dash/
 
 ### Mount funnels — a page-load result must never clobber test-driven state
 Some LiveViews spawn an `EvoDash.TaskSupervisor` child at mount or on a `handle_params` patch, and its result message REPLACES assigns with the mount-time snapshot.
-Apply the file-local funnel right after `live/3` (and after the relevant `render_patch/2`), BEFORE driving any event: `settings_live_test.await_mount_async_loads/1`, `review_live_test.flush_review_load/2` + `settle_debounced_task_reload/1`, `projects_live_test.await_async_loads/1`, `tasks_live_test.flush_tasks_load/2`, `settings_live_agents_test`'s `mount_settings/1` (bounded `wait_until/2`).
+Apply the file-local funnel right after `live/3` (and after the relevant `render_patch/2`), BEFORE driving any event: `settings_live_test.await_mount_async_loads/1`, `review_live_test.flush_review_load/2` + `settle_debounced_task_reload/1`, `projects_live_test.await_async_loads/1`, `tasks_live_test.flush_tasks_load/2`, `settings_live_agents_test`'s `mount_settings/1` → `await_view_async_loads/1`.
 They locate this mount's children by the view pid in the child's `:"$callers"` entry (`mount_async_task_pids/1` + `task_callers/1`) and wait for those pids to exit, after which the queued apply is drained by a `render(view)` (or, for `settings_live_test`'s monitor-only variant, by the test's next synchronous `render`/`:sys.get_state`).
+The `:"$callers"` filter is load-bearing, not cosmetic: `EvoDash.TaskSupervisor` never kills children per test, so a wait on EVERY supervisor child made each `settings_live_agents_test` mount pay its whole deadline whenever any long-lived child existed — the owner-aware poll (2 ms cadence, ~5 s best-effort cap) looks only at this mount's tasks and returns the instant they are gone.
 `review_live_test.flush_review_load/2` composes the funnel with `EvoDashWeb.TestHelpers.flush_loading/4` (funnel first, then the loading marker), and `tasks_live_test.flush_tasks_load/2` adds a `tasks_loading == false` poll plus a final `render(view)`.
 Reuse one of these helpers instead of re-deriving the race — a sleep cannot cover it deterministically.
 `render_async/2` does NOT await `Task.Supervisor` children, which is why `EvoDashWeb.TestHelpers.flush_loading/4` and the funnels exist.
 
 ### Async review actions — every review test must await the settle
 `ReviewLive` runs every review action through `spawn_action/4` (supervised task) and applies it in `handle_info({:review_action_result, task_id, node, action, ref, result})`, so a `render_click` proves dispatch only.
-Any test asserting action-derived state (a repo's `resolution`, `local_repo_resolutions`, `review_status`, the completion banner, the hub snapshot) or inspecting an injected runner-seam message MUST call the file-local `await_review_action_settled/1` after the click — this is the hard rule for every new review test.
-`await_review_action_settled/1` polls `assigns(view)[:review_action] == nil` (a stopped view counts as settled via a conditional `catch :exit`) and returns the post-settle render, or `""` when the view is gone.
+Any test asserting action-derived state (a repo's `resolution`, `local_repo_resolutions`, `review_status`, the completion banner, the hub snapshot) or inspecting an injected runner-seam message MUST call `await_review_action_settled/1` after the click — this is the hard rule for every new review test.
+`await_review_action_settled/1` (one `Helpers` function in the shared `EvoDashWeb.ReviewLiveTest.Helpers` module, imported by all eight review suites) polls `assigns(view)[:review_action] == nil` (a stopped view counts as settled via a conditional `catch :exit`) and returns the post-settle render, or `""` when the view is gone.
 The two nav-away cases (`ignore`, `auto_resolve`) synchronize a different way: `render_click` → `assert_redirect`, then a synchronous `EvoGit.TaskRegistry.get_task/1` proves the queued cast landed, so the hub `== :empty` assertion right after it is non-vacuous.
 Do not read action-derived state right after a bare `render_click` anywhere else.
 
@@ -77,20 +80,39 @@ The event table itself: `apps/evo_dash/CONTEXT.md` → "Push-based event contrac
 ### Global state inventory and isolation
 Boot-created, process-wide named hubs shared by ALL suites: `EvoDash.ActiveTasks` (`:evo_dash_active_tasks`), `EvoDash.ChatHistory` (`:evo_dash_chat_history`), `EvoDash.AccentCache` (`:evo_dash_accent_cache`), plus the `EvoGit.AgentScheduler` tables.
 `EvoDashWeb.ConnCase` resets `EvoDash.ActiveTasks` in `setup` and `on_exit`; any non-ConnCase suite that mounts whole pages resets it itself.
-Process-global `EvoGit.Store`/`EvoGit.TaskRegistry` isolation is `EvoDash.Test.IsolatedTaskStore.isolate!/1`, used by the six sync suites `home_live_test`, `tasks_live_test`, `live_hooks/node_aware_test`, `live_hooks/guide_test`, `node_context_test`, `isolated_task_store_test`.
-`review_live_test` runs on the production pair and asserts it with `IsolatedTaskStore.assert_production!/0` in setup.
-Everything else uses the run's single unique data dir.
+Process-global `EvoGit.Store`/`EvoGit.TaskRegistry` isolation is `EvoDash.Test.IsolatedTaskStore.isolate!/1`, and only four suites still call it (6 call sites): `home_live_test` (module setup, 74 tests), `tasks_live_test` (module setup, 81 tests), `node_aware_test` (the five describes whose assertions need a store-backed registry, 16 tests) and `isolated_task_store_test` itself (3 tests) — ≈174 calls per run.
+`isolate!/1` costs ≈6.5 ms per call end-to-end (≈1.7 ms production-pair restart + ≈4–5 ms for the teardown's `ExUnit.CaptureLog.capture_log/2` window + sub-millisecond terminate/boot/restore), so per-test isolation is NOT the significant cost — serialisation is.
+Every other store-touching suite writes into the RUN-WIDE per-run store instead (`EvoGit.Store`, started once per run and never terminated) in a whole-store-safe way: per-test unique ids (`System.unique_integer/1`, sometimes under a unique `project_path` so a filtered paged read is an exact-count anchor), assertions scoped to exactly those ids, and an `on_exit` that deletes the row through the DIRECT Store (`EvoGit.Store.delete_task(EvoGit.Store, id)` — never a `TaskRegistry` cast, which broadcasts on `"tasks"` and would arm every mounted page's reload debounce).
+Suites using that idiom: `node_context_test`'s async module (its config module writes only config), `NodeAwareRunWideTest`, every `ReviewLive*Test` module (fixture cleanup via `delete_seeded_task!/1`), `projects_live_test`, and `agents_live_test`'s per-test agent ids.
+`review_live_test` runs on the production pair and asserts it with `IsolatedTaskStore.assert_production!/0` in every module's `setup`.
 Prefer unique task ids plus explicit cleanup over assumptions about global emptiness.
 `XDG_CONFIG_HOME` is process-global and has no `Application.get_env` override seam, so any suite that SETS it is `async: false`.
 
 ### Async policy
-49 modules are `async: true`; 19 are `async: false` (17 declare it explicitly, 2 inherit the ConnCase default: `page_controller_test`, `projects_live_test`).
+Census by MODULE (the unit ExUnit parallelises), not by file — three files hold both kinds (`review_live_test.exs` 8 modules, `node_context_test.exs` 2, `node_aware_test.exs` 2): 78 test modules across the 69 files, 58 `async: true` and 20 `async: false`.
+The other 16 `defmodule`s in this tree (94 modules total) are helpers with no case template (the review `Helpers` and fake `ConnectionManager`s, `SafeCallTest.SlowServer`, the diff-viewer `Foo`).
 ExUnit drains ALL async modules before starting any sync one (`ExUnit.Runner.async_loop/4`), so a flip is unsafe only when a module shares a MUTABLE global with another ASYNC module.
-Sync reasons, all documented per file: writing `XDG_CONFIG_HOME`/config, terminating the global Store+TaskRegistry pair, resetting the boot-created ETS hubs (`active_tasks_test`), or sharing an app-env seam/hub with an async peer (`live_hooks/update_status_test` vs async `desktop_quit_test`; `settings_live_test`'s `:nix_available_override`/`:platform_os_override` vs async `platform_info_test`).
-Every sync module either WRITES config or mutates a shared hub/app-env/seam, so no flip candidates remain.
-`agents_live_test` (`/agents`) and `desktop_quit_test` (`/system`) mount whole pages while async and read config through the NodeAware/Appearance hooks, so a config writer must never run concurrently with them.
-Enablers for flipping the config-isolated majority would be production changes (an injectable config dir, a `server`-arg TaskRegistry, a store/registry seam in `NodeContext`); a process-dictionary override cannot work because LiveView processes do not inherit the test process's dictionary.
+Sync reasons, all documented per file: writing `XDG_CONFIG_HOME`/config, terminating the process-global Store+TaskRegistry pair, resetting or reading the boot-created ETS hubs, `Process.unregister(EvoGit.TaskRegistry)`, or sharing an app-env seam with an async peer (`live_hooks/update_status_test` vs async `desktop_quit_test` and `evo_dash/update_status_test`; `settings_live_test`'s `:nix_available_override`/`:platform_os_override` and `system_live_test`'s `:platform_os_override` vs async `platform_info_test`).
+Four files carry no `async: true` module at all, each for a genuinely different blocker: `isolated_task_store_test.exs` (it terminates the process-global pair and asserts ABSOLUTE properties of the replacement), `active_tasks_test.exs` (writes junk sentinel shapes into the `{nil, node()}` hub key an async whole-page mount seeds from), `projects_live/project_test.exs` (writes `XDG_CONFIG_HOME`), `controllers/page_controller_test.exs` (writes `XDG_CONFIG_HOME` plus the hub).
+The remaining flip candidates, and exactly what blocks each:
+- The `XDG_CONFIG_HOME` group — `settings_live_test`, `settings_live_agents_test`, `projects_live_test`, `home_live_test`, `system_live_test`, `welcome_live_test`, `welcome_complete_live_test`, `project_test`, `task_export_controller_test`, `appearance_test`, `node_context_test`'s `NodeContextConfigTest`. `EvoGit.Platform.config_dir/1` reads the env var at CALL time and there is no app-env or process-dictionary override; a process-dictionary seam cannot work because LiveView page processes do not inherit the test process's dictionary. A production-level injectable config dir is the only unlock.
+- The `"tasks"`-publisher group — review's `ReviewLiveMergeTest`, `ReviewLiveAutoResolveTest` and the click-mutating half of `ReviewLiveSyncTest`. Every task mutation broadcasts `{:task_updated, …}` from the process-global `EvoGit.TaskRegistry`, which arms `NodeAware`'s reload debounce on EVERY mounted page in the BEAM; running them concurrently measurably broke `agents_live_test`'s negative `:tasks_reload_pending` poll (1 failure in 5 runs). Unlock: scope the broadcast per task/node in the core.
+- The Store/TaskRegistry-singleton group — `tasks_live_test`, `home_live_test`, the store-asserting half of `node_aware_test`, `isolated_task_store_test`. `isolate!/1` makes each test's DATA private cheaply (≈6.5 ms), but the singleton NAME is per BEAM, so the PATCH (terminate + restart) cannot overlap anything.
+- `agents_live_test` (`/agents`) and `desktop_quit_test` (`/system`) mount whole pages while async and read config through the NodeAware/Appearance hooks, so a config writer must never run concurrently with them.
+Beyond those, no test-side flip candidate remains; every sync module is blocked by a process-global that only a production change can scope.
 Per-file evidence lives in the child docs: `evo_dash/CONTEXT.md`, `live/CONTEXT.md`, `live_hooks/CONTEXT.md`, `controllers/CONTEXT.md`.
+
+### Async first — test runtime is part of test quality
+New tests default to `async: true`; an unnecessary `async: false` module is a defect, because the sync phase is serial and every future development cycle pays its full cost.
+Prefer event-driven synchronization and bounded polls over fixed sleeps, and prefer ONE mount driving a state machine over many mounts of the same page.
+Remember what the executor actually parallelises: ExUnit parallelises across MODULES, never within one, so a single `async: true` module gains nothing — splitting one long file into several modules is what shortens the run (see `review_live_test.exs`).
+
+### Suite runtime: what actually costs time
+There is NO hidden per-test tax: the slowest ten tests in the whole suite are 190–320 ms and together are 2.3 s (≈11 % of a run), while a typical LiveView test mounts and clicks in 20–100 ms.
+`config :phoenix_live_view, enable_expensive_runtime_checks: true` (root `config/test.exs`) is a COMPILE-time flag that only enables function-environment checks on `start_async`/`assign_async` — it is not a per-render cost.
+`EvoDash.Test.IsolatedTaskStore` costs ≈6.5 ms per call, so it is not a lever either.
+The real cost structure is three terms: ~3–4 s of app boot per `mix test` invocation, a SERIAL `async: false` phase (13.9–15.1 s — the biggest lever, and the reason splitting a page file into async modules shortens the run), and a PARALLEL phase whose floor is the single largest async module.
+Measurement discipline: this host is SHARED, so absolute timings swing by 10–30× purely on load (the same unchanged file measured at 4.2 s and 124.5 s; the same suite at 17.7 s and 116.7 s). Always compare same-session A/B numbers and never trust a single run.
 
 ### Test-file `try/rescue`
 Allowed — and encouraged — in `on_exit`/teardown cleanup, because a teardown failure must not mask a real test failure; each such rescue carries a brief comment explaining why.

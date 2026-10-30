@@ -18,7 +18,7 @@ Counts below are statically declared `test` blocks.
 | `directory_picker_test.exs` | `EvoDash.DirectoryPickerTest` | 12 | true |
 | `isolated_task_store_test.exs` | `EvoDash.Test.IsolatedTaskStoreTest` | 3 | false |
 | `markdown_render_test.exs` | `EvoDash.MarkdownRenderTest` | 3 | true |
-| `node_context_test.exs` | `EvoDash.NodeContextTest` | 38 | false (`ConnCase`) |
+| `node_context_test.exs` | `EvoDash.NodeContextTest` (27) + `EvoDash.NodeContextConfigTest` (11) | 38 | both (`ConnCase`): true + false |
 | `safe_call_test.exs` | `EvoDash.SafeCallTest` | 25 | true |
 | `settings_utils_test.exs` | `EvoDash.SettingsUtilsTest` | 8 | true |
 | `update_status_test.exs` | `EvoDash.UpdateStatusTest` | 19 | true |
@@ -39,7 +39,8 @@ No test covers the `:cancelled` result kind, and no path validation/normalizatio
 Its module `setup` registers the post-teardown `on_exit` (reverse-order run) that asserts `assert_production!/0` holds and the isolated dir is gone.
 `markdown_render_test.exs` — `EvoDash.MarkdownRender` edges: nil, empty, headings, code blocks, tables, bold.
 `node_context_test.exs` — `EvoDash.NodeContext` delegates are thin node-first passthroughs to `EvoGit.RemoteNode.*`; the LOCAL path (`node()`) is exercised throughout, plus one remote transport-failure case.
-`setup :setup_isolated_registry` is attached ONLY to the describes that reach the store/registry (task-cancellation, lightweight reads, paged archive reads) — the pure delegation-shape describes never touch SQLite.
+The file holds TWO modules so most of the suite runs in the async phase: `EvoDash.NodeContextTest` (`async: true`) writes into the RUN-WIDE per-run store under per-test unique ids/`project_path`s, and `EvoDash.NodeContextConfigTest` (`async: false`) owns only the two describes that set `XDG_CONFIG_HOME` (custom agents, `custom_tools_status/1`).
+No describe uses `IsolatedTaskStore`; `insert_fixture!/1` registers an `on_exit` that deletes exactly its own id through the direct store (`EvoGit.Store.delete_task/2`, which also drops that task's `task_agent_archives` rows).
 Covered: cancel/force-kill (`:not_found`, `:pending` → `:cancelled` store-verified via `insert_fixture!/1`), lightweight reads (`get_task_lite`, nil for a missing task), paged archive reads (`list_task_archives/2,3` + `get_agent_archive/3` arities, `normalize_archive_page/1` totality on atom- and string-keyed pages, `%{entries: [], total: 0}` for a missing id, and `refute function_exported?(NodeContext, :get_task_archive, 2)` — the single-blob read has no deprecation shim), review RPC casts, GitHub delegates (verbatim `{:error, {:enoent, path}}`), `get_resolved_config/1`, `get_recent_system_samples/1`, custom-agents RPC (list/save/duplicate_id/missing_name/delete/script round-trip + reload, under an isolated `XDG_CONFIG_HOME`), `custom_tools_status/1` (hermetic `%{ok: [], errors: []}`, verbatim identity vs `EvoGit.RemoteNode`, a populated status from the `custom_tool_fixture!/1` temp `<config_dir>/tools` file, and the unreachable-remote `{:error, _}` that must NOT degrade to the empty map), and `approval_response/3` (total `{:error, {:invalid_decision, term}}` whitelist pre-dispatch, valid decisions on the local path, remote transport failure to `:"nonexistent-node@nowhere"` normalized to an error tuple and never raising).
 `EvoGit.CommandApproval` exists in this tree, so the `Code.ensure_loaded?` guards take the real branch and the assertions are `{:error, _}`.
 The remote-`{:erpc, …}` shape depends on whether the local node is distributed: non-distributed → `{:error, {:error, {:erpc, :noconnection}}}`, distributed → `{:error, :nodedown}`.
@@ -47,6 +48,7 @@ The remote-`{:erpc, …}` shape depends on whether the local node is distributed
 An unknown/dead supervisor EXITS via `Task.Supervisor.start_child/2` rather than returning `{:error, _}`, so that test asserts the durable contract only (never `{:ok, pid}`, never a stray result message) through a `catch :exit`-tolerant outcome check.
 `settings_utils_test.exs` — `deep_put/3`, `deep_merge/2`, `deep_delete/2`, `parse_int/1`, `parse_float/1`, `parse_atom/2`, `maybe_add_kw/3`; two doctests live here.
 `update_status_test.exs` — the `EvoDash.UpdateStatus` hub: initial `:idle` defaults, `check_started/0`, `handle_check_result/1` transitions, `request_download?/0`, `handle_download_result/1`, `applying/0`+`apply_failed/1`, `check_failed/1`, `desktop?/0`/`visible?/1`, and the `"updates"` broadcast.
+It is `async: true` because no other async module WRITES the hub or the seams it mutates; the sync `live_hooks/update_status_test` owns `:update_notify_only_override` and `:desktop_quit_stop_fun` for the same reason (both keys have an async writer).
 Setup pins `:update_notify_only_override` to `false` (so the download flow is testable on any host) and `reset/0`s the shared hub, snapshot-restoring every seam in `on_exit`.
 
 ## Notes for Agents — console-noise capture
@@ -74,13 +76,15 @@ The picker has no `:cancelled` and no path normalization/existence coverage; dow
 ## Notes for Agents — async policy (per-suite)
 
 Tests inside one module always run serially, so `async:` only decides whether a MODULE runs concurrently with other modules; ExUnit starts `async: false` modules only after every async module finished, so async-vs-sync overlap is impossible.
-Nine suites here are `async: true`; three stay `async: false`:
-`active_tasks_test.exs` — reads/writes the boot-created `:evo_dash_active_tasks` hub that `ConnCase` resets (a concurrent reset would wipe it); it resets the hub in setup + `on_exit`.
-`isolated_task_store_test.exs` — terminates and restores the process-global `EvoGit.Store`/`EvoGit.TaskRegistry` singletons.
-`node_context_test.exs` — swaps the process-global `XDG_CONFIG_HOME` and isolates the same singletons.
+The 12 files here hold 13 case modules: ten `async: true` and three `async: false`.
+The three sync modules, each blocked by a different process-global:
+`active_tasks_test.exs` — reads/writes the boot-created `:evo_dash_active_tasks` hub that `ConnCase` resets (a concurrent reset would wipe it) and writes junk sentinel shapes (`[:a, :b]`) that an async whole-page mount's sidebar seed would crash on; it resets the hub in setup + `on_exit`.
+`isolated_task_store_test.exs` — terminates and restores the process-global `EvoGit.Store`/`EvoGit.TaskRegistry` singletons and asserts ABSOLUTE properties of the replacement pair, by definition.
+`node_context_test.exs`'s `EvoDash.NodeContextConfigTest` — swaps the process-global `XDG_CONFIG_HOME`, the only config-dir seam.
 Async-safety facts for the async suites:
+`node_context_test.exs`'s async module writes only unique-id rows into the run-wide store, so no isolation is needed and no row can satisfy a "not_found" assertion.
 `chat_history_test.exs` — its only other consumer (`home_live_test.exs`) is `async: false`.
-`update_status_test.exs` — its other consumers (`system_live_test`, `live_hooks/update_status_test`) are `async: false`, and every seam (`:update_notify_only_override`, `:desktop_release`, `EVOGIT_DESKTOP`) is snapshot-restored.
+`update_status_test.exs` — NO async module writes the `EvoDash.UpdateStatus` hub or the seams it mutates; its only other writers (`live_hooks/update_status_test`, `system_live_test`, `node_aware_test`) are all `async: false`, so ExUnit never runs them concurrently with it. Its peers only READ the hub through the global `LiveHooks.UpdateStatus` on-mount hook (a navigation-dot seed no async suite asserts on) while `desktop?/0` is transiently true, and every seam/env var it mutates is snapshot-restored in `on_exit`.
 `desktop_lifetime_test.exs` — snapshots/restores `EVOGIT_LIFETIME_PORT` and `:parent_stop_fun`; no other async module reads them.
 `directory_picker_test.exs` — overrides `:directory_picker` + `:directory_picker_wx` and uses the app-started picker's global busy flag; its only other caller (`projects_live_test.exs`) is `async: false`.
 `attached_file_test.exs`, `markdown_render_test.exs`, `settings_utils_test.exs`, `connection_diagnostics_test.exs` — pure functions plus, for the last one, an idempotent telemetry handler attach.
