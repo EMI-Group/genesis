@@ -944,6 +944,10 @@ defmodule EvoGit.Agent.ContextBuilderTest do
     end
 
     test "no root gate — the helper takes no parent/depth argument (arity is exactly 2)" do
+      # `function_exported?/3` does NOT load the module, so both the assert and
+      # the refute below need an explicit load first.
+      Code.ensure_loaded!(ContextBuilder)
+
       assert function_exported?(ContextBuilder, :build_injected_message, 2)
       refute function_exported?(ContextBuilder, :build_injected_message, 3)
 

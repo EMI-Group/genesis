@@ -236,6 +236,11 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
 
   test "no root gate — media is materialized for an injected message via build_injected_message/2 (arity 2, no parent input)",
        %{agent_id: agent_id} do
+    # `function_exported?/3` is a BIF that does NOT load its module, so this
+    # module (`async: true`) must load it first — otherwise the answer depends on
+    # whether some OTHER test happened to load it already.
+    Code.ensure_loaded!(ContextBuilder)
+
     assert function_exported?(ContextBuilder, :build_injected_message, 2)
 
     message = %{
