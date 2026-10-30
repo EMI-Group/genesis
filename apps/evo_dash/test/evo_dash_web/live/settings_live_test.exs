@@ -406,10 +406,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
     dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
     on_exit(fn -> File.rm_rf!(dir) end)
 
-    # ActiveTasks is a global ETS hub that ConnCase already resets around every
-    # test; reset it here too so one test's sidebar snapshot never leaks into
-    # the next.
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     :ok
   end

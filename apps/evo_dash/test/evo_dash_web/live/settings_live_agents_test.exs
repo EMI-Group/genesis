@@ -26,8 +26,9 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
   # test's dir). It
   # touches no app-env seam (`:nix_available_override` / `:platform_os_override`
   # belong to settings_live_test.exs' sync module), no AgentScheduler state and
-  # no ETS hub; `EvoDash.ActiveTasks` is per-test data that ConnCase resets
-  # too, so nothing here can race an async peer.
+  # no ETS hub; its own `EvoDash.ActiveTasks` clear is scoped to the LOCAL
+  # `{nil, node()}` context, the same async-safe contract `EvoDashWeb.ConnCase`
+  # uses, so nothing here can race an async peer's whole-table wipe.
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
@@ -42,9 +43,11 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
     dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_agents_test_config")
     on_exit(fn -> File.rm_rf!(dir) end)
 
-    # ActiveTasks is a global GenServer under EvoDash.Application — reset it so
-    # one test's sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     :ok
   end

@@ -35,10 +35,11 @@ defmodule EvoDashWeb.AgentsLiveTest do
     agent_id = System.unique_integer([:positive]) + 10_000_000
     Process.put(:agents_live_test_agent_id, agent_id)
 
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
       # Clean up only the rows this test seeded; the tables themselves are

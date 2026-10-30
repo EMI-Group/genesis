@@ -6,9 +6,11 @@
 # comment is carried over unchanged; only module boilerplate moved.
 #
 # Two PROCESS-GLOBAL hazards decide a module's phase, and both are symmetric:
-#   * APP ENV (`Application.put_env/2` seams) + `EvoDash.ActiveTasks` hub +
-#     `PATH`: a module that WRITES one of those must not run concurrently with a
-#     module that reads it.
+#   * APP ENV (`Application.put_env/2` seams) + `PATH`, and ASSERTING on an
+#     `EvoDash.ActiveTasks` snapshot: a module that WRITES one of those must not
+#     run concurrently with a module that reads it. Async modules clear the hub
+#     through the node-scoped `invalidate(nil, node())` (never whole-table
+#     `reset/0`), so they can only disturb the LOCAL `{nil, node()}` context.
 #   * The "tasks" PUBSUB TOPIC: `EvoGit.TaskRegistry` broadcasts
 #     `{:task_updated, id, status, node()}` / `{:task_deleted, id, node()}` on
 #     EVERY mutation, and a same-node broadcast arms `EvoDashWeb.LiveHooks.
@@ -75,8 +77,9 @@
 # (`:review_archive_runner` / `:review_archive_agent_runner`), READ the
 # `EvoDash.ActiveTasks` hub snapshot — a single `{nil, node()}` key every
 # concurrently mounted page writes via its sidebar fetch, so a snapshot read (or
-# `wait_hub_warm/1`, which flunks when a concurrent `ActiveTasks.reset/0` leaves
-# the key cold) is only deterministic when no async module runs alongside — or
+# `wait_hub_warm/1`, which flunks when a concurrent module's local-context
+# `ActiveTasks.invalidate(nil, node())` leaves the key cold) is only
+# deterministic when no async module runs alongside — or
 # assert NodeAware's `:tasks_reload_pending` debounce stays FALSE (any broadcast
 # from the viewed node arms it, including the ones the sibling page modules
 # publish from their own fixture writes).
@@ -1339,20 +1342,19 @@ defmodule EvoDashWeb.ReviewLiveArchiveTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
@@ -3354,20 +3356,19 @@ defmodule EvoDashWeb.ReviewLiveMergeCheckTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
@@ -3642,20 +3643,19 @@ defmodule EvoDashWeb.ReviewLiveLoadTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
@@ -4134,20 +4134,19 @@ defmodule EvoDashWeb.ReviewLiveMultiRepoTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
@@ -4570,20 +4569,19 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
@@ -5165,20 +5163,19 @@ defmodule EvoDashWeb.ReviewLiveRemoteAutoResolveTest do
     # leaked an isolated instance instead of silently reading a foreign DB.
     EvoDash.Test.IsolatedTaskStore.assert_production!()
 
-    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
-    # explicit here because this file's tests mount whole pages through
-    # Layouts.app, which seeds the sidebar from it).
-    EvoDash.ActiveTasks.reset()
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
-      # Reset on EXIT as well as on entry — every page mount asynchronously
-      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # Clear the local context on EXIT as well as on entry — every page mount
+      # asynchronously writes a sidebar snapshot into it, and the LAST test's
       # snapshot would otherwise survive into a later suite that mounts pages
-      # without resetting the hub (PageControllerTest does a dead render through
+      # without clearing it (PageControllerTest does a dead render through
       # Layouts.app and reads the hub).
-      EvoDash.ActiveTasks.reset()
+      EvoDash.ActiveTasks.invalidate(nil, node())
     end)
 
     :ok
