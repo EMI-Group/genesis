@@ -41,7 +41,8 @@ Per-suite cadences and budgets:
 
 **The 0 ms rule**: zero-length `refute_receive` / `refute_push_event` probes are allowed ONLY after the mailbox has provably drained — i.e. after a synchronous `:sys.get_state` round-trip, a completed drain helper, or a dead-helper-process await has ALREADY proved the preceding work finished.
 Then the 0 ms probe is conclusive and strictly stronger than any timed window; without such a precedent, use a bounded backstop (a monotonic counter assertion) plus a small margin.
-Examples in force: `tasks_live_test`'s `refute_receive :page_load_spawned, 0` (preceded by `page_load_seq == 1/2` — the only writer is `start_async_page_load/3`, the hook's only caller — and by the synchronous `:sys.get_state`), `agents_live_test`'s `refute_receive {:commit_graph_call, …}, 0` after asserting both commit-graph assigns false, and `projects_live_test`'s `refute_push_event(view, "task_notification", %{}, 0)` after `await_async_loads/1`.
+Examples in force: `tasks_live_test`'s `refute_receive :page_load_spawned, 0` (preceded by `page_load_seq == 1/2` — the only writer is `start_async_page_load/3`, the hook's only caller — and by the synchronous `:sys.get_state`), `agents_live_test`'s `refute_receive {:commit_graph_call, …}, 0` after asserting both commit-graph assigns false, and the three `refute_push_event(view, "task_notification", %{}, 0)` probes in `ProjectsLiveSyncTest` (never in the async module — see "the notification scan is store-global" below) after `drain_task_reload/1`.
+The drain alone is NOT sufficient for a `task_notification` refute: the scan reads the RUN-WIDE store, so GLOBAL quiet is the other half of the precondition.
 No fixed `Process.sleep` is a mechanism anywhere; the only fixed waits are deliberate and documented per suite (see each suite's note below).
 
 ## Notes for Agents — ReviewLive suite (`review_live_test.exs`)
