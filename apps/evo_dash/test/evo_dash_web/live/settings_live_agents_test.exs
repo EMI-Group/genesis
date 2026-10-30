@@ -1,36 +1,49 @@
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.SettingsLiveTest.ConnectionManager). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.SettingsLiveAgentsTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.SettingsLiveAgentsTest do
-  use EvoDashWeb.ConnCase, async: false
+  # async: true — this module's only shared-state concern was the BEAM-global
+  # XDG_CONFIG_HOME, replaced by the PER-PROCESS config-dir seam
+  # (`EvoDash.Test.ConfigDir.isolate!/1`, resolved through `$callers` so the
+  # mounted LiveView and its supervised load tasks see THIS test's dir). It
+  # touches no app-env seam (`:nix_available_override` / `:platform_os_override`
+  # belong to settings_live_test.exs' sync module), no AgentScheduler state and
+  # no ETS hub; `EvoDash.ActiveTasks` is per-test data that ConnCase resets
+  # too, so nothing here can race an async peer.
+  use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
   # Isolate all tests in this file from the host's real user config: the
-  # custom-agents store (agents.toml) lives in EvoGit.Config.config_dir/0,
-  # which honours XDG_CONFIG_HOME on Linux. Pointing it at a unique temp dir
-  # guarantees a clean agents.toml per test (same pattern as
-  # settings_live_test.exs and apps/evo_git/test/evo_git/custom_agents_test.exs).
+  # custom-agents store (agents.toml) lives in EvoGit.Config.config_dir/0.
+  # `isolate!/1` gives this test its own temp dir and activates it for this
+  # process (and, through the `$callers` chain, for the mounted view and its
+  # supervised load tasks), so a clean agents.toml per test is guaranteed
+  # WITHOUT touching any BEAM-global env var — the same per-process idiom as
+  # settings_live_test.exs.
   setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_settings_agents_test_config_#{System.unique_integer([:positive])}"
-      )
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_agents_test_config")
+    on_exit(fn -> File.rm_rf!(dir) end)
 
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
-
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
+    # ActiveTasks is a global GenServer under EvoDash.Application — reset it so
+    # one test's sidebar snapshot never leaks into the next.
     EvoDash.ActiveTasks.reset()
 
     :ok
@@ -584,25 +597,4 @@ defmodule EvoDashWeb.SettingsLiveAgentsTest do
       assert html =~ "No custom agents defined"
     end
   end
-end
-
-# A minimal GenServer standing in for a real remote connection manager in
-# `EvoGit.RemoteConnection.Registry` (same pattern as
-# EvoDashWeb.SettingsLiveTest.ConnectionManager). The process dies (and its
-# Registry entry is auto-removed) at test end via `start_supervised!`.
-defmodule EvoDashWeb.SettingsLiveAgentsTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
