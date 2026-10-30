@@ -18,37 +18,28 @@ defmodule EvoGit.CLI.TaskRoutingTest do
   `{:error, :llm_not_configured}` immediately (see `without_model_profiles/1`).
   """
 
-  # async: false is FORCED by two pieces of BEAM-global state: (1) the setup
-  # below redirects the process-wide `XDG_CONFIG_HOME` env var for `-m`
-  # resolution (read live by `EvoGit.Config`); (2) `without_model_profiles/1`
-  # rewrites the global `EvoGit.AgentScheduler`'s `model_profiles`.
+  # async: false is FORCED by ONE remaining piece of BEAM-global state:
+  # `without_model_profiles/1` rewrites the global `EvoGit.AgentScheduler`'s
+  # `model_profiles` so the enqueued task fails fast at `run_agent/1`. The `-m`
+  # config resolution is isolated PER PROCESS (`EvoGit.TestSupport.ConfigDir`),
+  # so no process-wide env var is touched.
   use EvoGit.TaskRegistryCase, async: false
 
   @moduletag :tmp_dir
 
   import ExUnit.CaptureIO
 
+  alias EvoGit.TestSupport.ConfigDir
+
   # Observable-contract regexes from the CLI + task data-plane refactor.
   @started_re ~r/^Task ([0-9a-f]{16}) started \(type: (genesis|evolve|reflect)\)$/m
   @failed_re ~r/^Task [0-9a-f]{16} failed\./
 
-  # Isolate XDG_CONFIG_HOME so the -m tests can write a config.toml without
+  # Per-process config dir so the -m tests can write a config.toml without
   # touching the real user config, and so -m resolution is deterministic (no
   # models configured unless a test saves one).
-  setup %{tmp_dir: tmp_dir} do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-    xdg = Path.join(tmp_dir, "xdg")
-    File.mkdir_p!(xdg)
-    System.put_env("XDG_CONFIG_HOME", xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-    end)
-
+  setup do
+    ConfigDir.isolate!("evogit-cli-task-routing")
     :ok
   end
 

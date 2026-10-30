@@ -1,34 +1,18 @@
 defmodule EvoGit.Agents.CustomTest do
   @moduledoc """
-  `async: false` because `setup/0` mutates the BEAM-global `XDG_CONFIG_HOME` env
-  var (`System.put_env/2`) so `EvoGit.CustomAgents` never touches the real
-  `~/.config/genesis/` directory.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`) so `EvoGit.CustomAgents` never touches the
+  real `~/.config/genesis/` directory, and every definition lookup runs in the
+  calling test process.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
-  # touches the real ~/.config/genesis/ directory.
+  alias EvoGit.TestSupport.ConfigDir
+
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-agents-custom")
     :ok
   end
 

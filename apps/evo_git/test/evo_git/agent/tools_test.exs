@@ -1,12 +1,15 @@
 defmodule EvoGit.Agent.ToolsTest do
   @moduledoc """
-  `async: false` — the web-search tests mutate the BEAM-global `XDG_CONFIG_HOME`
-  env var (via the private `with_isolated_config/1` helper) and the `:req_llm`
-  application env, both of which are observable by concurrently running modules.
+  `async: false` — the web-search tests mutate the BEAM-global `:req_llm`
+  application env (`:tavily_api_key`), which concurrently running modules
+  observe. The config directory itself is isolated PER PROCESS
+  (`EvoGit.TestSupport.ConfigDir`, via the private `with_isolated_config/1`
+  helper), so no process-wide env var is touched.
   """
 
   use ExUnit.Case, async: false
   alias EvoGit.Agent.Tools
+  alias EvoGit.TestSupport.ConfigDir
 
   @moduletag :tmp_dir
 
@@ -1410,28 +1413,16 @@ defmodule EvoGit.Agent.ToolsTest do
     assert result =~ "Put the finding in your report instead"
   end
 
-  # Runs `fun` with XDG_CONFIG_HOME pointed at a fresh temp directory that
-  # contains NO genesis/config.toml, so tests are isolated from the real user
-  # config. Restores the original value and cleans up afterward.
+  # Runs `fun` with the PER-PROCESS config directory pointed at a fresh temp
+  # directory that contains NO genesis/config.toml, so tests are isolated from
+  # the real user config. The override is dropped again when `fun` returns.
   defp with_isolated_config(fun) do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
+    ConfigDir.isolate!("evogit-tools-cfg")
 
     try do
       fun.()
     after
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
+      Process.delete(:evogit_config_dir)
     end
   end
 

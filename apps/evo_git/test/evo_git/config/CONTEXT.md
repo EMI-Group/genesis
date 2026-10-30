@@ -21,18 +21,18 @@ No source files — test-only node.
 | `ecto_validation_test.exs` | `EvoGit.Config.EctoValidationTest` | `true` | `EvoGit.Config.EctoTypes` + `EvoGit.Config.EctoValidation` — the Ecto layer beneath `Schema.validate/1`: strict no-coercion casting, `nil` ≡ absent, type-then-rule error ordering, byte-exact messages/rules/key_paths, unknown-key survival, integer-indexed profile recursion, crash resilience |
 | `llm_catalog_test.exs` | `EvoGit.Config.LLMCatalogTest` | `true` | Static provider/model catalog surface (`EvoGit.Config.LLMCatalog`) — provider entries, model id display names, credential keys, `base_url` / variant rules |
 | `llm_generation_params_test.exs` | `EvoGit.Config.LLMGenerationParamsTest` | `false` | Per-model/-provider generation-parameter filtering: `Schema.LLM.provider_options_for_model/1` + `default_provider_options/0` (native OpenAI keeps `store: false`, compatible endpoints and extra-bearing endpoints do not), `profile_generation_params/1` (temperature / `max_tokens` / `reasoning_effort` clamping), `model_metadata/1` + `constraints_for/1` over the injected `:llm_model_metadata_fun`, and the `LLMConstraints.filter/3` reject tables |
-| `version_state_test.exs` | `EvoGit.Config.VersionStateTest` | `false` | `EvoGit.Config.VersionState` — version-state TOML file, cache, upgrade + onboarding detection |
+| `version_state_test.exs` | `EvoGit.Config.VersionStateTest` | `true` | `EvoGit.Config.VersionState` — version-state TOML file, cache, upgrade + onboarding detection |
 
 ## Constraints
-- `async: true` for every file here EXCEPT `version_state_test.exs` and `llm_generation_params_test.exs`.
+- `async: true` for every file here EXCEPT `llm_generation_params_test.exs`.
 - Test module names mirror the source module under test (`EvoGit.Config.Schema` → `…SchemaTest`).
 - No mocks; all assertions are pure data transformations (no git, no temp repos needed in this directory).
 - Never edit files outside this node — `../config_test.exs` and `../CONTEXT.md` belong to the parent node.
 
 ## Async-Safety Notes
-`version_state_test.exs` is `async: false`: each test mutates two BEAM globals observed by other concurrently running modules — the `XDG_CONFIG_HOME` env var (resolved by `EvoGit.Platform.config_dir/0`, which `VersionState.path/0` reads) and the `{EvoGit.Config.VersionState, :version_state}` `:persistent_term` cache served by `VersionState.get_version/0` (also read by the `:evo_dash` suites `welcome_complete_live_test`, `page_controller_test`, …).
+`version_state_test.exs` is `async: true`: each test gets its own PER-PROCESS config directory (`EvoGit.TestSupport.ConfigDir.isolate!/1`), and the single global `{EvoGit.Config.VersionState, :version_state}` `:persistent_term` cache stores the PATH alongside the classified state, transparently reloading from disk whenever `VersionState.path/0` changes — so concurrent modules with different config directories always observe their own file. No process-wide env var is written.
 `llm_generation_params_test.exs` is `async: false`: its metadata-lookup seam is the BEAM-global app-env key `:llm_model_metadata_fun`, which the module writes per test and deletes in `on_exit`.
-The other six files are `async: true`: everything under test is pure data transformation (`Schema`, `EctoTypes`, `EctoValidation`, `Schema.LLM`'s context-window resolver, the static `LLMCatalog`, the pure `EvoGit.PeakHours` validators) plus the read-only `EvoGit.Platform.cpu_threads/0` — no app env, `:persistent_term`, ETS, process, or application singleton is read or written.
+The other six files are `async: true`: everything under test is pure data transformation (`Schema`, `EctoTypes`, `EctoValidation`, `Schema.LLM`'s context-window resolver, the static `LLMCatalog`, the pure `EvoGit.PeakHours` validators) plus the read-only `EvoGit.Platform.cpu_threads/0` — no app env, ETS, process, or application singleton is read or written (the only `:persistent_term` touch is the path-keyed version-state cache described above).
 
 ## Notes for Agents
 - Test counts: `../config_test.exs` 76, `schema_test.exs` 119, `ecto_validation_test.exs` 39, `llm_generation_params_test.exs` 47, `llm_catalog_test.exs` 28, `version_state_test.exs` 15, `context_window_test.exs` 12, `tmp_schema_test.exs` 7.

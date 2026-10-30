@@ -1,32 +1,22 @@
 defmodule EvoGit.DistributionTest do
+  # `async: false` — the `enable_for_remote/1` describe starts REAL distribution
+  # (`:net_kernel.start/1`, so `node()` stops being `:nonode@nohost`) and
+  # rewrites the BEAM-global `:kernel` app env (`:epmd_module`,
+  # `:inet_dist_listen_min` / `_max`) plus the `{:evogit_epmd, :genesis}`
+  # `:persistent_term` registry. The config-dir isolation below no longer needs
+  # a process-wide env var: it resolves per process.
   use ExUnit.Case, async: false
 
   alias EvoGit.Distribution
+  alias EvoGit.TestSupport.ConfigDir
 
-  # Redirect XDG_CONFIG_HOME to a temp dir so that Distribution.maybe_enable/0
-  # (which calls EvoGit.Config.resolve() → user_config()) never reads the
-  # real ~/.config/genesis/config.toml. Without this isolation, a user config
-  # with node.enabled = true would cause maybe_enable/0 to attempt starting
+  # Per-process config directory so `Distribution.maybe_enable/0` (which calls
+  # `EvoGit.Config.resolve()`) never reads the real
+  # `~/.config/genesis/config.toml`. Without this isolation, a user config with
+  # node.enabled = true would cause maybe_enable/0 to attempt starting
   # :net_kernel, which fails with :nodistribution on a non-distributed BEAM.
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-distribution")
     :ok
   end
 

@@ -3,48 +3,26 @@ defmodule EvoGit.Config.VersionStateTest do
   Pins `EvoGit.Config.VersionState` (version-state TOML file, cache, upgrade and
   onboarding detection).
 
-  `async: false` is REQUIRED — each test mutates two BEAM-global resources that
-  every other concurrently running test observes: the `XDG_CONFIG_HOME` env var
-  (resolved by `EvoGit.Platform.config_dir/0`, which `VersionState.path/0`
-  reads) and the `{EvoGit.Config.VersionState, :version_state}`
-  `:persistent_term` cache served by `VersionState.get_version/0`. The
-  `:evo_dash` tests (`welcome_complete_live_test`, `page_controller_test`, …)
-  read that same singleton.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`, resolved by `EvoGit.Platform.config_dir/0`,
+  which `VersionState.path/0` reads). The `{EvoGit.Config.VersionState,
+  :version_state}` `:persistent_term` cache stores the PATH alongside the
+  classified state and transparently reloads from disk whenever `path/0`
+  changes, so concurrent modules with different config directories always
+  observe their own file.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Config.VersionState
+  alias EvoGit.TestSupport.ConfigDir
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that VersionState never
-  # touches the real ~/.config/genesis/ directory.
-  #
-  # The module caches the file state in `:persistent_term`. The cache stores
-  # the path alongside the state and auto-reloads when the path changes, so
-  # varying XDG_CONFIG_HOME per test is handled transparently. We erase the
-  # cache in setup anyway to guarantee a pristine starting point for each
-  # test (no stale data can leak between tests).
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    ConfigDir.isolate!("evogit-version-state")
 
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    # Ensure a fresh cache per test.
+    # Ensure a fresh cache per test (the cache is path-keyed, so this is a
+    # pristine-start guarantee, not a correctness requirement).
     :persistent_term.erase({VersionState, :version_state})
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
 
     :ok
   end
@@ -163,23 +141,13 @@ defmodule EvoGit.Config.VersionStateTest do
       assert :ok = VersionState.save_version("1.0.0")
       assert VersionState.get_version() == "1.0.0"
 
-      # Simulate a path change by erasing the cache and pointing XDG at a
-      # fresh directory (as would happen across tests or config changes).
-      :persistent_term.erase({VersionState, :version_state})
+      # A different config directory (as across tests or config changes) makes
+      # the path-keyed cache reload from disk without an explicit erase.
+      ConfigDir.isolate!("evogit-version-state-other")
 
-      new_xdg =
-        Path.join(System.tmp_dir!(), "evogit-test-xdg2-#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(new_xdg)
-      System.put_env("XDG_CONFIG_HOME", new_xdg)
-
-      try do
-        # No file in the new directory → default version, not the cached "1.0.0".
-        refute File.exists?(VersionState.path())
-        assert VersionState.get_version() == "0.8.0"
-      after
-        File.rm_rf!(new_xdg)
-      end
+      # No file in the new directory → default version, not the cached "1.0.0".
+      refute File.exists?(VersionState.path())
+      assert VersionState.get_version() == "0.8.0"
     end
   end
 end

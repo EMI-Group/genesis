@@ -3,48 +3,27 @@ defmodule EvoGit.CustomToolsTest do
   Loader + public-API tests for the custom-tools subsystem
   (`EvoGit.CustomTools` / `EvoGit.CustomTools.Loader`).
 
-  `async: false` — every test repoints the BEAM-global `XDG_CONFIG_HOME` env var
-  so custom tools never read the real `~/.config/genesis/` directory.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`) so custom tools never read the real
+  `~/.config/genesis/` directory, and the loader's `:persistent_term` cache key
+  EMBEDS the tools directory, so test-local directories cannot collide.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
   import ExUnit.CaptureLog
 
   alias EvoGit.CustomTools
-  alias EvoGit.CustomTools.Loader
+  alias EvoGit.TestSupport.ConfigDir
 
   setup do
-    isolate_xdg!()
+    ConfigDir.isolate!("evogit-custom-tools")
     :ok
   end
 
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
-
-  # Points XDG_CONFIG_HOME at a fresh temp dir (so `EvoGit.Config.config_dir/0`
-  # resolves under it) and restores it — plus the loader's `:persistent_term`
-  # cache entry — on exit.
-  defp isolate_xdg! do
-    original = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg = Path.join(System.tmp_dir!(), "evogit-ct-xdg-#{uniq()}")
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      Loader.invalidate(Path.join(EvoGit.Config.config_dir(), "tools"))
-
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-  end
 
   defp uniq, do: System.unique_integer([:positive])
 

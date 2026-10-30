@@ -9,16 +9,18 @@ defmodule EvoGit.CustomToolsRPCTest do
       unreachable-node `call_remote/4` failure path, same pattern as
       custom_agents_rpc_test.exs).
 
-  `async: false` — every test repoints the BEAM-global `XDG_CONFIG_HOME` so the
-  per-node `<config_dir>/tools/` directory is a fresh temp dir and never touches
-  the real `~/.config/genesis/`.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`), so the per-node `<config_dir>/tools/`
+  directory is a fresh temp dir and never touches the real
+  `~/.config/genesis/`. Both RPC layers execute in the calling test process,
+  and the loader's `:persistent_term` cache key embeds the tools directory.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.AgentScheduler.RemoteAPI
   alias EvoGit.CustomTools
-  alias EvoGit.CustomTools.Loader
   alias EvoGit.RemoteNode
+  alias EvoGit.TestSupport.ConfigDir
 
   # A node name that definitely does not exist on this machine (same pattern
   # as custom_agents_rpc_test.exs). On a non-distributed local node, :erpc.call
@@ -27,30 +29,7 @@ defmodule EvoGit.CustomToolsRPCTest do
   @fake_remote :"nonexistent@127.0.0.1"
 
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-ctrpc-xdg-#{uniq()}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    # The loader caches in :persistent_term keyed by the tools dir (which
-    # follows XDG_CONFIG_HOME) — invalidate before and after for determinism.
-    Loader.invalidate(tools_dir())
-
-    on_exit(fn ->
-      Loader.invalidate(tools_dir())
-
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-custom-tools-rpc")
     :ok
   end
 

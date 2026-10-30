@@ -1,37 +1,22 @@
 defmodule EvoGit.CLI.AgentFlagTest do
-  # async: false is FORCED by two pieces of BEAM-global state: (1) the setup
-  # below redirects the process-wide `XDG_CONFIG_HOME` env var (agents.toml /
-  # config.toml resolution), and (2) `without_model_profiles/1` temporarily
-  # rewrites the live `EvoGit.AgentScheduler` `:model_profiles` config.
+  # async: false is FORCED by ONE remaining piece of BEAM-global state:
+  # `without_model_profiles/1` temporarily rewrites the live
+  # `EvoGit.AgentScheduler` `:model_profiles` config, which the global scheduler
+  # reads when it dispatches (or rejects) an enqueued task. The config directory
+  # itself is isolated PER PROCESS (`EvoGit.TestSupport.ConfigDir`), so
+  # agents.toml / config.toml never touch the real `~/.config/genesis/`.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO
+
+  alias EvoGit.TestSupport.ConfigDir
 
   # Observable-contract regexes from the CLI + task data-plane refactor.
   @started_re ~r/^Task ([0-9a-f]{16}) started \(type: (genesis|evolve|reflect)\)$/m
   @failed_re ~r/^Task [0-9a-f]{16} failed\./
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that --agent validation never
-  # touches the real ~/.config/genesis/ directory (agents.toml lives there).
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-cli-agent-flag")
     :ok
   end
 
