@@ -465,8 +465,9 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # English source strings (matching what the en translation returns).
 
     test "renders custom model form for OpenRouter", %{conn: conn} do
+      # The mounted category IS `:llm` (SettingsLive.mount/3 seeds :llm), so no
+      # category switch is needed as setup.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       assert html =~ "Model Name"
@@ -483,7 +484,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       assert html =~ "Model Name"
@@ -499,7 +499,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       html =
@@ -520,7 +519,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       html =
@@ -708,8 +706,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "renders the editor with Add Model button and empty state", %{conn: conn} do
+      # `:llm` is the category mount already seeds, so render the settled page
+      # instead of re-selecting it through a full event round-trip.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "llm"})
+      html = render(view)
 
       assert html =~ "Model Profiles"
       assert html =~ "Add Model"
@@ -1368,18 +1368,37 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     # ── move_model_profile (profile re-ordering) ──
 
-    # Adds a complete, saved profile (same fixture shape as the add/save tests
-    # above): add_model_profile creates a draft, save_model_profile persists it.
-    defp add_saved_profile(view, id, provider, model_id) do
-      render_hook(view, "add_model_profile", %{})
+    # Seeds complete, saved profiles into config.toml BEFORE the mount — the
+    # same fixture style `seed_write_paths/1` uses. It writes the exact TOML
+    # shape `save_model_profile` persists (`model` = "<provider>:<model_id>",
+    # `concurrency` = 3), so the mounted page renders the identical list.
+    # The profile LIST/re-order operations below need two persisted profiles as
+    # SETUP only — the add/save UI path they used to drive per case is the
+    # subject of the dedicated add_model_profile / save_model_profile tests,
+    # and each of those events costs a full settings-page render.
+    # The explicit on_exit rm is belt-and-braces (the setup already rm_rf!'s
+    # the whole per-test temp dir).
+    defp seed_model_profiles(profiles) do
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
 
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => id,
-        "profile_id_new" => id,
-        "provider" => provider,
-        "model_id" => model_id,
-        "concurrency" => "3"
-      })
+      File.write!(
+        path,
+        Enum.map_join(profiles, "", fn {id, provider, model_id} ->
+          """
+          [[llm.models]]
+          id = "#{id}"
+          model = "#{provider}:#{model_id}"
+          concurrency = 3
+
+          """
+        end)
+      )
+
+      on_exit(fn ->
+        # Teardown cleanup must not mask test failures.
+        File.rm(path)
+      end)
     end
 
     defp profile_ids(view) do
@@ -1387,9 +1406,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile moves a profile up", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html = render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
 
@@ -1398,9 +1420,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile is a no-op at either boundary", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html =
         render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-1"})
@@ -1416,9 +1441,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile persists the reordered config to disk", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html =
         render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
@@ -1436,9 +1464,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html = render(view)
 
@@ -1785,9 +1816,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "profile_form_draft is cleared when opening a different profile's edit form", %{
       conn: conn
     } do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -2096,8 +2130,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "connection test with a map model renders the formatted string, not the raw map",
          %{conn: conn} do
+      # `:llm` is the category mount already seeds — no switch needed.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
 
       # Simulate the LLM connection test result being delivered by the async task
       # (handle_info({:llm_test_result, result}, socket) stores the status). We send
@@ -2350,8 +2384,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_list_entry with malformed or out-of-range index is a no-op", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
+      # These events mutate/read `file_config` only — no card in the rendered
+      # html is asserted — so the page stays on its default category and the
+      # sidebar event is not needed as setup.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Malformed index → Integer.parse fails → treated as -1 → no-op
       render_hook(view, "remove_list_entry", %{
@@ -2373,7 +2409,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "save_category persists the edited list to the config file", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
       render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
@@ -2399,7 +2434,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "blank-only list saves as an explicit empty list", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # The UI flow: add one blank entry, then save. The form submits the hidden
       # sentinel "" plus the blank input → parsed to [] (a set-but-empty list
@@ -2420,7 +2454,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "absent write_paths on save keeps nil (no key introduced)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
         render_hook(view, "save_category", %{
