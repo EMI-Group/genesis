@@ -3,11 +3,19 @@ defmodule EvoDash.ChatHistoryTest do
 
   alias EvoDash.ChatHistory
 
-  # The store is a single shared global GenServer + ETS table started by
-  # EvoDash.Application. async: true is safe: tests inside ONE module always
-  # run serially (so a sibling's setup reset/0 can never race an assertion),
-  # and the only other consumer of the table — home_live_test.exs — is
-  # async: false, which ExUnit never runs concurrently with async modules.
+  # ChatHistory is ONE process-wide GenServer + named ETS table started by
+  # EvoDash.Application, so these exact-global assertions are safe only while no
+  # concurrently running module writes that table.
+  # setup's reset/0 is a WHOLE-TABLE wipe, confined to this module's own tests
+  # (tests inside one module always run serially, so a sibling's reset/0 can
+  # never race an assertion).
+  # The sole writer is a connected `/help` mount (HomeLive calls new_chat/0,
+  # put_state/2 and prune/1), and EVERY module in this tree that mounts `/help`
+  # is `async: false`: home_live_test, page_controller_test, and the `/help` case
+  # in ProjectsLiveSyncTest — ExUnit drains ALL async modules before starting
+  # any sync one, so none of them can write the table while these assertions run.
+  # A FUTURE `/help` mount added to an `async: true` module breaks that contract:
+  # it must live in a sync module instead, or this module must go sync.
   setup do
     ChatHistory.reset()
     :ok
