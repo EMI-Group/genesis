@@ -126,6 +126,18 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - `mix store.maintenance [--data-dir <path>] [--vacuum]` — task-store upkeep: `PRAGMA optimize`, and `--vacuum` to reclaim freed pages (`VACUUM`, switches `auto_vacuum` to incremental); never runs automatically
 - `mix migrate.store` — report/apply task-store Ecto migrations manually (normally a no-op; boot applies them)
 
+### Test Runtime & Parallelism Policy
+
+Code integrity matters, and so does the test suite's runtime: a slow suite taxes every future change, so **test speed is part of test quality and an unnecessary `async: false` module is a defect**, not a style choice.
+ExUnit runs ALL `async: true` modules concurrently and THEN drains the `async: false` ones one at a time — so only work removed from that serial tail, or made cheaper, shortens a suite; a suite's serial tail is the first thing to attack when it gets slow.
+**New tests default to `async: true`.** A module may be `async: false` only when it mutates BEAM-global state another concurrently running module can observe (a process-wide env var, an app-env key, `:persistent_term`, a global ETS table or singleton GenServer, a shared PubSub topic it asserts on), and it then carries an in-file comment naming the exact forcing global; the suite's `test/CONTEXT.md` lists the sync modules and their reasons.
+**ExUnit parallelises across MODULES, never within one** — splitting an oversized suite into several async modules is the lever; a single large `async: true` module gains nothing.
+Buy speed with the established patterns, never by weakening an assertion: default-inert call-time seams (`Application.get_env(:evo_git, key, production_default)` read at the call site; `EvoGit.Platform.config_dir/1`'s `:config_dir_fun`), per-process overrides resolved via `Process.get`/`$callers` (a LiveView or task process does not inherit the test process's dictionary), uniquely-named isolated Store/TaskRegistry instances instead of the app-global pair, and event-driven/bounded-poll waits instead of fixed `Process.sleep`.
+Removing a redundant or over-blocking test is allowed when it buys real parallelization, and a fixture may be simplified for speed — but a surviving assertion keeps its full strength, and the documented "pins that must not be weakened" stay pinned.
+Judge a change by the TOTAL wall clock of the app's suite, not by the sync figure alone: a sync→async move that shifts work into an already-saturated async cohort is a regression and gets reverted.
+The host is shared, so absolute timings swing several-fold under load — compare a same-session A/B and repeat runs before concluding anything.
+Per-suite rules, the measured cost profile and the remaining sync inventory: `apps/evo_git/test/CONTEXT.md` (Async-Safety Policy, Cost Profile, Timing Seams) and `apps/evo_dash/test/CONTEXT.md` (Async policy, "Suite runtime: what actually costs time").
+
 ### Internationalization (i18n) Development Policy
 
 The web dashboard (`:evo_dash`) is internationalized with Gettext — all user-facing strings in LiveViews, components, helpers and templates are wrapped with `gettext/1,2`; the CLI / `:evo_git` core is deliberately NOT internationalized (English-only).

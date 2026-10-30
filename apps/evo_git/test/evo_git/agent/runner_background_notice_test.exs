@@ -13,11 +13,15 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   driven directly here, the same convention as
   `Runner.drain_and_inject_user_messages/1`.
 
-  `async: false` — the cases seed the global named `:evogit_agent_state` ETS
-  table and an isolated `EvoGit.BackgroundJobs` registry.
+  `async: true` — the cases seed ONE row in the app-global named
+  `:evogit_agent_state` ETS table under a per-test unique agent id from this
+  file's own id range (deleted on exit, nothing asserted about the table as a
+  whole), and each test's background jobs live in its OWN isolated
+  `EvoGit.BackgroundJobs` registry under a unique name, writing uniquely named
+  job log files — so the real detached children never collide across modules.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.Runner
@@ -29,14 +33,16 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
 
   @moduletag :tmp_dir
 
-  @agent_id 1
   @turn 5
   @deadline_ms 5_000
 
   setup %{tmp_dir: _tmp_dir} do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    clear_ets()
+
+    # This file's own id range keeps the row unshared with every other module
+    # that seeds the same app-global tables concurrently.
+    agent_id = 9_961_000 + :erlang.unique_integer([:positive])
 
     name = :"runner_bg_notice_#{System.unique_integer([:positive])}"
     start_supervised!({EvoGit.BackgroundJobs, [name: name]})
@@ -44,7 +50,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     Process.put(:evogit_background_jobs_server, name)
     Process.put(:evogit_agent_pid, self())
 
-    seed_agent_state()
+    seed_agent_state(agent_id)
 
     on_exit(fn ->
       # `on_exit` runs in a different process, so these deletes touch THAT
@@ -52,10 +58,11 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
       # belt-and-braces for the seam contract.
       Process.delete(:evogit_agent_pid)
       Process.delete(:evogit_background_jobs_server)
-      clear_ets()
+      # Delete ONLY this test's rows — never another module's.
+      delete_agent_rows(agent_id)
     end)
 
-    :ok
+    %{agent_id: agent_id}
   end
 
   # ---------------------------------------------------------------------------
@@ -68,17 +75,18 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     end
   end
 
-  defp clear_ets do
-    [:evogit_agent_state, :evogit_sched_meta]
-    |> Enum.each(fn name ->
-      if :ets.whereis(name) != :undefined, do: :ets.delete_all_objects(name)
-    end)
+  defp delete_agent_rows(agent_id) do
+    if :ets.whereis(:evogit_agent_state) != :undefined,
+      do: :ets.delete(:evogit_agent_state, agent_id)
+
+    if :ets.whereis(:evogit_sched_meta) != :undefined,
+      do: :ets.delete(:evogit_sched_meta, agent_id)
   end
 
   # A minimal registered agent — enough for `sync_context_to_ets/2` (a plain
   # ETS write-through) and for the loop's ETS expectations.
-  defp seed_agent_state do
-    Store.put_agent_state(@agent_id, %AgentState{
+  defp seed_agent_state(agent_id) do
+    Store.put_agent_state(agent_id, %AgentState{
       context_node: %ContextNode{path: "./", repo: "/tmp/test"},
       phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
       llm_model: "test:model",
@@ -88,9 +96,9 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     })
   end
 
-  defp loop_state(context \\ ReqLLM.Context.new([])) do
+  defp loop_state(agent_id, context \\ ReqLLM.Context.new([])) do
     %LoopState{
-      agent_id: @agent_id,
+      agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
       node_path: "./",
@@ -184,12 +192,12 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   # ---------------------------------------------------------------------------
 
   test "a finished job is announced with exactly ONE turn-tagged [NOTICE] user message",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
     existing = ReqLLM.Context.user("already here")
-    state = loop_state(ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
+    state = loop_state(agent_id, ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
 
     new_state = Runner.inject_background_job_notices(state)
 
@@ -205,23 +213,23 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   end
 
   test "the ETS context is synced with the notice (dashboard visibility)",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
-    _state = Runner.inject_background_job_notices(loop_state())
+    _state = Runner.inject_background_job_notices(loop_state(agent_id))
 
-    assert {:ok, %AgentState{context: context}} = Store.get_agent_state(@agent_id)
+    assert {:ok, %AgentState{context: context}} = Store.get_agent_state(agent_id)
     assert [notice] = notice_messages(context)
     assert text_of(notice) =~ job.id
   end
 
   test "a second call appends nothing — the claim marked the job announced",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
-    once = Runner.inject_background_job_notices(loop_state())
+    once = Runner.inject_background_job_notices(loop_state(agent_id))
     assert [_notice] = notice_messages(once.context)
     assert length(once.context.messages) == 1
 
@@ -233,16 +241,20 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert {:ok, []} = BackgroundJobs.claim_finished_notices()
   end
 
-  test "no finished jobs leaves the context untouched" do
-    state = loop_state(ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi")))
+  test "no finished jobs leaves the context untouched", %{agent_id: agent_id} do
+    state =
+      loop_state(
+        agent_id,
+        ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi"))
+      )
 
     assert Runner.inject_background_job_notices(state) == state
   end
 
-  test "a still-running job is not announced", %{tmp_dir: tmp_dir} do
+  test "a still-running job is not announced", %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("sleep 30", tmp_dir)
 
-    state = loop_state()
+    state = loop_state(agent_id)
     assert Runner.inject_background_job_notices(state) == state
     assert state.context.messages == []
 
@@ -254,14 +266,14 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   # ---------------------------------------------------------------------------
 
   test "two jobs finished before the turn boundary get ONE combined [NOTICE] message",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     first = start_job!("echo first", tmp_dir)
     second = start_job!("echo second", tmp_dir)
     _ = await_terminal!(first.id)
     _ = await_terminal!(second.id)
 
     existing = ReqLLM.Context.user("already here")
-    state = loop_state(ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
+    state = loop_state(agent_id, ReqLLM.Context.append(ReqLLM.Context.new([]), existing))
     before = length(state.context.messages)
 
     new_state = Runner.inject_background_job_notices(state)
@@ -286,7 +298,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   end
 
   test "the notice is notification-only — it never carries the job's output",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     marker = "SECRET_OUTPUT_MARKER"
 
     # stdout gets the marker only by DECODING it, so it never appears literally
@@ -301,7 +313,7 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     # below cannot pass vacuously.
     await_output!(job.output_path, marker)
 
-    state = Runner.inject_background_job_notices(loop_state())
+    state = Runner.inject_background_job_notices(loop_state(agent_id))
 
     assert [notice] = notice_messages(state.context)
     text = text_of(notice)
@@ -318,11 +330,11 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
   # ---------------------------------------------------------------------------
 
   test "a grace period skips the notice AND leaves the job claimable",
-       %{tmp_dir: tmp_dir} do
+       %{agent_id: agent_id, tmp_dir: tmp_dir} do
     job = start_job!("echo done", tmp_dir)
     _ = await_terminal!(job.id)
 
-    grace_state = %{loop_state() | in_grace_period: true, grace_turns_remaining: 2}
+    grace_state = %{loop_state(agent_id) | in_grace_period: true, grace_turns_remaining: 2}
 
     assert Runner.inject_background_job_notices(grace_state) == grace_state
     assert grace_state.context.messages == []
@@ -336,10 +348,16 @@ defmodule EvoGit.Agent.RunnerBackgroundNoticeTest do
     assert text_of(notice) =~ job.id
   end
 
-  test "an unreachable registry leaves the state unchanged and never raises" do
+  test "an unreachable registry leaves the state unchanged and never raises", %{
+    agent_id: agent_id
+  } do
     Process.put(:evogit_background_jobs_server, :runner_bg_notice_missing_registry)
 
-    state = loop_state(ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi")))
+    state =
+      loop_state(
+        agent_id,
+        ReqLLM.Context.append(ReqLLM.Context.new([]), ReqLLM.Context.user("hi"))
+      )
 
     assert Runner.inject_background_job_notices(state) == state
   end

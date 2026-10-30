@@ -1,7 +1,11 @@
 defmodule EvoDash.Test.IsolatedTaskStoreTest do
-  # `async: false` — `isolate!/1` terminates the PROCESS-GLOBAL `EvoGit.Store` /
-  # `EvoGit.TaskRegistry` singletons, so no other suite may run concurrently (the
-  # same reason `node_context_test.exs` is a sync module).
+  # `async: false` by DEFINITION, not by cost: `isolate!/1` terminates the
+  # PROCESS-GLOBAL `EvoGit.Store` / `EvoGit.TaskRegistry` singletons (their
+  # `EvoGit.Supervisor` children are stopped and replaced by an isolated pair)
+  # and then asserts ABSOLUTE properties of that pair — `safe_select_all_tasks/1`
+  # returning `[]` and the applied migration versions — which any suite writing
+  # through the shared store at the same time would break. No test in this module
+  # can ever run alongside another one.
   use ExUnit.Case, async: false
 
   alias EvoDash.Test.IsolatedTaskStore

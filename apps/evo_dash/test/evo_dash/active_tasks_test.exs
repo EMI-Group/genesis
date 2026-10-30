@@ -1,4 +1,9 @@
 defmodule EvoDash.ActiveTasksTest do
+  # async: false — these tests write the LOCAL context (`nil`, `node()`), which is
+  # the exact key a mounted page's NodeAware sidebar loader reads, and they write
+  # arbitrary sentinel shapes into it (`[:a, :b]`). The async page-mounting suites
+  # (agents_live_test, desktop_quit_test) would crash on such a shape, so the hub
+  # writes must never overlap them. ~2 ms of sync-block time; not worth a split.
   use ExUnit.Case, async: false
 
   alias EvoDash.ActiveTasks

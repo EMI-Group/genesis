@@ -1,35 +1,32 @@
 defmodule EvoDashWeb.PageControllerTest do
-  use EvoDashWeb.ConnCase
+  # async: false — the "malformed ActiveTasks hub" test writes JUNK SENTINEL
+  # SHAPES into the boot-created, process-global `EvoDash.ActiveTasks` hub under
+  # the `{nil, node()}` LOCAL key, and every connected whole-page mount seeds
+  # its sidebar from exactly that key (`NodeAware.hub_snapshot/2`). An
+  # `async: true` page-mounting peer (`agents_live_test`, `desktop_quit_test`)
+  # would seed the junk list into `Layouts.group_tasks_by_project/2` mid-run,
+  # which is the crash this suite pins. The config directory is NOT a reason to
+  # stay sync any more: it is isolated PER PROCESS through the test-only
+  # `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by
+  # test/test_helper.exs), never through a BEAM-global `XDG_CONFIG_HOME` write.
+  use EvoDashWeb.ConnCase, async: false
 
   # ProjectsLive (GET /) and HomeLive (GET /help) both redirect first-time
   # users to /welcome via server-based detection
-  # (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the config
-  # dir to a temp directory and mark onboarding complete so both routes
-  # render their pages instead of redirecting.
+  # (EvoGit.Config.VersionState.onboarding_needed?/0). Isolate the config dir
+  # to a per-test temp directory (the override lives in the TEST process'
+  # dictionary and reaches the mounted pages through OTP's `:"$callers"` chain)
+  # and mark onboarding complete so both routes render their pages instead of
+  # redirecting.
   setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_page_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
+    # `isolate!/1` creates a unique temp dir, activates it for this process and
+    # registers the `File.rm_rf!` cleanup itself. The layout is
+    # `<temp dir>/genesis`, the layout `EvoGit.Platform.config_dir/0` expects.
+    EvoDash.Test.ConfigDir.isolate!("evogit_page_test_config")
 
     if Code.ensure_loaded?(EvoGit.Config.VersionState) do
       EvoGit.Config.VersionState.complete_onboarding()
     end
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
 
     :ok
   end

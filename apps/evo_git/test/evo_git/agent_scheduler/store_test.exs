@@ -5,13 +5,15 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   `metadata[:timestamp]` stamping happens at message-creation time in the agent
   code (`EvoGit.Agent.ContextBuilder`), never in the store.
 
-  Uses `async: false` because the tests manipulate global named ETS tables
-  (`:evogit_agent_state` and `:evogit_sched_meta`) and subscribe to / assert on
-  the shared `"agents"` PubSub topic (`PubSub.agent_topic`) of the global
-  `EvoGit.PubSub`.
+  Uses `async: true`: the rows it seeds live in the app-global named ETS tables
+  (`:evogit_agent_state` and `:evogit_sched_meta`), so every test uses its own
+  `unique_agent_id/0` (its 9_950_000+ range) and never wipes a table. The
+  `"agents"` PubSub topic (`PubSub.agent_topic`) of the global `EvoGit.PubSub`
+  is shared, but every assertion matches on the agent id, so a sibling module's
+  broadcast is benign.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.AgentScheduler.AgentState
   alias EvoGit.AgentScheduler.PubSub
@@ -58,13 +60,10 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
   end
 
-  defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
-
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete_all_objects(:evogit_sched_meta)
-  end
+  # Per-test-unique agent id: the tables are app-global and shared with every
+  # concurrently running `async: true` module, so this module never reuses a
+  # small literal id and never wipes a table (see the moduledoc).
+  defp unique_agent_id, do: 9_950_000 + :erlang.unique_integer([:positive])
 
   defp drain_mailbox do
     receive do
@@ -79,8 +78,6 @@ defmodule EvoGit.AgentScheduler.StoreTest do
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    clear_ets()
-    on_exit(fn -> clear_ets() end)
     :ok
   end
 
@@ -93,7 +90,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
   describe "update_agent_context/2 — dumb pass-through write" do
     test "returns :ok and stores a pre-stamped context exactly as given" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{
@@ -111,7 +108,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "does not re-stamp or modify any pre-existing metadata" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{
@@ -126,7 +123,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "is a pass-through across repeated syncs of an already-stamped context" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{
@@ -143,7 +140,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "passes through messages with nil metadata untouched" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{messages: [message(:user, metadata: nil)]}
@@ -154,7 +151,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "leaves non-Message entries untouched" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       loose = %{role: :user, content: "not a struct"}
@@ -166,7 +163,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "handles an empty messages list" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       context = %ReqLLM.Context{messages: []}
@@ -179,7 +176,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
   describe "update_agent_context/2 + batch_update_agent/2 — one-way write sequence" do
     test "repeated writes of pre-stamped contexts store them unchanged every time" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       # Turn 1: post-LLM-response write via batch_update_agent (tool_dispatch.ex).
@@ -218,7 +215,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
 
   describe "cancel_requested — graceful-cancel flag" do
     test "set_cancel_requested/1 returns :ok and sets the flag for a live agent" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert :ok = Store.set_cancel_requested(agent_id)
@@ -226,15 +223,15 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "set_cancel_requested/1 returns {:error, :not_found} for an unknown agent" do
-      assert {:error, :not_found} = Store.set_cancel_requested(999)
+      assert {:error, :not_found} = Store.set_cancel_requested(unique_agent_id())
     end
 
     test "cancel_requested?/1 is false when the agent state is missing" do
-      refute Store.cancel_requested?(999)
+      refute Store.cancel_requested?(unique_agent_id())
     end
 
     test "cancel_requested?/1 is false by default and reflects the flag after set/clear" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       refute Store.cancel_requested?(agent_id)
@@ -247,11 +244,11 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "clear_cancel_requested/1 returns {:error, :not_found} for an unknown agent" do
-      assert {:error, :not_found} = Store.clear_cancel_requested(999)
+      assert {:error, :not_found} = Store.clear_cancel_requested(unique_agent_id())
     end
 
     test "the flag survives a put_agent_state/2 round-trip" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
       assert :ok = Store.set_cancel_requested(agent_id)
 
@@ -266,7 +263,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "the flag survives a batch_update_agent/2 update of an unrelated field" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
       assert :ok = Store.set_cancel_requested(agent_id)
 
@@ -292,7 +289,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "batch_update_agent with a :context broadcasts a stripped delta with message_count" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       # The insert path broadcasts the initial tracked fields (no context).
@@ -315,7 +312,7 @@ defmodule EvoGit.AgentScheduler.StoreTest do
     end
 
     test "update_agent_context/2 broadcasts message_count matching the new context" do
-      agent_id = 2
+      agent_id = unique_agent_id()
       Store.put_agent_state(agent_id, agent_state())
 
       assert_receive {:agent_updated, ^agent_id, _insert_fields, _node}

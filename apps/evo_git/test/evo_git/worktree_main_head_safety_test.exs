@@ -8,9 +8,11 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
   `Runtime.Helpers.merge_and_report/4` branch creation, and review pre-merge
   reads.
   """
-  # async: false — real git operations across multiple repos plus the shared
-  # named ETS tables (:evogit_agent_state, :evogit_sched_meta).
-  use ExUnit.Case, async: false
+  # async: true — every test uses its OWN temp repos and a per-test-unique agent
+  # id, so its rows in the shared named ETS tables (:evogit_agent_state,
+  # :evogit_sched_meta) collide with nothing and are never wiped (a whole-table
+  # delete would destroy a concurrently running module's rows).
+  use ExUnit.Case, async: true
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
@@ -38,8 +40,6 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
 
-    on_exit(fn -> clear_ets() end)
-
     :ok
   end
 
@@ -49,14 +49,6 @@ defmodule EvoGit.WorktreeMainHeadSafetyTest do
     if :ets.whereis(name) == :undefined do
       :ets.new(name, [:set, :named_table, :public])
     end
-  end
-
-  defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
-
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete_all_objects(:evogit_sched_meta)
   end
 
   # Creates a fresh temp git repo whose default branch is deterministically

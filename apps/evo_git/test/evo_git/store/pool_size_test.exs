@@ -27,10 +27,12 @@ defmodule EvoGit.Store.PoolSizeTest do
   something weaker (a slow machine could make a served read look queued).
   """
 
-  # NOT async: the timing-sensitive concurrency assertions below deserve a
-  # quiet machine (a queue wait has only a sub-millisecond margin to be
-  # observably fast), and these tests stop/start their own repos.
-  use ExUnit.Case, async: false
+  # `async: true`: every test boots its OWN unnamed dynamic repo on a UNIQUE
+  # temp database (never the app-level `EvoGit.Store`) and stops it on exit, and
+  # every wait is event-driven — the queued state is polled on the pool's own
+  # `checkout_queue_length` metric and completion is a 5 s `Task.await` — so no
+  # assertion depends on a quiet machine.
+  use ExUnit.Case, async: true
 
   alias EvoGit.Repo
   alias EvoGit.Store

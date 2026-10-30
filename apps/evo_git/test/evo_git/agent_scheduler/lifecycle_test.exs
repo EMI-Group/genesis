@@ -3,12 +3,16 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
   Tests for the crash-retry logic in `EvoGit.AgentScheduler.Lifecycle.handle_agent_crash/3`,
   the cancellation logic in `cancel_agent/2`, and the defensive handling for missing ETS entries.
 
-  Uses `async: false` because the tests read and write the application's global named ETS
-  tables (`:evogit_agent_state`, `:evogit_sched_meta` and `:evogit_cancelling_tasks`) —
-  concurrent test processes would clobber each other's rows.
+  Uses `async: true`: every row the module seeds lives in the app-global named
+  ETS tables (`:evogit_agent_state`, `:evogit_sched_meta` and
+  `:evogit_cancelling_tasks`), so it writes ONLY under per-test UNIQUE agent ids
+  (`unique_agent_id/0`, its own 9_700_000+ range) and never wipes a table — a
+  whole-table delete would destroy a concurrently running module's rows, and a
+  small literal id would collide with one (other modules read e.g. id 3 and
+  assert the scheduler-default fallback).
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Result
@@ -69,15 +73,16 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
   end
 
-  defp clear_ets do
-    if :ets.whereis(:evogit_agent_state) != :undefined,
-      do: :ets.delete_all_objects(:evogit_agent_state)
+  # Per-test-unique agent id: the tables are app-global and shared with every
+  # concurrently running `async: true` module, so this module must never reuse a
+  # small literal id and must never wipe a table (see the moduledoc).
+  defp unique_agent_id, do: 9_700_000 + :erlang.unique_integer([:positive])
 
-    if :ets.whereis(:evogit_sched_meta) != :undefined,
-      do: :ets.delete_all_objects(:evogit_sched_meta)
-
-    if :ets.whereis(:evogit_cancelling_tasks) != :undefined,
-      do: :ets.delete_all_objects(:evogit_cancelling_tasks)
+  # All sched_meta rows belonging to `task_id` — the async-safe replacement for
+  # a whole-table size check (see the moduledoc).
+  defp sched_meta_for_task(task_id) do
+    :ets.tab2list(:evogit_sched_meta)
+    |> Enum.filter(fn {_agent_id, meta} -> meta.task_id == task_id end)
   end
 
   defp put_sched_meta(agent_id, meta) do
@@ -125,8 +130,6 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
     create_ets_if_missing(:evogit_cancelling_tasks)
-    clear_ets()
-    on_exit(fn -> clear_ets() end)
     :ok
   end
 
@@ -134,7 +137,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   describe "handle_agent_crash/3 — retry path" do
     test "retries agent and queues it for re-dispatch" do
-      agent_id = 1
+      agent_id = unique_agent_id()
 
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
       put_sched_meta(agent_id, meta)
@@ -159,7 +162,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
 
     test "missing agent_state during retry doesn't crash" do
-      agent_id = 1
+      agent_id = unique_agent_id()
 
       # sched_meta present but NO agent_state entry
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
@@ -180,7 +183,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
 
     test "resetting agent_state sets phylo_node and context to nil" do
-      agent_id = 1
+      agent_id = unique_agent_id()
 
       meta = %SchedMeta{id: agent_id, depth: 0, spec: agent_spec(), retries: 0}
       put_sched_meta(agent_id, meta)
@@ -205,7 +208,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   describe "handle_agent_crash/3 — permanent failure" do
     test "marks agent as failed after max retries and replies to caller" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       ref = make_ref()
 
       meta = %SchedMeta{
@@ -239,8 +242,11 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     test "missing sched_meta returns state completely unchanged" do
       state = base_state([])
 
-      # Agent ID 9999 has no sched_meta or agent_state in ETS
-      assert {:noreply, new_state} = Lifecycle.handle_agent_crash(state, 9999, {:error, :ghost})
+      # A fresh id has no sched_meta or agent_state in ETS
+      ghost_id = unique_agent_id()
+
+      assert {:noreply, new_state} =
+               Lifecycle.handle_agent_crash(state, ghost_id, {:error, :ghost})
 
       # The function returns the state completely unchanged on :error
       assert new_state == state
@@ -249,7 +255,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   describe "cancel_agent/2" do
     test "kills the agent's Task process and cleans up ETS entries" do
-      agent_id = 1
+      agent_id = unique_agent_id()
 
       # Spawn a real long-running task
       task = Task.async(fn -> Process.sleep(10_000) end)
@@ -420,13 +426,20 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       # caller_pid scan in the handler does NOT match this agent.
       dummy_caller = spawn(fn -> Process.sleep(:infinity) end)
 
+      # Per-test-unique agent ids — the tables are shared with every concurrent
+      # `async: true` module (see the moduledoc).
+      a1 = unique_agent_id()
+      a2 = unique_agent_id()
+      a3 = unique_agent_id()
+      a4 = unique_agent_id()
+
       try do
         [task1, task2, task3] = tasks
 
-        # Agent 1: top-level (depth: 0) whose `from` contains caller_pid.
+        # Agent a1: top-level (depth: 0) whose `from` contains caller_pid.
         # This is the entry point the handler keys off of.
         meta1 = %SchedMeta{
-          id: 1,
+          id: a1,
           depth: 0,
           spec: agent_spec(),
           retries: 0,
@@ -435,33 +448,33 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           task_ref: task1
         }
 
-        # Agent 2: subagent (depth: 1) sharing the same task_id.
+        # Agent a2: subagent (depth: 1) sharing the same task_id.
         meta2 = %SchedMeta{
-          id: 2,
+          id: a2,
           depth: 1,
           spec: agent_spec(),
           retries: 0,
           task_id: task_id,
-          parent_id: 1,
+          parent_id: a1,
           task_ref: task2
         }
 
-        # Agent 3: another subagent (depth: 2) sharing the same task_id.
+        # Agent a3: another subagent (depth: 2) sharing the same task_id.
         meta3 = %SchedMeta{
-          id: 3,
+          id: a3,
           depth: 2,
           spec: agent_spec(),
           retries: 0,
           task_id: task_id,
-          parent_id: 2,
+          parent_id: a2,
           task_ref: task3
         }
 
-        # Agent 4: belongs to a DIFFERENT task_id — must NOT be cancelled.
+        # Agent a4: belongs to a DIFFERENT task_id — must NOT be cancelled.
         # Its `from` uses dummy_caller (a different pid) so it isn't matched by
         # the caller_pid scan (ETS tab2list order is unspecified).
         meta4 = %SchedMeta{
-          id: 4,
+          id: a4,
           depth: 0,
           spec: agent_spec(),
           retries: 0,
@@ -470,15 +483,15 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           task_ref: nil
         }
 
-        put_sched_meta(1, meta1)
-        put_sched_meta(2, meta2)
-        put_sched_meta(3, meta3)
-        put_sched_meta(4, meta4)
+        put_sched_meta(a1, meta1)
+        put_sched_meta(a2, meta2)
+        put_sched_meta(a3, meta3)
+        put_sched_meta(a4, meta4)
 
         # Put all four agent IDs into the dispatch queue.
         state =
           base_state([])
-          |> then(fn s -> %{s | queue: Enum.reduce([1, 2, 3, 4], s.queue, &:queue.in/2)} end)
+          |> then(fn s -> %{s | queue: Enum.reduce([a1, a2, a3, a4], s.queue, &:queue.in/2)} end)
 
         from = {self(), make_ref()}
 
@@ -487,16 +500,16 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         assert {:reply, :ok, new_state} =
                  AgentScheduler.handle_call({:force_kill_task_agents, caller_pid}, from, state)
 
-        # Agents 1-3 are removed from the queue; agent 4 (different task) survives.
-        assert :queue.to_list(new_state.queue) == [4]
+        # Agents a1-a3 are removed from the queue; a4 (different task) survives.
+        assert :queue.to_list(new_state.queue) == [a4]
 
         # Cancelled agents are deleted from ETS.
-        assert get_sched_meta(1) == :missing
-        assert get_sched_meta(2) == :missing
-        assert get_sched_meta(3) == :missing
+        assert get_sched_meta(a1) == :missing
+        assert get_sched_meta(a2) == :missing
+        assert get_sched_meta(a3) == :missing
 
         # The unrelated agent's metadata is untouched.
-        assert {:ok, ^meta4} = get_sched_meta(4)
+        assert {:ok, ^meta4} = get_sched_meta(a4)
       after
         # Clean up spawned tasks (Task.shutdown is idempotent if already killed).
         Enum.each(tasks, fn task ->
@@ -517,12 +530,16 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       tasks =
         Enum.map(1..2, fn _ -> Task.async(fn -> Process.sleep(:infinity) end) end)
 
+      # Per-test-unique agent ids (see the moduledoc).
+      a1 = unique_agent_id()
+      a2 = unique_agent_id()
+
       try do
         [task1, task2] = tasks
 
-        # Agent 1: top-level (depth: 0) whose `from` contains caller_pid.
+        # Agent a1: top-level (depth: 0) whose `from` contains caller_pid.
         meta1 = %SchedMeta{
-          id: 1,
+          id: a1,
           depth: 0,
           spec: agent_spec(),
           retries: 0,
@@ -531,27 +548,27 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
           task_ref: task1
         }
 
-        # Agent 2: subagent (depth: 1) sharing the same task_id.
+        # Agent a2: subagent (depth: 1) sharing the same task_id.
         meta2 = %SchedMeta{
-          id: 2,
+          id: a2,
           depth: 1,
           spec: agent_spec(),
           retries: 0,
           task_id: task_id,
-          parent_id: 1,
+          parent_id: a1,
           task_ref: task2
         }
 
-        put_sched_meta(1, meta1)
-        put_sched_meta(2, meta2)
+        put_sched_meta(a1, meta1)
+        put_sched_meta(a2, meta2)
 
         # Simulate both agents holding LLM and tool slots at the time of
         # cancellation.
         state =
           base_state(
-            llm_holders: %{"default" => MapSet.new([1, 2])},
-            tool_holders: MapSet.new([1, 2]),
-            llm_last_granted: %{"default" => %{1 => 1_000, 2 => 2_000}}
+            llm_holders: %{"default" => MapSet.new([a1, a2])},
+            tool_holders: MapSet.new([a1, a2]),
+            llm_last_granted: %{"default" => %{a1 => 1_000, a2 => 2_000}}
           )
 
         from = {self(), make_ref()}
@@ -562,15 +579,15 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         # The cancelled agents must be removed from both holder sets so that
         # the slots are returned to the pool (no permanent leak).
         default_holders = State.holders_for(new_state, "default")
-        refute MapSet.member?(default_holders, 1)
-        refute MapSet.member?(default_holders, 2)
-        refute MapSet.member?(new_state.tool_holders, 1)
-        refute MapSet.member?(new_state.tool_holders, 2)
+        refute MapSet.member?(default_holders, a1)
+        refute MapSet.member?(default_holders, a2)
+        refute MapSet.member?(new_state.tool_holders, a1)
+        refute MapSet.member?(new_state.tool_holders, a2)
 
         # llm_last_granted entries for cancelled agents are also cleaned up.
         default_last_granted = State.last_granted_for(new_state, "default")
-        refute Map.has_key?(default_last_granted, 1)
-        refute Map.has_key?(default_last_granted, 2)
+        refute Map.has_key?(default_last_granted, a1)
+        refute Map.has_key?(default_last_granted, a2)
 
         assert default_holders == MapSet.new()
         assert new_state.tool_holders == MapSet.new()
@@ -587,9 +604,14 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       task_id = "graceful-42"
       caller_pid = self()
 
-      # Agent 1: top-level (depth 0); Agent 2: subagent (depth 1) — same task.
-      put_sched_meta(1, %SchedMeta{
-        id: 1,
+      # Per-test-unique agent ids (see the moduledoc).
+      a1 = unique_agent_id()
+      a2 = unique_agent_id()
+      other = unique_agent_id()
+
+      # Agent a1: top-level (depth 0); Agent a2: subagent (depth 1) — same task.
+      put_sched_meta(a1, %SchedMeta{
+        id: a1,
         depth: 0,
         spec: agent_spec(),
         retries: 0,
@@ -597,18 +619,18 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         from: {caller_pid, make_ref()}
       })
 
-      put_sched_meta(2, %SchedMeta{
-        id: 2,
+      put_sched_meta(a2, %SchedMeta{
+        id: a2,
         depth: 1,
         spec: agent_spec(),
         retries: 0,
         task_id: task_id,
-        parent_id: 1
+        parent_id: a1
       })
 
-      # Agent 3 belongs to a DIFFERENT task — must NOT be notified.
-      put_sched_meta(3, %SchedMeta{
-        id: 3,
+      # Agent `other` belongs to a DIFFERENT task — must NOT be notified.
+      put_sched_meta(other, %SchedMeta{
+        id: other,
         depth: 0,
         spec: agent_spec(),
         retries: 0,
@@ -616,7 +638,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
         from: {caller_pid, make_ref()}
       })
 
-      for id <- [1, 2, 3], do: put_agent_state(id, agent_state())
+      for id <- [a1, a2, other], do: put_agent_state(id, agent_state())
 
       state = base_state([])
       from = {self(), make_ref()}
@@ -627,17 +649,17 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       # Marker registered.
       assert :ets.member(:evogit_cancelling_tasks, task_id)
 
-      # Agents 1 & 2 got the cancel message + cancel_requested flag.
-      for id <- [1, 2] do
+      # Agents a1 & a2 got the cancel message + cancel_requested flag.
+      for id <- [a1, a2] do
         {:ok, st} = get_agent_state(id)
         assert st.cancel_requested == true, "agent #{id} cancel_requested not set"
         assert Enum.any?(st.pending_user_messages, &String.contains?(&1, "being cancelled"))
       end
 
-      # Agent 3 (different task) untouched.
-      {:ok, st3} = get_agent_state(3)
-      assert st3.cancel_requested != true
-      assert st3.pending_user_messages == []
+      # The other task's agent is untouched.
+      {:ok, untouched} = get_agent_state(other)
+      assert untouched.cancel_requested != true
+      assert untouched.pending_user_messages == []
     end
 
     test "begin_graceful_cancel with no agents still registers the marker" do
@@ -679,16 +701,19 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
       assert {:reply, {:error, :cancelled}, ^state} =
                AgentScheduler.handle_call({:run_agent, spec}, from, state)
 
-      # No agent was registered.
-      assert :ets.info(:evogit_sched_meta, :size) == 0
-      assert :ets.info(:evogit_agent_state, :size) == 0
+      # No agent was registered for THIS task. Scoped to the task's own
+      # sched_meta slice — a table-wide size check is not async-safe (the tables
+      # are shared with every concurrently running module), and registration
+      # writes sched_meta unconditionally, so an empty slice proves neither
+      # table gained a row for this task.
+      assert sched_meta_for_task(task_id) == []
     end
 
     test "Dispatch.register_agent puts a newly registered agent of a cancelling task into grace" do
       task_id = "graceful-reg"
       :ets.insert(:evogit_cancelling_tasks, {task_id})
 
-      state = base_state([])
+      state = base_state(next_agent_id: unique_agent_id())
       spec = agent_spec()
 
       {agent_id, _new_state} =
@@ -710,7 +735,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     test "Dispatch.register_agent does not touch agents of non-cancelling tasks" do
       task_id = "graceful-reg-other"
 
-      state = base_state([])
+      state = base_state(next_agent_id: unique_agent_id())
       spec = agent_spec()
 
       {agent_id, _new_state} =
@@ -732,7 +757,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   describe "increment_compression_count/1" do
     test "increments compression_count in the agent state table" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       put_agent_state(agent_id, agent_state())
 
       AgentScheduler.increment_compression_count(agent_id)
@@ -760,7 +785,7 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
 
   describe "update_total_tokens/2" do
     test "updates total_tokens in the agent state table" do
-      agent_id = 1
+      agent_id = unique_agent_id()
       put_agent_state(agent_id, agent_state())
 
       AgentScheduler.update_total_tokens(agent_id, 5000)
@@ -801,10 +826,11 @@ defmodule EvoGit.AgentScheduler.LifecycleTest do
     end
 
     test "rolls up foreign-repo commits across three levels, child wins for shared keys" do
-      # 3-level tree: root agent1 -> sub-manager agent2 -> executor agent3.
-      agent1 = 101
-      agent2 = 102
-      agent3 = 103
+      # 3-level tree: root agent1 -> sub-manager agent2 -> executor agent3
+      # (per-test-unique ids — see the moduledoc).
+      agent1 = unique_agent_id()
+      agent2 = unique_agent_id()
+      agent3 = unique_agent_id()
 
       # agent1 already has its OWN direct foreign work on "foreign1" before
       # delegating — a pre-existing entry the deeper subtree view must override.

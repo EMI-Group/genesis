@@ -1,39 +1,46 @@
 defmodule EvoDashWeb.WelcomeLiveTest do
-  use EvoDashWeb.ConnCase, async: false
+  # async: true — every piece of state this suite writes is either per-test or
+  # observed by NO async peer:
+  #
+  #   * the config dir (config.toml + credentials.toml) is isolated PER PROCESS
+  #     through the test-only `:config_dir_fun` seam
+  #     (`EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs),
+  #     never through a BEAM-global `XDG_CONFIG_HOME` write. The override lives
+  #     in the TEST process' dictionary and reaches the mounted LiveView plus its
+  #     supervised load tasks through the OTP `:"$callers"` chain
+  #     (`support/config_dir_test.exs` proves all three levels).
+  #   * the `:req_llm` credential store (`ReqLLM.put_key/2` app env, written by
+  #     the merged-save flow and scrubbed by `scrub_anthropic_credential!/0`) is
+  #     a BEAM-global, but NO other suite in `apps/evo_dash/test` reads an
+  #     `:anthropic_api_key`/`ANTHROPIC_API_KEY` value or issues a real provider
+  #     request — the only other `llm_test` caller (settings_live_test) injects
+  #     the result instead of calling `EvoGit.SystemCheck`. The scrub is still
+  #     REQUIRED, for this module's OWN serial test order: the keyless
+  #     "testing state renders the spinner" test must not inherit the typed key
+  #     the previous test persisted, or its spawned `EvoGit.SystemCheck.llm_test/1`
+  #     would issue a real provider request.
+  #   * `EvoDash.ActiveTasks` (the sidebar hub seeded on every mount) is reset by
+  #     `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, and no test here
+  #     asserts sidebar contents.
+  #
+  # The "tasks" PubSub regression test is the ONE exception and lives in its own
+  # `async: false` module at the end of this file: broadcasting
+  # `{:task_updated, …}` reaches EVERY mounted page in the BEAM (it arms
+  # `NodeAware`'s reload debounce, which an async page-mounting peer such as
+  # agents_live_test observes negatively).
+  use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
   # Isolate all tests in this file from the host's real user config.
   # WelcomeLive.mount/1 calls ConfigIO.load_file_config() → EvoGit.Config.resolve(),
-  # which reads config.toml from EvoGit.Config.config_dir/0. On Linux that
-  # honours the XDG_CONFIG_HOME env var, so pointing it at an empty temp dir
-  # guarantees no config.toml exists and schema defaults are used — making the
-  # tests deterministic regardless of host env.
+  # which reads config.toml from EvoGit.Config.config_dir/0. The per-process
+  # override points that at an empty `<temp dir>/genesis`, so no config.toml
+  # exists and schema defaults are used — making the tests deterministic
+  # regardless of host env (and immune to any concurrent suite's config).
   setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_welcome_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
-
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
-
+    # `isolate!/1` creates a unique temp dir, activates it for this process and
+    # registers the `File.rm_rf!` cleanup itself.
+    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
     :ok
   end
 
@@ -801,11 +808,12 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     test "typed API key is saved before the connection test runs", %{conn: conn} do
       # `save_typed_key_for_test/2` → `EvoGit.Config.save_credentials/1` registers
       # the key process-wide via `ReqLLM.put_key/2` (a `:req_llm` app-env write
-      # that the per-test XDG_CONFIG_HOME isolation does NOT cover). Snapshot +
-      # restore it so the bogus key can never leak into a later test — notably
-      # the keyless "testing state renders the spinner" test, whose spawned
-      # `EvoGit.SystemCheck.llm_test/1` must keep failing fast at request-build
-      # time (no key) instead of issuing a real provider request.
+      # that the per-process config-dir isolation does NOT cover — that only
+      # redirects FILES). Snapshot + restore it so the bogus key can never leak
+      # onward — notably into this module's keyless "testing state renders the
+      # spinner" test, whose spawned `EvoGit.SystemCheck.llm_test/1` must keep
+      # failing fast at request-build time (no key) instead of issuing a real
+      # provider request.
       previous_key = Application.get_env(:req_llm, :anthropic_api_key)
 
       on_exit(fn ->
@@ -839,32 +847,52 @@ defmodule EvoDashWeb.WelcomeLiveTest do
     end
   end
 
-  describe "task broadcast handling" do
-    # WelcomeLive subscribes to the "tasks" PubSub topic via
-    # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
-    # :live_view`). It previously had NO task-broadcast handle_info clauses and
-    # crashed with FunctionClauseError on any {:task_updated, _, status, node}
-    # / {:task_deleted, _, node} message; it now forwards to
-    # NodeAware.handle_task_info/2 and handles the :node_aware_reload_tasks
-    # self-message. This test guards the regression.
+  # WelcomeLive subscribes to the "tasks" PubSub topic via
+  # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
+  # :live_view`). It previously had NO task-broadcast handle_info clauses and
+  # crashed with FunctionClauseError on any {:task_updated, _, status, node}
+  # / {:task_deleted, _, node} message; it now forwards to
+  # NodeAware.handle_task_info/2 and handles the :node_aware_reload_tasks
+  # self-message. That regression guard lives in
+  # `EvoDashWeb.WelcomeLiveTest.TaskBroadcast` (async: false) at the end of this
+  # file, because it must PUBLISH on the process-global "tasks" topic.
+end
 
-    test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = live(conn, ~p"/welcome")
+defmodule EvoDashWeb.WelcomeLiveTest.TaskBroadcast do
+  # async: false — this test PUBLISHES `{:task_updated, …}` on the
+  # process-global "tasks" `EvoGit.PubSub` topic. Every mounted page in the BEAM
+  # subscribes to it through `NodeAware`, so the broadcast arms every other
+  # page's reload debounce and emits `:node_aware_reload_tasks`; running it
+  # concurrently with an async page-mounting peer (agents_live_test's negative
+  # `:tasks_reload_pending` poll is the documented victim) is unsafe. Sync
+  # modules run only after every async one drains, so nothing observes it.
+  #
+  # It is a separate MODULE rather than making the whole file sync because the
+  # other 25 tests mutate no shared global.
+  use EvoDashWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
 
-      # The broadcast shape observed crashing in production (the :finalizing
-      # status transition).
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-finalizing", :finalizing, node()}
-      )
+  setup do
+    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_test_config")
+    :ok
+  end
 
-      # render/1 flushes pending messages synchronously; a crash would propagate here.
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Welcome to Genesis"
-    end
+  test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/welcome")
+
+    # The broadcast shape observed crashing in production (the :finalizing
+    # status transition).
+    Phoenix.PubSub.broadcast(
+      EvoGit.PubSub,
+      "tasks",
+      {:task_updated, "test-finalizing", :finalizing, node()}
+    )
+
+    # render/1 flushes pending messages synchronously; a crash would propagate here.
+    html = render(view)
+    assert is_binary(html)
+    assert html =~ "Welcome to Genesis"
   end
 end

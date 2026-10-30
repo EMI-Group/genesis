@@ -190,10 +190,26 @@ defmodule EvoGit.Platform do
 
   The directory is not created automatically — callers should use `File.mkdir_p!/1`
   if needed.
+
+  Tests may redirect this per process through the default-inert `:config_dir_fun`
+  app-env seam (see `EvoGit.TestSupport.ConfigDir`); production never sets it.
   """
   @spec config_dir(String.t()) :: String.t()
   def config_dir(app_name) do
-    base_dir(app_name, "XDG_CONFIG_HOME", ".config")
+    case config_dir_override() do
+      dir when is_binary(dir) and dir != "" -> Path.join(dir, app_name)
+      _ -> base_dir(app_name, "XDG_CONFIG_HOME", ".config")
+    end
+  end
+
+  # Test-only seam: read at CALL time, unset in production (production behaviour
+  # is byte-identical to the XDG env-var resolution below).
+  defp config_dir_override do
+    case Application.get_env(:evo_git, :config_dir_fun) do
+      fun when is_function(fun, 0) -> fun.()
+      {m, f, a} when is_atom(m) and is_atom(f) and is_list(a) -> apply(m, f, a)
+      _ -> nil
+    end
   end
 
   # Shared platform-directory resolution used by both `data_dir/1` and

@@ -1,5 +1,12 @@
 defmodule EvoGit.AgentScheduler.DispatchCustomAgentsTest do
-  use ExUnit.Case, async: false
+  # `async: true` — every test gets its own per-process config directory
+  # (`EvoGit.TestSupport.ConfigDir`), and the ModelSelector cache key embeds the
+  # agents.toml path. `Dispatch.register_agent/7` is called DIRECTLY (never
+  # through the app-global scheduler), so its config reads and model-script
+  # evaluation happen in the test process; the only global effect is one row in
+  # the app-global `:evogit_agent_state` / `:evogit_sched_meta` ETS tables keyed
+  # by a per-test-unique agent id and deleted in `on_exit`.
+  use ExUnit.Case, async: true
 
   alias EvoGit.AgentSpec
   alias EvoGit.AgentScheduler.Dispatch
@@ -7,41 +14,18 @@ defmodule EvoGit.AgentScheduler.DispatchCustomAgentsTest do
   alias EvoGit.AgentScheduler.Store
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
+  alias EvoGit.TestSupport.ConfigDir
 
   defmodule DummyAgent do
     def run(_objective, _ctx), do: {:ok, :done}
   end
 
-  # async: false — the tests mutate the process-wide XDG_CONFIG_HOME env var so
-  # that CustomAgents / ModelSelector never touch the real ~/.config/genesis/
-  # directory, and every register/2 call funnels through
-  # Dispatch.register_agent/7 → Store.put_agent_state/2, which broadcasts on the
-  # shared "agents" PubSub topic (`EvoGit.PubSub` / `PubSub.agent_topic`) — a
-  # topic other test modules subscribe to concurrently.
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    ConfigDir.isolate!("evogit-dispatch-custom-agents")
 
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    # The ModelSelector cache key embeds the agents.toml path (which follows
-    # XDG_CONFIG_HOME), so stale entries from other tests could leak through.
+    # The ModelSelector cache key embeds the agents.toml path, so no stale entry
+    # can leak in; erase it anyway for a pristine starting point.
     EvoGit.CustomAgents.ModelSelector.invalidate()
-
-    on_exit(fn ->
-      EvoGit.CustomAgents.ModelSelector.invalidate()
-
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
 
     :ok
   end

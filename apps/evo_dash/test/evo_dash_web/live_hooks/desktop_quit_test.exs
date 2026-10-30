@@ -9,7 +9,7 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
   # System.stop/0 (which would shut down the test VM) is NEVER invoked. The
   # prior value is SAVED and RESTORED in on_exit (never a blind delete_env) so
   # a sibling suite relying on that seam is unaffected. This file does NOT
-  # isolate TaskRegistry/Store nor XDG_CONFIG_HOME, so it may run concurrently.
+  # isolate TaskRegistry/Store nor the config dir, so it may run concurrently.
   use EvoDashWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
@@ -27,10 +27,12 @@ defmodule EvoDashWeb.LiveHooks.DesktopQuitTest do
       send(test_pid, :desktop_stopped)
     end)
 
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
+    # `EvoDash.ActiveTasks` is a process-less ETS module over the boot-created
+    # process-wide `:evo_dash_active_tasks` table — clear ONLY the local context
+    # (this suite's pages are local) so one test's sidebar snapshot never leaks
+    # into the next. A whole-table `reset/0` here would delete another
+    # concurrently running async module's per-test snapshot mid-assertion.
+    EvoDash.ActiveTasks.invalidate(nil, node())
 
     on_exit(fn ->
       if is_nil(original_stop_fun) do

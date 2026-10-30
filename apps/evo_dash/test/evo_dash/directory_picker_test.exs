@@ -1,9 +1,12 @@
 defmodule EvoDash.DirectoryPickerTest do
   # async: true — tests inside one module always run serially, so the shared
   # EvoDash.DirectoryPicker GenServer's global "busy" gate is never contended
-  # within this file. No async: true module ever calls DirectoryPicker.pick
-  # (the only other caller, projects_live_test.exs, is async: false), so the
-  # :directory_picker / :directory_picker_wx app-env overrides below are safe.
+  # within this file. The only other suite that drives the REAL picker
+  # GenServer is projects_live_test.exs's sync `ProjectsLiveSyncTest` module
+  # (its picker-disabled test); the async page module routes every pick through
+  # `:directory_picker_module` -> `EvoDash.DirectoryPicker.Fake`, which never
+  # reaches the GenServer, so the :directory_picker / :directory_picker_wx
+  # app-env overrides below are safe.
   #
   # TIMING — every `refute_receive {:directory_picker_result, …}, 0` below is a
   # plain `receive … after 0` mailbox scan: it still flunks on a stray message,

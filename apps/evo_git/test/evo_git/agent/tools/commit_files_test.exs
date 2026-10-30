@@ -14,10 +14,12 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
     * treats an empty/blank file list and a nothing-staged commit as graceful
       no-ops (`{:ok, output}`), while a failed `git add` is `{:error, message}`.
 
-  `async: false` — the tests redirect the process-wide `XDG_CONFIG_HOME`
-  (read LIVE by `EvoGit.Config.config_path/0` → `EvoGit.Platform.config_dir/1`,
-  with no app-env seam) and write config.toml through `EvoGit.Config`, which
-  serializes this module against every other config reader.
+  `async: true` — the tests resolve config through their OWN module-wide
+  per-process config directory (`EvoGit.TestSupport.ConfigDir`), so
+  `EvoGit.Config.config_path/0` never touches the real
+  `~/.config/genesis/config.toml`. The `:persistent_term` config cache is keyed
+  by FILE PATH, so the test-local directory cannot collide with another
+  module's.
 
   Repository fixtures come from ONE per-module git TEMPLATE built in
   `setup_all` and copied per test with `File.cp_r!`: ~2 ms per test versus the
@@ -25,37 +27,22 @@ defmodule EvoGit.Agent.Tools.CommitFilesTest do
   per-test `new_repo!/0` used to pay. Every assertion is unchanged.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.Shared
+  alias EvoGit.TestSupport.ConfigDir
 
   setup_all do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit-commit-files-xdg-#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-    File.mkdir_p!(EvoGit.Config.config_dir())
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    {:ok, repo_template: git_template!()}
+    # One module-unique config directory; it is activated per test in `setup`
+    # below (`setup_all` runs in a different process than the tests).
+    {:ok,
+     config_dir: ConfigDir.isolate_module!("evogit-commit-files"), repo_template: git_template!()}
   end
 
-  setup %{repo_template: template} = context do
+  setup %{config_dir: config_dir, repo_template: template} = context do
+    ConfigDir.activate(config_dir)
+    File.mkdir_p!(EvoGit.Config.config_dir())
+
     if Map.get(context, :no_repo) do
       :ok
     else

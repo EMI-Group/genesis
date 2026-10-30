@@ -9,15 +9,18 @@ defmodule EvoGit.CustomAgentsRPCTest do
       RemoteAPI; the remote branch is exercised through the unreachable-node
       `call_remote/4` failure path, same pattern as remote_node_test.exs).
 
-  Uses `async: false` and mutates `XDG_CONFIG_HOME` so `agents.toml` is
-  written to a temp dir and never touches the real `~/.config/genesis/`.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`), and both RPC layers (`RemoteAPI` and the
+  `RemoteNode` local path) execute in the calling test process, so nothing
+  BEAM-global is touched.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.AgentScheduler.RemoteAPI
   alias EvoGit.CustomAgents
   alias EvoGit.RemoteNode
+  alias EvoGit.TestSupport.ConfigDir
 
   # A node name that definitely does not exist on this machine (same pattern
   # as remote_node_test.exs). On a non-distributed local node, :erpc.call to
@@ -26,30 +29,13 @@ defmodule EvoGit.CustomAgentsRPCTest do
   @fake_remote :"nonexistent@127.0.0.1"
 
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    ConfigDir.isolate!("evogit-custom-agents-rpc")
 
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    # The ModelSelector compile cache is keyed on the agents.toml path (which
-    # follows XDG_CONFIG_HOME) plus file mtime/size — invalidate before and
-    # after for determinism (same pattern as model_selector_test.exs).
+    # The ModelSelector compile cache is keyed on the agents.toml path plus
+    # file mtime/size, so a test-local directory can never see another test's
+    # entry; erase it anyway for a pristine starting point (same pattern as
+    # model_selector_test.exs).
     EvoGit.CustomAgents.ModelSelector.invalidate()
-
-    on_exit(fn ->
-      EvoGit.CustomAgents.ModelSelector.invalidate()
-
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
 
     :ok
   end

@@ -1,15 +1,47 @@
+# Fake connection manager: registering it under the target id in
+# `EvoGit.RemoteConnection.Registry` is how the production `status/1` read is
+# answered (same pattern as the LiveView suites). Defined ABOVE the async test
+# module because an `async: true` module is handed to the runner as soon as its
+# `defmodule` is evaluated — anything it `start_supervised!`s at runtime must
+# already be compiled.
+defmodule EvoDashWeb.TaskExportControllerTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
 defmodule EvoDashWeb.TaskExportControllerTest do
-  # async: false — the `?node=` describe isolates XDG_CONFIG_HOME so the
-  # `EvoGit.RemoteConnections.save/1` call cannot pollute the developer's real
-  # `~/.config/genesis`. That env var is process-global and is the ONLY config-dir
-  # seam (`EvoGit.Config.config_dir/0` derives the path from it; there is no
-  # injectable override), so an async module reading config concurrently could
-  # observe this suite's temp dir instead of the real one. The suite also injects
-  # the two module-level runner seams (`:task_export_task_runner` /
-  # `:task_export_archive_runner`), which live in the `:evo_dash` app env — also
-  # process-global. It writes NOTHING to the shared Store: the task and the
-  # archive pages come from the injected runners.
-  use EvoDashWeb.ConnCase, async: false
+  # async: true — this suite mutates NO process-global state that an async peer
+  # reads:
+  #
+  #   * the `?node=` describe SAVES a connection target with
+  #     `EvoGit.RemoteConnections.save/1` — a TOML file under the config dir.
+  #     That dir is isolated PER TEST through the test-only `:config_dir_fun`
+  #     seam (`EvoDash.Test.ConfigDir.isolate!/1` in `setup` below, installed by
+  #     test/test_helper.exs), never a BEAM-global `XDG_CONFIG_HOME` write, and
+  #     the request runs in the TEST process, so the override applies directly.
+  #     A concurrent async mount therefore resolves its OWN config dir and can
+  #     never observe this suite's temp dir (the reverse holds too) — and no
+  #     test here writes into the run-wide config dir.
+  #   * the two runner seams (`:task_export_task_runner` /
+  #     `:task_export_archive_runner`) live in the shared `:evo_dash` app env but
+  #     are read ONLY by this controller, which no other suite exercises (grep:
+  #     both keys appear in no other test file), and each test restores the
+  #     previous value in `on_exit`.
+  #   * it writes NOTHING to the shared Store: the task and the archive pages
+  #     come from the injected runners.
+  use EvoDashWeb.ConnCase, async: true
 
   # The controller logs a warning for every degraded page; capture it so the
   # suite output stays readable (captured logs are printed on failure).
@@ -19,6 +51,15 @@ defmodule EvoDashWeb.TaskExportControllerTest do
 
   @archive_runner :task_export_archive_runner
   @task_runner :task_export_task_runner
+
+  setup do
+    # Per-test config dir (see the module comment). `isolate!/1` creates a unique
+    # temp dir, activates it for this process and registers the `File.rm_rf!`
+    # cleanup itself; the layout is `<temp dir>/genesis`, the shape
+    # `EvoGit.Platform.config_dir/0` resolves for this process.
+    EvoDash.Test.ConfigDir.isolate!("evogit_test_config_export")
+    :ok
+  end
 
   describe "GET /tasks/:task_id/export" do
     test "returns 404 when the task is missing or its archive is empty", %{conn: conn} do
@@ -299,32 +340,9 @@ defmodule EvoDashWeb.TaskExportControllerTest do
 
   describe "GET /tasks/:task_id/export with ?node= param" do
     # The node-aware export resolves `?node=` through EvoGit.RemoteConnections
-    # (a TOML file under the config dir), so XDG_CONFIG_HOME is isolated per
-    # test — same pattern as page_controller_test / settings_live_test.
-    setup do
-      original = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_config =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_test_config_export_" <> to_string(System.unique_integer([:positive]))
-        )
-
-      File.mkdir_p!(tmp_config)
-      System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_config)
-
-        if original do
-          System.put_env("XDG_CONFIG_HOME", original)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-      end)
-
-      :ok
-    end
+    # (a TOML file under the config dir); the module-level `setup` already
+    # isolates that dir per test through the per-process `:config_dir_fun` seam
+    # — the same idiom as page_controller_test / appearance_test.
 
     test "returns 404 without any read for an unknown or disconnected node", %{conn: conn} do
       stub_task_runner(fn node, task_id ->
@@ -466,24 +484,4 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   defp tmp_archive_files(task_id) do
     Path.wildcard(Path.join(System.tmp_dir!(), "archive-#{task_id}-*.json"))
   end
-end
-
-# Fake connection manager: registering it under the target id in
-# `EvoGit.RemoteConnection.Registry` is how the production `status/1` read is
-# answered (same pattern as the LiveView suites).
-defmodule EvoDashWeb.TaskExportControllerTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

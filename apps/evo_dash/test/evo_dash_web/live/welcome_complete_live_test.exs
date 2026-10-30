@@ -1,41 +1,33 @@
 defmodule EvoDashWeb.WelcomeCompleteLiveTest do
-  use EvoDashWeb.ConnCase, async: false
+  # async: true — this module mutates NO process-global state.
+  #
+  # The config directory is isolated PER PROCESS through the test-only
+  # `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by
+  # test/test_helper.exs), never through a BEAM-global `XDG_CONFIG_HOME` write.
+  # `go_to_dashboard` runs `EvoGit.Config.VersionState.complete_onboarding/0`,
+  # which writes `version_state.toml` into `EvoGit.Config.config_dir/0`; with the
+  # seam that file lands in THIS test's own `<temp dir>/genesis`, so it can never
+  # mark onboarding complete for another suite (projects_live_test asserts the
+  # push_navigate to /welcome). VersionState's `:persistent_term` cache is keyed
+  # by path, so each unique temp dir gets fresh state automatically (no manual
+  # cache invalidation needed).
+  #
+  # `EvoDash.ActiveTasks` — the sidebar hub seeded on every mount — is reset by
+  # `EvoDashWeb.ConnCase`'s setup and again in its `on_exit`, and no test here
+  # reads it, so no reset of its own is needed.
+  #
+  # The "tasks" PubSub regression test lives in its own `async: false` module at
+  # the end of this file: broadcasting `{:task_updated, …}` reaches EVERY mounted
+  # page in the BEAM (it arms `NodeAware`'s reload debounce, which an async
+  # page-mounting peer such as agents_live_test observes negatively).
+  use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
-  # Isolate the onboarding-completion test from the host's real user config —
-  # same pattern as welcome_live_test.exs. The go_to_dashboard handler calls
-  # EvoGit.Config.VersionState.complete_onboarding/0, which writes
-  # version_state.toml into EvoGit.Config.config_dir/0. On Linux that honours
-  # the XDG_CONFIG_HOME env var, so pointing it at an empty temp dir
-  # guarantees the test only touches temp state. VersionState's
-  # :persistent_term cache is keyed by path, so each unique temp dir gets
-  # fresh state automatically (no manual cache invalidation needed).
   setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_welcome_complete_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
-
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
-
+    # Per-process config dir (see the module comment). `isolate!/1` creates a
+    # unique temp dir, activates it for this process and registers the
+    # `File.rm_rf!` cleanup itself.
+    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
     :ok
   end
 
@@ -109,32 +101,49 @@ defmodule EvoDashWeb.WelcomeCompleteLiveTest do
     end
   end
 
-  describe "task broadcast handling" do
-    # WelcomeCompleteLive subscribes to the "tasks" PubSub topic via
-    # EvoDashWeb.LiveHooks.NodeAware.on_mount/4 (registered by `use EvoDashWeb,
-    # :live_view`). It previously had NO task-broadcast handle_info clauses and
-    # crashed with FunctionClauseError on any {:task_updated, _, status, node}
-    # / {:task_deleted, _, node} message; it now forwards to
-    # NodeAware.handle_task_info/2 and handles the :node_aware_reload_tasks
-    # self-message. This test guards the regression.
+  # The "task broadcast handling" regression guard (WelcomeCompleteLive had no
+  # `handle_info` clauses for `{:task_updated, …}` / `{:task_deleted, …}` and
+  # crashed with FunctionClauseError) lives in
+  # `EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast` — its own `async: false`
+  # module at the end of this file, because it must PUBLISH on the
+  # process-global "tasks" topic.
+end
 
-    test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
-      conn: conn
-    } do
-      {:ok, view, _html} = live(conn, ~p"/welcome/complete")
+defmodule EvoDashWeb.WelcomeCompleteLiveTest.TaskBroadcast do
+  # async: false — this test PUBLISHES `{:task_updated, …}` on the
+  # process-global "tasks" `EvoGit.PubSub` topic. Every mounted page in the BEAM
+  # subscribes to that topic through `NodeAware`, so the broadcast arms every
+  # other page's reload debounce and emits `:node_aware_reload_tasks`; running it
+  # concurrently with an async page-mounting peer (agents_live_test's negative
+  # `:tasks_reload_pending` poll is the documented victim) is unsafe. Sync
+  # modules run only after every async one drains, so nothing observes it.
+  #
+  # It stays a separate MODULE rather than making the whole file sync because the
+  # two rendering tests above mutate no global at all.
+  use EvoDashWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
 
-      # The broadcast shape observed crashing in production (the :finalizing
-      # status transition).
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "tasks",
-        {:task_updated, "test-finalizing", :finalizing, node()}
-      )
+  setup do
+    EvoDash.Test.ConfigDir.isolate!("evogit_welcome_complete_test_config")
+    :ok
+  end
 
-      # render/1 flushes pending messages synchronously; a crash would propagate here.
-      html = render(view)
-      assert is_binary(html)
-      assert html =~ "Write high-level prompts, not code"
-    end
+  test "handle_info {:task_updated, _, :finalizing, node()} does not crash the LiveView", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/welcome/complete")
+
+    # The broadcast shape observed crashing in production (the :finalizing
+    # status transition).
+    Phoenix.PubSub.broadcast(
+      EvoGit.PubSub,
+      "tasks",
+      {:task_updated, "test-finalizing", :finalizing, node()}
+    )
+
+    # render/1 flushes pending messages synchronously; a crash would propagate here.
+    html = render(view)
+    assert is_binary(html)
+    assert html =~ "Write high-level prompts, not code"
   end
 end

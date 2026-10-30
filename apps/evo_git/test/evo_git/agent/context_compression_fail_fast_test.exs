@@ -30,8 +30,12 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   setup rewrites its `model_profiles` (a single-slot pool), the per-model
   backoff is read/cleared through `:sys.get_state/1` + `:sys.replace_state/2`,
   and the non-retryable test acquires/releases a slot from the shared scheduler
-  LLM slot pools. All of that is BEAM-global state observable by any
-  concurrently running module.
+  LLM slot pools. It also writes the app-env keys
+  `:compression_llm_max_attempts` and `:llm_retry_backoff_base_ms`, read at CALL
+  time by the production retry loop. All of that is BEAM-global state observable
+  by any concurrently running module. The config dir itself is isolated PER
+  PROCESS through the `EvoGit.TestSupport.ConfigDir` seam (never
+  `XDG_CONFIG_HOME`).
   `EvoGit.PeakHourEngine` is SUSPENDED for the whole module (`:sys.suspend` in
   `setup`, `:sys.resume` in `on_exit` AFTER the profile restore), because its
   "scheduler_config" wakeup re-derives the `model_concurrency` map from
@@ -179,27 +183,16 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     )
   end
 
-  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir, so the
-  # operator's own `~/.config/genesis/config.toml` can never contribute a
+  # Points the CURRENT process' config dir at a fresh temp dir through the
+  # `EvoGit.TestSupport.ConfigDir` seam (installed suite-wide by
+  # `test/test_helper.exs`), so the operator's own
+  # `~/.config/genesis/config.toml` can never contribute a
   # `[:llm, :compression_threshold_tokens]` override (which would flip the
-  # trigger's source away from `:window`) or disable Stage 1.
+  # trigger's source away from `:window`) or disable Stage 1. This is a
+  # process-dictionary override, NOT `System.put_env("XDG_CONFIG_HOME")` — the
+  # BEAM-global env var stays untouched.
   defp isolate_config! do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-fail-fast-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      case original_xdg do
-        nil -> System.delete_env("XDG_CONFIG_HOME")
-        value -> System.put_env("XDG_CONFIG_HOME", value)
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-fail-fast")
 
     File.mkdir_p!(EvoGit.Config.config_dir())
     :ok
@@ -246,21 +239,12 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
   # the per-test timing bound below measures the compression call rather than an
   # arbitrary test being charged the catalog load. It does NOT lower the
   # BEAM-wide total — the catalog is cached after the first load anywhere.
+  # The fake OpenAI credential (`"test-key"`) is pinned ONCE suite-wide by
+  # `test/test_helper.exs`, so no per-test app-env write is needed here.
   defp warm_up do
-    previous_api_key = Application.get_env(:req_llm, :openai_api_key)
-    Application.put_env(:req_llm, :openai_api_key, "test-key")
-
-    try do
-      case ReqLLM.stream_text(refused_model(), ReqLLM.Context.new(), []) do
-        {:ok, stream_resp} -> _ = ReqLLM.StreamResponse.process_stream(stream_resp)
-        {:error, _reason} -> :ok
-      end
-    after
-      if previous_api_key do
-        Application.put_env(:req_llm, :openai_api_key, previous_api_key)
-      else
-        Application.delete_env(:req_llm, :openai_api_key)
-      end
+    case ReqLLM.stream_text(refused_model(), ReqLLM.Context.new(), []) do
+      {:ok, stream_resp} -> _ = ReqLLM.StreamResponse.process_stream(stream_resp)
+      {:error, _reason} -> :ok
     end
 
     :ok
@@ -302,11 +286,10 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
     Application.put_env(:evo_git, :compression_llm_max_attempts, @max_attempts)
     Application.put_env(:evo_git, :llm_retry_backoff_base_ms, @backoff_base_ms)
 
-    # Pin a test API key so the OpenAI provider requests clear the build phase
-    # (ReqLLM's key resolution) and reach the transport layer.
-    original_api_key = Application.get_env(:req_llm, :openai_api_key)
-    Application.put_env(:req_llm, :openai_api_key, "test-key")
-
+    # The fake OpenAI credential (`"test-key"`) is pinned ONCE suite-wide by
+    # `test/test_helper.exs`, so the provider requests clear the build phase
+    # (ReqLLM's key resolution) and reach the transport layer without a
+    # per-test app-env write.
     original_profiles = AgentScheduler.get_config(:model_profiles)
 
     # Suspend the peak-hour engine for the whole test (the `cost_test` /
@@ -338,12 +321,6 @@ defmodule EvoGit.Agent.ContextCompressionFailFastTest do
 
       restore_env(:compression_llm_max_attempts, original_max_attempts)
       restore_env(:llm_retry_backoff_base_ms, original_backoff_base)
-
-      if original_api_key do
-        Application.put_env(:req_llm, :openai_api_key, original_api_key)
-      else
-        Application.delete_env(:req_llm, :openai_api_key)
-      end
     end)
 
     :ok

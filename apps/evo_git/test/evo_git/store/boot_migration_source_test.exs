@@ -25,13 +25,17 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
       migration version pending each time — emit no `redefining module` text
       and still stamp all of them
 
-  ## Warning capture is deterministic under `async: true`
+  ## Warning capture under `async: true`
 
-  `ExUnit.CaptureIO.capture_io(:stderr, fun)` is GROUP-LEADER scoped: it
-  redirects only THIS test process's stderr (and the processes it spawns), so a
-  concurrently running module's compiler warnings cannot leak into the capture
-  and the capture cannot swallow another module's assertions. `Boot` compiles in
-  the calling process, so the capture observes exactly this test's own compiles.
+  `ExUnit.CaptureIO.capture_io(:stderr, fun)` does NOT hand a test a private
+  stderr: named-device capture goes through ONE shared `StringIO` per device,
+  handed to every capturer with per-capturer offsets, so bytes written by a
+  CONCURRENT test (another async module compiling a module, for example) can
+  appear inside this window. The refutes below are therefore SCOPED to the six
+  migration module NAMES — the only redefinitions that can be a regression of
+  the property this suite owns — instead of a bare `"redefining module"`.
+  `Boot` compiles in the calling process, so this test's own compiles are always
+  observed.
   """
 
   use ExUnit.Case, async: true
@@ -145,7 +149,7 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
 
       # The documented BEAM-wide memo slot holds exactly the returned list.
       assert :persistent_term.get(@memo_key) == first
-      refute output =~ "redefining module"
+      refute_migration_redefinition(output)
     end
   end
 
@@ -182,13 +186,32 @@ defmodule EvoGit.Store.BootMigrationSourceTest do
           assert booted_versions(db_path(root, "fresh_b")) == @shipped_versions
         end)
 
-      refute output =~ "redefining module"
+      refute_migration_redefinition(output)
     end
   end
 
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   defp db_path(root, tag), do: Path.join(root, "evogit_bootsource_#{tag}.sqlite")
+
+  # Refutes a redefinition of ANY shipped migration module — the SCOPED form of
+  # the assertion (see the moduledoc): an unrelated module's compiler warning
+  # emitted by a concurrent async test shares the named-device stderr capture,
+  # so a bare `"redefining module"` match would be flaky. Every migration module
+  # is still checked individually, so a regression to a directory source (which
+  # recompiles all six on every boot) is caught.
+  defp refute_migration_redefinition(output) do
+    for module <- [
+          @baseline_module,
+          @normalization_module,
+          @composite_index_module,
+          @covering_index_module,
+          @archive_module,
+          @prune_indexes_module
+        ] do
+      refute output =~ "redefining module #{inspect(module)}"
+    end
+  end
 
   # Boots a dynamic repo on a FRESH database (every migration version pending,
   # so the compile path under test is genuinely exercised), returns the versions

@@ -1,52 +1,44 @@
-defmodule EvoDashWeb.SettingsLiveTest do
-  use EvoDashWeb.ConnCase, async: false
+# Settings page (`/settings`) suite.
+#
+# Split across modules for the suite's async policy (see `test/CONTEXT.md`):
+# `EvoDashWeb.SettingsLiveTest` is the ASYNC module — every test there touches
+# only per-process state, so config isolation comes from the `:config_dir_fun`
+# seam (`EvoDash.Test.ConfigDir.isolate!/1`, installed by `test_helper.exs`)
+# instead of a BEAM-global `XDG_CONFIG_HOME` write — and
+# `EvoDashWeb.SettingsLiveGlobalStateTest` is the SYNC module holding the few
+# tests that mutate a genuinely process-wide value: the
+# `:nix_available_override` / `:platform_os_override` app-env seams (shared with
+# the `async: true` `EvoDashWeb.PlatformInfoTest`) and the boot-time
+# `EvoGit.AgentScheduler` (pause/resume). ExUnit drains every async module
+# before any sync one starts, so those mutations can never overlap.
+#
+# Layout follows the established precedent in `review_live_test.exs`: async
+# modules first, sync module(s) last, and the helpers shared by both modules in
+# one `EvoDashWeb.SettingsLiveTest.Helpers` module exported from this file.
+# Every test body is unchanged by the split.
+#
+# LOAD-ORDER CONSTRAINT: the fake connection managers
+# (`EvoDashWeb.SettingsLiveTest.ConnectionManager` / `.BootstrapManager` /
+# `.ConnectManager`) are declared ABOVE the async module, next to the helpers.
+# An `async: true` module is handed to ExUnit's runner as soon as its
+# `defmodule` is evaluated — while the rest of the file is still being loaded —
+# so a test in it that starts a module defined FURTHER DOWN the file can race
+# the loader (`start_supervised!` → "module … does not exist"). Modules used by
+# an async test must therefore precede it; only the sync module may sit last.
+
+defmodule EvoDashWeb.SettingsLiveTest.Helpers do
+  @moduledoc false
+  # Helpers shared by the two settings-page suites, imported as
+  # `EvoDashWeb.SettingsLiveTest.Helpers`. Public instead of private because the
+  # suite is split across modules; bodies are unchanged apart from that.
+  use EvoDashWeb, :verified_routes
+  # `Phoenix.LiveViewTest.live/2` is a MACRO that expands to
+  # `__live__(get(conn, path), ...)`, so the caller needs `get/2` — in a
+  # ConnCase module it arrives via `use EvoDashWeb.ConnCase`, here explicitly.
+  import Phoenix.ConnTest
   import Phoenix.LiveViewTest
-
-  # Isolate all tests in this file from the host's real user config.
-  # SettingsLive.mount/1 calls load_file_config() → EvoGit.Config.resolve(),
-  # which reads config.toml from EvoGit.Config.config_dir/0. On Linux that
-  # honours the XDG_CONFIG_HOME env var, so pointing it at an empty temp dir
-  # guarantees no config.toml exists and schema defaults (e.g. nix.enabled =
-  # false) are used — making the tests deterministic regardless of host env.
-  setup do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_settings_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
-
-    # Force the nix category visible by default so ALL existing tests are
-    # deterministic regardless of whether the host has the `nix` binary (the
-    # boolean field rendering and category-conversion tests select the nix
-    # category). Gating tests below override this to false and clean up via
-    # their own on_exit; the next test's setup re-establishes the default.
-    Application.put_env(:evo_dash, :nix_available_override, true)
-
-    on_exit(fn ->
-      Application.delete_env(:evo_dash, :nix_available_override)
-    end)
-
-    # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-    # terminated by the per-test isolation above — reset it so one test's
-    # sidebar snapshot never leaks into the next.
-    EvoDash.ActiveTasks.reset()
-
-    :ok
-  end
+  import ExUnit.Assertions
+  import ExUnit.Callbacks
 
   # ───────────────────────────────────────────────────────────────────────────
   # Mount helper — deterministic settle of the page's ASYNC loads
@@ -73,7 +65,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
   # The ORIGINAL mount HTML is returned unchanged: the "shell seeding (async
   # platform gating)" describe asserts on the seed-shell render that live/3
   # always returns.
-  defp mount_settings(conn, path) do
+  def mount_settings(conn, path) do
     {:ok, view, html} = Phoenix.LiveViewTest.live(conn, path)
     await_mount_async_loads(view)
     {:ok, view, html}
@@ -85,7 +77,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
   # process-dictionary entry, so matching it against the view pid targets exactly
   # this mount's tasks — a leftover task from another test is never waited on
   # (and cannot block the mount).
-  defp await_mount_async_loads(view) do
+  def await_mount_async_loads(view) do
     view.pid
     |> mount_async_task_pids()
     |> Enum.map(&Process.monitor/1)
@@ -106,7 +98,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     :ok
   end
 
-  defp mount_async_task_pids(view_pid) do
+  def mount_async_task_pids(view_pid) do
     EvoDash.TaskSupervisor
     |> DynamicSupervisor.which_children()
     |> Enum.flat_map(fn
@@ -118,7 +110,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end)
   end
 
-  defp task_callers(pid) do
+  def task_callers(pid) do
     case Process.info(pid, :dictionary) do
       {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
       _ -> []
@@ -129,7 +121,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
   # disclosure (`<details id="model-profile-advanced">`) is rendered OPEN.
   # HEEx drops a boolean attribute whose value is false/nil, so the mere
   # presence of the `open` attribute IS the open state.
-  defp advanced_details_open?(html) do
+
+  def advanced_details_open?(html) do
     open_attributes =
       html
       |> Floki.parse_document!()
@@ -137,6 +130,289 @@ defmodule EvoDashWeb.SettingsLiveTest do
       |> Floki.attribute("open")
 
     open_attributes != []
+  end
+
+  # In LiveView 1.x the test View struct has no `.assigns` field, so we read
+  # them from the underlying LiveView process socket.
+  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
+
+  # Builds a deterministic NodeData results map for the currently viewed node
+  # by applying the pure PlatformInfo filters to the UNFILTERED schemas
+  # snapshot (`:all_schemas_by_category`). The platform computation
+  # short-circuits on the `:platform_os_override` / `:nix_available_override`
+  # app-env seams (checked FIRST by PlatformInfo), so the result is
+  # deterministic on ANY host. `overrides` win per-key for tests that want a
+  # different value than the current env computes.
+  def default_node_results(view, overrides) do
+    overrides = Map.new(overrides)
+    assigns = assigns(view)
+    node = assigns[:current_node]
+    all_schemas = assigns[:all_schemas_by_category]
+    platform_os = Map.get(overrides, :platform_os, EvoDashWeb.PlatformInfo.os_for_node(node))
+
+    filtered =
+      Map.get(
+        overrides,
+        :filtered_schemas_by_category,
+        EvoDashWeb.PlatformInfo.filter_nix_category(
+          EvoDashWeb.PlatformInfo.filter_schemas_by_category(all_schemas, platform_os),
+          node
+        )
+      )
+
+    Map.merge(
+      %{
+        platform_os: platform_os,
+        filtered_schemas_by_category: filtered,
+        file_config: assigns[:file_config] || %{},
+        config_status: assigns[:config_status] || %{},
+        remote_config_error: nil,
+        custom_agents: %{
+          agents: assigns[:custom_agents] || [],
+          model_selection_script: assigns[:model_selection_script] || "",
+          script_status: assigns[:script_status] || :ok
+        }
+      },
+      overrides
+    )
+  end
+
+  # Deterministically delivers a NodeData result (the async task's message)
+  # to the view and drains the mailbox via render — the established direct-
+  # send pattern for tests asserting async-loaded content. Tagged with the
+  # CURRENT node so it passes the stale-guard. The real task (same node, same
+  # deterministic values under the override seams) sends its message before
+  # ours, so ours is processed last — assertions are race-free.
+  def deliver_node_data(view, category_param \\ nil, overrides \\ %{}) do
+    send(
+      view.pid,
+      {:settings_node_data_loaded, assigns(view)[:current_node], category_param,
+       default_node_results(view, overrides)}
+    )
+
+    render(view)
+  end
+
+  def write_paths(view) do
+    get_in(assigns(view).file_config, [:sandbox, :write_paths])
+  end
+
+  # Seeds config.toml before mounting the LiveView. Every test's `setup`
+  # activates its own per-process config dir (the `:config_dir_fun` seam), so
+  # EvoGit.Config.config_path() is unique to this test and resolve() picks the
+  # file up via its path-keyed, mtime+size-validated cache. The explicit
+  # on_exit rm is belt-and-braces (the setup already rm_rf!'s the whole temp
+  # dir).
+  def seed_write_paths(paths) do
+    path = EvoGit.Config.config_path()
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
+
+    on_exit(fn ->
+      # Teardown cleanup must not mask test failures.
+      File.rm(path)
+    end)
+  end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.ProjectsLiveTest.ConnectionManager). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+defmodule EvoDashWeb.SettingsLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
+end
+
+# A fake manager for bootstrap flows. Registered in
+# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
+# GenServer `:bootstrap` / `{:bootstrap, opts}` call that
+# `EvoGit.RemoteConnection.bootstrap/1,2` routes to it, records every call in
+# `calls` (read back via `GenServer.call(manager, :calls)`), and serves
+# `:status` — used by `EvoDash.NodeContext.connection_status/0` inside the
+# `{:bootstrap_complete, ...}` handler's `reload_remote_statuses/1`.
+# `delay_ms` optionally holds the `:bootstrap` reply back so a test can keep a
+# bootstrap "in flight" (e.g. the double-click guard).
+defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
+  use GenServer
+
+  def start_link({target_id, result, delay_ms}) do
+    GenServer.start_link(__MODULE__, {target_id, result, delay_ms})
+  end
+
+  @impl true
+  def init({target_id, result, delay_ms}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, %{target_id: target_id, result: result, delay_ms: delay_ms, released: false, calls: []}}
+  end
+
+  @impl true
+  def handle_call(:bootstrap, _from, state), do: reply_bootstrap(state, :bootstrap)
+
+  @impl true
+  def handle_call({:bootstrap, opts}, _from, state),
+    do: reply_bootstrap(state, {:bootstrap, opts})
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    # A disconnected status keeps `reload_remote_statuses/1` from crashing on a
+    # nil/non-map value while a bootstrap result is being handled.
+    {:reply,
+     %{phase: :disconnected, node: nil, last_error: nil, target: nil, bootstrap_stage: nil},
+     state}
+  end
+
+  @impl true
+  def handle_call(:calls, _from, state), do: {:reply, state.calls, state}
+
+  @impl true
+  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
+
+  # `:release` may land BEFORE the gated call (the spawned task has not reached
+  # the manager yet) — remember it so hold_reply/2 does not block.
+  @impl true
+  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
+
+  defp reply_bootstrap(state, call) do
+    hold_reply(state.delay_ms, state.released)
+    {:reply, state.result, %{state | calls: state.calls ++ [call]}}
+  end
+
+  # Parks the reply until the test sends `:release` (`delay_ms: :gate`) — a
+  # deterministic in-flight window with no wall-clock sleep, so the test can
+  # assert the "still running" state without racing the completion. Integer
+  # delays are still honoured for callers that want a timed hold.
+  defp hold_reply(:gate, false) do
+    receive do
+      :release -> :ok
+    after
+      5_000 -> :ok
+    end
+  end
+
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(_delay, _released?), do: :ok
+end
+
+# A fake manager for the async remote-connection connect flow. Registered in
+# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
+# GenServer `:connect` call that `EvoGit.RemoteConnection.connect/1` routes to
+# it with `connect_result` (default `{:ok, :connecting}`) after `delay_ms`,
+# records every call in `calls` (read back via `GenServer.call(manager,
+# :calls)`), and serves `:status` — used by `NodeContext.connection_status/0`
+# when the page recomputes `@remote_statuses` after a broadcast. Tests drive
+# the row's phase with `{:set_status, status}` (mirroring the real core:
+# manager state changes first, THEN the broadcast fires).
+defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
+  use GenServer
+
+  def start_link({target_id, status, connect_result, delay_ms}) do
+    GenServer.start_link(__MODULE__, {target_id, status, connect_result, delay_ms})
+  end
+
+  @impl true
+  def init({target_id, status, connect_result, delay_ms}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+
+    {:ok,
+     %{
+       status: status,
+       connect_result: connect_result,
+       delay_ms: delay_ms,
+       released: false,
+       calls: []
+     }}
+  end
+
+  @impl true
+  def handle_call(:connect, _from, state) do
+    hold_reply(state.delay_ms, state.released)
+    {:reply, state.connect_result, %{state | calls: state.calls ++ [:connect]}}
+  end
+
+  @impl true
+  def handle_call({:set_status, status}, _from, state) do
+    {:reply, :ok, %{state | status: status}}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state) do
+    {:reply, state.status, state}
+  end
+
+  @impl true
+  def handle_call(:calls, _from, state) do
+    {:reply, state.calls, state}
+  end
+
+  @impl true
+  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
+
+  # See BootstrapManager: a `:release` that arrives before the gated call is
+  # remembered, so hold_reply/2 does not block.
+  @impl true
+  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
+
+  # See BootstrapManager.hold_reply/2 — `delay_ms: :gate` parks the reply until
+  # the test sends `:release` (deterministic in-flight window, no sleep).
+  defp hold_reply(:gate, false) do
+    receive do
+      :release -> :ok
+    after
+      5_000 -> :ok
+    end
+  end
+
+  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
+  defp hold_reply(_delay, _released?), do: :ok
+end
+
+defmodule EvoDashWeb.SettingsLiveTest do
+  # ASYNC: everything here touches only per-process state — the config
+  # directory comes from the `:config_dir_fun` seam (`setup` below), never from
+  # a BEAM-global `XDG_CONFIG_HOME` write, and the mounted LiveView plus every
+  # async load task it spawns inherits that override through `$callers`. The
+  # tests that mutate a process-wide app-env seam or the boot-time
+  # `EvoGit.AgentScheduler` live in `EvoDashWeb.SettingsLiveGlobalStateTest`
+  # (`async: false`) at the bottom of this file.
+  use EvoDashWeb.ConnCase, async: true
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.SettingsLiveTest.Helpers
+
+  setup do
+    # Isolate this test's config directory PER PROCESS through the
+    # `:config_dir_fun` seam (`EvoDash.Test.ConfigDir`, installed by
+    # `test/test_helper.exs`).
+    # SettingsLive.mount/1 calls load_file_config() → EvoGit.Config.resolve(),
+    # which reads config.toml from EvoGit.Config.config_dir/0, so an EMPTY
+    # per-test temp dir guarantees no config.toml exists and schema defaults
+    # (e.g. nix.enabled = false) are used — making the tests deterministic
+    # regardless of host env.
+    # `isolate!/1` writes the per-process override (`<dir>/genesis` is the
+    # concrete config dir), so nothing is BEAM-global and no env restore is
+    # needed.
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    # ActiveTasks is a process-less public ETS table shared by the whole run.
+    # This module is `async: true`, so clear ONLY the local `{nil, node()}`
+    # context — a whole-table reset would delete a concurrent module's
+    # per-test snapshot between its put and its get.
+    EvoDash.ActiveTasks.invalidate(nil, node())
+
+    :ok
   end
 
   describe "settings search" do
@@ -185,86 +461,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
-  describe "scheduler_config broadcast (node-filtered)" do
-    # Push-refactor contract: the emitter broadcasts
-    # `{:scheduler_config_updated, node}` on the "scheduler_config" topic,
-    # where node is the BEAM node atom of the publisher. The handler
-    # (settings_live.ex:822) node-filters via
-    # NodeAware.event_from_current_node?/2 — matching-node events re-read the
-    # scheduler config (LOCAL — pre-existing gap, see settings_live/CONTEXT.md);
-    # foreign-node events are ignored (socket unchanged).
-
-    test "broadcast from the current node refreshes the :scheduler_config assign", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # Mount seeds the assign from the scheduler — flip the paused flag so the
-      # refreshed config observably differs from the mount-time snapshot.
-      EvoGit.AgentScheduler.pause()
-
-      on_exit(fn ->
-        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
-        try do
-          EvoGit.AgentScheduler.resume()
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "scheduler_config",
-        {:scheduler_config_updated, node()}
-      )
-
-      # render/1 flushes pending messages synchronously; a crash would propagate here.
-      render(view)
-
-      assert assigns(view)[:scheduler_config][:paused] == true
-    end
-
-    test "broadcast from a foreign node is ignored (assign unchanged)", %{conn: conn} do
-      # Pause BEFORE mounting: pause() itself broadcasts a matching-node
-      # {:scheduler_config_updated, node()} via
-      # AgentScheduler.PubSub.broadcast_config_updated/0 (config change, pause,
-      # or resume). With no subscribers yet the broadcast is dropped, so the
-      # mount-time snapshot is the paused state and the foreign broadcast below
-      # is the ONLY event the view can react to. This also makes the test
-      # immune to cross-test scheduler-state leakage (if a prior test left the
-      # scheduler paused, pause() is a no-op and the test still behaves
-      # identically).
-      EvoGit.AgentScheduler.pause()
-
-      on_exit(fn ->
-        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
-        try do
-          EvoGit.AgentScheduler.resume()
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # Mount snapshot was paused — the final assertion below means "unchanged
-      # from the snapshot" (the foreign event was dropped).
-      assert assigns(view)[:scheduler_config][:paused] == true
-
-      Phoenix.PubSub.broadcast(
-        EvoGit.PubSub,
-        "scheduler_config",
-        {:scheduler_config_updated, :genesis_remote@somewhere}
-      )
-
-      render(view)
-
-      # Foreign-node event dropped — the mount-time snapshot (paused) stays.
-      assert assigns(view)[:scheduler_config][:paused] == true
-    end
-  end
-
   describe "LLM quick setup API key detection (credentials.toml)" do
-    # The credentials.toml file is written under the test's isolated XDG dir
-    # (see the file-level `setup` block), so EvoGit.Config.credentials_path/0
+    # The credentials.toml file is written under this test's isolated config
+    # dir (see the async module's `setup` block — the `:config_dir_fun` seam),
+    # so EvoGit.Config.credentials_path/0
     # resolves to a path we can control. Each test cleans up after itself so no
     # state leaks between tests.
     defp creds_file, do: EvoGit.Config.credentials_path()
@@ -429,44 +629,14 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
-  describe "boolean field rendering (nix.enabled)" do
-    test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      # The hidden field (value="false") must appear BEFORE the checkbox so that
-      # unchecked submits "false" and checked submits "true" (checkbox overrides).
-      hidden_html = ~s(type="hidden" name="nix.enabled" value="false")
-      checkbox_html = ~s(type="checkbox" name="nix.enabled" value="true")
-
-      hidden_pos = :binary.match(html, hidden_html)
-      checkbox_pos = :binary.match(html, checkbox_html)
-
-      # Both must be present
-      assert hidden_pos != :nomatch, "hidden boolean field not rendered"
-      assert checkbox_pos != :nomatch, "checkbox boolean field not rendered"
-
-      # Hidden must come before checkbox in the HTML
-      {hidden_start, _} = hidden_pos
-      {checkbox_start, _} = checkbox_pos
-      assert hidden_start < checkbox_start, "hidden field must precede the checkbox"
-
-      # The checkbox is the DaisyUI toggle and is UNCHECKED for the false/nil
-      # default (nix.enabled defaults to false).
-      assert html =~ ~s(class="toggle toggle-primary toggle-sm")
-
-      refute html =~
-               ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
-    end
-  end
-
   describe "custom model providers (OpenRouter / OpenAI-Compatible)" do
     # Note: gettext is NOT imported in ConnCase, so assertions use literal
     # English source strings (matching what the en translation returns).
 
     test "renders custom model form for OpenRouter", %{conn: conn} do
+      # The mounted category IS `:llm` (SettingsLive.mount/3 seeds :llm), so no
+      # category switch is needed as setup.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       assert html =~ "Model Name"
@@ -483,7 +653,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       html = render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       assert html =~ "Model Name"
@@ -499,7 +668,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openrouter"})
 
       html =
@@ -520,7 +688,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "saving OpenAI-compatible custom model stores map spec and pre-fills", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
       render_hook(view, "select_llm_provider", %{"provider_id" => "openai_compatible"})
 
       html =
@@ -546,170 +713,19 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
   end
 
-  describe "whitelist safety (unknown values do not crash)" do
-    # These regression tests verify that the whitelist-based conversion helpers
-    # (category_str_to_atom/1, provider_by_id_str/0, variant_id_by_str/1) safely
-    # map unknown/untrusted client strings to nil/default instead of crashing.
-    # The "doesn't crash" assertion is implicit: render_hook/live returning a
-    # successful result (not raising) proves it didn't crash.
-
-    # In LiveView 1.x the test View struct has no `.assigns` field, so we read
-    # them from the underlying LiveView process socket.
-    defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
-
-    # Builds a deterministic NodeData results map for the currently viewed node
-    # by applying the pure PlatformInfo filters to the UNFILTERED schemas
-    # snapshot (`:all_schemas_by_category`). The platform computation
-    # short-circuits on the `:platform_os_override` / `:nix_available_override`
-    # app-env seams (checked FIRST by PlatformInfo), so the result is
-    # deterministic on ANY host. `overrides` win per-key for tests that want a
-    # different value than the current env computes.
-    defp default_node_results(view, overrides) do
-      overrides = Map.new(overrides)
-      assigns = assigns(view)
-      node = assigns[:current_node]
-      all_schemas = assigns[:all_schemas_by_category]
-      platform_os = Map.get(overrides, :platform_os, EvoDashWeb.PlatformInfo.os_for_node(node))
-
-      filtered =
-        Map.get(
-          overrides,
-          :filtered_schemas_by_category,
-          EvoDashWeb.PlatformInfo.filter_nix_category(
-            EvoDashWeb.PlatformInfo.filter_schemas_by_category(all_schemas, platform_os),
-            node
-          )
-        )
-
-      Map.merge(
-        %{
-          platform_os: platform_os,
-          filtered_schemas_by_category: filtered,
-          file_config: assigns[:file_config] || %{},
-          config_status: assigns[:config_status] || %{},
-          remote_config_error: nil,
-          custom_agents: %{
-            agents: assigns[:custom_agents] || [],
-            model_selection_script: assigns[:model_selection_script] || "",
-            script_status: assigns[:script_status] || :ok
-          }
-        },
-        overrides
-      )
-    end
-
-    # Deterministically delivers a NodeData result (the async task's message)
-    # to the view and drains the mailbox via render — the established direct-
-    # send pattern for tests asserting async-loaded content. Tagged with the
-    # CURRENT node so it passes the stale-guard. The real task (same node, same
-    # deterministic values under the override seams) sends its message before
-    # ours, so ours is processed last — assertions are race-free.
-    defp deliver_node_data(view, category_param \\ nil, overrides \\ %{}) do
-      send(
-        view.pid,
-        {:settings_node_data_loaded, assigns(view)[:current_node], category_param,
-         default_node_results(view, overrides)}
-      )
-
-      render(view)
-    end
-
-    test "unknown category does not crash select_category", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "select_category", %{"category" => "totally_fake_category"})
-
-      # Unknown category → active_category stays unchanged (default :llm).
-      assert assigns(view).active_category == :llm
-      # The hidden category input reflects the unchanged value.
-      assert html =~ ~s(name="category" value="llm")
-    end
-
-    test "unknown category in URL params does not crash", %{conn: conn} do
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=bogus_category")
-
-      # Unknown category in handle_params → keeps current category (:llm).
-      assert assigns(view).active_category == :llm
-      assert html =~ ~s(name="category" value="llm")
-    end
-
-    test "valid category conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert assigns(view).active_category == :nix
-      assert html =~ ~s(name="category" value="nix")
-    end
-
-    test "unknown provider does not crash select_llm_provider", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
-
-      # Unknown provider → clears selection and shows flash error.
-      assert assigns(view).selected_provider_id == nil
-      assert assigns(view).selected_provider_models == []
-      assert html =~ "Unknown provider."
-    end
-
-    test "valid provider conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      assert assigns(view).selected_provider_id == :alibaba
-    end
-
-    test "unknown variant does not crash select_llm_variant", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      render_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
-
-      # No provider selected → selected_variant_id becomes nil.
-      assert assigns(view).selected_variant_id == nil
-    end
-
-    test "unknown variant after valid provider does not crash", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      render_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
-
-      assert assigns(view).selected_variant_id == nil
-    end
-
-    test "valid variant conversion still works", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
-
-      html = render_hook(view, "select_llm_variant", %{"variant_id" => "global"})
-
-      assert assigns(view).selected_variant_id == :global
-      # The selected variant button gets the active styling.
-      assert html =~ ~s(phx-value-variant_id="global")
-    end
-
-    test "unknown key path does not crash reset_key", %{conn: conn} do
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
-
-      assert html =~ "Invalid key path."
-    end
-  end
-
   describe "model profiles editor" do
-    # The assigns/1 helper is defined above (line 229) in the "whitelist safety"
-    # describe block and is module-scoped (defp), so it's available here too.
+    # `assigns/1` (and every other helper shared with the sync module) comes
+    # from `EvoDashWeb.SettingsLiveTest.Helpers`, imported above.
 
     defp current_models(view) do
       get_in(assigns(view).file_config, [:llm, :models]) || []
     end
 
     test "renders the editor with Add Model button and empty state", %{conn: conn} do
+      # `:llm` is the category mount already seeds, so render the settled page
+      # instead of re-selecting it through a full event round-trip.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = render_hook(view, "select_category", %{"category" => "llm"})
+      html = render(view)
 
       assert html =~ "Model Profiles"
       assert html =~ "Add Model"
@@ -1368,18 +1384,37 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     # ── move_model_profile (profile re-ordering) ──
 
-    # Adds a complete, saved profile (same fixture shape as the add/save tests
-    # above): add_model_profile creates a draft, save_model_profile persists it.
-    defp add_saved_profile(view, id, provider, model_id) do
-      render_hook(view, "add_model_profile", %{})
+    # Seeds complete, saved profiles into config.toml BEFORE the mount — the
+    # same fixture style `seed_write_paths/1` uses. It writes the exact TOML
+    # shape `save_model_profile` persists (`model` = "<provider>:<model_id>",
+    # `concurrency` = 3), so the mounted page renders the identical list.
+    # The profile LIST/re-order operations below need two persisted profiles as
+    # SETUP only — the add/save UI path they used to drive per case is the
+    # subject of the dedicated add_model_profile / save_model_profile tests,
+    # and each of those events costs a full settings-page render.
+    # The explicit on_exit rm is belt-and-braces (the setup already rm_rf!'s
+    # the whole per-test temp dir).
+    defp seed_model_profiles(profiles) do
+      path = EvoGit.Config.config_path()
+      File.mkdir_p!(Path.dirname(path))
 
-      render_hook(view, "save_model_profile", %{
-        "profile_id" => id,
-        "profile_id_new" => id,
-        "provider" => provider,
-        "model_id" => model_id,
-        "concurrency" => "3"
-      })
+      File.write!(
+        path,
+        Enum.map_join(profiles, "", fn {id, provider, model_id} ->
+          """
+          [[llm.models]]
+          id = "#{id}"
+          model = "#{provider}:#{model_id}"
+          concurrency = 3
+
+          """
+        end)
+      )
+
+      on_exit(fn ->
+        # Teardown cleanup must not mask test failures.
+        File.rm(path)
+      end)
     end
 
     defp profile_ids(view) do
@@ -1387,9 +1422,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile moves a profile up", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html = render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
 
@@ -1398,9 +1436,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile is a no-op at either boundary", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html =
         render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-1"})
@@ -1416,9 +1457,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile persists the reordered config to disk", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html =
         render_hook(view, "move_model_profile", %{"direction" => "up", "id" => "profile-2"})
@@ -1436,9 +1480,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     end
 
     test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       html = render(view)
 
@@ -1785,9 +1832,12 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "profile_form_draft is cleared when opening a different profile's edit form", %{
       conn: conn
     } do
+      seed_model_profiles([
+        {"profile-1", "anthropic", "claude-sonnet-4-6"},
+        {"profile-2", "openai", "gpt-5.5"}
+      ])
+
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      add_saved_profile(view, "profile-1", "anthropic", "claude-sonnet-4-6")
-      add_saved_profile(view, "profile-2", "openai", "gpt-5.5")
 
       render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
@@ -2096,8 +2146,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "connection test with a map model renders the formatted string, not the raw map",
          %{conn: conn} do
+      # `:llm` is the category mount already seeds — no switch needed.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "llm"})
 
       # Simulate the LLM connection test result being delivered by the async task
       # (handle_info({:llm_test_result, result}, socket) stores the status). We send
@@ -2264,26 +2314,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # results. The add_list_entry / remove_list_entry events mutate only the
     # in-memory file_config — nothing persists until save_category is submitted.
 
-    defp write_paths(view) do
-      get_in(assigns(view).file_config, [:sandbox, :write_paths])
-    end
-
-    # Seeds config.toml before mounting the LiveView. The file-level setup has
-    # already redirected XDG_CONFIG_HOME to a per-test temp dir, so
-    # EvoGit.Config.config_path() is unique to this test and resolve() picks the
-    # file up via its mtime+size-validated cache. The explicit on_exit rm is
-    # belt-and-braces (the setup already rm_rf!'s the whole temp dir).
-    defp seed_write_paths(paths) do
-      path = EvoGit.Config.config_path()
-      File.mkdir_p!(Path.dirname(path))
-      File.write!(path, "[sandbox]\nwrite_paths = #{inspect(paths)}\n")
-
-      on_exit(fn ->
-        # Teardown cleanup must not mask test failures.
-        File.rm(path)
-      end)
-    end
-
     test "sandbox category renders the write_paths card without crashing", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
       html = render_hook(view, "select_category", %{"category" => "sandbox"})
@@ -2350,8 +2380,10 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "remove_list_entry with malformed or out-of-range index is a no-op", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
+      # These events mutate/read `file_config` only — no card in the rendered
+      # html is asserted — so the page stays on its default category and the
+      # sidebar event is not needed as setup.
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Malformed index → Integer.parse fails → treated as -1 → no-op
       render_hook(view, "remove_list_entry", %{
@@ -2373,7 +2405,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
     test "save_category persists the edited list to the config file", %{conn: conn} do
       seed_write_paths(["/tmp/a", "/tmp/b"])
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # Add a blank entry, then remove the first entry → ["/tmp/b", ""]
       render_hook(view, "add_list_entry", %{"key_path" => "sandbox.write_paths"})
@@ -2399,7 +2430,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "blank-only list saves as an explicit empty list", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       # The UI flow: add one blank entry, then save. The form submits the hidden
       # sentinel "" plus the blank input → parsed to [] (a set-but-empty list
@@ -2420,7 +2450,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "absent write_paths on save keeps nil (no key introduced)", %{conn: conn} do
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      render_hook(view, "select_category", %{"category" => "sandbox"})
 
       html =
         render_hook(view, "save_category", %{
@@ -2431,308 +2460,6 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Configuration saved successfully."
       assert EvoGit.Config.resolve([:sandbox, :write_paths]) == nil
       refute File.read!(EvoGit.Config.config_path()) =~ "write_paths"
-    end
-  end
-
-  describe "platform gating" do
-    # SettingsLive filters the :sandbox category per-node-OS via
-    # EvoDashWeb.PlatformInfo.filter_schemas_by_category/2 — in mount AND
-    # again in handle_params (before category resolution). The testable
-    # injection seam is the :platform_os_override app env, which
-    # PlatformInfo.os_for_node/1 checks BEFORE any OS detection — so these
-    # tests are deterministic on ANY host OS. This file is async: false, so
-    # env mutation is safe, but each test still cleans up its own override.
-
-    defp with_os_override(os) do
-      Application.put_env(:evo_dash, :platform_os_override, os)
-
-      on_exit(fn ->
-        Application.delete_env(:evo_dash, :platform_os_override)
-      end)
-    end
-
-    test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
-      with_os_override(:windows)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # The platform-filtered schemas arrive with the async NodeData result —
-      # deliver it deterministically (the real task computes the same values
-      # under the :platform_os_override seam, so a duplicate is idempotent).
-      html = deliver_node_data(view)
-
-      # The sidebar renders one button per category, each carrying
-      # phx-value-category="<name>" (EvoDashWeb.SettingsComponents.Sidebar).
-      # With :sandbox deleted from schemas_by_category, no such button exists.
-      refute html =~ ~s(phx-value-category="sandbox")
-      # The sandbox content section is not rendered either.
-      refute html =~ ~s(id="category-sandbox")
-      # The default active category is :llm.
-      assert html =~ ~s(id="category-llm")
-    end
-
-    test "Windows override: ?category=sandbox falls back to :llm without crashing", %{conn: conn} do
-      with_os_override(:windows)
-
-      # The result handler re-resolves the category param against the
-      # platform-FILTERED schemas — deliver the async result first. On Windows
-      # "sandbox" is not a known category → falls back to the active category
-      # (:llm). No crash.
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=sandbox")
-      html = deliver_node_data(view, "sandbox")
-
-      assert assigns(view).active_category == :llm
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-sandbox")
-    end
-
-    test "macOS override keeps sandbox mode + write_paths but drops Linux sub-sections", %{
-      conn: conn
-    } do
-      with_os_override(:macos)
-      # Seed write_paths so the :list_of_strings card renders its named inputs
-      # (an unset/nil value renders only the "Not set" hint, no name attribute).
-      seed_write_paths(["/tmp/a"])
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      # Deliver the async platform-filtered schemas before selecting the
-      # category (the seed shell shows the UNFILTERED map).
-      deliver_node_data(view)
-      html = render_hook(view, "select_category", %{"category" => "sandbox"})
-
-      assert assigns(view).active_category == :sandbox
-      # sub_category == nil schemas (mode + write_paths) remain.
-      assert html =~ ~s(name="sandbox.mode")
-      assert html =~ ~s(name="sandbox.write_paths")
-      # The Linux-only sub-sections (:resources/:process/:linux) are filtered
-      # out, so their sub-headers never render.
-      refute html =~ "Resources"
-      refute html =~ "Process Limits"
-      refute html =~ "Linux Security"
-    end
-
-    test "Linux override keeps the Linux Security sub-section", %{conn: conn} do
-      with_os_override(:linux)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      # Deliver the async platform-filtered schemas before selecting the
-      # category (the seed shell shows the UNFILTERED map).
-      deliver_node_data(view)
-      html = render_hook(view, "select_category", %{"category" => "sandbox"})
-
-      # On Linux the sandbox schemas are unchanged — all sub-sections render.
-      assert html =~ "Linux Security"
-      assert html =~ "Resources"
-      assert html =~ "Process Limits"
-    end
-  end
-
-  describe "nix category gating" do
-    # SettingsLive hides the :nix category via
-    # EvoDashWeb.PlatformInfo.filter_nix_category/2 (applied in mount AND in
-    # handle_params before category resolution) when the nix binary is missing
-    # on the node AND the user has NOT explicitly set `[nix] enabled` in the
-    # raw config file. The testable injection seam is the
-    # :nix_available_override app env (checked by
-    # PlatformInfo.nix_available_for_node/1 BEFORE any detection) — so these
-    # tests are deterministic on ANY host. The file-level `setup` defaults the
-    # override to true; each test here overrides it and cleans up via its own
-    # on_exit (LIFO: the test's cleanup runs before setup's re-delete, and the
-    # next test's setup re-establishes the true default).
-
-    defp with_nix_available_override(bool) do
-      Application.put_env(:evo_dash, :nix_available_override, bool)
-
-      on_exit(fn ->
-        Application.delete_env(:evo_dash, :nix_available_override)
-      end)
-    end
-
-    # Seed an explicit `[nix] enabled` in the RAW user config file (under the
-    # file-level setup's isolated XDG_CONFIG_HOME dir). Must be called BEFORE
-    # mount_settings(conn, ~p"/settings") so mount sees it.
-    defp seed_nix_enabled(bool) do
-      File.mkdir_p!(Path.dirname(EvoGit.Config.config_path()))
-      File.write!(EvoGit.Config.config_path(), "[nix]\nenabled = #{bool}\n")
-    end
-
-    test "nix binary available → nix category shown even with no config", %{conn: conn} do
-      with_nix_available_override(true)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-
-      # Deliver the async NodeData result (nix visible under the override) so
-      # the platform-filtered schemas are in place before the gated asserts.
-      html = deliver_node_data(view)
-
-      # Sidebar entry is present on initial load...
-      assert html =~ ~s(phx-value-category="nix")
-      # ...and selecting the category renders its content section (only the
-      # active category's section is rendered, so select first).
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert section_html =~ ~s(id="category-nix")
-    end
-
-    test "no nix binary but explicit [nix] enabled = true → category shown", %{conn: conn} do
-      with_nix_available_override(false)
-      seed_nix_enabled(true)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = deliver_node_data(view)
-
-      assert html =~ ~s(phx-value-category="nix")
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert section_html =~ ~s(id="category-nix")
-    end
-
-    test "no nix binary but explicit [nix] enabled = false → category still shown", %{conn: conn} do
-      with_nix_available_override(false)
-      seed_nix_enabled(false)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = deliver_node_data(view)
-
-      # An explicit false counts as "configured" — the section must stay
-      # editable so the user can turn the feature on.
-      assert html =~ ~s(phx-value-category="nix")
-      section_html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert section_html =~ ~s(id="category-nix")
-    end
-
-    test "no nix binary and no config → category hidden everywhere (sidebar, section, search)", %{
-      conn: conn
-    } do
-      with_nix_available_override(false)
-
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
-      html = deliver_node_data(view)
-
-      # Sidebar entry and content section are both gone.
-      refute html =~ ~s(phx-value-category="nix")
-      refute html =~ ~s(id="category-nix")
-      # The default active category is :llm.
-      assert html =~ ~s(id="category-llm")
-
-      # Selecting the hidden category is a no-op — it is not a known category
-      # in the filtered map, so active_category stays :llm.
-      select_html = render_hook(view, "select_category", %{"category" => "nix"})
-
-      assert assigns(view).active_category == :llm
-      refute select_html =~ ~s(id="category-nix")
-
-      # Search: only the nix schemas ([nix] :enabled / :flake_output) contain
-      # "nix" in key_path/description, so with the category removed from
-      # @schemas_by_category the search finds zero matches.
-      search_html = render_hook(view, "search", %{"value" => "nix"})
-
-      assert search_html =~ "No settings found matching"
-    end
-
-    test "no nix binary and no config: ?category=nix falls back to :llm without crashing", %{
-      conn: conn
-    } do
-      with_nix_available_override(false)
-
-      # The result handler re-resolves the category param against the
-      # platform-FILTERED schemas — deliver the async result first. With nix
-      # hidden, "nix" is not a known category → falls back to the active
-      # category (:llm). No crash.
-      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=nix")
-      html = deliver_node_data(view, "nix")
-
-      assert assigns(view).active_category == :llm
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-nix")
-    end
-  end
-
-  describe "shell seeding (async platform gating)" do
-    # handle_params/3 no longer runs the platform gating + category resolution
-    # synchronously: the FILTERED schemas map and the re-resolved active
-    # category arrive with the async NodeData result. Until then the page shell
-    # seeds — UNFILTERED schemas (every category visible in the sidebar) and
-    # the active category via seed_category/2: non-gated `?category=` params
-    # (:agents, :remote_connections, :llm, ...) resolve immediately with zero
-    # flash, gated ones (:nix / :sandbox — the platform filter may hide them)
-    # seed the current stable category (or :llm) and defer to the result
-    # handler's re-resolution.
-    #
-    # The html returned by live/3 is ALWAYS the seed-shell render (the async
-    # task's message cannot interleave with the mount/handle_params call), so
-    # seed-state html assertions are deterministic. `assigns` may already
-    # reflect the real task's (fast, local) result — seed asserts below
-    # therefore use scenarios where the seed state and the post-result state
-    # coincide, and the post-delivery asserts use deliver_node_data (ours is
-    # the last message processed).
-
-    test "non-gated ?category=agents renders the agents section immediately", %{conn: conn} do
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=agents")
-
-      # Seeded directly by seed_category/2 — no async result needed. The real
-      # task's re-resolution lands on :agents too, so this holds in both states.
-      assert assigns(view).active_category == :agents
-      assert html =~ "Add Agent"
-      assert html =~ ~s(phx-value-category="agents")
-    end
-
-    test "gated ?category=sandbox seeds :llm, then resolves :sandbox after delivery", %{
-      conn: conn
-    } do
-      with_os_override(:linux)
-
-      # Seed shell: :sandbox is potentially-gated, so it seeds the default
-      # :llm — the sandbox section is NOT rendered on the first paint, even
-      # though the UNFILTERED sidebar still lists the sandbox entry. (html-only
-      # asserts: the real task may have already re-resolved to :sandbox.)
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=sandbox")
-
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-sandbox")
-      assert html =~ ~s(phx-value-category="sandbox")
-
-      # After the async result (sandbox kept on Linux) the result handler
-      # re-resolves the captured param and opens the sandbox section.
-      html = deliver_node_data(view, "sandbox")
-
-      assert assigns(view).active_category == :sandbox
-      assert html =~ ~s(id="category-sandbox")
-    end
-
-    test "gated ?category=nix seeds :llm, then resolves :nix after delivery", %{conn: conn} do
-      # nix binary available (file-level setup default) → nix visible post-result.
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
-
-      assert html =~ ~s(id="category-llm")
-      refute html =~ ~s(id="category-nix")
-
-      html = deliver_node_data(view, "nix")
-
-      assert assigns(view).active_category == :nix
-      assert html =~ ~s(id="category-nix")
-    end
-
-    test "gated ?category=nix stays :llm when the nix category is hidden", %{conn: conn} do
-      with_nix_available_override(false)
-
-      # Seed shell: the UNFILTERED sidebar still shows the nix entry, but the
-      # active category seeds :llm (nix is potentially-gated). The post-result
-      # state coincides (:llm — nix hidden), so the assigns assert is race-free.
-      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
-
-      assert assigns(view).active_category == :llm
-      assert html =~ ~s(id="category-llm")
-      assert html =~ ~s(phx-value-category="nix")
-
-      # After the async result (nix hidden: no binary + no explicit config) the
-      # category stays :llm and the sidebar entry disappears.
-      html = deliver_node_data(view, "nix")
-
-      assert assigns(view).active_category == :llm
-      refute html =~ ~s(phx-value-category="nix")
-      refute html =~ ~s(id="category-nix")
     end
   end
 
@@ -3823,7 +3550,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
     # shell (unfiltered) and async-filtered schema maps agree — selecting the
     # category immediately after live/3 is deterministic, the same pattern as
     # the "boolean field rendering (nix.enabled)" tests. No config file exists
-    # in the per-test isolated XDG_CONFIG_HOME, so accent_color is unset and
+    # in the per-test isolated config dir, so accent_color is unset and
     # the schema default "blue" is the active value.
 
     test "selecting the appearance category renders 10 swatches and the hidden accent input", %{
@@ -4005,166 +3732,546 @@ defmodule EvoDashWeb.SettingsLiveTest do
   end
 end
 
-# A minimal GenServer standing in for a real remote connection manager in
-# `EvoGit.RemoteConnection.Registry` (same pattern as
-# EvoDashWeb.ProjectsLiveTest.ConnectionManager). The process dies (and its
-# Registry entry is auto-removed) at test end via `start_supervised!`.
-defmodule EvoDashWeb.SettingsLiveTest.ConnectionManager do
-  use GenServer
+defmodule EvoDashWeb.SettingsLiveGlobalStateTest do
+  # SYNC (`async: false`): these tests mutate BEAM-GLOBAL app-env seams that an
+  # `async: true` peer also reads — `:nix_available_override` and
+  # `:platform_os_override` are exercised by `EvoDashWeb.PlatformInfoTest`
+  # (async) and `system_live_test` — and two of them pause/resume the boot-time
+  # `EvoGit.AgentScheduler`. The suite's rule is that a flip is unsafe only when
+  # a mutable global is shared with another ASYNC module, which is exactly the
+  # case here; ExUnit runs `async: false` modules only after every async module
+  # has finished, so these mutations can never overlap another test.
+  use EvoDashWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.SettingsLiveTest.Helpers
 
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
+  setup do
+    # Same per-process config isolation as the async module: the
+    # `:config_dir_fun` seam, never an `XDG_CONFIG_HOME` write.
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_settings_test_config")
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    # Force the nix category visible by default so ALL tests here are
+    # deterministic regardless of whether the host has the `nix` binary (the
+    # boolean field rendering and category-conversion tests select the nix
+    # category). Gating tests below override this to false and clean up via
+    # their own on_exit; the next test's setup re-establishes the default.
+    Application.put_env(:evo_dash, :nix_available_override, true)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_dash, :nix_available_override)
+    end)
+
+    # ActiveTasks is a global ETS hub that ConnCase already resets around every
+    # test; reset it here too so one test's sidebar snapshot never leaks into
+    # the next.
+    EvoDash.ActiveTasks.reset()
+
+    :ok
   end
 
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
+  describe "scheduler_config broadcast (node-filtered)" do
+    # Push-refactor contract: the emitter broadcasts
+    # `{:scheduler_config_updated, node}` on the "scheduler_config" topic,
+    # where node is the BEAM node atom of the publisher. The handler
+    # (settings_live.ex:822) node-filters via
+    # NodeAware.event_from_current_node?/2 — matching-node events re-read the
+    # scheduler config (LOCAL — pre-existing gap, see settings_live/CONTEXT.md);
+    # foreign-node events are ignored (socket unchanged).
 
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
-end
+    test "broadcast from the current node refreshes the :scheduler_config assign", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-# A fake manager for bootstrap flows. Registered in
-# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
-# GenServer `:bootstrap` / `{:bootstrap, opts}` call that
-# `EvoGit.RemoteConnection.bootstrap/1,2` routes to it, records every call in
-# `calls` (read back via `GenServer.call(manager, :calls)`), and serves
-# `:status` — used by `EvoDash.NodeContext.connection_status/0` inside the
-# `{:bootstrap_complete, ...}` handler's `reload_remote_statuses/1`.
-# `delay_ms` optionally holds the `:bootstrap` reply back so a test can keep a
-# bootstrap "in flight" (e.g. the double-click guard).
-defmodule EvoDashWeb.SettingsLiveTest.BootstrapManager do
-  use GenServer
+      # Mount seeds the assign from the scheduler — flip the paused flag so the
+      # refreshed config observably differs from the mount-time snapshot.
+      EvoGit.AgentScheduler.pause()
 
-  def start_link({target_id, result, delay_ms}) do
-    GenServer.start_link(__MODULE__, {target_id, result, delay_ms})
-  end
+      on_exit(fn ->
+        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.AgentScheduler.resume()
+        rescue
+          _ -> :ok
+        end
+      end)
 
-  @impl true
-  def init({target_id, result, delay_ms}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, %{target_id: target_id, result: result, delay_ms: delay_ms, released: false, calls: []}}
-  end
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, node()}
+      )
 
-  @impl true
-  def handle_call(:bootstrap, _from, state), do: reply_bootstrap(state, :bootstrap)
+      # render/1 flushes pending messages synchronously; a crash would propagate here.
+      render(view)
 
-  @impl true
-  def handle_call({:bootstrap, opts}, _from, state),
-    do: reply_bootstrap(state, {:bootstrap, opts})
+      assert assigns(view)[:scheduler_config][:paused] == true
+    end
 
-  @impl true
-  def handle_call(:status, _from, state) do
-    # A disconnected status keeps `reload_remote_statuses/1` from crashing on a
-    # nil/non-map value while a bootstrap result is being handled.
-    {:reply,
-     %{phase: :disconnected, node: nil, last_error: nil, target: nil, bootstrap_stage: nil},
-     state}
-  end
+    test "broadcast from a foreign node is ignored (assign unchanged)", %{conn: conn} do
+      # Pause BEFORE mounting: pause() itself broadcasts a matching-node
+      # {:scheduler_config_updated, node()} via
+      # AgentScheduler.PubSub.broadcast_config_updated/0 (config change, pause,
+      # or resume). With no subscribers yet the broadcast is dropped, so the
+      # mount-time snapshot is the paused state and the foreign broadcast below
+      # is the ONLY event the view can react to. This also makes the test
+      # immune to cross-test scheduler-state leakage (if a prior test left the
+      # scheduler paused, pause() is a no-op and the test still behaves
+      # identically).
+      EvoGit.AgentScheduler.pause()
 
-  @impl true
-  def handle_call(:calls, _from, state), do: {:reply, state.calls, state}
+      on_exit(fn ->
+        # Resume in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.AgentScheduler.resume()
+        rescue
+          _ -> :ok
+        end
+      end)
 
-  @impl true
-  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
 
-  # `:release` may land BEFORE the gated call (the spawned task has not reached
-  # the manager yet) — remember it so hold_reply/2 does not block.
-  @impl true
-  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
+      # Mount snapshot was paused — the final assertion below means "unchanged
+      # from the snapshot" (the foreign event was dropped).
+      assert assigns(view)[:scheduler_config][:paused] == true
 
-  defp reply_bootstrap(state, call) do
-    hold_reply(state.delay_ms, state.released)
-    {:reply, state.result, %{state | calls: state.calls ++ [call]}}
-  end
+      Phoenix.PubSub.broadcast(
+        EvoGit.PubSub,
+        "scheduler_config",
+        {:scheduler_config_updated, :genesis_remote@somewhere}
+      )
 
-  # Parks the reply until the test sends `:release` (`delay_ms: :gate`) — a
-  # deterministic in-flight window with no wall-clock sleep, so the test can
-  # assert the "still running" state without racing the completion. Integer
-  # delays are still honoured for callers that want a timed hold.
-  defp hold_reply(:gate, false) do
-    receive do
-      :release -> :ok
-    after
-      5_000 -> :ok
+      render(view)
+
+      # Foreign-node event dropped — the mount-time snapshot (paused) stays.
+      assert assigns(view)[:scheduler_config][:paused] == true
     end
   end
 
-  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
-  defp hold_reply(_delay, _released?), do: :ok
-end
+  describe "boolean field rendering (nix.enabled)" do
+    test "renders a DaisyUI toggle with hidden field for false value submission", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = render_hook(view, "select_category", %{"category" => "nix"})
 
-# A fake manager for the async remote-connection connect flow. Registered in
-# `EvoGit.RemoteConnection.Registry` under the target id, it answers the
-# GenServer `:connect` call that `EvoGit.RemoteConnection.connect/1` routes to
-# it with `connect_result` (default `{:ok, :connecting}`) after `delay_ms`,
-# records every call in `calls` (read back via `GenServer.call(manager,
-# :calls)`), and serves `:status` — used by `NodeContext.connection_status/0`
-# when the page recomputes `@remote_statuses` after a broadcast. Tests drive
-# the row's phase with `{:set_status, status}` (mirroring the real core:
-# manager state changes first, THEN the broadcast fires).
-defmodule EvoDashWeb.SettingsLiveTest.ConnectManager do
-  use GenServer
+      # The hidden field (value="false") must appear BEFORE the checkbox so that
+      # unchecked submits "false" and checked submits "true" (checkbox overrides).
+      hidden_html = ~s(type="hidden" name="nix.enabled" value="false")
+      checkbox_html = ~s(type="checkbox" name="nix.enabled" value="true")
 
-  def start_link({target_id, status, connect_result, delay_ms}) do
-    GenServer.start_link(__MODULE__, {target_id, status, connect_result, delay_ms})
-  end
+      hidden_pos = :binary.match(html, hidden_html)
+      checkbox_pos = :binary.match(html, checkbox_html)
 
-  @impl true
-  def init({target_id, status, connect_result, delay_ms}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+      # Both must be present
+      assert hidden_pos != :nomatch, "hidden boolean field not rendered"
+      assert checkbox_pos != :nomatch, "checkbox boolean field not rendered"
 
-    {:ok,
-     %{
-       status: status,
-       connect_result: connect_result,
-       delay_ms: delay_ms,
-       released: false,
-       calls: []
-     }}
-  end
+      # Hidden must come before checkbox in the HTML
+      {hidden_start, _} = hidden_pos
+      {checkbox_start, _} = checkbox_pos
+      assert hidden_start < checkbox_start, "hidden field must precede the checkbox"
 
-  @impl true
-  def handle_call(:connect, _from, state) do
-    hold_reply(state.delay_ms, state.released)
-    {:reply, state.connect_result, %{state | calls: state.calls ++ [:connect]}}
-  end
+      # The checkbox is the DaisyUI toggle and is UNCHECKED for the false/nil
+      # default (nix.enabled defaults to false).
+      assert html =~ ~s(class="toggle toggle-primary toggle-sm")
 
-  @impl true
-  def handle_call({:set_status, status}, _from, state) do
-    {:reply, :ok, %{state | status: status}}
-  end
-
-  @impl true
-  def handle_call(:status, _from, state) do
-    {:reply, state.status, state}
-  end
-
-  @impl true
-  def handle_call(:calls, _from, state) do
-    {:reply, state.calls, state}
-  end
-
-  @impl true
-  def handle_call(_other, _from, state), do: {:reply, {:error, :unexpected_call}, state}
-
-  # See BootstrapManager: a `:release` that arrives before the gated call is
-  # remembered, so hold_reply/2 does not block.
-  @impl true
-  def handle_info(:release, state), do: {:noreply, %{state | released: true}}
-
-  # See BootstrapManager.hold_reply/2 — `delay_ms: :gate` parks the reply until
-  # the test sends `:release` (deterministic in-flight window, no sleep).
-  defp hold_reply(:gate, false) do
-    receive do
-      :release -> :ok
-    after
-      5_000 -> :ok
+      refute html =~
+               ~s(name="nix.enabled" value="true" class="toggle toggle-primary toggle-sm" checked)
     end
   end
 
-  defp hold_reply(ms, _released?) when is_integer(ms) and ms > 0, do: Process.sleep(ms)
-  defp hold_reply(_delay, _released?), do: :ok
+  describe "whitelist safety (unknown values do not crash)" do
+    # These regression tests verify that the whitelist-based conversion helpers
+    # (category_str_to_atom/1, provider_by_id_str/0, variant_id_by_str/1) safely
+    # map unknown/untrusted client strings to nil/default instead of crashing.
+    # The "doesn't crash" assertion is implicit: render_hook/live returning a
+    # successful result (not raising) proves it didn't crash.
+
+    test "unknown category does not crash select_category", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = render_hook(view, "select_category", %{"category" => "totally_fake_category"})
+
+      # Unknown category → active_category stays unchanged (default :llm).
+      assert assigns(view).active_category == :llm
+      # The hidden category input reflects the unchanged value.
+      assert html =~ ~s(name="category" value="llm")
+    end
+
+    test "unknown category in URL params does not crash", %{conn: conn} do
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=bogus_category")
+
+      # Unknown category in handle_params → keeps current category (:llm).
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(name="category" value="llm")
+    end
+
+    test "valid category conversion still works", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert assigns(view).active_category == :nix
+      assert html =~ ~s(name="category" value="nix")
+    end
+
+    test "unknown provider does not crash select_llm_provider", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = render_hook(view, "select_llm_provider", %{"provider_id" => "totally_fake_provider"})
+
+      # Unknown provider → clears selection and shows flash error.
+      assert assigns(view).selected_provider_id == nil
+      assert assigns(view).selected_provider_models == []
+      assert html =~ "Unknown provider."
+    end
+
+    test "valid provider conversion still works", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      assert assigns(view).selected_provider_id == :alibaba
+    end
+
+    test "unknown variant does not crash select_llm_variant", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      render_hook(view, "select_llm_variant", %{"variant_id" => "totally_fake_variant"})
+
+      # No provider selected → selected_variant_id becomes nil.
+      assert assigns(view).selected_variant_id == nil
+    end
+
+    test "unknown variant after valid provider does not crash", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      render_hook(view, "select_llm_variant", %{"variant_id" => "fake_variant"})
+
+      assert assigns(view).selected_variant_id == nil
+    end
+
+    test "valid variant conversion still works", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "select_llm_provider", %{"provider_id" => "alibaba"})
+
+      html = render_hook(view, "select_llm_variant", %{"variant_id" => "global"})
+
+      assert assigns(view).selected_variant_id == :global
+      # The selected variant button gets the active styling.
+      assert html =~ ~s(phx-value-variant_id="global")
+    end
+
+    test "unknown key path does not crash reset_key", %{conn: conn} do
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = render_hook(view, "reset_key", %{"key_path" => "nope.nope"})
+
+      assert html =~ "Invalid key path."
+    end
+  end
+
+  describe "platform gating" do
+    # SettingsLive filters the :sandbox category per-node-OS via
+    # EvoDashWeb.PlatformInfo.filter_schemas_by_category/2 — in mount AND
+    # again in handle_params (before category resolution). The testable
+    # injection seam is the :platform_os_override app env, which
+    # PlatformInfo.os_for_node/1 checks BEFORE any OS detection — so these
+    # tests are deterministic on ANY host OS. This module is async: false (the
+    # seam is a BEAM-global app-env value shared with the async
+    # EvoDashWeb.PlatformInfoTest), so env mutation is safe, but each test still
+    # cleans up its own override.
+
+    defp with_os_override(os) do
+      Application.put_env(:evo_dash, :platform_os_override, os)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :platform_os_override)
+      end)
+    end
+
+    test "Windows override hides the Sandbox sidebar entry", %{conn: conn} do
+      with_os_override(:windows)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      # The platform-filtered schemas arrive with the async NodeData result —
+      # deliver it deterministically (the real task computes the same values
+      # under the :platform_os_override seam, so a duplicate is idempotent).
+      html = deliver_node_data(view)
+
+      # The sidebar renders one button per category, each carrying
+      # phx-value-category="<name>" (EvoDashWeb.SettingsComponents.Sidebar).
+      # With :sandbox deleted from schemas_by_category, no such button exists.
+      refute html =~ ~s(phx-value-category="sandbox")
+      # The sandbox content section is not rendered either.
+      refute html =~ ~s(id="category-sandbox")
+      # The default active category is :llm.
+      assert html =~ ~s(id="category-llm")
+    end
+
+    test "Windows override: ?category=sandbox falls back to :llm without crashing", %{conn: conn} do
+      with_os_override(:windows)
+
+      # The result handler re-resolves the category param against the
+      # platform-FILTERED schemas — deliver the async result first. On Windows
+      # "sandbox" is not a known category → falls back to the active category
+      # (:llm). No crash.
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=sandbox")
+      html = deliver_node_data(view, "sandbox")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-sandbox")
+    end
+
+    test "macOS override keeps sandbox mode + write_paths but drops Linux sub-sections", %{
+      conn: conn
+    } do
+      with_os_override(:macos)
+      # Seed write_paths so the :list_of_strings card renders its named inputs
+      # (an unset/nil value renders only the "Not set" hint, no name attribute).
+      seed_write_paths(["/tmp/a"])
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      # Deliver the async platform-filtered schemas before selecting the
+      # category (the seed shell shows the UNFILTERED map).
+      deliver_node_data(view)
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      assert assigns(view).active_category == :sandbox
+      # sub_category == nil schemas (mode + write_paths) remain.
+      assert html =~ ~s(name="sandbox.mode")
+      assert html =~ ~s(name="sandbox.write_paths")
+      # The Linux-only sub-sections (:resources/:process/:linux) are filtered
+      # out, so their sub-headers never render.
+      refute html =~ "Resources"
+      refute html =~ "Process Limits"
+      refute html =~ "Linux Security"
+    end
+
+    test "Linux override keeps the Linux Security sub-section", %{conn: conn} do
+      with_os_override(:linux)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      # Deliver the async platform-filtered schemas before selecting the
+      # category (the seed shell shows the UNFILTERED map).
+      deliver_node_data(view)
+      html = render_hook(view, "select_category", %{"category" => "sandbox"})
+
+      # On Linux the sandbox schemas are unchanged — all sub-sections render.
+      assert html =~ "Linux Security"
+      assert html =~ "Resources"
+      assert html =~ "Process Limits"
+    end
+  end
+
+  describe "nix category gating" do
+    # SettingsLive hides the :nix category via
+    # EvoDashWeb.PlatformInfo.filter_nix_category/2 (applied in mount AND in
+    # handle_params before category resolution) when the nix binary is missing
+    # on the node AND the user has NOT explicitly set `[nix] enabled` in the
+    # raw config file. The testable injection seam is the
+    # :nix_available_override app env (checked by
+    # PlatformInfo.nix_available_for_node/1 BEFORE any detection) — so these
+    # tests are deterministic on ANY host. This module's `setup` defaults the
+    # override to true; each test here overrides it and cleans up via its own
+    # on_exit (LIFO: the test's cleanup runs before setup's re-delete, and the
+    # next test's setup re-establishes the true default).
+
+    defp with_nix_available_override(bool) do
+      Application.put_env(:evo_dash, :nix_available_override, bool)
+
+      on_exit(fn ->
+        Application.delete_env(:evo_dash, :nix_available_override)
+      end)
+    end
+
+    # Seed an explicit `[nix] enabled` in the RAW user config file (under this
+    # module's per-process isolated config dir). Must be called BEFORE
+    # mount_settings(conn, ~p"/settings") so mount sees it.
+    defp seed_nix_enabled(bool) do
+      File.mkdir_p!(Path.dirname(EvoGit.Config.config_path()))
+      File.write!(EvoGit.Config.config_path(), "[nix]\nenabled = #{bool}\n")
+    end
+
+    test "nix binary available → nix category shown even with no config", %{conn: conn} do
+      with_nix_available_override(true)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      # Deliver the async NodeData result (nix visible under the override) so
+      # the platform-filtered schemas are in place before the gated asserts.
+      html = deliver_node_data(view)
+
+      # Sidebar entry is present on initial load...
+      assert html =~ ~s(phx-value-category="nix")
+      # ...and selecting the category renders its content section (only the
+      # active category's section is rendered, so select first).
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary but explicit [nix] enabled = true → category shown", %{conn: conn} do
+      with_nix_available_override(false)
+      seed_nix_enabled(true)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view)
+
+      assert html =~ ~s(phx-value-category="nix")
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary but explicit [nix] enabled = false → category still shown", %{conn: conn} do
+      with_nix_available_override(false)
+      seed_nix_enabled(false)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view)
+
+      # An explicit false counts as "configured" — the section must stay
+      # editable so the user can turn the feature on.
+      assert html =~ ~s(phx-value-category="nix")
+      section_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert section_html =~ ~s(id="category-nix")
+    end
+
+    test "no nix binary and no config → category hidden everywhere (sidebar, section, search)", %{
+      conn: conn
+    } do
+      with_nix_available_override(false)
+
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      html = deliver_node_data(view)
+
+      # Sidebar entry and content section are both gone.
+      refute html =~ ~s(phx-value-category="nix")
+      refute html =~ ~s(id="category-nix")
+      # The default active category is :llm.
+      assert html =~ ~s(id="category-llm")
+
+      # Selecting the hidden category is a no-op — it is not a known category
+      # in the filtered map, so active_category stays :llm.
+      select_html = render_hook(view, "select_category", %{"category" => "nix"})
+
+      assert assigns(view).active_category == :llm
+      refute select_html =~ ~s(id="category-nix")
+
+      # Search: only the nix schemas ([nix] :enabled / :flake_output) contain
+      # "nix" in key_path/description, so with the category removed from
+      # @schemas_by_category the search finds zero matches.
+      search_html = render_hook(view, "search", %{"value" => "nix"})
+
+      assert search_html =~ "No settings found matching"
+    end
+
+    test "no nix binary and no config: ?category=nix falls back to :llm without crashing", %{
+      conn: conn
+    } do
+      with_nix_available_override(false)
+
+      # The result handler re-resolves the category param against the
+      # platform-FILTERED schemas — deliver the async result first. With nix
+      # hidden, "nix" is not a known category → falls back to the active
+      # category (:llm). No crash.
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings?category=nix")
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-nix")
+    end
+  end
+
+  describe "shell seeding (async platform gating)" do
+    # handle_params/3 no longer runs the platform gating + category resolution
+    # synchronously: the FILTERED schemas map and the re-resolved active
+    # category arrive with the async NodeData result. Until then the page shell
+    # seeds — UNFILTERED schemas (every category visible in the sidebar) and
+    # the active category via seed_category/2: non-gated `?category=` params
+    # (:agents, :remote_connections, :llm, ...) resolve immediately with zero
+    # flash, gated ones (:nix / :sandbox — the platform filter may hide them)
+    # seed the current stable category (or :llm) and defer to the result
+    # handler's re-resolution.
+    #
+    # The html returned by live/3 is ALWAYS the seed-shell render (the async
+    # task's message cannot interleave with the mount/handle_params call), so
+    # seed-state html assertions are deterministic. `assigns` may already
+    # reflect the real task's (fast, local) result — seed asserts below
+    # therefore use scenarios where the seed state and the post-result state
+    # coincide, and the post-delivery asserts use deliver_node_data (ours is
+    # the last message processed).
+
+    test "non-gated ?category=agents renders the agents section immediately", %{conn: conn} do
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=agents")
+
+      # Seeded directly by seed_category/2 — no async result needed. The real
+      # task's re-resolution lands on :agents too, so this holds in both states.
+      assert assigns(view).active_category == :agents
+      assert html =~ "Add Agent"
+      assert html =~ ~s(phx-value-category="agents")
+    end
+
+    test "gated ?category=sandbox seeds :llm, then resolves :sandbox after delivery", %{
+      conn: conn
+    } do
+      with_os_override(:linux)
+
+      # Seed shell: :sandbox is potentially-gated, so it seeds the default
+      # :llm — the sandbox section is NOT rendered on the first paint, even
+      # though the UNFILTERED sidebar still lists the sandbox entry. (html-only
+      # asserts: the real task may have already re-resolved to :sandbox.)
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=sandbox")
+
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-sandbox")
+      assert html =~ ~s(phx-value-category="sandbox")
+
+      # After the async result (sandbox kept on Linux) the result handler
+      # re-resolves the captured param and opens the sandbox section.
+      html = deliver_node_data(view, "sandbox")
+
+      assert assigns(view).active_category == :sandbox
+      assert html =~ ~s(id="category-sandbox")
+    end
+
+    test "gated ?category=nix seeds :llm, then resolves :nix after delivery", %{conn: conn} do
+      # nix binary available (this module's setup default) → nix visible
+      # post-result.
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
+
+      assert html =~ ~s(id="category-llm")
+      refute html =~ ~s(id="category-nix")
+
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :nix
+      assert html =~ ~s(id="category-nix")
+    end
+
+    test "gated ?category=nix stays :llm when the nix category is hidden", %{conn: conn} do
+      with_nix_available_override(false)
+
+      # Seed shell: the UNFILTERED sidebar still shows the nix entry, but the
+      # active category seeds :llm (nix is potentially-gated). The post-result
+      # state coincides (:llm — nix hidden), so the assigns assert is race-free.
+      {:ok, view, html} = mount_settings(conn, ~p"/settings?category=nix")
+
+      assert assigns(view).active_category == :llm
+      assert html =~ ~s(id="category-llm")
+      assert html =~ ~s(phx-value-category="nix")
+
+      # After the async result (nix hidden: no binary + no explicit config) the
+      # category stays :llm and the sidebar entry disappears.
+      html = deliver_node_data(view, "nix")
+
+      assert assigns(view).active_category == :llm
+      refute html =~ ~s(phx-value-category="nix")
+      refute html =~ ~s(id="category-nix")
+    end
+  end
 end

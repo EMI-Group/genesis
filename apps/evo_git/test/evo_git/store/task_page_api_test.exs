@@ -226,6 +226,10 @@ defmodule EvoGit.Store.TaskPageApiTest do
   # write `Store.select_tasks_page(opts)` / `Store.get_task_lite(id)` against the
   # default store exactly like the neighbouring reads.
   test "the documented default-store arities exist" do
+    # `function_exported?/3` does NOT load the module, so load it explicitly
+    # (this module is `async: true`: nothing else guarantees the load happened).
+    Code.ensure_loaded!(Store)
+
     assert function_exported?(Store, :select_tasks_page, 1)
     assert function_exported?(Store, :select_tasks_page, 2)
     assert function_exported?(Store, :get_task_lite, 1)

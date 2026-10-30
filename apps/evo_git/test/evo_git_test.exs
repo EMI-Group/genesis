@@ -3,42 +3,24 @@ defmodule EvoGitTest do
   Top-level tests for `EvoGit` (sandbox args/run), `EvoGit.Sandbox` and
   `EvoGit.Platform`.
 
-  `async: false` is stated explicitly (rather than relying on the untagged
-  serial default) because `setup` mutates two process-wide globals: it
-  redirects the `XDG_CONFIG_HOME` env var via `System.put_env/2` (isolating the
-  tests from the user's real `~/.config/genesis/config.toml`) and writes the
-  `:nix_enabled` app-env key via `Application.put_env(:evo_git, :nix_enabled, false)`.
+  `async: true` — each test's config dir is isolated PER PROCESS through the
+  `EvoGit.TestSupport.ConfigDir` seam (`EvoGit.Platform.config_dir/1`), so the
+  user's real `~/.config/genesis/config.toml` is never read. No process-wide env
+  var or app-env key is mutated: nix integration is pinned OFF once suite-wide by
+  `test/test_helper.exs`.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
+
+  alias EvoGit.Config
+  alias EvoGit.TestSupport.ConfigDir
 
   setup do
-    # Isolate from the user's ~/.config/genesis/config.toml so tests
-    # use only built-in defaults.
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    # Disable nix integration for tests.
-    original = Application.get_env(:evo_git, :nix_enabled)
-    Application.put_env(:evo_git, :nix_enabled, false)
-    on_exit(fn -> Application.put_env(:evo_git, :nix_enabled, original) end)
-
-    {:ok, tmp_xdg: tmp_xdg}
+    # Isolate from the user's ~/.config/genesis/config.toml (a per-process
+    # config-dir override, never a process-wide env var) so tests use only
+    # built-in defaults.
+    ConfigDir.isolate!("evogit-test")
+    :ok
   end
 
   describe "sandbox_args/4" do
@@ -154,27 +136,25 @@ defmodule EvoGitTest do
       assert is_boolean(EvoGit.Platform.sandbox_exec_available?())
     end
 
-    test "shell/0 honors the [tools] shell config override", %{tmp_xdg: tmp_xdg} do
-      # Each test gets a fresh tmp_xdg (unique path), so the config.toml path
+    test "shell/0 honors the [tools] shell config override" do
+      # Each test gets a fresh config dir (unique path), so the config.toml path
       # differs per test — EvoGit.Config's mtime+size file cache can never
-      # collide across tests. The file is removed by the shared on_exit.
-      write_config_toml(tmp_xdg, "shell = \"sh\"")
+      # collide across tests. The dir is removed by the seam's on_exit.
+      write_config_toml("shell = \"sh\"")
 
       assert EvoGit.Platform.shell() == "sh"
       assert EvoGit.Platform.shell_args("echo hi") == ["-c", "echo hi"]
     end
 
-    test "shell_args/1 uses PowerShell invocation args when the configured shell is pwsh",
-         %{tmp_xdg: tmp_xdg} do
-      write_config_toml(tmp_xdg, "shell = \"pwsh\"")
+    test "shell_args/1 uses PowerShell invocation args when the configured shell is pwsh" do
+      write_config_toml("shell = \"pwsh\"")
 
       assert EvoGit.Platform.shell() == "pwsh"
       assert EvoGit.Platform.shell_args("echo hi") == EvoGit.Powershell.invoke_args("echo hi")
     end
 
-    test "shell/0 falls back to the platform default for an empty config value",
-         %{tmp_xdg: tmp_xdg} do
-      write_config_toml(tmp_xdg, "shell = \"\"")
+    test "shell/0 falls back to the platform default for an empty config value" do
+      write_config_toml("shell = \"\"")
 
       expected = if EvoGit.Platform.os() == :windows, do: "powershell", else: "bash"
 
@@ -190,10 +170,9 @@ defmodule EvoGitTest do
     end
   end
 
-  # Writes a config.toml into the isolated XDG config dir used by this test.
-  defp write_config_toml(tmp_xdg, tools_body) do
-    config_dir = Path.join(tmp_xdg, "genesis")
-    File.mkdir_p!(config_dir)
-    File.write!(Path.join(config_dir, "config.toml"), "[tools]\n#{tools_body}\n")
+  # Writes a config.toml into this test's isolated config dir.
+  defp write_config_toml(tools_body) do
+    File.mkdir_p!(Config.config_dir())
+    File.write!(Config.config_path(), "[tools]\n#{tools_body}\n")
   end
 end

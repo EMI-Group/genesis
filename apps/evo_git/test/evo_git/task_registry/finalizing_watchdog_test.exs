@@ -21,12 +21,17 @@ defmodule EvoGit.TaskRegistry.FinalizingWatchdogTest do
   - `false` disables the watchdog entirely (the row stays `:finalizing`).
 
   `async: false` is required: `set_grace/1` MUTATES the process-wide app-env key
-  `:evo_git, :finalizing_watchdog_grace_minutes`, which the running
-  `EvoGit.TaskRegistry` reads at every local-node `:finalizing` PubSub broadcast
-  — so a concurrently running module whose task reaches `:finalizing` would
-  observe the perturbed grace window. The `EvoGit.TaskRegistryCase` fixture is
-  already isolated (uniquely-named Store + registry, resolved through the test
-  process dictionary), so the app-env grace key is the only forcing global.
+  `:evo_git, :finalizing_watchdog_grace_minutes`, which every
+  `EvoGit.TaskRegistry` instance reads at each local-node `:finalizing` PubSub
+  broadcast — so a concurrently running module whose task reaches `:finalizing`
+  would observe the perturbed grace window (a 0-minute grace would resolve it to
+  `:failed` immediately). The value cannot be hoisted into the suite-wide
+  `test_helper.exs` constants: `config/test.exs` already sets 1 minute, but this
+  module needs 0 (immediate timer fire), 2 and 3 (the exact "N minutes"
+  messages) and `false` (disabled) per test, so no single value serves it.
+  The `EvoGit.TaskRegistryCase` fixture is already isolated (uniquely-named
+  Store + registry, resolved through the test process dictionary), so the
+  app-env grace key is the only forcing global.
   """
 
   @env_key :finalizing_watchdog_grace_minutes

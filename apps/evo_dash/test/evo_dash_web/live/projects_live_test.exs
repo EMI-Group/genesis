@@ -4,16 +4,184 @@
 # for the full dashboard UX, including the remote-node contexts (node-aware
 # render gate, palette, per-node state persistence) from the `aa4605cc`
 # workstream.
-defmodule EvoDashWeb.ProjectsLiveTest do
-  use EvoDashWeb.ConnCase
+
+# ---------------------------------------------------------------------------
+# The suite is split across three modules for one reason: everything that
+# touches a MUTABLE process-wide global shared with another `async: true`
+# module lives in the sync module at the bottom of this file, so the bulk of
+# the suite can run async. Precedent: review_live_test.exs (async modules
+# first, sync module last, shared helpers hoisted into a Helpers module).
+#
+# `EvoDashWeb.ProjectsLiveTest.Helpers` owns the fixtures, the bounded-poll
+# waits and the per-test setup callbacks; bodies are unchanged apart from
+# `defp` -> `def` (one module imports them, they are no longer file-private).
+#
+# ORDER MATTERS: every helper module (Helpers, and the fake
+# `ConnectionManager` GenServer) is defined BEFORE the first test module.
+# A module defined AFTER a test module is not guaranteed to be loaded when
+# that module's tests run (`start_supervised!` would raise "…was given as a
+# child to a supervisor but it does not exist"), so the trailing fake module
+# was moved to the top of this file.
+#
+# Config isolation is the per-process `:config_dir_fun` seam
+# (`EvoDash.Test.ConfigDir.isolate!/1` in `set_onboarding_completed/1`), NOT
+# the BEAM-global `XDG_CONFIG_HOME`: the config dir is unique per test, so
+# the path-keyed `EvoGit.Config` / `VersionState` caches stay cache-safe, and
+# the mounted view + its supervised load tasks inherit the override through
+# `$callers`.
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.NodeAwareTest.ConnectionManager). `connect/1` on the real manager
+# resolves the registered pid via the Registry and calls `:connect`; the fake
+# answers with a configurable result so `retry_remote_connection` /
+# `select_node` never start real SSH machinery. The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+#
+# Startup shapes (preserving the original 2-tuple for existing call sites):
+#   * `{target_id, status}` — `:connect` answers `{:ok, :connecting}`
+#   * `{target_id, status, opts}` — `opts` may set `:connect_result` (the
+#     `:connect` reply, default `{:ok, :connecting}`) and an optional
+#     `:connect_delay_ms` (sleep before replying). NOTE: the off-process property
+#     is proven by the recorded caller pid (see `:callers` below), NOT by any
+#     delay — the caller-pid assertion is delay-independent.
+#
+# Extra calls used by the event-driven async-connect tests:
+#   * `{:set_status, status}` — test-driven phase mutation (the broadcast →
+#     gate reconciliation path re-reads the LIVE manager, so the stored status
+#     must flip before the broadcast is sent)
+#   * `:calls` / `:callers` — recorded `:connect` invocation count / caller
+#     pids (a caller that is neither the LiveView process nor the test process
+#     proves the connect ran on `EvoDash.TaskSupervisor`).
+defmodule EvoDashWeb.ProjectsLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    init({target_id, status, []})
+  end
+
+  def init({target_id, status, opts}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+
+    {:ok,
+     %{
+       status: status,
+       connect_result: Keyword.get(opts, :connect_result, {:ok, :connecting}),
+       connect_delay_ms: Keyword.get(opts, :connect_delay_ms),
+       connect_callers: []
+     }}
+  end
+
+  @impl true
+  def handle_call(:status, _from, state), do: {:reply, state.status, state}
+
+  @impl true
+  def handle_call(:connect, from, state) do
+    # The delay sleeps INSIDE the fake (a GenServer handle_call) so any caller
+    # that blocks on the connect synchronously would stall; recording the
+    # caller pid lets the test prove the connect ran on a separate process.
+    if delay = state.connect_delay_ms, do: Process.sleep(delay)
+
+    {:reply, state.connect_result,
+     %{state | connect_callers: [elem(from, 0) | state.connect_callers]}}
+  end
+
+  @impl true
+  def handle_call({:set_status, status}, _from, state),
+    do: {:reply, :ok, %{state | status: status}}
+
+  @impl true
+  def handle_call(:calls, _from, state), do: {:reply, length(state.connect_callers), state}
+
+  @impl true
+  def handle_call(:callers, _from, state), do: {:reply, state.connect_callers, state}
+end
+
+defmodule EvoDashWeb.ProjectsLiveTest.Helpers do
+  @moduledoc false
+  # Fixtures + helpers shared by the async and the sync ProjectsLive modules below.
+  # Public instead of private because the suite is split across modules; bodies are
+  # unchanged apart from `defp` -> `def`. `use EvoDashWeb, :verified_routes` is
+  # needed for the `~p` sigil in any helper body, and the `Phoenix.ConnTest` /
+  # `Phoenix.LiveViewTest` imports cover `live/2`, `render/1` and `render_click/3
+  # (the helper bodies call them).
+
+  use EvoDashWeb, :verified_routes
+  import Phoenix.ConnTest
   import Phoenix.LiveViewTest
+  import ExUnit.Assertions
+  import ExUnit.Callbacks
 
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.TaskInfo
 
-  setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
+  # Builds the module-wide git fixture template ONCE per suite module (called
+  # from each module's `setup_all`) and copies it per test. Every git fixture
+  # needs a real repository with one (empty) commit, and `git init` +
+  # `git commit` cost ~13ms of subprocess time per fixture (~28 fixtures per
+  # run). Build that repository ONCE and copy it per test instead
+  # (`File.cp_r!` is ~3.5ms).
+  #
+  # Each copy stays a REAL, INDEPENDENT repository: it is a plain recursive
+  # BYTE copy — never `cp -l`/hard links and never `git clone --shared` into
+  # the template's object store — so a test may freely commit into or mutate
+  # its copy (one does: a second commit feeding an updated base_sha). The
+  # template is quiescent when copied (no index.lock, no in-flight process)
+  # and its `.git/hooks` sample scripts are dropped: they are inert samples
+  # and the biggest part of the copy cost.
+  def install_git_template(_context) do
+    template = Path.join(System.tmp_dir!(), "evogit_git_template_#{System.unique_integer()}")
+    File.mkdir_p!(template)
+    {_, 0} = System.cmd("git", ["init", template], stderr_to_stdout: true)
 
-  defp setup_temp_dir(%{} = context) do
+    {_, 0} =
+      System.cmd(
+        "git",
+        [
+          "-c",
+          "user.email=t@example.com",
+          "-c",
+          "user.name=t",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "init"
+        ],
+        cd: template,
+        stderr_to_stdout: true
+      )
+
+    File.rm_rf!(Path.join(template, ".git/hooks"))
+    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: template)
+    key = {__MODULE__, :git_template}
+    :persistent_term.put(key, {template, String.trim(sha)})
+
+    on_exit(fn ->
+      # Guarded erase: both suite modules build a template, so never erase a key
+      # that has already been replaced by the other module's value.
+      if :persistent_term.get(key, nil) == {template, String.trim(sha)} do
+        :persistent_term.erase(key)
+      end
+
+      # Teardown-only rescue: a cleanup failure must never mask a test failure.
+      try do
+        File.rm_rf!(template)
+      rescue
+        _ -> :ok
+      end
+    end)
+
+    :ok
+  end
+
+  def git_template!, do: :persistent_term.get({__MODULE__, :git_template})
+
+  def setup_temp_dir(%{} = context) do
     tmp_dir =
       Path.join(System.tmp_dir!(), "evogit_test_" <> to_string(System.unique_integer()))
 
@@ -37,48 +205,38 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # server-based detection (EvoGit.Config.VersionState.onboarding_needed?/0,
   # which is true when no version-state file exists). To keep the dashboard
   # tests deterministic regardless of host state, isolate the config dir to a
-  # temp directory and mark onboarding complete by writing a version-state
-  # file there. This mirrors WelcomeLiveTest's XDG isolation approach.
-  defp set_onboarding_completed(%{conn: conn} = _context) do
-    tmp_config =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_dashboard_test_config_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_config)
-    original = System.get_env("XDG_CONFIG_HOME")
-    System.put_env("XDG_CONFIG_HOME", tmp_config)
+  # per-test temp directory through the `:config_dir_fun` seam
+  # (`EvoDash.Test.ConfigDir.isolate!/1` -> `EvoGit.Platform.config_dir/0`,
+  # inherited by the mounted view and its supervised load tasks through
+  # `$callers`) and mark onboarding complete by writing a version-state file
+  # there. The layout is `<dir>/genesis/...` (what `EvoGit.Platform.config_dir/0`
+  # expects); the mechanism is per-process, never a BEAM-global env var.
+  def set_onboarding_completed(%{conn: conn} = _context) do
+    dir = EvoDash.Test.ConfigDir.isolate!("evogit_dashboard_test_config")
 
     # Create the version-state file so onboarding_needed?/0 returns false.
-    if Code.ensure_loaded?(EvoGit.Config.VersionState) do
-      EvoGit.Config.VersionState.complete_onboarding()
-    end
+    EvoGit.Config.VersionState.complete_onboarding()
 
-    on_exit(fn ->
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_config)
-    end)
+    on_exit(fn -> File.rm_rf!(dir) end)
 
     {:ok, conn: Plug.Test.init_test_session(conn, %{})}
   end
 
-  # ActiveTasks is a global GenServer under EvoDash.Application that is NOT
-  # terminated by the per-test isolation above — reset it so one test's
-  # sidebar snapshot never leaks into the next.
-  defp reset_active_tasks_hub(_context) do
-    EvoDash.ActiveTasks.reset()
+  # ActiveTasks is a process-less public ETS table shared by the whole run and
+  # NOT terminated by the per-test isolation above — clear it so one test's
+  # sidebar snapshot never leaks into the next. Scoped to the LOCAL
+  # `{nil, node()}` context because this callback also runs in the `async: true`
+  # module, where a whole-table `reset/0` would delete a concurrent module's
+  # per-test snapshot between its put and its get; the sync module's hub
+  # assertions are local-context only, so one clear serves both.
+  def reset_active_tasks_hub(_context) do
+    EvoDash.ActiveTasks.invalidate(nil, node())
     :ok
   end
 
   # Clears all recent projects from the shared SQLite store so tests are
   # deterministic regardless of what other tests in this file inserted.
-  defp clear_recent_projects do
+  def clear_recent_projects do
     for project <- EvoGit.TaskRegistry.list_recent_projects() do
       EvoGit.TaskRegistry.remove_recent_project(project.path)
     end
@@ -86,10 +244,24 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     :ok
   end
 
+  # Opens `path` as the active project in ONE event turn.
+  #
+  # This is the SAME handler the palette's open-path form submits to
+  # (`open_project_palette` → `palette_mode "open_path"` → form submit is only
+  # a way of REACHING `handle_event("open_project", %{"path" => ...})`), and
+  # its render already carries the post-`push_patch` (activated) DOM, so the
+  # tests that merely need an active project — so the task form renders —
+  # save the two palette-opening round-trips. Tests that assert palette UI
+  # (the "opening a project" / "project palette" describes) keep driving the
+  # clicks themselves.
+  def open_project!(view, path) do
+    render_click(view, "open_project", %{"path" => path})
+  end
+
   # Seeds a recent project via the public TaskRegistry API and registers
   # on_exit cleanup so it never leaks into other tests (the shared SQLite
   # store persists across tests in this file).
-  defp seed_recent_project(path, name) do
+  def seed_recent_project(path, name) do
     EvoGit.TaskRegistry.add_recent_project(path, name)
 
     on_exit(fn ->
@@ -104,7 +276,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   # Extracts the inner HTML of the edit-mode path-suggestion datalist so
   # option ordering/uniqueness can be asserted precisely.
-  defp path_suggestions_datalist(html) do
+  def path_suggestions_datalist(html) do
     case Regex.run(~r{<datalist id="path-suggestions">(.*?)</datalist>}s, html) do
       [_, inner] -> inner
       _ -> ""
@@ -113,7 +285,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
   # Returns the byte index of the first occurrence of `pattern` in `string`,
   # or nil if it is not present.
-  defp string_index(string, pattern) do
+  def string_index(string, pattern) do
     case :binary.match(string, pattern) do
       {idx, _len} -> idx
       :nomatch -> nil
@@ -124,7 +296,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # task spawn that `start_task/2` triggers) and registers on_exit cleanup so
   # the fixture never leaks into other tests in this file (the shared store
   # persists across tests). Returns the inserted %TaskInfo{}.
-  defp insert_task_fixture!(overrides) do
+  def insert_task_fixture!(overrides) do
     id = "fixture_#{System.unique_integer([:positive])}"
 
     task =
@@ -176,7 +348,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # graceful-cancel machinery (marker writes, broadcasts, grace turns) into
   # the test for zero assertion value. The on_exit cancel is a rescued safety
   # net only (on a terminal row it is a no-op {:error, :not_running}).
-  defp cleanup_launched_task(html) do
+  def cleanup_launched_task(html) do
     [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
 
     on_exit(fn ->
@@ -205,7 +377,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # still-spawning port and ERTS prints an uncatchable "spawn: Could not cd to
   # <tmp_dir>" line on stderr. Best-effort: on timeout the test proceeds (the
   # on_exit cleanups are rescued).
-  defp wait_for_task_terminal(id, timeout_ms \\ 10_000) do
+  #
+  # DEADLINE based, not attempt based, exactly like `wait_assigns/3`: the poll
+  # cadence is 2ms, so a wrapper that has already gone terminal is seen on the
+  # next tick instead of eating a fixed sleep, while the 10s budget — the part
+  # that protects against a wedge — is unchanged.
+  def wait_for_task_terminal(id, timeout_ms \\ 10_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     loop = fn loop ->
@@ -218,7 +395,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
         _ ->
           if System.monotonic_time(:millisecond) < deadline do
-            Process.sleep(20)
+            Process.sleep(2)
             loop.(loop)
           else
             :ok
@@ -233,9 +410,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # codec atomizes only its whitelist), so string keys must be looked up via
   # Map.new — Access.get/3 and Keyword.has_key?/2 reject non-atom keys on
   # keyword lists.
-  defp opt(task, key), do: Map.get(Map.new(task.opts || []), key)
+  def opt(task, key), do: Map.get(Map.new(task.opts || []), key)
 
-  defp has_opt?(task, key), do: Map.has_key?(Map.new(task.opts || []), key)
+  def has_opt?(task, key), do: Map.has_key?(Map.new(task.opts || []), key)
 
   # The speed ↔ quality opt is threaded as :quality_level with a STRING value
   # ("fast"/"high_quality"). The persisted row round-trips through
@@ -243,28 +420,29 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # `opt(task, "agent")` above for the same shape): a key outside the whitelist
   # decodes as a STRING key. Read BOTH forms so this assertion holds whether or
   # not the key is (ever) whitelisted — no dependency on the core opt whitelist.
-  defp quality_level_opt(task) do
+  def quality_level_opt(task) do
     opts = Map.new(task.opts || [])
     Map.get(opts, :quality_level) || Map.get(opts, "quality_level")
   end
 
-  defp has_quality_level_opt?(task) do
+  def has_quality_level_opt?(task) do
     opts = Map.new(task.opts || [])
     Map.has_key?(opts, :quality_level) or Map.has_key?(opts, "quality_level")
   end
 
   # The active segment of the speed ↔ quality control is the button whose class
   # carries btn-active (component-side contract in task_form_components_test).
-  defp quality_step_active?(html, level) do
+  def quality_step_active?(html, level) do
     [btn] = html |> Floki.parse_document!() |> Floki.find("button#quality-level-#{level}")
     btn |> Floki.attribute("class") |> List.first() |> to_string() =~ "btn-active"
   end
 
-  # Saves a unique remote connection target under the test's isolated
-  # XDG_CONFIG_HOME (set_onboarding_completed isolates it per test) and
+  # Saves a unique remote connection target under the test's isolated config
+  # dir (set_onboarding_completed activates a per-test `:config_dir_fun`
+  # override) and
   # registers cleanup. Returns the target id. Each test uses a unique id so the
   # TOML file never has colliding entries across tests.
-  defp save_target!(name \\ "Test Target") do
+  def save_target!(name \\ "Test Target") do
     id = "test-target-#{System.unique_integer([:positive])}"
 
     {:ok, _target} =
@@ -286,31 +464,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # initial commit, returning `{path, head_sha}`. The new foreign-repo
   # validation checks git-ness via `EvoGit.Adapters.Git.rev_parse/1` (runs
   # `git rev-parse HEAD`, which FAILS on an empty repo), so fixture repos MUST
-  # contain at least one commit — hence the `--allow-empty` initial commit.
-  # Registers on_exit cleanup.
-  defp git_repo_fixture!(tmp_dir, name) do
+  # contain at least one commit — the module-wide template in `setup_all`
+  # carries that `--allow-empty` commit. Registers on_exit cleanup.
+  def git_repo_fixture!(tmp_dir, name) do
     path = Path.join(tmp_dir, name)
-
-    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
-
-    {_, 0} =
-      System.cmd(
-        "git",
-        [
-          "-c",
-          "user.email=t@example.com",
-          "-c",
-          "user.name=t",
-          "commit",
-          "--allow-empty",
-          "-m",
-          "init"
-        ],
-        cd: path,
-        stderr_to_stdout: true
-      )
-
-    {sha, 0} = System.cmd("git", ["rev-parse", "HEAD"], cd: path)
+    {template, head_sha} = git_template!()
+    File.cp_r!(template, path)
 
     on_exit(fn ->
       # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
@@ -321,11 +480,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       end
     end)
 
-    {path, String.trim(sha)}
+    {path, head_sha}
   end
 
   # Seeds `path` as a REAL git repository with an initial (empty) commit —
-  # synchronously, in the test process — before a task is launched against it.
+  # synchronously, in the test process (a byte copy of the module-wide template
+  # built in `setup_all`) — before a task is launched against it.
   # This is the quiet-launch contract shared by every launch test in this file.
   #
   # The task-form launch tests submit `node_path: "./nonexistent-dir"`: the
@@ -334,7 +494,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # starting-commit resolution but before run_mode spawns any agent — so no
   # LLM call can ever happen. That matters because the scheduler's model
   # profiles come from the boot-time ambient config, NOT the per-test
-  # XDG_CONFIG_HOME isolation: a VALID node path would proceed to
+  # config-dir isolation: a VALID node path would proceed to
   # AgentScheduler.run_agent and reach the real LLM, which is exactly why the
   # invalid path is load-bearing and must stay.
   #
@@ -346,25 +506,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # git-inits the project itself — port spawns racing the setup's on_exit
   # rm_rf! printed uncatchable "spawn: Could not cd to <tmp_dir>" lines, and
   # the repo mutation bought no assertion anything.
-  defp make_git_repo!(path) do
-    {_, 0} = System.cmd("git", ["init", path], stderr_to_stdout: true)
-
-    {_, 0} =
-      System.cmd(
-        "git",
-        [
-          "-c",
-          "user.email=t@example.com",
-          "-c",
-          "user.name=t",
-          "commit",
-          "--allow-empty",
-          "-m",
-          "init"
-        ],
-        cd: path,
-        stderr_to_stdout: true
-      )
+  def make_git_repo!(path) do
+    {template, _head_sha} = git_template!()
+    File.cp_r!(template, path)
 
     path
   end
@@ -384,10 +528,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # put_github_seams/1 and must not be clobbered; an empty tmp_dir
   # auto-detects genesis_new, which never checks). Conflict-free: nothing
   # else in this file reads :github_runner, the assertion surface is
-  # unchanged (an :error status renders no GitHub UI), and the file's
-  # mounting suites are all async: false so the global env stub cannot
-  # race another suite.
-  defp stub_github_upstream_check! do
+  # unchanged (an :error status renders no GitHub UI), and no other suite in
+  # the tree touches the key (it is this file family's own seam), so the
+  # global stub cannot race a peer.
+  def stub_github_upstream_check! do
     Application.put_env(:evo_dash, :github_runner, fn _node, _path ->
       {:error, :no_github_upstream}
     end)
@@ -402,7 +546,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # The Phoenix.LiveViewTest View struct exposes no assigns accessor in this
   # version, so read the LiveView socket assigns directly from the process
   # state (same pattern as welcome_live_test.exs / settings_live_test.exs).
-  defp assigns(view), do: :sys.get_state(view.pid).socket.assigns
+  def assigns(view), do: :sys.get_state(view.pid).socket.assigns
 
   # Bounded poll on the LiveView assigns (async remote-project activation runs
   # in a supervised Task and lands a frame later via handle_info). `predicate`
@@ -415,7 +559,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # wedge — is unchanged. `assigns/1` is a `:sys.get_state` round-trip, so a
   # successful poll also guarantees the view has processed every message the
   # TEST process queued before it (Erlang signal order per sender pair).
-  defp wait_assigns(view, predicate, timeout_ms \\ 3_000) do
+  def wait_assigns(view, predicate, timeout_ms \\ 3_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     poll = fn poll ->
@@ -444,7 +588,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # batch first — otherwise the assertion races the continuation (seed
   # dependent). Bounded through `wait_assigns/2`, so real breakage still fails
   # loudly instead of hanging.
-  defp wait_for_recent_projects(view, paths) do
+  def wait_for_recent_projects(view, paths) do
     wait_assigns(view, fn assigns ->
       loaded = for %{path: path} <- assigns[:recent_projects] || [], do: path
       Enum.all?(List.wrap(paths), &(&1 in loaded))
@@ -456,7 +600,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # `notified_task_ids_ready?` is true (diffing against an unseeded empty set
   # would notify for every historical task), so tests that exercise the
   # notification path must wait for readiness instead of racing it.
-  defp wait_notified_ids_ready(view) do
+  def wait_notified_ids_ready(view) do
     wait_assigns(view, fn assigns -> assigns[:notified_task_ids_ready?] == true end)
   end
 
@@ -464,7 +608,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # `AsyncLoad.maybe_spawn/2`. The whole batch runs inside
   # `EvoDash.SafeCall.run/1`, so a fun that exits/raises sends NO result
   # message at all and the page keeps the defaults `mount/3` seeded.
-  defp install_projects_async_load_runner(fun) do
+  def install_projects_async_load_runner(fun) do
     Application.put_env(:evo_dash, :projects_async_load_runner, fun)
 
     on_exit(fn ->
@@ -475,7 +619,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # Safety net for tests that freeze the shared, serialized task registry: a
   # failed assertion must never leave it suspended for the next suite.
   # Teardown-only rescue (the registry can already be gone at teardown time).
-  defp restore_registry_on_exit do
+  def restore_registry_on_exit do
     on_exit(fn ->
       if Process.whereis(EvoGit.TaskRegistry) do
         try do
@@ -493,7 +637,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # after the budget (default 3s) so a connect that never lands fails loudly
   # instead of hanging. Deadline + 2ms cadence for the same reasons as
   # `wait_assigns/3`.
-  defp wait_for_fake_callers(fake, predicate, timeout_ms \\ 3_000) do
+  def wait_for_fake_callers(fake, predicate, timeout_ms \\ 3_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
     poll = fn poll ->
@@ -540,7 +684,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # waited on (and cannot block the mount). (Copied from
   # review_live_test.exs / settings_live_test.exs, where the same pattern fixed
   # an intermittent full-suite flake.)
-  defp await_async_loads(view) do
+  def await_async_loads(view) do
     # Synchronous mailbox drain FIRST: `:sys.get_state` is ordered after every
     # message the TEST process already sent to the view (Erlang signal order per
     # sender pair), so a `send(view.pid, :node_aware_reload_tasks)` sitting in
@@ -567,7 +711,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     :ok
   end
 
-  defp mount_async_task_pids(view_pid) do
+  def mount_async_task_pids(view_pid) do
     EvoDash.TaskSupervisor
     |> DynamicSupervisor.which_children()
     |> Enum.flat_map(fn
@@ -579,7 +723,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end)
   end
 
-  defp task_callers(pid) do
+  def task_callers(pid) do
     case Process.info(pid, :dictionary) do
       {:dictionary, dict} -> Keyword.get(dict, :"$callers", [])
       _ -> []
@@ -604,11 +748,186 @@ defmodule EvoDashWeb.ProjectsLiveTest do
   # A refute with timeout 0 is then conclusive: anything the scan would have
   # pushed is already here. Returns the final rendered HTML so callers do not
   # need an extra `render/1` round-trip.
-  defp drain_task_reload(view) do
+  def drain_task_reload(view) do
     await_async_loads(view)
     _ = assigns(view)
     render(view)
   end
+
+  # Installs the fake directory picker module (test/support) for the binary
+  # attach flow and restores the prior app env on exit — mirrors the inline
+  # per-test idiom of the text file_pick tests above.
+  def install_fake_picker! do
+    original = Application.get_env(:evo_dash, :directory_picker_module)
+    Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
+
+    on_exit(fn ->
+      # Restore the prior config so other tests are unaffected.
+      if original do
+        Application.put_env(:evo_dash, :directory_picker_module, original)
+      else
+        Application.delete_env(:evo_dash, :directory_picker_module)
+      end
+    end)
+
+    :ok
+  end
+
+  # Opens `tmp_dir` as the active project through the command palette
+  # (open-path mode). The task form's launch panel + staged-attachment chip
+  # row render ONLY when a project is active (@disabled == false), so the
+  # staging tests that launch a task (or exercise the enabled-form flow)
+  # open a project first — exactly like the existing task_submit /
+  # custom-agent tests.
+  #
+  # Every caller writes staging files (a .png/.mp3 fixture) into tmp_dir
+  # BEFORE activating, so detect_mode/1 resolves genesis_existing and the
+  # activation spawns the REAL `git remote get-url origin` GitHub-upstream
+  # check under tmp_dir — the spawn: "Could not cd" noise source. Stub the
+  # :github_runner seam here (all 5 callers stage files; none stubs its own
+  # GitHub seams) so this shared helper stays the single wiring point.
+  def open_staging_project(view, tmp_dir) do
+    stub_github_upstream_check!()
+    clear_recent_projects()
+
+    open_project!(view, tmp_dir)
+
+    assert assigns(view)[:active_project_path] == tmp_dir
+    view
+  end
+
+  # Runs the native binary attach pick ("file_pick" on the given image/audio
+  # picker channel) against `path`, re-setting the fake's file-mode result
+  # first (the fake's default "/fake/picked/file.txt" would fail image/audio
+  # extension validation).
+  def pick_staged(view, picker_id, kind, path) do
+    EvoDash.DirectoryPicker.Fake.set_file_result({:ok, path})
+    render_hook(view, "file_pick", %{picker_id: picker_id, prompt: "", kind: kind})
+    view
+  end
+
+  def put_github_seams(overrides) do
+    defaults = [
+      {:github_runner, fn _node, _path -> {:error, :no_github_upstream} end},
+      {:github_issues_runner, fn _node, _path, _opts -> {:ok, []} end},
+      {:github_issue_markdown_runner,
+       fn _node, _path, _number ->
+         {:error, :gh_not_available}
+       end}
+    ]
+
+    seams = Keyword.merge(defaults, overrides)
+
+    for {key, value} <- seams do
+      Application.put_env(:evo_dash, key, value)
+    end
+
+    on_exit(fn ->
+      for {key, _value} <- seams do
+        Application.delete_env(:evo_dash, key)
+      end
+    end)
+
+    :ok
+  end
+
+  def ok_upstream_runner do
+    fn _node, _path ->
+      {:ok,
+       %{
+         owner: "acme",
+         repo: "widgets",
+         gh_available: true,
+         url: "https://github.com/acme/widgets"
+       }}
+    end
+  end
+
+  # Opens `path` through the project palette (open-path mode) — the same
+  # flow as the "opening a project" tests. Activating a project with a
+  # non-genesis_new mode spawns the async GitHub-upstream check.
+  #
+  # Driven as ONE `open_project` event: that is the exact handler the
+  # open-path form submits to, and its render already carries the
+  # post-`push_patch` (activated) DOM. The two palette-opening clicks only
+  # exist to reach the form, and nothing here asserts on them.
+  def open_project(view, path) do
+    render_click(view, "open_project", %{"path" => path})
+
+    view
+  end
+
+  # Makes `tmp_dir` an evolve_simple project (a CONTEXT.md file) so the
+  # GitHub-upstream check is spawned — genesis_new projects never check.
+  def make_evolve_project(tmp_dir) do
+    File.write!(Path.join(tmp_dir, "CONTEXT.md"), "# Test project\n")
+  end
+
+  # Polls the LiveView socket assigns until `predicate/1` is truthy. The
+  # GitHub runners run in supervised Tasks and report back via self-messages
+  # handled by handle_info, so polling the assigns (with a generous budget)
+  # is the deterministic way to wait for an async result.
+  def wait_until(view, predicate, timeout_ms \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    poll = fn poll ->
+      cond do
+        predicate.(assigns(view)) ->
+          :ok
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          flunk("Timed out waiting for async GitHub state — assigns: #{inspect(assigns(view))}")
+
+        true ->
+          Process.sleep(2)
+          poll.(poll)
+      end
+    end
+
+    poll.(poll)
+  end
+
+  # Writes a config.toml with a single model profile into the test's isolated
+  # config dir (`set_onboarding_completed/1`'s per-process seam override) so
+  # load_model_profiles has a profile to select.
+  def write_model_profile_config do
+    config_path = EvoGit.Config.config_path()
+    File.mkdir_p!(Path.dirname(config_path))
+
+    File.write!(config_path, """
+    [[llm.models]]
+    id = "profile-a"
+    model = {provider = "anthropic", id = "claude-sonnet-5"}
+    concurrency = 3
+    """)
+  end
+
+  def github_status(view, state) do
+    wait_until(view, fn a -> a[:github_status] && a[:github_status].state == state end)
+  end
+end
+
+defmodule EvoDashWeb.ProjectsLiveTest do
+  # `async: true` — nothing in this module mutates a process-wide global that a
+  # concurrently running `async: true` module also touches. The tests that DO
+  # (the frozen `EvoGit.TaskRegistry` probes, the real task launches whose
+  # `{:task_updated, ...}` broadcast arms every mounted page's NodeAware
+  # debounce, the run-wide-store `clear_task_history` sweep, the `/help` mount
+  # that writes the process-wide `EvoDash.ChatHistory`, and the app-env keys
+  # shared with `directory_picker_test` / `project_flow_test`) live in
+  # `EvoDashWeb.ProjectsLiveSyncTest` below. The per-test `ActiveTasks` clear is
+  # node-scoped (`invalidate(nil, node())`), so it can only touch the LOCAL
+  # `{nil, node()}` context — the same async-safe contract `EvoDashWeb.ConnCase`
+  # uses.
+  use EvoDashWeb.ConnCase, async: true
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ProjectsLiveTest.Helpers
+
+  alias EvoGit.Core.ForeignRepo
+  alias EvoGit.TaskInfo
+
+  setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
+  setup_all [:install_git_template]
 
   describe "dashboard without active project" do
     setup do
@@ -690,13 +1009,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       [link] = html |> Floki.parse_document!() |> Floki.find(~s(a[aria-current="page"]))
       assert Floki.text(link) =~ "Projects"
     end
-
-    test "mounts HomeLive at /help", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/help")
-
-      assert html =~ "Chat with Genesis"
-      assert html =~ ~s(id="chat-form")
-    end
   end
 
   describe "opening a project" do
@@ -712,9 +1024,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Project should be active — task form enabled
       assert html =~ "task-launch-button"
@@ -764,9 +1076,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Empty directory has no genesis.toml — shows defaults message
       assert html =~ "No genesis.toml" or html =~ "using global defaults"
@@ -782,9 +1094,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       |> element("form[phx-submit='open_project']")
       |> render_submit(%{path: tmp_dir})
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # No foreign repos registered (scheduler not running in tests)
       assert html =~ "No foreign repositories registered"
@@ -891,9 +1203,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         ]
       })
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # Foreign repos should be restored and visible in the project settings.
       # The component renders repo.id and repo.root for each foreign repo.
@@ -911,9 +1223,9 @@ defmodule EvoDashWeb.ProjectsLiveTest do
         "foreign_repos" => []
       })
 
-      # Expand the project settings panel
-      render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
-      html = render(view)
+      # Expand the project settings panel (the click's own render IS the html
+      # below — a second full `render/1` would re-render the same DOM)
+      html = render_click(view, "toggle_project_settings", %{"project" => tmp_dir})
 
       # No repos restored — shows the empty state message
       assert html =~ "No foreign repositories registered"
@@ -935,12 +1247,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # Open a project so the task form renders
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed the prompt the way the client does, then assert the textarea is
       # client-owned: phx-update="ignore" means LiveView re-renders (on model /
@@ -1638,29 +1945,12 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       :ok
     end
 
-    test "no notification for a task already terminal before mount", %{conn: conn} do
-      insert_task_fixture!(status: :completed)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      # The terminal-id SEED is part of the connected mount's async batch and
-      # notification scanning is skipped until it lands — wait for it instead
-      # of racing the continuation.
-      wait_notified_ids_ready(view)
-
-      # The seed pre-notifies terminal ids, so a reload must not push a
-      # browser notification for them.
-      send(view.pid, :node_aware_reload_tasks)
-      # The scan runs off-process; settle it (and the diff that would carry a
-      # pushed notification) before asserting, so the zero-timeout refute is
-      # conclusive instead of a 100 ms observation window.
-      html = drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-      # No active project in this describe (recent projects cleared, fixture
-      # inserted directly into the store), so the launch panel is hidden
-      refute html =~ "task-launch-button"
-    end
-
+    # The two tests LEFT in this describe are content-pinned POSITIVE
+    # assertions: `assert_push_event` scans the mailbox for the exact
+    # `{title, body}` pair derived from this test's OWN fixture (a unique
+    # prompt / `pr_title`), so a concurrent module's notification — which
+    # carries different content — cannot satisfy or break them. A zero-timeout
+    # `refute_push_event` could not stay here.
     test "notification fires only for newly-terminal ids with matching content", %{conn: conn} do
       # Terminal before mount -> part of the mount seed -> never notified
       insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
@@ -1711,86 +2001,24 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
     end
 
-    test "user-initiated delete_task does not notify", %{conn: conn} do
-      task = insert_task_fixture!(status: :running)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_notified_ids_ready(view)
-
-      render_hook(view, "delete_task", %{"task_id" => task.id})
-
-      # delete_task is a cast — a synchronous registry call afterwards
-      # guarantees the store deletion was processed before the reload snapshot.
-      EvoGit.TaskRegistry.list_tasks()
-
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
-
-    test "user-initiated clear_task_history does not notify", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      # Terminal AFTER mount — would be newly-terminal on reload if the user
-      # had not cleared the history.
-      insert_task_fixture!(status: :completed, opts: [prompt: "cleared task"])
-
-      render_hook(view, "clear_task_history", %{})
-
-      # The clear re-seeds the notified-id set asynchronously; wait for that
-      # readiness before triggering the scan.
-      wait_notified_ids_ready(view)
-
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
+    # MOVED: "user-initiated delete_task does not notify", "user-initiated
+    # clear_task_history does not notify" AND "no notification for a task
+    # already terminal before mount" live in
+    # `EvoDashWeb.ProjectsLiveSyncTest` below — each zero-timeout refute is a
+    # claim about GLOBAL quiet (no `task_notification` at all). The scan behind
+    # it (`EvoDashWeb.ProjectsLive.Notifications`) diffs terminal ids read from
+    # the RUN-WIDE `EvoGit.Store`, so any `:completed` row a concurrent async
+    # module inserts after this view's mount seed is "newly terminal" here and
+    # pushes its own `task_notification`; the delete/clear mutations add a
+    # `"tasks"` broadcast from the process-global registry (and the clear sweeps
+    # every FINISHED task out of the RUN-WIDE store, which would delete another
+    # async module's live fixture mid-test).
   end
 
   describe "async mount loads + notification scan (exit-safe)" do
     setup do
       clear_recent_projects()
       :ok
-    end
-
-    test "mount does no synchronous task-store work and survives an exiting async batch", %{
-      conn: conn
-    } do
-      # The whole batch body is delegated to the seam; an exiting body sends NO
-      # result message, so the page must keep mount/3's seeded defaults.
-      install_projects_async_load_runner(fn -> exit(:boom) end)
-
-      # FREEZE the single, serialized task registry while the page mounts: any
-      # SYNCHRONOUS store call on the mount path would block here and `live/2`
-      # could not return. (The injected batch exits immediately and needs no
-      # store access at all.)
-      :ok = :sys.suspend(EvoGit.TaskRegistry)
-      restore_registry_on_exit()
-
-      # Dead render: renders normally, zero store work.
-      static = get(conn, ~p"/projects")
-      assert html_response(static, 200) =~ "Open a project to get started"
-
-      # Connected mount: renders normally, zero store work, page stays alive.
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      assert Process.alive?(view.pid)
-      assert assigns(view)[:recent_projects] == []
-      assert assigns(view)[:notified_task_ids_ready?] == false
-      assert render(view) =~ "Open a project to get started"
-
-      # A debounced reload while the id set is unseeded must not scan (and so
-      # can never notify), and the handler returns while the store is still
-      # frozen — no synchronous read.
-      send(view.pid, :node_aware_reload_tasks)
-      assert assigns(view)[:task_notifications_seq] == 0
-
-      :ok = :sys.resume(EvoGit.TaskRegistry)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
     end
 
     test "the async batch really fills recent projects a frame after mount", %{conn: conn} do
@@ -1843,143 +2071,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       await_async_loads(view)
     end
 
-    test "the notified-id seed never notifies for pre-existing terminal tasks", %{conn: conn} do
-      ids = for _ <- 1..3, do: insert_task_fixture!(status: :completed).id
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_notified_ids_ready(view)
-
-      # Every pre-existing terminal task is in the seed.
-      assert MapSet.new(ids) |> MapSet.subset?(assigns(view)[:notified_task_ids])
-
-      # No notification before the seed landed: the readiness poll above settles
-      # the mount turn and the batch never pushes a notification itself, so a
-      # zero-timeout refute is conclusive.
-      refute_push_event(view, "task_notification", %{}, 0)
-
-      # ...and none after a scan runs against the seeded set.
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
-
-    test "the notification scan runs off-process and notifies only a newly terminal task", %{
-      conn: conn
-    } do
-      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_notified_ids_ready(view)
-
-      new_task = insert_task_fixture!(status: :completed, opts: [prompt: "notify me"])
-
-      # FREEZE the registry: the scan's store reads now block, so the handler
-      # finishing synchronously (the :sys.get_state round-trip below) proves
-      # the scan was handed to a supervised task instead of running inline.
-      :ok = :sys.suspend(EvoGit.TaskRegistry)
-      restore_registry_on_exit()
-
-      send(view.pid, :node_aware_reload_tasks)
-
-      assert assigns(view)[:task_notifications_seq] == 1
-      # Off-process work exists: the scan (and the sidebar fetch) are live
-      # supervised children owned by this view, blocked on the frozen store.
-      assert mount_async_task_pids(view.pid) != []
-
-      :ok = :sys.resume(EvoGit.TaskRegistry)
-      drain_task_reload(view)
-
-      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
-      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
-
-      # The old (seeded) task produced no second notification.
-      refute_push_event(view, "task_notification", %{}, 0)
-      assert MapSet.member?(assigns(view)[:notified_task_ids], new_task.id)
-    end
-  end
-
-  describe "task_submit clears the prompt" do
-    setup do
-      clear_recent_projects()
-      :ok
-    end
-
-    test "clears the prompt assign and pushes the clear_prompt event on launch", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      # Open a project via the palette (open-path mode)
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      # Seed the prompt the way the client does (restore_state is the
-      # still-supported way to set the persisted prompt).
-      render_change(view, "restore_state", %{"task_prompt" => "build me a thing"})
-      assert assigns(view)[:task_prompt] == "build me a thing"
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (see make_git_repo!/1): ensure_repo short-circuits, rev-parse HEAD
-      # succeeds, and the wrapper dies at node-path validation before any
-      # agent dispatch — no LLM calls, no worktrees, no agents (which matters
-      # because the scheduler's model profiles come from the boot-time
-      # ambient config, not the per-test XDG_CONFIG_HOME isolation).
-      make_git_repo!(tmp_dir)
-
-      # Launch an evolve task with a nonexistent node_path. The task still
-      # launches successfully (start_task returns {:ok, task}); the spawned
-      # wrapper then fails fast in EvoGit.Runtime.Evolution at the invalid
-      # node path.
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-
-      # The server-side prompt assign is reset to "" after a successful
-      # launch, so the next render seeds the compact layout (the visible
-      # textarea itself is cleared client-side — morphdom skips it under
-      # phx-update="ignore").
-      assert assigns(view)[:task_prompt] == ""
-
-      # The client-side clear event is pushed: it empties the textarea and
-      # removes the persisted draft so a reload can't resurrect the prompt.
-      assert_push_event(view, "clear_prompt", %{})
-
-      # The launch spawned a real task (which fails fast on the invalid node
-      # path — terminal long before this point); register the on_exit
-      # cancel+delete cleanup and wait for the terminal status so the wrapper
-      # has finished spawning ports before the setup on_exit rm_rf!(tmp_dir).
-      [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
-
-      on_exit(fn ->
-        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
-        try do
-          EvoGit.TaskRegistry.cancel_task(id)
-        rescue
-          _ -> :ok
-        end
-
-        try do
-          EvoGit.TaskRegistry.delete_task(id)
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      wait_for_task_terminal(id)
-    end
+    # MOVED: "the notified-id seed never notifies for pre-existing terminal
+    # tasks" lives in `EvoDashWeb.ProjectsLiveSyncTest` below — its final
+    # zero-timeout refute follows a real reload, whose scan diffs the RUN-WIDE
+    # store, so it is the same GLOBAL-quiet claim as the other moved tests.
   end
 
   describe "remote node contexts" do
@@ -2011,12 +2106,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       await_async_loads(view)
 
       # Open a local project and fill in form state
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # task_prompt_change no longer exists (per-keystroke server event removed);
       # restore_state is the still-supported way to set the persisted prompt.
@@ -2918,44 +3008,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:active_project_path] == tmp_dir
       assert assigns(view)[:task_resume_from] == ""
     end
-
-    test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      remote_home = Path.join(tmp_dir, "remote-home")
-      File.mkdir_p!(remote_home)
-
-      on_exit(fn ->
-        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
-        try do
-          EvoGit.TaskRegistry.remove_recent_project(remote_home)
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      # The remote_path_expand_runner seam is read at call time (both in the
-      # dead render's handle_params and inside the activation task).
-      Application.put_env(:evo_dash, :remote_path_expand_runner, fn _node, _path ->
-        {:ok, remote_home}
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :remote_path_expand_runner) end)
-
-      id = save_target!()
-
-      start_supervised!(
-        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
-      )
-
-      {:ok, view, _html} =
-        live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
-
-      wait_assigns(view, &(&1[:active_project_path] == remote_home))
-      assert assigns(view)[:active_project_path] == remote_home
-    end
   end
 
   describe "foreign repos — read-write validation and threading" do
@@ -3259,67 +3311,13 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       {:ok, view, _html} = live(conn, "/projects?resume_from=" <> task.id)
 
+      # The resume override runs in a supervised Task
+      # (`start_foreign_repos_restore/2` -> `{:foreign_repos_restored, ...}`), so
+      # wait for that result to be applied before reading the assign.
+      wait_assigns(view, fn a -> Enum.any?(a[:foreign_repos] || [], &(&1.id == "orig")) end)
+
       repo = Enum.find(assigns(view)[:foreign_repos], &(&1.id == "orig"))
       assert %ForeignRepo{id: "orig", writable: true, base_sha: "abc123"} = repo
-    end
-
-    test "task_submit threads foreign_repos (writable + base_sha) into the task opts", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
-
-      # The fixture makes tmp_dir non-empty, so activation auto-detects
-      # genesis_existing and spawns the real GitHub-upstream git port under
-      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
-      stub_github_upstream_check!()
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      render_click(view, "add_foreign_repo", %{
-        "repo_id" => "repo1",
-        "path" => repo_path,
-        "description" => "the repo",
-        "writable" => "true",
-        "base_sha" => head_sha
-      })
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-
-      # Re-fetch AFTER the wait — the wrapper's final-status persistence may
-      # rewrite the row (the codec round-trip of :foreign_repos is unchanged).
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # :foreign_repos is in the codec's known-opt-key whitelist, so the key
-      # round-trips as an atom; the VALUE is Jason-decoded into string-keyed
-      # maps (id/root/description/writable/base_sha).
-      foreign_repos = opt(task, :foreign_repos)
-      assert is_list(foreign_repos)
-
-      repo = Enum.find(foreign_repos, &(Map.get(&1, "id") == "repo1"))
-      assert Map.get(repo, "writable") == true
-      assert Map.get(repo, "base_sha") == head_sha
     end
   end
 
@@ -3375,29 +3373,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert assigns(view)[:current_node] == :"genesis_remote@127.0.0.1"
       refute html =~ "project-path-browse-button"
       assert html =~ ~s(id="project-path-input")
-    end
-
-    test "directory_pick with the picker disabled pushes unavailable", %{conn: conn} do
-      # Explicit and self-documenting (test_helper.exs already sets it, but
-      # state it here so this test reads standalone). The disabled flag is
-      # checked FIRST in EvoDash.DirectoryPicker.pick/2, so this exercises the
-      # real synchronous {:error, :unavailable} path without ever touching wx.
-      original = Application.get_env(:evo_dash, :directory_picker)
-      Application.put_env(:evo_dash, :directory_picker, enabled: false)
-
-      on_exit(fn ->
-        # Restore the prior config so other tests are unaffected.
-        if original do
-          Application.put_env(:evo_dash, :directory_picker, original)
-        else
-          Application.delete_env(:evo_dash, :directory_picker)
-        end
-      end)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_hook(view, "directory_pick", %{picker_id: "new-project"})
-      assert_push_event(view, "picker_result:new-project", %{unavailable: true})
     end
 
     test "directory_pick with the fake picker module pushes the picked path", %{conn: conn} do
@@ -3576,30 +3551,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
     end
 
-    test "file_pick with the picker disabled pushes unavailable", %{conn: conn} do
-      # Explicit and self-documenting (test_helper.exs already sets it, but
-      # state it here so this test reads standalone). The disabled flag is
-      # checked FIRST in EvoDash.DirectoryPicker.pick/3, so this exercises the
-      # real synchronous {:error, :unavailable} path with the real picker
-      # module (the env seam defaults to it).
-      original = Application.get_env(:evo_dash, :directory_picker)
-      Application.put_env(:evo_dash, :directory_picker, enabled: false)
-
-      on_exit(fn ->
-        # Restore the prior config so other tests are unaffected.
-        if original do
-          Application.put_env(:evo_dash, :directory_picker, original)
-        else
-          Application.delete_env(:evo_dash, :directory_picker)
-        end
-      end)
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
-      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
-    end
-
     test "file_pick_manual with a valid path appends the file content to the prompt", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -3704,63 +3655,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     end
 
     # --- Staged image/audio attachment tests (binary attach flow) ---
-
-    # Installs the fake directory picker module (test/support) for the binary
-    # attach flow and restores the prior app env on exit — mirrors the inline
-    # per-test idiom of the text file_pick tests above.
-    defp install_fake_picker! do
-      original = Application.get_env(:evo_dash, :directory_picker_module)
-      Application.put_env(:evo_dash, :directory_picker_module, EvoDash.DirectoryPicker.Fake)
-
-      on_exit(fn ->
-        # Restore the prior config so other tests are unaffected.
-        if original do
-          Application.put_env(:evo_dash, :directory_picker_module, original)
-        else
-          Application.delete_env(:evo_dash, :directory_picker_module)
-        end
-      end)
-
-      :ok
-    end
-
-    # Opens `tmp_dir` as the active project through the command palette
-    # (open-path mode). The task form's launch panel + staged-attachment chip
-    # row render ONLY when a project is active (@disabled == false), so the
-    # staging tests that launch a task (or exercise the enabled-form flow)
-    # open a project first — exactly like the existing task_submit /
-    # custom-agent tests.
-    #
-    # Every caller writes staging files (a .png/.mp3 fixture) into tmp_dir
-    # BEFORE activating, so detect_mode/1 resolves genesis_existing and the
-    # activation spawns the REAL `git remote get-url origin` GitHub-upstream
-    # check under tmp_dir — the spawn: "Could not cd" noise source. Stub the
-    # :github_runner seam here (all 5 callers stage files; none stubs its own
-    # GitHub seams) so this shared helper stays the single wiring point.
-    defp open_staging_project(view, tmp_dir) do
-      stub_github_upstream_check!()
-      clear_recent_projects()
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      assert assigns(view)[:active_project_path] == tmp_dir
-      view
-    end
-
-    # Runs the native binary attach pick ("file_pick" on the given image/audio
-    # picker channel) against `path`, re-setting the fake's file-mode result
-    # first (the fake's default "/fake/picked/file.txt" would fail image/audio
-    # extension validation).
-    defp pick_staged(view, picker_id, kind, path) do
-      EvoDash.DirectoryPicker.Fake.set_file_result({:ok, path})
-      render_hook(view, "file_pick", %{picker_id: picker_id, prompt: "", kind: kind})
-      view
-    end
 
     test "image pick stages a raw-bytes attachment and pushes the image channel", %{
       conn: conn,
@@ -4056,84 +3950,14 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert render(view) =~ "File not found:"
       assert assigns(view)[:staged_attachments] == []
     end
-
-    test "submitting with a staged attachment threads base64 attachments and clears the staged list",
-         %{
-           conn: conn,
-           tmp_dir: tmp_dir
-         } do
-      install_fake_picker!()
-
-      png_path = Path.join(tmp_dir, "pic.png")
-      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>>
-      File.write!(png_path, png_bytes)
-
-      # The staged .png makes tmp_dir non-empty → activation auto-detects
-      # genesis_existing and spawns the real GitHub-upstream git port under
-      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
-      stub_github_upstream_check!()
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      open_staging_project(view, tmp_dir)
-
-      pick_staged(view, "objective_file_image", "image", png_path)
-
-      assert assigns(view)[:staged_attachments] == [
-               %{
-                 "type" => "image",
-                 "name" => "pic.png",
-                 "media_type" => "image/png",
-                 "data" => png_bytes
-               }
-             ]
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — the invalid node_path kills the wrapper at
-      # validation, before any agent dispatch (no LLM calls, no worktrees, no
-      # agents — see the "task_submit clears the prompt" describe).
-      make_git_repo!(tmp_dir)
-
-      # Launch an evolve task with a nonexistent node_path — the task launches
-      # successfully but the wrapper fails fast at validation.
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-
-      # A successful launch clears the staged attachments.
-      assert assigns(view)[:staged_attachments] == []
-
-      id = cleanup_launched_task(html)
-
-      # The persisted task opts carry the attachment as BASE64 (raw bytes never
-      # cross the task-opts boundary — this is the whole point of encoding at
-      # submit). The :attachments opt key is not codec-whitelisted, so it
-      # round-trips as the STRING "attachments" — read tolerantly for either
-      # key shape.
-      task = EvoGit.TaskRegistry.get_task(id)
-      opts_map = Map.new(task.opts || [])
-      attachments = Map.get(opts_map, "attachments") || Map.get(opts_map, :attachments)
-
-      assert [%{} = att] = attachments
-      assert att["type"] == "image"
-      assert att["name"] == "pic.png"
-      assert att["media_type"] == "image/png"
-      assert att["data"] == Base.encode64(png_bytes)
-    end
   end
 
   describe "custom agent selection" do
     setup do
       clear_recent_projects()
 
-      # The module-level set_onboarding_completed already isolates
-      # XDG_CONFIG_HOME per test, so agents.toml lands in a temp dir.
+      # The module-level set_onboarding_completed already activates a per-test
+      # config-dir override, so agents.toml lands in a temp dir.
       {:ok, _agent} =
         EvoGit.CustomAgents.save(%{
           name: "Bug Hunter",
@@ -4153,14 +3977,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
       # No project open → controls row hidden; open one so the select renders.
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
 
       assert html =~ ~s(name="agent")
       assert html =~ "Auto (recommended)"
@@ -4173,12 +3990,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       assert assigns(view)[:selected_agent_id] == nil
 
@@ -4188,82 +4000,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       assert html =~ ~s(<option value="my-agent" selected)
     end
 
-    test "selecting a custom agent threads :agent into the task opts", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      render_change(view, "select_agent", %{"agent" => "my-agent"})
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1): the invalid node_path kills it at validation,
-      # before any agent dispatch (see "task_submit clears the prompt").
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # The persisted task opts round-trip through EvoGit.Store.Codec, which
-      # atomizes only its known-key whitelist — :agent decodes as a string key.
-      assert opt(task, "agent") == "my-agent"
-    end
-
-    test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-      refute has_opt?(task, "agent")
-    end
-
     test "renders the Custom Agent mode option", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # 4th mode option next to genesis_new / genesis_existing / evolve_simple.
       assert render(view) =~ "Custom Agent"
@@ -4275,12 +4015,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       assert assigns(view)[:selected_agent_id] == nil
 
@@ -4300,12 +4035,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       render_change(view, "select_agent", %{"agent" => "my-agent"})
       render_change(view, "task_change", %{"mode" => "evolve_simple"})
@@ -4320,12 +4050,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Submit DIRECTLY (no task_change first — it would auto-select the first
       # agent) so the selected_agent_id assign is still nil.
@@ -4342,56 +4067,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ "task started with ID:"
     end
 
-    test "custom_agent submit with a selected agent starts an evolve task with mode custom", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      render_change(view, "select_agent", %{"agent" => "my-agent"})
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "custom_agent",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      assert task.type == :evolve
-      # :mode/:objective are in the Store codec's atomization whitelist, so the
-      # round-tripped opts decode them as atom keys with STRING values; :agent
-      # is not whitelisted, so it stays a string key.
-      assert opt(task, :mode) == "custom"
-      assert opt(task, "agent") == "my-agent"
-      assert opt(task, :objective) == "build me a thing"
-    end
-
     test "custom_agent mode persists/restores across form state", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Simulate a sessionStorage restore on reload: the node gate passes and
       # the already-active project skips activate_project's mode re-detection,
@@ -4436,179 +4115,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     test "agent select is absent", %{conn: conn, tmp_dir: tmp_dir} do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
+      html = open_project!(view, tmp_dir)
 
       refute html =~ ~s(name="agent")
       refute html =~ "Auto (recommended)"
-    end
-  end
-
-  describe "model selection auto/lock semantics" do
-    setup do
-      clear_recent_projects()
-      :ok
-    end
-
-    # Writes a config.toml with a single model profile into the test's
-    # isolated XDG_CONFIG_HOME (set per test by set_onboarding_completed) so
-    # load_model_profiles has a profile to select.
-    defp write_model_profile_config do
-      config_path = EvoGit.Config.config_path()
-      File.mkdir_p!(Path.dirname(config_path))
-
-      File.write!(config_path, """
-      [[llm.models]]
-      id = "profile-a"
-      model = {provider = "anthropic", id = "claude-sonnet-5"}
-      concurrency = 3
-      """)
-    end
-
-    test "with a model-selection script, default is Auto (by rules) and submit threads neither key",
-         %{conn: conn, tmp_dir: tmp_dir} do
-      write_model_profile_config()
-      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
-      EvoGit.CustomAgents.reload()
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      # The "" sentinel → the select renders "Auto (by rules)" as selected.
-      assert assigns(view)[:selected_model_id] == ""
-      assert assigns(view)[:model_selection_enabled] == true
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
-      assert html =~ "Auto (by rules)"
-      assert html =~ ~s(<option value="" selected)
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # Neither key may be threaded: the runtime script decides the model.
-      # (String-key checks: :model_id/:model_id_locked are not in the codec's
-      # atomization whitelist, so a round-tripped opts decodes them as strings.)
-      refute has_opt?(task, "model_id")
-      refute has_opt?(task, "model_id_locked")
-      assert task.model_id == nil
-    end
-
-    test "with a model-selection script, an explicit profile choice locks the model", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      write_model_profile_config()
-      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
-      EvoGit.CustomAgents.reload()
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      assert assigns(view)[:selected_model_id] == ""
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      render_change(view, "select_model", %{"model_id" => "profile-a"})
-      assert assigns(view)[:selected_model_id] == "profile-a"
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # An explicit profile choice threads BOTH keys — the runtime script is
-      # deferred. (String-key opts checks: the codec round-trip demotes
-      # non-whitelisted keys; task.model_id is the dedicated column.)
-      assert task.model_id == "profile-a"
-      assert opt(task, "model_id") == "profile-a"
-      assert opt(task, "model_id_locked") == true
-    end
-
-    test "without a script the default is the first profile and submit threads :model_id + :model_id_locked",
-         %{conn: conn, tmp_dir: tmp_dir} do
-      write_model_profile_config()
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      # No script configured → current behavior: first profile is the default
-      # and no "Auto (by rules)" option renders.
-      assert assigns(view)[:selected_model_id] == "profile-a"
-      assert assigns(view)[:model_selection_enabled] == false
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      html = render(view)
-      refute html =~ "Auto (by rules)"
-      assert html =~ ~s(<option value="profile-a" selected)
-
-      # Seed a real git repo so the doomed wrapper's life is pure validation
-      # (make_git_repo!/1) — see "task_submit clears the prompt".
-      make_git_repo!(tmp_dir)
-
-      html =
-        view
-        |> element("#task-form")
-        |> render_submit(%{
-          prompt: "build me a thing",
-          mode: "evolve_simple",
-          node_path: "./nonexistent-dir"
-        })
-
-      assert html =~ "task started with ID:"
-      task_id = cleanup_launched_task(html)
-      task = EvoGit.TaskRegistry.get_task(task_id)
-
-      # The first profile is threaded as :model_id, and the lock flag IS set
-      # (unconditional per the cross-app contract — harmless without a script).
-      assert task.model_id == "profile-a"
-      assert opt(task, "model_id") == "profile-a"
-      assert opt(task, "model_id_locked") == true
     end
   end
 
@@ -4657,7 +4167,11 @@ defmodule EvoDashWeb.ProjectsLiveTest do
 
       # handle_params spawns the grouped async load; mount/3 seeds the LOCAL
       # profiles first, so wait for the async (degraded) result to apply.
-      render_async(view)
+      # `render_async/2` does NOT await `EvoDash.TaskSupervisor` children (only
+      # `start_async`/`assign_async`), so it never proved the result had landed.
+      # `await_async_loads/1` waits for THIS view's supervised batch to exit and
+      # drains its queued `{:async_project_load, ...}` apply instead.
+      await_async_loads(view)
 
       # The fake BEAM node can never answer :erpc (fails immediately with
       # {:erpc, :noconnection}) — get_resolved_config fails fast and
@@ -4687,91 +4201,6 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       put_github_seams([])
 
       :ok
-    end
-
-    defp put_github_seams(overrides) do
-      defaults = [
-        {:github_runner, fn _node, _path -> {:error, :no_github_upstream} end},
-        {:github_issues_runner, fn _node, _path, _opts -> {:ok, []} end},
-        {:github_issue_markdown_runner,
-         fn _node, _path, _number ->
-           {:error, :gh_not_available}
-         end}
-      ]
-
-      seams = Keyword.merge(defaults, overrides)
-
-      for {key, value} <- seams do
-        Application.put_env(:evo_dash, key, value)
-      end
-
-      on_exit(fn ->
-        for {key, _value} <- seams do
-          Application.delete_env(:evo_dash, key)
-        end
-      end)
-
-      :ok
-    end
-
-    defp ok_upstream_runner do
-      fn _node, _path ->
-        {:ok,
-         %{
-           owner: "acme",
-           repo: "widgets",
-           gh_available: true,
-           url: "https://github.com/acme/widgets"
-         }}
-      end
-    end
-
-    # Opens `path` through the project palette (open-path mode) — the same
-    # flow as the "opening a project" tests. Activating a project with a
-    # non-genesis_new mode spawns the async GitHub-upstream check.
-    defp open_project(view, path) do
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: path})
-
-      view
-    end
-
-    # Makes `tmp_dir` an evolve_simple project (a CONTEXT.md file) so the
-    # GitHub-upstream check is spawned — genesis_new projects never check.
-    defp make_evolve_project(tmp_dir) do
-      File.write!(Path.join(tmp_dir, "CONTEXT.md"), "# Test project\n")
-    end
-
-    # Polls the LiveView socket assigns until `predicate/1` is truthy. The
-    # GitHub runners run in supervised Tasks and report back via self-messages
-    # handled by handle_info, so polling the assigns (with a generous budget)
-    # is the deterministic way to wait for an async result.
-    defp wait_until(view, predicate, timeout_ms \\ 2_000) do
-      deadline = System.monotonic_time(:millisecond) + timeout_ms
-
-      poll = fn poll ->
-        cond do
-          predicate.(assigns(view)) ->
-            :ok
-
-          System.monotonic_time(:millisecond) >= deadline ->
-            flunk("Timed out waiting for async GitHub state — assigns: #{inspect(assigns(view))}")
-
-          true ->
-            Process.sleep(2)
-            poll.(poll)
-        end
-      end
-
-      poll.(poll)
-    end
-
-    defp github_status(view, state) do
-      wait_until(view, fn a -> a[:github_status] && a[:github_status].state == state end)
     end
 
     test "hides the GitHub button when the upstream check fails", %{conn: conn, tmp_dir: tmp_dir} do
@@ -4973,6 +4402,957 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute html =~ "Issue for open"
     end
 
+    test "Fix failure flashes the surfaced error and keeps the modal open", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      make_evolve_project(tmp_dir)
+
+      put_github_seams(
+        github_runner: ok_upstream_runner(),
+        github_issues_runner: fn _node, _path, _opts ->
+          {:ok,
+           [
+             %{
+               number: 7,
+               title: "Broken issue",
+               state: "open",
+               labels: [],
+               url: "https://github.com/acme/widgets/issues/7",
+               author: "",
+               created_at: "2026-01-01T00:00:00Z"
+             }
+           ]}
+        end,
+        github_issue_markdown_runner: fn _node, _path, _number -> {:error, :gh_not_available} end
+      )
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_project(view, tmp_dir)
+      github_status(view, :ok)
+
+      render_click(view, "open_github_issues", %{})
+      wait_until(view, fn a -> a[:github_issues].status == :ok end)
+
+      render_click(view, "github_fix_issue", %{"number" => "7"})
+
+      # handle_fix_result clears :github_fixing on the error path.
+      wait_until(view, fn a -> a[:github_fixing] == nil end)
+
+      html = render(view)
+
+      # :gh_not_available falls back to the generic error message.
+      assert html =~ "Could not load GitHub issues"
+      # The modal stays open so the user can retry.
+      assert html =~ "github-issues-modal"
+      assert assigns(view)[:github_modal_open] == true
+    end
+  end
+
+  # Speed ↔ quality segmented control — the 3-step control on the task form's
+  # bottom toolbar (#quality-level-control, component-side markup contract is
+  # covered in task_form_components_test.exs). Projectslive owns the assign
+  # (@quality_level, default "balanced"), the whitelisted select_quality_level
+  # event, and the submit threading: do_task_submit/4 adds the :quality_level
+  # task opt ONLY for "fast"/"high_quality" — "balanced" (the default) adds NO
+  # key, so the untouched case keeps the task opts byte-identical to before.
+  describe "speed ↔ quality control" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "select_quality_level updates the assign and moves the active step", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      html = open_project!(view, tmp_dir)
+
+      # Default state: the middle (balanced) step is the active one.
+      assert assigns(view)[:quality_level] == "balanced"
+      assert quality_step_active?(html, "balanced")
+      refute quality_step_active?(html, "fast")
+      refute quality_step_active?(html, "high_quality")
+
+      # Clicking the fast step (via its element → phx-value-level="fast") moves
+      # the selection and the highlight.
+      html = view |> element("#quality-level-fast") |> render_click()
+
+      assert assigns(view)[:quality_level] == "fast"
+      assert quality_step_active?(html, "fast")
+      refute quality_step_active?(html, "balanced")
+
+      # …and the high-quality step likewise. (The return-to-balanced cycle is
+      # covered by the default-state assertion above plus the component-level
+      # step tests in task_form_components_test.exs.)
+      html = view |> element("#quality-level-high_quality") |> render_click()
+
+      assert assigns(view)[:quality_level] == "high_quality"
+      assert quality_step_active?(html, "high_quality")
+      refute quality_step_active?(html, "fast")
+    end
+
+    test "an unknown level is ignored and the selection is unchanged", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+
+      render_click(view, "select_quality_level", %{"level" => "fast"})
+      assert assigns(view)[:quality_level] == "fast"
+
+      # Not a whitelisted level → the catch-all clause returns the socket
+      # unchanged (the current selection stays "fast").
+      render_click(view, "select_quality_level", %{"level" => "bogus"})
+      assert assigns(view)[:quality_level] == "fast"
+
+      # A missing level param is likewise a no-op.
+      render_click(view, "select_quality_level", %{})
+      assert assigns(view)[:quality_level] == "fast"
+    end
+
+    # Both non-default levels thread their STRING into the task opts on ONE
+    # mount (formerly one test per level — byte-identical apart from the value).
+  end
+end
+
+defmodule EvoDashWeb.ProjectsLiveSyncTest do
+  # `async: false` — every test here mutates a MUTABLE process-wide global that
+  # another `async: true` module also reads or writes, and ExUnit drains ALL
+  # async modules before it starts any sync one, so a write here can never race
+  # them:
+  #
+  #   * `:sys.suspend(EvoGit.TaskRegistry)` — freezing the one serialized registry
+  #     would deadlock any concurrent suite that touches it.
+  #   * real task launches (`render_submit` -> `TaskRegistry.start_task`) — every
+  #     task mutation broadcasts `{:task_updated, ...}` on the process-global
+  #     `EvoGit.PubSub`, which arms `NodeAware`'s 300 ms reload debounce on EVERY
+  #     mounted page in the BEAM (the documented `agents_live_test`
+  #     `:tasks_reload_pending` canary), plus the `on_exit` cancel/delete of the
+  #     launched row.
+  #   * user-initiated `delete_task` — the SAME process-global `"tasks"`
+  #     broadcast (`{:task_deleted, ...}`), and the test it drives asserts that
+  #     NO `task_notification` is pushed at all, which is only conclusive while
+  #     no concurrent module can publish one.
+  #   * user-initiated `clear_task_history` — `TaskRegistry.clear_finished_tasks/0`
+  #     sweeps EVERY finished task out of the RUN-WIDE `EvoGit.Store` all suites
+  #     share, so under `async: true` it deletes another async module's live
+  #     fixture mid-test (seen once: `ReviewLiveArchiveTest`'s task disappeared
+  #     between insert and `LoadData.load/2`). Its refute is also the same
+  #     GLOBAL-quiet claim as the delete test.
+  #   * the store-global notification scan — `EvoDashWeb.ProjectsLive.Notifications`
+  #     diffs terminal ids against the RUN-WIDE `EvoGit.Store`, so a `:completed`
+  #     row a concurrent async module inserts after a view's mount seed is
+  #     "newly terminal" for that view and pushes its own `task_notification`.
+  #     Every zero-timeout `refute_push_event(view, "task_notification", %{}, 0)`
+  #     is therefore a GLOBAL-quiet claim and belongs here.
+  #   * `:directory_picker` (`enabled`) — `test/evo_dash/directory_picker_test.exs`
+  #     is `async: true` and flips it to `enabled: true` for its own module; a
+  #     concurrent `enabled: false` here (or a real pick there) is the conflict.
+  #   * `:remote_path_expand_runner` — `projects_live/project_flow_test.exs` is
+  #     `async: true` and stubs the same key.
+  #   * mounting `/help` — a connected `EvoDash.HomeLive` mount calls
+  #     `EvoDash.ChatHistory.current_chat_id() || new_chat()` + `put_state`,
+  #     i.e. it WRITES the process-wide ChatHistory ETS table, while the
+  #     `async: true` `EvoDash.ChatHistoryTest` asserts exact GLOBAL contents
+  #     (`list_chats()`, `current_chat_id()`).
+  #
+  # The `:github_runner` / `:github_issues_runner` /
+  # `:github_issue_markdown_runner` / `:projects_async_load_runner` /
+  # `:directory_picker_module` seams are unique to this file family and ride the
+  # async module.
+  use EvoDashWeb.ConnCase, async: false
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ProjectsLiveTest.Helpers
+
+  alias EvoGit.Core.ForeignRepo
+  alias EvoGit.TaskInfo
+
+  setup [:setup_temp_dir, :set_onboarding_completed, :reset_active_tasks_hub]
+  setup_all [:install_git_template]
+
+  # Moved here from the async module: a connected `HomeLive` mount writes the
+  # process-wide `EvoDash.ChatHistory` table, which the async
+  # `EvoDash.ChatHistoryTest` asserts on by exact global contents. Sync
+  # placement keeps those two from overlapping; the assertions are unchanged.
+  describe "Home chat route (/help)" do
+    test "mounts HomeLive at /help", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/help")
+
+      assert html =~ "Chat with Genesis"
+      assert html =~ ~s(id="chat-form")
+    end
+  end
+
+  describe "async mount loads + notification scan (exit-safe)" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "mount does no synchronous task-store work and survives an exiting async batch", %{
+      conn: conn
+    } do
+      # The whole batch body is delegated to the seam; an exiting body sends NO
+      # result message, so the page must keep mount/3's seeded defaults.
+      install_projects_async_load_runner(fn -> exit(:boom) end)
+
+      # FREEZE the single, serialized task registry while the page mounts: any
+      # SYNCHRONOUS store call on the mount path would block here and `live/2`
+      # could not return. (The injected batch exits immediately and needs no
+      # store access at all.)
+      :ok = :sys.suspend(EvoGit.TaskRegistry)
+      restore_registry_on_exit()
+
+      # Dead render: renders normally, zero store work.
+      static = get(conn, ~p"/projects")
+      assert html_response(static, 200) =~ "Open a project to get started"
+
+      # Connected mount: renders normally, zero store work, page stays alive.
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      assert Process.alive?(view.pid)
+      assert assigns(view)[:recent_projects] == []
+      assert assigns(view)[:notified_task_ids_ready?] == false
+      assert render(view) =~ "Open a project to get started"
+
+      # A debounced reload while the id set is unseeded must not scan (and so
+      # can never notify), and the handler returns while the store is still
+      # frozen — no synchronous read.
+      send(view.pid, :node_aware_reload_tasks)
+      assert assigns(view)[:task_notifications_seq] == 0
+
+      :ok = :sys.resume(EvoGit.TaskRegistry)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+
+    test "the notification scan runs off-process and notifies only a newly terminal task", %{
+      conn: conn
+    } do
+      insert_task_fixture!(status: :completed, opts: [prompt: "old task"])
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      new_task = insert_task_fixture!(status: :completed, opts: [prompt: "notify me"])
+
+      # FREEZE the registry: the scan's store reads now block, so the handler
+      # finishing synchronously (the :sys.get_state round-trip below) proves
+      # the scan was handed to a supervised task instead of running inline.
+      :ok = :sys.suspend(EvoGit.TaskRegistry)
+      restore_registry_on_exit()
+
+      send(view.pid, :node_aware_reload_tasks)
+
+      assert assigns(view)[:task_notifications_seq] == 1
+      # Off-process work exists: the scan (and the sidebar fetch) are live
+      # supervised children owned by this view, blocked on the frozen store.
+      assert mount_async_task_pids(view.pid) != []
+
+      :ok = :sys.resume(EvoGit.TaskRegistry)
+      drain_task_reload(view)
+
+      {title, body} = EvoDashWeb.ProjectsLive.Project.task_notification_content(new_task)
+      assert_push_event(view, "task_notification", %{title: ^title, body: ^body})
+
+      # The old (seeded) task produced no second notification.
+      refute_push_event(view, "task_notification", %{}, 0)
+      assert MapSet.member?(assigns(view)[:notified_task_ids], new_task.id)
+    end
+  end
+
+  # Moved here from the async module: this test's refute is a claim about
+  # GLOBAL quiet (no `task_notification` at all), and the `delete_task` it
+  # drives publishes `{:task_deleted, ...}` on the process-global `"tasks"`
+  # topic — which both reaches this view through `NodeAware` and arms every
+  # OTHER mounted page's reload debounce in the BEAM. `async: true` would let a
+  # concurrently running module's newly-terminal task push its own
+  # `task_notification` into this view between the drain and the refute. Sync
+  # placement keeps the assertion (and its zero window) exactly as it was.
+  describe "user-initiated task mutations do not notify" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "user-initiated delete_task does not notify", %{conn: conn} do
+      task = insert_task_fixture!(status: :running)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      render_hook(view, "delete_task", %{"task_id" => task.id})
+
+      # delete_task is a cast — a synchronous registry call afterwards
+      # guarantees the store deletion was processed before the reload snapshot.
+      EvoGit.TaskRegistry.list_tasks()
+
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+
+    # Same reasoning as the delete test above, plus a second, sharper hazard:
+    # `clear_task_history` runs `TaskRegistry.clear_finished_tasks/0`, which
+    # sweeps EVERY finished task out of the RUN-WIDE store the whole suite
+    # shares — under `async: true` that deletes another module's live fixture
+    # mid-test (observed once: `ReviewLiveArchiveTest`'s task vanished between
+    # its fixture insert and its `LoadData.load/2`). Serial placement means the
+    # sweep can only ever see fixtures of tests that already finished.
+    # The refute also stays conclusive: no concurrent module can push its own
+    # `task_notification` into this view between the drain and the refute.
+    test "user-initiated clear_task_history does not notify", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Terminal AFTER mount — would be newly-terminal on reload if the user
+      # had not cleared the history.
+      insert_task_fixture!(status: :completed, opts: [prompt: "cleared task"])
+
+      render_hook(view, "clear_task_history", %{})
+
+      # The clear re-seeds the notified-id set asynchronously; wait for that
+      # readiness before triggering the scan.
+      wait_notified_ids_ready(view)
+
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+  end
+
+  # Moved here from the async module: `EvoDashWeb.ProjectsLive.Notifications`
+  # scans terminal ids in the RUN-WIDE `EvoGit.Store` and notifies every id the
+  # view's mount seed did not already contain, so a `:completed` row any
+  # concurrent `async: true` module inserts between this view's seed and its
+  # reload is "newly terminal" for THIS view and pushes its own
+  # `task_notification` (observed intermittently as `%{title: "Evolution task
+  # completed", body: "Test objective"}` — a review-suite task fixture). The
+  # zero-timeout refute below claims NOTHING pushes, which is only conclusive
+  # once ExUnit has drained every async module; assertions are unchanged.
+  describe "notification scan is store-global (refute needs global quiet)" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "no notification for a task already terminal before mount", %{conn: conn} do
+      insert_task_fixture!(status: :completed)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      # The terminal-id SEED is part of the connected mount's async batch and
+      # notification scanning is skipped until it lands — wait for it instead
+      # of racing the continuation.
+      wait_notified_ids_ready(view)
+
+      # The seed pre-notifies terminal ids, so a reload must not push a
+      # browser notification for them.
+      send(view.pid, :node_aware_reload_tasks)
+      # The scan runs off-process; settle it (and the diff that would carry a
+      # pushed notification) before asserting, so the zero-timeout refute is
+      # conclusive instead of a 100 ms observation window.
+      html = drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+      # No active project in this describe (recent projects cleared, fixture
+      # inserted directly into the store), so the launch panel is hidden
+      refute html =~ "task-launch-button"
+    end
+
+    # Same hazard as the test above (moved from the async module for it): the
+    # seed-subset assertions are placement-independent, but the REFUTES are a
+    # GLOBAL-quiet claim about a scan that diffs the RUN-WIDE store.
+    test "the notified-id seed never notifies for pre-existing terminal tasks", %{conn: conn} do
+      ids = for _ <- 1..3, do: insert_task_fixture!(status: :completed).id
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      # Every pre-existing terminal task is in the seed.
+      assert MapSet.new(ids) |> MapSet.subset?(assigns(view)[:notified_task_ids])
+
+      # No notification before the seed landed: the readiness poll above settles
+      # the mount turn and the batch never pushes a notification itself, so a
+      # zero-timeout refute is conclusive.
+      refute_push_event(view, "task_notification", %{}, 0)
+
+      # ...and none after a scan runs against the seeded set.
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
+    end
+  end
+
+  describe "task_submit clears the prompt" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "clears the prompt assign and pushes the clear_prompt event on launch", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # Open a project via the palette (open-path mode)
+      open_project!(view, tmp_dir)
+
+      # Seed the prompt the way the client does (restore_state is the
+      # still-supported way to set the persisted prompt).
+      render_change(view, "restore_state", %{"task_prompt" => "build me a thing"})
+      assert assigns(view)[:task_prompt] == "build me a thing"
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (see make_git_repo!/1): ensure_repo short-circuits, rev-parse HEAD
+      # succeeds, and the wrapper dies at node-path validation before any
+      # agent dispatch — no LLM calls, no worktrees, no agents (which matters
+      # because the scheduler's model profiles come from the boot-time
+      # ambient config, not the per-test config-dir isolation).
+      make_git_repo!(tmp_dir)
+
+      # Launch an evolve task with a nonexistent node_path. The task still
+      # launches successfully (start_task returns {:ok, task}); the spawned
+      # wrapper then fails fast in EvoGit.Runtime.Evolution at the invalid
+      # node path.
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+
+      # The server-side prompt assign is reset to "" after a successful
+      # launch, so the next render seeds the compact layout (the visible
+      # textarea itself is cleared client-side — morphdom skips it under
+      # phx-update="ignore").
+      assert assigns(view)[:task_prompt] == ""
+
+      # The client-side clear event is pushed: it empties the textarea and
+      # removes the persisted draft so a reload can't resurrect the prompt.
+      assert_push_event(view, "clear_prompt", %{})
+
+      # The launch spawned a real task (which fails fast on the invalid node
+      # path — terminal long before this point); register the on_exit
+      # cancel+delete cleanup and wait for the terminal status so the wrapper
+      # has finished spawning ports before the setup on_exit rm_rf!(tmp_dir).
+      [id] = Regex.run(~r/task started with ID: ([a-f0-9]{16})/, html, capture: :all_but_first)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.cancel_task(id)
+        rescue
+          _ -> :ok
+        end
+
+        try do
+          EvoGit.TaskRegistry.delete_task(id)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      wait_for_task_terminal(id)
+    end
+  end
+
+  describe "remote URL-driven project activation (local node as remote target)" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "remote ?project= tilde path expands via the remote seam, never the local HOME", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      remote_home = Path.join(tmp_dir, "remote-home")
+      File.mkdir_p!(remote_home)
+
+      on_exit(fn ->
+        # Cleanup in on_exit: rescue so teardown failures don't mask real test failures.
+        try do
+          EvoGit.TaskRegistry.remove_recent_project(remote_home)
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      # The remote_path_expand_runner seam is read at call time (both in the
+      # dead render's handle_params and inside the activation task).
+      Application.put_env(:evo_dash, :remote_path_expand_runner, fn _node, _path ->
+        {:ok, remote_home}
+      end)
+
+      on_exit(fn -> Application.delete_env(:evo_dash, :remote_path_expand_runner) end)
+
+      id = save_target!()
+
+      start_supervised!(
+        {EvoDashWeb.ProjectsLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: to_string(node()), last_error: nil}}}
+      )
+
+      {:ok, view, _html} =
+        live(conn, "/projects?project=" <> URI.encode("~/remote-proj") <> "&node=" <> id)
+
+      wait_assigns(view, &(&1[:active_project_path] == remote_home))
+      assert assigns(view)[:active_project_path] == remote_home
+    end
+  end
+
+  describe "foreign repos — read-write validation and threading" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "task_submit threads foreign_repos (writable + base_sha) into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {repo_path, head_sha} = git_repo_fixture!(tmp_dir, "repo1")
+
+      # The fixture makes tmp_dir non-empty, so activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+
+      render_click(view, "add_foreign_repo", %{
+        "repo_id" => "repo1",
+        "path" => repo_path,
+        "description" => "the repo",
+        "writable" => "true",
+        "base_sha" => head_sha
+      })
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+
+      # Re-fetch AFTER the wait — the wrapper's final-status persistence may
+      # rewrite the row (the codec round-trip of :foreign_repos is unchanged).
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # :foreign_repos is in the codec's known-opt-key whitelist, so the key
+      # round-trips as an atom; the VALUE is Jason-decoded into string-keyed
+      # maps (id/root/description/writable/base_sha).
+      foreign_repos = opt(task, :foreign_repos)
+      assert is_list(foreign_repos)
+
+      repo = Enum.find(foreign_repos, &(Map.get(&1, "id") == "repo1"))
+      assert Map.get(repo, "writable") == true
+      assert Map.get(repo, "base_sha") == head_sha
+    end
+  end
+
+  describe "directory picker" do
+    test "directory_pick with the picker disabled pushes unavailable", %{conn: conn} do
+      # Explicit and self-documenting (test_helper.exs already sets it, but
+      # state it here so this test reads standalone). The disabled flag is
+      # checked FIRST in EvoDash.DirectoryPicker.pick/2, so this exercises the
+      # real synchronous {:error, :unavailable} path without ever touching wx.
+      original = Application.get_env(:evo_dash, :directory_picker)
+      Application.put_env(:evo_dash, :directory_picker, enabled: false)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_hook(view, "directory_pick", %{picker_id: "new-project"})
+      assert_push_event(view, "picker_result:new-project", %{unavailable: true})
+    end
+  end
+
+  describe "file attach" do
+    setup do
+      on_exit(fn ->
+        # Clear the fake's per-test file result so it never leaks across tests.
+        EvoDash.DirectoryPicker.Fake.reset()
+      end)
+
+      :ok
+    end
+
+    test "file_pick with the picker disabled pushes unavailable", %{conn: conn} do
+      # Explicit and self-documenting (test_helper.exs already sets it, but
+      # state it here so this test reads standalone). The disabled flag is
+      # checked FIRST in EvoDash.DirectoryPicker.pick/3, so this exercises the
+      # real synchronous {:error, :unavailable} path with the real picker
+      # module (the env seam defaults to it).
+      original = Application.get_env(:evo_dash, :directory_picker)
+      Application.put_env(:evo_dash, :directory_picker, enabled: false)
+
+      on_exit(fn ->
+        # Restore the prior config so other tests are unaffected.
+        if original do
+          Application.put_env(:evo_dash, :directory_picker, original)
+        else
+          Application.delete_env(:evo_dash, :directory_picker)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      render_hook(view, "file_pick", %{picker_id: "objective_file", prompt: "my base prompt"})
+      assert_push_event(view, "picker_result:objective_file", %{unavailable: true})
+    end
+
+    test "submitting with a staged attachment threads base64 attachments and clears the staged list",
+         %{
+           conn: conn,
+           tmp_dir: tmp_dir
+         } do
+      install_fake_picker!()
+
+      png_path = Path.join(tmp_dir, "pic.png")
+      png_bytes = <<137, 80, 78, 71, 13, 10, 26, 10>>
+      File.write!(png_path, png_bytes)
+
+      # The staged .png makes tmp_dir non-empty → activation auto-detects
+      # genesis_existing and spawns the real GitHub-upstream git port under
+      # tmp_dir — stub the runner (this test asserts no GitHub behavior).
+      stub_github_upstream_check!()
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      open_staging_project(view, tmp_dir)
+
+      pick_staged(view, "objective_file_image", "image", png_path)
+
+      assert assigns(view)[:staged_attachments] == [
+               %{
+                 "type" => "image",
+                 "name" => "pic.png",
+                 "media_type" => "image/png",
+                 "data" => png_bytes
+               }
+             ]
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — the invalid node_path kills the wrapper at
+      # validation, before any agent dispatch (no LLM calls, no worktrees, no
+      # agents — see the "task_submit clears the prompt" describe).
+      make_git_repo!(tmp_dir)
+
+      # Launch an evolve task with a nonexistent node_path — the task launches
+      # successfully but the wrapper fails fast at validation.
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+
+      # A successful launch clears the staged attachments.
+      assert assigns(view)[:staged_attachments] == []
+
+      id = cleanup_launched_task(html)
+
+      # The persisted task opts carry the attachment as BASE64 (raw bytes never
+      # cross the task-opts boundary — this is the whole point of encoding at
+      # submit). The :attachments opt key is not codec-whitelisted, so it
+      # round-trips as the STRING "attachments" — read tolerantly for either
+      # key shape.
+      task = EvoGit.TaskRegistry.get_task(id)
+      opts_map = Map.new(task.opts || [])
+      attachments = Map.get(opts_map, "attachments") || Map.get(opts_map, :attachments)
+
+      assert [%{} = att] = attachments
+      assert att["type"] == "image"
+      assert att["name"] == "pic.png"
+      assert att["media_type"] == "image/png"
+      assert att["data"] == Base.encode64(png_bytes)
+    end
+  end
+
+  describe "custom agent selection" do
+    setup do
+      clear_recent_projects()
+
+      # Each test's isolated config-dir seam gives agents.toml a temp home.
+      {:ok, _agent} =
+        EvoGit.CustomAgents.save(%{
+          name: "Bug Hunter",
+          prompt: "You hunt bugs in code.",
+          id: "my-agent"
+        })
+
+      # Bust the ModelSelector persistent_term cache so the new file is seen.
+      EvoGit.CustomAgents.reload()
+      :ok
+    end
+
+    test "selecting a custom agent threads :agent into the task opts", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1): the invalid node_path kills it at validation,
+      # before any agent dispatch (see "task_submit clears the prompt").
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # The persisted task opts round-trip through EvoGit.Store.Codec, which
+      # atomizes only its known-key whitelist — :agent decodes as a string key.
+      assert opt(task, "agent") == "my-agent"
+    end
+
+    test "Auto (default) threads no :agent opt", %{conn: conn, tmp_dir: tmp_dir} do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+      refute has_opt?(task, "agent")
+    end
+
+    test "custom_agent submit with a selected agent starts an evolve task with mode custom", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      open_project!(view, tmp_dir)
+
+      render_change(view, "select_agent", %{"agent" => "my-agent"})
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "custom_agent",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      assert task.type == :evolve
+      # :mode/:objective are in the Store codec's atomization whitelist, so the
+      # round-tripped opts decode them as atom keys with STRING values; :agent
+      # is not whitelisted, so it stays a string key.
+      assert opt(task, :mode) == "custom"
+      assert opt(task, "agent") == "my-agent"
+      assert opt(task, :objective) == "build me a thing"
+    end
+  end
+
+  describe "model selection auto/lock semantics" do
+    setup do
+      clear_recent_projects()
+      :ok
+    end
+
+    test "with a model-selection script, default is Auto (by rules) and submit threads neither key",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      write_model_profile_config()
+      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
+      EvoGit.CustomAgents.reload()
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # The "" sentinel → the select renders "Auto (by rules)" as selected.
+      assert assigns(view)[:selected_model_id] == ""
+      assert assigns(view)[:model_selection_enabled] == true
+
+      html = open_project!(view, tmp_dir)
+      assert html =~ "Auto (by rules)"
+      assert html =~ ~s(<option value="" selected)
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # Neither key may be threaded: the runtime script decides the model.
+      # (String-key checks: :model_id/:model_id_locked are not in the codec's
+      # atomization whitelist, so a round-tripped opts decodes them as strings.)
+      refute has_opt?(task, "model_id")
+      refute has_opt?(task, "model_id_locked")
+      assert task.model_id == nil
+    end
+
+    test "with a model-selection script, an explicit profile choice locks the model", %{
+      conn: conn,
+      tmp_dir: tmp_dir
+    } do
+      write_model_profile_config()
+      :ok = EvoGit.CustomAgents.save_model_selection_script(~s("profile-a"))
+      EvoGit.CustomAgents.reload()
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      assert assigns(view)[:selected_model_id] == ""
+
+      open_project!(view, tmp_dir)
+
+      render_change(view, "select_model", %{"model_id" => "profile-a"})
+      assert assigns(view)[:selected_model_id] == "profile-a"
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # An explicit profile choice threads BOTH keys — the runtime script is
+      # deferred. (String-key opts checks: the codec round-trip demotes
+      # non-whitelisted keys; task.model_id is the dedicated column.)
+      assert task.model_id == "profile-a"
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+    end
+
+    test "without a script the default is the first profile and submit threads :model_id + :model_id_locked",
+         %{conn: conn, tmp_dir: tmp_dir} do
+      write_model_profile_config()
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+
+      # No script configured → current behavior: first profile is the default
+      # and no "Auto (by rules)" option renders.
+      assert assigns(view)[:selected_model_id] == "profile-a"
+      assert assigns(view)[:model_selection_enabled] == false
+
+      html = open_project!(view, tmp_dir)
+      refute html =~ "Auto (by rules)"
+      assert html =~ ~s(<option value="profile-a" selected)
+
+      # Seed a real git repo so the doomed wrapper's life is pure validation
+      # (make_git_repo!/1) — see "task_submit clears the prompt".
+      make_git_repo!(tmp_dir)
+
+      html =
+        view
+        |> element("#task-form")
+        |> render_submit(%{
+          prompt: "build me a thing",
+          mode: "evolve_simple",
+          node_path: "./nonexistent-dir"
+        })
+
+      assert html =~ "task started with ID:"
+      task_id = cleanup_launched_task(html)
+      task = EvoGit.TaskRegistry.get_task(task_id)
+
+      # The first profile is threaded as :model_id, and the lock flag IS set
+      # (unconditional per the cross-app contract — harmless without a script).
+      assert task.model_id == "profile-a"
+      assert opt(task, "model_id") == "profile-a"
+      assert opt(task, "model_id_locked") == true
+    end
+  end
+
+  describe "GitHub issue integration" do
+    setup do
+      clear_recent_projects()
+
+      put_github_seams([])
+
+      :ok
+    end
+
     test "Fix starts an :evolve task with the issue markdown and closes the modal", %{
       conn: conn,
       tmp_dir: tmp_dir
@@ -4986,7 +5366,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # on the unborn HEAD (rev-parse HEAD errors) — Evolution returns the
       # error before node-path validation and run_mode, so no LLM is ever
       # reachable (which matters because the scheduler's model profiles come
-      # from the boot-time ambient config, not the per-test XDG_CONFIG_HOME
+      # from the boot-time ambient config, not the per-test config-dir
       # isolation). The fix flow builds its opts WITHOUT a node_path (it is
       # not a task-form param), so "./" validation would always pass — the
       # unborn-HEAD lever is what keeps this launch LLM-safe.
@@ -5074,145 +5454,21 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       # keeps it on that dedicated field.
       assert task.model_id == "test-model"
     end
-
-    test "Fix failure flashes the surfaced error and keeps the modal open", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      make_evolve_project(tmp_dir)
-
-      put_github_seams(
-        github_runner: ok_upstream_runner(),
-        github_issues_runner: fn _node, _path, _opts ->
-          {:ok,
-           [
-             %{
-               number: 7,
-               title: "Broken issue",
-               state: "open",
-               labels: [],
-               url: "https://github.com/acme/widgets/issues/7",
-               author: "",
-               created_at: "2026-01-01T00:00:00Z"
-             }
-           ]}
-        end,
-        github_issue_markdown_runner: fn _node, _path, _number -> {:error, :gh_not_available} end
-      )
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      open_project(view, tmp_dir)
-      github_status(view, :ok)
-
-      render_click(view, "open_github_issues", %{})
-      wait_until(view, fn a -> a[:github_issues].status == :ok end)
-
-      render_click(view, "github_fix_issue", %{"number" => "7"})
-
-      # handle_fix_result clears :github_fixing on the error path.
-      wait_until(view, fn a -> a[:github_fixing] == nil end)
-
-      html = render(view)
-
-      # :gh_not_available falls back to the generic error message.
-      assert html =~ "Could not load GitHub issues"
-      # The modal stays open so the user can retry.
-      assert html =~ "github-issues-modal"
-      assert assigns(view)[:github_modal_open] == true
-    end
   end
 
-  # Speed ↔ quality segmented control — the 3-step control on the task form's
-  # bottom toolbar (#quality-level-control, component-side markup contract is
-  # covered in task_form_components_test.exs). Projectslive owns the assign
-  # (@quality_level, default "balanced"), the whitelisted select_quality_level
-  # event, and the submit threading: do_task_submit/4 adds the :quality_level
-  # task opt ONLY for "fast"/"high_quality" — "balanced" (the default) adds NO
-  # key, so the untouched case keeps the task opts byte-identical to before.
   describe "speed ↔ quality control" do
     setup do
       clear_recent_projects()
       :ok
     end
 
-    test "select_quality_level updates the assign and moves the active step", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      html =
-        view
-        |> element("form[phx-submit='open_project']")
-        |> render_submit(%{path: tmp_dir})
-
-      # Default state: the middle (balanced) step is the active one.
-      assert assigns(view)[:quality_level] == "balanced"
-      assert quality_step_active?(html, "balanced")
-      refute quality_step_active?(html, "fast")
-      refute quality_step_active?(html, "high_quality")
-
-      # Clicking the fast step (via its element → phx-value-level="fast") moves
-      # the selection and the highlight.
-      html = view |> element("#quality-level-fast") |> render_click()
-
-      assert assigns(view)[:quality_level] == "fast"
-      assert quality_step_active?(html, "fast")
-      refute quality_step_active?(html, "balanced")
-
-      # …and the high-quality step likewise. (The return-to-balanced cycle is
-      # covered by the default-state assertion above plus the component-level
-      # step tests in task_form_components_test.exs.)
-      html = view |> element("#quality-level-high_quality") |> render_click()
-
-      assert assigns(view)[:quality_level] == "high_quality"
-      assert quality_step_active?(html, "high_quality")
-      refute quality_step_active?(html, "fast")
-    end
-
-    test "an unknown level is ignored and the selection is unchanged", %{
-      conn: conn,
-      tmp_dir: tmp_dir
-    } do
-      {:ok, view, _html} = live(conn, ~p"/projects")
-
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
-
-      render_click(view, "select_quality_level", %{"level" => "fast"})
-      assert assigns(view)[:quality_level] == "fast"
-
-      # Not a whitelisted level → the catch-all clause returns the socket
-      # unchanged (the current selection stays "fast").
-      render_click(view, "select_quality_level", %{"level" => "bogus"})
-      assert assigns(view)[:quality_level] == "fast"
-
-      # A missing level param is likewise a no-op.
-      render_click(view, "select_quality_level", %{})
-      assert assigns(view)[:quality_level] == "fast"
-    end
-
-    # Both non-default levels thread their STRING into the task opts on ONE
-    # mount (formerly one test per level — byte-identical apart from the value).
     test "selecting fast threads :quality_level \"fast\" into the task opts", %{
       conn: conn,
       tmp_dir: tmp_dir
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Seed a real git repo so the doomed wrapper's life is pure validation
       # (make_git_repo!/1): the invalid node_path kills it at validation,
@@ -5246,12 +5502,7 @@ defmodule EvoDashWeb.ProjectsLiveTest do
     } do
       {:ok, view, _html} = live(conn, ~p"/projects")
 
-      render_click(view, "open_project_palette", %{})
-      render_click(view, "palette_mode", %{"mode" => "open_path"})
-
-      view
-      |> element("form[phx-submit='open_project']")
-      |> render_submit(%{path: tmp_dir})
+      open_project!(view, tmp_dir)
 
       # Never touched → the assign keeps its "balanced" default.
       assert assigns(view)[:quality_level] == "balanced"
@@ -5275,76 +5526,4 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       refute has_quality_level_opt?(task)
     end
   end
-end
-
-# A minimal GenServer standing in for a real remote connection manager in
-# `EvoGit.RemoteConnection.Registry` (same pattern as
-# EvoDashWeb.NodeAwareTest.ConnectionManager). `connect/1` on the real manager
-# resolves the registered pid via the Registry and calls `:connect`; the fake
-# answers with a configurable result so `retry_remote_connection` /
-# `select_node` never start real SSH machinery. The process dies (and its
-# Registry entry is auto-removed) at test end via `start_supervised!`.
-#
-# Startup shapes (preserving the original 2-tuple for existing call sites):
-#   * `{target_id, status}` — `:connect` answers `{:ok, :connecting}`
-#   * `{target_id, status, opts}` — `opts` may set `:connect_result` (the
-#     `:connect` reply, default `{:ok, :connecting}`) and an optional
-#     `:connect_delay_ms` (sleep before replying). NOTE: the off-process property
-#     is proven by the recorded caller pid (see `:callers` below), NOT by any
-#     delay — the caller-pid assertion is delay-independent.
-#
-# Extra calls used by the event-driven async-connect tests:
-#   * `{:set_status, status}` — test-driven phase mutation (the broadcast →
-#     gate reconciliation path re-reads the LIVE manager, so the stored status
-#     must flip before the broadcast is sent)
-#   * `:calls` / `:callers` — recorded `:connect` invocation count / caller
-#     pids (a caller that is neither the LiveView process nor the test process
-#     proves the connect ran on `EvoDash.TaskSupervisor`).
-defmodule EvoDashWeb.ProjectsLiveTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    init({target_id, status, []})
-  end
-
-  def init({target_id, status, opts}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-
-    {:ok,
-     %{
-       status: status,
-       connect_result: Keyword.get(opts, :connect_result, {:ok, :connecting}),
-       connect_delay_ms: Keyword.get(opts, :connect_delay_ms),
-       connect_callers: []
-     }}
-  end
-
-  @impl true
-  def handle_call(:status, _from, state), do: {:reply, state.status, state}
-
-  @impl true
-  def handle_call(:connect, from, state) do
-    # The delay sleeps INSIDE the fake (a GenServer handle_call) so any caller
-    # that blocks on the connect synchronously would stall; recording the
-    # caller pid lets the test prove the connect ran on a separate process.
-    if delay = state.connect_delay_ms, do: Process.sleep(delay)
-
-    {:reply, state.connect_result,
-     %{state | connect_callers: [elem(from, 0) | state.connect_callers]}}
-  end
-
-  @impl true
-  def handle_call({:set_status, status}, _from, state),
-    do: {:reply, :ok, %{state | status: status}}
-
-  @impl true
-  def handle_call(:calls, _from, state), do: {:reply, length(state.connect_callers), state}
-
-  @impl true
-  def handle_call(:callers, _from, state), do: {:reply, state.connect_callers, state}
 end

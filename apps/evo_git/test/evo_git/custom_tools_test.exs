@@ -3,48 +3,27 @@ defmodule EvoGit.CustomToolsTest do
   Loader + public-API tests for the custom-tools subsystem
   (`EvoGit.CustomTools` / `EvoGit.CustomTools.Loader`).
 
-  `async: false` — every test repoints the BEAM-global `XDG_CONFIG_HOME` env var
-  so custom tools never read the real `~/.config/genesis/` directory.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`) so custom tools never read the real
+  `~/.config/genesis/` directory, and the loader's `:persistent_term` cache key
+  EMBEDS the tools directory, so test-local directories cannot collide.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
   import ExUnit.CaptureLog
 
   alias EvoGit.CustomTools
-  alias EvoGit.CustomTools.Loader
+  alias EvoGit.TestSupport.ConfigDir
 
   setup do
-    isolate_xdg!()
+    ConfigDir.isolate!("evogit-custom-tools")
     :ok
   end
 
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
-
-  # Points XDG_CONFIG_HOME at a fresh temp dir (so `EvoGit.Config.config_dir/0`
-  # resolves under it) and restores it — plus the loader's `:persistent_term`
-  # cache entry — on exit.
-  defp isolate_xdg! do
-    original = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg = Path.join(System.tmp_dir!(), "evogit-ct-xdg-#{uniq()}")
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      Loader.invalidate(Path.join(EvoGit.Config.config_dir(), "tools"))
-
-      if original do
-        System.put_env("XDG_CONFIG_HOME", original)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-  end
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -112,6 +91,19 @@ defmodule EvoGit.CustomToolsTest do
     module = module_for(uniq())
     path = write_raw!(dir, basename, tool_source(module, tool_name, opts))
     {module, path}
+  end
+
+  # Unloads generated fixture modules so a following `CustomTools.reload/0` can
+  # recompile their sources WITHOUT emitting `warning: redefining module ...`.
+  # That warning matters beyond this file: `ExUnit.CaptureIO`'s named-device
+  # stderr is ONE StringIO per device handed out with per-capturer offsets, so a
+  # concurrent async module's capture window can observe bytes written by this
+  # test (see `store/boot_migration_source_test.exs`).
+  defp unload_modules!(modules) do
+    Enum.each(modules, fn module ->
+      :code.purge(module)
+      :code.delete(module)
+    end)
   end
 
   # Compiles generated source with `Code.compile_file/1` to obtain the beam
@@ -335,24 +327,46 @@ defmodule EvoGit.CustomToolsTest do
   # ---------------------------------------------------------------------------
 
   describe "reload/0" do
-    test "picks up newly written files" do
+    test "picks up newly written files and a CHANGED tool source" do
       assert CustomTools.load() == %{}
 
       first = "ct_reload_a_#{uniq()}"
-      write_source_tool!(dir(), "#{first}.ex", first, read_only: true)
-      assert CustomTools.reload() == :ok
-      assert CustomTools.known?(first)
 
+      {first_module, first_path} =
+        write_source_tool!(dir(), "#{first}.ex", first, read_only: true)
+
+      assert CustomTools.reload() == :ok
+      assert CustomTools.load()[first].module == first_module
+      assert CustomTools.load()[first].read_only? == true
+
+      # Rewrite the SAME file with a CHANGED source (same tool name, a WRITE
+      # classification, a fresh module name) and prove `reload/0` picks it up.
+      # A reload rebuilds the WHOLE directory, so it recompiles this file too;
+      # the previous module is unloaded first because recompiling a module name
+      # that is still loaded in the BEAM prints `warning: redefining module ...`
+      # on stderr — and `CaptureIO`'s named-device stderr is SHARED per device,
+      # so a CONCURRENT async module's capture window can see those bytes (that
+      # is exactly how this leaked into `store/boot_migration_source_test.exs`).
+      {changed_module, ^first_path} =
+        write_source_tool!(dir(), "#{first}.ex", first, read_only: false)
+
+      unload_modules!([first_module])
+      assert CustomTools.reload() == :ok
+      assert CustomTools.load()[first].module == changed_module
+      assert CustomTools.load()[first].read_only? == false
+      assert CustomTools.write_tool?(first)
+
+      # A NEW file is picked up on the next reload, which recompiles the first
+      # file again (still warning-free: its module is unloaded first).
       second = "ct_reload_b_#{uniq()}"
-      write_source_tool!(dir(), "#{second}.ex", second, read_only: true)
-      assert CustomTools.reload() == :ok
 
-      # Adding a file forces the loader to rebuild the whole set (it also
-      # recompiles the first file) — silence the expected redefinition warning.
-      capture_io(:stderr, fn ->
-        assert CustomTools.known?(first)
-        assert CustomTools.known?(second)
-      end)
+      {second_module, _second_path} =
+        write_source_tool!(dir(), "#{second}.ex", second, read_only: true)
+
+      unload_modules!([changed_module])
+      assert CustomTools.reload() == :ok
+      assert CustomTools.load()[first].module == changed_module
+      assert CustomTools.load()[second].module == second_module
     end
   end
 

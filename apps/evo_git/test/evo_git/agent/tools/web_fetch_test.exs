@@ -5,6 +5,9 @@ defmodule EvoGit.Agent.Tools.WebFetchTest do
   path is exercised with no network access and no mocking of `Req`.
   """
 
+  # NOT async: the fixed absolute `@repo` below is SHARED by every test (and by
+  # any concurrent run), so this module can only be flipped once its fixtures
+  # move to a per-test `@moduletag :tmp_dir` dir.
   use ExUnit.Case, async: false
 
   alias EvoGit.Agent.Tools.WebFetch
