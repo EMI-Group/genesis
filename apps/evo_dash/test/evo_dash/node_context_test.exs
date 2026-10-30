@@ -5,11 +5,18 @@
 #     touches process-global state. It writes into the RUN-WIDE per-run store
 #     with UNIQUE ids/paths (the idiom already used by the task-review
 #     describe), so nothing has to be swapped or isolated.
-#   * `EvoDash.NodeContextConfigTest` (`async: false`) — the two describes that
-#     must set `XDG_CONFIG_HOME` to a temp dir. That env var is
-#     process-global and has no app-env seam (`EvoGit.Platform.base_dir/3`
-#     reads it at call time), and a process-dictionary seam cannot work because
-#     LiveView/page processes do not inherit the test process's dictionary.
+#   * `EvoDash.NodeContextConfigTest` (`async: true`) — the two describes that
+#     WRITE the viewed node's config dir (`agents.toml`, `tools/`). They used to
+#     redirect `XDG_CONFIG_HOME` to a temp dir — a process-global env var, the
+#     reason this module was `async: false`. They now isolate PER PROCESS
+#     through the test-only `:config_dir_fun` seam installed by
+#     test/test_helper.exs (`EvoDash.Test.ConfigDir.isolate!/1`): the override
+#     lives in the TEST process' dictionary and both the RPC code under test and
+#     anything it spawns reach it through the OTP `:"$callers"` chain. Nothing
+#     process-global is mutated, so both modules run in the async phase.
+#
+# The split itself stays: ExUnit parallelises across MODULES, never within one,
+# so two async modules run on two runners instead of one.
 defmodule EvoDash.NodeContextTest do
   use EvoDashWeb.ConnCase, async: true
 
@@ -426,10 +433,14 @@ defmodule EvoDash.NodeContextTest do
   end
 end
 
-# Stays in the SYNC phase: both describes redirect `XDG_CONFIG_HOME` to a temp
-# dir, which is process-global and cannot be scoped to one test process.
+# `async: true` — this module writes the config dir (agents.toml, tools/), and
+# that write is isolated PER PROCESS by the `:config_dir_fun` seam
+# (`EvoDash.Test.ConfigDir.isolate!/1`), never by the BEAM-global
+# `XDG_CONFIG_HOME`. Each test gets its own unique `<temp dir>/genesis` — the
+# same layout the old env-var redirect produced — so no assertion changes and no
+# process-global state is mutated.
 defmodule EvoDash.NodeContextConfigTest do
-  use EvoDashWeb.ConnCase, async: false
+  use EvoDashWeb.ConnCase, async: true
 
   import ExUnit.CaptureLog
 
@@ -472,28 +483,17 @@ defmodule EvoDash.NodeContextConfigTest do
 
   describe "custom-agents RPC delegates (local node, real paths)" do
     # The local path reads/writes the REAL agents.toml at
-    # EvoGit.Config.config_dir(). Never touch the user's real file: isolate
-    # with the same XDG pattern as evo_git's custom_agents_test.exs. This is
-    # why the module is `async: false` — `XDG_CONFIG_HOME` is process-global.
+    # EvoGit.Config.config_dir(). Never touch the user's real file: give this
+    # test its OWN `<temp dir>/genesis` through the per-process
+    # `:config_dir_fun` seam (same directory layout as the old XDG redirect).
+    # A fresh dir has no agents.toml, which is exactly the hermetic "no
+    # definition yet" state.
+    #
+    # No cache invalidation is needed: the `:persistent_term` config/agent
+    # caches are keyed by FILE PATH and every test resolves a unique path.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
-
+      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_config")
+      on_exit(fn -> File.rm_rf!(dir) end)
       :ok
     end
 
@@ -573,36 +573,18 @@ defmodule EvoDash.NodeContextConfigTest do
 
   describe "custom_tools_status/1 (node-first custom-tools RPC)" do
     # The local path reads the VIEWED node's own `<config_dir>/tools/`
-    # directory. Never touch the user's real config: isolate with the same XDG
-    # pattern as the custom-agents describe above (and evo_git's
-    # custom_tools_rpc_test.exs) — again, the `async: false` reason. A fresh
-    # temp config dir has no `tools/` subdirectory, so the hermetic status is
-    # the empty shape.
+    # directory. Never touch the user's real config: give this test its OWN
+    # `<temp dir>/genesis` through the per-process `:config_dir_fun` seam (same
+    # directory layout as the old XDG redirect, so evo_git's
+    # custom_tools_rpc_test.exs behaviour is mirrored). A fresh dir has no
+    # `tools/` subdirectory, so the hermetic status is the empty shape.
+    #
+    # The loader's `:persistent_term` cache is keyed by the tools DIRECTORY and
+    # every test resolves a unique one, so a cached entry can never leak in
+    # from — or into — another test: no reload is needed around the setup.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      # The loader caches in :persistent_term keyed by the tools dir (which
-      # follows XDG_CONFIG_HOME) — invalidate before and after for determinism.
-      EvoGit.CustomTools.reload()
-
-      on_exit(fn ->
-        EvoGit.CustomTools.reload()
-
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
-
+      dir = EvoDash.Test.ConfigDir.isolate!("evogit_node_context_tools")
+      on_exit(fn -> File.rm_rf!(dir) end)
       :ok
     end
 

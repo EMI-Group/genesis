@@ -1,14 +1,14 @@
 # Review-page suite — SPLIT ACROSS MODULES FOR PARALLELISM.
 #
 # ExUnit parallelises across MODULES, never within one, so the page suite is
-# partitioned into 5 `async: true` modules plus THREE `async: false` modules for
-# the tests that publish process-global state. Every test body, assertion and
+# partitioned into SIX `async: true` modules plus THREE `async: false` modules
+# for the tests that publish process-global state. Every test body, assertion and
 # comment is carried over unchanged; only module boilerplate moved.
 #
 # Two PROCESS-GLOBAL hazards decide a module's phase, and both are symmetric:
 #   * APP ENV (`Application.put_env/2` seams) + `EvoDash.ActiveTasks` hub +
-#     `XDG_CONFIG_HOME` / `PATH`: a module that WRITES one of those must not run
-#     concurrently with a module that reads it.
+#     `PATH`: a module that WRITES one of those must not run concurrently with a
+#     module that reads it.
 #   * The "tasks" PUBSUB TOPIC: `EvoGit.TaskRegistry` broadcasts
 #     `{:task_updated, id, status, node()}` / `{:task_deleted, id, node()}` on
 #     EVERY mutation, and a same-node broadcast arms `EvoDashWeb.LiveHooks.
@@ -19,11 +19,25 @@
 #     that flag and fails on any concurrent publisher (1 failure in 5 runs when
 #     the merge module was async). Fixture SEEDS go through `EvoGit.Store.put_task`
 #     and fixture CLEANUP goes through `delete_seeded_task!/1` (Store delete, no
-#     broadcast) for exactly this reason.
+#     broadcast) for exactly this reason. A CLICK that reaches only an
+#     UNREACHABLE REMOTE node (every `:erpc` fails fast with `:nodedown`) writes
+#     nothing locally and therefore publishes nothing.
+#
+# The CONFIG DIR is no longer a phase reason: a suite that WRITES it isolates it
+# PER PROCESS through the test-only `:config_dir_fun` seam
+# (`EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs —
+# `support/config_dir_test.exs` proves the LiveView and its supervised load
+# tasks resolve it), never through the BEAM-global `XDG_CONFIG_HOME`. Each test
+# gets its own `<temp dir>/genesis` — the layout the old env-var redirect
+# produced — so no assertion changed.
 #
 #   Module (async?)              Tests  App-env keys OWNED / why sync
 #   ---------------------------------------------------------------------------
 #   .Helpers (no tests)              –  shared helpers + per-module repo templates
+#   .ConnectionManager (no tests)    –  fake connection-manager GenServer; defined
+#                                       ABOVE every test module because an
+#                                       `async: true` module runs as soon as it
+#                                       is registered by the compiler
 #   ReviewLiveArchiveTest  (true)    21  :review_archive_runner,
 #                                       :review_archive_agent_runner; no action
 #                                       click ⇒ publishes nothing
@@ -33,6 +47,11 @@
 #   ReviewLiveLoadTest     (true)    14  none (seam-free, no action click)
 #   ReviewLiveMultiRepoTest (true)   13  none (seam-free, no action click)
 #   ReviewLiveChromeTest   (true)    16  none (seam-free, no action click)
+#   ReviewLiveRemoteAutoResolveTest (true) 1  none: auto_resolve against an
+#                                       UNREACHABLE remote node → `set_review_status`
+#                                       / `start_task` are `:erpc` calls that fail
+#                                       fast, so nothing is published on "tasks";
+#                                       the config dir is seam-isolated per process
 #   ReviewLiveMergeTest    (false)   24  :review_merge_runner + :review_reject_runner
 #                                       (several tests write both, so one module
 #                                       must own both) — SYNC because every test
@@ -40,19 +59,20 @@
 #                                       broadcasts on "tasks"
 #   ReviewLiveAutoResolveTest (false)  3  SYNC: resume / auto_resolve clicks
 #                                       (`start_task` + `set_review_status`)
-#   ReviewLiveSyncTest     (false)   20  writes XDG_CONFIG_HOME / PATH, or asserts
-#                                       the ActiveTasks hub: ignore action (2),
-#                                       auto merge conflict resolution (3),
-#                                       auto merge conflict on an unreachable
-#                                       remote node (1), remote node review (3),
-#                                       per-repo merge scoping (1), merge partial
-#                                       failure (1), per-repo reject scoping (1),
-#                                       hub invalidation (1), plus 7 individually
-#                                       moved tests (see each site's comment).
+#   ReviewLiveSyncTest     (false)   19  writes PATH (the `gh` stub) or the
+#                                       :review_archive_runner app-env seam, or
+#                                       asserts/writes the LOCAL ActiveTasks hub
+#                                       key: ignore action (2), auto merge
+#                                       conflict resolution (3), remote node
+#                                       review (3), per-repo merge scoping (1),
+#                                       merge partial failure (1), per-repo reject
+#                                       scoping (1), hub invalidation (1), plus 7
+#                                       individually moved tests (see each site's
+#                                       comment).
 #
-# WHY the individually moved tests are in the SYNC module: they either set
-# `XDG_CONFIG_HOME` (process-wide, no app-env/process-dict override seam in
-# `EvoGit.Platform.config_dir/1`), rewrite `PATH` for the `gh` stub, READ the
+# WHY the individually moved tests are in the SYNC module: they either rewrite
+# `PATH` for the `gh` stub, WRITE an app-env seam the async sibling modules own
+# (`:review_archive_runner` / `:review_archive_agent_runner`), READ the
 # `EvoDash.ActiveTasks` hub snapshot — a single `{nil, node()}` key every
 # concurrently mounted page writes via its sidebar fetch, so a snapshot read (or
 # `wait_hub_warm/1`, which flunks when a concurrent `ActiveTasks.reset/0` leaves
@@ -1260,6 +1280,32 @@ defmodule EvoDashWeb.ReviewLiveTest.Helpers do
         nil
     end
   end
+end
+
+# A minimal GenServer standing in for a real remote connection manager in
+# `EvoGit.RemoteConnection.Registry` (same pattern as
+# EvoDashWeb.SettingsLiveTest.ConnectionManager). The process dies (and its
+# Registry entry is auto-removed) at test end via `start_supervised!`.
+#
+# Defined FIRST in this file (above every test module): an `async: true`
+# module starts running as soon as it is registered by the compiler, so a
+# fake sitting at the END of the file would not be loaded yet when an async
+# test calls `start_supervised!/1`.
+defmodule EvoDashWeb.ReviewLiveTest.ConnectionManager do
+  use GenServer
+
+  def start_link(args) do
+    GenServer.start_link(__MODULE__, args)
+  end
+
+  @impl true
+  def init({target_id, status}) do
+    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
+    {:ok, status}
+  end
+
+  @impl true
+  def handle_call(:status, _from, status), do: {:reply, status, status}
 end
 
 defmodule EvoDashWeb.ReviewLiveArchiveTest do
@@ -5087,6 +5133,151 @@ defmodule EvoDashWeb.ReviewLiveChromeTest do
   end
 end
 
+defmodule EvoDashWeb.ReviewLiveRemoteAutoResolveTest do
+  # `async: true` — the auto-resolve attempt here runs against an UNREACHABLE
+  # remote node: `Actions.auto_resolve/3` issues its `set_review_status` /
+  # `start_task` writes THROUGH `EvoDash.NodeContext` with that node, so both
+  # are `:erpc` calls that fail fast (:nodedown) and NOTHING is published on the
+  # local "tasks" topic — the very reason the sibling merge/reject modules are
+  # `async: false`. The config dir this describe writes
+  # (`EvoGit.RemoteConnections.save`) is isolated PER PROCESS through the
+  # test-only `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`),
+  # never through the BEAM-global `XDG_CONFIG_HOME`, and the fake
+  # ConnectionManager registers under a per-test unique target id in the shared
+  # `EvoGit.RemoteConnection.Registry`.
+  #
+  # MOVED here out of `EvoDashWeb.ReviewLiveSyncTest`: the config dir was this
+  # describe's only blocker.
+  use EvoDashWeb.ConnCase, async: true
+  import Phoenix.LiveViewTest
+  import EvoDashWeb.ReviewLiveTest.Helpers
+
+  setup_all do
+    # Canonical merge-check stub for EVERY mount in this module (see the file
+    # header). Never deleted.
+    install_canonical_merge_check_runner()
+    :ok
+  end
+
+  setup do
+    # This suite depends on the PRODUCTION Store/TaskRegistry pair (it does no
+    # isolation of its own), so fail loudly at the source if a prior suite
+    # leaked an isolated instance instead of silently reading a foreign DB.
+    EvoDash.Test.IsolatedTaskStore.assert_production!()
+
+    # ActiveTasks is a global ETS hub under EvoDash.Application that is NOT
+    # terminated by the per-test isolation above — reset it so one test's
+    # sidebar snapshot never leaks into the next (ConnCase resets it too; kept
+    # explicit here because this file's tests mount whole pages through
+    # Layouts.app, which seeds the sidebar from it).
+    EvoDash.ActiveTasks.reset()
+
+    on_exit(fn ->
+      # Reset on EXIT as well as on entry — every page mount asynchronously
+      # writes a sidebar snapshot into this global hub, and the LAST test's
+      # snapshot would otherwise survive into a later suite that mounts pages
+      # without resetting the hub (PageControllerTest does a dead render through
+      # Layouts.app and reads the hub).
+      EvoDash.ActiveTasks.reset()
+    end)
+
+    :ok
+  end
+
+  describe "auto merge conflict resolution on an unreachable remote node" do
+    # Same per-process config-dir isolation + fake ConnectionManager seam as the
+    # sibling "remote node review" describe.
+    setup do
+      EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_auto_resolve")
+
+      :ok
+    end
+
+    test "auto-resolve against an unreachable node fails with an error flash", %{conn: conn} do
+      id = "review-auto-target-#{System.unique_integer([:positive])}"
+
+      {:ok, _target} =
+        EvoGit.RemoteConnections.save(%{
+          ssh_target: "user@host",
+          id: id,
+          name: "Review Auto Target"
+        })
+
+      start_supervised!(
+        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
+         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
+      )
+
+      # The task does not exist on the (unreachable) remote node — the real
+      # async load fails fast with :nodedown and the page renders the graceful
+      # error state (review_repos stays []). The merge-check result handler
+      # drops results for repo ids absent from @review_repos (per-repo
+      # stale-guard), so to reach the auto-resolve RPC-failure path we first
+      # inject a VALID load result carrying a primary review-repo entry (with
+      # branch_exists: false and merge_targets: [] so MergeCheck.maybe_start
+      # does NOT spawn an async check — fully deterministic), then inject the
+      # conflict result for "primary".
+      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
+
+      # Flush the real async load (nodedown → error state) so the injected
+      # load result cannot be clobbered by a racing message.
+      flush_review_load(view)
+
+      remote_node = assigns(view)[:current_node]
+      assert remote_node != node()
+
+      gen = assigns(view)[:load_generation]
+
+      send(
+        view.pid,
+        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
+         {:ok,
+          %{
+            review_repos: [
+              %{
+                repo_id: "primary",
+                repo_path: "/nonexistent/repo/path",
+                branch_name: "evogit/test-branch",
+                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+                base_sha: nil,
+                branch_exists: false,
+                review_data: nil,
+                commits: [],
+                merge_targets: [],
+                default_merge_target: nil,
+                merge_status: nil
+              }
+            ],
+            active_repo_id: "primary",
+            loading: false,
+            error: nil
+          }}}
+      )
+
+      render(view)
+
+      send(
+        view.pid,
+        {:merge_check_result, "some-remote-task-id", remote_node, "primary", "main",
+         {:ok, {:conflict, ["file_a.txt"]}}}
+      )
+
+      render(view)
+
+      # The set_review_status and start_task RPCs both fail fast with
+      # :nodedown → error flash, no navigation.
+      render_click(view, "auto_resolve")
+
+      # The action runs in a TaskSupervisor child; the flash lands one
+      # {:review_action_result, ...} frame later.
+      html = await_review_action_settled(view)
+
+      assert html =~ "Failed to start auto-resolve"
+      refute_redirected(view)
+    end
+  end
+end
+
 defmodule EvoDashWeb.ReviewLiveAutoResolveTest do
   # `async: false` — every test here CLICKS a review action (merge / reject /
   # resume / ignore / auto_resolve), and each action's production path casts to
@@ -5689,118 +5880,6 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     end
   end
 
-  describe "auto merge conflict resolution on an unreachable remote node" do
-    # Same XDG_CONFIG_HOME isolation + fake ConnectionManager seam as the
-    # remote-node describe above.
-    setup do
-      original = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_config =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_test_config_review_auto_" <> to_string(System.unique_integer([:positive]))
-        )
-
-      File.mkdir_p!(tmp_config)
-      System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_config)
-
-        if original do
-          System.put_env("XDG_CONFIG_HOME", original)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-      end)
-
-      :ok
-    end
-
-    test "auto-resolve against an unreachable node fails with an error flash", %{conn: conn} do
-      id = "review-auto-target-#{System.unique_integer([:positive])}"
-
-      {:ok, _target} =
-        EvoGit.RemoteConnections.save(%{
-          ssh_target: "user@host",
-          id: id,
-          name: "Review Auto Target"
-        })
-
-      start_supervised!(
-        {EvoDashWeb.ReviewLiveTest.ConnectionManager,
-         {id, %{phase: :connected, node: "genesis_remote@127.0.0.1", last_error: nil}}}
-      )
-
-      # The task does not exist on the (unreachable) remote node — the real
-      # async load fails fast with :nodedown and the page renders the graceful
-      # error state (review_repos stays []). The merge-check result handler
-      # drops results for repo ids absent from @review_repos (per-repo
-      # stale-guard), so to reach the auto-resolve RPC-failure path we first
-      # inject a VALID load result carrying a primary review-repo entry (with
-      # branch_exists: false and merge_targets: [] so MergeCheck.maybe_start
-      # does NOT spawn an async check — fully deterministic), then inject the
-      # conflict result for "primary".
-      {:ok, view, _html} = live(conn, "/review/some-remote-task-id?node=" <> id)
-
-      # Flush the real async load (nodedown → error state) so the injected
-      # load result cannot be clobbered by a racing message.
-      flush_review_load(view)
-
-      remote_node = assigns(view)[:current_node]
-      assert remote_node != node()
-
-      gen = assigns(view)[:load_generation]
-
-      send(
-        view.pid,
-        {:review_data_loaded, "some-remote-task-id", remote_node, gen,
-         {:ok,
-          %{
-            review_repos: [
-              %{
-                repo_id: "primary",
-                repo_path: "/nonexistent/repo/path",
-                branch_name: "evogit/test-branch",
-                commit_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-                base_sha: nil,
-                branch_exists: false,
-                review_data: nil,
-                commits: [],
-                merge_targets: [],
-                default_merge_target: nil,
-                merge_status: nil
-              }
-            ],
-            active_repo_id: "primary",
-            loading: false,
-            error: nil
-          }}}
-      )
-
-      render(view)
-
-      send(
-        view.pid,
-        {:merge_check_result, "some-remote-task-id", remote_node, "primary", "main",
-         {:ok, {:conflict, ["file_a.txt"]}}}
-      )
-
-      render(view)
-
-      # The set_review_status and start_task RPCs both fail fast with
-      # :nodedown → error flash, no navigation.
-      render_click(view, "auto_resolve")
-
-      # The action runs in a TaskSupervisor child; the flash lands one
-      # {:review_action_result, ...} frame later.
-      html = await_review_action_settled(view)
-
-      assert html =~ "Failed to start auto-resolve"
-      refute_redirected(view)
-    end
-  end
-
   describe "remote node review (unreachable node)" do
     # A remote node that cannot be reached must degrade to the existing
     # graceful "Review Not Available" state instead of crashing. The seam:
@@ -5812,29 +5891,18 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     # :nodedown, so NodeContext.get_task returns nil → the existing
     # "Task not found" error state renders.
     #
-    # XDG_CONFIG_HOME is isolated so the saved target never touches the
-    # developer's real ~/.config/genesis/ (same pattern as settings_live_test).
+    # The config dir is isolated PER PROCESS (test-only `:config_dir_fun` seam →
+    # `EvoDash.Test.ConfigDir.isolate!/1`) so the saved target never touches the
+    # developer's real ~/.config/genesis/ — never through the BEAM-global
+    # `XDG_CONFIG_HOME` (the seam gives this test a unique `<temp dir>/genesis`,
+    # the same layout the old env-var redirect produced).
+    #
+    # Still `async: false`: the "unknown node param falls back to local" test
+    # mounts a LOCAL page, whose connected-mount sidebar fetch writes the
+    # process-global LOCAL `EvoDash.ActiveTasks` hub key every concurrently
+    # mounting page also writes.
     setup do
-      original = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_config =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_test_config_review_" <> to_string(System.unique_integer([:positive]))
-        )
-
-      File.mkdir_p!(tmp_config)
-      System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_config)
-
-        if original do
-          System.put_env("XDG_CONFIG_HOME", original)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-      end)
+      EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_node")
 
       :ok
     end
@@ -6340,27 +6408,15 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
     test "the paged runners receive the viewed remote node atom", %{conn: conn} do
       # Same remote-node fixture as the "remote node review" describe: a fake
       # connection manager registers the target as :connected so NodeAware
-      # resolves `?node=` to the remote BEAM node atom.
-      original = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_config =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit_test_config_review_archive_" <> to_string(System.unique_integer([:positive]))
-        )
-
-      File.mkdir_p!(tmp_config)
-      System.put_env("XDG_CONFIG_HOME", tmp_config)
-
-      on_exit(fn ->
-        File.rm_rf(tmp_config)
-
-        if original do
-          System.put_env("XDG_CONFIG_HOME", original)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-      end)
+      # resolves `?node=` to the remote BEAM node atom. The config dir is
+      # isolated PER PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`), never
+      # through the BEAM-global `XDG_CONFIG_HOME`.
+      #
+      # Still `async: false`: this test WRITES the `:review_archive_runner` /
+      # `:review_archive_agent_runner` app-env seams, which the async
+      # `EvoDashWeb.ReviewLiveArchiveTest` module OWNS — a shared app-env key
+      # may not be written while an async reader runs.
+      EvoDash.Test.ConfigDir.isolate!("evogit_review_remote_archive")
 
       id = "review-archive-target-#{System.unique_integer([:positive])}"
 
@@ -6812,25 +6868,4 @@ defmodule EvoDashWeb.ReviewLiveSyncTest do
       assert assigns(view)[:flash]["error"] =~ "Failed to create pull request"
     end
   end
-end
-
-# A minimal GenServer standing in for a real remote connection manager in
-# `EvoGit.RemoteConnection.Registry` (same pattern as
-# EvoDashWeb.SettingsLiveTest.ConnectionManager). The process dies (and its
-# Registry entry is auto-removed) at test end via `start_supervised!`.
-defmodule EvoDashWeb.ReviewLiveTest.ConnectionManager do
-  use GenServer
-
-  def start_link(args) do
-    GenServer.start_link(__MODULE__, args)
-  end
-
-  @impl true
-  def init({target_id, status}) do
-    Registry.register(EvoGit.RemoteConnection.Registry, target_id, :status)
-    {:ok, status}
-  end
-
-  @impl true
-  def handle_call(:status, _from, status), do: {:reply, status, status}
 end

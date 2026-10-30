@@ -87,8 +87,13 @@ defmodule EvoDashWeb.NodeAwareRunWideTest do
   # `EvoGit.RemoteConnection.Registry`, but only under target ids unique to this
   # file, so no concurrently running suite can resolve one.
   #
-  # Everything that must MUTATE a process-global — `XDG_CONFIG_HOME`, the
-  # LOCAL `EvoDash.ActiveTasks` hub key, the `EvoGit.TaskRegistry` name, the
+  # The config dir is NOT written here; the `async: false` module below writes
+  # it and isolates it PER PROCESS through the test-only `:config_dir_fun` seam
+  # (`EvoDash.Test.ConfigDir.isolate!/1`), never through a BEAM-global
+  # `XDG_CONFIG_HOME` write.
+  #
+  # Everything that must MUTATE a process-global — the LOCAL
+  # `EvoDash.ActiveTasks` hub key, the `EvoGit.TaskRegistry` name, the
   # production Store/TaskRegistry pair — lives in the `async: false`
   # `EvoDashWeb.NodeAwareTest` module below.
   use ExUnit.Case, async: true
@@ -593,10 +598,6 @@ defmodule EvoDashWeb.NodeAwareTest do
   # NodeAware hook tests that MUST mutate a process-global, so they run
   # `async: false`:
   #
-  #   * `XDG_CONFIG_HOME` (`isolate_config_dir/1`) — process-global with NO
-  #     app-env seam (`EvoGit.Platform.base_dir/3` reads it at call time), so a
-  #     suite that WRITES a connection target must not overlap another module's
-  #     config reads.
   #   * the LOCAL `EvoDash.ActiveTasks` hub key (`{nil, node()}`) — every
   #     concurrently mounting page seeds AND writes it, so only a sync suite can
   #     assert it is cold.
@@ -604,7 +605,17 @@ defmodule EvoDashWeb.NodeAwareTest do
   #     `GenServer.call` EXIT deterministic.
   #   * `EvoDash.Test.IsolatedTaskStore.isolate!/1` — terminates the
   #     process-global Store/TaskRegistry pair, for the describes whose
-  #     assertions depend on a store that holds NOTHING.
+  #     assertions depend on a store that holds NOTHING (`setup_isolated_registry`
+  #     below); the pair's NAME is per BEAM, so the terminate+restart must not
+  #     overlap any other suite.
+  #
+  # The config dir is NO LONGER a reason: these describes WRITE it
+  # (`save_target!`), and that write is isolated PER PROCESS through the
+  # test-only `:config_dir_fun` seam (`isolate_config_dir/1` →
+  # `EvoDash.Test.ConfigDir.isolate!/1`, installed by test/test_helper.exs), not
+  # by the BEAM-global `XDG_CONFIG_HOME`. The override lives in the test
+  # process' dictionary and reaches whatever the hook spawns through the OTP
+  # `:"$callers"` chain.
   #
   # These describes invoke `on_mount/4` directly on a boot-shaped socket
   # (`mount_socket/1` = dead render, `connected_mount_socket/1` = connected) and
@@ -696,32 +707,17 @@ defmodule EvoDashWeb.NodeAwareTest do
     :ok = EvoDash.Test.IsolatedTaskStore.isolate!("node_aware")
   end
 
-  # Isolates the config dir via XDG_CONFIG_HOME so EvoGit.RemoteConnections
-  # never touches the developer's real ~/.config/genesis/ directory. Same
-  # pattern as evo_git's remote_connections_test.exs. Requires async: false
-  # (mutates a global env var).
+  # Isolates the config dir PER PROCESS so EvoGit.RemoteConnections never touches
+  # the developer's real ~/.config/genesis/ directory. Uses the test-only
+  # `:config_dir_fun` seam (`EvoDash.Test.ConfigDir.isolate!/1`), which gives
+  # this test a unique `<temp dir>/genesis` — the same layout the old
+  # `XDG_CONFIG_HOME` redirect produced — and registers the `File.rm_rf!`
+  # cleanup itself. The override reaches spawned work
+  # (`EvoDash.SafeCall`/`Task.Supervisor` children) through OTP's `:"$callers"`
+  # chain, so nothing here needs the sync phase for the CONFIG DIR; these
+  # describes stay `async: false` for the globals named in the module comment.
   defp isolate_config_dir(_context) do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit_test_node_aware_xdg_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    EvoDash.Test.ConfigDir.isolate!("evogit_node_aware_test_config")
     :ok
   end
 
@@ -774,9 +770,10 @@ defmodule EvoDashWeb.NodeAwareTest do
   describe "assign_node/2 — :remote_status assign" do
     # assign_node's remote resolution reads connection targets from
     # EvoGit.RemoteConnections (a TOML file under the config dir), so these
-    # tests isolate XDG_CONFIG_HOME to avoid touching the developer's real
-    # ~/.config/genesis/ and save a dedicated test target — a config WRITE,
-    # hence async: false even for the two tests that only read.
+    # tests isolate the config dir per test (see `isolate_config_dir/1`) and
+    # save a dedicated test target. `async: false` comes from the isolated
+    # Store/TaskRegistry pair (`setup_isolated_registry`), not from the config
+    # write.
     #
     # The node-context assigns (current_node_id/current_node/remote_status) are
     # set synchronously and asserted directly. Each assign_node call ALSO
@@ -866,9 +863,9 @@ defmodule EvoDashWeb.NodeAwareTest do
     #   at all. LOCAL pages DO fetch on every connected mount — the
     #   staleness catch-up covered in the next describe.
     #
-    # async: false — the LOCAL-key seed assertions here are exact, and the
-    # config dir is isolated per test (`save_target!` writes it) because
-    # resolve_node_context reads remote_connections.toml.
+    # async: false — the LOCAL-key seed assertions here are exact (every
+    # concurrently mounting page writes that key); the config dir itself is
+    # isolated per process (`save_target!` writes it).
     setup :isolate_config_dir
 
     test "warm LOCAL hub seeds running/pending synchronously on the dead render (no blink premise)" do
@@ -1035,8 +1032,9 @@ defmodule EvoDashWeb.NodeAwareTest do
     # paints the first render blink-free; the fresh result lands via the
     # attached :handle_info hook. Remote/pending pages NEVER fetch on mount.
     #
-    # async: false — `save_target!` writes the config dir, and the payload
-    # assertions require a store that holds NOTHING (the isolated pair).
+    # async: false — the payload assertions require a store that holds NOTHING
+    # (the isolated pair, whose terminate+restart touches the process-global
+    # TaskRegistry name) and the LOCAL hub key is read exactly.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
@@ -1193,7 +1191,13 @@ defmodule EvoDashWeb.NodeAwareTest do
     # hook (`handle_remote_context_result/2` — seq-stale-guarded only, since a
     # node switch must not throw the target list away).
     #
-    # async: false — `save_target!` writes the config dir.
+    # This describe has no global of its OWN: the config dir it writes
+    # (`save_target!`) is isolated per process through the seam. It stays in
+    # this `async: false` module — the MODULE is sync for the singleton reasons
+    # in its header — because moving it into the async module above would mean
+    # duplicating (or extracting into a shared helper module) the module-private
+    # mount helpers it uses (`mount_socket/1`, `connected_mount_socket/1`,
+    # `assert_remote_context_loaded/0`, `save_target!/2`) for two tests.
     setup :isolate_config_dir
 
     test "the dead render spawns NO node-context load (:remote_context_seq stays 0)" do
@@ -1509,7 +1513,8 @@ defmodule EvoDashWeb.NodeAwareTest do
     # gap; this pins that the reload fires for an UNSEEN (hub-cold) remote
     # context with the correct node_id/node in the fetch message.
     #
-    # async: false — `save_target!` writes the config dir.
+    # async: false — the isolated Store/TaskRegistry pair
+    # (`setup_isolated_registry`); the config dir is seam-isolated per process.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
@@ -1559,7 +1564,8 @@ defmodule EvoDashWeb.NodeAwareTest do
     # while the fake ConnectionManager stands in for the real manager in
     # EvoGit.RemoteConnection.Registry.
     #
-    # async: false — `save_target!` writes the config dir.
+    # async: false — the isolated Store/TaskRegistry pair
+    # (`setup_isolated_registry`); the config dir is seam-isolated per process.
     setup :setup_isolated_registry
     setup :isolate_config_dir
 
