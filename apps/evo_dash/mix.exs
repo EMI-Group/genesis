@@ -67,7 +67,8 @@ defmodule EvoDash.MixProject do
       {:jason, "~> 1.2"},
       {:gettext, "~> 1.0"},
       {:phoenix_pubsub, "~> 2.2"},
-      {:bandit, "~> 1.14"},
+      # >= 1.14.1 — EEF-CVE-2026-116078 (HTTP/2 1-byte DATA frame memory amplification)
+      {:bandit, "~> 1.14.1"},
       {:mdex, "~> 0.1"},
       {:floki, "~> 0.38.0", only: :test}
     ]
