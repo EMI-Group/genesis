@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-J48YMht85nPrv9f2sHFS71bLJhCjPLklcmPnNKoKXlo=";
+    hash = "sha256-/jIVc0+iK1DcCPJFt9RIjRIoihHRtd5DhJ85R0NLdA8=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -82,20 +82,21 @@ let
   #
   # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
   precompiled_nifs = [
-    # ── mdex_native 0.2.11 (base) ─────────────────────────────────
+    # ── mdex_native 0.3.0 (base) ─────────────────────────────────
     # Only the plain, unsuffixed asset is fetched: it is the variant selected
     # by the unset compile-time config
-    # Application.compile_env(:mdex_native, :syntax_highlighter, nil). The
-    # upstream "--lumis"/"--syntect"/"--legacy_cpu" variants exist but are
-    # never used — do not reintroduce them.
+    # Application.compile_env(:mdex_native, :syntax_highlighter, nil) plus
+    # the default :use_legacy_artifacts = false. The upstream
+    # "--lumis"/"--syntect"/"--legacy_cpu" variants exist but are never
+    # used — do not reintroduce them.
     {
-      prefix = "libmdex_native_nif-v0.2.11-nif-2.15";
-      urlPrefix = "https://github.com/leandrocp/mdex_native/releases/download/v0.2.11";
+      prefix = "libmdex_native_nif-v0.3.0-nif-2.15";
+      urlPrefix = "https://github.com/leandrocp/mdex_native/releases/download/v0.3.0";
       hashes = {
-        x86_64-unknown-linux-gnu = "sha256-ktOfM2EZvOlIRood/H8CBS444WMjQI0aySwKxyYUI6g=";
-        aarch64-unknown-linux-gnu = "sha256-+tJGeCvLJ3zp0Yr/LCrWUsb+3MAP3M5QzyhD4A0CW44=";
-        x86_64-apple-darwin = "sha256-/60oRFLM7H4KlBNzhvLpEBiNQCTosqMQHCYD3QKigQY=";
-        aarch64-apple-darwin = "sha256-vgQVWuxsQ9mpDZ4ILI05mDz27kl85iPiW9Qd9AWMaoA=";
+        x86_64-unknown-linux-gnu = "sha256-CnIHJkBQtcyWDokZKCzJNN2N+ytjYN8wH3yMNygyM14=";
+        aarch64-unknown-linux-gnu = "sha256-Nwq0cH9ximb6YwBzB0r5N0LYGmUC1lenGrCBBKEJxqc=";
+        x86_64-apple-darwin = "sha256-UJKty5Ro6AVcW3xx++uI+wANEV7b5YUn2Y5Pqzz4I0w=";
+        aarch64-apple-darwin = "sha256-3qIDxYS3T8PiGIVHRDV9CFDk/Axy8TiadVYexrwUHqE=";
       };
     }
 
