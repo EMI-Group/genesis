@@ -17,11 +17,13 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   media this way (the root-only gate covers the `:attachments` TASK OPT only —
   the initial user message, see `ContextBuilder.build_initial_messages/4`).
 
-  `async: false` — the cases seed the global named `:evogit_agent_state` ETS
-  table (same convention as `cancel_grace_test.exs`).
+  `async: true` — the cases seed ONE row in the app-global named
+  `:evogit_agent_state` ETS table, keyed by a per-test unique agent id from this
+  file's own id range, and delete exactly that row on exit. Nothing is asserted
+  about the table as a whole, so the writes are concurrent-safe.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ContextBuilder
   alias EvoGit.Agent.LoopState
@@ -31,15 +33,18 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   alias EvoGit.Core.ContextNode
   alias EvoGit.Core.PhyloGraphNode
 
-  @agent_id 1
   @turn 5
 
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    clear_ets()
-    on_exit(fn -> clear_ets() end)
-    :ok
+
+    # This file's own id range keeps the row unshared with every other module
+    # that seeds the same app-global tables concurrently.
+    agent_id = 9_960_000 + :erlang.unique_integer([:positive])
+    on_exit(fn -> delete_agent_rows(agent_id) end)
+
+    %{agent_id: agent_id}
   end
 
   # ---------------------------------------------------------------------------
@@ -52,18 +57,20 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     end
   end
 
-  defp clear_ets do
-    [:evogit_agent_state, :evogit_sched_meta]
-    |> Enum.each(fn name ->
-      if :ets.whereis(name) != :undefined, do: :ets.delete_all_objects(name)
-    end)
+  # Deletes ONLY this test's rows — never another module's.
+  defp delete_agent_rows(agent_id) do
+    if :ets.whereis(:evogit_agent_state) != :undefined,
+      do: :ets.delete(:evogit_agent_state, agent_id)
+
+    if :ets.whereis(:evogit_sched_meta) != :undefined,
+      do: :ets.delete(:evogit_sched_meta, agent_id)
   end
 
   # Seeds the agent's pending-message queue EXACTLY as the scheduler's queue
   # append would (a direct state write, so the test does not depend on the
   # queue's own normalization/validation).
-  defp seed_pending_queue(pending) do
-    Store.put_agent_state(@agent_id, %AgentState{
+  defp seed_pending_queue(agent_id, pending) do
+    Store.put_agent_state(agent_id, %AgentState{
       context_node: %ContextNode{path: "./", repo: "/tmp/test"},
       phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
       llm_model: "test:model",
@@ -73,9 +80,9 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     })
   end
 
-  defp loop_state do
+  defp loop_state(agent_id) do
     %LoopState{
-      agent_id: @agent_id,
+      agent_id: agent_id,
       agent_module: __MODULE__,
       depth: 0,
       node_path: "./",
@@ -84,10 +91,10 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     }
   end
 
-  defp drain(pending) do
-    seed_pending_queue(pending)
+  defp drain(agent_id, pending) do
+    seed_pending_queue(agent_id, pending)
 
-    loop_state()
+    loop_state(agent_id)
     |> Runner.drain_and_inject_user_messages()
     |> Map.fetch!(:context)
     |> Map.fetch!(:messages)
@@ -106,13 +113,13 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
   # Materialization
   # ---------------------------------------------------------------------------
 
-  test "a drained map message with an image produces user([text | image])" do
+  test "a drained map message with an image produces user([text | image])", %{agent_id: agent_id} do
     message = %{
       text: "Look at this screenshot",
       attachments: [attachment("image", "shot.png", "image/png", <<1, 2, 3>>)]
     }
 
-    assert [msg] = drain([message])
+    assert [msg] = drain(agent_id, [message])
 
     assert msg.role == :user
 
@@ -124,13 +131,13 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     assert msg.metadata[:turn] == @turn
   end
 
-  test "a drained audio attachment rides as a file part" do
+  test "a drained audio attachment rides as a file part", %{agent_id: agent_id} do
     message = %{
       text: "Transcribe this",
       attachments: [attachment("audio", "clip.mp3", "audio/mpeg", <<4, 5, 6>>)]
     }
 
-    assert [msg] = drain([message])
+    assert [msg] = drain(agent_id, [message])
 
     assert msg.content == [
              ReqLLM.Message.ContentPart.text("Transcribe this"),
@@ -138,13 +145,15 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
            ]
   end
 
-  test "a drained string-keyed map (Codec / RPC shape) is materialized the same way" do
+  test "a drained string-keyed map (Codec / RPC shape) is materialized the same way", %{
+    agent_id: agent_id
+  } do
     message = %{
       "text" => "Wire shape",
       "attachments" => [attachment("image", "w.png", "image/png", <<7>>)]
     }
 
-    assert [msg] = drain([message])
+    assert [msg] = drain(agent_id, [message])
 
     assert msg.content == [
              ReqLLM.Message.ContentPart.text("Wire shape"),
@@ -152,8 +161,8 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
            ]
   end
 
-  test "a drained legacy binary produces the plain user(text) message" do
-    assert [msg] = drain(["please wrap it up"])
+  test "a drained legacy binary produces the plain user(text) message", %{agent_id: agent_id} do
+    assert [msg] = drain(agent_id, ["please wrap it up"])
 
     assert msg.role == :user
     # Same bytes as the legacy injection path: one text part, nothing else.
@@ -163,18 +172,23 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     assert is_integer(msg.metadata[:timestamp])
   end
 
-  test "a map message without media (attachments: []) takes the plain-text path" do
-    assert [msg] = drain([%{text: "no media here", attachments: []}])
+  test "a map message without media (attachments: []) takes the plain-text path", %{
+    agent_id: agent_id
+  } do
+    assert [msg] = drain(agent_id, [%{text: "no media here", attachments: []}])
     assert msg.content == [ReqLLM.Message.ContentPart.text("no media here")]
   end
 
-  test "a mixed batch is drained in order, each message materialized on its own" do
+  test "a mixed batch is drained in order, each message materialized on its own", %{
+    agent_id: agent_id
+  } do
     image = %{
       text: "first (with image)",
       attachments: [attachment("image", "a.png", "image/png", <<9>>)]
     }
 
-    assert [m1, m2, m3] = drain([image, "second (legacy)", %{text: "third", attachments: nil}])
+    assert [m1, m2, m3] =
+             drain(agent_id, [image, "second (legacy)", %{text: "third", attachments: nil}])
 
     assert m1.content == [
              ReqLLM.Message.ContentPart.text("first (with image)"),
@@ -187,10 +201,12 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     assert Enum.all?([m1, m2, m3], &(&1.metadata[:turn] == @turn))
   end
 
-  test "messages are appended AFTER the existing context (nothing is replaced)" do
-    seed_pending_queue(["injected"])
+  test "messages are appended AFTER the existing context (nothing is replaced)", %{
+    agent_id: agent_id
+  } do
+    seed_pending_queue(agent_id, ["injected"])
 
-    state = loop_state()
+    state = loop_state(agent_id)
     existing = ReqLLM.Context.user("already here")
     state = %{state | context: ReqLLM.Context.append(state.context, existing)}
 
@@ -201,24 +217,25 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
     assert injected.content == [ReqLLM.Message.ContentPart.text("injected")]
   end
 
-  test "the queue is emptied by the drain (a second drain is a no-op)" do
-    seed_pending_queue(["once"])
+  test "the queue is emptied by the drain (a second drain is a no-op)", %{agent_id: agent_id} do
+    seed_pending_queue(agent_id, ["once"])
 
-    state = loop_state()
+    state = loop_state(agent_id)
     drained = Runner.drain_and_inject_user_messages(state)
 
     assert [%ReqLLM.Message{}] = drained.context.messages
-    assert Store.drain_pending_user_messages(@agent_id) == []
+    assert Store.drain_pending_user_messages(agent_id) == []
   end
 
-  test "an empty queue leaves the state untouched" do
-    seed_pending_queue([])
+  test "an empty queue leaves the state untouched", %{agent_id: agent_id} do
+    seed_pending_queue(agent_id, [])
 
-    state = loop_state()
+    state = loop_state(agent_id)
     assert Runner.drain_and_inject_user_messages(state) == state
   end
 
-  test "no root gate — media is materialized for an injected message via build_injected_message/2 (arity 2, no parent input)" do
+  test "no root gate — media is materialized for an injected message via build_injected_message/2 (arity 2, no parent input)",
+       %{agent_id: agent_id} do
     assert function_exported?(ContextBuilder, :build_injected_message, 2)
 
     message = %{
@@ -226,7 +243,7 @@ defmodule EvoGit.Agent.RunnerInjectedMessageTest do
       attachments: [attachment("image", "d.png", "image/png", <<5>>)]
     }
 
-    assert [msg] = drain([message])
+    assert [msg] = drain(agent_id, [message])
     assert length(msg.content) == 2
   end
 end

@@ -18,8 +18,13 @@ defmodule EvoGit.Agent.ToolDispatchRetrySlotTest do
   The remaining one-off cost is ReqLLM's `LLMDB.load/1` catalog decode, paid ONCE
   in `setup_all/1` (see `warm_pool/0`).
 
-  `async: false` — touches the global `EvoGit.AgentScheduler` GenServer (config
-  update, pause/resume) and the shared scheduler ETS tables.
+  `async: false` — MUTATES the live global `EvoGit.AgentScheduler`: it rewrites
+  `model_profiles` / `model_concurrency` (incl. a hard-pause `0` map), calls
+  `pause/0` + `resume/0`, and edits the per-model LLM backoff in place via
+  `:sys.replace_state/2`; it also suspends `EvoGit.PeakHourEngine` (which would
+  otherwise re-apply a floored map from the live profiles) and pins the app-env
+  keys `:llm_retry_backoff_base_ms` and `:req_llm, :openai_api_key` that other
+  modules read. Its agent state rows use per-test unique ids.
 
   It also pins the model-exhaustion (HTTP 402 "insufficient balance") retry
   handling: a 402 drives the LONG model-exhaustion schedule reported

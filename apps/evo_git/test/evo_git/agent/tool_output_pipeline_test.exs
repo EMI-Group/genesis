@@ -13,13 +13,14 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
   `EvoGit.Agent.TruncationFeedback` and `EvoGit.Agent.DelegationHints` stay
   BINARY-ONLY and never see a `%ToolOutput{}`.
 
-  Serialized (`async: false`) — the batch-assembly describe below registers agent
-  state in the app-global `:evogit_agent_state` ETS table and acquires slots from
-  the global `EvoGit.AgentScheduler`, exactly like the sibling
-  `tool_dispatch_serial_batch_test.exs`.
+  `async: true` — the batch-assembly describe below registers ONE row in the
+  app-global `:evogit_agent_state` ETS table under a per-test unique agent id
+  (deleted on exit, nothing asserted about the table as a whole) and takes tool
+  slots from the global `EvoGit.AgentScheduler` (a serialized GenServer, not a
+  global mutation). Everything else is process-local or per-test temp dirs.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.LoopState
   alias EvoGit.Agent.ToolDispatch
@@ -250,7 +251,7 @@ defmodule EvoGit.Agent.ToolOutputPipelineTest do
     setup do
       repo = new_repo!()
       {:ok, head} = Git.rev_parse(repo)
-      agent_id = 9_970_000 + :erlang.unique_integer([:positive])
+      agent_id = 9_900_000 + :erlang.unique_integer([:positive])
 
       agent_state = %EvoGit.AgentScheduler.AgentState{
         context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo},

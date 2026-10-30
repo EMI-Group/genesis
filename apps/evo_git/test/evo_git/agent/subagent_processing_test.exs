@@ -1,13 +1,14 @@
 defmodule EvoGit.Agent.SubagentProcessingTest do
   @moduledoc """
-  `async: false` — the two `build_subagent_specs/3` describes insert/delete
-  parent `AgentState` rows (fixed agent ids 99_998/99_999) in the app-owned
-  BEAM-global `:evogit_agent_state` ETS table, which is shared state; the
-  remaining tests use per-test `:tmp_dir` git repos. Kept sync per the
-  async-safety policy, matching the other ETS-touching modules.
+  `async: true` — the two `build_subagent_specs/3` describes insert/delete ONE
+  parent `AgentState` row apiece in the app-owned BEAM-global
+  `:evogit_agent_state` ETS table, under a per-test unique agent id from this
+  file's own id range (deleted on exit). Nothing is asserted about either table
+  as a whole, so the writes are concurrent-safe; the remaining tests use
+  per-test `:tmp_dir` git repos.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   @moduletag :tmp_dir
 
@@ -438,7 +439,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         :ets.new(:evogit_agent_state, [:set, :public, :named_table])
       end
 
-      agent_id = 99_999
+      agent_id = 9_900_000 + :erlang.unique_integer([:positive])
 
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
@@ -620,7 +621,7 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
         :ets.new(:evogit_sched_meta, [:set, :public, :named_table])
       end
 
-      agent_id = 99_998
+      agent_id = 9_900_000 + :erlang.unique_integer([:positive])
 
       # Insert a parent AgentState with a specific model_id
       parent_state = %AgentState{
@@ -934,8 +935,8 @@ defmodule EvoGit.Agent.SubagentProcessingTest do
       foreign_root = Path.join(tmp_dir, "foreign")
       [sha] = copy_fixture!(fixture, foreign_root)
 
-      writable_parent = 99_001
-      primary_parent = 99_002
+      writable_parent = 9_900_000 + :erlang.unique_integer([:positive])
+      primary_parent = 9_900_000 + :erlang.unique_integer([:positive])
 
       :ets.insert(
         :evogit_sched_meta,

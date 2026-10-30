@@ -68,11 +68,14 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
       timeout budget alone. Only the "shell default is NOT the generic default"
       case still sleeps, because there the tool has to COMPLETE.
 
-  Serialized (`async: false`): the dispatcher registers agent state in the
-  app-global `:evogit_agent_state` ETS table, acquires tool slots from the
-  global `EvoGit.AgentScheduler`, mutates the global fake-tool app env and the
-  process-wide `XDG_CONFIG_HOME` — exactly like the sibling
-  `tool_dispatch_test.exs` / `tool_output_integration_test.exs` suites.
+  Serialized (`async: false`) by TWO globals: the fake-tool registry app env
+  `:evo_git, :tool_dispatch_test_tools` (one shared key, also installed by the
+  sibling `tool_output_integration_test.exs`, so the two must never overlap) and
+  the process-wide `XDG_CONFIG_HOME` redirect the timeout describe uses to pin
+  `[:scheduler, :default_tool_timeout]`. Concurrent-safe on its own: agent state
+  rows go into the app-global `:evogit_agent_state` table under per-test unique
+  ids (deleted on exit) and the global `EvoGit.AgentScheduler` only supplies
+  tool slots.
   """
 
   use ExUnit.Case, async: false

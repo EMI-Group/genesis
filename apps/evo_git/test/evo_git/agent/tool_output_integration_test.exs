@@ -26,11 +26,13 @@ defmodule EvoGit.Agent.ToolOutputIntegrationTest do
   test (the serial/parallel partition, the write delegation hint, the
   redundant-cd warning) are exercised rather than stubbed.
 
-  Serialized (`async: false`) — the pipeline registers agent state in the
-  app-global `:evogit_agent_state` ETS table, acquires slots from the global
-  `EvoGit.AgentScheduler`, and mutates a global app env (the fake-tool registry),
-  exactly like the sibling `tool_output_pipeline_test.exs` /
-  `tool_dispatch_serial_batch_test.exs`.
+  Serialized (`async: false`) by ONE global: the fake-tool registry app env
+  `:evo_git, :tool_dispatch_test_tools` — a single key `Tools.execute/5` reads,
+  also installed by the sibling `tool_dispatch_containment_test.exs`, so the two
+  modules must never overlap. Everything else here is concurrent-safe: agent
+  state rows go into the app-global `:evogit_agent_state` table under per-test
+  unique ids (deleted on exit) and the global `EvoGit.AgentScheduler` only
+  supplies tool slots (a serialized GenServer call, not a global mutation).
   """
 
   use ExUnit.Case, async: false

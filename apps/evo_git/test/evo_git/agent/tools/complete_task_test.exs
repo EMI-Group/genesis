@@ -1,8 +1,10 @@
 defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   @moduledoc """
-  `async: false` — the `complete/5` + archive tests mutate the shared,
-  app-owned named ETS tables (`:evogit_sched_meta` / `:evogit_agent_state`),
-  which other modules observe.
+  `async: true` — the `complete/5` + archive tests seed ONE row per agent in the
+  shared, app-owned named ETS tables (`:evogit_sched_meta` /
+  `:evogit_agent_state`) under a per-test UNIQUE agent id (deleted on exit, and
+  nothing here asserts anything about the tables as a whole), so the writes are
+  concurrent-safe.
 
   Every test additionally gets its OWN isolated `EvoGit.Store` +
   `EvoGit.TaskRegistry` pair (`EvoGit.TaskRegistryCase`), so the archive
@@ -16,7 +18,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   of `git` subprocesses. Every assertion is unchanged.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  use EvoGit.TaskRegistryCase, async: true
 
   alias EvoGit.Adapters.Git
   alias EvoGit.Agent.Tools.CompleteTask
@@ -183,18 +185,16 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_123", %{task_id: "1", task_number: 1}})
-      :ets.insert(:evogit_agent_state, {"agent_123", %{task_local_id: 1}})
+      # ETS entries for task-scoped naming, under a per-test unique agent id
+      agent_id = unique_agent_id()
+      register_agent!(agent_id, "1", 1, 1)
 
       result =
-        CompleteTask.complete("agent_123", "Task done", base_commit, base_commit: base_commit)
+        CompleteTask.complete(agent_id, "Task done", base_commit, base_commit: base_commit)
 
       assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agent-T1-A1"} =
                result
 
-      :ets.delete(:evogit_sched_meta, "agent_123")
-      :ets.delete(:evogit_agent_state, "agent_123")
       Process.delete(:repo_path)
     end
 
@@ -248,12 +248,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_ret", %{task_id: "2", task_number: 2}})
-      :ets.insert(:evogit_agent_state, {"agent_ret", %{task_local_id: 3}})
+      # ETS entries for task-scoped naming, under a per-test unique agent id
+      agent_id = unique_agent_id()
+      register_agent!(agent_id, "2", 2, 3)
 
       result =
-        CompleteTask.complete("agent_ret", "My findings", base_commit, base_commit: base_commit)
+        CompleteTask.complete(agent_id, "My findings", base_commit, base_commit: base_commit)
 
       assert is_map(result)
       assert Map.has_key?(result, :result)
@@ -263,8 +263,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert result.commit_sha == base_commit
       assert result.branch == "evogit-agent-T2-A3"
 
-      :ets.delete(:evogit_sched_meta, "agent_ret")
-      :ets.delete(:evogit_agent_state, "agent_ret")
       Process.delete(:repo_path)
     end
 
@@ -297,9 +295,9 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
          } do
       Process.put(:repo_path, tmp_dir)
 
-      # ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_force", %{task_id: "force", task_number: 6}})
-      :ets.insert(:evogit_agent_state, {"agent_force", %{task_local_id: 9}})
+      # ETS entries for task-scoped naming, under a per-test unique agent id
+      agent_id = unique_agent_id()
+      register_agent!(agent_id, "force", 6, 9)
 
       # Hostile content on BOTH completions: double quotes, newlines and '>'
       # chars flow into the pretty-printed JSON note (Jason.encode! pretty: true
@@ -309,7 +307,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       first_result = "First result: \"quoted\"\nline2 > done"
       first_objective = "Objective > with > chars and \"quotes\""
 
-      CompleteTask.complete("agent_force", first_result, base_commit,
+      CompleteTask.complete(agent_id, first_result, base_commit,
         base_commit: base_commit,
         objective: first_objective
       )
@@ -322,7 +320,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # first completion's note would otherwise still win.
       second_result = "Second result: overwritten > \"again\"\nline3"
 
-      CompleteTask.complete("agent_force", second_result, base_commit,
+      CompleteTask.complete(agent_id, second_result, base_commit,
         base_commit: base_commit,
         objective: first_objective
       )
@@ -333,8 +331,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       assert metadata["result"] == second_result
       assert metadata["objective"] == first_objective
 
-      :ets.delete(:evogit_sched_meta, "agent_force")
-      :ets.delete(:evogit_agent_state, "agent_force")
       Process.delete(:repo_path)
     end
 
@@ -344,11 +340,11 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      # Insert ETS entries for task-scoped naming
-      :ets.insert(:evogit_sched_meta, {"agent_defaults", %{task_id: "5", task_number: 5}})
-      :ets.insert(:evogit_agent_state, {"agent_defaults", %{task_local_id: 7}})
+      # ETS entries for task-scoped naming, under a per-test unique agent id
+      agent_id = unique_agent_id()
+      register_agent!(agent_id, "5", 5, 7)
 
-      result = CompleteTask.complete("agent_defaults", "Simple result", base_commit)
+      result = CompleteTask.complete(agent_id, "Simple result", base_commit)
 
       assert result.branch == "evogit-agent-T5-A7"
       assert result.result == "Simple result"
@@ -356,8 +352,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # No base_commit in opts, so no metadata note
       assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
 
-      :ets.delete(:evogit_sched_meta, "agent_defaults")
-      :ets.delete(:evogit_agent_state, "agent_defaults")
       Process.delete(:repo_path)
     end
   end
@@ -844,6 +838,10 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     on_exit(fn -> File.rm_rf!(dest) end)
     dest
   end
+
+  # A per-test agent id for rows seeded into the app-global scheduler ETS tables:
+  # unique so a concurrently running module can neither observe nor clobber them.
+  defp unique_agent_id, do: "ct_agent_#{System.unique_integer([:positive])}"
 
   # The task-scoped naming lookups read these NAMED tables; the app owns them,
   # so this is a no-op unless the app is not running.
