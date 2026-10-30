@@ -1,8 +1,9 @@
 defmodule EvoGit.Agent.Tools.LspTest do
   @moduledoc """
-  `async: false` — every execute-level test here spawns real OS processes (a fake
-  language server) and the unconfigured cases read the resolved user config, so
-  keeping the module serial keeps process/pid accounting honest.
+  `async: true` — nothing global is read or written here: every execute-level
+  test spawns its own fake language server in a UNIQUE temp dir, and every
+  `Lsp.execute/4,5` call passes `enabled:`/`command:` explicitly (the
+  unconfigured cases included), so no resolved user config is consulted.
 
   No real language server, no network, no compilation: the fixture
   `EvoGit.FakeLspServer` (`test/support/fake_lsp_server.ex`) speaks the LSP base
@@ -15,7 +16,7 @@ defmodule EvoGit.Agent.Tools.LspTest do
   (an Elixir boot plus a script compile, ~300 ms) on EVERY spawn.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.Lsp
   alias EvoGit.Config.Schema

@@ -17,13 +17,16 @@ defmodule EvoGit.Agent.ToolDispatchSerialBatchTest do
   resulting file contents + returned results. No concurrency primitive is
   involved anywhere in the fix or in these tests.
 
-  Serialized (`async: false`) on purpose — like the sibling
-  `tool_dispatch_test.exs`, the dispatcher registers agent state in the
-  app-global `:evogit_agent_state` ETS table and acquires slots from the global
-  `EvoGit.AgentScheduler`.
+  `async: true` — the dispatcher registers ONE row in the app-global
+  `:evogit_agent_state` ETS table under a per-test unique agent id (deleted on
+  exit, nothing asserted about the table as a whole) and takes tool slots from
+  the global `EvoGit.AgentScheduler` (a serialized GenServer, not a global
+  mutation). The batches call only fast file tools — no shell forks whose wall
+  clock a loaded async cohort could inflate past a production budget — and the
+  per-call timeout is generous (`@tool_timeout`).
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.ToolDispatch
 
@@ -43,7 +46,7 @@ defmodule EvoGit.Agent.ToolDispatchSerialBatchTest do
 
     File.mkdir_p!(repo_root)
 
-    agent_id = 9_980_000 + :erlang.unique_integer([:positive])
+    agent_id = 9_900_000 + :erlang.unique_integer([:positive])
 
     agent_state = %EvoGit.AgentScheduler.AgentState{
       context_node: %EvoGit.Core.ContextNode{path: "./", repo: repo_root},

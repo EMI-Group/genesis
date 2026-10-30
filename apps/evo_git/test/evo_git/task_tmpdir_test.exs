@@ -1,15 +1,17 @@
 defmodule EvoGit.TaskTmpdirTest do
-  # async: false — several tests mutate the process-wide XDG_CONFIG_HOME, which
-  # EvoGit.Config.config_path/0 → EvoGit.Platform.config_dir/1 reads LIVE via
-  # System.get_env/1 (there is no app-env seam for [:tmp, :mode] / [:tmp, :path]).
-  # Redirecting it serializes this module against every other config reader.
-  use ExUnit.Case, async: false
+  # async: true — every test isolates its config dir PER PROCESS through the
+  # EvoGit.TestSupport.ConfigDir seam (EvoGit.Platform.config_dir/1), so the
+  # [:tmp, :mode] / [:tmp, :path] reads never touch the real
+  # ~/.config/genesis/config.toml. No process-wide env var, app-env key or
+  # global ETS row is mutated.
+  use ExUnit.Case, async: true
 
   alias EvoGit.TaskTmpdir
+  alias EvoGit.TestSupport.ConfigDir
 
   describe "mode/0" do
     setup do
-      isolate_xdg!()
+      isolate_config!()
       :ok
     end
 
@@ -34,7 +36,7 @@ defmodule EvoGit.TaskTmpdirTest do
     end
 
     test "defaults to :system when no config.toml exists" do
-      # isolate_xdg! created an EMPTY XDG config dir — no config.toml at all.
+      # isolate_config! created an EMPTY config dir — no config.toml at all.
       refute File.exists?(EvoGit.Config.config_path())
       assert TaskTmpdir.mode() == :system
     end
@@ -47,7 +49,7 @@ defmodule EvoGit.TaskTmpdirTest do
     # test-owned.
 
     setup do
-      isolate_xdg!()
+      isolate_config!()
       :ok
     end
 
@@ -106,7 +108,7 @@ defmodule EvoGit.TaskTmpdirTest do
 
   describe "ensure/2" do
     setup do
-      isolate_xdg!()
+      isolate_config!()
       :ok
     end
 
@@ -170,7 +172,7 @@ defmodule EvoGit.TaskTmpdirTest do
     # :custom mode with a test-owned base — reclaim/2 must never enumerate or
     # delete anything under the real /tmp/genesis.
     setup do
-      isolate_xdg!()
+      isolate_config!()
       :ok
     end
 
@@ -278,32 +280,17 @@ defmodule EvoGit.TaskTmpdirTest do
 
   # ── Helpers ─────────────────────────────────────────────────────────────
 
-  # Isolates XDG_CONFIG_HOME (read LIVE by EvoGit.Config via
-  # EvoGit.Platform.config_dir/1) into a unique temp dir and restores it on
-  # exit, mirroring config_test.exs's `[data] dir` setup.
-  defp isolate_xdg! do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-task-tmpdir-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    tmp_xdg
+  # Isolates the config dir for the CURRENT process through the
+  # EvoGit.TestSupport.ConfigDir seam (installed suite-wide by
+  # `test/test_helper.exs`): `EvoGit.Config` resolves the fresh temp dir instead
+  # of the operator's real `~/.config/genesis`, and `on_exit` removes it. This is
+  # a process-dictionary override, NOT `System.put_env("XDG_CONFIG_HOME")` — the
+  # BEAM-global env var stays untouched.
+  defp isolate_config! do
+    ConfigDir.isolate!("evogit-task-tmpdir")
   end
 
-  # Writes a minimal config.toml under the isolated XDG dir. `mode` is the raw
+  # Writes a minimal config.toml under the isolated config dir. `mode` is the raw
   # TOML string ("system" | "custom" | "per_repo" | anything else);
   # EvoGit.Config.atomize_enum_values/1 converts the valid ones to atoms.
   defp write_tmp_config!(mode, path \\ nil) do

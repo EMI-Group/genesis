@@ -1,27 +1,14 @@
 defmodule EvoGit.RemoteConnectionsTest do
-  use ExUnit.Case, async: false
+  # `async: true` — every test works on its own per-process config directory
+  # (`EvoGit.TestSupport.ConfigDir`) so `remote_connections.toml` never touches
+  # the real `~/.config/genesis/`, and `EvoGit.RemoteConnections` is a
+  # collection of pure TOML file functions evaluated in the calling process.
+  use ExUnit.Case, async: true
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that RemoteConnections never
-  # touches the real ~/.config/genesis/ directory.
+  alias EvoGit.TestSupport.ConfigDir
+
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-remote-connections")
     :ok
   end
 

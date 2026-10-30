@@ -5,10 +5,10 @@ defmodule EvoGit.TaskRegistry.MergeContextBlockTest do
 
   These tests build their `%TaskInfo{}` fixture locally and never touch the
   Store or the registry, so the module runs `async: true`. It was extracted
-  from `EvoGit.TaskRegistry.MergeContextTest` (which uses the `async: false`
-  `EvoGit.TaskRegistryCase` fixture, terminating + restarting the global
-  `EvoGit.TaskRegistry` / `EvoGit.Store` app children) so that pure tests no
-  longer pay for that heavy per-test setup.
+  from `EvoGit.TaskRegistry.MergeContextTest` (whose `EvoGit.TaskRegistryCase`
+  fixture starts an isolated per-test `EvoGit.Store` + `EvoGit.TaskRegistry`
+  pair for its real database round trips) so that pure tests no longer pay for
+  that heavier per-test setup.
   """
 
   use ExUnit.Case, async: true

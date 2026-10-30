@@ -27,7 +27,11 @@ defmodule EvoGit.TaskRegistry.ReadFaultIsolationTest do
   production crash chain's dead-server exit.
   """
 
-  use EvoGit.TaskRegistryCase, async: false
+  # `async: true`: nothing global forces serialization — the fault is forced on
+  # THIS test's own isolated store/registry pair (it stops its own store), and
+  # the log assertion is a POSITIVE match (`assert log =~ …`), which a
+  # concurrent module's output in the window-based capture cannot flip.
+  use EvoGit.TaskRegistryCase, async: true
 
   import ExUnit.CaptureLog
 

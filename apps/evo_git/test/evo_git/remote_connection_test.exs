@@ -4,7 +4,13 @@ defmodule EvoGit.RemoteConnectionTest do
   remote connection's lifecycle.
 
   Uses `async: false` because the tests interact with the Registry /
-  DynamicSupervisor that are part of the application supervision tree.
+  DynamicSupervisor that are part of the application supervision tree, swap the
+  process-wide `PATH` for the fake `ssh`/`scp` children, write BEAM-global
+  app-env timing seams, AND must redirect `XDG_CONFIG_HOME`: the connection
+  manager is a GenServer started under the APP-level DynamicSupervisor, so it
+  sits outside the test's `$callers` chain and cannot see the per-process
+  config-dir seam (`EvoGit.TestSupport.ConfigDir`) — it reads `config.toml`
+  with `EvoGit.Config.resolve/0` inside its own process.
   """
 
   use ExUnit.Case, async: false

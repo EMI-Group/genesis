@@ -4,12 +4,13 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   API over scheduler ETS state.
 
   Uses `async: false` because the tests (a) manipulate the global named ETS
-  tables (`:evogit_agent_state` and `:evogit_sched_meta`), (b) write task
-  rows directly into the app-level `EvoGit.Store` singleton (`insert_task/2` →
-  `EvoGit.Store.put_task/2`, cleaned up in `on_exit`), and (c) the
-  `list_agents/0 compression_threshold` describe repoints the process-wide
-  `XDG_CONFIG_HOME` so `EvoGit.Config.resolve/1` sees no
-  `compression_threshold_tokens` override.
+  tables (`:evogit_agent_state` and `:evogit_sched_meta` — `clear_ets/0` wipes
+  them wholesale) and (b) write task rows directly into the app-level
+  `EvoGit.Store` singleton (`insert_task/2` → `EvoGit.Store.put_task/2`,
+  cleaned up in `on_exit`). The `list_agents/0 compression_threshold` describe
+  isolates its config directory PER PROCESS
+  (`EvoGit.TestSupport.ConfigDir`), so it no longer touches a process-wide env
+  var.
   """
 
   use ExUnit.Case, async: false
@@ -25,6 +26,7 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
   alias EvoGit.Core.ForeignRepo
   alias EvoGit.Core.PhyloGraphNode
   alias EvoGit.TaskInfo
+  alias EvoGit.TestSupport.ConfigDir
 
   # --- Shared test fixtures ---
 
@@ -424,32 +426,11 @@ defmodule EvoGit.AgentScheduler.RemoteAPITest do
     # `Threshold.for_model/2` honors the OPTIONAL
     # [:llm, :compression_threshold_tokens] user-config override, which wins
     # over every window-derived value (this developer machine's own
-    # config.toml sets it to 150_000). Point XDG_CONFIG_HOME at an EMPTY temp
-    # dir — no genesis/config.toml exists there — so the absolute
-    # window-derived pins below (57_344 / 126_272) are deterministic. Safe to
-    # redirect: this module is `async: false`.
+    # config.toml sets it to 150_000). Point the PER-PROCESS config directory
+    # at an EMPTY temp dir — no genesis/config.toml exists there — so the
+    # absolute window-derived pins below (57_344 / 126_272) are deterministic.
     setup do
-      original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-      tmp_xdg =
-        Path.join(
-          System.tmp_dir!(),
-          "evogit-remote-api-cfg-#{System.unique_integer([:positive])}"
-        )
-
-      File.mkdir_p!(tmp_xdg)
-      System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-      on_exit(fn ->
-        if original_xdg do
-          System.put_env("XDG_CONFIG_HOME", original_xdg)
-        else
-          System.delete_env("XDG_CONFIG_HOME")
-        end
-
-        File.rm_rf!(tmp_xdg)
-      end)
-
+      ConfigDir.isolate!("evogit-remote-api-cfg")
       :ok
     end
 

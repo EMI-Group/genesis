@@ -1,35 +1,21 @@
 defmodule EvoGit.Runtime.PullRequestTest do
   @moduledoc """
-  Mutates the process-global `XDG_CONFIG_HOME` env var (read by `EvoGit.Config`) → `async: false`.
+  `async: true` — each test's config dir is isolated PER PROCESS through the
+  `EvoGit.TestSupport.ConfigDir` seam (`EvoGit.Platform.config_dir/1`), so no
+  BEAM-global state (no `XDG_CONFIG_HOME` env var, no app-env key) is mutated.
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Config
   alias EvoGit.Runtime.PullRequest
+  alias EvoGit.TestSupport.ConfigDir
 
-  # Redirect XDG_CONFIG_HOME to a fresh temp dir (with NO genesis/config.toml) so
-  # EvoGit.Config.resolve([:llm, :model]) resolves to nil. This keeps generate_title/2
-  # on the pure nil-model path and prevents any accidental real-LLM call if the host
-  # machine has a configured model.
+  # Point this process' config dir at a fresh temp dir (with NO
+  # genesis/config.toml) so EvoGit.Config.resolve([:llm, :model]) resolves to
+  # nil. This keeps generate_title/2 on the pure nil-model path and prevents any
+  # accidental real-LLM call if the host machine has a configured model.
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-pr-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    ConfigDir.isolate!("evogit-pr-test")
     :ok
   end
 

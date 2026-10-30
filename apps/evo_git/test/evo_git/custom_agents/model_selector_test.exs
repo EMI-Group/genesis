@@ -1,38 +1,18 @@
 defmodule EvoGit.CustomAgents.ModelSelectorTest do
-  use ExUnit.Case, async: false
+  # `async: true` — every test gets its own per-process config directory
+  # (`EvoGit.TestSupport.ConfigDir`) and the `:persistent_term` compile cache
+  # key EMBEDS the agents.toml path, so a test-local directory can never
+  # observe or overwrite another test's entry.
+  use ExUnit.Case, async: true
 
-  # async: false — this module mutates two pieces of BEAM-global state that
-  # other concurrently running test modules read: the `XDG_CONFIG_HOME` env
-  # var (consumed by `EvoGit.Config.config_dir/0` / `EvoGit.CustomAgents`) and
-  # the process-wide `:persistent_term` compile cache cleared by
-  # `EvoGit.CustomAgents.ModelSelector.invalidate/0`.
+  alias EvoGit.TestSupport.ConfigDir
 
-  # Tests mutate the XDG_CONFIG_HOME env var so that CustomAgents never
-  # touches the real ~/.config/genesis/ directory.
   setup do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
+    ConfigDir.isolate!("evogit-model-selector")
 
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-test-xdg-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    # The cache key embeds the agents.toml path (which follows XDG_CONFIG_HOME),
-    # so stale entries from other tests could otherwise leak through.
+    # The cache key embeds the agents.toml path, so no stale entry can leak in;
+    # erase it anyway for a pristine starting point.
     EvoGit.CustomAgents.ModelSelector.invalidate()
-
-    on_exit(fn ->
-      EvoGit.CustomAgents.ModelSelector.invalidate()
-
-      if original_xdg do
-        System.put_env("XDG_CONFIG_HOME", original_xdg)
-      else
-        System.delete_env("XDG_CONFIG_HOME")
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
 
     :ok
   end

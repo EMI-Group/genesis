@@ -43,7 +43,8 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   ONLY trace: it is logged synchronously from the store process while it
   handles the worker's `:DOWN`, so `capture_log/2` alone captures everything —
   no counter handler, no awaiting, and nothing leaking between tests. The
-  `refute log =~ "raised an exception"` pins that contract.
+  `refute read_worker_crash_report?(log)` pins that contract, scoped to THIS
+  module's read worker because `capture_log/2` is window-based (see the helper).
 
   ## Waiting for the async crash-report path (no fixed sleep)
 
@@ -58,9 +59,13 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   fixed 250 ms sleep per test.
   """
 
-  # `async: false`: the fault arm stops the store's own repo instance and the
-  # raise arm asserts exact log lines — neither should race a sibling test.
-  use EvoGit.TaskRegistryCase, async: false
+  # `async: true`: every fault is forced on THIS test's own isolated store (its
+  # own SQLite file and dynamic repo instance) and every wait is event-driven, so
+  # nothing global is mutated. The ONE window-based surface — `capture_log/2`
+  # captures ANY process — is neutralized by attributing the crash-report arm to
+  # this module's own read worker (`read_worker_crash_report?/1`) and keeping the
+  # log assertions POSITIVE (`assert log =~ …`).
+  use EvoGit.TaskRegistryCase, async: true
 
   import ExUnit.CaptureLog
 
@@ -143,8 +148,8 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       assert log =~ "** (ArgumentError)"
 
       # ONE log line per degraded read: the worker's `:shutdown`-class exit
-      # produces no second, asynchronous OTP crash report.
-      refute log =~ "raised an exception"
+      # produces no second, asynchronous OTP crash report — for THIS worker.
+      refute read_worker_crash_report?(log)
     end
 
     test "a raise inside the read worker is caught — the store survives and keeps reading",
@@ -169,7 +174,7 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
       assert log =~ "store/operations/tasks.ex"
 
       # … and the worker's death did NOT also become an OTP crash report.
-      refute log =~ "raised an exception"
+      refute read_worker_crash_report?(log)
 
       assert Process.alive?(store_pid)
 
@@ -199,6 +204,26 @@ defmodule EvoGit.Store.ReadFaultIsolationTest do
   # ---------------------------------------------------------------------------
   # Helpers
   # ---------------------------------------------------------------------------
+
+  # True when the captured log carries an OTP crash report for THIS module's
+  # read worker. `capture_log/2` is WINDOW-based — it captures every process, so
+  # a concurrently running module's crash report can land in the same window —
+  # so the refutation is attributed instead of blanket: a report for a degraded
+  # read is a plain-process report (`Process #PID<…> raised an exception`) whose
+  # stacktrace necessarily carries the offload worker's own frames
+  # (`EvoGit.Store.run_offload/2` — called non-tail, so it survives the
+  # report's stacktrace formatting — or the `start_offload_worker/2` spawn
+  # frame). Nothing outside the read-worker path can produce those frames, and a
+  # report for our own worker always does, so the assertion stays exactly as
+  # strong for this module's fault.
+  defp read_worker_crash_report?(log) do
+    log
+    |> then(&Regex.split(~r/^\d{2}:\d{2}:\d{2}\.\d{3} /, &1, trim: true))
+    |> Enum.any?(fn event ->
+      event =~ "raised an exception" and
+        event =~ ~r/EvoGit\.Store\.(run_offload|start_offload_worker)/
+    end)
+  end
 
   # Walks the async crash-report path up to the capture (see the moduledoc):
   # `:sys.get_state/1` on `:logger_proxy` makes it forward everything already in

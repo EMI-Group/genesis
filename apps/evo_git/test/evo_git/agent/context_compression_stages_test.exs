@@ -164,11 +164,17 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     `[:llm, :compression_threshold_tokens]` override, and the incompressible
     context shapes.
 
-  `async: false` — the module swaps the global `:llm_model_metadata_fun` seam,
-  redirects the process-wide `XDG_CONFIG_HOME` (so the operator's own
-  `config.toml` can never supply a threshold override or disable pruning),
-  installs a single-slot model profile on the GLOBAL `EvoGit.AgentScheduler`, and
-  registers agent-state ETS rows (which `increment_compression_count/1` requires).
+  `async: false` — three BEAM-global surfaces remain: (1) the
+  `:llm_model_metadata_fun` seam, read at CALL time by every
+  `profile_generation_params/1` call (agent spawns) as well as by `Threshold`;
+  (2) the GLOBAL `EvoGit.AgentScheduler` (`resume/0` +
+  `update_config(model_profiles: …)` installs a single-slot model profile the
+  compression call's slot lives in); and (3) the app-global agent-state ETS rows
+  (`increment_compression_count/1` requires them). The config dir is isolated
+  PER PROCESS through `EvoGit.TestSupport.ConfigDir` (no `XDG_CONFIG_HOME`
+  mutation), so the operator's own `config.toml` can never supply a threshold
+  override or disable pruning without forcing serialization, and the fake
+  OpenAI credential comes from the suite-wide `test_helper.exs` default.
   """
 
   use ExUnit.Case, async: false
@@ -198,9 +204,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
 
   @seam :llm_model_metadata_fun
   @model_id "default"
-  # The credential the stubbed stage-2 round trip authenticates with (see the
-  # `setup/1` pin).
-  @api_key "test-key"
+  # The stubbed stage-2 round trip authenticates with the suite-wide fake
+  # OpenAI credential set once in `test/test_helper.exs`
+  # (`:req_llm, :openai_api_key`), so no per-test pin is needed here.
 
   # The summary text the stub server streams back, and the `## Current Work`
   # section it deliberately opens with (so it looks like a real summary).
@@ -458,29 +464,17 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
   defp restore_seam(nil), do: Application.delete_env(:evo_git, @seam)
   defp restore_seam(value), do: Application.put_env(:evo_git, @seam, value)
 
-  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir and returns
-  # the config directory the runtime then resolves. Tests that need a config key
-  # write `config.toml` there. Without this the developer's own
-  # `~/.config/genesis/config.toml` (which may set
-  # `compression_threshold_tokens`) would silently override the window formula.
+  # Isolates the config dir for the CURRENT process through the
+  # `EvoGit.TestSupport.ConfigDir` seam (installed suite-wide by
+  # `test/test_helper.exs`). Tests that need a config key write `config.toml`
+  # there. Without this the developer's own `~/.config/genesis/config.toml`
+  # (which may set `compression_threshold_tokens`) would silently override the
+  # window formula. This is a process-dictionary override, NOT
+  # `System.put_env("XDG_CONFIG_HOME")` — the BEAM-global env var stays
+  # untouched, and the seam's `on_exit` removes the unique temp dir (so no
+  # unique-path `:persistent_term` cache entry survives).
   defp isolate_config! do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(System.tmp_dir!(), "evogit-stages-#{System.unique_integer([:positive])}")
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      case original_xdg do
-        nil -> System.delete_env("XDG_CONFIG_HOME")
-        value -> System.put_env("XDG_CONFIG_HOME", value)
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
+    EvoGit.TestSupport.ConfigDir.isolate!("evogit-stages")
     config_dir = EvoGit.Config.config_dir()
     File.mkdir_p!(config_dir)
     config_dir
@@ -490,28 +484,9 @@ defmodule EvoGit.Agent.ContextCompressionStagesTest do
     File.write!(Path.join(config_dir, "config.toml"), contents)
   end
 
-  # Restores the `:req_llm, :openai_api_key` app-env value captured before the
-  # pin, DELETING it again when there was none (mirrors
-  # `tool_dispatch_retry_slot_test`).
-  defp restore_api_key(nil), do: Application.delete_env(:req_llm, :openai_api_key)
-  defp restore_api_key(value), do: Application.put_env(:req_llm, :openai_api_key, value)
-
   setup do
     assert Process.whereis(EvoGit.AgentScheduler), "AgentScheduler must be running"
     AgentScheduler.resume()
-
-    # PIN the provider credential the stage-2 stubbed round trip needs:
-    # `ReqLLM.Keys.get/2` resolves a provider key from
-    # `Application.get_env(:req_llm, :openai_api_key)` (or the `OPENAI_API_KEY`
-    # env var) and never from the model spec's `api_key` field — so the credential
-    # is declared here instead of being borrowed from whatever
-    # `EvoGit.Config.credentials/0` loaded at boot out of the developer's real
-    # `credentials.toml`. Declaring it makes this module behave identically with an
-    # empty config dir; `on_exit` restores the previous value (or deletes the key
-    # again when there was none).
-    previous_api_key = Application.get_env(:req_llm, :openai_api_key)
-    Application.put_env(:req_llm, :openai_api_key, @api_key)
-    on_exit(fn -> restore_api_key(previous_api_key) end)
 
     previous_seam = Application.get_env(:evo_git, @seam)
     on_exit(fn -> restore_seam(previous_seam) end)

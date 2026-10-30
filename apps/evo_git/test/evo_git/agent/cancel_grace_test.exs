@@ -14,14 +14,13 @@ defmodule EvoGit.Agent.CancelGraceTest do
     - `complete_task` during cancel-grace succeeds with a dirty workspace
       (the grace dirty-check skip).
 
-  `async: false` — the ETS-based tests mutate the global named
-  `:evogit_agent_state` / `:evogit_sched_meta` tables by calling
-  `:ets.delete_all_objects/1` on them, and several tests use
-  the fixed `agent_id = 1` (a process-shared key); both make these tests
-  unsafe to run concurrently with other modules touching those tables (same
-  convention as `agent_scheduler/store_test.exs`).
+  `async: true` — the ETS-based tests seed ONE row in the app-global named
+  `:evogit_agent_state` table under a per-test unique agent id from this file's
+  own id range and delete exactly that row on exit; nothing is asserted about
+  the table as a whole, so the writes are concurrent-safe. Every other test is
+  pure (`LoopState` structs / a per-test temp git repo).
   """
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   @moduletag :tmp_dir
 
@@ -38,12 +37,17 @@ defmodule EvoGit.Agent.CancelGraceTest do
   # Harness
   # ---------------------------------------------------------------------------
 
+  # An agent id NOTHING ever registers, so the "no ETS agent state" tests keep
+  # observing a nil objective regardless of concurrently running modules. It
+  # sits just below this file's unique-id range (9_900_000 + unique_integer).
+  @absent_agent_id 9_899_999
+
   # Minimal LoopState builder (mirrors turn_limit_test.exs).
   defp state, do: state([])
 
   defp state(overrides) do
     %LoopState{
-      agent_id: 1,
+      agent_id: @absent_agent_id,
       agent_module: __MODULE__,
       depth: 0,
       node_path: "./",
@@ -56,7 +60,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
     %ContextNode{path: "./", repo: "/tmp/test"}
   end
 
-  defp agent_state(overrides \\ []) do
+  defp agent_state(overrides) do
     defaults = [
       context_node: context_node(),
       phylo_node: %PhyloGraphNode{repo: "/tmp/test", base_commit: "abc", current_commit: "abc"},
@@ -74,19 +78,19 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
   end
 
-  defp clear_ets do
-    [:evogit_agent_state, :evogit_sched_meta]
-    |> Enum.each(fn name ->
-      if :ets.whereis(name) != :undefined, do: :ets.delete_all_objects(name)
-    end)
-  end
-
   setup do
     create_ets_if_missing(:evogit_agent_state)
     create_ets_if_missing(:evogit_sched_meta)
-    clear_ets()
-    on_exit(fn -> clear_ets() end)
     :ok
+  end
+
+  # Seeds an agent row under a UNIQUE id (this file's own range) and schedules
+  # its deletion, so no concurrently running module can observe or clobber it.
+  defp put_agent_state!(overrides \\ []) do
+    agent_id = 9_900_000 + :erlang.unique_integer([:positive])
+    :ok = Store.put_agent_state(agent_id, agent_state(overrides))
+    on_exit(fn -> Store.delete_agent_state(agent_id) end)
+    agent_id
   end
 
   # Replicates `Runner`'s drain_and_inject_user_messages/1 (which is private):
@@ -222,23 +226,23 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
   describe "cancel_requested flag → cancel-grace entry" do
     test "flag set + cancel message pending → cancel-grace with budget 3, flag cleared, no extra message" do
-      agent_id = 1
-
       cancel_message =
         "The task is being cancelled. Please wrap up and call complete_task with your best answer."
 
-      Store.put_agent_state(
-        agent_id,
-        agent_state(
+      agent_id =
+        put_agent_state!(
           objective: "Original objective",
           pending_user_messages: [cancel_message],
           cancel_requested: true
         )
-      )
 
       # loop/1 drains pending user messages BEFORE the cancel check; replicate
       # that step so the cancel message is already in the context.
-      drained = inject_user_messages(state(), Store.drain_pending_user_messages(agent_id))
+      drained =
+        inject_user_messages(
+          state(agent_id: agent_id),
+          Store.drain_pending_user_messages(agent_id)
+        )
 
       assert Enum.any?(message_texts(drained.context), &(&1 =~ cancel_message))
 
@@ -260,9 +264,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "flag not set → :no_cancel (loop continues normally)" do
-      Store.put_agent_state(agent_id = 1, agent_state())
+      agent_id = put_agent_state!()
 
-      assert :no_cancel == Runner.maybe_enter_cancel_grace(state())
+      assert :no_cancel == Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
       refute Store.cancel_requested?(agent_id)
     end
 
@@ -311,9 +315,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
     end
 
     test "turn-limit message includes the objective when present (byte-for-byte parity)" do
-      Store.put_agent_state(1, agent_state(objective: "Refactor the parser"))
+      agent_id = put_agent_state!(objective: "Refactor the parser")
 
-      grace_state = Runner.enter_grace(state(), "max turns (128) exceeded")
+      grace_state = Runner.enter_grace(state(agent_id: agent_id), "max turns (128) exceeded")
 
       [text] = message_texts(grace_state.context)
       assert text =~ "Your original objective was:\nRefactor the parser"
@@ -333,9 +337,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
       Process.put(:repo_path, tmp_dir)
       on_exit(fn -> Process.delete(:repo_path) end)
 
-      Store.put_agent_state(1, agent_state(cancel_requested: true))
+      agent_id = put_agent_state!(cancel_requested: true)
 
-      assert {:cancel_grace, grace_state} = Runner.maybe_enter_cancel_grace(state())
+      assert {:cancel_grace, grace_state} =
+               Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
+
       assert grace_state.in_grace_period == true
       assert grace_state.grace_turns_remaining == 3
 
@@ -353,9 +359,10 @@ defmodule EvoGit.Agent.CancelGraceTest do
       Process.put(:repo_path, tmp_dir)
       on_exit(fn -> Process.delete(:repo_path) end)
 
-      Store.put_agent_state(1, agent_state(cancel_requested: true))
+      agent_id = put_agent_state!(cancel_requested: true)
 
-      assert {:cancel_grace, _grace_state} = Runner.maybe_enter_cancel_grace(state())
+      assert {:cancel_grace, _grace_state} =
+               Runner.maybe_enter_cancel_grace(state(agent_id: agent_id))
 
       assert {:ok, ""} = EvoGit.Adapters.Git.status(tmp_dir)
 
@@ -378,9 +385,8 @@ defmodule EvoGit.Agent.CancelGraceTest do
       Process.put(:repo_path, tmp_dir)
       on_exit(fn -> Process.delete(:repo_path) end)
 
-      Store.put_agent_state(
-        1,
-        agent_state(
+      agent_id =
+        put_agent_state!(
           phylo_node: %PhyloGraphNode{
             repo: tmp_dir,
             base_commit: base_sha,
@@ -389,12 +395,11 @@ defmodule EvoGit.Agent.CancelGraceTest do
           objective: "Wrap up",
           task_local_id: 1
         )
-      )
 
       complete_call =
         ReqLLM.ToolCall.new("call_complete", "complete_task", ~s({"result":"wrapping up"}))
 
-      grace_state = state(in_grace_period: true, grace_turns_remaining: 3)
+      grace_state = state(agent_id: agent_id, in_grace_period: true, grace_turns_remaining: 3)
 
       assert {:complete, %EvoGit.Agent.Result{result: "wrapping up"}} =
                ToolDispatch.handle_complete_call(complete_call, grace_state, [complete_call])
@@ -409,21 +414,19 @@ defmodule EvoGit.Agent.CancelGraceTest do
       Process.put(:repo_path, tmp_dir)
       on_exit(fn -> Process.delete(:repo_path) end)
 
-      Store.put_agent_state(
-        1,
-        agent_state(
+      agent_id =
+        put_agent_state!(
           phylo_node: %PhyloGraphNode{
             repo: tmp_dir,
             base_commit: base_sha,
             current_commit: base_sha
           }
         )
-      )
 
       complete_call =
         ReqLLM.ToolCall.new("call_complete", "complete_task", ~s({"result":"wrapping up"}))
 
-      non_grace_state = state(in_grace_period: false)
+      non_grace_state = state(agent_id: agent_id, in_grace_period: false)
 
       assert {:continue, tool_responses, nil} =
                ToolDispatch.handle_complete_call(complete_call, non_grace_state, [complete_call])

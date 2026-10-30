@@ -31,11 +31,11 @@ defmodule EvoGit.Agent.Tools.WebFetchLspRegistrationTest do
       returned string comes from the TOOL (an `Error: …` produced by its own
       argument/gate validation), never from the unknown-tool fallback.
 
-  `async: false` — the schema-list assertions redirect the process-wide
-  `XDG_CONFIG_HOME` at a fresh temp config dir so they are independent of the
-  developer's real `~/.config/genesis/config.toml` (which may enable `[lsp]`).
-  The repo-less process dictionary key is per-test-process and cleared in
-  `on_exit`.
+  `async: true` — every test works on its own per-process config directory
+  (`EvoGit.TestSupport.ConfigDir`) so the schema-list assertions are independent
+  of the developer's real `~/.config/genesis/config.toml` (which may enable
+  `[lsp]`). The repo-less process dictionary key is per-test-process and
+  cleared in `on_exit`.
 
   No network and no language server is touched: `web_fetch` is handed a
   `file://` URL (refused by its scheme gate before any socket) and the `lsp`
@@ -44,9 +44,10 @@ defmodule EvoGit.Agent.Tools.WebFetchLspRegistrationTest do
   it never spawns the configured command.
   """
 
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools
+  alias EvoGit.TestSupport.ConfigDir
 
   # `web_fetch` is offered unconditionally; `lsp` only joins it on an enabled
   # `[lsp]` config, so the default-config schema assertions iterate this list.
@@ -80,31 +81,11 @@ defmodule EvoGit.Agent.Tools.WebFetchLspRegistrationTest do
     path
   end
 
-  # Redirects the process-wide `XDG_CONFIG_HOME` at a fresh temp dir and returns
-  # the genesis config directory the runtime then resolves. Restores the env var
-  # and removes the temp tree in `on_exit` (the module is `async: false`).
+  # Points the PER-PROCESS config directory (`EvoGit.TestSupport.ConfigDir`) at
+  # a fresh temp dir and returns the genesis config directory the runtime then
+  # resolves. The temp tree is removed in `on_exit`.
   defp isolate_config! do
-    original_xdg = System.get_env("XDG_CONFIG_HOME")
-
-    tmp_xdg =
-      Path.join(
-        System.tmp_dir!(),
-        "evogit-tool-registration-#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(tmp_xdg)
-    System.put_env("XDG_CONFIG_HOME", tmp_xdg)
-
-    on_exit(fn ->
-      case original_xdg do
-        nil -> System.delete_env("XDG_CONFIG_HOME")
-        value -> System.put_env("XDG_CONFIG_HOME", value)
-      end
-
-      File.rm_rf!(tmp_xdg)
-    end)
-
-    config_dir = EvoGit.Config.config_dir()
+    config_dir = Path.join(ConfigDir.isolate!("evogit-tool-registration"), "genesis")
     File.mkdir_p!(config_dir)
     config_dir
   end

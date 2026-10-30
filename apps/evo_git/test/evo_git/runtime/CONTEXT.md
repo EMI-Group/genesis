@@ -13,12 +13,9 @@ Every `async: false` module carries an in-file `@moduledoc` naming the exact BEA
 forces serialization — keep it accurate when the forcing state changes. Do NOT flip these to
 `async: true`:
 
-- **`evolution_test.exs`** — `System.put_env("XDG_CONFIG_HOME")` (read by `EvoGit.Config` /
-  `EvoGit.CustomAgents`), the live scheduler's `model_profiles` (`AgentScheduler.update_config/1`),
-  and the global `Logger` level.
-- **`pull_request_test.exs`** — `System.put_env("XDG_CONFIG_HOME")` (read by `EvoGit.Config`).
-- **`root_agent_helpers_test.exs`** — `System.put_env("XDG_CONFIG_HOME")` (read by
-  `EvoGit.CustomAgents`).
+- **`evolution_test.exs`** — the live scheduler's `model_profiles`
+  (`AgentScheduler.update_config/1`) and the global `Logger` level. Its config dir is isolated PER
+  PROCESS via `EvoGit.TestSupport.ConfigDir.isolate!/1` (no `XDG_CONFIG_HOME` mutation).
 - **`self_reflective_test.exs`** — the `:self_reflective_source_root` / `:self_reflective_source_dir`
   app env and the `GENESIS_SOURCE_ROOT` OS env var (read by production
   `EvoGit.Runtime.SelfReflective.source_root/0` / `EvoGit.SelfReflectiveSource.reference_path/0`),
@@ -26,6 +23,11 @@ forces serialization — keep it accurate when the forcing state changes. Do NOT
 
 Genuinely `async: true` (verified to mutate no BEAM-global state):
 
+- **`pull_request_test.exs`** — only `generate_title/2`'s nil-model path and pure `format_body/2`;
+  its config dir is isolated PER PROCESS via `EvoGit.TestSupport.ConfigDir.isolate!/1` (no
+  `XDG_CONFIG_HOME` mutation, no app-env write).
+- **`root_agent_helpers_test.exs`** — `EvoGit.CustomAgents`/`Runtime.Helpers` reads only; the config
+  dir is isolated PER PROCESS via `EvoGit.TestSupport.ConfigDir.isolate!/1`.
 - **`genesis_test.exs`** — pure `Helpers.new_codebase?/1` + `AgentSpec.new/5` + the UNC
   `Genesis.run/2` pre-I/O `ArgumentError` guard.
 - **`helpers_test.exs`** — pure helpers + real git ops on unique temp repos. It does NOT subscribe

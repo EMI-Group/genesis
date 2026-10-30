@@ -19,7 +19,7 @@ The compression ORCHESTRATION tests live one node up (`../` — `context_compres
 ## Constraints
 
 `recency_test.exs` is `async: false` because its seam tests mutate the app-env keys `:compression_tail_budget_fraction` / `:compression_tail_budget_tokens`, read at CALL time by `Recency.tail_budget/1` and exercised concurrently by `checkpoint_test` / `tool_result_pruner_test`; `setup` clears both and `on_exit` restores the operator's values.
-`threshold_test.exs` is `async: false` and redirects `XDG_CONFIG_HOME` (the `[llm]` threshold/pruning overrides have no app-env seam) while swapping the `:llm_model_metadata_fun` seam.
+`threshold_test.exs` is `async: false` because it swaps the `:llm_model_metadata_fun` seam, which `EvoGit.Config.Schema.LLM.model_metadata/1` reads at CALL time on every agent spawn (`profile_generation_params/1` → `LLMConstraints.filter/3`) as well as in `Threshold`; the `[llm]` threshold/pruning overrides have no app-env seam, so its config dir is isolated PER PROCESS via `EvoGit.TestSupport.ConfigDir.isolate!/1` instead of mutating `XDG_CONFIG_HOME`.
 The remaining suites are pure and `async: true`.
 `shrink_to_budget/2` is the only step that can shrink a protected suffix whose MINIMAL pairing-safe form (assistant call + its results) is itself over budget — `boundary/3` never protects less than that, which is why an over-budget suffix used to survive every rebuild.
 Contract of `shrink_to_budget/2`: `%{messages, truncated, estimated_tokens}`; `:budget` (positive integer) wins over `:context_window`/`:tail_budget_fraction`/`:tail_budget_tokens`; empty/non-list input comes back untouched with a zero estimate.
