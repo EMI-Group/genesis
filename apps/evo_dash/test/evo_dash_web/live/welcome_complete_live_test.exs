@@ -1,4 +1,11 @@
 defmodule EvoDashWeb.WelcomeCompleteLiveTest do
+  # async: false — the go_to_dashboard test writes `version_state.toml` into the
+  # per-test isolated `XDG_CONFIG_HOME` (process-global, the ONLY config-dir
+  # seam), and that file drives `EvoGit.Config.VersionState.onboarding_needed?/0`
+  # — the projects page's first-run gate. Written into the shared run config dir
+  # instead, it would mark onboarding complete for every later suite
+  # (projects_live_test asserts the push_navigate to /welcome). The module also
+  # resets the boot-created `EvoDash.ActiveTasks` hub.
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 

@@ -4,11 +4,11 @@ defmodule EvoDashWeb.TaskExportControllerTest do
   # `~/.config/genesis`. That env var is process-global and is the ONLY config-dir
   # seam (`EvoGit.Config.config_dir/0` derives the path from it; there is no
   # injectable override), so an async module reading config concurrently could
-  # observe this suite's temp dir instead of the real one. The suite also injects
-  # the two module-level runner seams (`:task_export_task_runner` /
-  # `:task_export_archive_runner`), which live in the `:evo_dash` app env — also
-  # process-global. It writes NOTHING to the shared Store: the task and the
-  # archive pages come from the injected runners.
+  # observe this suite's temp dir — the blocker. The two module-level runner
+  # seams (`:task_export_task_runner` / `:task_export_archive_runner`) are NOT a
+  # blocker: they live in the `:evo_dash` app env but are read only by this
+  # controller, which no other suite exercises. It writes NOTHING to the shared
+  # Store: the task and the archive pages come from the injected runners.
   use EvoDashWeb.ConnCase, async: false
 
   # The controller logs a warning for every degraded page; capture it so the

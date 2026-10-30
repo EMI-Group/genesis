@@ -15,8 +15,16 @@ defmodule EvoDashWeb.ProjectsLive.ProjectTest do
   `load_model_profiles_from_config/2` seam (its moduledoc explicitly exposes
   it for unit testing with an injected config map).
 
-  NOTE: `async: false` — every test isolates `XDG_CONFIG_HOME` (same rationale
-  as `node_aware_test.exs`).
+  NOTE: `async: false` — `XDG_CONFIG_HOME` is process-global and is the ONLY
+  config-dir seam (`EvoGit.Config.config_dir/0` derives the path from it; there
+  is no injectable override), while every test in this module runs inside the
+  per-test isolated dir and the local-node tests WRITE into it
+  (`write_model_profile_config/0`, `CustomAgents.save_model_selection_script/1`).
+  `LiveHooks.Appearance` resolves config at every page mount, so a concurrent
+  async mount would observe this temp dir. Only the three local-node tests truly
+  need the isolation; the six pure/remote ones could form an async module, but
+  that would duplicate (or extract to `test/support/`, out of scope) the shared
+  fixtures to recover ~4 ms — not worth it.
   """
 
   use ExUnit.Case, async: false

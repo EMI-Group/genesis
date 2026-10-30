@@ -1,4 +1,12 @@
 defmodule EvoDashWeb.WelcomeLiveTest do
+  # async: false — this suite WRITES process-global state that other suites read:
+  # the isolated `XDG_CONFIG_HOME` dir (config.toml + credentials.toml — the only
+  # config-dir seam, derived by `EvoGit.Config.config_dir/0`), a process-wide
+  # ReqLLM key, and the boot-created `EvoDash.ActiveTasks` hub. The async
+  # page-mounting suites (agents_live_test, desktop_quit_test) read config and the
+  # hub through the on-mount hooks, so the writes must not overlap them. There is
+  # no config-free half to split off: every test mounts `/welcome`, whose mount
+  # resolves config from the isolated dir.
   use EvoDashWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
 

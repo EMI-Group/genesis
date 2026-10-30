@@ -5,8 +5,18 @@ defmodule EvoDashWeb.LiveHooks.UpdateStatusTest do
   # @update_status seeding decision. No LiveView needed — the hub runs in the
   # test app's supervision tree.
   #
-  # async: false — the hub is a shared global GenServer and every test injects
-  # global Application env values.
+  # async: false — everything this file mutates is process-global with no
+  # per-test scoping, and each item has an `async: true` owner it would race:
+  #   * the `EvoDash.UpdateStatus` singleton hub — `reset/0` plus phase
+  #     assertions here, also reset and asserted by
+  #     test/evo_dash/update_status_test.exs (`async: true`);
+  #   * the `:update_notify_only_override` Application env — written here and by
+  #     that same async module;
+  #   * the `:desktop_quit_stop_fun` Application env — written here and by
+  #     desktop_quit_test.exs (`async: true`, its only other test writer).
+  # ExUnit drains ALL async modules before starting any sync one, so staying sync
+  # is exactly what keeps those writers disjoint. Flipping has no upside: the 11
+  # tests here finish in ~0.05 s.
   use ExUnit.Case, async: false
 
   alias EvoDash.UpdateStatus
