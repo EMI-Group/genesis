@@ -2071,26 +2071,10 @@ defmodule EvoDashWeb.ProjectsLiveTest do
       await_async_loads(view)
     end
 
-    test "the notified-id seed never notifies for pre-existing terminal tasks", %{conn: conn} do
-      ids = for _ <- 1..3, do: insert_task_fixture!(status: :completed).id
-
-      {:ok, view, _html} = live(conn, ~p"/projects")
-      wait_notified_ids_ready(view)
-
-      # Every pre-existing terminal task is in the seed.
-      assert MapSet.new(ids) |> MapSet.subset?(assigns(view)[:notified_task_ids])
-
-      # No notification before the seed landed: the readiness poll above settles
-      # the mount turn and the batch never pushes a notification itself, so a
-      # zero-timeout refute is conclusive.
-      refute_push_event(view, "task_notification", %{}, 0)
-
-      # ...and none after a scan runs against the seeded set.
-      send(view.pid, :node_aware_reload_tasks)
-      drain_task_reload(view)
-
-      refute_push_event(view, "task_notification", %{}, 0)
-    end
+    # MOVED: "the notified-id seed never notifies for pre-existing terminal
+    # tasks" lives in `EvoDashWeb.ProjectsLiveSyncTest` below — its final
+    # zero-timeout refute follows a real reload, whose scan diffs the RUN-WIDE
+    # store, so it is the same GLOBAL-quiet claim as the other moved tests.
   end
 
   describe "remote node contexts" do
@@ -4780,6 +4764,30 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
       # No active project in this describe (recent projects cleared, fixture
       # inserted directly into the store), so the launch panel is hidden
       refute html =~ "task-launch-button"
+    end
+
+    # Same hazard as the test above (moved from the async module for it): the
+    # seed-subset assertions are placement-independent, but the REFUTES are a
+    # GLOBAL-quiet claim about a scan that diffs the RUN-WIDE store.
+    test "the notified-id seed never notifies for pre-existing terminal tasks", %{conn: conn} do
+      ids = for _ <- 1..3, do: insert_task_fixture!(status: :completed).id
+
+      {:ok, view, _html} = live(conn, ~p"/projects")
+      wait_notified_ids_ready(view)
+
+      # Every pre-existing terminal task is in the seed.
+      assert MapSet.new(ids) |> MapSet.subset?(assigns(view)[:notified_task_ids])
+
+      # No notification before the seed landed: the readiness poll above settles
+      # the mount turn and the batch never pushes a notification itself, so a
+      # zero-timeout refute is conclusive.
+      refute_push_event(view, "task_notification", %{}, 0)
+
+      # ...and none after a scan runs against the seeded set.
+      send(view.pid, :node_aware_reload_tasks)
+      drain_task_reload(view)
+
+      refute_push_event(view, "task_notification", %{}, 0)
     end
   end
 
