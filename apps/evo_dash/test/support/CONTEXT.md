@@ -74,6 +74,7 @@ Measured per-call breakdown: ~0.9 ms already-migrated boot + ~0.07 ms copy + ~1.
 ## Constraints
 
 - Keep support modules free of test logic and assertions.
+- `config_dir_test.exs` is a TEST file placed here because it proves this directory's support module: only `*.ex` files are compiled through `elixirc_paths(:test)`, so the `_test.exs` is loaded by ExUnit as an ordinary test file (and carries the assertions).
 - Keep the isolation helper's shutdown ORDER (registry → read-worker drain → store → supervisor) and the unlink; both are load-bearing for zero stray console output.
 - **Two concurrent runs of the same suite under one `TMPDIR` collide**: isolated roots are `<tmp>/evogit_test_<prefix>_<unique_integer>`, and `System.unique_integer/1` is unique only WITHIN one BEAM.
   Symptoms look unrelated — `isolated_task_store_test.exs`'s `assert [^root] = isolated_root_dirs()` failing, a `File.CopyError` while seeding, then a cascade of `EvoGit.Store`/`EvoGit.TaskRegistry` "no process" failures (a failed `isolate!/1` leaves the production children terminated for the rest of that run).
