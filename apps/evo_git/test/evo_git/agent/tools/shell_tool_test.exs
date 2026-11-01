@@ -454,6 +454,22 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert schema.description =~ "5000"
     end
 
+    test "the background paragraph steers to ONE long wait, not short re-polling" do
+      isolate_max_timeout!(1_800_000)
+
+      description = ShellTool.schema().description
+
+      # A background START still has no timeout at all — the long wait is the
+      # `job_output` budget, not the `bash` timeout.
+      assert description =~ "has NO timeout"
+
+      assert description =~
+               "For a job expected to take a while, do ONE long `job_output` wait"
+
+      assert description =~ ~s(e.g. `timeout: "30m"`)
+      assert description =~ "instead of re-polling with short budgets"
+    end
+
     test "a unit-string timeout still runs the command", %{tmp_dir: tmp_dir} do
       isolate_max_timeout!(1_800_000)
 

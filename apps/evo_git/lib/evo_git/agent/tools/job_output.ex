@@ -56,7 +56,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
       (no new output)
       [status: running]
-      [wait: 120000 ms budget expired, status: running; pass timeout_ms (or timeout) to wait up to 1775000 ms ("1775s")]
+      [wait: 120000 ms budget expired, status: running; pass timeout_ms (or timeout) to wait up to 1775000 ms ("29m35s")]
 
   The first marker means the job reached a terminal status during the wait; the
   second means the budget ran out with the job still live (the default-budget
@@ -399,15 +399,17 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   end
 
   # Human form of a budget, rendered from the CAP at call time (never a literal):
-  # a whole-minute value renders as `<n>m`, anything else as `<n>s` (truncated
-  # seconds, so the hint never advertises more than the cap).
+  # a whole number of minutes renders as `<n>m`, minutes plus a remainder as
+  # `<n>m<n>s`, and anything below one minute as `<n>s` (truncated seconds, so the
+  # hint never advertises more than the cap).
   defp humanize_ms(ms) do
-    seconds = div(ms, 1_000)
+    minutes = div(ms, 60_000)
+    seconds = rem(div(ms, 1_000), 60)
 
-    if seconds > 0 and rem(seconds, 60) == 0 do
-      "#{div(seconds, 60)}m"
-    else
-      "#{seconds}s"
+    cond do
+      minutes > 0 and seconds == 0 -> "#{minutes}m"
+      minutes > 0 -> "#{minutes}m#{seconds}s"
+      true -> "#{seconds}s"
     end
   end
 

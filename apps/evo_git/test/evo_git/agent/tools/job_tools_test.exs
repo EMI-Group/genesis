@@ -607,14 +607,14 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       # BOTH forms — the numeric budget and its human form, both rendered at
       # runtime from `wait_max_ms/0` (never a literal). With the default config
       # the cap is 1_775_000 ms, which is NOT a whole minute, so the human form
-      # is seconds.
+      # is `<n>m<n>s`.
       cap_ms = BackgroundJobs.wait_max_ms()
       assert cap_ms == 1_775_000
 
       assert String.ends_with?(
                text,
                "[wait: #{@wait_default_seam_ms} ms budget expired, status: running; " <>
-                 "pass timeout_ms (or timeout) to wait up to #{cap_ms} ms (\"1775s\")]"
+                 "pass timeout_ms (or timeout) to wait up to #{cap_ms} ms (\"29m35s\")]"
              )
 
       # With the SAME seam installed, an explicit budget stays distinguishable:
@@ -625,14 +625,25 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       refute explicit =~ "pass timeout_ms"
       assert job_status(job.id) == :running
 
-      # The `<n>m` arm of the same hint: a cap that IS a whole minute renders as
-      # minutes, still derived from `wait_max_ms/0` (never a literal).
+      # The whole-minute arm of the same hint: a cap that IS a whole minute
+      # renders as `<n>m`, still derived from `wait_max_ms/0` (never a literal).
       put_test_env(:background_wait_max_ms, 60_000)
       {minute, _elapsed} = wait_read(job, %{}, cwd)
 
       assert String.ends_with?(
                minute,
                "pass timeout_ms (or timeout) to wait up to 60000 ms (\"1m\")]"
+             )
+
+      assert job_status(job.id) == :running
+
+      # The below-one-minute arm: a sub-minute cap renders as `<n>s`.
+      put_test_env(:background_wait_max_ms, 8_000)
+      {seconds, _elapsed} = wait_read(job, %{}, cwd)
+
+      assert String.ends_with?(
+               seconds,
+               "pass timeout_ms (or timeout) to wait up to 8000 ms (\"8s\")]"
              )
 
       assert job_status(job.id) == :running
