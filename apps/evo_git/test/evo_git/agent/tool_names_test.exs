@@ -271,13 +271,17 @@ defmodule EvoGit.Agent.ToolNamesTest do
 
     test "returns the DERIVED wait ceiling for job_output in every accepted spelling" do
       # `job_output`'s `wait: true` loop may block up to
-      # `EvoGit.BackgroundJobs.wait_max_ms()` INSIDE one tool call, so its
-      # dispatch ceiling is the cap plus headroom — derived from that single
-      # source of truth, never a magic number.
-      assert Tools.default_timeout_ms("job_output") ==
-               EvoGit.BackgroundJobs.wait_max_ms() + 25_000
+      # `EvoGit.BackgroundJobs.wait_max_ms()` INSIDE one tool call. The wait cap
+      # is itself derived at call time as the configured scheduler tool ceiling
+      # (`[:scheduler, :max_tool_timeout]`) MINUS
+      # `EvoGit.BackgroundJobs.dispatch_headroom_ms()` (25 s), so the dispatch
+      # ceiling adds that headroom straight back and lands exactly on the
+      # configured `max_tool_timeout` (1_800_000 ms with the default config).
+      # Both numbers come from that single source of truth, never a magic value.
+      expected =
+        EvoGit.BackgroundJobs.wait_max_ms() + EvoGit.BackgroundJobs.dispatch_headroom_ms()
 
-      assert Tools.default_timeout_ms("job_output") == 85_000
+      assert Tools.default_timeout_ms("job_output") == expected
 
       # The wait cap must FIT inside the dispatch ceiling, or a full bounded
       # wait would be killed by the dispatcher at the very moment it expires.
@@ -287,7 +291,7 @@ defmodule EvoGit.Agent.ToolNamesTest do
       # name; the canonical `"job_output"` itself has no alias entry and passes
       # through unchanged.
       for spelling <- ["bash_output", "background_output", "job_status", "Bash_Output"] do
-        assert Tools.default_timeout_ms(spelling) == 85_000,
+        assert Tools.default_timeout_ms(spelling) == expected,
                "default_timeout_ms(#{inspect(spelling)}) should be the job_output ceiling"
       end
     end

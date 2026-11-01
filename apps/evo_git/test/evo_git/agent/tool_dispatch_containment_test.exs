@@ -43,9 +43,11 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
 
   An OMITTED `timeout` on the platform shell tool resolves to the generous
   120 s default instead of the generic configured
-  `[:scheduler, :default_tool_timeout]`; an explicit positive integer is used
-  as-is (still clamped by `[:scheduler, :max_tool_timeout]`); an invalid
-  `timeout` (`"9000"` string, negative, `0`) is treated as absent.
+  `[:scheduler, :default_tool_timeout]`; an explicit positive duration is used
+  as-is (still clamped by `[:scheduler, :max_tool_timeout]`) — that includes the
+  non-integer shapes of the unified tool surface, a numeric STRING (`"9000"`) and
+  a float (truncated), which are EXPLICIT budgets rather than absent ones; an
+  unusable `timeout` (negative, `0`, unparseable) is treated as absent.
 
   ## Seams
 
@@ -103,7 +105,8 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
 
   # The explicit `timeout` used by the "explicit argument wins" case — distinct
   # from both the generic default (20) and the shell default (120_000). The tool
-  # blocks forever, so the call always times out instead of completing.
+  # blocks forever, so the call always times out instead of completing. The
+  # string/float spelling case reuses the same budget (`"40"`, `40.9`).
   @explicit_timeout 40
 
   # The dispatch-level read tool (parallel phase, no write guard).
@@ -525,17 +528,36 @@ defmodule EvoGit.Agent.ToolDispatchContainmentTest do
     test "an invalid timeout argument is treated as absent" do
       install_fake_tools(%{@read_tool => blocking_tool()})
 
-      for invalid <- [-1, 0, "9000"] do
+      for invalid <- [-1, 0] do
         call = tool_call(@read_tool, %{"file_path" => "./a.txt", "timeout" => invalid})
 
         assert {:continue, [message], _usage} =
                  ToolDispatch.process_tool_calls([call], loop_state(), [])
 
-        # Honouring `-1`/`0` would yield "after -1ms"/"after 0ms"; honouring the
-        # `"9000"` string would yield "after 9000ms". Absent means the generic
-        # configured default.
+        # Honouring `-1`/`0` would yield "after -1ms"/"after 0ms". A non-positive
+        # budget is unusable, so the generic configured default applies.
         assert message_text(message) == timeout_message(@tiny_generic_timeout),
                "a #{inspect(invalid)} timeout argument must be treated as absent"
+      end
+    end
+
+    test "a numeric-string or float timeout argument counts as EXPLICIT" do
+      install_fake_tools(%{@read_tool => blocking_tool()})
+
+      # The unified tool-surface `timeout` shapes are not integers: `"40"`
+      # (numeric string) and `40.9` (float, truncated) both mean "the model asked
+      # for ~40 ms". Recognition is shared with
+      # `ToolInvocation.resolve_timeout/4` (`Shared.fetch_duration_ms/2`), so the
+      # tiny configured generic default must NOT apply — a string treated as
+      # absent would cut the call at `@tiny_generic_timeout` instead.
+      for timeout <- [Integer.to_string(@explicit_timeout), @explicit_timeout + 0.9] do
+        call = tool_call(@read_tool, %{"file_path" => "./a.txt", "timeout" => timeout})
+
+        assert {:continue, [message], _usage} =
+                 ToolDispatch.process_tool_calls([call], loop_state(), [])
+
+        assert message_text(message) == timeout_message(@explicit_timeout),
+               "a #{inspect(timeout)} timeout argument must be honoured as EXPLICIT"
       end
     end
   end
