@@ -8,6 +8,9 @@ defmodule EvoGit.Agent.Tools.SharedTest do
   use ExUnit.Case, async: true
   alias EvoGit.Agent.Tools.Shared
 
+  # The wait-budget spellings `job_output` honours, in priority order.
+  @budget_keys ["timeout_ms", "timeout", "timeoutMs"]
+
   describe "normalize_relpath/1" do
     test "normalizes bare path to ./ prefix" do
       assert Shared.normalize_relpath("foo/bar") == "./foo/bar"
@@ -441,6 +444,109 @@ defmodule EvoGit.Agent.Tools.SharedTest do
     test "treats other strings as false (falls back to default)" do
       assert Shared.get_optional_boolean(%{"search_notes" => "yes"}, "search_notes", false) ==
                false
+    end
+  end
+
+  describe "fetch_duration_ms/2" do
+    test "accepts an integer as-is" do
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 300}, @budget_keys) == {:ok, 300}
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 0}, @budget_keys) == {:ok, 0}
+    end
+
+    test "truncates a float" do
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 300.9}, @budget_keys) == {:ok, 300}
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 1.5}, @budget_keys) == {:ok, 1}
+    end
+
+    test "accepts a numeric string, with or without a unit suffix" do
+      for {value, expected} <- [
+            {"60000", 60_000},
+            {"60000ms", 60_000},
+            {"60 s", 60_000},
+            {"60s", 60_000},
+            {"60S", 60_000},
+            {"2m", 120_000},
+            {"1.5s", 1_500},
+            {" 300 ", 300}
+          ] do
+        assert Shared.fetch_duration_ms(%{"timeout_ms" => value}, @budget_keys) ==
+                 {:ok, expected},
+               "#{inspect(value)} must parse as #{expected} ms"
+      end
+    end
+
+    test "rejects every unusable value shape" do
+      # The WHOLE value must parse — no numeric-prefix truncation — and a blank or
+      # unit-less-fractional string is not a duration either.
+      for value <- ["", "soon", "1h30m", "60000abc", "1.5", nil, true, [300], %{ms: 300}] do
+        assert Shared.fetch_duration_ms(%{"timeout_ms" => value}, @budget_keys) == :error,
+               "#{inspect(value)} must be unusable"
+      end
+    end
+
+    test "returns :error for a non-map args value" do
+      assert Shared.fetch_duration_ms(nil, @budget_keys) == :error
+      assert Shared.fetch_duration_ms("nope", "timeout_ms") == :error
+      assert Shared.fetch_duration_ms([timeout_ms: 300], @budget_keys) == :error
+    end
+
+    test "returns :error when no key is present" do
+      assert Shared.fetch_duration_ms(%{}, @budget_keys) == :error
+      assert Shared.fetch_duration_ms(%{"max_bytes" => 10}, @budget_keys) == :error
+    end
+
+    test "falls through a present-but-unusable key to a later one" do
+      # This is what makes `timeout` (or `timeoutMs`) win when `timeout_ms` holds
+      # something unusable — the caller gets a budget, not the tool's default.
+      assert Shared.fetch_duration_ms(
+               %{"timeout_ms" => "soon", "timeout" => 300},
+               @budget_keys
+             ) == {:ok, 300}
+
+      assert Shared.fetch_duration_ms(
+               %{"timeout_ms" => "", "timeout" => nil, "timeoutMs" => "2m"},
+               @budget_keys
+             ) == {:ok, 120_000}
+    end
+
+    test "tries the keys in the ORDER it is given" do
+      assert Shared.fetch_duration_ms(
+               %{"timeout" => 300, "timeoutMs" => 400},
+               @budget_keys
+             ) == {:ok, 300}
+
+      assert Shared.fetch_duration_ms(
+               %{"timeout" => 300, "timeoutMs" => 400},
+               ["timeoutMs", "timeout"]
+             ) == {:ok, 400}
+    end
+
+    test "accepts a single key as well as a list" do
+      assert Shared.fetch_duration_ms(%{"timeout" => 250}, "timeout") == {:ok, 250}
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 250}, "timeout") == :error
+    end
+
+    test "does NOT clamp (that is the caller's job)" do
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => -5}, @budget_keys) == {:ok, -5}
+
+      assert Shared.fetch_duration_ms(%{"timeout_ms" => 90_000_000}, @budget_keys) ==
+               {:ok, 90_000_000}
+    end
+  end
+
+  describe "get_duration_ms/3" do
+    test "returns the fetched duration when a key yields one" do
+      assert Shared.get_duration_ms(%{"timeout" => "2m"}, ["timeout_ms", "timeout"], 8_000) ==
+               120_000
+    end
+
+    test "returns the default when no key yields a usable value" do
+      assert Shared.get_duration_ms(%{}, ["timeout_ms", "timeout"], 8_000) == 8_000
+      assert Shared.get_duration_ms(%{"timeout_ms" => "soon"}, ["timeout_ms"], 8_000) == 8_000
+    end
+
+    test "does NOT clamp the fetched value either" do
+      assert Shared.get_duration_ms(%{"timeout_ms" => -5}, ["timeout_ms"], 8_000) == -5
     end
   end
 end
