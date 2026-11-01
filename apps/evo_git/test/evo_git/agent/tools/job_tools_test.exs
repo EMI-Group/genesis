@@ -9,10 +9,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   rest of the BEAM/host are all BEAM-global, so this module must never run
   concurrently with another module.
 
-  It also writes the app-env `:background_wait_default_ms` call-time seam (the
-  `job_output` wait's default budget) for the default-budget tests, which is one
-  more BEAM-global a concurrent module could observe; the production default
-  (8000 ms) is unchanged and restored after every test.
+  It also writes the app-env `:background_wait_default_ms` / `:background_wait_max_ms`
+  call-time seams (the `job_output` wait's default budget and its cap) for the
+  budget tests, which is one more BEAM-global a concurrent module could observe;
+  the production defaults (120 000 ms default, scheduler-derived cap) are
+  unchanged and restored after every test.
 
   This suite PINS the shipped behaviour of the background-job tool surface —
   it is a characterisation suite, not a design:
@@ -46,13 +47,14 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
   @job_tools ["job_output", "job_list", "job_kill"]
 
-  # The job_output tool's own dispatch default (see
-  # `Tools.default_timeout_ms/1`): `EvoGit.BackgroundJobs.wait_max_ms/0` plus the
-  # dispatcher's 25 s read headroom, i.e. 85_000 ms today. A bounded `wait: true`
-  # legitimately blocks up to the 60 s cap inside the tool, so this generous bound
-  # is a compile-time-safe ceiling, NOT a latency race; it is never waited out —
-  # every test below pins a SMALL budget instead.
-  @job_output_default_timeout_ms BackgroundJobs.wait_max_ms() + 25_000
+  # The job_output tool's own dispatch default (see `Tools.default_timeout_ms/1`)
+  # is DERIVED AT RUNTIME — `EvoGit.BackgroundJobs.wait_max_ms/0` (the configured
+  # scheduler tool ceiling minus the dispatcher headroom) plus that headroom
+  # added straight back — so it is read through `job_output_default_timeout_ms/0`
+  # below, never a compile-time attribute (which would freeze the cap at build
+  # time). A bounded `wait: true` legitimately blocks up to the wait cap inside
+  # the tool; that derived value is a CEILING for the real block, NOT a latency
+  # race, and it is never waited out — every test below pins a SMALL budget.
 
   # Poll cadence for every wait below (see `wait_until/2`): tight at first, then
   # relaxed so a genuinely slow condition does not spin. The wait's own deadline
@@ -182,6 +184,39 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   defp wait_read(job, budget_args, cwd) do
     args = Map.merge(%{"job_id" => job.id, "wait" => true}, budget_args)
     timed(fn -> JobOutput.execute(args, cwd, cwd) end)
+  end
+
+  # The job_output tool's dispatch ceiling, DERIVED at runtime (see
+  # `Tools.default_timeout_ms/1` and `EvoGit.BackgroundJobs.wait_max_ms/0`):
+  # the wait cap plus the dispatcher headroom that produced it, i.e. exactly the
+  # scheduler's `[:scheduler, :max_tool_timeout]`.
+  defp job_output_default_timeout_ms do
+    BackgroundJobs.wait_max_ms() + BackgroundJobs.dispatch_headroom_ms()
+  end
+
+  # Sets/clears the owning agent's graceful-cancel flag for the tool task. The
+  # wait loop reads `:evogit_agent_id` from the process dictionary and the flag
+  # from the app-owned `:evogit_agent_state` ETS table, so this mirrors exactly
+  # what `TaskRegistry.cancel_task/1` + `AgentScheduler` leave behind. A UNIQUE
+  # agent id keeps the row invisible to every other consumer of that table, and
+  # the row is deleted afterwards.
+  defp put_cancel_flag!(agent_id, value) do
+    :ets.insert(:evogit_agent_state, {agent_id, %{cancel_requested: value}})
+
+    on_exit(fn -> :ets.delete(:evogit_agent_state, agent_id) end)
+    :ok
+  end
+
+  # The wait loop's backoff curve as a list: the delay AFTER each poll, starting
+  # from `base_ms` and following `JobOutput.next_poll_delay/2` for `steps` polls.
+  defp backoff_curve(base_ms, cap_ms, steps) do
+    {delays, _last} =
+      Enum.map_reduce(1..steps, base_ms, fn _step, current ->
+        next = JobOutput.next_poll_delay(current, cap_ms)
+        {next, next}
+      end)
+
+    delays
   end
 
   ## Job helpers
@@ -391,7 +426,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
                ~r/\Afast\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\z/
 
       assert elapsed < 20_000,
-             "a bounded wait must settle far under #{@job_output_default_timeout_ms} ms"
+             "a bounded wait must settle far under #{job_output_default_timeout_ms()} ms"
     end
 
     test "wait: true with a short timeout_ms returns while the job is still running",
@@ -489,8 +524,9 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   end
 
   # The `wait: true` budget contract and its ONE marker line. Every wait below is
-  # bounded by a SMALL budget (300/350 ms) — never the production 8000 ms default
-  # nor the 60 s cap — and every `sleep 30` job is killed and reaped.
+  # bounded by a SMALL budget — the 120 000 ms production default and the derived
+  # ~30 min cap are shortened through the CALL-TIME seams, never waited out — and
+  # every `sleep 30` job is killed and reaped.
   describe "JobOutput.execute/3 — wait budget and marker" do
     test "honours an explicit timeout_ms budget", %{tmp_dir: cwd} do
       job = start_job("sleep 30", cwd)
@@ -501,7 +537,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert text =~ "[status: running]"
 
       # An EXPLICIT budget renders the bare marker: the default-only hint (which
-      # names the 60 s cap) is absent.
+      # names the CAP) is absent.
       assert String.ends_with?(
                text,
                "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
@@ -558,7 +594,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
     test "an absent budget uses the default, and only the default gets the hint", %{tmp_dir: cwd} do
       # Test-only CALL-TIME seam (`EvoGit.BackgroundJobs.wait_default_ms/0`): the
-      # production 8000 ms is unchanged — this only keeps the test fast.
+      # production 120 000 ms is unchanged — this only keeps the test fast.
       put_test_env(:background_wait_default_ms, @wait_default_seam_ms)
 
       job = start_job("sleep 30", cwd)
@@ -567,11 +603,18 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       assert elapsed >= @wait_default_seam_ms - 50
       assert elapsed < @wait_elapsed_ceiling_ms
 
-      # The hint rides ONLY the default-budget marker, and it names the cap.
+      # The hint rides ONLY the default-budget marker, and it names the CAP in
+      # BOTH forms — the numeric budget and its human form, both rendered at
+      # runtime from `wait_max_ms/0` (never a literal). With the default config
+      # the cap is 1_775_000 ms, which is NOT a whole minute, so the human form
+      # is seconds.
+      cap_ms = BackgroundJobs.wait_max_ms()
+      assert cap_ms == 1_775_000
+
       assert String.ends_with?(
                text,
                "[wait: #{@wait_default_seam_ms} ms budget expired, status: running; " <>
-                 "pass timeout_ms (or timeout) to wait up to #{BackgroundJobs.wait_max_ms()} ms]"
+                 "pass timeout_ms (or timeout) to wait up to #{cap_ms} ms (\"1775s\")]"
              )
 
       # With the SAME seam installed, an explicit budget stays distinguishable:
@@ -580,6 +623,18 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       assert explicit =~ "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
       refute explicit =~ "pass timeout_ms"
+      assert job_status(job.id) == :running
+
+      # The `<n>m` arm of the same hint: a cap that IS a whole minute renders as
+      # minutes, still derived from `wait_max_ms/0` (never a literal).
+      put_test_env(:background_wait_max_ms, 60_000)
+      {minute, _elapsed} = wait_read(job, %{}, cwd)
+
+      assert String.ends_with?(
+               minute,
+               "pass timeout_ms (or timeout) to wait up to 60000 ms (\"1m\")]"
+             )
+
       assert job_status(job.id) == :running
 
       kill_and_reap(job, cwd)
@@ -592,7 +647,7 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       {text, elapsed} = wait_read(job, %{"timeout_ms" => "soon"}, cwd)
 
       # "soon" is unusable, so the DEFAULT was waited — never a 0 ms budget (which
-      # would return at once) and never the production 8000 ms.
+      # would return at once) and never the production 120 000 ms.
       assert elapsed >= @wait_default_seam_ms - 50
       assert elapsed < @wait_elapsed_ceiling_ms
       assert text =~ "[wait: #{@wait_default_seam_ms} ms budget expired, status: running; pass"
@@ -629,6 +684,168 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       false_read = JobOutput.execute(%{"job_id" => job.id, "wait" => false}, cwd, cwd)
       assert false_read == "(no new output)\n[status: completed, exit code: 0]"
       refute false_read =~ "[wait:"
+    end
+
+    test "a full-budget wait is never cut off by the dispatch ceiling", %{tmp_dir: cwd} do
+      # Shrink BOTH call-time seams: the cap (so a "full budget" wait is 500 ms)
+      # and the poll cadence. The dispatcher's job_output ceiling is derived from
+      # the SAME cap at runtime, so this also pins the headroom arithmetic end to
+      # end: cap + headroom, i.e. exactly the scheduler's tool ceiling.
+      put_test_env(:background_wait_max_ms, 500)
+      put_test_env(:background_poll_interval_ms, 10)
+
+      assert BackgroundJobs.wait_max_ms() == 500
+
+      assert Tools.default_timeout_ms("job_output") ==
+               BackgroundJobs.wait_max_ms() + BackgroundJobs.dispatch_headroom_ms()
+
+      assert Tools.default_timeout_ms("job_output") == 25_500
+
+      # `job_output`'s `timeout` argument is an INTERNAL wait budget, so the
+      # dispatcher applies that derived value as a FLOOR — an explicit budget can
+      # never lower the ceiling below the wait cap plus headroom.
+      assert Tools.timeout_arg_is_wait_budget?("job_output")
+
+      job = start_job("sleep 0.03", cwd)
+
+      # No explicit budget: the 120 000 ms default is CLAMPED to the 500 ms cap,
+      # and the job finishes after a couple of polls — so the marker is "finished",
+      # never "budget expired" and never a dispatcher-level abort of the call.
+      {text, elapsed} = wait_read(job, %{}, cwd)
+
+      assert elapsed < 2_000
+      assert text =~ ~r/\[wait: finished after \d+ ms, status: completed\]\z/
+      refute text =~ "budget expired"
+      assert job_status(job.id) == :completed
+    end
+
+    test "a unit-string budget is honoured and CLAMPED to the derived cap", %{tmp_dir: cwd} do
+      # The cap is shrunk to 500 ms so a 30 minute request is provably clamped in
+      # half a second instead of 30 minutes.
+      put_test_env(:background_wait_max_ms, 500)
+      put_test_env(:background_poll_interval_ms, 10)
+
+      shapes = [{"timeout", "30m"}, {"timeout_ms", "90s"}, {"timeout_ms", 500.0}]
+
+      for {key, value} <- shapes do
+        job = start_job("sleep 30", cwd)
+        {text, elapsed} = wait_read(job, %{key => value}, cwd)
+        label = "#{key} => #{inspect(value)}"
+
+        assert elapsed >= 400, label
+        assert elapsed < 3_000, label
+
+        # The marker reports the CLAMPED budget (500), not the requested one.
+        assert String.ends_with?(text, "[wait: 500 ms budget expired, status: running]"),
+               "#{label} must clamp to the 500 ms cap, got: #{inspect(text)}"
+
+        refute text =~ "pass timeout_ms"
+        refute text =~ "1800000"
+        refute text =~ "90000"
+        assert job_status(job.id) == :running
+
+        kill_and_reap(job, cwd)
+      end
+    end
+
+    test "the poll backoff curve grows from the base and caps out" do
+      # The pure curve behind the wait loop: ~1.5× per poll from the configured
+      # base cadence (100 ms in production), never past the 3 s cap. Backing off
+      # is what keeps a ~30 min wait from running ~18 000 `systemctl --user show`
+      # polls in the single global registry.
+      assert JobOutput.next_poll_delay(100, 3_000) == 150
+      assert JobOutput.next_poll_delay(150, 3_000) == 225
+
+      curve = backoff_curve(100, 3_000, 40)
+
+      assert hd(curve) == 150
+      assert List.last(curve) == 3_000
+      assert curve == Enum.sort(curve), "the curve must never shrink"
+      assert Enum.max(curve) == 3_000, "the curve must never exceed the cap"
+      assert Enum.count(curve, &(&1 == 3_000)) > 1, "the curve must flatten AT the cap"
+
+      # A zero base (the poll-interval seam allows 0) still sleeps at least 1 ms,
+      # so the wait can never degenerate into a busy loop.
+      assert JobOutput.next_poll_delay(0, 3_000) >= 1
+      assert JobOutput.next_poll_delay(3_000, 3_000) == 3_000
+    end
+
+    test "a graceful cancel aborts the wait early with its own marker", %{tmp_dir: cwd} do
+      agent_id = System.unique_integer([:positive])
+      put_cancel_flag!(agent_id, true)
+      Process.put(:evogit_agent_id, agent_id)
+      on_exit(fn -> Process.delete(:evogit_agent_id) end)
+
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout" => 5_000}, cwd)
+
+      # The 5 s budget was NOT consumed: the cancel flag is checked on every poll,
+      # so the wait returns at the next-poll latency.
+      assert elapsed < 2_000
+      assert text =~ "[status: running]"
+
+      assert text =~
+               ~r/\[wait: aborted after \d+ ms — cancellation requested, status: running\]\z/
+
+      refute text =~ "budget expired"
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
+    end
+  end
+
+  # The cancel probe must be TOTAL: it runs inside a wait, so anything it cannot
+  # answer is "not cancelled" — never a raise and never a crashed tool.
+  describe "JobOutput cancel probe totality" do
+    test "an absent or unusable agent id is never a cancel" do
+      Process.delete(:evogit_agent_id)
+      refute JobOutput.cancel_requested?()
+
+      for invalid <- ["7", nil, 7.0, :agent] do
+        Process.put(:evogit_agent_id, invalid)
+
+        refute JobOutput.cancel_requested?(),
+               "agent id #{inspect(invalid)} must not count as a cancel"
+      end
+    end
+
+    test "an absent agent-state ETS table is never a cancel" do
+      # Probed through an explicit table name, so the app-owned singleton table
+      # (shared with the running scheduler) is never deleted.
+      assert :ets.whereis(:evogit_no_such_state_table) == :undefined
+
+      Process.put(:evogit_agent_id, System.unique_integer([:positive]))
+      refute JobOutput.cancel_requested?(:evogit_no_such_state_table)
+    end
+
+    test "a real flag is reported for the owning agent only" do
+      agent_id = System.unique_integer([:positive])
+      put_cancel_flag!(agent_id, true)
+      Process.put(:evogit_agent_id, agent_id)
+
+      assert JobOutput.cancel_requested?()
+
+      put_cancel_flag!(agent_id, nil)
+      refute JobOutput.cancel_requested?()
+
+      # A DIFFERENT agent's flag never leaks into this agent's wait.
+      other_id = agent_id + 1_000_000
+      put_cancel_flag!(other_id, true)
+      refute JobOutput.cancel_requested?()
+    end
+
+    test "a wait with no agent id just waits its budget (no raise)", %{tmp_dir: cwd} do
+      Process.delete(:evogit_agent_id)
+
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout_ms" => 200}, cwd)
+
+      assert elapsed >= 150
+      assert elapsed < 3_000
+      assert String.ends_with?(text, "[wait: 200 ms budget expired, status: running]")
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
     end
   end
 

@@ -26,10 +26,11 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @tool_name "bash"
 
   # Default command timeout: 2 minutes. A longer-running command must pass an
-  # explicit `timeout`; `@max_timeout` is the hard cap — a larger requested
-  # value is CLAMPED (never rejected), so the advertised cap is the real cap.
+  # explicit `timeout`; the hard cap is the CONFIGURED
+  # `[:scheduler, :max_tool_timeout]` (read at call time, default 30 min) — a
+  # larger requested value is CLAMPED (never rejected), so the advertised cap is
+  # the real cap. There is deliberately no duplicated literal here.
   @default_timeout 120_000
-  @max_timeout 1_800_000
 
   # Matches `cd` targets: absolute paths (`/foo`), dot-relative escapes
   # (`.`, `..`, `./foo`, `../foo`, `../../../`) and plain relative paths
@@ -47,6 +48,17 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   defp shell_name, do: if(powershell?(), do: "PowerShell", else: Platform.shell())
   defp shell_flag, do: if(powershell?(), do: "-Command", else: "-c")
   defp tmp_var, do: if(powershell?(), do: "$env:TEMP", else: "$TMPDIR")
+
+  # The hard timeout cap, resolved at CALL time from the configured
+  # `[:scheduler, :max_tool_timeout]` (default 30 min). Degrades to the tool's
+  # own default budget if the config somehow yields a non-positive integer, so
+  # a broken config can never make a command run unbounded — or crash the tool.
+  defp max_timeout do
+    case EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) do
+      max when is_integer(max) and max > 0 -> max
+      _ -> @default_timeout
+    end
+  end
 
   # Runtime descriptions that differ by shell
   defp command_description, do: "The #{shell_name()} command to execute"
@@ -88,10 +100,11 @@ defmodule EvoGit.Agent.Tools.ShellTool do
           "timeout" => %{
             "type" => "integer",
             "description" =>
-              "Timeout in milliseconds for a FOREGROUND command. Default: #{@default_timeout}. " <>
-                "Maximum: #{@max_timeout} (a larger value is clamped to it). A command still " <>
-                "running when the timeout expires is killed. A background command " <>
-                "(`run_in_background: true`) has no timeout — this value is ignored for it.",
+              "Timeout for a FOREGROUND command: milliseconds, or a string with a unit " <>
+                "(e.g. \"90s\", \"30m\", \"1.5s\"). Default: #{@default_timeout}. " <>
+                "Maximum: #{max_timeout()} (a larger value is clamped to it, never rejected). " <>
+                "A command still running when the timeout expires is killed. A background " <>
+                "command (`run_in_background: true`) has no timeout — this value is ignored for it.",
             "default" => @default_timeout
           },
           "run_in_background" => %{
@@ -137,7 +150,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
     """
     Use the bash tool — not shell commands like cat, sed, grep or find — to run a shell command when the dedicated read/write/edit/glob/rg tools cannot do the job.
 
-    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is in milliseconds and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{@max_timeout} (a larger value is clamped to it), and a command still running when the timeout expires is killed.
+    Pass `description` FIRST — a clear, short description of what the command does, echoed back as a `# …` header on the result — then `command`. #{shell_intro()} `timeout` is milliseconds (or a string with a unit, e.g. `90s`/`30m`) and applies to FOREGROUND commands: default #{@default_timeout}, maximum #{max_timeout()} (a larger value is clamped to it, never rejected), and a command still running when the timeout expires is killed.
 
     For work that should stay alive — a server, a watcher, a long build — or that you want to poll while you do something else, set `run_in_background: true`: it returns a job id immediately, has NO timeout, and notifies you with a `[NOTICE]` when the job finishes; read its output with `job_output`, list your jobs with `job_list`, and stop it with `job_kill`.
     NEVER background a command yourself with `&`, `nohup`, `setsid`, `disown`, `screen` or `tmux`: the sandbox kills the process group as soon as this call returns, so the command silently dies — and because the call still reports success (exit 0) with empty output, that failure is invisible (no job id, output discarded, no notification, not killable). Use `run_in_background: true` instead.
@@ -190,7 +203,7 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   end
 
   defp execute_foreground(command, args, repo_path, repo_root) do
-    timeout = args |> Map.get("timeout", @default_timeout) |> effective_timeout()
+    timeout = args |> Map.get("timeout") |> effective_timeout()
 
     max_bytes =
       Map.get(
@@ -307,12 +320,26 @@ defmodule EvoGit.Agent.Tools.ShellTool do
   @doc """
   The effective (clamped) timeout for a requested `timeout` argument.
 
-  An integer above the advertised maximum (#{@max_timeout} ms) is reduced to it;
-  everything else is returned UNCHANGED (a non-integer value is left for the
-  sandbox's own argument guard to report). Never raises.
+  TOTAL: every accepted shape — an integer, a float (truncated) or a numeric
+  string with an optional unit (`"60000"`, `"90s"`, `"30m"`, `"1.5s"`) — is
+  coerced to integer milliseconds by `EvoGit.Agent.Tools.Shared` (the single
+  duration parser; never re-implemented here) and clamped to the configured
+  `[:scheduler, :max_tool_timeout]` (read at call time).
+
+  An unusable / absent value — including a present-but-non-positive one, so a
+  nonsense timeout is never a 0 ms budget — falls back to the default
+  #{@default_timeout} ms budget. This function never returns a non-integer and
+  never raises.
   """
-  def effective_timeout(timeout) when is_integer(timeout), do: min(timeout, @max_timeout)
-  def effective_timeout(timeout), do: timeout
+  def effective_timeout(timeout) do
+    ms =
+      case Shared.fetch_duration_ms(%{"timeout" => timeout}, ["timeout"]) do
+        {:ok, value} when value > 0 -> value
+        _ -> @default_timeout
+      end
+
+    min(ms, max_timeout())
+  end
 
   defp do_execute(command, header, repo_path, repo_root, timeout, max_bytes) do
     case main_copy_mutation_error(command, repo_path, repo_root) do

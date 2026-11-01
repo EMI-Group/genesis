@@ -9,6 +9,25 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
 
   alias EvoGit.Agent.Tools.WebSearch
   alias EvoGit.Agent.Tools.WebSearchProviders, as: Providers
+  alias EvoGit.TestSupport.ConfigDir
+
+  # Drives the timeout ceiling through a MODULE-PROCESS-local config directory
+  # (`:config_dir_fun` seam), so an assertion pins the CONFIGURED maximum and
+  # never the developer's real `~/.config/genesis/config.toml`.
+  defp isolate_max_timeout!(max_ms) do
+    ConfigDir.isolate!("evogit-web-search-timeout")
+    :ok = EvoGit.Config.save_user_config(%{scheduler: %{max_tool_timeout: max_ms}})
+  end
+
+  # Runner stub that reports the `receive_timeout` it was handed. Req's
+  # `receive_timeout` must never be a non-integer, so the value is asserted at
+  # this seam rather than only at the tool's own boundary.
+  defp timeout_capturing_runner(body) do
+    fn _request, receive_timeout ->
+      send(self(), {:receive_timeout, receive_timeout})
+      {:ok, %{status: 200, body: body}}
+    end
+  end
 
   # ── Hardcoded config maps (no EvoGit.Config.resolve()/schema reliance) ──
 
@@ -362,6 +381,49 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
       result = WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily))
       assert result == "Error: Search response (unexpected format): %{\"nope\" => true}"
     end
+
+    test "a unit-string timeout reaches the runner as integer ms" do
+      isolate_max_timeout!(1_800_000)
+
+      Application.put_env(
+        :evo_git,
+        :web_search_http_runner,
+        timeout_capturing_runner(%{"results" => []})
+      )
+
+      assert WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily, %{timeout: "90s"})) ==
+               "Found 0 results:\n\n"
+
+      assert_receive {:receive_timeout, receive_timeout}
+      assert is_integer(receive_timeout)
+      assert receive_timeout == 90_000
+    end
+
+    test "a float timeout is truncated to integer ms" do
+      isolate_max_timeout!(1_800_000)
+      Application.put_env(:evo_git, :web_search_http_runner, timeout_capturing_runner(%{}))
+      WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily, %{timeout: 2_500.9}))
+      assert_receive {:receive_timeout, 2_500}
+    end
+
+    test "an oversized timeout is clamped to the configured maximum" do
+      isolate_max_timeout!(5_000)
+      assert EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) == 5_000
+      Application.put_env(:evo_git, :web_search_http_runner, timeout_capturing_runner(%{}))
+      WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily, %{timeout: "10m"}))
+      assert_receive {:receive_timeout, 5_000}
+      WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily, %{timeout: 999_999_999}))
+      assert_receive {:receive_timeout, 5_000}
+    end
+
+    test "an absent or unusable timeout keeps the 30 s default (never a non-integer)" do
+      isolate_max_timeout!(1_800_000)
+      Application.put_env(:evo_git, :web_search_http_runner, timeout_capturing_runner(%{}))
+      WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily))
+      assert_receive {:receive_timeout, 30_000}
+      WebSearch.do_web_search("q", "basic", 5, provider_map(:tavily, %{timeout: "soon"}))
+      assert_receive {:receive_timeout, 30_000}
+    end
   end
 
   describe "execute/3 through the seam (tavily, base schema)" do
@@ -387,6 +449,34 @@ defmodule EvoGit.Agent.Tools.WebSearchTest do
         assert request.url == "https://api.tavily.com/search"
         assert request.headers["Authorization"] == "Bearer test-key"
         assert request.body == %{query: "hello", search_depth: "advanced", max_results: 7}
+      after
+        if original_key do
+          Application.put_env(:req_llm, :tavily_api_key, original_key)
+        else
+          Application.delete_env(:req_llm, :tavily_api_key)
+        end
+      end
+    end
+
+    test "a unit-string timeout argument is coerced before the runner sees it" do
+      isolate_max_timeout!(1_800_000)
+
+      Application.put_env(
+        :evo_git,
+        :web_search_http_runner,
+        timeout_capturing_runner(%{"results" => []})
+      )
+
+      original_key = Application.get_env(:req_llm, :tavily_api_key)
+      ReqLLM.put_key(:tavily_api_key, "test-key")
+
+      try do
+        assert WebSearch.execute(%{"query" => "hello", "timeout" => "2m"}, nil, nil) ==
+                 "Found 0 results:\n\n"
+
+        assert_receive {:receive_timeout, receive_timeout}
+        assert is_integer(receive_timeout)
+        assert receive_timeout == 120_000
       after
         if original_key do
           Application.put_env(:req_llm, :tavily_api_key, original_key)
