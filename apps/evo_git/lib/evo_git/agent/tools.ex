@@ -510,8 +510,10 @@ defmodule EvoGit.Agent.Tools do
 
   @doc """
   True when this tool's `timeout` ARGUMENT is an INTERNAL wait budget rather than
-  a dispatch budget — today only `job_output` (any accepted spelling, normalised
-  through `ToolNames.normalize/1`), `false` for every other tool.
+  a dispatch budget — today only `job_output`, `false` for every other tool. The
+  name is matched exactly as `default_timeout_ms/1` matches it (through
+  `ToolNames.normalize/1`, and `job_output` has no alias entry), so the predicate
+  can never disagree with a positive advertised default.
 
   It exists because `job_output`'s `timeout` bounds the in-tool `wait: true`
   polling loop, NOT the whole call, so the dispatcher must treat
