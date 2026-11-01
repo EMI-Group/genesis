@@ -275,9 +275,20 @@ defmodule EvoGit.Agent.Tools do
   @shell_tool_default_timeout_ms 120_000
 
   # Default per-tool timeout (ms) for `job_output`: a bounded `wait` blocks up
-  # to 60 s INSIDE the tool, so the generic 10 s default would abort a
-  # legitimate wait. 65 s = the 60 s wait budget + headroom for reading output.
-  @job_output_default_timeout_ms 65_000
+  # to `EvoGit.BackgroundJobs.wait_max_ms()` (60 s) INSIDE the tool, so the
+  # generic 10 s default would abort a legitimate wait, and an explicit `timeout`
+  # must never lower the ceiling below that budget either (see
+  # `timeout_arg_is_wait_budget?/1` below).
+  #
+  # DERIVED, never a magic number: the wait cap comes from the single source of
+  # truth (`EvoGit.BackgroundJobs.wait_max_ms/0`, a plain `def` with no compile
+  # dependency on this module, so the attribute stays acyclic) plus headroom for
+  # the read plus registry latency — each poll of a `:unit`-handled job runs a
+  # synchronous `systemctl --user show` in the single GLOBAL registry, so 5 s of
+  # slack (the previous 65_000) is not enough under load.
+  @job_output_wait_headroom_ms 25_000
+  @job_output_default_timeout_ms EvoGit.BackgroundJobs.wait_max_ms() +
+                                   @job_output_wait_headroom_ms
 
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     maybe_block_repo_less(
@@ -473,17 +484,20 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   The DEFAULT timeout (ms) a tool should get when the caller does not request one
   explicitly: `120_000` for the platform shell tool (any accepted spelling of it
-  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `65_000` for
-  `job_output` (its `wait` argument may block up to 60 s inside the tool, so the
-  generic 10 s default would cut a bounded wait short — 65 s leaves the wait's
-  own 60 s budget plus headroom for reading the output file), and `nil` for
-  every other tool (meaning "no per-tool default — the dispatcher's generic
-  default applies"). `job_list` / `job_kill` are fast registry calls and
-  deliberately keep the generic default.
+  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `85_000` for `job_output`
+  (derived as `EvoGit.BackgroundJobs.wait_max_ms()` + 25 s headroom: its `wait`
+  argument may block up to 60 s inside the tool, so the generic 10 s default
+  would cut a bounded wait short, and the headroom covers the read plus registry
+  latency — each poll of a `:unit`-handled job runs a synchronous
+  `systemctl --user show` in the single global registry), and `nil` for every
+  other tool (meaning "no per-tool default — the dispatcher's generic default
+  applies"). `job_list` / `job_kill` are fast registry calls and deliberately
+  keep the generic default.
 
   Pure, read-only seam: it changes no dispatch behaviour by itself; the
   dispatcher (a file this module does not own) is expected to consult it for its
-  per-tool default timeout.
+  per-tool default timeout — as a FLOOR for the tools named by
+  `timeout_arg_is_wait_budget?/1` and as a max-only default for the rest.
   """
   @spec default_timeout_ms(term()) :: pos_integer() | nil
   def default_timeout_ms(tool_name) do
@@ -493,6 +507,23 @@ defmodule EvoGit.Agent.Tools do
       _other -> nil
     end
   end
+
+  @doc """
+  True when this tool's `timeout` ARGUMENT is an INTERNAL wait budget rather than
+  a dispatch budget — today only `job_output` (any accepted spelling, normalised
+  through `ToolNames.normalize/1`), `false` for every other tool.
+
+  It exists because `job_output`'s `timeout` bounds the in-tool `wait: true`
+  polling loop, NOT the whole call, so the dispatcher must treat
+  `default_timeout_ms/1` as a FLOOR for this tool even when an explicit `timeout`
+  argument is present: an explicit value may RAISE the dispatch ceiling, but
+  never lower it below the wait cap plus headroom — otherwise
+  `{"wait": true, "timeout": 60000}` would wait 60 s and be killed by the
+  dispatcher at exactly 60 s. Every other tool keeps the "explicit wins" rule
+  (the platform shell's `timeout` genuinely weights its command).
+  """
+  @spec timeout_arg_is_wait_budget?(term()) :: boolean()
+  def timeout_arg_is_wait_budget?(tool_name), do: ToolNames.normalize(tool_name) == "job_output"
 
   # Defense-in-depth write guard: repo-less agents (marked via
   # `Process.get(:repo_less)` — chatbot-style agents without a git worktree)

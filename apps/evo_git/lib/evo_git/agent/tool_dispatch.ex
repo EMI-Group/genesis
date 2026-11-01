@@ -1529,7 +1529,10 @@ defmodule EvoGit.Agent.ToolDispatch do
   # raises the resolved timeout to that value. It is a pure MAX — it can never
   # LOWER the resolved timeout, so `resolve_timeout/4`'s own shell fallback and
   # an explicit `timeout` argument are both unaffected — and it is clamped by
-  # the same `max_timeout`.
+  # the same `max_timeout`. The one exception is a tool whose `timeout` argument
+  # is an INTERNAL wait budget (`EvoGit.Agent.Tools.timeout_arg_is_wait_budget?/1`
+  # — `job_output`), where the advertised default is a FLOOR even against an
+  # explicit argument (see `apply_advertised_tool_timeout/4`).
   #
   # `owner` is the batch's resolved owner identity (`%{agent_id:, task_id:,
   # agent_pid:}` — see `batch_execute_tools/4`): the agent id is what the tool
@@ -1614,14 +1617,27 @@ defmodule EvoGit.Agent.ToolDispatch do
   # Pure MAX + `max_timeout` clamp: `min(max(resolved, advertised), max_timeout)`.
   # It can only RAISE the resolved timeout, never lower it, so the platform-shell
   # 120 s fallback in `ToolInvocation.resolve_timeout/4` and a resolved value
-  # that is already larger both survive untouched. An explicit `timeout`
-  # argument (a positive integer under `"timeout"`) means the model asked for a
-  # specific budget, so the advertised default does not apply — that is the same
-  # "explicit wins" rule `resolve_timeout/4` implements.
+  # that is already larger both survive untouched.
+  #
+  # Two branches:
+  #
+  #   * `EvoGit.Agent.Tools.timeout_arg_is_wait_budget?/1` (today only
+  #     `job_output`, whose `timeout` argument bounds its INTERNAL `wait: true`
+  #     loop rather than the whole call): the advertised value is a FLOOR even
+  #     when an explicit `timeout` argument is present — an explicit value may
+  #     still RAISE the ceiling, but never lower it below the wait cap plus
+  #     headroom, so `{"wait": true, "timeout": 60000}` cannot be killed by the
+  #     dispatcher at exactly 60 s.
+  #   * every other tool: an explicit `timeout` argument (a positive integer
+  #     under `"timeout"`) means the model asked for a specific budget, so the
+  #     advertised default does not apply — that is the same "explicit wins" rule
+  #     `resolve_timeout/4` implements (pinned for the platform shell by
+  #     `test/evo_git/agent/tool_dispatch_test.exs`).
   defp apply_advertised_tool_timeout(resolved, name, args, max_timeout) do
     case EvoGit.Agent.Tools.default_timeout_ms(name) do
       advertised when is_integer(advertised) and advertised > 0 ->
-        if explicit_timeout_arg?(args) do
+        if explicit_timeout_arg?(args) and
+             not EvoGit.Agent.Tools.timeout_arg_is_wait_budget?(name) do
           resolved
         else
           resolved |> max(advertised) |> min(max_timeout)

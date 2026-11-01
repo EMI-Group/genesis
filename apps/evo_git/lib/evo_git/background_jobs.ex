@@ -34,6 +34,11 @@ defmodule EvoGit.BackgroundJobs do
   # `:background_unknown_grace_ms`.
   @unknown_grace_ms 15_000
   # Suggested polling defaults for callers implementing a `wait: true` loop (this module does NOT block — see `wait_default_ms/0`).
+  # Both are the PRODUCTION defaults. `@wait_default_ms` is read through
+  # `resolved_wait_default_ms/0`, a CALL-TIME seam (app env
+  # `:background_wait_default_ms`, non-negative integers only) so a suite can pin
+  # the default-budget path of `EvoGit.Agent.Tools.JobOutput`'s `wait: true` loop
+  # without sleeping the full 8 s; `@wait_max_ms` is the hard CAP and has no seam.
   @wait_default_ms 8_000
   @wait_max_ms 60_000
   @poll_interval_ms 100
@@ -252,10 +257,20 @@ defmodule EvoGit.BackgroundJobs do
   @doc "Maximum number of live jobs one owner may have at once."
   def max_jobs_per_owner, do: @max_jobs_per_owner
 
-  @doc "Suggested default wait budget (ms) for a caller-side `wait: true` loop."
-  def wait_default_ms, do: @wait_default_ms
+  @doc """
+  Suggested default wait budget (ms) for a caller-side `wait: true` loop — the
+  PRODUCTION default is 8_000, exposed through a CALL-TIME seam (app env
+  `:background_wait_default_ms`, honoured only when it is a non-negative
+  integer) because `EvoGit.Agent.Tools.JobOutput` reads this value for its
+  `wait: true` loop and a test must be able to pin the default-budget path
+  without sleeping the full 8 s.
+  """
+  def wait_default_ms, do: resolved_wait_default_ms()
 
-  @doc "Suggested maximum wait budget (ms) for a caller-side `wait: true` loop."
+  @doc """
+  Suggested maximum wait budget (ms) for a caller-side `wait: true` loop — a
+  FIXED 60_000 with deliberately no seam (this is the hard cap, not a default).
+  """
   def wait_max_ms, do: @wait_max_ms
 
   @doc "Suggested polling interval (ms) for a caller-side `wait: true` loop."
@@ -899,6 +914,18 @@ defmodule EvoGit.BackgroundJobs do
     case Application.get_env(:evo_git, :background_unknown_grace_ms, @unknown_grace_ms) do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @unknown_grace_ms
+    end
+  end
+
+  # Test-only CALL-TIME override (`:background_wait_default_ms`); the production
+  # default `@wait_default_ms` is unchanged. Read on EVERY call (`wait_default_ms/0`)
+  # by `EvoGit.Agent.Tools.JobOutput`'s `wait: true` loop, so a suite can pin the
+  # default-budget path without sleeping the documented 8 s. `@wait_max_ms` has no
+  # counterpart: it is the hard cap.
+  defp resolved_wait_default_ms do
+    case Application.get_env(:evo_git, :background_wait_default_ms, @wait_default_ms) do
+      ms when is_integer(ms) and ms >= 0 -> ms
+      _other -> @wait_default_ms
     end
   end
 
