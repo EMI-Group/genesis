@@ -33,7 +33,7 @@ let
   mixFodDeps = beamPackages.fetchMixDeps {
     pname = "mix-deps-${pname}";
     inherit src version;
-    hash = "sha256-6jdpetXoh1t/BualncznSchkG9AjCxlQ5USBkmoZ0Ds=";
+    hash = "sha256-g+ePsgGJ6Iy/Y22hQoaPbtuUR9BM3fAbrk6oxSfhnno=";
   };
 
   # ── Platform mapping ──────────────────────────────────────────────
@@ -82,7 +82,7 @@ let
   #
   # To update hashes: use lib.fakeHash, build, then copy the reported hashes.
   precompiled_nifs = [
-    # ── mdex_native 0.3.0 (base) ─────────────────────────────────
+    # ── mdex_native 0.3.1 (base) ─────────────────────────────────
     # Only the plain, unsuffixed asset is fetched: it is the variant selected
     # by the unset compile-time config
     # Application.compile_env(:mdex_native, :syntax_highlighter, nil) plus
@@ -90,13 +90,13 @@ let
     # "--lumis"/"--syntect"/"--legacy_cpu" variants exist but are never
     # used — do not reintroduce them.
     {
-      prefix = "libmdex_native_nif-v0.3.0-nif-2.15";
-      urlPrefix = "https://github.com/leandrocp/mdex_native/releases/download/v0.3.0";
+      prefix = "libmdex_native_nif-v0.3.1-nif-2.15";
+      urlPrefix = "https://github.com/leandrocp/mdex_native/releases/download/v0.3.1";
       hashes = {
-        x86_64-unknown-linux-gnu = "sha256-CnIHJkBQtcyWDokZKCzJNN2N+ytjYN8wH3yMNygyM14=";
-        aarch64-unknown-linux-gnu = "sha256-Nwq0cH9ximb6YwBzB0r5N0LYGmUC1lenGrCBBKEJxqc=";
-        x86_64-apple-darwin = "sha256-UJKty5Ro6AVcW3xx++uI+wANEV7b5YUn2Y5Pqzz4I0w=";
-        aarch64-apple-darwin = "sha256-3qIDxYS3T8PiGIVHRDV9CFDk/Axy8TiadVYexrwUHqE=";
+        x86_64-unknown-linux-gnu = "sha256-mlrlfJ7hksIcEhgyzhAqqYFwh9JlIlgv1E3Ra2rdURA=";
+        aarch64-unknown-linux-gnu = "sha256-1idkbTepJglZ6/nbRaEOr79wVw8AfmR7/GN2siAluQk=";
+        x86_64-apple-darwin = "sha256-ekmpcXuWlmYu/E0kktDH3yqhkAGE6N0zh/zTpJWdyJs=";
+        aarch64-apple-darwin = "sha256-zZfngdpUU1ezyWZrTHeNCT76iontO3Ye0dEaPyjzzFQ=";
       };
     }
 
