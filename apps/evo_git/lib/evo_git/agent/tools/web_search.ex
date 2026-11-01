@@ -43,7 +43,9 @@ defmodule EvoGit.Agent.Tools.WebSearch do
     * `:base_url` — the API endpoint URL
     * `:search_depth` — default search depth (`:basic` or `:advanced`)
     * `:max_results` — default max results (1-50)
-    * `:timeout` — request timeout in milliseconds
+    * `:timeout` — request timeout in milliseconds (the `timeout` argument may
+      also be a numeric string with an `ms`/`s`/`m` unit); clamped to the
+      configured `[:scheduler, :max_tool_timeout]`
     * `:max_bytes` — maximum output size in bytes
 
   Per-provider request building and response parsing are pure functions in the
@@ -75,6 +77,46 @@ defmodule EvoGit.Agent.Tools.WebSearch do
   alias EvoGit.Agent.Tools.Failure
   alias EvoGit.Agent.Tools.Shared
   alias EvoGit.Agent.Tools.WebSearchProviders
+
+  # The request timeout used when neither the `timeout` argument nor the
+  # provider's configured `:timeout` yields a usable value. Every timeout is
+  # additionally clamped to the configured `[:scheduler, :max_tool_timeout]`.
+  @default_timeout 30_000
+
+  # The hard request-timeout cap, resolved at CALL time. Degrades to this tool's
+  # own default when the config yields a non-positive integer.
+  defp max_timeout do
+    case EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) do
+      max when is_integer(max) and max > 0 -> max
+      _ -> @default_timeout
+    end
+  end
+
+  # TOTAL millisecond coercion: an integer, a float (truncated) or a numeric
+  # string with an optional unit (`"60000"`, `"90s"`, `"30m"`, `"1.5s"`) →
+  # integer ms via `EvoGit.Agent.Tools.Shared` (the single duration parser;
+  # never re-implemented here), clamped to `max_timeout/0`.
+  #
+  # An unusable/absent `value` falls back to `default`, and an unusable
+  # `default` falls back to `@default_timeout`. NON-POSITIVE values are treated
+  # as unusable in both positions, so a nonsense timeout is never a 0 ms budget.
+  # Never returns a non-integer and never raises — a non-integer reaching Req's
+  # `receive_timeout` is exactly the hazard this closes.
+  defp effective_timeout(value, default) do
+    fallback =
+      case Shared.fetch_duration_ms(%{"timeout" => default}, ["timeout"]) do
+        {:ok, ms} when ms > 0 -> ms
+        _ -> @default_timeout
+      end
+
+    ms =
+      case Shared.fetch_duration_ms(%{"timeout" => value}, ["timeout"]) do
+        {:ok, ms} when ms > 0 -> ms
+        _ -> fallback
+      end
+
+    min(ms, max_timeout())
+  end
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -148,7 +190,10 @@ defmodule EvoGit.Agent.Tools.WebSearch do
           },
           "timeout" => %{
             "type" => "integer",
-            "description" => "Timeout in milliseconds for this call (default: #{timeout}).",
+            "description" =>
+              "Timeout for this call: milliseconds, or a string with a unit " <>
+                "(e.g. \"90s\", \"30m\"). Default: #{effective_timeout(nil, timeout)}. " <>
+                "Maximum: #{max_timeout()} (a larger value is clamped to it, never rejected).",
             "default" => timeout
           },
           "max_bytes" => %{
@@ -198,7 +243,12 @@ defmodule EvoGit.Agent.Tools.WebSearch do
         end
 
       base_url = provider_config[:base_url]
-      timeout = args["timeout"] || provider_config[:timeout]
+
+      # Millisecond-safe at the boundary: the argument's `timeout` (which may be
+      # a unit string) falls back to the provider's configured `:timeout`, which
+      # itself falls back to `@default_timeout`; the result is clamped to the
+      # configured scheduler maximum and is ALWAYS an integer.
+      timeout = effective_timeout(args["timeout"], provider_config[:timeout])
       max_bytes = args["max_bytes"] || provider_config[:max_bytes]
 
       provider_map = %{
@@ -241,7 +291,10 @@ defmodule EvoGit.Agent.Tools.WebSearch do
       Failure.error("API key for search provider is not set")
     else
       provider = provider_config.provider
-      receive_timeout = provider_config.timeout || 30_000
+      # `do_web_search/4` is a public test seam reached with a hand-built
+      # provider map (`timeout: nil`), so the coercion also runs HERE — Req's
+      # `receive_timeout` must never see a non-integer.
+      receive_timeout = effective_timeout(Map.get(provider_config, :timeout), @default_timeout)
 
       # `build_request/5` is total for every normalized provider (all five
       # adapters return `{:ok, _}`), so the match cannot fail.

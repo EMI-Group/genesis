@@ -1,13 +1,24 @@
 defmodule EvoGit.Agent.Tools.ShellToolTest do
   @moduledoc """
   `async: true` — pure formatting/detection helpers plus `ShellTool.execute/3`
-  against a per-test `:tmp_dir` git repo; no BEAM-global state.
+  against a per-test `:tmp_dir` git repo; no BEAM-global state (the timeout-cap
+  tests read config through the per-process `:config_dir_fun` override, so even
+  those never touch the real `~/.config/genesis/config.toml`).
   """
 
   use ExUnit.Case, async: true
 
   alias EvoGit.Agent.Tools.ShellTool
   alias EvoGit.Adapters.Git
+  alias EvoGit.TestSupport.ConfigDir
+
+  # Drives the timeout ceiling through a MODULE-PROCESS-local config directory
+  # (`:config_dir_fun` seam), so the assertion pins the CONFIGURED maximum and
+  # never the developer's real `~/.config/genesis/config.toml`.
+  defp isolate_max_timeout!(max_ms) do
+    ConfigDir.isolate!("evogit-shell-timeout")
+    :ok = EvoGit.Config.save_user_config(%{scheduler: %{max_tool_timeout: max_ms}})
+  end
 
   @repo_root "/home/user/my-project"
   @repo_path "/home/user/my-project/.genesis/workers/worker_T1_A1"
@@ -388,6 +399,93 @@ defmodule EvoGit.Agent.Tools.ShellToolTest do
       assert Map.has_key?(result, :description)
       assert is_binary(result.header)
       assert is_binary(result.description)
+    end
+  end
+
+  describe "timeout argument (millisecond-safe, clamped by the configured max)" do
+    @describetag :tmp_dir
+
+    test "effective_timeout/1 coerces integers, floats and unit strings to integer ms" do
+      isolate_max_timeout!(1_800_000)
+
+      assert ShellTool.effective_timeout(5_000) == 5_000
+      assert ShellTool.effective_timeout(1_500.9) == 1_500
+      assert ShellTool.effective_timeout("1s") == 1_000
+      assert ShellTool.effective_timeout("1500ms") == 1_500
+      assert ShellTool.effective_timeout(" 2m ") == 120_000
+    end
+
+    test "an oversized value is clamped to the CONFIGURED maximum, not a literal" do
+      isolate_max_timeout!(5_000)
+
+      assert EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) == 5_000
+      assert ShellTool.effective_timeout(999_999_999) == 5_000
+      assert ShellTool.effective_timeout("10m") == 5_000
+      assert ShellTool.effective_timeout(4_999) == 4_999
+    end
+
+    test "an unusable / non-positive value falls back to the 120 s default, never 0" do
+      isolate_max_timeout!(1_800_000)
+
+      for value <- [nil, 0, -5, "soon", "1h30m", [], %{}] do
+        assert ShellTool.effective_timeout(value) == 120_000,
+               "expected #{inspect(value)} to fall back to the default budget"
+      end
+    end
+
+    test "effective_timeout/1 is total: every shape yields an integer" do
+      isolate_max_timeout!(1_800_000)
+
+      for value <- [nil, 1, 1.9, "90s", "nonsense", :atom, %{"a" => 1}] do
+        assert is_integer(ShellTool.effective_timeout(value)),
+               "expected an integer for #{inspect(value)}"
+      end
+    end
+
+    test "the schema advertises unit strings and the max configured at build time" do
+      isolate_max_timeout!(5_000)
+
+      schema = ShellTool.schema()
+      timeout = schema.parameter_schema["properties"]["timeout"]
+
+      assert timeout["default"] == 120_000
+      assert timeout["description"] =~ "5000"
+      assert timeout["description"] =~ "90s"
+      assert schema.description =~ "5000"
+    end
+
+    test "a unit-string timeout still runs the command", %{tmp_dir: tmp_dir} do
+      isolate_max_timeout!(1_800_000)
+
+      result = ShellTool.execute(%{"command" => "echo hi", "timeout" => "1s"}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 0]"
+      assert result =~ "hi"
+    end
+
+    test "a float timeout is truncated instead of reaching the sandbox raw", %{
+      tmp_dir: tmp_dir
+    } do
+      isolate_max_timeout!(1_800_000)
+
+      result =
+        ShellTool.execute(%{"command" => "echo hi", "timeout" => 1_000.7}, tmp_dir, tmp_dir)
+
+      assert result =~ ~S"[Exit Code: 0]"
+      assert result =~ "hi"
+    end
+
+    test "a unit-string timeout is coerced before the timeout branch reports it", %{
+      tmp_dir: tmp_dir
+    } do
+      isolate_max_timeout!(1_800_000)
+
+      result =
+        ShellTool.execute(%{"command" => "sleep 30", "timeout" => "1ms"}, tmp_dir, tmp_dir)
+
+      refute result =~ ~S"[Exit Code:"
+      assert result =~ "Error: the command timed out after 1 ms (actual: "
+      assert result =~ "Partial output:"
     end
   end
 
