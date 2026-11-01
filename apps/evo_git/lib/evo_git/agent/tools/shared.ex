@@ -163,6 +163,119 @@ defmodule EvoGit.Agent.Tools.Shared do
   end
 
   @doc """
+  Leniently fetches a DURATION argument (milliseconds) from one of several keys.
+
+  Exists because a duration key has more than one plausible spelling on the
+  model-facing surface: a tool that read only `timeout_ms` fell back to its
+  default BUDGET silently whenever the model spelled it `timeout` (the generic
+  convention `ToolInvocation.resolve_timeout/4` honours) or passed a float, so
+  an 8 s default was indistinguishable from a 60 s request. Callers pass every
+  spelling they honour, IN PRIORITY ORDER, and get one coercing reader.
+
+  Keys are tried in order; a key that is PRESENT with an unusable value is
+  skipped (it falls through to the next key), and `:error` is returned when no
+  key yields a usable value. `keys` may be a single key or a list of keys.
+
+  Accepted value shapes: an integer (as-is), a float (`trunc`), or a binary
+  accepted as a pure integer (`"60000"`) or an integer/float with an
+  unambiguous unit suffix `ms` / `s` / `m` (case-insensitive, optional space:
+  `"60000ms"`, `"60 s"`, `"2m"`, `"1.5s"` → 1500). Every other value (`"soon"`,
+  `"1h30m"`, `"60000abc"`, `nil`, a list, a map) is unusable. Parsing uses the
+  non-crashing `Integer.parse/1` / `Float.parse/1` variants, never a raise, and
+  the whole value must parse (no numeric-prefix truncation).
+
+  The range is NOT clamped here — clamping to a tool's own budget is the
+  caller's job (see `get_duration_ms/3`).
+  """
+  def fetch_duration_ms(args, keys) when is_map(args) do
+    keys
+    |> List.wrap()
+    |> Enum.find_value(:error, fn key ->
+      case coerce_duration_ms(Map.get(args, key)) do
+        {:ok, ms} -> {:ok, ms}
+        :error -> nil
+      end
+    end)
+  end
+
+  def fetch_duration_ms(_args, _keys), do: :error
+
+  @doc """
+  Fetches a DURATION argument (milliseconds) from one of several keys, falling
+  back to `default` when no key yields a usable value.
+
+  Thin `default`-applying wrapper over `fetch_duration_ms/2`; see it for the key
+  order and the accepted value shapes. It does NOT clamp — the caller clamps to
+  its own budget.
+  """
+  def get_duration_ms(args, keys, default) do
+    case fetch_duration_ms(args, keys) do
+      {:ok, ms} -> ms
+      :error -> default
+    end
+  end
+
+  # A duration must consume the WHOLE (trimmed) value, so "60000abc" / "1h30m"
+  # are unusable rather than silently truncated to their numeric prefix.
+  defp coerce_duration_ms(value) when is_integer(value), do: {:ok, value}
+  defp coerce_duration_ms(value) when is_float(value), do: {:ok, trunc(value)}
+
+  defp coerce_duration_ms(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> :error
+      trimmed -> parse_duration_binary(trimmed)
+    end
+  end
+
+  defp coerce_duration_ms(_value), do: :error
+
+  # `ms` is tested BEFORE `s` so "60000ms" is not read as 60000 seconds.
+  defp parse_duration_binary(text) do
+    size = String.length(text)
+    lower = String.downcase(text)
+
+    cond do
+      String.ends_with?(lower, "ms") -> scaled_duration(text, size - 2, 1)
+      String.ends_with?(lower, "s") -> scaled_duration(text, size - 1, 1_000)
+      String.ends_with?(lower, "m") -> scaled_duration(text, size - 1, 60_000)
+      true -> integer_duration(text)
+    end
+  end
+
+  # A unit-less string must be a PURE integer; a fractional millisecond count is
+  # only meaningful with an explicit unit ("1.5s"), where it is well-defined.
+  defp integer_duration(text) do
+    case Integer.parse(text) do
+      {int, ""} -> {:ok, int}
+      _ -> :error
+    end
+  end
+
+  defp scaled_duration(text, number_length, multiplier) do
+    text
+    |> String.slice(0, number_length)
+    |> String.trim()
+    |> parse_duration_number()
+    |> case do
+      {:ok, number} -> {:ok, trunc(number * multiplier)}
+      :error -> :error
+    end
+  end
+
+  defp parse_duration_number(text) do
+    case Integer.parse(text) do
+      {int, ""} ->
+        {:ok, int}
+
+      _ ->
+        case Float.parse(text) do
+          {float, ""} -> {:ok, float}
+          _ -> :error
+        end
+    end
+  end
+
+  @doc """
   Validates and sanitizes an array argument to ensure all elements are binaries.
   Returns {:ok, sanitized_list} or :error with a descriptive message.
   """
