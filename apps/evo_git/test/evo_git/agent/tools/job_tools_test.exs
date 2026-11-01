@@ -9,6 +9,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   rest of the BEAM/host are all BEAM-global, so this module must never run
   concurrently with another module.
 
+  It also writes the app-env `:background_wait_default_ms` call-time seam (the
+  `job_output` wait's default budget) for the default-budget tests, which is one
+  more BEAM-global a concurrent module could observe; the production default
+  (8000 ms) is unchanged and restored after every test.
+
   This suite PINS the shipped behaviour of the background-job tool surface —
   it is a characterisation suite, not a design:
 
@@ -42,10 +47,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   @job_tools ["job_output", "job_list", "job_kill"]
 
   # The job_output tool's own dispatch default (see
-  # `Tools.default_timeout_ms/1`): a bounded `wait: true` legitimately blocks up
-  # to 60 s inside the tool, so this generous bound is a compile-time-safe
-  # ceiling, NOT a latency race.
-  @job_output_default_timeout_ms 65_000
+  # `Tools.default_timeout_ms/1`): `EvoGit.BackgroundJobs.wait_max_ms/0` plus the
+  # dispatcher's 25 s read headroom, i.e. 85_000 ms today. A bounded `wait: true`
+  # legitimately blocks up to the 60 s cap inside the tool, so this generous bound
+  # is a compile-time-safe ceiling, NOT a latency race; it is never waited out —
+  # every test below pins a SMALL budget instead.
+  @job_output_default_timeout_ms BackgroundJobs.wait_max_ms() + 25_000
 
   # Poll cadence for every wait below (see `wait_until/2`): tight at first, then
   # relaxed so a genuinely slow condition does not spin. The wait's own deadline
@@ -60,6 +67,17 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
   # production default is unchanged; the wait's own `timeout_ms` budget is what
   # the timed-out case exercises.
   @poll_interval_ms_override 5
+
+  # The wait budget these tests pin explicitly: small enough that the whole
+  # budget/marker coverage costs ~2 s, large enough that `elapsed` proves WHICH
+  # budget the tool used (the 8000 ms default would be unmistakable).
+  @wait_budget_ms 300
+  @wait_budget_lower_bound_ms 250
+  @wait_elapsed_ceiling_ms 5_000
+
+  # The value the default-budget tests install on the call-time seam
+  # `:background_wait_default_ms` (production `wait_default_ms/0` is 8000 ms).
+  @wait_default_seam_ms 350
 
   setup do
     registry = :"job_tools_test_#{System.unique_integer([:positive])}"
@@ -147,6 +165,23 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
         Process.sleep(poll_ms)
         do_wait_until(fun, deadline, timeout, min(poll_ms * 2, @poll_max_ms))
     end
+  end
+
+  ## Timing (the budget a wait actually used)
+
+  # `{result, elapsed_ms}` around a call whose OWN budget is what the elapsed
+  # bounds prove: a bounded wait blocks at most its budget (plus scheduling
+  # latency), so an 8000 ms default would show up unmistakably.
+  defp timed(fun) do
+    started = System.monotonic_time(:millisecond)
+    result = fun.()
+    {result, System.monotonic_time(:millisecond) - started}
+  end
+
+  # A `wait: true` `job_output` read of `job` with the given budget args, timed.
+  defp wait_read(job, budget_args, cwd) do
+    args = Map.merge(%{"job_id" => job.id, "wait" => true}, budget_args)
+    timed(fn -> JobOutput.execute(args, cwd, cwd) end)
   end
 
   ## Job helpers
@@ -349,7 +384,11 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       elapsed = System.monotonic_time(:millisecond) - started
 
       assert text =~ "fast"
-      assert text =~ ~r/\[status: completed, exit code: 0\]\z/
+
+      # The FULL shape, not just the status line: the wait marker is one separate
+      # line after the byte-identical `[status: …]` line.
+      assert text =~
+               ~r/\Afast\n\[status: completed, exit code: 0\]\n\[wait: finished after \d+ ms, status: completed\]\z/
 
       assert elapsed < 20_000,
              "a bounded wait must settle far under #{@job_output_default_timeout_ms} ms"
@@ -372,6 +411,10 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
 
       # A timed-out wait returns (it must never hang) and leaves the job RUNNING.
       assert text =~ "[status: running]"
+      # An EXPLICIT budget renders the bare expired marker (the default-only hint
+      # is absent — this 30 ms budget was asked for).
+      assert text =~ "[wait: 30 ms budget expired, status: running]"
+      refute text =~ "pass timeout_ms"
       assert elapsed < 20_000
       assert job_status(job.id) == :running
 
@@ -435,6 +478,157 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
                "[status: failed, exit code: 3]"
 
       assert JobOutput.status_line(%{status: nil, detail: nil}) == "[status: unknown]"
+
+      # The wait marker is a SEPARATE line after this one, and this line is shared
+      # with `JobKill`'s "already finished" reply, so it must stay byte-identical.
+      assert JobOutput.status_line(%{status: :completed, detail: "exit code: 0"}) ==
+               "[status: completed, exit code: 0]"
+
+      assert JobOutput.status_line(%{status: :running}) == "[status: running]"
+    end
+  end
+
+  # The `wait: true` budget contract and its ONE marker line. Every wait below is
+  # bounded by a SMALL budget (300/350 ms) — never the production 8000 ms default
+  # nor the 60 s cap — and every `sleep 30` job is killed and reaped.
+  describe "JobOutput.execute/3 — wait budget and marker" do
+    test "honours an explicit timeout_ms budget", %{tmp_dir: cwd} do
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout_ms" => @wait_budget_ms}, cwd)
+
+      assert elapsed >= @wait_budget_lower_bound_ms
+      assert elapsed < @wait_elapsed_ceiling_ms
+      assert text =~ "[status: running]"
+
+      # An EXPLICIT budget renders the bare marker: the default-only hint (which
+      # names the 60 s cap) is absent.
+      assert String.ends_with?(
+               text,
+               "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
+             )
+
+      refute text =~ "pass timeout_ms"
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
+    end
+
+    test "honours the generic `timeout` spelling as the same budget", %{tmp_dir: cwd} do
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout" => @wait_budget_ms}, cwd)
+
+      # THE regression: `timeout` used to be ignored, so this call waited the full
+      # 8000 ms default and rendered NO marker at all.
+      assert elapsed >= @wait_budget_lower_bound_ms
+      assert elapsed < @wait_elapsed_ceiling_ms
+      assert text =~ "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
+      refute text =~ "pass timeout_ms"
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
+    end
+
+    test "coerces every accepted value shape to the same budget", %{tmp_dir: cwd} do
+      # A float (truncated: 300.0 → exactly 300), a numeric string, a unit string
+      # and the `timeoutMs` harness-alignment alias all land on 300 ms.
+      shapes = [
+        {"timeout_ms", 300.0},
+        {"timeout_ms", "300"},
+        {"timeout_ms", "300ms"},
+        {"timeoutMs", 300}
+      ]
+
+      for {key, value} <- shapes do
+        job = start_job("sleep 30", cwd)
+        {text, elapsed} = wait_read(job, %{key => value}, cwd)
+        label = "#{key} => #{inspect(value)}"
+
+        assert elapsed >= @wait_budget_lower_bound_ms, label
+        assert elapsed < @wait_elapsed_ceiling_ms, label
+
+        assert text =~ "[wait: #{@wait_budget_ms} ms budget expired, status: running]",
+               "#{label} must use a #{@wait_budget_ms} ms budget, got: #{inspect(text)}"
+
+        refute text =~ "pass timeout_ms"
+        assert job_status(job.id) == :running
+
+        kill_and_reap(job, cwd)
+      end
+    end
+
+    test "an absent budget uses the default, and only the default gets the hint", %{tmp_dir: cwd} do
+      # Test-only CALL-TIME seam (`EvoGit.BackgroundJobs.wait_default_ms/0`): the
+      # production 8000 ms is unchanged — this only keeps the test fast.
+      put_test_env(:background_wait_default_ms, @wait_default_seam_ms)
+
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{}, cwd)
+
+      assert elapsed >= @wait_default_seam_ms - 50
+      assert elapsed < @wait_elapsed_ceiling_ms
+
+      # The hint rides ONLY the default-budget marker, and it names the cap.
+      assert String.ends_with?(
+               text,
+               "[wait: #{@wait_default_seam_ms} ms budget expired, status: running; " <>
+                 "pass timeout_ms (or timeout) to wait up to #{BackgroundJobs.wait_max_ms()} ms]"
+             )
+
+      # With the SAME seam installed, an explicit budget stays distinguishable:
+      # 300 ms and no hint.
+      {explicit, _elapsed} = wait_read(job, %{"timeout" => @wait_budget_ms}, cwd)
+
+      assert explicit =~ "[wait: #{@wait_budget_ms} ms budget expired, status: running]"
+      refute explicit =~ "pass timeout_ms"
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
+    end
+
+    test "a present but unusable budget counts as the default", %{tmp_dir: cwd} do
+      put_test_env(:background_wait_default_ms, @wait_default_seam_ms)
+
+      job = start_job("sleep 30", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout_ms" => "soon"}, cwd)
+
+      # "soon" is unusable, so the DEFAULT was waited — never a 0 ms budget (which
+      # would return at once) and never the production 8000 ms.
+      assert elapsed >= @wait_default_seam_ms - 50
+      assert elapsed < @wait_elapsed_ceiling_ms
+      assert text =~ "[wait: #{@wait_default_seam_ms} ms budget expired, status: running; pass"
+      refute text =~ "[wait: 0 ms"
+      assert job_status(job.id) == :running
+
+      kill_and_reap(job, cwd)
+    end
+
+    test "returns early with the completion marker when the job finishes mid-wait",
+         %{tmp_dir: cwd} do
+      job = start_job("sleep 0.3", cwd)
+      {text, elapsed} = wait_read(job, %{"timeout_ms" => 5_000}, cwd)
+
+      # The 5 s budget was NOT consumed: the wait returned as soon as the job
+      # reached its terminal status.
+      assert elapsed < 3_000
+      assert text =~ "[status: completed, exit code: 0]"
+      assert text =~ ~r/\[wait: finished after \d+ ms, status: completed\]\z/
+      refute text =~ "budget expired"
+      assert job_status(job.id) == :completed
+    end
+
+    test "a non-wait read renders no marker", %{tmp_dir: cwd} do
+      job = start_job("echo no-wait", cwd)
+      await_job_status(job.id, :completed)
+
+      # Both the DEFAULT (no `wait` key) and an explicit `wait: false` are
+      # byte-identical to the pre-marker result shape.
+      default_read = JobOutput.execute(%{"job_id" => job.id}, cwd, cwd)
+      assert default_read =~ "no-wait"
+      refute default_read =~ "[wait:"
+
+      false_read = JobOutput.execute(%{"job_id" => job.id, "wait" => false}, cwd, cwd)
+      assert false_read == "(no new output)\n[status: completed, exit code: 0]"
+      refute false_read =~ "[wait:"
     end
   end
 
@@ -516,6 +710,12 @@ defmodule EvoGit.Agent.Tools.JobToolsTest do
       again = JobKill.execute(%{"job_id" => job.id}, cwd, cwd)
       assert String.starts_with?(again, "job #{job.id} had already finished [status: ")
       assert again =~ "killed (stopped by request)"
+
+      # The reply ENDS with the shared status line (unaffected by `job_output`'s
+      # separate wait marker line).
+      assert again ==
+               "job #{job.id} had already finished " <>
+                 "[status: killed, killed (stopped by request)]"
 
       # A caller-supplied `reason` is what lands on the job's detail.
       custom = start_job("sleep 30", cwd)
