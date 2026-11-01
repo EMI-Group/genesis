@@ -24,10 +24,32 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   A `wait: true` call blocks in THIS tool (never in the registry) by polling
   `EvoGit.BackgroundJobs.job/2` every
   `EvoGit.BackgroundJobs.poll_interval_ms/0` until the job reaches a terminal
-  status or the wait budget expires (default
-  `EvoGit.BackgroundJobs.wait_default_ms/0`, capped at
-  `EvoGit.BackgroundJobs.wait_max_ms/0`). A timed-out wait leaves the job
-  RUNNING and still returns whatever output was produced.
+  status or the wait budget expires. A timed-out wait leaves the job RUNNING
+  and still returns whatever output was produced.
+
+  The wait budget is read (in order) from `timeout_ms`, `timeout` or
+  `timeoutMs` — `timeout_ms` is canonical and `timeout` is the generic spelling
+  the rest of the tool surface uses. A value may be an integer, a float
+  (truncated), or a string holding a number with an optional `ms`/`s`/`m` unit
+  (`"60000"`, `"60s"`, `"2m"`). No usable value means the effective default
+  `EvoGit.BackgroundJobs.wait_default_ms/0`; every budget is clamped into
+  `[0, EvoGit.BackgroundJobs.wait_max_ms/0]`.
+
+  One marker line is then appended AFTER the status line, so a short wait is
+  diagnosable instead of looking like a fast success:
+
+      <delta>
+      [status: completed, exit code: 0]
+      [wait: finished after 142 ms, status: completed]
+
+      (no new output)
+      [status: running]
+      [wait: 8000 ms budget expired, status: running; pass timeout_ms (or timeout) to wait up to 60000 ms]
+
+  The first marker means the job reached a terminal status during the wait; the
+  second means the budget ran out with the job still live (the default-budget
+  hint is omitted when the budget was passed explicitly). The marker follows
+  the `[status: …]` line byte-identically — the status line itself is unchanged.
   """
 
   alias EvoGit.Agent.Tools.Failure
@@ -36,6 +58,12 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   # Statuses a wait keeps polling through.
   @live_statuses [:running, :stopping]
+
+  # The wait-budget spellings honoured by `wait: true`, in priority order:
+  # `timeout_ms` is canonical, `timeout` is the generic convention used by the
+  # rest of the tool surface (the one a model reaches for first), `timeoutMs`
+  # is tolerated for harness alignment.
+  @wait_budget_keys ["timeout_ms", "timeout", "timeoutMs"]
 
   @doc """
   Returns the tool schema for ReqLLM.
@@ -55,12 +83,17 @@ defmodule EvoGit.Agent.Tools.JobOutput do
           "wait" => %{
             "type" => "boolean",
             "description" =>
-              "Block until the job finishes or the timeout expires; a timed-out wait leaves the job running. Defaults to false."
+              "Block until the job finishes or the budget expires; the result then reports which of the two happened, and an expired budget leaves the job running. Defaults to false."
           },
           "timeout_ms" => %{
             "type" => "integer",
             "description" =>
-              "Max wait in milliseconds with wait: true. Defaults to #{BackgroundJobs.wait_default_ms()}, capped at #{BackgroundJobs.wait_max_ms()}."
+              "Max wait in milliseconds with wait: true. `timeout` and `timeoutMs` are accepted aliases for the same budget. Accepts an integer, a float (truncated), or a string with an optional ms/s/m unit (\"60000\", \"60s\", \"2m\"). Defaults to #{BackgroundJobs.wait_default_ms()}, capped at #{BackgroundJobs.wait_max_ms()}."
+          },
+          "timeout" => %{
+            "type" => "integer",
+            "description" =>
+              "Alias for `timeout_ms` — the same wait budget, for callers using the generic timeout spelling."
           },
           "max_bytes" => %{
             "type" => "integer",
@@ -77,11 +110,11 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   @doc """
   Executes the job_output tool.
 
-  Reads `job_id` (required) and optionally honours `wait`, `timeout_ms` and
-  `max_bytes`. Never raises: a missing/non-string argument returns the shared
-  descriptive error string, every registry failure is rendered as an
-  `Error: ...` string, and an unexpected raise/exit at the tool boundary is
-  caught too.
+  Reads `job_id` (required) and optionally honours `wait`, the wait budget
+  (`timeout_ms` / `timeout` / `timeoutMs`) and `max_bytes`. Never raises: a
+  missing/non-string argument returns the shared descriptive error string,
+  every registry failure is rendered as an `Error: ...` string, and an
+  unexpected raise/exit at the tool boundary is caught too.
   """
   def execute(args, _repo_path, _repo_root) do
     with {:ok, job_id} <- Shared.fetch_string_arg(args, "job_id") do
@@ -114,22 +147,33 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     # Waiting is best-effort: a timed-out (or unusable) wait still falls through
     # to the read below, which reports the real outcome — and the real error
     # when the job is unknown.
-    :ok = maybe_wait(job_id, args, owner)
+    wait = maybe_wait(job_id, args, owner)
 
     case BackgroundJobs.read(job_id, read_opts(args, owner)) do
-      {:ok, %{text: text, job: job}} -> render(text, job)
+      {:ok, %{text: text, job: job}} -> render(text, job, wait)
       {:error, reason} -> Failure.error(error_message(reason, job_id))
     end
   end
 
   ## Wait loop (caller side — never inside the registry)
 
+  # Returns `nil` (no wait requested) or the wait OUTCOME facts the renderer
+  # turns into the marker line: how long the wait actually took, the CLAMPED
+  # budget it used, and whether that budget came from an explicit argument or
+  # the default (the default-only hint depends on it).
   defp maybe_wait(job_id, args, owner) do
     if Shared.get_optional_boolean(args, "wait", false) do
-      deadline = System.monotonic_time(:millisecond) + wait_budget_ms(args)
-      wait_until_terminal(job_id, owner, deadline)
+      {budget_ms, source} = wait_budget(args)
+      started_at = System.monotonic_time(:millisecond)
+      :ok = wait_until_terminal(job_id, owner, started_at + budget_ms)
+
+      %{
+        elapsed_ms: System.monotonic_time(:millisecond) - started_at,
+        budget_ms: budget_ms,
+        source: source
+      }
     else
-      :ok
+      nil
     end
   end
 
@@ -157,14 +201,20 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   defp terminal?(%{status: status}), do: status not in @live_statuses
   defp terminal?(_job), do: true
 
-  defp wait_budget_ms(args) do
+  # `{budget_ms, :explicit | :default}` — the budget CLAMPED to
+  # `[0, wait_max_ms()]`. The source is derived from whether a key actually
+  # yielded a usable duration, so a present-but-unusable value counts as the
+  # default (which is what the job actually waited for).
+  defp wait_budget(args) do
     max_ms = BackgroundJobs.wait_max_ms()
 
-    args
-    |> Shared.get_optional_integer("timeout_ms", BackgroundJobs.wait_default_ms())
-    |> min(max_ms)
-    |> max(0)
+    case Shared.fetch_duration_ms(args, @wait_budget_keys) do
+      {:ok, ms} -> {clamp_ms(ms, max_ms), :explicit}
+      :error -> {clamp_ms(BackgroundJobs.wait_default_ms(), max_ms), :default}
+    end
   end
+
+  defp clamp_ms(ms, max_ms), do: ms |> min(max_ms) |> max(0)
 
   ## Read options
 
@@ -187,7 +237,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Rendering
 
-  defp render(text, job) do
+  defp render(text, job, wait) do
     body =
       case text do
         value when is_binary(value) and value != "" -> value
@@ -196,7 +246,35 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
     separator = if String.ends_with?(body, "\n"), do: "", else: "\n"
 
-    body <> separator <> status_line(job)
+    body <> separator <> status_line(job) <> marker_suffix(wait, job)
+  end
+
+  # The wait marker is a SEPARATE line after the status line (never part of it —
+  # `status_line/1` is shared with JobKill and must stay byte-identical). A call
+  # that did not request `wait: true` renders nothing extra.
+  defp marker_suffix(nil, _job), do: ""
+
+  defp marker_suffix(wait, job) do
+    status = status_text(job)
+
+    # "Finished" is decided from the job this read returned — the authoritative
+    # post-wait state, not the last poll.
+    line =
+      if terminal?(job) do
+        "[wait: finished after #{wait.elapsed_ms} ms, status: #{status}]"
+      else
+        expired_marker(wait, status)
+      end
+
+    "\n" <> line
+  end
+
+  defp expired_marker(%{budget_ms: budget_ms, source: :explicit}, status),
+    do: "[wait: #{budget_ms} ms budget expired, status: #{status}]"
+
+  defp expired_marker(%{budget_ms: budget_ms}, status) do
+    "[wait: #{budget_ms} ms budget expired, status: #{status}; " <>
+      "pass timeout_ms (or timeout) to wait up to #{BackgroundJobs.wait_max_ms()} ms]"
   end
 
   defp status_text(job) do
