@@ -285,7 +285,7 @@ defmodule EvoGit.Agent.Tools do
   # dependency on this module, so the attribute stays acyclic) plus headroom for
   # the read plus registry latency — each poll of a `:unit`-handled job runs a
   # synchronous `systemctl --user show` in the single GLOBAL registry, so 5 s of
-  # slack (the previous 65_000) is not enough under load.
+  # slack is not enough under load.
   @job_output_wait_headroom_ms 25_000
   @job_output_default_timeout_ms EvoGit.BackgroundJobs.wait_max_ms() +
                                    @job_output_wait_headroom_ms
