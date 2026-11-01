@@ -30,8 +30,13 @@ defmodule EvoGit.Agent.ToolInvocation do
   `resolve_timeout/4` centralizes the timeout rule so an omitted `timeout` means
   the same thing everywhere:
 
-    * an explicit positive integer `timeout` argument → used, clamped by the
-      configured `max_tool_timeout`;
+    * an explicit positive `timeout` argument → used, clamped by the configured
+      `max_tool_timeout`. Every duration shape the tool surface accepts is
+      recognised: an integer, a float, or a numeric string with an optional
+      `ms`/`s`/`m` unit (`60000`, `"60000"`, `"90s"`, `"30m"`, `"1.5s"`), parsed
+      by the ONE duration helper `EvoGit.Agent.Tools.Shared.fetch_duration_ms/2`
+      so a string timeout raises the ceiling instead of silently yielding the
+      default. A zero/negative or unparseable value is treated as absent;
     * the platform shell tool (`bash`, `run_bash`, `run_powershell`, `pwsh`,
       `shell`, `sh`, …) with NO explicit timeout → at least
       `@shell_default_timeout_ms` (120 s), clamped by `max_tool_timeout`. The
@@ -109,8 +114,11 @@ defmodule EvoGit.Agent.ToolInvocation do
   Resolves the per-call timeout (ms) for one tool call.
 
   `args` may be anything the tolerant parse produced (a map, a raw string, nil) —
-  only a map can carry a `timeout`. A non-integer / non-positive `timeout`
-  argument is treated as absent rather than crashing the dispatch.
+  only a map can carry a `timeout`. The `timeout` argument accepts every
+  duration shape of the unified tool surface (an integer, a float, or a numeric
+  string with an optional `ms`/`s`/`m` unit — `"60000"`, `"90s"`, `"30m"`), and
+  a value that is unusable or non-positive is treated as absent rather than
+  crashing the dispatch.
   `configured_default` is `[:scheduler, :default_tool_timeout]`,
   `max_timeout` is `[:scheduler, :max_tool_timeout]`.
   """
@@ -148,11 +156,19 @@ defmodule EvoGit.Agent.ToolInvocation do
 
   def shell_tool?(_name), do: false
 
-  # The declared `timeout` tool argument, when it is a usable positive integer.
+  # The declared `timeout` tool argument, when it is a USABLE positive duration.
+  # Recognition is delegated to the ONE duration helper
+  # (`EvoGit.Agent.Tools.Shared.fetch_duration_ms/2`), which accepts an integer,
+  # a float (`trunc`) or a numeric string with an optional `ms`/`s`/`m` unit — so
+  # `{"timeout": "30m"}` raises the per-call ceiling instead of being mistaken
+  # for an absent argument and silently taking the generic default.
   defp explicit_timeout(args) when is_map(args) do
-    case Map.get(args, "timeout") do
-      timeout when is_integer(timeout) and timeout > 0 -> {:ok, timeout}
-      _absent_or_invalid -> :none
+    case EvoGit.Agent.Tools.Shared.fetch_duration_ms(
+           %{"timeout" => Map.get(args, "timeout")},
+           ["timeout"]
+         ) do
+      {:ok, timeout} when timeout > 0 -> {:ok, timeout}
+      _absent_or_unusable -> :none
     end
   end
 

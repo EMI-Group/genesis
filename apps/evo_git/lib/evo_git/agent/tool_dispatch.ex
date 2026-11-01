@@ -1625,14 +1625,15 @@ defmodule EvoGit.Agent.ToolDispatch do
   #     `job_output`, whose `timeout` argument bounds its INTERNAL `wait: true`
   #     loop rather than the whole call): the advertised value is a FLOOR even
   #     when an explicit `timeout` argument is present — an explicit value may
-  #     still RAISE the ceiling, but never lower it below the wait cap plus
-  #     headroom, so `{"wait": true, "timeout": 60000}` cannot be killed by the
-  #     dispatcher at exactly 60 s.
-  #   * every other tool: an explicit `timeout` argument (a positive integer
-  #     under `"timeout"`) means the model asked for a specific budget, so the
-  #     advertised default does not apply — that is the same "explicit wins" rule
-  #     `resolve_timeout/4` implements (pinned for the platform shell by
-  #     `test/evo_git/agent/tool_dispatch_test.exs`).
+  #     still RAISE the ceiling, but never lower it below the advertised wait
+  #     default (the 60 s wait cap plus headroom), so
+  #     `{"wait": true, "timeout": "60s"}` cannot be killed by the dispatcher at
+  #     exactly 60 s.
+  #   * every other tool: an explicit `timeout` argument (any usable duration
+  #     shape — see `explicit_timeout_arg?/1`) means the model asked for a
+  #     specific budget, so the advertised default does not apply — that is the
+  #     same "explicit wins" rule `resolve_timeout/4` implements (pinned for the
+  #     platform shell by `test/evo_git/agent/tool_dispatch_test.exs`).
   defp apply_advertised_tool_timeout(resolved, name, args, max_timeout) do
     case EvoGit.Agent.Tools.default_timeout_ms(name) do
       advertised when is_integer(advertised) and advertised > 0 ->
@@ -1648,13 +1649,22 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # True when `args` carries a usable explicit `timeout` (a positive integer).
+  # True when `args` carries a usable explicit `timeout`: any duration shape the
+  # tool surface accepts (an integer, a float, or a numeric string with an
+  # optional `ms`/`s`/`m` unit — `"60000"`, `"90s"`, `"30m"`), parsed by the ONE
+  # duration helper `EvoGit.Agent.Tools.Shared.fetch_duration_ms/2` and POSITIVE
+  # (a zero/negative or unusable value means "absent"). This is the SAME
+  # recognition `ToolInvocation.resolve_timeout/4` applies, so the "explicit wins"
+  # rule can never disagree with the resolved timeout.
   # TOTAL: the tolerant arguments parse can hand the dispatcher a RAW string, a
   # nil or anything else — only a map can declare a `timeout`.
   defp explicit_timeout_arg?(args) when is_map(args) do
-    case Map.get(args, "timeout") do
-      timeout when is_integer(timeout) and timeout > 0 -> true
-      _absent_or_invalid -> false
+    case EvoGit.Agent.Tools.Shared.fetch_duration_ms(
+           %{"timeout" => Map.get(args, "timeout")},
+           ["timeout"]
+         ) do
+      {:ok, timeout} when timeout > 0 -> true
+      _absent_or_unusable -> false
     end
   end
 

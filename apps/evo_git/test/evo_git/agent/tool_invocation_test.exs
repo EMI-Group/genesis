@@ -16,9 +16,12 @@ defmodule EvoGit.Agent.ToolInvocationTest do
   the same shapes (a map or `%{}`, never a raise), because the hint/telemetry
   helpers downstream of tool execution are map-only.
 
-  Also pins the timeout rule: an explicit positive integer `timeout` argument is
-  used and clamped by the configured maximum, an invalid or unreadable one is
-  treated as ABSENT, an omitted timeout means the generous platform-shell
+  Also pins the timeout rule: an explicit positive `timeout` argument is used
+  and clamped by the configured maximum — in EVERY unified duration shape the
+  tool surface accepts (an integer, a float, or a numeric string with an optional
+  `ms`/`s`/`m` unit: `"60000"`, `"90s"`, `"30m"`), so a string timeout is no
+  longer mistaken for an absent argument — while an unusable or non-positive one
+  is treated as ABSENT, an omitted timeout means the generous platform-shell
   default (never lower than the configured default) for a shell tool and the
   configured `[:scheduler, :default_tool_timeout]` for everything else.
 
@@ -228,9 +231,62 @@ defmodule EvoGit.Agent.ToolInvocationTest do
     end
   end
 
-  describe "resolve_timeout/4 — invalid explicit timeout is treated as absent" do
-    test "falls back to the shell default for a string timeout on a shell tool" do
+  describe "resolve_timeout/4 — unified duration shapes are explicit" do
+    # A string timeout is a REAL request, not a malformed argument: the unified
+    # tool surface accepts `"60000"` / `"90s"` / `"30m"` and the dispatcher must
+    # honour it (previously it fell through to the 120 s shell default).
+    test "uses a numeric string timeout on a shell tool, winning over the shell default" do
       assert ToolInvocation.resolve_timeout("bash", %{"timeout" => "9000"}, 10_000, 300_000) ==
+               9_000
+
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "9000"}, 10_000, 300_000) ==
+               9_000
+    end
+
+    test "clamps a string timeout above the configured maximum" do
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "999000"}, 10_000, 60_000) ==
+               60_000
+
+      assert ToolInvocation.resolve_timeout("bash", %{"timeout" => "999000"}, 10_000, 60_000) ==
+               60_000
+    end
+
+    test "truncates a float timeout" do
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => 1_500.9}, 10_000, 300_000) ==
+               1_500
+
+      assert ToolInvocation.resolve_timeout("bash", %{"timeout" => 1_500.9}, 10_000, 300_000) ==
+               1_500
+    end
+
+    test "accepts the seconds unit" do
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "90s"}, 10_000, 300_000) ==
+               90_000
+
+      assert ToolInvocation.resolve_timeout("bash", %{"timeout" => "90s"}, 10_000, 300_000) ==
+               90_000
+    end
+
+    test "accepts the minutes unit and clamps it by the configured maximum" do
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "30m"}, 10_000, 1_800_000) ==
+               1_800_000
+
+      assert ToolInvocation.resolve_timeout("bash", %{"timeout" => "30m"}, 10_000, 300_000) ==
+               300_000
+    end
+
+    test "accepts a duration with an explicit ms unit and a fractional value" do
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "1500ms"}, 10_000, 300_000) ==
+               1_500
+
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "1.5s"}, 10_000, 300_000) ==
+               1_500
+    end
+  end
+
+  describe "resolve_timeout/4 — invalid explicit timeout is treated as absent" do
+    test "falls back to the shell default for an unparseable string timeout on a shell tool" do
+      assert ToolInvocation.resolve_timeout("bash", %{"timeout" => "soon"}, 10_000, 300_000) ==
                120_000
     end
 
@@ -245,7 +301,7 @@ defmodule EvoGit.Agent.ToolInvocationTest do
     end
 
     test "falls back to the configured default for a non-shell tool" do
-      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "9000"}, 10_000, 300_000) ==
+      assert ToolInvocation.resolve_timeout("read", %{"timeout" => "soon"}, 10_000, 300_000) ==
                10_000
 
       assert ToolInvocation.resolve_timeout("read", %{"timeout" => 0}, 10_000, 300_000) ==

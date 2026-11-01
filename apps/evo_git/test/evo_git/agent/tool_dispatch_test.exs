@@ -604,6 +604,65 @@ defmodule EvoGit.Agent.ToolDispatchTest do
       assert output =~ "timed out after 120ms"
     end
 
+    test "a string or float `timeout` argument counts as explicit", context do
+      # The unified tool-surface `timeout` shapes are NOT integers: `"120"`
+      # (numeric string) and `120.9` (float, truncated) both mean "the model
+      # asked for ~120 ms". Recognition is shared with
+      # `ToolInvocation.resolve_timeout/4` (`Shared.fetch_duration_ms/2`), so the
+      # advertised 120 s shell default must NOT apply — an unrecognised string
+      # budget would leave the fake tool running to completion (the 300 ms
+      # workload) instead of cutting it at 120 ms.
+      %{repo_root: repo_root} = context
+      shell_name = EvoGit.Agent.ToolNames.shell_tool_name()
+
+      install_fake_tools(%{
+        shell_name => fn _args, _repo_path, _repo_root, _node_path ->
+          Process.sleep(300)
+          "completed without being cut"
+        end
+      })
+
+      for {timeout, index} <- Enum.with_index(["120", 120.9]) do
+        calls = [
+          {ReqLLM.ToolCall.new(
+             "call_#{index}",
+             shell_name,
+             Jason.encode!(%{"command" => "echo hi", "timeout" => timeout})
+           ), 0}
+        ]
+
+        [{0, _tool_call_id, _name, output}] =
+          ToolDispatch.batch_execute_tools(calls, 1_800_000, repo_root, :low)
+
+        assert output =~ "timed out after 120ms",
+               "a #{inspect(timeout)} timeout argument must be honoured as 120 ms"
+      end
+    end
+
+    test "a string `timeout` still cannot lower job_output's wait floor", context do
+      # The string spelling must not sneak past the wait-budget FLOOR rule:
+      # `job_output`'s `timeout` bounds its INTERNAL `wait: true` loop, so a
+      # `"50"` request has to be raised to the advertised wait default (85 s,
+      # shrunk here by the batch's `max_timeout` of 300 ms) instead of becoming
+      # the dispatch ceiling.
+      %{repo_root: repo_root} = context
+
+      install_fake_tools(%{"job_output" => blocking_tool()})
+
+      call =
+        ReqLLM.ToolCall.new(
+          "call_1",
+          "job_output",
+          Jason.encode!(%{"job_id" => "job-1", "wait" => true, "timeout" => "50"})
+        )
+
+      [{0, _tool_call_id, _name, output}] =
+        ToolDispatch.batch_execute_tools([{call, 0}], 300, repo_root, :low)
+
+      assert output =~ "timed out after 300ms"
+      refute output =~ "timed out after 50ms"
+    end
+
     test "job_output's explicit `timeout` is a FLOOR, while the shell tool's still wins",
          context do
       # REGRESSION (the dispatch-ceiling half of the background-wait fix):
