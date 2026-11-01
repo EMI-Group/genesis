@@ -268,6 +268,85 @@ defmodule EvoGit.Agent.ToolNamesTest do
       assert Tools.default_timeout_ms("my_custom_tool") == nil
       assert Tools.default_timeout_ms(nil) == nil
     end
+
+    test "returns the DERIVED wait ceiling for job_output in every accepted spelling" do
+      # `job_output`'s `wait: true` loop may block up to
+      # `EvoGit.BackgroundJobs.wait_max_ms()` INSIDE one tool call, so its
+      # dispatch ceiling is the cap plus headroom — derived from that single
+      # source of truth, never a magic number.
+      assert Tools.default_timeout_ms("job_output") ==
+               EvoGit.BackgroundJobs.wait_max_ms() + 25_000
+
+      assert Tools.default_timeout_ms("job_output") == 85_000
+
+      # The wait cap must FIT inside the dispatch ceiling, or a full bounded
+      # wait would be killed by the dispatcher at the very moment it expires.
+      assert Tools.default_timeout_ms("job_output") > EvoGit.BackgroundJobs.wait_max_ms()
+
+      # Alias spellings resolve through `ToolNames.normalize/1` like every other
+      # name; the canonical `"job_output"` itself has no alias entry and passes
+      # through unchanged.
+      for spelling <- ["bash_output", "background_output", "job_status", "Bash_Output"] do
+        assert Tools.default_timeout_ms(spelling) == 85_000,
+               "default_timeout_ms(#{inspect(spelling)}) should be the job_output ceiling"
+      end
+    end
+
+    test "the background-job NEIGHBOURS keep the generic default (nil)" do
+      # `job_list` / `job_kill` are fast registry calls and deliberately keep the
+      # dispatcher's generic default — the generous ceiling is job_output's
+      # alone.
+      for spelling <- ["job_list", "job_kill", "jobs", "kill_job", "background_jobs"] do
+        assert Tools.default_timeout_ms(spelling) == nil,
+               "default_timeout_ms(#{inspect(spelling)}) must stay nil"
+      end
+    end
+  end
+
+  describe "Tools.timeout_arg_is_wait_budget?/1" do
+    test "true for job_output and its accepted spellings" do
+      assert Tools.timeout_arg_is_wait_budget?("job_output")
+
+      for spelling <- ["bash_output", "background_output", "job_status", "Bash_Output"] do
+        assert Tools.timeout_arg_is_wait_budget?(spelling),
+               "timeout_arg_is_wait_budget?(#{inspect(spelling)}) should be true"
+      end
+    end
+
+    test "false for every other tool name — explicit `timeout` stays the ceiling there" do
+      # The predicate is what keeps the "advertised default is a FLOOR" rule
+      # narrow: the platform shell's `timeout` genuinely weights its command, so
+      # an explicit value must keep winning for it.
+      for name <- [
+            "bash",
+            "shell",
+            "run_bash",
+            "run_powershell",
+            "read",
+            "read_file",
+            "write",
+            "edit",
+            "rg",
+            "job_list",
+            "job_kill",
+            "jobs",
+            "kill_job",
+            "my_custom_tool",
+            nil
+          ] do
+        refute Tools.timeout_arg_is_wait_budget?(name),
+               "timeout_arg_is_wait_budget?(#{inspect(name)}) must be false"
+      end
+    end
+
+    test "matches the name EXACTLY, through normalize/1, like default_timeout_ms/1" do
+      # `ToolNames.normalize/1` only down-cases spellings in the alias TABLE; an
+      # unmapped spelling is returned UNCHANGED, so `"JobOutput"` is NOT
+      # `job_output` — and the two predicates agree on that.
+      assert ToolNames.normalize("JobOutput") == "JobOutput"
+      refute Tools.timeout_arg_is_wait_budget?("JobOutput")
+      assert Tools.default_timeout_ms("JobOutput") == nil
+    end
   end
 
   describe "Tools.serial_tool?/1 — normalises the raw model-facing name" do
