@@ -22,18 +22,30 @@ defmodule EvoGit.Agent.Tools.JobOutput do
   ## `wait: true`
 
   A `wait: true` call blocks in THIS tool (never in the registry) by polling
-  `EvoGit.BackgroundJobs.job/2` every
-  `EvoGit.BackgroundJobs.poll_interval_ms/0` until the job reaches a terminal
-  status or the wait budget expires. A timed-out wait leaves the job RUNNING
-  and still returns whatever output was produced.
+  `EvoGit.BackgroundJobs.job/2` until the job reaches a terminal status, the
+  owning agent is gracefully cancelled, or the wait budget expires. A timed-out
+  wait leaves the job RUNNING and still returns whatever output was produced.
+
+  The point of a long budget is to make ONE wait instead of re-polling: a
+  background job is usually started because it takes minutes, so the default is
+  a generous `EvoGit.BackgroundJobs.wait_default_ms/0` (120 000 ms) and the cap
+  is `EvoGit.BackgroundJobs.wait_max_ms/0` — the configured scheduler tool
+  ceiling (`[:scheduler, :max_tool_timeout]`) minus the dispatcher headroom,
+  ~30 min by default. A job expected to take a while should be collected with
+  ONE long wait (e.g. `timeout: "30m"`), not a string of short ones.
 
   The wait budget is read (in order) from `timeout_ms`, `timeout` or
   `timeoutMs` — `timeout_ms` is canonical and `timeout` is the generic spelling
   the rest of the tool surface uses. A value may be an integer, a float
   (truncated), or a string holding a number with an optional `ms`/`s`/`m` unit
-  (`"60000"`, `"60s"`, `"2m"`). No usable value means the effective default
-  `EvoGit.BackgroundJobs.wait_default_ms/0`; every budget is clamped into
-  `[0, EvoGit.BackgroundJobs.wait_max_ms/0]`.
+  (`"60000"`, `"60s"`, `"2m"`, `"30m"`). No usable value means the effective
+  default `EvoGit.BackgroundJobs.wait_default_ms/0`; every budget is clamped
+  into `[0, EvoGit.BackgroundJobs.wait_max_ms/0]`.
+
+  Polling backs off (~1.5× per iteration up to 3 s) so a fast job is still
+  observed promptly while a long wait does not hammer the registry — every poll
+  of a `:unit`-handled job runs a synchronous `systemctl --user show` in the
+  single GLOBAL registry.
 
   One marker line is then appended AFTER the status line, so a short wait is
   diagnosable instead of looking like a fast success:
@@ -44,12 +56,19 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
       (no new output)
       [status: running]
-      [wait: 8000 ms budget expired, status: running; pass timeout_ms (or timeout) to wait up to 60000 ms]
+      [wait: 120000 ms budget expired, status: running; pass timeout_ms (or timeout) to wait up to 1775000 ms ("1775s")]
 
   The first marker means the job reached a terminal status during the wait; the
   second means the budget ran out with the job still live (the default-budget
-  hint is omitted when the budget was passed explicitly). The marker follows
-  the `[status: …]` line byte-identically — the status line itself is unchanged.
+  hint is omitted when the budget was passed explicitly). A graceful cancel of
+  the owning agent aborts the wait early with its own marker:
+
+      (no new output)
+      [status: running]
+      [wait: aborted after 61 ms — cancellation requested, status: running]
+
+  The marker follows the `[status: …]` line byte-identically — the status line
+  itself is unchanged.
   """
 
   alias EvoGit.Agent.Tools.Failure
@@ -88,7 +107,7 @@ defmodule EvoGit.Agent.Tools.JobOutput do
           "timeout_ms" => %{
             "type" => "integer",
             "description" =>
-              "Max wait in milliseconds with wait: true. `timeout` and `timeoutMs` are accepted aliases for the same budget. Accepts an integer, a float (truncated), or a string with an optional ms/s/m unit (\"60000\", \"60s\", \"2m\"). Defaults to #{BackgroundJobs.wait_default_ms()}, capped at #{BackgroundJobs.wait_max_ms()}."
+              "Max wait in milliseconds with wait: true — either milliseconds or a unit string (\"90s\", \"30m\"). `timeout` and `timeoutMs` are accepted aliases for the same budget. Accepts an integer, a float (truncated), or a string with an optional ms/s/m unit (\"120000\", \"120s\", \"30m\"). Defaults to #{BackgroundJobs.wait_default_ms()}, capped at #{BackgroundJobs.wait_max_ms()}. For a job expected to take a while, do ONE long wait (e.g. timeout: \"30m\") instead of re-polling with short budgets."
           },
           "timeout" => %{
             "type" => "integer",
@@ -157,45 +176,138 @@ defmodule EvoGit.Agent.Tools.JobOutput do
 
   ## Wait loop (caller side — never inside the registry)
 
+  # Upper bound for the exponential poll backoff (ms) — see `next_poll_delay/2`.
+  # The wait cap is ~30 min, so a FIXED 100 ms cadence would mean ~18 000 polls
+  # (and, for a `:unit`-handled job, ~18 000 SYNCHRONOUS `systemctl --user show`
+  # spawns in the single GLOBAL BackgroundJobs registry) per waiting agent.
+  # Backing off to at most this keeps the first seconds fast — a short job is
+  # still observed promptly — while bounding a long wait to a few hundred probes.
+  @poll_backoff_cap_ms 3_000
+  # Growth factor of the poll backoff (~1.5× per iteration).
+  @poll_backoff_factor 1.5
+  # The scheduler-owned ETS table holding per-agent state (its `cancel_requested`
+  # flag). Guarded with `:ets.whereis/1` before every probe — see
+  # `cancel_requested?/1`.
+  @agent_state_table :evogit_agent_state
+
   # Returns `nil` (no wait requested) or the wait OUTCOME facts the renderer
   # turns into the marker line: how long the wait actually took, the CLAMPED
-  # budget it used, and whether that budget came from an explicit argument or
-  # the default (the default-only hint depends on it).
+  # budget it used, whether a cancellation aborted it early, and whether that
+  # budget came from an explicit argument or the default (the default-only hint
+  # depends on it).
   defp maybe_wait(job_id, args, owner) do
     if Shared.get_optional_boolean(args, "wait", false) do
       {budget_ms, source} = wait_budget(args)
       started_at = System.monotonic_time(:millisecond)
-      :ok = wait_until_terminal(job_id, owner, started_at + budget_ms)
+      aborted? = wait_until_terminal(job_id, owner, started_at + budget_ms)
 
       %{
         elapsed_ms: System.monotonic_time(:millisecond) - started_at,
         budget_ms: budget_ms,
-        source: source
+        source: source,
+        aborted: aborted?
       }
     else
       nil
     end
   end
 
+  # Returns `true` when the wait was ABORTED by a graceful cancel, `false` when
+  # it ended for any other reason (terminal status, foreign/unknown job, or an
+  # expired budget).
   defp wait_until_terminal(job_id, owner, deadline) do
+    do_wait_until_terminal(job_id, owner, deadline, BackgroundJobs.poll_interval_ms())
+  end
+
+  # One probe per iteration: the deadline, then the job's status (a TERMINAL
+  # status always wins over a pending cancel, so a job that finished while the
+  # cancel was in flight still reports "finished"), then the owning agent's
+  # graceful-cancel flag (so a cancelled agent never sits out a 30 minute wait),
+  # then a BACKED-OFF sleep.
+  defp do_wait_until_terminal(job_id, owner, deadline, poll_ms) do
     if System.monotonic_time(:millisecond) >= deadline do
-      :ok
+      false
     else
       case BackgroundJobs.job(job_id, owner_opts(owner)) do
         {:ok, job} ->
-          if terminal?(job) do
-            :ok
-          else
-            Process.sleep(BackgroundJobs.poll_interval_ms())
-            wait_until_terminal(job_id, owner, deadline)
+          cond do
+            terminal?(job) ->
+              false
+
+            cancel_requested?() ->
+              true
+
+            true ->
+              Process.sleep(poll_ms)
+
+              do_wait_until_terminal(
+                job_id,
+                owner,
+                deadline,
+                next_poll_delay(poll_ms, @poll_backoff_cap_ms)
+              )
           end
 
         # Unknown or foreign job: stop waiting. The read that follows renders the
         # real, actionable reason — polling again could only repeat it.
         {:error, _reason} ->
-          :ok
+          false
       end
     end
+  end
+
+  @doc false
+  # The pure backoff curve of the wait loop: the NEXT poll delay given the
+  # current one, grown by `@poll_backoff_factor` and capped at `cap_ms`. Public
+  # (but doc-false) so the curve is unit-testable without waiting it out. A zero
+  # base (the `:background_poll_interval_ms` seam allows 0) is floored to 1 ms so
+  # the sleep never degenerates into a busy loop.
+  def next_poll_delay(current_ms, cap_ms) do
+    current_ms
+    |> max(1)
+    |> Kernel.*(@poll_backoff_factor)
+    |> round()
+    |> min(cap_ms)
+  end
+
+  @doc false
+  # True when the OWNING agent has a graceful cancel pending. Read once per wait
+  # poll from the job's owning agent id (`:evogit_agent_id`, which `ToolDispatch`
+  # re-installs in the tool task's process dictionary) and the scheduler's
+  # `cancel_requested` flag.
+  #
+  # TOTAL by construction, because it runs INSIDE a wait: no agent id (a
+  # non-agent caller), a non-integer id, an absent `:evogit_agent_state` table
+  # (the app is shutting down) or a raise/exit out of the probe all mean "not
+  # cancelled". Crashing here would turn a clean cancel into an `Error: …` string
+  # instead of the delta + abort marker, and would fail a wait for a reason that
+  # has nothing to do with the job.
+  #
+  # The table is a PARAMETER (default `:evogit_agent_state`) so a test can probe
+  # the absent-table arm without deleting the app-owned singleton table.
+  def cancel_requested?(table \\ @agent_state_table) do
+    case Process.get(:evogit_agent_id) do
+      agent_id when is_integer(agent_id) ->
+        :ets.whereis(table) != :undefined and flag_cancel_requested?(agent_id)
+
+      _other ->
+        false
+    end
+  end
+
+  defp flag_cancel_requested?(agent_id) do
+    EvoGit.AgentScheduler.Store.cancel_requested?(agent_id) == true
+  rescue
+    # Justified `try/rescue`: this probe runs inside a long `wait: true` loop and
+    # its only failure mode is the app-owned ETS table vanishing between the
+    # `whereis/1` guard and the lookup (app shutdown). "Flag unavailable" is the
+    # VISIBLE `false` this clause returns — never an agent-facing error, and never
+    # an empty catch.
+    _ -> false
+  catch
+    # An exit out of the scheduler store (table gone mid-call) is equally "not
+    # cancelled" — it must not abort the wait or crash the tool.
+    :exit, _ -> false
   end
 
   defp terminal?(%{status: status}), do: status not in @live_statuses
@@ -258,12 +370,19 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     status = status_text(job)
 
     # "Finished" is decided from the job this read returned — the authoritative
-    # post-wait state, not the last poll.
+    # post-wait state, not the last poll — and WINS over an abort: a job that
+    # reached a terminal status in the same iteration the cancel was seen is
+    # reported as finished, not aborted.
     line =
-      if terminal?(job) do
-        "[wait: finished after #{wait.elapsed_ms} ms, status: #{status}]"
-      else
-        expired_marker(wait, status)
+      cond do
+        terminal?(job) ->
+          "[wait: finished after #{wait.elapsed_ms} ms, status: #{status}]"
+
+        wait.aborted ->
+          "[wait: aborted after #{wait.elapsed_ms} ms — cancellation requested, status: #{status}]"
+
+        true ->
+          expired_marker(wait, status)
       end
 
     "\n" <> line
@@ -273,8 +392,23 @@ defmodule EvoGit.Agent.Tools.JobOutput do
     do: "[wait: #{budget_ms} ms budget expired, status: #{status}]"
 
   defp expired_marker(%{budget_ms: budget_ms}, status) do
+    cap_ms = BackgroundJobs.wait_max_ms()
+
     "[wait: #{budget_ms} ms budget expired, status: #{status}; " <>
-      "pass timeout_ms (or timeout) to wait up to #{BackgroundJobs.wait_max_ms()} ms]"
+      "pass timeout_ms (or timeout) to wait up to #{cap_ms} ms (\"#{humanize_ms(cap_ms)}\")]"
+  end
+
+  # Human form of a budget, rendered from the CAP at call time (never a literal):
+  # a whole-minute value renders as `<n>m`, anything else as `<n>s` (truncated
+  # seconds, so the hint never advertises more than the cap).
+  defp humanize_ms(ms) do
+    seconds = div(ms, 1_000)
+
+    if seconds > 0 and rem(seconds, 60) == 0 do
+      "#{div(seconds, 60)}m"
+    else
+      "#{seconds}s"
+    end
   end
 
   defp status_text(job) do

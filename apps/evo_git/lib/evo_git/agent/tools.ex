@@ -274,22 +274,21 @@ defmodule EvoGit.Agent.Tools do
   # `default_timeout_ms/1` as a read-only seam for the dispatcher.
   @shell_tool_default_timeout_ms 120_000
 
-  # Default per-tool timeout (ms) for `job_output`: a bounded `wait` blocks up
-  # to `EvoGit.BackgroundJobs.wait_max_ms()` (60 s) INSIDE the tool, so the
-  # generic 10 s default would abort a legitimate wait, and an explicit `timeout`
-  # must never lower the ceiling below that budget either (see
+  # Default per-tool timeout (ms) for `job_output`: a bounded `wait` blocks up to
+  # `EvoGit.BackgroundJobs.wait_max_ms()` INSIDE the tool, so the generic 10 s
+  # default would abort a legitimate wait, and an explicit `timeout` must never
+  # lower the ceiling below that budget either (see
   # `timeout_arg_is_wait_budget?/1` below).
   #
-  # DERIVED, never a magic number: the wait cap comes from the single source of
-  # truth (`EvoGit.BackgroundJobs.wait_max_ms/0`, a plain `def` with no compile
-  # dependency on this module, so the attribute stays acyclic) plus headroom for
-  # the read plus registry latency — each poll of a `:unit`-handled job runs a
-  # synchronous `systemctl --user show` in the single GLOBAL registry, so 5 s of
-  # slack is not enough under load.
-  @job_output_wait_headroom_ms 25_000
-  @job_output_default_timeout_ms EvoGit.BackgroundJobs.wait_max_ms() +
-                                   @job_output_wait_headroom_ms
-
+  # DERIVED AT RUNTIME, never a compile-time attribute and never a magic number:
+  # `wait_max_ms/0` derives the cap from the scheduler's tool ceiling
+  # (`[:scheduler, :max_tool_timeout]`, 1_800_000 ms by default) MINUS the
+  # dispatcher headroom, and this module adds the SAME headroom straight back
+  # (`job_output_default_timeout_ms/0` below), so `job_output`'s dispatch ceiling
+  # is exactly `[:scheduler, :max_tool_timeout]` — a full-length wait expires just
+  # before the dispatcher would kill the call. The headroom covers the completing
+  # read plus registry latency: each poll of a `:unit`-handled job runs a
+  # synchronous `systemctl --user show` in the single GLOBAL registry.
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
     maybe_block_repo_less(
       ToolNames.normalize(tool_name),
@@ -484,15 +483,20 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   The DEFAULT timeout (ms) a tool should get when the caller does not request one
   explicitly: `120_000` for the platform shell tool (any accepted spelling of it
-  — `bash`, `shell`, `run_bash`, `run_powershell`, …), `85_000` for `job_output`
-  (derived as `EvoGit.BackgroundJobs.wait_max_ms()` + 25 s headroom: its `wait`
-  argument may block up to 60 s inside the tool, so the generic 10 s default
-  would cut a bounded wait short, and the headroom covers the read plus registry
-  latency — each poll of a `:unit`-handled job runs a synchronous
-  `systemctl --user show` in the single global registry), and `nil` for every
-  other tool (meaning "no per-tool default — the dispatcher's generic default
-  applies"). `job_list` / `job_kill` are fast registry calls and deliberately
-  keep the generic default.
+  — `bash`, `shell`, `run_bash`, `run_powershell`, …), the scheduler's tool
+  ceiling (`[:scheduler, :max_tool_timeout]`, `1_800_000` ms by default) for
+  `job_output`, and `nil` for every other tool (meaning "no per-tool default —
+  the dispatcher's generic default applies"). `job_list` / `job_kill` are fast
+  registry calls and deliberately keep the generic default.
+
+  The `job_output` ceiling is DERIVED on every call, never a compile-time
+  attribute: `EvoGit.BackgroundJobs.wait_max_ms/0` (itself derived at call time
+  from the scheduler's ceiling minus the dispatcher headroom) plus
+  `EvoGit.BackgroundJobs.dispatch_headroom_ms/0`. Its `wait` argument blocks up
+  to that wait cap inside the tool, so adding the headroom straight back makes
+  the dispatch ceiling exactly `[:scheduler, :max_tool_timeout]` — the headroom
+  covers the completing read plus registry latency (each poll of a `:unit`-handled
+  job runs a synchronous `systemctl --user show` in the single global registry).
 
   Pure, read-only seam: it changes no dispatch behaviour by itself; the
   dispatcher (a file this module does not own) is expected to consult it for its
@@ -503,9 +507,18 @@ defmodule EvoGit.Agent.Tools do
   def default_timeout_ms(tool_name) do
     case ToolNames.normalize(tool_name) do
       @shell_tool_name -> @shell_tool_default_timeout_ms
-      "job_output" -> @job_output_default_timeout_ms
+      "job_output" -> job_output_default_timeout_ms()
       _other -> nil
     end
+  end
+
+  # `job_output`'s dispatch ceiling, computed AT CALL TIME (never an attribute):
+  # the wait cap the tool advertises plus the dispatcher headroom it was derived
+  # from, i.e. exactly `[:scheduler, :max_tool_timeout]`. The headroom literal is
+  # owned by `EvoGit.BackgroundJobs` (`dispatch_headroom_ms/0`) — never duplicated
+  # here.
+  defp job_output_default_timeout_ms do
+    EvoGit.BackgroundJobs.wait_max_ms() + EvoGit.BackgroundJobs.dispatch_headroom_ms()
   end
 
   @doc """
@@ -520,8 +533,8 @@ defmodule EvoGit.Agent.Tools do
   `default_timeout_ms/1` as a FLOOR for this tool even when an explicit `timeout`
   argument is present: an explicit value may RAISE the dispatch ceiling, but
   never lower it below the wait cap plus headroom — otherwise
-  `{"wait": true, "timeout": 60000}` would wait 60 s and be killed by the
-  dispatcher at exactly 60 s. Every other tool keeps the "explicit wins" rule
+  `{"wait": true, "timeout": "30m"}` would wait 30 min and be killed by the
+  dispatcher at exactly 30 min. Every other tool keeps the "explicit wins" rule
   (the platform shell's `timeout` genuinely weights its command).
   """
   @spec timeout_arg_is_wait_budget?(term()) :: boolean()

@@ -34,14 +34,33 @@ defmodule EvoGit.BackgroundJobs do
   # `:background_unknown_grace_ms`.
   @unknown_grace_ms 15_000
   # Suggested polling defaults for callers implementing a `wait: true` loop (this module does NOT block — see `wait_default_ms/0`).
-  # Both are the PRODUCTION defaults. `@wait_default_ms` is read through
-  # `resolved_wait_default_ms/0`, a CALL-TIME seam (app env
+  # `@wait_default_ms` is the PRODUCTION default wait budget and it is the SAME
+  # generous 120 s the foreground shell tool advertises: a background job is
+  # usually started BECAUSE it takes minutes, so a small default would make the
+  # agent re-poll every few seconds instead of settling the job with ONE call.
+  # It is read through `resolved_wait_default_ms/0`, a CALL-TIME seam (app env
   # `:background_wait_default_ms`, non-negative integers only) so a suite can pin
   # the default-budget path of `EvoGit.Agent.Tools.JobOutput`'s `wait: true` loop
-  # without sleeping the full 8 s; `@wait_max_ms` is the hard CAP and has no seam.
-  @wait_default_ms 8_000
-  @wait_max_ms 60_000
+  # without sleeping the full 120 s.
+  @wait_default_ms 120_000
   @poll_interval_ms 100
+  # Headroom (ms) the DISPATCHER needs on top of a wait budget (the completing
+  # read plus registry latency — each poll of a `:unit`-handled job runs a
+  # synchronous `systemctl --user show` in the single GLOBAL registry).
+  # `wait_max_ms/0` SUBTRACTS it from the scheduler's tool ceiling, and
+  # `EvoGit.Agent.Tools.default_timeout_ms/1` adds it straight back through
+  # `dispatch_headroom_ms/0`, so `job_output`'s dispatch ceiling lands exactly on
+  # `[:scheduler, :max_tool_timeout]`. ONE literal lives here — never duplicate it.
+  @dispatch_headroom_ms 25_000
+  # Last-resort ceiling, used ONLY when `Config.resolve/1` does not answer a
+  # positive integer for `[:scheduler, :max_tool_timeout]`. It MIRRORS that key's
+  # schema default (`config/schema/definitions.ex` is the single source of
+  # truth) and is unreachable in practice, because the schema enforces a
+  # positive integer.
+  @wait_max_fallback_ms 1_800_000
+  # Defensive floor for the derived cap: a configured ceiling smaller than the
+  # headroom must never yield a zero/negative wait budget.
+  @wait_max_floor_ms 1_000
   # A spawn can briefly block (systemd-run / port open), so registry calls use an explicit timeout instead of the 5s default.
   @call_timeout 15_000
   # `reap_under/1` runs inside a GenServer teardown path (WorktreeManager's `:DOWN`), so it must fail fast instead of stalling that process.
@@ -259,19 +278,42 @@ defmodule EvoGit.BackgroundJobs do
 
   @doc """
   Suggested default wait budget (ms) for a caller-side `wait: true` loop — the
-  PRODUCTION default is 8_000, exposed through a CALL-TIME seam (app env
+  PRODUCTION default is 120_000 (the same generous budget the foreground shell
+  tool uses, so a slow job is settled by ONE call instead of a re-poll every few
+  seconds), exposed through a CALL-TIME seam (app env
   `:background_wait_default_ms`, honoured only when it is a non-negative
   integer) because `EvoGit.Agent.Tools.JobOutput` reads this value for its
   `wait: true` loop and a test must be able to pin the default-budget path
-  without sleeping the full 8 s.
+  without sleeping the full 120 s.
   """
   def wait_default_ms, do: resolved_wait_default_ms()
 
   @doc """
-  Suggested maximum wait budget (ms) for a caller-side `wait: true` loop — a
-  FIXED 60_000 with deliberately no seam (this is the hard cap, not a default).
+  Dispatcher headroom (ms) — the slack a `wait: true` call needs on top of its
+  wait budget for the completing read plus registry latency.
+
+  `wait_max_ms/0` subtracts it from the scheduler's tool ceiling and
+  `EvoGit.Agent.Tools.default_timeout_ms/1` adds it back, so the `job_output`
+  dispatch ceiling is exactly `[:scheduler, :max_tool_timeout]`.
   """
-  def wait_max_ms, do: @wait_max_ms
+  def dispatch_headroom_ms, do: @dispatch_headroom_ms
+
+  @doc """
+  Maximum wait budget (ms) for a caller-side `wait: true` loop — DERIVED at CALL
+  time from the scheduler's tool ceiling: `[:scheduler, :max_tool_timeout]`
+  (schema default 1_800_000 = 30 min) minus `dispatch_headroom_ms/0`, i.e.
+  1_775_000 ms (~29.6 min) with the default config, floored at 1_000 so a tiny
+  configured ceiling cannot produce a zero/negative budget.
+
+  Deriving the cap (instead of fixing it at 60 s) is what lets ONE long wait
+  cover a genuinely slow background job instead of an agent re-polling every
+  minute.
+
+  Test-only CALL-TIME seam: app env `:background_wait_max_ms`, honoured only
+  when it is a POSITIVE integer (anything else falls through to the derivation),
+  so a suite can shrink the cap without sleeping minutes.
+  """
+  def wait_max_ms, do: resolved_wait_max_ms()
 
   @doc "Suggested polling interval (ms) for a caller-side `wait: true` loop."
   def poll_interval_ms, do: resolved_poll_interval_ms()
@@ -920,13 +962,40 @@ defmodule EvoGit.BackgroundJobs do
   # Test-only CALL-TIME override (`:background_wait_default_ms`); the production
   # default `@wait_default_ms` is unchanged. Read on EVERY call (`wait_default_ms/0`)
   # by `EvoGit.Agent.Tools.JobOutput`'s `wait: true` loop, so a suite can pin the
-  # default-budget path without sleeping the documented 8 s. `@wait_max_ms` has no
-  # counterpart: it is the hard cap.
+  # default-budget path without sleeping the documented 120 s.
   defp resolved_wait_default_ms do
     case Application.get_env(:evo_git, :background_wait_default_ms, @wait_default_ms) do
       ms when is_integer(ms) and ms >= 0 -> ms
       _other -> @wait_default_ms
     end
+  end
+
+  # Test-only CALL-TIME override (`:background_wait_max_ms`), honoured only for a
+  # POSITIVE integer; a nil / string / float / non-positive value falls through to
+  # the derivation. Read on EVERY call (`wait_max_ms/0`) so a suite can shrink the
+  # cap instead of sleeping minutes, and so no value is ever frozen at compile
+  # time (a compile-time read would also re-read config inside an attribute).
+  defp resolved_wait_max_ms do
+    case Application.get_env(:evo_git, :background_wait_max_ms) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _other -> derived_wait_max_ms()
+    end
+  end
+
+  # The scheduler's tool ceiling is the single source of truth for how long a tool
+  # call may block; the wait cap is that ceiling MINUS the dispatcher's own
+  # headroom (which `EvoGit.Agent.Tools.default_timeout_ms/1` adds back, so a
+  # full-length wait expires just before the dispatcher would kill the call).
+  # `Config.resolve/1` is read at CALL time — never cached here — so a config
+  # reload is honoured by the next wait.
+  defp derived_wait_max_ms do
+    ceiling =
+      case EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) do
+        ms when is_integer(ms) and ms > 0 -> ms
+        _other -> @wait_max_fallback_ms
+      end
+
+    max(@wait_max_floor_ms, ceiling - @dispatch_headroom_ms)
   end
 
   # Test-only CALL-TIME override (`:background_poll_interval_ms`); the production

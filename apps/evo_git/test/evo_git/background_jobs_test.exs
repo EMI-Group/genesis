@@ -16,11 +16,13 @@ defmodule EvoGit.BackgroundJobsTest do
   # `kill -0` and the fixtures are `sh` command lines (`sleep`, `seq`, `echo`),
   # matching what the disabled-backend port path spawns on this host.
   #
-  # A third global: the wait-budget tests write the CALL-TIME seam app env
-  # `:background_wait_default_ms` (restored per test through `put_test_env/2`,
-  # nil-aware). It is read at call time by `wait_default_ms/0`, i.e. potentially
-  # by a concurrent module's `job_output` loop, so it is a real BEAM-global —
-  # never write a seam value without an `on_exit` restore in this (sync) module.
+  # A third global: the wait-budget tests write the CALL-TIME seams app env
+  # `:background_wait_default_ms` (the default budget) and
+  # `:background_wait_max_ms` (the cap), restored per test through
+  # `put_test_env/2`, nil-aware. Both are read at call time by
+  # `wait_default_ms/0` / `wait_max_ms/0`, i.e. potentially by a concurrent
+  # module's `job_output` loop, so they are real BEAM-globals — never write a
+  # seam value without an `on_exit` restore in this (sync) module.
   use ExUnit.Case, async: false
 
   alias EvoGit.BackgroundJobs
@@ -949,9 +951,17 @@ defmodule EvoGit.BackgroundJobsTest do
   describe "registry constants and status vocabulary" do
     test "exposes the documented tunables" do
       assert BackgroundJobs.max_jobs_per_owner() == 10
-      assert BackgroundJobs.wait_default_ms() == 8_000
-      assert BackgroundJobs.wait_max_ms() == 60_000
+      assert BackgroundJobs.wait_default_ms() == 120_000
+      assert BackgroundJobs.dispatch_headroom_ms() == 25_000
       assert BackgroundJobs.poll_interval_ms() == 100
+
+      # The cap is DERIVED at call time from the scheduler's tool ceiling minus
+      # the dispatcher headroom — 30 min − 25 s with the schema defaults.
+      assert BackgroundJobs.wait_max_ms() ==
+               EvoGit.Config.resolve([:scheduler, :max_tool_timeout]) -
+                 BackgroundJobs.dispatch_headroom_ms()
+
+      assert BackgroundJobs.wait_max_ms() == 1_775_000
 
       # `tick_interval_ms/0` is read at CALL TIME and this module's `setup`
       # shortens it; the documented PRODUCTION default is asserted with the
@@ -997,32 +1007,36 @@ defmodule EvoGit.BackgroundJobsTest do
     end
   end
 
-  # The documented wait-budget defaults, their CALL-TIME seam, and the cap that
-  # deliberately has none. Every test below is a PURE read — no job is started
-  # and nothing sleeps — so the only cost is the module's own per-test fixture.
+  # The documented wait-budget defaults, their CALL-TIME seams, and the cap that
+  # is DERIVED from the scheduler's tool ceiling on every call. Every test below
+  # is a PURE read — no job is started and nothing sleeps — so the only cost is
+  # the module's own per-test fixture.
   describe "wait budget tunables" do
     setup do
       # Start from the documented PRODUCTION state (no seam) and always restore
-      # whatever was there: the key is a BEAM-global a concurrent module's
+      # whatever was there: both keys are BEAM-globals a concurrent module's
       # `job_output` loop reads at call time.
-      previous = Application.get_env(:evo_git, :background_wait_default_ms)
-      Application.delete_env(:evo_git, :background_wait_default_ms)
+      for key <- [:background_wait_default_ms, :background_wait_max_ms] do
+        previous = Application.get_env(:evo_git, key)
+        Application.delete_env(:evo_git, key)
 
-      on_exit(fn ->
-        if is_nil(previous) do
-          Application.delete_env(:evo_git, :background_wait_default_ms)
-        else
-          Application.put_env(:evo_git, :background_wait_default_ms, previous)
-        end
-      end)
+        on_exit(fn ->
+          if is_nil(previous) do
+            Application.delete_env(:evo_git, key)
+          else
+            Application.put_env(:evo_git, key, previous)
+          end
+        end)
+      end
 
       :ok
     end
 
-    test "wait_default_ms/0 defaults to 8_000 and honours the seam at CALL time" do
-      # No app env -> the documented production default.
+    test "wait_default_ms/0 defaults to 120_000 and honours the seam at CALL time" do
+      # No app env -> the documented production default: the SAME generous budget
+      # the foreground shell tool advertises, so one wait settles a slow job.
       assert Application.get_env(:evo_git, :background_wait_default_ms) == nil
-      assert BackgroundJobs.wait_default_ms() == 8_000
+      assert BackgroundJobs.wait_default_ms() == 120_000
 
       # The seam is honoured ...
       put_test_env(:background_wait_default_ms, 350)
@@ -1040,20 +1054,56 @@ defmodule EvoGit.BackgroundJobsTest do
       for invalid <- ["350", nil, 350.0, -1] do
         Application.put_env(:evo_git, :background_wait_default_ms, invalid)
 
-        assert BackgroundJobs.wait_default_ms() == 8_000,
-               "a #{inspect(invalid)} seam value must fall back to 8_000"
+        assert BackgroundJobs.wait_default_ms() == 120_000,
+               "a #{inspect(invalid)} seam value must fall back to 120_000"
       end
     end
 
-    test "wait_max_ms/0 is a FIXED 60_000 cap with no seam" do
-      assert BackgroundJobs.wait_max_ms() == 60_000
+    test "wait_max_ms/0 DERIVES from the scheduler tool ceiling at CALL time" do
+      # The cap is not a fixed number: it is the scheduler's hard tool timeout
+      # (`[:scheduler, :max_tool_timeout]`, the single source of truth) minus the
+      # headroom the dispatcher needs on top of a wait budget. With the isolated
+      # test config (no [scheduler] override) that key resolves to its 1_800_000
+      # schema default, so the cap is 1_775_000 ms (~29.6 min) — long enough that
+      # ONE wait covers a genuinely slow job.
+      ceiling = EvoGit.Config.resolve([:scheduler, :max_tool_timeout])
+      headroom = BackgroundJobs.dispatch_headroom_ms()
 
-      # Deliberately NOT tunable: an agent may never be told it can wait longer
-      # than the hard cap, and the dispatcher's ceiling (`job_output`'s
-      # `Tools.default_timeout_ms/1`) is derived from this value.
+      assert ceiling == 1_800_000
+      assert headroom == 25_000
+      assert BackgroundJobs.wait_max_ms() == ceiling - headroom
+      assert BackgroundJobs.wait_max_ms() == 1_775_000
+    end
+
+    test "wait_max_ms/0 honours the `:background_wait_max_ms` seam at CALL time" do
+      assert Application.get_env(:evo_git, :background_wait_max_ms) == nil
+
+      put_test_env(:background_wait_max_ms, 500)
+      assert BackgroundJobs.wait_max_ms() == 500
+
+      # Read on EVERY call, never memoised.
+      Application.put_env(:evo_git, :background_wait_max_ms, 900)
+      assert BackgroundJobs.wait_max_ms() == 900
+
+      # The DEFAULT budget seam is independent of the cap.
       put_test_env(:background_wait_default_ms, 350)
-      assert BackgroundJobs.wait_max_ms() == 60_000
       assert BackgroundJobs.wait_default_ms() == 350
+      assert BackgroundJobs.wait_max_ms() == 900
+    end
+
+    test "wait_max_ms/0 ignores an unusable seam value" do
+      # Only a POSITIVE integer is honoured; anything else falls through to the
+      # derivation from the scheduler ceiling instead of raising or producing a
+      # junk cap.
+      derived = BackgroundJobs.wait_max_ms()
+      assert derived == 1_775_000
+
+      for invalid <- ["500", nil, 500.0, 0, -1] do
+        Application.put_env(:evo_git, :background_wait_max_ms, invalid)
+
+        assert BackgroundJobs.wait_max_ms() == derived,
+               "a #{inspect(invalid)} seam value must fall through to the derived cap"
+      end
     end
   end
 
