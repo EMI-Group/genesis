@@ -48,7 +48,8 @@ defmodule EvoDash.MixProject do
       # pure-BEAM PDF reader, zero runtime deps — used by the objective attach-file feature
       {:ex_pdf, "~> 1.0"},
       {:phoenix, "~> 1.8.1"},
-      {:phoenix_html, "~> 4.1"},
+      # >= 4.4.0 — EEF-CVE-2026-117645 (attribute-name injection in attributes_escape/1)
+      {:phoenix_html, "~> 4.4"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
       {:phoenix_live_view, "~> 1.2.0"},
       {:phoenix_live_dashboard, "~> 0.8"},
