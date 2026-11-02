@@ -14,6 +14,14 @@ The eight measured phases are `worktree_add`, `file_read`, `file_write`, `git_st
 `EvoGit.Bench.picker/1` (`@doc false`) builds the cycling pick closure over a pre-shuffled, non-empty seed-file list.
 `EvoGit.Bench.Stats` is pure: `summarize/1`, `percentile/2` (nearest-rank), `ops_per_sec/2`, `duration_ms/1` and `format_duration_us/1`; empty inputs yield zeros and never raise.
 `EvoGit.Bench.SystemInfo.collect/1` gathers best-effort `os`, `arch`, `cpus`, `elixir`, `otp`, `hostname`, `git_version` and the `df -T`-derived `fs_type`/`fs_device`/`mountpoint` (all `nil` when a probe is unavailable, which covers Windows); `parse_df/1` (`@doc false`) is the pure row parser.
+`EvoGit.Bench.Report.to_map/1`, `render_json/1` and `render_text/1` are PURE presentation — a ten-key JSON-safe projection, a pretty `Jason` encoding and the aligned ~30-line human report; no I/O and no printing (the Mix task owns stdout).
+
+## Report Contract
+`to_map/1` keeps exactly `label`, `dir`, `kept`, `settings`, `system`, `setup`, `phases`, `cycle`, `overall` and `throughput`, sanitizing every value (atom → string, struct → plain map, tuple → list) so `Jason` can encode it.
+`render_json/1` is a pretty `Jason.encode!` of `to_map/1`.
+`render_text/1` lists the eight phases in canonical order with human labels, milliseconds via `Stats.duration_ms/1`, `share` as a percentage, and a `mean / median` cycle-total row.
+A `tmpfs`/`ramfs`/`none` `system.fs_type` appends a `Warning` line right after `Directory`; an unknown or real filesystem prints none.
+Both renderers are total over synthetic maps: a missing or unexpected phase entry renders zeros and an unknown phase name degrades to a humanized key.
 
 ## Constraints
 No application boot: plain function calls only, no GenServer start, no Store/TaskRegistry access and no dependency on the config cache being primed.
