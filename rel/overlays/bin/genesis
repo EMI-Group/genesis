@@ -20,6 +20,7 @@ FLAG_IP=""
 FLAG_PORT=""
 FLAG_HOST=""
 FLAG_FOREGROUND=0
+FLAG_NO_LINGER=0
 
 die() {
   printf 'genesis: %s\n' "$*" >&2
@@ -47,6 +48,7 @@ Options (serve/start/restart/status/url):
   --ip ADDR             Bind address (default 127.0.0.1)
   --port N              HTTP port (default 9999)
   --host NAME           Optional external hostname for generated URLs (PHX_HOST)
+  --no-linger           Do not offer to enable systemd lingering (start)
 
 Both `--flag value` and `--flag=value` are accepted; `start -f` (or
 `--foreground`) behaves like `serve`.
@@ -54,6 +56,7 @@ Both `--flag value` and `--flag=value` are accepted; `start -f` (or
 Environment:
   GENESIS_HOME          Release root (default: the parent of this script's dir)
   GENESIS_DATA_DIR      State and log directory override
+  GENESIS_LINGER        Linger policy for start: ask|yes|no (default ask)
 EOF
 }
 
@@ -280,6 +283,7 @@ parse_flags() {
   FLAG_PORT=""
   FLAG_HOST=""
   FLAG_FOREGROUND=0
+  FLAG_NO_LINGER=0
 
   while [ $# -gt 0 ]; do
     case $1 in
@@ -318,6 +322,10 @@ parse_flags() {
         ;;
       --foreground | -f)
         FLAG_FOREGROUND=1
+        shift
+        ;;
+      --no-linger)
+        FLAG_NO_LINGER=1
         shift
         ;;
       -h | --help)
@@ -407,6 +415,136 @@ service_active() {
     launchd) launchd_loaded ;;
     *) pidfile_active ;;
   esac
+}
+
+# ── systemd lingering ────────────────────────────────────────────────────────
+
+# Without lingering, systemd tears a `--user` unit down when the user's last
+# session ends — so the server would stop on logout. These helpers only ever
+# warn: a refusal or a failure must never change `start`'s exit status.
+
+# The current user name for `loginctl`; empty when it cannot be resolved.
+linger_user() {
+  _linger_id=$(id -un 2>/dev/null || true)
+  if [ -z "$_linger_id" ]; then
+    _linger_id=${USER:-}
+  fi
+  printf '%s' "$_linger_id"
+}
+
+# Prints exactly one of `enabled` / `disabled` / `unknown`.
+# `loginctl show-user` is used in its full-property form (`Linger=yes|no`)
+# because older loginctl builds have no `--value`; when it is missing or its
+# output is unusable, the linger marker file is consulted instead. An absent
+# marker is `unknown`, NOT `disabled`: it proves nothing about older hosts.
+linger_state() {
+  _linger_state_user=$(linger_user)
+  if [ -z "$_linger_state_user" ]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  if command -v loginctl >/dev/null 2>&1; then
+    _linger_state_out=$(loginctl show-user "$_linger_state_user" 2>/dev/null || true)
+    case $_linger_state_out in
+      *Linger=yes*)
+        printf 'enabled\n'
+        return 0
+        ;;
+      *Linger=no*)
+        printf 'disabled\n'
+        return 0
+        ;;
+    esac
+  fi
+
+  if [ -e "/var/lib/systemd/linger/$_linger_state_user" ]; then
+    printf 'enabled\n'
+  else
+    printf 'unknown\n'
+  fi
+  return 0
+}
+
+linger_hint() {
+  printf 'Warning: systemd lingering is disabled, so systemd stops Genesis when you log out.\n' >&2
+  printf 'Enable it with: loginctl enable-linger %s\n' "$1" >&2
+  printf 'If polkit requires authentication, use: sudo loginctl enable-linger %s\n' "$1" >&2
+}
+
+linger_enable_failed() {
+  printf 'Warning: could not enable systemd lingering; the server stops when you log out.\n' >&2
+  printf 'Run it manually: loginctl enable-linger %s\n' "$1" >&2
+  printf 'or with sudo: sudo loginctl enable-linger %s\n' "$1" >&2
+}
+
+linger_still_disabled() {
+  printf 'Warning: systemd lingering still reports disabled; the server may stop when you log out.\n' >&2
+  printf 'Run it manually: sudo loginctl enable-linger %s\n' "$1" >&2
+}
+
+# Offer (or, under GENESIS_LINGER=yes, perform) `loginctl enable-linger` for the
+# systemd backend. Other backends have no session-teardown problem, so they are
+# left untouched. Always returns 0 and never prompts when stdin is not a TTY.
+# Variables are namespaced: POSIX sh has no `local`.
+ensure_linger() {
+  if [ "$1" != systemd ]; then return 0; fi
+
+  _linger_policy=$(printf '%s' "${GENESIS_LINGER:-ask}" | tr 'A-Z' 'a-z')
+  case $_linger_policy in
+    no | skip) return 0 ;;
+    yes | enable) ;;
+    *) _linger_policy=ask ;;
+  esac
+  if [ "$FLAG_NO_LINGER" = 1 ]; then return 0; fi
+
+  _linger_cur_user=$(linger_user)
+  if [ -z "$_linger_cur_user" ]; then
+    # No user → the state is `unknown`, which needs no warning.
+    return 0
+  fi
+
+  if [ "$(linger_state)" != disabled ]; then
+    return 0
+  fi
+
+  if [ "$_linger_policy" = ask ]; then
+    if [ -t 0 ]; then
+      printf 'Genesis runs as a systemd user service. Unless lingering is enabled, systemd stops it when you log out.\n' >&2
+      printf "Enable systemd lingering for '%s' now? [Y/n] " "$_linger_cur_user" >&2
+      # One line only, and never abort under `set -eu` on EOF.
+      _linger_answer=""
+      IFS= read -r _linger_answer || _linger_answer=""
+      case $_linger_answer in
+        '' | y | Y | yes | YES) ;;
+        *)
+          linger_hint "$_linger_cur_user"
+          return 0
+          ;;
+      esac
+    else
+      # Non-interactive (script, CI, container): never block on a prompt.
+      linger_hint "$_linger_cur_user"
+      return 0
+    fi
+  fi
+
+  if ! command -v loginctl >/dev/null 2>&1; then
+    linger_enable_failed "$_linger_cur_user"
+    return 0
+  fi
+  if ! loginctl enable-linger "$_linger_cur_user"; then
+    linger_enable_failed "$_linger_cur_user"
+    return 0
+  fi
+
+  printf "Enabled systemd lingering for '%s'; the server keeps running after you log out.\n" "$_linger_cur_user"
+  # A single re-probe (no retry loop): polkit may have accepted the call while
+  # lingering is still off.
+  if [ "$(linger_state)" != enabled ]; then
+    linger_still_disabled "$_linger_cur_user"
+  fi
+  return 0
 }
 
 # ── Starting and stopping ────────────────────────────────────────────────────
@@ -674,6 +812,7 @@ cmd_start() {
   state_save "$_ip" "$_port"
 
   _backend=$(service_backend)
+  ensure_linger "$_backend"
   do_start "$_ip" "$_port" "$FLAG_HOST"
   printf 'Genesis server starting (%s backend).\n' "$_backend"
   printf 'Dashboard: %s\n' "$_url"
