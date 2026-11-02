@@ -266,6 +266,16 @@ The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDA
 - `save_user_config/1` does NOT auto-reload scheduler state — the dashboard (SettingsLive) calls `reload_remote_config` but IGNORES its return → a silent stale-config window until a manual reload.
 - `RemoteConnections` does NOT auto-create an empty `remote_connections.toml` (unlike the config skeleton) — the file appears only when a target is saved.
 
+## Boot-Time Resolve Cost & Retention
+
+- `resolve/0` is UNCACHED: every call rebuilds the defaults map (`Schema.defaults/0` → `Definitions.schemas/0`, which allocates all 104 schema maps per call), deep-merges the atomized TOML, atomizes enum strings, migrates llm models and runs Ecto validation over all 104 schemas.
+- `resolve/1` for ONE leaf key costs a full `resolve/0` (plus a second `defaults/0` fold when the value is nil), so each single-key read pays a whole pipeline (est. tens–hundreds of µs; no benchmark exists).
+- Every `resolve` also does exactly ONE `File.stat/1` (`cached_file_read/2`, config.ex:1008); the TOML is read + decoded only on a stat miss, and the ONLY retained artifact is the parsed string-keyed TOML map (a few KB) — the RESOLVED map is never cached anywhere (AgentScheduler keeps selected fields only: `model_profiles`, generation params, sandbox/scheduler scalars).
+- Boot runs roughly 6–10 pipelines: `config/runtime.exs:92,94,264,320` + `EvoGit.Platform.data_dir/0` (`runtime.exs:174,281` → `resolve([:data, :dir])`), the `Store` child spec (`application.ex:100`) and `TaskRegistry.init` (`task_registry.ex:369`) data-dir resolutions, `Distribution.maybe_enable/0` (`distribution.ex:35`, skipped in test), `AgentScheduler.init` (`agent_scheduler.ex:538` + `credentials/0` at `:541`) and Linux `SandboxSlice.init` (`sandbox_slice.ex:209`, plus `Sandbox.backend/0` → `sandbox.ex:30`).
+- `PeakHourEngine.init` reads AgentScheduler state (`safe_get_config/2`), never the disk; `SystemSampler` samples that state too.
+- ⚠️ The DOMINANT boot cost is not the resolve pipeline: `AgentScheduler.init` → `Schema.LLM.llm_generation_params/1` → `model_metadata/1` → `ReqLLM.model/1` triggers LLMDB's LAZY packaged-catalog load (`priv/llm_db/snapshot.json`, 11.7 MB, ~10,100 models across ~100+ providers), whose decoded table is retained in `:persistent_term` for the BEAM lifetime (tests measure ~2.5 s for the decode/pricing/index pass). It fires whenever ANY profile carries a `model` — i.e. every configured install; a model-less fresh install pays nothing.
+- Benign: config BEAM code is ~220 KB and lazily loaded; the `[lsp]`/search/`LLMCatalog` data are module literals touched only on demand; no schema validation runs at compile time and `Schema.validate/1` is a plain O(n=104) map walk per resolve.
+
 ## Test Seam — per-process config dir (`:config_dir_fun`)
 
 - `EvoGit.Platform.config_dir/1` consults the app-env seam `:evo_git, :config_dir_fun` at CALL time before the XDG resolution.
