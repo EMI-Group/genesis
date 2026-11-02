@@ -34,7 +34,7 @@ A repo-OPEN failure stops with `{:stop, {:failed_to_open_sqlite, reason}}`; a MI
 
 - `Boot.start_dynamic/2` and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → stop → reopen the pool → start the writer); no `handle_continue`/Task deferral, so the supervisor's child start BLOCKS until it returns.
 - That blocks `EvoGit.Application.start/2` and — via the OTP dependency order — `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener**, so a slow first-boot migration delays HTTP readiness (desktop probe budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
-- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + one `schema_migrations` version read, and no per-migration output when nothing is pending).
+- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + one `schema_migrations` version read, and no per-migration output when nothing is pending — but Ecto's empty-run arm still logs `Migrations already up` at `:info` once per boot, `deps/ecto_sql/lib/ecto/migrator.ex:748`).
 - A fresh DB pays no scan cost; later boots pay only the `schema_migrations` check. `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (`XqliteEcto3.supports_ddl_transaction?` is `true`), so a SIGKILLed migration rolls back atomically.
 - A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`; there are NO sleeps on the store/application boot path.
 
