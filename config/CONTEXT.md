@@ -69,6 +69,20 @@ Remote-dev daemon unaffected: the `genesis_remote` guard at the top of the prod 
 | Logging | rotating `<data_dir>/logs/backend.log` | console/stdout (journald) |
 | Lifecycle | Tauri sidecar + lifetime pipe + watchdog | operator/`genesis` CLI managed process |
 
+## Boot-Mode Matrix — `MIX_ENV=dev mix phx.server` vs a `genesis_server` release
+
+Everything this directory branches on at boot, and whether it can affect memory:
+- **dev only** (`dev.exs`): endpoint `http: [ip: 127.0.0.1, port: PORT||4100]`, `code_reloader`, `debug_errors`, esbuild/tailwind `--watch` watchers, `live_reload`, `dev_routes`, `stacktrace_depth: 20`, `plug_init_mode: :runtime`, LiveView `debug_heex_annotations`/`debug_attributes` (compile-time) + `enable_expensive_runtime_checks` (runtime CPU), Logger default level `:debug`.
+- **prod only** (`prod.exs`): `cache_static_manifest` (decoded at endpoint boot into ~7 ETS entries from a ~1–3 KB JSON; skipped when the gitignored file is absent) and Logger `level: :info`.
+- **server mode** (`runtime.exs` prod block): `server: true`, `url`/`http` from `PHX_IP` → `[server] listen_ip`, `PORT` → `[server] listen_port`, `check_origin: false`, a persisted `<data_dir>/secret_key_base` (one ~64 B read), and console logging — the desktop `backend.log` handler branch (`runtime.exs:280-313`) is NOT taken.
+- **mode-invariant** (identical in both, driven by the same `~/.config/genesis/config.toml`): `EvoGit.Config.resolve()` + ReqLLM Finch pool sizing (`runtime.exs:92-142` — runtime.exs is also evaluated by `mix phx.server`), the Ecto/Store pool (6 connections × 8 MiB native SQLite page cache — NIF malloc, invisible to any process), the unconditional `EvoGit.Application` child list, and telemetry (zero periodic pollers).
+- **The only boot-time allocation of tens of MB is mode-invariant**: the `llm_db` catalog snapshot (`deps/llm_db/priv/llm_db/snapshot.json`, 11.7 MB, ~10k models, `compile_embed` false) is decoded and index-built in the process that FIRST calls `Schema.LLM.model_metadata/1` — normally `EvoGit.AgentScheduler.init/1` via `State.from_model_profiles/1`; `:persistent_term` reads never copy, so only the loader's own heap retains the load garbage and an idle GenServer never fullsweeps.
+- **ERTS flags come from the release launcher, not from here**: `RELEASE_MODE=embedded` (Mix release default → every module preloaded; `mix phx.server` is interactive), `RELEASE_DISTRIBUTION=sname`, plus `rel/vm.args.eex`'s `-start_epmd false`/`-epmd_module Elixir.EvoGit.EpmdDist`/`-dist_listen true`/`inet_dist_listen_min..max` and `+sbwt none`. There are NO `+hms`/`+MBas`/`+MM*`/`+P`/`+t` flags, and the bundled ERTS (17.1.1) matches the host OTP 29.1.2 build.
+- **Distribution is not a dev-vs-release delta**: config.toml `[node] enabled = true` makes dev run distributed too (`EvoGit.Application` calls `EvoGit.Distribution.maybe_enable/0`); the release additionally starts it from ERTS flags.
+- **`config/dev.local.exs` does not exist here**; when present it is imported by `dev.exs` and is the one file that can diverge a dev boot's resolved config (LLM profiles, `[data] dir`) — the only path by which "same machine, same config" can actually differ at boot.
+- `EvoGit.Platform.data_dir/0` is fed by `HOME`/`XDG_DATA_HOME` (config.toml `[data] dir` is unset on this host), so a launch-env difference (systemd user unit vs interactive shell) silently switches `tasks.sqlite`/`config.toml`.
+- **Do not chase the `47.2 MB ≈ 6 × 8 MiB` coincidence**: the SQLite page-cache ceiling is native and cannot appear as a process heap.
+
 ## Constraints
 - **Load order**: `config.exs` imports `{env}.exs` at the bottom — env files override base.
 - **Runtime vs compile-time**: Only `runtime.exs` references environment variables; all others are compile-time only.
