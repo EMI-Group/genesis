@@ -61,6 +61,13 @@ $HOME/.local/bin/genesis -> <install dir>/bin/genesis
 
 Printed next steps: `genesis` (foreground server), `genesis start` (service via systemd-run/launchd), `genesis status`, `genesis logs`, `genesis stop`, then open the dashboard URL printed on boot (default `http://127.0.0.1:9999`).
 
+### `test-genesis-cli.sh`
+
+Self-contained smoke test for `../rel/overlays/bin/genesis`: a temp release with a stub `bin/genesis_server` and PATH-shadowed supervisors, run with `bash scripts/test-genesis-cli.sh` (no release build, no service manager).
+It also covers the `genesis start` systemd-linger offer — `GENESIS_LINGER` (`ask`/`yes`/`no`) and `--no-linger`, the non-TTY hint, the enable-success and enable-failure warnings, and the fallback-backend / foreground gating that never probes lingering.
+Stub `systemd-run`/`systemctl`/`loginctl`/`curl`/`uname` binaries stand in for the real ones (the recording `loginctl` shims prove the non-systemd paths never call it), so no real service manager, `loginctl` or network is touched.
+The stub `curl` reports healthy on the first poll, so the `/health` loop returns immediately and the whole run stays sub-second.
+
 ## Constraints
 
 - POSIX `sh` only — `#!/bin/sh`, `set -eu`, no bashisms, no arrays/`[[ ]]`/`local`.
@@ -76,6 +83,7 @@ Printed next steps: `genesis` (foreground server), `genesis start` (service via 
 
 - `./install.sh` → one-line installer for the headless `genesis_server` distribution.
 - `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd; run with `bash scripts/test-genesis-cli.sh`, no release build or service manager needed).
+- `./test-genesis-cli.sh` also covers the `genesis start` systemd-linger offer (`GENESIS_LINGER` `ask`/`yes`/`no`, `--no-linger`, the non-TTY hint, enable success/failure warnings, fallback-backend and foreground gating) through stub `systemd-run`/`systemctl`/`loginctl`/`curl` shims, so nothing real is invoked and the stub `curl` keeps the `/health` poll instant.
 - `../rel/overlays/` → release overlay sources; `../rel/overlays/bin/genesis` is the CLI this installer links.
 - `../.github/workflows/` → builds and uploads the `genesis_server_*` tarballs and the `install.sh` asset.
 - `../apps/evo_git/lib/evo_git/remote_bootstrap.ex` → Elixir mirror of the same `/dl/` asset-URL pattern (`direct_url/1`).
