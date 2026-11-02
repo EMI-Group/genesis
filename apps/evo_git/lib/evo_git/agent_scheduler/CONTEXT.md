@@ -200,6 +200,11 @@ Windows-only failure modes here; NONE is test-covered (the suite runs on Linux/m
 
 ~1130 lines — agent lifecycle, per-model LLM/tool slot pools, config state + updates, cancellation markers, startup reconciliation; sub-logic lives in `agent_scheduler/`.
 **Lazy config-read rule (do not regress)**: single-key config reads inside the scheduler MUST use the lazy private `config_value/2`, never an eagerly built full config map — `config_map/1` evaluates `Platform.sandbox_backend()` and `Sandbox.capabilities()` on every call, which deterministically regressed the system_sampler tests. `config_map/1` is used ONLY for the full `:get_config` reply; `@config_keys` (16 keys) enumerates the fields.
+**Boot cost of `init/1` is O(#model profiles), i.e. KBs**: `agent_scheduler.ex:526-658` only `:ets.whereis`-warns about the two app-owned tables, calls `Config.resolve()`/`Config.credentials()` (TOML read + merge + validate), builds empty per-model pools via `State.from_model_profiles/2`, and runs one best-effort `ReqLLMPool.reconcile/1` no-op — no SQLite query, no `.genesis/workers` scan, no PubSub subscribe, no timer.
+`Slots`, `Store`, `PubSub` and `RemoteAPI` are PLAIN modules (no GenServer/init/ETS/timer/`:pg`); the only process besides the scheduler is `PubSub.Throttle`, whose state is a single timer ref (`throttle.ex:24-33`).
+`task_local_counters` is NEVER pruned (`task_agent_counts` is, at `lifecycle.ex:208,250`), so one ~100-byte entry per task_id accumulates for the scheduler's lifetime.
+Nothing purges `:evogit_agent_state` (`:ets.delete_all_objects` appears nowhere in `:evo_git`) and `init/1` resets `next_agent_id: 1`, so a scheduler-only crash leaves dead agents' rows — each carrying its full `context` — until the ids are reused.
+`RemoteAPI.list_agents/0` copies the WHOLE `:evogit_agent_state` table (`:ets.tab2list`, `remote_api.ex:70,1148-1153`) before building summaries, a transient per-call heap spike equal to the sum of all live agent contexts.
 
 ## Task-Scoped Resource Inventory (per-task on-disk artifacts + teardown hooks)
 
