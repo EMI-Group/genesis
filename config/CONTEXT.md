@@ -77,6 +77,11 @@ Remote-dev daemon unaffected: the `genesis_remote` guard at the top of the prod 
 - **Umbrella layout**: Asset paths reference `apps/evo_dash/assets`.
 - **LLM config split**: Elixir config handles HTTP timeouts/infrastructure; TOML handles model selection, concurrency, API keys. These are separate systems that don't overlap.
 
+## Notes for Agents
+
+- **Env vars are STRINGS — materialize a real boolean before mixing one into the strict `or`/`and`.** `PHX_SERVER` is PRESENCE-checked (ANY non-empty value enables the endpoint server, matching Phoenix's generated `runtime.exs`: `if System.get_env("PHX_SERVER") do`), but it must be converted first — `phx_server? = System.get_env("PHX_SERVER") not in [nil, ""]`, then `if phx_server? or …`. Combining the raw string into `||` and then `or` raised `BadBooleanError` at config-load time and aborted EVERY desktop boot (the Tauri sidecar sets `PHX_SERVER=true`). Every remaining strict `or`/`and` in `runtime.exs` combines booleans only (`==` comparisons and app-env flags); never leave a string next to `or`/`and`, and never "fix" this by parsing `"false"` as false — that would break the documented presence semantics.
+- **Regression coverage for `runtime.exs`**: `apps/evo_dash/test/evo_dash/runtime_config_test.exs` evaluates the REAL `config/runtime.exs` with `Config.Reader.read!/2` (raises on any evaluation error, exactly like a release boot) in the `:test` and `:prod` config envs — `PHX_SERVER` set / unset / empty / `"false"`, prod desktop mode, and prod server mode (persisted secret key). The module is `async: false` (it mutates the OS process environment, the `:evo_dash` `:desktop_release` app-env flag and the `:evo_git` `:config_dir_fun` seam) and redirects `HOME`/`XDG_DATA_HOME`/`APPDATA` into a per-test temp dir, so the prod branches never touch real user state. Extend it when adding a boot-time env var or mode branch.
+
 ## LLM-Related Configuration
 
 ### In this directory (Elixir Application Config)

@@ -32,8 +32,15 @@ server_mode =
     System.get_env("EVOGIT_SERVER") == "1" or
     System.get_env("RELEASE_NAME") == "genesis_server"
 
-if (System.get_env("PHX_SERVER") ||
-      Application.get_env(:evo_dash, :desktop_release, false)) or server_mode do
+# `PHX_SERVER` is PRESENCE-checked, matching Phoenix's generated runtime.exs
+# (`if System.get_env("PHX_SERVER") do`): any non-empty value enables the
+# endpoint server. It MUST be converted to a real boolean here — the raw value
+# is a STRING and Elixir's strict `or` raises BadBooleanError on a non-boolean
+# left operand (this crashed every desktop boot: the Tauri sidecar sets
+# PHX_SERVER=true).
+phx_server? = System.get_env("PHX_SERVER") not in [nil, ""]
+
+if phx_server? or Application.get_env(:evo_dash, :desktop_release, false) or server_mode do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
