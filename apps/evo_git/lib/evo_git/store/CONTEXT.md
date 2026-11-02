@@ -34,18 +34,17 @@ A repo-OPEN failure stops with `{:stop, {:failed_to_open_sqlite, reason}}`; a MI
 
 - `Boot.start_dynamic/2` and the migration run are SYNCHRONOUS inside `init/1` (boot repo → migrator → `PRAGMA optimize` → stop → reopen the pool → start the writer); no `handle_continue`/Task deferral, so the supervisor's child start BLOCKS until it returns.
 - That blocks `EvoGit.Application.start/2` and — via the OTP dependency order — `EvoDashWeb.Endpoint`'s Bandit bind: **Store boot precedes the HTTP listener**, so a slow first-boot migration delays HTTP readiness (desktop probe budget: `desktop/src-tauri/CONTEXT.md` → "Backend Readiness Budgets & Launch Diagnostics").
-- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + one `schema_migrations` version read, and no per-migration output when nothing is pending — but Ecto's empty-run arm still logs `Migrations already up` at `:info` once per boot, `deps/ecto_sql/lib/ecto/migrator.ex:748`).
+- **Version-stamped, not per-boot**: only versions absent from `schema_migrations` run, so a release shipping no new migration is a pure no-op (`ensure_schema_migrations_table!` + one `schema_migrations` version read, and no per-migration output when nothing is pending).
 - A fresh DB pays no scan cost; later boots pay only the `schema_migrations` check. `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (`XqliteEcto3.supports_ddl_transaction?` is `true`), so a SIGKILLed migration rolls back atomically.
 - A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`; there are NO sleeps on the store/application boot path.
 
-### Boot memory profile (RSS + SQLite page cache)
+### Boot memory footprint (page cache vs process heap)
 
-- `cache_size: -8_000` is a PER-CONNECTION CEILING, not an allocation: SQLite's page cache fills LAZILY as pages are read and evicts past the limit, so opening the 6-connection pool reserves no page memory; the nominal steady-state ceiling is 6 × 8 MiB ≈ 48 MB and the page size stays SQLite's 4096 default (8 MiB = 2048 pages per connection).
-- A boot touches only the sqlite_schema / `schema_migrations` pages (a few pages on the boot connection; the reopened pool's connections load the schema on FIRST USE), so boot-resident page cache is tens of KB — well under 1 MB.
-- The only leg that can read many pages at boot is `PRAGMA optimize` on the boot connection: since SQLite 3.46 (xqlite = libsqlite3-sys 0.38.2) it AUTO-LIMITS the ANALYZE scope for tables missing from `sqlite_stat1` (empty on a fresh DB), so it cannot become a full index scan.
-- No JSON column is decoded at boot on a CURRENT database (the migrations short-circuit on the version list); a LEGACY upgrade does decode — migration 2 selects `id, opts` for EVERY non-object `opts` row in ONE result set (the one unbounded-ish heap spike, since `opts` can carry base64 attachments), while migration 5 reads `result, archive_metadata` ONE row at a time.
-- One-time per BEAM, never per store: the six migration `.exs` (92 KB of source) compile once inside the `:global` lock, their modules stay in the code area, and the `:persistent_term.put` of the 6-element `[{version, module}]` list triggers the one-time literal-area update (a global GC sweep).
-- Eager ETS: NONE — `Store`/`Boot`/`Writer`/`Maintenance` create no ETS table (the five `evogit_*` tables belong to `EvoGit.Application`); `Writer` state is `%{store_ref: monitor_ref}` and `Maintenance` holds `%{store: name}` plus one 1 h timer.
+- Nothing is rehydrated into a long-lived process at boot: `EvoGit.Store.init/1` keeps only `%{repo, name, data_dir, writer, offloads: %{}}` — no task rows, no archive rows, no `:ets` table, no file contents (`boot/` reads only the six `.exs` migration sources via `Code.compile_file/1`).
+- The ONE boot read is `TaskRegistry.init/1`'s `select_running_lease_info`, which selects `id`/`status`/`lease_expires_at` only for `WHERE status IN ('running','finalizing','cancelling')` and is reduced to `{id, status}` pairs (never stored), so it is empty on a boot with no tasks running.
+- `@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory (one `PRAGMA cache_size` per connection in `XqliteEcto3.Driver.connect/1`), so the 6 × 8 MiB ≈ 47 MiB figure is a lazily-filled CAP — it never appears in `Process.info(pid, :memory)` or `:erlang.memory/1`, only in OS RSS.
+- The only boot path that materializes data-proportional terms in an Erlang process is a still-PENDING migration (it runs in the `EvoGit.Store` process, which on a fresh BEAM also compiles the six `.exs` sources): transient compiler/decoder garbage that one GC reclaims, and identical in dev and prod.
+- No environment gating lives in this directory beyond the `:data_dir` app env and the `:store_boot_optimize_fun` seam, so pool size (`default_pool_size/0` = 6) and `cache_size` are byte-identical in dev and prod.
 
 ### Migration 1 — `20260815000001_baseline_adoption`
 
