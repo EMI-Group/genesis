@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.12] - 2026-11-02
+
+### Changed
+
+- Tool call timeouts now accept integers, floats, and numeric strings with ms/s/m units (e.g. "30m", "1.5s") instead of being silently ignored or truncated to the default, clamped to the configured maximum.
+- Background job wait timeouts are now configurable: job_output honors timeout/timeout_ms/timeoutMs budgets, reports whether the wait finished or the budget expired, and is no longer cut short by the dispatch ceiling, so long-running background jobs complete instead of being killed.
+- Improved background job output guidance: the wait cap is shown in human-readable form (e.g. "29m35s") and the bash tool description advises a single long job_output wait instead of repeated short polls.
+- Updated mdex_native to 0.3.1 and refreshed Nix build hashes and precompiled NIF pins so Nix builds succeed.
+
+### Fixed
+
+- Require phoenix_html >= 4.4.0 to fix an attribute injection vulnerability (EEF-CVE-2026-117645).
+
+### Security
+
+- Bumped h2, plist/quick-xml, rustls-webpki, and webpki-root-certs dependencies to address RustSec security advisories.
+- Bumped minimum jsv to 0.26.2 and mdex to 0.14.6 to address EEF-CVE-2026-117680.
+- Bumped bandit to 1.14.1 to fix a HIGH-severity HTTP/2 memory amplification vulnerability, along with related dependency patch updates.
+- Updated desktop dependencies (tauri-plugin-updater 2.14.1, zip 9.1.3, rustls 0.23.46) to clear Dependabot security advisories.
+
 ## [0.13.11] - 2026-10-30
 
 ### Added
