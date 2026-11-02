@@ -78,6 +78,7 @@ The stub `curl` reports healthy on the first poll, so the `/health` loop returns
 - A missing `.sha256` is never fatal (silently skipped); verification uses `sha256sum` or `shasum -a 256`.
 - Replacing an existing install is staged (temp sibling dir) and the old tree is deleted only after the new one is in place; an existing `$HOME/.local/bin/genesis` is only ever replaced when it is a symlink.
 - External tool dependencies only: `curl` or `wget`, `tar` with `.tar.xz` support, `awk`; no network access during analysis/verification.
+- The smoke test is `bash` (not POSIX `sh`, unlike `install.sh`) and must never invoke a real `systemd-run`/`systemctl`/`journalctl`/`loginctl`/`curl` where a stub applies — the shim dirs precede `PATH`, and recording `loginctl` shims make "never called" provable rather than assumed.
 
 ## Routing Table
 
