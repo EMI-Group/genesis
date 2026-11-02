@@ -46,7 +46,8 @@ These directories exist as documentation of the intended per-release configurati
 Server mode is detected in `../config/runtime.exs` from that baked `server_release` flag (or `EVOGIT_SERVER=1`); the CLI only exports `PHX_IP` and `PORT` (plus `PHX_HOST` when `--host` is given) and execs `<release>/bin/genesis_server start`.
 The CLI is POSIX `sh` with `set -eu` and never needs a running BEAM for lifecycle commands.
 
-Commands: bare `genesis` == `genesis serve`; `serve`/`run [--ip ADDR] [--port N]` runs in the foreground (prints the URL, then `exec`s the release; a wildcard bind is annotated); `start [--ip] [--port] [--foreground|-f]` daemonizes; `stop`, `restart`, `status`, `logs [-f]`, `url`, `version`, `help`; an unknown command prints usage and exits 2.
+Commands: bare `genesis` == `genesis serve`; `serve`/`run [--ip ADDR] [--port N]` runs in the foreground (prints the URL, then `exec`s the release; a wildcard bind is annotated); `start [--ip] [--port] [--foreground|-f] [--no-linger]` daemonizes; `stop`, `restart`, `status`, `logs [-f]`, `url`, `version`, `help`; an unknown command prints usage and exits 2.
+`--no-linger` is a global flag (parsed by `parse_flags`, so `restart` inherits it).
 `--ip`/`--port` accept both `--flag value` and `--flag=value`.
 
 Release discovery: `$0` is resolved through symlinks with a portable `readlink` loop (no `readlink -f` — absent on macOS/BSD), then `GENESIS_HOME` is the parent of the script's directory when that directory is `bin`, else the directory itself; an explicit `$GENESIS_HOME` wins. A missing `$GENESIS_HOME/bin/genesis_server` fails with "not inside a Genesis server release; set GENESIS_HOME=…".
