@@ -11,6 +11,7 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 - `./evo_git/agent/tools/` → per-tool tests → `./evo_git/agent/tools/CONTEXT.md`
 - `./evo_git/agent_scheduler/` → scheduler dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI → `./evo_git/agent_scheduler/CONTEXT.md`
 - `./evo_git/adapters/` → Git / GitHub / CoW-worktree / GitEnv adapters → `./evo_git/adapters/CONTEXT.md`
+- `./evo_git/bench/` → `EvoGit.Bench` boot-free I/O benchmark (pure stats/report suites + one real-git integration suite on a unique temp dir, all `async: true`) → `./evo_git/bench/` + production detail `../lib/evo_git/bench/CONTEXT.md`
 - `./evo_git/core/` → `ContextNode`, `PhyloGraphNode`, `ForeignRepo` → `./evo_git/core/CONTEXT.md`
 - `./evo_git/custom_agents/` → custom-agents store + model-selection script → `./evo_git/custom_agents/CONTEXT.md`
 - `./evo_git/runtime/` → Genesis / Evolution / Helpers / Prompts / SelfReflective runtimes → `./evo_git/runtime/CONTEXT.md`
@@ -24,7 +25,7 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 - Background-command execution suites (registry semantics `./evo_git/background_jobs_test.exs` — incl. the registry-shutdown pin: stopping the registry kills a live detached `sleep` child, because `init/1` traps exits so `terminate/2` runs, plus the unreachable-registry `{:error, message}` contract; job tools `./evo_git/agent/tools/job_tools_test.exs`; pure detached-sandbox layer `./evo_git/sandbox/background_test.exs` — incl. the cwd-validation pin: a non-existent `cwd` is `{:error, {:cwd_missing, path}}` on every backend, never a raise and never a handle) → the matching directory CONTEXT.md files
 - SQLite persistence-layer suites (`EvoGit.Store` + `Store.Codec/Errors/Boot/Operations/Maintenance`, TaskRegistry↔Store resilience) → `./evo_git/` (`store_test`, `store_summary_test`, `store_disk_full_test`, `migrate_store_test`) + `./evo_git/store/` (`boot_*`, `archive_migration`, `canonical_schema`, the index suites, `errors`, `maintenance`, `pool_size`, `read_fault_isolation`, `repo*`, `types`, `task_page_api`, `store_invariants`, `store_write_offload` + an `operations/` subdir) + `./evo_git/task_registry/` (`persistence_test` incl. structural corruption, `store_skip_and_log_test`, `read_fault_isolation_test`, `lightweight_read_mirror_test`); disk-full arms `PRAGMA query_only = ON` on an isolated Store restarted with `pool_size: 1` (connection-scoped; default `EvoGit.Store.Boot.default_pool_size/0` = 6) via `EvoGit.Store.__repo_pid__/1` + `XqliteEcto3.with_xqlite/2`; detail in those CONTEXT.md files
 - `./evo_git/agent_scheduler/store_test.exs` tests `EvoGit.AgentScheduler.Store` (scheduler-side state store) — NOT the SQLite `EvoGit.Store`; naming collision, do not mis-route persistence work there
-- `./mix/tasks/` → standalone `mix`-task suites (`bump.version`, `changelog`), both `async: true`; detail in `./mix/tasks/CONTEXT.md`
+- `./mix/tasks/` → standalone `mix`-task suites (`bump.version`, `changelog`, `bench_io` — the latter covering the pure `Mix.Tasks.Bench.Io.parse_args/1` seam), all `async: true`; detail in `./mix/tasks/CONTEXT.md`
 - `./evo_git_test.exs` → top-level sandbox/platform suite (`EvoGit.sandbox_args/4`, `sandbox_run/4`, backend capability checks)
 
 ## Async-Safety Policy

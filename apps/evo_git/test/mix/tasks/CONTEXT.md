@@ -3,12 +3,14 @@
 ## Intent
 ExUnit suites for the release-time Mix tasks `mix changelog` (`Mix.Tasks.Changelog`) and `mix bump.version` (`Mix.Tasks.Bump.Version`).
 Both tasks are interactive and run git/file operations; the suites exercise their full flows against real temp git repos.
+`bench_io_test.exs` is PURE: it exercises only the public `Mix.Tasks.Bench.Io.parse_args/1` seam (defaults, long/alias flags, `{:help}`, rejections) and never runs a benchmark or boots the app.
 
 ## Files
 | File | Module | Tests | async |
 |---|---|---|---|
 | `changelog_test.exs` | `Mix.Tasks.ChangelogTest` | 14 | `true` |
 | `bump_version_test.exs` | `Mix.Tasks.Bump.VersionTest` | 5 | `true` |
+| `bench_io_test.exs` | `Mix.Tasks.Bench.IoTest` | 13 | `true` |
 
 ## Why `async: true` (the seam)
 Both suites flip to `async: true` because the production tasks resolve every process-/VM-global at CALL time from per-call `opts` (the merged testability seam in `lib/mix/tasks/{changelog,bump.version}.ex`), so the tests mutate no global state.
