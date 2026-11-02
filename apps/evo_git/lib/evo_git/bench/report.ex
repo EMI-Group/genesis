@@ -117,8 +117,9 @@ defmodule EvoGit.Bench.Report do
       cycle_row(cycle),
       "",
       "Overall: #{count(overall, :cycles)} cycles in " <>
-        "#{Stats.format_duration_us(field(overall, :wall_us))} → " <>
-        "#{one_decimal(field(overall, :cycles_per_sec))} cycles/s",
+        "#{Stats.format_duration_us(field(overall, :wall_us))} wall → " <>
+        "#{one_decimal(field(overall, :cycles_per_sec))} cycles/s " <>
+        "(phase time #{Stats.format_duration_us(field(overall, :phase_us))})",
       write_line(throughput, phases),
       read_line(throughput, phases),
       "",

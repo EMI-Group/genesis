@@ -105,7 +105,9 @@ defmodule EvoGit.Bench.ReportTest do
         max_us: 5_000,
         samples_us: [4_942, 5_000]
       },
-      overall: %{cycles: 2, wall_us: 4_971, cycles_per_sec: 402.3},
+      # `wall_us` is the real elapsed time and `phase_us` the summed per-cycle
+      # phase total; the renderer must show both.
+      overall: %{cycles: 2, wall_us: 5_100, phase_us: 4_971, cycles_per_sec: 392.2},
       throughput: %{
         files_written: 8,
         bytes_written: 8_192,
@@ -166,6 +168,15 @@ defmodule EvoGit.Bench.ReportTest do
 
       assert text =~ "Repo setup: 64 files"
       assert text =~ "152.0 ms"
+    end
+
+    test "renders the overall line with wall time, cycles/s and the phase time" do
+      text = Report.render_text(result())
+
+      assert text =~ "Overall: 2 cycles in 5.1 ms wall"
+      assert text =~ "cycles/s"
+      assert text =~ "(phase time 5.0 ms)"
+      assert text =~ "Cycle total"
     end
 
     test "renders the notes line" do
@@ -262,8 +273,9 @@ defmodule EvoGit.Bench.ReportTest do
       assert decoded["phases"]["worktree_add"]["samples_us"] == [10, 11]
       assert decoded["phases"]["file_write"]["share"] == 0.4
       assert decoded["overall"]["cycles"] == 2
-      assert decoded["overall"]["wall_us"] == 4_971
-      assert decoded["overall"]["cycles_per_sec"] == 402.3
+      assert decoded["overall"]["wall_us"] == 5_100
+      assert decoded["overall"]["phase_us"] == 4_971
+      assert decoded["overall"]["cycles_per_sec"] == 392.2
       assert decoded["cycle"]["n"] == 2
       assert decoded["settings"]["iterations"] == 2
       assert decoded["settings"]["fsync"] == false

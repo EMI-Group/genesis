@@ -121,8 +121,12 @@ defmodule EvoGit.BenchTest do
       assert result.throughput.read_mib_per_sec >= 0.0
 
       # ── Overall ────────────────────────────────────────────────────────
+      # `phase_us` is the summed per-cycle phase total (the comparison the
+      # phase shares are based on); `wall_us` is the real elapsed time of the
+      # counted cycles, which includes the overhead between phases.
       assert result.overall.cycles == @iterations
-      assert result.overall.wall_us == result.cycle.total_us
+      assert result.overall.phase_us == result.cycle.total_us
+      assert is_integer(result.overall.wall_us) and result.overall.wall_us > 0
       assert result.overall.cycles_per_sec > 0.0
 
       # ── Cleanup contract ───────────────────────────────────────────────

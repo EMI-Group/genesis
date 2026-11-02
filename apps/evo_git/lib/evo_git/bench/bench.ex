@@ -196,17 +196,26 @@ defmodule EvoGit.Bench do
         pick = picker(Enum.shuffle(rel_files))
 
         with {:ok, _warmup_acc} <-
-               run_cycles(empty_acc(), opts, repo, base_sha, pick, cycle_indexes(opts[:warmup])),
-             {:ok, acc} <-
-               run_cycles(
-                 empty_acc(),
-                 opts,
-                 repo,
-                 base_sha,
-                 pick,
-                 cycle_indexes(opts[:iterations])
-               ) do
-          {:ok, build_result(opts, root, setup, acc)}
+               run_cycles(empty_acc(), opts, repo, base_sha, pick, cycle_indexes(opts[:warmup])) do
+          # The warmup stays outside the timer: `wall_us` is the REAL elapsed
+          # time of the counted cycles only, while the per-cycle phase totals
+          # remain the sum of the eight measured phases.
+          {wall_us, counted} =
+            :timer.tc(fn ->
+              run_cycles(
+                empty_acc(),
+                opts,
+                repo,
+                base_sha,
+                pick,
+                cycle_indexes(opts[:iterations])
+              )
+            end)
+
+          case counted do
+            {:ok, acc} -> {:ok, build_result(opts, root, setup, acc, wall_us)}
+            {:error, _} = error -> error
+          end
         end
 
       {:error, _} = error ->
@@ -421,16 +430,16 @@ defmodule EvoGit.Bench do
     Map.update!(acc, :totals, fn totals -> [total | totals] end)
   end
 
-  defp build_result(opts, root, setup, acc) do
+  defp build_result(opts, root, setup, acc, wall_us) do
     cycles = opts[:iterations]
     totals = Enum.reverse(acc.totals)
     cycle_stats = Stats.summarize(totals) |> Map.put(:samples_us, totals)
-    wall_us = cycle_stats.total_us
+    phase_us = cycle_stats.total_us
 
     phases =
       Map.new(@phases, fn phase ->
         samples = acc |> Map.fetch!(phase) |> Enum.reverse()
-        {phase, phase_stats(samples, wall_us)}
+        {phase, phase_stats(samples, phase_us)}
       end)
 
     files_written = cycles * opts[:writes]
@@ -459,6 +468,7 @@ defmodule EvoGit.Bench do
       overall: %{
         cycles: cycles,
         wall_us: wall_us,
+        phase_us: phase_us,
         cycles_per_sec: Stats.ops_per_sec(cycles, wall_us)
       },
       throughput: %{
@@ -472,17 +482,19 @@ defmodule EvoGit.Bench do
     }
   end
 
-  defp phase_stats(samples, wall_us) do
+  # Phase shares are fractions of the summed per-cycle phase totals, never of
+  # the real wall time, so they still add up to ~1.0.
+  defp phase_stats(samples, phase_us) do
     total = Enum.sum(samples)
 
     samples
     |> Stats.summarize()
     |> Map.put(:samples_us, samples)
-    |> Map.put(:share, share(total, wall_us))
+    |> Map.put(:share, share(total, phase_us))
   end
 
   defp share(_total, 0), do: 0.0
-  defp share(total, wall_us), do: total / wall_us
+  defp share(total, phase_us), do: total / phase_us
 
   defp mib_per_sec(_bytes, 0), do: 0.0
   defp mib_per_sec(bytes, us), do: bytes * 1_000_000 / (1_048_576 * us)
