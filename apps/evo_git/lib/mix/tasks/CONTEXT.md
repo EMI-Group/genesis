@@ -5,6 +5,7 @@
 Mix tasks for the `:evo_git` app.
 Release-time: `mix changelog` (AI-generated Keep-a-Changelog section from git history) and `mix bump.version` (bump the single-source-of-truth `VERSION` and sync it to the desktop manifests + README badge) — both interactive (shell `yes?` prompts), run git/file operations, and expose a call-time-resolved testability seam so their suites can run under `async: true`.
 Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
+Benchmark: `mix bench.io` (self-contained filesystem/git I/O measurement over a throw-away synthetic repo — runs with NO Genesis application and prints a human report or, with `--json`, only a JSON document).
 
 ## API Surface
 
@@ -13,6 +14,7 @@ Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
 | `changelog.ex` | `Mix.Tasks.Changelog` | `mix changelog <version> [--from <ref>] [--to <ref>] [--model <id>] [--file <path>]`. PR/merge-aware first-parent collection, two-stage (map-reduce) LLM summarization via `ReqLLM.stream_object`, keeps `CHANGELOG.md`. `@requirements ["app.config"]` kept. |
 | `bump.version.ex` | `Mix.Tasks.Bump.Version` | `mix bump.version <version>`. Rewrites `VERSION`, `desktop/src-tauri/{tauri.conf.json,Cargo.toml,Cargo.lock}`, `README.md`; interactively commits the touched files and optionally delegates to `Mix.Tasks.Changelog.run/1`. |
 | `migrate.store.ex` | `Mix.Tasks.Migrate.Store` | `mix migrate.store [db_path]`. Thin `Ecto.Migrator` wrapper: boots a private UNNAMED dynamic `EvoGit.Repo` instance on the target DB and runs `EvoGit.Store.Boot.run_migrations/1` — the EXACT call the store boot uses — then reports the applied versions (or "already current") and stops the instance. The store auto-migrates at boot, so this is NORMALLY A NO-OP; it exists for manual verification (a copied DB, an interrupted upgrade) and works when the app cannot boot (never starts `:evo_git`; only `ensure_all_started(:ecto_sql)`). Its private instance is started with the app's SHARED DBConnection budget — `Keyword.merge(EvoGit.Repo.start_opts(), database: …, name: nil, pool_size: 1)`, the same shape as the private `Boot.start_opts/2` — because Ecto's own `@defaults` (`timeout: 15_000`) arrive as start opts and would otherwise win (see the `EvoGit.Repo` moduledoc). Idempotent. |
+| `bench.io.ex` | `Mix.Tasks.Bench.Io` | `mix bench.io [--dir PATH] [--iterations N] [--warmup N] [--files N] [--writes N] [--reads N] [--file-size BYTES] [--seed N] [--label STRING] [--fsync] [--keep] [--json] [--help]` (aliases `-n`, `-h`). Prints the human report from `EvoGit.Bench.Report.render_text/1`, or with `--json` ONLY `EvoGit.Bench.Report.render_json/1` on stdout; `--keep` retains the bench root. `parse_args/1` is PURE (`{:ok, opts} \| {:error, message} \| {:help}`, `--help` winning over every other token) and validates through `EvoGit.Bench.validate/1`, returning every setting merged over `EvoGit.Bench.defaults/0` with `:json` still present for `run/1` to consume; a bench failure raises `"bench.io failed in phase <phase>: <detail>"`. `@requirements ["app.config"]`. |
 
 ### Injectable seams (call-time resolved, defaults byte-for-byte unchanged)
 
@@ -31,6 +33,7 @@ Operational: `mix migrate.store` (standalone manual `tasks.sqlite` upgrade).
 - Production behavior MUST stay byte-for-byte identical when the new opts / app env values are ABSENT — every seam is read at CALL time. Do not change any user-facing output string, prompt, or message.
 - Per-call `opts` overrides are the async-safe path; the `Application.get_env(:evo_git, …)` values remain the backward-compatible fallback.
 - `mix format --check-formatted` and `mix compile --warnings-as-errors` must stay clean.
+- `mix bench.io` keeps `@requirements ["app.config"]` (NEVER `"app.start"`): the benchmark must run with no Genesis application (no Store, TaskRegistry or scheduler), and it renders through `EvoGit.Bench.Report` via `apply/3` so it never depends on the renderer being compiled first.
 - Do NOT run `mix changelog` / `mix bump.version` against the real repo casually — they mutate files and commit.
 
 ## Routing Table
