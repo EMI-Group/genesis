@@ -50,6 +50,9 @@ Commands: bare `genesis` == `genesis serve`; `serve`/`run [--ip ADDR] [--port N]
 `--no-linger` is a global flag (parsed by `parse_flags`, so `restart` inherits it).
 `--ip`/`--port` accept both `--flag value` and `--flag=value`.
 
+Environment: `GENESIS_LINGER` (`ask` default, `yes`/`enable` = enable lingering without prompting, `no`/`skip` = say and probe nothing) is the only linger control besides `--no-linger`.
+`GENESIS_HOME` and `GENESIS_DATA_DIR` are the other two environment overrides (release root, state/log directory).
+
 Release discovery: `$0` is resolved through symlinks with a portable `readlink` loop (no `readlink -f` — absent on macOS/BSD), then `GENESIS_HOME` is the parent of the script's directory when that directory is `bin`, else the directory itself; an explicit `$GENESIS_HOME` wins. A missing `$GENESIS_HOME/bin/genesis_server` fails with "not inside a Genesis server release; set GENESIS_HOME=…".
 
 Backends, chosen per host by `systemd_usable` → `launchd_usable` → pidfile fallback:
@@ -85,6 +88,7 @@ Smoke test: `scripts/test-genesis-cli.sh` (bash) builds a temp release with a st
 - Shell env templates: use `export` for variables consumed by the VM/release boot scripts.
 - EEx conditionals use string comparison on `@release.name`: `@release.name == :genesis_remote` (atom comparison).
 - `overlays/bin/genesis` must stay POSIX `sh` (no bash arrays/`local`/`[[ ]]`), `set -eu`, quoted expansions, and rely only on coreutils plus a curl-or-wget health probe.
+- Linger handling is systemd-only and best-effort: never probe or invoke `loginctl` on the `launchd`/`fallback` backends or from `serve`, never prompt when stdin is not a TTY, and never fail (or `die`/`exit`) `start` because of a declined, impossible or failed linger — the server must still start.
 - A `genesis_server` release must be built AFTER `mix assets.deploy` (in `apps/evo_dash`): the prod endpoint loads `priv/static/cache_manifest.json` and boot aborts without it, so a bare local `mix release genesis_server` produces an unstartable release (the CI server job runs the shared `setup-mix` action that deploys assets).
 - Server mode is detected at runtime from `RELEASE_NAME=genesis_server` (exported by the generated launcher), not from the release definition's `config:` — that option does not reach the generated sys.config in this umbrella project.
 
@@ -93,6 +97,7 @@ Smoke test: `scripts/test-genesis-cli.sh` (bash) builds a temp release with a st
 - **EEx conditionals instead of per-release overlays**: Mix does not automatically apply `rel/<release_name>/` overlays. EEx conditionals in the top-level templates achieve the same result more maintainably than adding custom `:steps` to each release definition (which would require duplicating the desktop optimization flags). `rel/overlays/` is used only for the release-wide file overlay (`bin/genesis`) that `genesis_server` declares explicitly.
 - **`genesis_server` has no `wx`**: headless servers usually have no wxWidgets runtime, and a missing wx module would fail the whole release boot; the dashboard's directory picker already falls back to manual entry, so dropping it is lossless there.
 - **A shell CLI instead of a BEAM-based control command**: `status`/`stop`/`logs` must work when the server cannot boot (bad config, missing ERTS, busy port), so lifecycle commands only use the platform supervisor and the HTTP probe. `serve` is a thin `exec`, keeping the process a direct child of the supervisor.
+- **Lingering is offered, never required, on `start`**: a `systemd-run --user` unit belongs to the user's session and systemd tears it down at logout unless lingering is enabled, which users experience as "the background server randomly dies"; `start` therefore probes `loginctl show-user` and offers `loginctl enable-linger` (asking only on a TTY, auto-yes under `GENESIS_LINGER=yes`, silence under `no`/`--no-linger`). The fix is advisory rather than fatal — polkit may deny the call, containers often have no loginctl, and starting the server matters more than the linger state, so every outcome degrades to a warning with the manual command.
 - **`readlink` loop instead of `readlink -f`**: macOS/BSD `readlink` has no `-f`, and the installer links `~/.local/bin/genesis` to the release, so symlink resolution must be portable.
 - **No `+P`/`+t` caps — OTP defaults for process and atom limits**: an 80000 atom cap caused atom-table exhaustion in production and a silent, zero-log VM boot failure (the VM dies before Logger is configured); the idle-memory saving does not justify it, so the templates set only the scheduler busy-wait flags.
 - **`remote.vm.args.eex` is required by Mix**: Mix requires this file for the `remote` and `rpc` commands. Without it, Mix falls back to a cached split from `vm.args.eex` which may not include EEx-processed content correctly.
