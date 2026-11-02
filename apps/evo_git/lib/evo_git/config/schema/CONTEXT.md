@@ -43,7 +43,7 @@ Public API: `filter(params, model, metadata)` (guard-clause safe for non-list/no
 After the first load the term is READ with `:persistent_term.get(:llm_db_store, nil)` (`catalog.ex:64`), which does NOT copy it into the reader's heap (OTP `persistent_term.erl`: a copy + global GC happens only on `put`/`erase`).
 There is NO cache or memoization in front of `model_metadata/1` (no ETS, `:persistent_term` or process-dictionary entry) — every call re-runs the resolve against the loaded catalog.
 Callers (all of them): boot — `AgentScheduler.init/1` (`agent_scheduler.ex:584-588`) and `State.from_model_profiles/2` (`agent_scheduler/state.ex:182`); per agent spawn — `Dispatch.resolve_model_for_agent/2` (`agent_scheduler/dispatch.ex:357`); per compression check — `Agent.Compression.Threshold.output_limit/1` (`agent/compression/threshold.ex:240`).
-**Keep it cheap** — it runs per agent spawn (and per profile read / per-turn compression check).
+**Keep it cheap** — it runs per agent spawn (and per profile read / per-turn compression check), and a cold-boot first call carries the whole snapshot load in that caller's heap (measured proof: `AgentScheduler.init/1` shows tens of MB of process memory while its live state is KB-scale — see `../agent_scheduler/CONTEXT.md`); cache per-model `%{limits, capabilities}` (ETS/`:persistent_term`) instead of re-resolving.
 
 Tests inject stub metadata through the seam, so no catalog is needed.
 
