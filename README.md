@@ -211,6 +211,15 @@ mix phx.server
 
 Then open [http://localhost:4100](http://localhost:4100).
 
+#### Benchmark your machine's I/O
+Genesis agents spend much of their time creating git worktrees, reading and writing files, and committing. `mix bench.io` measures that workload on your machine so you can compare filesystems, SSDs or platforms:
+```bash
+mix bench.io                                    # synthetic repo in the system temp dir
+mix bench.io --dir /mnt/nvme --iterations 10 --files 500 --writes 50
+mix bench.io --json > bench.json                # machine-readable result
+```
+The report breaks down worktree creation, random reads/writes, `git status`/`add`/`commit`, and worktree reclaim (mean/median/p95) alongside overall cycles/s and throughput. Point `--dir` at the filesystem you want to measure — `/tmp` may be RAM-backed, which the report warns about. The benchmark seeds and removes its own throwaway repo and boots no Genesis runtime.
+
 ---
 
 ## 📦 Distribution via Package Managers
