@@ -1346,6 +1346,33 @@ defmodule EvoGit.Config.SchemaTest do
     end
   end
 
+  describe "effective_model_profiles/1" do
+    test "returns the configured [[llm.models]] profiles unchanged" do
+      profiles = [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]
+
+      assert Schema.effective_model_profiles(%{llm: %{models: profiles}}) == profiles
+    end
+
+    test "falls back to one synthesized legacy \"default\" profile" do
+      config = %{
+        llm: %{model: "anthropic:claude", temperature: 0.5},
+        scheduler: %{default_llm_max_concurrency: 5}
+      }
+
+      assert [profile] = Schema.effective_model_profiles(config)
+      assert profile.id == "default"
+      assert profile.model == "anthropic:claude"
+      assert profile.concurrency == 5
+      assert profile.temperature == 0.5
+    end
+
+    test "the legacy fallback carries a nil model when none is configured" do
+      assert [profile] = Schema.effective_model_profiles(%{})
+      assert profile.id == "default"
+      assert profile.model == nil
+    end
+  end
+
   describe "get_model_profile/2" do
     test "returns {:ok, profile} when found" do
       config = %{llm: %{models: [%{id: "default", model: "x:y"}, %{id: "fast", model: "a:b"}]}}

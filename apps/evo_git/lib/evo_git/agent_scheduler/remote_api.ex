@@ -214,17 +214,9 @@ defmodule EvoGit.AgentScheduler.RemoteAPI do
   def build_reload_opts(config) when is_map(config) do
     scheduler = Map.get(config, :scheduler, %{})
 
-    # Build model profiles (same pattern as AgentScheduler.init/1)
-    raw_model_profiles = EvoGit.Config.Schema.model_profiles(config)
-
-    model_profiles =
-      case raw_model_profiles do
-        [] ->
-          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
-
-        profiles ->
-          profiles
-      end
+    # Build model profiles (same helper as AgentScheduler.init/1, which applies
+    # the legacy single-"default"-profile fallback when [[llm.models]] is empty)
+    model_profiles = EvoGit.Config.Schema.effective_model_profiles(config)
 
     sandbox = Map.get(config, :sandbox, %{})
 

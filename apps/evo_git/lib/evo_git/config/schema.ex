@@ -265,4 +265,23 @@ defmodule EvoGit.Config.Schema do
   defdelegate model_profiles(config), to: LLM
   defdelegate get_model_profile(config, id), to: LLM
   defdelegate default_model_profile(config), to: LLM
+
+  @doc """
+  Returns the model profiles the runtime actually runs with for a resolved
+  config map: every `[[llm.models]]` profile, or a single synthesized legacy
+  `"default"` profile built from the flat `[llm]` / `[scheduler]` keys when no
+  profile is configured.
+
+  This is the single source of truth for that fallback — `AgentScheduler.init/1`,
+  `RemoteAPI.build_reload_opts/1` and `EvoGit.CatalogWarmup` all resolve model
+  profiles through it, so a boot, a config reload and the catalog warm-up can
+  never disagree about which profiles exist.
+  """
+  @spec effective_model_profiles(map()) :: [map()]
+  def effective_model_profiles(config) when is_map(config) do
+    case LLM.model_profiles(config) do
+      [] -> [LLM.build_legacy_default_profile(config)]
+      profiles -> profiles
+    end
+  end
 end

@@ -555,20 +555,13 @@ defmodule EvoGit.AgentScheduler do
     } = scheduler_config
 
     # Load model profiles from config (Step 2: per-model slot pools).
-    # Each profile becomes its own slot pool. Falls back to a single
-    # legacy profile derived from the flat llm.model / scheduler.default_llm_max_concurrency
-    # config keys when no [[llm.models]] profiles are configured.
-    raw_model_profiles = EvoGit.Config.Schema.model_profiles(config)
-
-    model_profiles =
-      case raw_model_profiles do
-        [] ->
-          # Legacy path: build a single "default" profile from flat config
-          [EvoGit.Config.Schema.LLM.build_legacy_default_profile(config)]
-
-        profiles ->
-          profiles
-      end
+    # Each profile becomes its own slot pool; `effective_model_profiles/1`
+    # applies the legacy single-"default"-profile fallback derived from the flat
+    # llm.model / scheduler.default_llm_max_concurrency keys.
+    # `EvoGit.CatalogWarmup` starts before this process and resolves the SAME
+    # list through the SAME helper, so the llm_db catalog is already warm and
+    # the metadata lookups below are cheap `:persistent_term` reads.
+    model_profiles = EvoGit.Config.Schema.effective_model_profiles(config)
 
     # Build per-model pool state from profiles
     pool_state = State.from_model_profiles(model_profiles)
