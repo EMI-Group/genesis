@@ -38,6 +38,14 @@ A repo-OPEN failure stops with `{:stop, {:failed_to_open_sqlite, reason}}`; a MI
 - A fresh DB pays no scan cost; later boots pay only the `schema_migrations` check. `Ecto.Migrator` runs each migration AND its version stamp in ONE transaction (`XqliteEcto3.supports_ddl_transaction?` is `true`), so a SIGKILLed migration rolls back atomically.
 - A DB locked by another process can stall a boot connection up to `busy_timeout: 30_000`; there are NO sleeps on the store/application boot path.
 
+### Boot memory footprint (page cache vs process heap)
+
+- Nothing is rehydrated into a long-lived process at boot: `EvoGit.Store.init/1` keeps only `%{repo, name, data_dir, writer, offloads: %{}}` — no task rows, no archive rows, no `:ets` table, no file contents (`boot/` reads only the six `.exs` migration sources via `Code.compile_file/1`).
+- The ONE boot read is `TaskRegistry.init/1`'s `select_running_lease_info`, which selects `id`/`status`/`lease_expires_at` only for `WHERE status IN ('running','finalizing','cancelling')` and is reduced to `{id, status}` pairs (never stored), so it is empty on a boot with no tasks running.
+- `@cache_size -8_000` (8 MiB) is PER-CONNECTION SQLite NATIVE memory (one `PRAGMA cache_size` per connection in `XqliteEcto3.Driver.connect/1`), so the 6 × 8 MiB ≈ 47 MiB figure is a lazily-filled CAP — it never appears in `Process.info(pid, :memory)` or `:erlang.memory/1`, only in OS RSS.
+- The only boot path that materializes data-proportional terms in an Erlang process is a still-PENDING migration (it runs in the `EvoGit.Store` process, which on a fresh BEAM also compiles the six `.exs` sources): transient compiler/decoder garbage that one GC reclaims, and identical in dev and prod.
+- No environment gating lives in this directory beyond the `:data_dir` app env and the `:store_boot_optimize_fun` seam, so pool size (`default_pool_size/0` = 6) and `cache_size` are byte-identical in dev and prod.
+
 ### Migration 1 — `20260815000001_baseline_adoption`
 
 Baseline schema ADOPTION, on a fresh DB (tables via `CREATE TABLE IF NOT EXISTS`) and on ANY pre-Ecto legacy DB (no `schema_migrations` ⇒ version 0 ⇒ it runs):
