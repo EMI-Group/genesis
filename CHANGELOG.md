@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-11-02
+
+### Added
+
+- Genesis start detects systemd lingering status and offers to enable it (configurable via GENESIS_LINGER or --no-linger), so headless servers survive logout.
+- Add a `mix bench.io` task for benchmarking filesystem and git I/O, with text and JSON report output.
+
+### Changed
+
+- Pre-warm the LLM model catalog in a short-lived process so the agent scheduler no longer retains tens of MB of memory after boot.
+
+### Fixed
+
+- Fix desktop boot failure by converting PHX_SERVER into a real boolean in runtime config.
+- Benchmark reports now report actual wall-clock time in the overall summary line instead of an inaccurate value.
+
 ## [0.13.12] - 2026-11-02
 
 ### Changed
