@@ -127,6 +127,15 @@ Key design: spatial context tree for routing, phylogenetic graph for temporal ev
 - `mix store.maintenance [--data-dir <path>] [--vacuum]` — task-store upkeep: `PRAGMA optimize`, and `--vacuum` to reclaim freed pages (`VACUUM`, switches `auto_vacuum` to incremental); never runs automatically
 - `mix migrate.store` — report/apply task-store Ecto migrations manually (normally a no-op; boot applies them)
 
+### I/O Benchmark (`mix bench.io`)
+
+A small, self-contained measurement tool for comparing machines, filesystems, SSDs and platforms — NOT part of the test suite and NOT related to Genesis's own development.
+It seeds a throwaway synthetic git repo (default 200 files), then measures per-cycle: worktree create, random file reads, random file writes, `git status`, `git add`, `git commit`, worktree directory reclaim, and `git worktree prune` + branch delete — mirroring the real `WorktreeManager` create/teardown order.
+The report gives overall cycle time and cycles/s plus a mean/median/p95/min/max breakdown with per-phase share and read/write throughput; `--json` emits a machine-readable result for cross-machine comparison.
+Key flags: `--dir PATH` (the filesystem under test — the system temp dir may be tmpfs/RAM, which the report warns about), `--iterations`, `--warmup`, `--files`, `--writes`, `--reads`, `--file-size`, `--fsync`, `--seed`, `--label`, `--keep`.
+The task boots no Genesis runtime (no Store, scheduler or config), and a run is entirely disposable — the synthetic repo and worktrees are removed unless `--keep`.
+Detail: `apps/evo_git/lib/evo_git/bench/CONTEXT.md`.
+
 ### Test Runtime & Parallelism Policy
 
 Code integrity matters, and so does the test suite's runtime: a slow suite taxes every future change, so **test speed is part of test quality and an unnecessary `async: false` module is a defect**, not a style choice.
