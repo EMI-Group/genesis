@@ -33,7 +33,7 @@ Benchmark: `mix bench.io` (self-contained filesystem/git I/O measurement over a 
 - Production behavior MUST stay byte-for-byte identical when the new opts / app env values are ABSENT — every seam is read at CALL time. Do not change any user-facing output string, prompt, or message.
 - Per-call `opts` overrides are the async-safe path; the `Application.get_env(:evo_git, …)` values remain the backward-compatible fallback.
 - `mix format --check-formatted` and `mix compile --warnings-as-errors` must stay clean.
-- `mix bench.io` keeps `@requirements ["app.config"]` (NEVER `"app.start"`): the benchmark must run with no Genesis application (no Store, TaskRegistry or scheduler), and it renders through `EvoGit.Bench.Report` via `apply/3` so it never depends on the renderer being compiled first.
+- `mix bench.io` keeps `@requirements ["app.config"]` (NEVER `"app.start"`): the benchmark must run with no Genesis application (no Store, TaskRegistry or scheduler), and it renders through `EvoGit.Bench.Report`.
 - Do NOT run `mix changelog` / `mix bump.version` against the real repo casually — they mutate files and commit.
 
 ## Routing Table

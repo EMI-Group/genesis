@@ -159,15 +159,10 @@ defmodule Mix.Tasks.Bench.Io do
   end
 
   ## Rendering
-  #
-  # `EvoGit.Bench.Report` is called through `apply/3` so this module compiles
-  # without an "undefined function" warning whenever the renderer is not yet
-  # compiled into the tree; a direct remote call would fail the
-  # `--warnings-as-errors` build.
 
-  defp render_text(result), do: apply(EvoGit.Bench.Report, :render_text, [result])
+  defp render_text(result), do: EvoGit.Bench.Report.render_text(result)
 
-  defp render_json(result), do: apply(EvoGit.Bench.Report, :render_json, [result])
+  defp render_json(result), do: EvoGit.Bench.Report.render_json(result)
 
   ## Parsing helpers
 
