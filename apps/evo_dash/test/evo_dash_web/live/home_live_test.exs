@@ -620,10 +620,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # Right-aligned wrapper around a content-fit bubble.
       assert wrapper_class =~ "flex justify-end"
 
-      # The DaisyUI theme-token bubble (bg-base-300/text-base-content read
+      # The DaisyUI theme-token bubble (bg-base-200/text-base-content read
       # correctly in both light and dark themes), text left-aligned inside.
       assert bubble_class =~ "w-fit"
-      assert bubble_class =~ "bg-base-300"
+      assert bubble_class =~ "bg-base-200"
       assert bubble_class =~ "text-left"
       refute bubble_class =~ "bg-primary"
     end
