@@ -5,13 +5,30 @@ defmodule EvoGit.Config.Schema.LLM do
   Besides assembling the parameter keyword list, this module is the place where
   parameters are made **provider/model-aware**:
 
-  - `provider_options_for_model/1` returns the OpenAI-only default
-    (`store: false`) for a genuine NATIVE OpenAI endpoint only.
+  - `provider_options_for_model/1` returns the provider options a bare model
+    spec needs: the OpenAI-only default (`store: false`) for a genuine NATIVE
+    OpenAI endpoint only, and the subscription (OAuth) options for an
+    OAuth-only provider (`:openai_codex`).
   - `profile_generation_params/1` — the single choke point for every parameter
     consumer (scheduler state, dispatch, agent state, both the legacy-flat and
     the explicit-profile path) — runs the assembled list through
     `EvoGit.Config.Schema.LLMConstraints.filter/3`, which omits parameters the
     target provider/model does not accept.
+
+  ## OAuth (subscription) profiles
+
+  A model profile authenticates through a subscription OAuth credential when
+  its `auth_mode` is `"oauth"` / `:oauth`, OR when its model's provider is
+  OAuth-only (`EvoGit.Config.LLMCatalog.oauth_only?/1`) — so
+  `model = "openai_codex:gpt-5.6-terra"` works with no other configuration.
+  Such a profile's `provider_options` always carry `auth_mode: :oauth` plus the
+  managed `oauth_file`, resolved by `EvoGit.Auth.oauth_file/1` (the profile's
+  own `oauth_file` → the `[llm] oauth_file` config key →
+  `<config_dir>/auth.json`), and the credential is imported lazily from the
+  vendor CLI login at assembly time via `EvoGit.Auth.ensure_credentials/2`.
+  That call is fault-isolated: a missing vendor login never blocks assembly —
+  the request then fails with ReqLLM's own credential message and
+  `EvoGit.Config.config_status/0` reports the login step.
 
   ## Model metadata seam (tests + catalog availability)
 
@@ -25,6 +42,8 @@ defmodule EvoGit.Config.Schema.LLM do
   """
 
   require Logger
+  alias EvoGit.Auth
+  alias EvoGit.Config.LLMCatalog
   alias EvoGit.Config.Schema.LLMConstraints
 
   # Default context window (tokens) for context-compression decisions when a
@@ -213,7 +232,10 @@ defmodule EvoGit.Config.Schema.LLM do
 
   Used when `[[llm.models]]` is empty or absent, so the runtime always has at
   least one profile to work with. Generation params from the flat `[llm]`
-  section are included; nil values are omitted.
+  section are included; nil values are omitted. The optional `[llm] auth_mode`
+  key is carried into the profile so a legacy-flat OAuth configuration
+  (`[llm] auth_mode = "oauth"`) authenticates exactly like an explicit
+  `[[llm.models]]` profile.
 
   The returned profile always has at least `:id`, `:model`, and `:concurrency`
   keys. The `:model` value may be `nil` when no model is configured.
@@ -225,6 +247,11 @@ defmodule EvoGit.Config.Schema.LLM do
       ...>   scheduler: %{default_llm_max_concurrency: 5}
       ...> })
       %{id: "default", model: "anthropic:claude", concurrency: 5, temperature: 0.7}
+
+      iex> Schema.LLM.build_legacy_default_profile(%{
+      ...>   llm: %{model: "anthropic:claude", auth_mode: "oauth"}
+      ...> })
+      %{id: "default", model: "anthropic:claude", concurrency: 3, auth_mode: "oauth"}
   """
   @spec build_legacy_default_profile(map()) :: map()
   def build_legacy_default_profile(config) when is_map(config) do
@@ -246,6 +273,7 @@ defmodule EvoGit.Config.Schema.LLM do
     |> maybe_put(:top_k, Map.get(llm, :top_k))
     |> maybe_put(:frequency_penalty, Map.get(llm, :frequency_penalty))
     |> maybe_put(:presence_penalty, Map.get(llm, :presence_penalty))
+    |> maybe_put(:auth_mode, Map.get(llm, :auth_mode))
   end
 
   defp maybe_put(map, _key, nil), do: map
@@ -266,6 +294,10 @@ defmodule EvoGit.Config.Schema.LLM do
   "OpenAI-Compatible API" catalog entry, which maps to provider `:openai` with a
   custom `base_url`), and such endpoints do not implement `store`. Use
   `provider_options_for_model/1` at call sites instead, which encodes that rule.
+
+  Subscription (OAuth) providers do NOT get this default: `store` is not part of
+  the `:openai_codex` provider schema at all, so an OAuth model must never be
+  handed `store: false` — see `provider_options_for_model/1`.
   """
   @spec default_provider_options() :: keyword()
   def default_provider_options, do: [store: false]
@@ -308,21 +340,155 @@ defmodule EvoGit.Config.Schema.LLM do
   @doc """
   Returns the appropriate `provider_options` keyword list for a given model spec.
 
-  Returns `[store: false]` (via `default_provider_options/0`) only for a NATIVE
-  OpenAI endpoint, and `[]` otherwise. "Native" means the spec's provider is
-  `:openai` AND the spec carries no custom endpoint override (`:base_url` or
-  `:extra`) — a custom endpoint is an OpenAI-compatible third-party service,
-  which does not implement the OpenAI-only options (a presence check is used,
-  so even an empty `extra` map counts as an override).
+  Three branches:
+
+  - **OAuth-only provider** (`EvoGit.Config.LLMCatalog.oauth_only?/1`, e.g.
+    `:openai_codex`) → `[auth_mode: :oauth, oauth_file: <managed file>]`, with a
+    lazy, fault-isolated `EvoGit.Auth.ensure_credentials/2` (the vendor CLI
+    login is imported on first use). This is what makes a call site that holds
+    only a model spec and no profile — `EvoGit.SystemCheck`'s LLM test,
+    `EvoGit.Runtime.PullRequest` — authenticate a subscription model.
+  - **Native OpenAI endpoint** → `[store: false]` (via
+    `default_provider_options/0`). "Native" means the spec's provider is
+    `:openai` AND the spec carries no custom endpoint override (`:base_url` or
+    `:extra`) — a custom endpoint is an OpenAI-compatible third-party service,
+    which does not implement the OpenAI-only options (a presence check is used,
+    so even an empty `extra` map counts as an override).
+  - **Everything else** → `[]`.
+
+  `:openai_codex` is deliberately NEVER given `store: false`: it is a
+  Responses-API provider with a completely different provider schema, `store`
+  is not in that schema, and sending it would raise at request time.
   """
   @spec provider_options_for_model(String.t() | map() | tuple() | nil) :: keyword()
   def provider_options_for_model(model) do
-    if provider_from_model(model) == :openai and not custom_endpoint?(model) do
-      default_provider_options()
-    else
-      []
+    provider = provider_from_model(model)
+
+    cond do
+      LLMCatalog.oauth_only?(provider) -> oauth_provider_options(%{model: model})
+      provider == :openai and not custom_endpoint?(model) -> default_provider_options()
+      true -> []
     end
   end
+
+  @doc """
+  Returns `true` when a model profile authenticates through a subscription
+  (OAuth) credential.
+
+  A profile is OAuth when its `auth_mode` normalizes to `:oauth` (both `"oauth"`
+  and `:oauth` are accepted) OR when its model's provider is OAuth-only
+  (`EvoGit.Config.LLMCatalog.oauth_only?/1`, e.g. `openai_codex:gpt-5.6-terra`).
+  Any other / absent `auth_mode` value means the API-key default.
+
+  `profile` is any map with a `:model` (and optionally `:auth_mode` /
+  `:oauth_file`) key, so a bare `%{model: model, auth_mode: ...}` spec works too.
+  Never raises.
+
+  ## Example
+
+      iex> Schema.LLM.oauth_profile?(%{model: "openai_codex:gpt-5.6-terra"})
+      true
+
+      iex> Schema.LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5", auth_mode: "oauth"})
+      true
+
+      iex> Schema.LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5"})
+      false
+  """
+  @spec oauth_profile?(map()) :: boolean()
+  def oauth_profile?(profile) when is_map(profile) do
+    oauth_auth_mode?(profile_field(profile, :auth_mode)) or
+      LLMCatalog.oauth_only?(oauth_provider(profile))
+  end
+
+  def oauth_profile?(_profile), do: false
+
+  @doc """
+  Ensures the managed subscription credential for an OAuth model profile is
+  present, importing it from the vendor CLI login when appropriate.
+
+  Resolves the provider from the profile's `:model` and the managed file
+  through `EvoGit.Auth.oauth_file/1` (the profile's own `oauth_file` → the
+  `[llm] oauth_file` config key → `<config_dir>/auth.json`), then delegates to
+  the fault-isolated `EvoGit.Auth.ensure_credentials/2`. Returns `:ok` when a
+  usable credential exists (including a provider env token) and
+  `{:error, reason}` otherwise — never raises and never blocks.
+
+  A caller that only has a model spec can pass `%{model: model}`.
+  """
+  @spec ensure_profile_credentials(map()) :: :ok | {:error, term()}
+  def ensure_profile_credentials(profile) when is_map(profile) do
+    ensure_credentials(oauth_provider(profile), oauth_file_for(profile))
+  end
+
+  def ensure_profile_credentials(_profile), do: {:error, :invalid_profile}
+
+  @doc """
+  Reports whether the subscription credential of an OAuth model profile
+  resolves, importing it lazily first (like `ensure_profile_credentials/1`).
+
+  Returns `{:ok, %{expires: ms_epoch | nil, account_id: String.t() | nil}}` when
+  the managed entry carries an access or a refresh token (or a provider env
+  token is set), `{:error, :no_credentials}` when nothing is available, and
+  `{:error, :invalid_credentials}` for an unusable/broken managed file. Never
+  raises: a broken or missing auth file degrades to "not configured".
+
+  Used by `EvoGit.Config.config_status/0` to decide whether an OAuth profile
+  satisfies the API-credential health check.
+  """
+  @spec oauth_credential_status(map()) ::
+          {:ok, %{expires: integer() | nil, account_id: String.t() | nil}}
+          | {:error, :no_credentials | :invalid_credentials | term()}
+  def oauth_credential_status(profile) when is_map(profile) do
+    provider = oauth_provider(profile)
+    oauth_file = oauth_file_for(profile)
+
+    # Import first (the one-time vendor-CLI import), then report what the
+    # managed entry actually holds.
+    _ = ensure_credentials(provider, oauth_file)
+
+    Auth.credential_status(provider, oauth_file: oauth_file)
+  end
+
+  def oauth_credential_status(_profile), do: {:error, :no_credentials}
+
+  # The provider a profile's subscription credential belongs to. `nil` when the
+  # model spec carries no resolvable provider — `EvoGit.Auth` then reports "no
+  # credentials" instead of raising.
+  defp oauth_provider(profile), do: provider_from_model(profile_field(profile, :model))
+
+  # The managed OAuth file for a profile: the profile's own `oauth_file` wins,
+  # otherwise `EvoGit.Auth.oauth_file/1` falls through to the `[llm] oauth_file`
+  # config key and finally the default `<config_dir>/auth.json`.
+  defp oauth_file_for(profile) do
+    Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
+  end
+
+  # `EvoGit.Auth.ensure_credentials/2` is the designated fault-isolation
+  # boundary for this path: a missing vendor login, a corrupt managed file or an
+  # unwritable config dir degrades to an error tuple, so provider-option
+  # assembly always succeeds.
+  defp ensure_credentials(provider, oauth_file) do
+    Auth.ensure_credentials(provider, oauth_file: oauth_file)
+  end
+
+  # The OAuth defaults for a profile: `auth_mode: :oauth` plus the resolved
+  # managed file. The credential import runs HERE (assembly time, lazily) and is
+  # gated on the OAuth branch, so an api_key profile stays allocation-identical.
+  # It is cheap — a couple of `File.stat`/`File.read` of small files, no network
+  # and no subprocess — and never blocks on a credential failure.
+  defp oauth_provider_options(profile) do
+    oauth_file = oauth_file_for(profile)
+    _ = ensure_credentials(oauth_provider(profile), oauth_file)
+
+    [auth_mode: :oauth, oauth_file: oauth_file]
+  end
+
+  # Both `"oauth"` and `:oauth` mean OAuth; anything else (including nil) is the
+  # API-key default. The schema validator reports invalid values separately.
+  defp oauth_auth_mode?(:oauth), do: true
+  defp oauth_auth_mode?("oauth"), do: true
+  defp oauth_auth_mode?(_value), do: false
 
   defp custom_endpoint?(model) when is_map(model) do
     Map.get(model, :base_url) != nil or Map.get(model, :extra) != nil
@@ -336,8 +502,20 @@ defmodule EvoGit.Config.Schema.LLM do
   The assembled keyword list is passed through
   `EvoGit.Config.Schema.LLMConstraints.filter/3` against the profile's model spec,
   dropping parameters the target provider/model does not accept (see that module
-  for the constraint table and the degradation rules). An explicit
-  `provider_options` override from the profile always wins verbatim.
+  for the constraint table and the degradation rules).
+
+  `provider_options` is assembled with OAuth awareness:
+
+  - an OAuth profile (see `oauth_profile?/1`) always gets `auth_mode: :oauth`
+    plus its resolved `oauth_file`, so a subscription profile needs no extra
+    configuration;
+  - a user-supplied profile `provider_options` map/keyword list is a PARTIAL
+    override on top of those OAuth defaults: its own keys win (an explicit
+    `oauth_file:` inside the options is honoured, for instance) while the OAuth
+    defaults it does not set survive;
+  - without a profile override the model-derived options apply
+    (`provider_options_for_model/1`);
+  - an EMPTY resolved option list omits the `:provider_options` key entirely.
   """
   @spec profile_generation_params(map()) :: keyword()
   def profile_generation_params(profile) when is_map(profile) do
@@ -477,15 +655,22 @@ defmodule EvoGit.Config.Schema.LLM do
 
   defp existing_atom_key(_provider, _id), do: nil
 
-  # Resolves provider_options for a profile, preferring an explicit user override
-  # over the provider-aware default.
+  # Resolves provider_options for a profile: the model-derived options (or the
+  # user's explicit override) merged OVER the OAuth defaults.
   #
-  # - Explicit `provider_options` map in config → converted to a keyword list (user override).
-  # - Explicit `provider_options` keyword list in config → used as-is.
-  # - Otherwise → `provider_options_for_model/1` (store: false only for a native
-  #   OpenAI endpoint).
-  # When the resolved list is empty, the `:provider_options` key is omitted entirely
-  # (a non-native-OpenAI profile without an override must NOT get store: false).
+  # - The OAuth defaults (`auth_mode: :oauth` + the resolved managed file) are
+  #   present whenever the profile is OAuth — `oauth_profile?/1` covers both an
+  #   explicit `auth_mode = "oauth"` and auto-detection of an OAuth-only
+  #   provider, and this is also where the lazy vendor-login import runs.
+  # - A user-supplied `provider_options` map/keyword list is a PARTIAL override:
+  #   its own keys win (an explicit `oauth_file:` inside the options is honoured)
+  #   while the OAuth defaults it does not set survive.
+  # - Without a user override the model-derived defaults apply
+  #   (`provider_options_for_model/1` — store: false only for a native OpenAI
+  #   endpoint, OAuth options for an OAuth-only provider).
+  #
+  # An EMPTY resolved list means the caller omits the `:provider_options` key
+  # entirely (a non-native-OpenAI api_key profile must NOT get store: false).
   defp maybe_provider_options(keyword_list, profile) do
     case resolve_provider_options(profile) do
       [] -> keyword_list
@@ -494,6 +679,11 @@ defmodule EvoGit.Config.Schema.LLM do
   end
 
   defp resolve_provider_options(profile) do
+    defaults = if oauth_profile?(profile), do: oauth_provider_options(profile), else: []
+    merge_options(defaults, user_or_model_options(profile))
+  end
+
+  defp user_or_model_options(profile) do
     case Map.get(profile, :provider_options) do
       nil ->
         provider_options_for_model(Map.get(profile, :model))
@@ -504,6 +694,15 @@ defmodule EvoGit.Config.Schema.LLM do
       override when is_list(override) ->
         override
     end
+  end
+
+  # Key-wise merge where the override wins and the defaults fill the gaps. Not
+  # `Keyword.merge/2`: the override comes from user config and may carry
+  # non-atom keys, which `Keyword.merge/2` does not accept.
+  defp merge_options(defaults, override) do
+    overridden = for {key, _value} <- override, into: MapSet.new(), do: key
+
+    Enum.reject(defaults, fn {key, _value} -> MapSet.member?(overridden, key) end) ++ override
   end
 
   @doc """

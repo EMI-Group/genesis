@@ -334,6 +334,15 @@ defmodule EvoGit.SystemCheck do
     # previously loaded credentials).
     EvoGit.Config.credentials()
 
+    # A subscription (OAuth) model authenticates through the managed OAuth
+    # file, not an API key — make sure it exists (importing the vendor CLI login
+    # lazily) before the request, so a connection test right after boot works.
+    # `ensure_profile_credentials/1` is fault-isolated: a missing login returns
+    # an error tuple and the request then reports ReqLLM's own message.
+    if EvoGit.Config.Schema.LLM.oauth_profile?(%{model: model}) do
+      _ = EvoGit.Config.Schema.LLM.ensure_profile_credentials(%{model: model})
+    end
+
     context = ReqLLM.Context.new([ReqLLM.Context.user("Say hello in one word.")])
 
     stream_opts =

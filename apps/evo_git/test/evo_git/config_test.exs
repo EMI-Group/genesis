@@ -1053,6 +1053,188 @@ defmodule EvoGit.ConfigTest do
     end
   end
 
+  describe "config_status/0 OAuth awareness" do
+    # Health checks must never flag a subscription (OAuth) model profile as
+    # "missing an API key". These tests write real config.toml/auth.json files
+    # into the isolated XDG dir and exercise the REAL Config.config_status/0.
+    #
+    # The `:req_llm` credential keys, the `:auth_home_fun` seam and the two
+    # Claude env tokens are BEAM-global — this module is async: false and
+    # snapshots/restores every one of them (a leaked key would hide a credential
+    # from later modules; a leaked vendor home would import real tokens).
+    @generic_api_key_warning "No API key found. Add keys to credentials.toml or configure via the settings page."
+
+    setup do
+      reqllm_snapshot = reqllm_key_snapshot()
+      on_exit(fn -> reqllm_key_restore(reqllm_snapshot) end)
+
+      # `:auth_home_fun` is the sole home-directory source for the vendor-CLI
+      # credential import — an empty temp home makes it a deterministic skip
+      # instead of importing a real ~/.codex or ~/.claude login.
+      empty_home =
+        Path.join(System.tmp_dir!(), "evogit-oauth-home-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(empty_home)
+      previous_home_fun = Application.get_env(:evo_git, :auth_home_fun)
+      Application.put_env(:evo_git, :auth_home_fun, fn -> empty_home end)
+
+      env_names = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"]
+      env_snapshot = Enum.map(env_names, fn name -> {name, System.get_env(name)} end)
+      Enum.each(env_names, &System.delete_env/1)
+
+      on_exit(fn ->
+        if previous_home_fun do
+          Application.put_env(:evo_git, :auth_home_fun, previous_home_fun)
+        else
+          Application.delete_env(:evo_git, :auth_home_fun)
+        end
+
+        File.rm_rf!(empty_home)
+
+        for {name, value} <- env_snapshot do
+          if value, do: System.put_env(name, value), else: System.delete_env(name)
+        end
+      end)
+
+      isolate_xdg!("evogit-config-status-oauth")
+      File.mkdir_p!(Config.config_dir())
+
+      :ok
+    end
+
+    # The warning that belongs to a given missing key (checks keep their order).
+    defp warning_for(status, key) do
+      status.missing
+      |> Enum.find_index(&(&1 == key))
+      |> case do
+        nil -> nil
+        index -> Enum.at(status.warnings, index)
+      end
+    end
+
+    test "a resolvable OAuth credential satisfies the :api_key check" do
+      reqllm_key_cleanup()
+
+      auth_file = Path.join(Config.config_dir(), "auth.json")
+
+      File.write!(
+        auth_file,
+        Jason.encode!(%{
+          "openai-codex" => %{"type" => "oauth", "access" => "tok", "refresh" => "refresh"}
+        })
+      )
+
+      # No auth_mode: the OAuth-only provider is auto-detected.
+      File.write!(Config.config_path(), """
+      [llm]
+      oauth_file = "#{auth_file}"
+
+      [[llm.models]]
+      id = "codex"
+      model = "openai_codex:gpt-5.6-terra"
+      """)
+
+      status = Config.config_status()
+
+      refute :api_key in status.missing
+      refute :llm_model in status.missing
+      assert status.ok? == true
+    end
+
+    test "an unresolvable Codex credential flags :api_key and names `codex login`" do
+      reqllm_key_cleanup()
+      auth_file = Path.join(Config.config_dir(), "absent-auth.json")
+
+      File.write!(Config.config_path(), """
+      [llm]
+      oauth_file = "#{auth_file}"
+
+      [[llm.models]]
+      id = "codex"
+      model = "openai_codex:gpt-5.6-terra"
+      auth_mode = "oauth"
+      """)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      warning = warning_for(status, :api_key)
+      assert warning =~ "codex login"
+      assert warning =~ auth_file
+      refute warning == @generic_api_key_warning
+    end
+
+    test "an unresolvable Claude credential names the Claude login / CLAUDE_CODE_OAUTH_TOKEN" do
+      reqllm_key_cleanup()
+      auth_file = Path.join(Config.config_dir(), "absent-claude-auth.json")
+
+      File.write!(Config.config_path(), """
+      [llm]
+      oauth_file = "#{auth_file}"
+
+      [[llm.models]]
+      id = "claude"
+      model = "anthropic:claude-opus-5-5"
+      auth_mode = "oauth"
+      """)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      warning = warning_for(status, :api_key)
+      assert warning =~ "CLAUDE_CODE_OAUTH_TOKEN"
+      assert warning =~ auth_file
+    end
+
+    test "an API key still satisfies the check for an OAuth profile" do
+      reqllm_key_cleanup()
+      ReqLLM.put_key(:openai_api_key, "sk-test")
+
+      File.write!(Config.config_path(), """
+      [llm]
+      oauth_file = "#{Path.join(Config.config_dir(), "absent-auth.json")}"
+
+      [[llm.models]]
+      id = "codex"
+      model = "openai_codex:gpt-5.6-terra"
+      auth_mode = "oauth"
+      """)
+
+      refute :api_key in Config.config_status().missing
+    end
+
+    test "no OAuth profile keeps the generic API-key warning byte-identical" do
+      reqllm_key_cleanup()
+
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "claude"
+      model = "anthropic:claude-opus-5-5"
+      """)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      assert warning_for(status, :api_key) == @generic_api_key_warning
+    end
+
+    test "no configured model profile keeps the generic API-key warning" do
+      reqllm_key_cleanup()
+
+      File.write!(Config.config_path(), """
+      [llm]
+      """)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      assert :llm_model in status.missing
+      assert warning_for(status, :api_key) == @generic_api_key_warning
+    end
+  end
+
   describe "model spec normalization (LLMDB-compatible output)" do
     # Model specs are now normalized to LLMDB-compatible formats instead of
     # plain maps. String model specs pass through as-is (ReqLLM resolves them

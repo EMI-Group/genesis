@@ -3,7 +3,9 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
   Provider/model-aware LLM generation parameters.
 
   `async: false` is REQUIRED: the metadata-lookup seam is a BEAM-global
-  application env key (`:llm_model_metadata_fun`).
+  application env key (`:llm_model_metadata_fun`), and the vendor-login seam
+  (`:auth_home_fun`) is redirected to an empty temp home so no OAuth credential
+  import ever touches the developer's real `~/.codex` / `~/.claude` login files.
   """
   use ExUnit.Case, async: false
 
@@ -13,14 +15,34 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
   alias EvoGit.Config.Schema.LLMConstraints
 
   @seam :llm_model_metadata_fun
+  @auth_home_seam :auth_home_fun
 
   setup do
-    on_exit(fn -> Application.delete_env(:evo_git, @seam) end)
+    # No vendor CLI login must be discoverable: `:auth_home_fun` is the sole
+    # home-directory source for the import (`OAuthImport.sources/2`), so an empty
+    # temp home makes the import a deterministic `{:skipped, :source_missing}`
+    # instead of copying the developer's real tokens into a temp auth file.
+    empty_home =
+      Path.join(System.tmp_dir!(), "evogit-oauth-home-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(empty_home)
+    Application.put_env(:evo_git, @auth_home_seam, fn -> empty_home end)
+
+    on_exit(fn ->
+      Application.delete_env(:evo_git, @seam)
+      Application.delete_env(:evo_git, @auth_home_seam)
+      File.rm_rf!(empty_home)
+    end)
+
     :ok
   end
 
   defp stub_metadata(metadata) do
     Application.put_env(:evo_git, @seam, fn _model -> metadata end)
+  end
+
+  defp tmp_oauth_file do
+    Path.join(System.tmp_dir!(), "evogit-oauth-#{System.unique_integer([:positive])}.json")
   end
 
   describe "provider_options_for_model/1 — native OpenAI only" do
@@ -100,6 +122,181 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
                LLM.profile_generation_params(%{model: "anthropic:claude"}),
                :provider_options
              )
+    end
+  end
+
+  describe "profile_generation_params/1 — OAuth (subscription) profiles" do
+    test "an explicit auth_mode oauth profile gains auth_mode + oauth_file" do
+      for auth_mode <- ["oauth", :oauth] do
+        oauth_file = tmp_oauth_file()
+
+        params =
+          LLM.profile_generation_params(%{
+            id: "claude",
+            model: "anthropic:claude-opus-5-5",
+            auth_mode: auth_mode,
+            oauth_file: oauth_file
+          })
+
+        assert params[:provider_options] == [auth_mode: :oauth, oauth_file: oauth_file],
+               "auth_mode #{inspect(auth_mode)} did not produce the OAuth options"
+      end
+    end
+
+    test "the legacy flat path threads [llm] auth_mode into provider_options" do
+      oauth_file = tmp_oauth_file()
+      EvoGit.TestSupport.ConfigDir.isolate!("evogit-legacy-oauth")
+
+      # The GLOBAL managed-file override (`[llm] oauth_file`) is what the legacy
+      # flat profile falls through to: `build_legacy_default_profile/1` carries
+      # `auth_mode` but no profile-level `oauth_file`.
+      File.mkdir_p!(EvoGit.Config.config_dir())
+
+      File.write!(EvoGit.Config.config_path(), """
+      [llm]
+      oauth_file = "#{oauth_file}"
+      """)
+
+      # Flat config: no [[llm.models]] → ONE synthesized "default" profile.
+      config = %{llm: %{model: "anthropic:claude-opus-5-5", auth_mode: "oauth"}}
+
+      [profile] = EvoGit.Config.Schema.effective_model_profiles(config)
+      assert profile.auth_mode == "oauth"
+
+      assert LLM.profile_generation_params(profile)[:provider_options] ==
+               [auth_mode: :oauth, oauth_file: oauth_file]
+    end
+
+    test "an auth_mode-less profile auto-detects an OAuth-only provider" do
+      EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-detect")
+
+      params = LLM.profile_generation_params(%{model: "openai_codex:gpt-5.6-terra"})
+
+      assert params[:provider_options] == [
+               auth_mode: :oauth,
+               oauth_file: Path.join(EvoGit.Config.config_dir(), "auth.json")
+             ]
+    end
+
+    test "a user provider_options override keeps its keys and gains the OAuth defaults" do
+      oauth_file = tmp_oauth_file()
+
+      params =
+        LLM.profile_generation_params(%{
+          model: "anthropic:claude-opus-5-5",
+          auth_mode: "oauth",
+          oauth_file: oauth_file,
+          provider_options: %{some_key: "v"}
+        })
+
+      options = params[:provider_options]
+      assert options[:some_key] == "v"
+      assert options[:auth_mode] == :oauth
+      assert options[:oauth_file] == oauth_file
+    end
+
+    test "an oauth_file inside provider_options wins over the profile's" do
+      profile_file = tmp_oauth_file()
+      inner_file = tmp_oauth_file()
+
+      params =
+        LLM.profile_generation_params(%{
+          model: "anthropic:claude-opus-5-5",
+          auth_mode: "oauth",
+          oauth_file: profile_file,
+          provider_options: %{oauth_file: inner_file}
+        })
+
+      assert params[:provider_options][:oauth_file] == inner_file
+      assert params[:provider_options][:auth_mode] == :oauth
+    end
+
+    test "an api_key profile gets no auth_mode / oauth_file" do
+      params =
+        LLM.profile_generation_params(%{
+          model: "anthropic:claude-opus-5-5",
+          auth_mode: "api_key"
+        })
+
+      refute Keyword.has_key?(params, :provider_options)
+    end
+
+    test "an api_key profile never touches the managed OAuth file" do
+      oauth_file = tmp_oauth_file()
+
+      refute Keyword.has_key?(
+               LLM.profile_generation_params(%{
+                 model: "anthropic:claude-opus-5-5",
+                 auth_mode: "api_key",
+                 oauth_file: oauth_file
+               }),
+               :provider_options
+             )
+
+      refute File.exists?(oauth_file)
+    end
+
+    test "oauth_profile?/1 accepts both spellings and auto-detects OAuth-only providers" do
+      assert LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5", auth_mode: "oauth"})
+      assert LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5", auth_mode: :oauth})
+      assert LLM.oauth_profile?(%{model: "openai_codex:gpt-5.6-terra"})
+      # :openai is the Codex provider's alias, but it is not OAuth-ONLY.
+      refute LLM.oauth_profile?(%{model: "openai:gpt-6-sol"})
+      refute LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5", auth_mode: "api_key"})
+      refute LLM.oauth_profile?(%{model: "anthropic:claude-opus-5-5"})
+      refute LLM.oauth_profile?(%{})
+      refute LLM.oauth_profile?(:nope)
+    end
+
+    test "oauth_credential_status/1 degrades to :no_credentials for a missing file" do
+      assert {:error, :no_credentials} =
+               LLM.oauth_credential_status(%{
+                 model: "anthropic:claude-opus-5-5",
+                 auth_mode: "oauth",
+                 oauth_file: tmp_oauth_file()
+               })
+    end
+
+    test "oauth_credential_status/1 reports a written managed entry" do
+      oauth_file = tmp_oauth_file()
+
+      File.write!(
+        oauth_file,
+        Jason.encode!(%{"anthropic" => %{"type" => "oauth", "access" => "tok"}})
+      )
+
+      on_exit(fn -> File.rm(oauth_file) end)
+
+      assert {:ok, %{account_id: nil}} =
+               LLM.oauth_credential_status(%{
+                 model: "anthropic:claude-opus-5-5",
+                 auth_mode: "oauth",
+                 oauth_file: oauth_file
+               })
+    end
+  end
+
+  describe "provider_options_for_model/1 — OAuth-only providers" do
+    test "an OAuth-only provider gets OAuth options and NEVER store: false" do
+      EvoGit.TestSupport.ConfigDir.isolate!("evogit-codex-options")
+
+      options = LLM.provider_options_for_model("openai_codex:gpt-5.6-terra")
+
+      assert options[:auth_mode] == :oauth
+      assert options[:oauth_file] == Path.join(EvoGit.Config.config_dir(), "auth.json")
+      refute Keyword.has_key?(options, :store)
+    end
+
+    test "a native OpenAI endpoint still gets store: false, not OAuth options" do
+      assert LLM.provider_options_for_model("openai:gpt-6-sol") == [store: false]
+    end
+
+    test "an OpenAI-compatible custom endpoint still gets no options at all" do
+      assert LLM.provider_options_for_model(%{
+               provider: :openai,
+               id: "x",
+               base_url: "https://example.test/v1"
+             }) == []
     end
   end
 

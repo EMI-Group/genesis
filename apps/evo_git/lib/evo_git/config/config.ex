@@ -635,6 +635,14 @@ defmodule EvoGit.Config do
   - `:ok?` — boolean, true if all critical config is present
   - `:validation_errors` — list of `EvoGit.Config.Schema.ValidationError` structs from
     the last `resolve/0` call, or empty list if none
+
+  The `:api_key` check is OAuth-aware: it passes when an API key is configured
+  OR when at least one configured model profile authenticates through a
+  subscription (OAuth) credential that actually resolves — a subscription-only
+  setup must never be reported as "missing an API key". When it does fail and
+  OAuth profile(s) are configured, the warning names the vendor login step
+  (`EvoGit.Auth.login_instructions/1`) and the managed credential file
+  (`EvoGit.Auth.oauth_file/1`) instead of only the generic API-key text.
   """
   @spec config_status() :: %{
           missing: [atom()],
@@ -644,13 +652,12 @@ defmodule EvoGit.Config do
         }
   def config_status do
     resolved = resolve()
+    profiles = EvoGit.Config.Schema.model_profiles(resolved)
 
     checks = [
       {:llm_model, "LLM model is not configured. Set [llm] model in config.toml.",
        fn ->
          # Check that at least one model profile has a non-nil/non-empty model
-         profiles = EvoGit.Config.Schema.model_profiles(resolved)
-
          has_model =
            Enum.any?(profiles, fn profile ->
              case Map.get(profile, :model) do
@@ -669,10 +676,9 @@ defmodule EvoGit.Config do
 
          not has_model
        end},
-      {:api_key,
-       "No API key found. Add keys to credentials.toml or configure via the settings page.",
+      {:api_key, fn -> api_key_warning(profiles) end,
        fn ->
-         not api_key_present?(credentials())
+         not api_key_ok?(profiles)
        end},
       {:search_api_key, "Web search is enabled but the API key is not configured.",
        fn ->
@@ -684,9 +690,14 @@ defmodule EvoGit.Config do
        end}
     ]
 
-    # Evaluate each check once, collecting {key, message} pairs for failing checks.
+    # Evaluate each check once, collecting {key, message} pairs for failing
+    # checks. A check's message may be a 0-arity fun when it depends on the
+    # config state (the :api_key warning names the vendor login step for an
+    # OAuth profile, and stays byte-identical otherwise).
     failing =
-      for {key, msg, check} <- checks, check.(), do: {key, msg}
+      for {key, msg, check} <- checks, check.() do
+        {key, if(is_function(msg, 0), do: msg.(), else: msg)}
+      end
 
     %{
       missing: Enum.map(failing, &elem(&1, 0)),
@@ -694,6 +705,58 @@ defmodule EvoGit.Config do
       ok?: failing == [],
       validation_errors: Process.get(:evo_git_config_validation_errors, [])
     }
+  end
+
+  # The generic API-key warning — kept byte-identical for a config with no OAuth
+  # profile, so the well-known message never changes out from under the UI.
+  @missing_api_key_warning "No API key found. Add keys to credentials.toml or configure via the settings page."
+
+  # The :api_key check passes when an API key is configured OR when at least one
+  # configured model profile authenticates through a subscription (OAuth)
+  # credential that resolves. Everything here is fault-isolated (see
+  # `EvoGit.Config.Schema.LLM.oauth_credential_status/1`): a broken or missing
+  # auth file degrades to "not configured", never raises.
+  defp api_key_ok?(profiles) do
+    api_key_present?(credentials()) or oauth_credentials_resolve?(profiles)
+  end
+
+  defp api_key_warning(profiles) do
+    case oauth_providers(profiles) do
+      [] ->
+        @missing_api_key_warning
+
+      providers ->
+        instructions =
+          providers
+          |> Enum.map(&EvoGit.Auth.login_instructions/1)
+          |> Enum.map_join("\n", &String.trim/1)
+
+        "No API key found and no usable subscription (OAuth) credential for " <>
+          Enum.map_join(providers, ", ", &to_string/1) <>
+          ". " <> instructions <> "\nManaged OAuth file: #{EvoGit.Auth.oauth_file([])}"
+    end
+  end
+
+  # Configured model profiles that authenticate through a subscription.
+  defp oauth_profiles(profiles) do
+    Enum.filter(profiles, &EvoGit.Config.Schema.LLM.oauth_profile?/1)
+  end
+
+  # The distinct OAuth providers behind those profiles, normalized so an
+  # `:openai` model reports the same login step as `:openai_codex`.
+  defp oauth_providers(profiles) do
+    profiles
+    |> oauth_profiles()
+    |> Enum.map(&EvoGit.Config.Schema.LLM.provider_from_model(Map.get(&1, :model)))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&EvoGit.Auth.normalize_provider/1)
+    |> Enum.uniq()
+  end
+
+  defp oauth_credentials_resolve?(profiles) do
+    profiles
+    |> oauth_profiles()
+    |> Enum.any?(&match?({:ok, _}, EvoGit.Config.Schema.LLM.oauth_credential_status(&1)))
   end
 
   @doc """
