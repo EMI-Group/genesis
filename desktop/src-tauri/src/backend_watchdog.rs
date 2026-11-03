@@ -279,9 +279,9 @@ pub fn tcp_accepting(port: u16, timeout: Duration) -> bool {
 // Presentation stays isolated from watchdog lifecycle decisions.
 #[path = "shell_pages.rs"]
 mod shell_pages;
-use shell_pages::{error_page_data_url, loading_page_data_url, startup_page_data_url};
 #[cfg(test)]
 use shell_pages::percent_encode;
+use shell_pages::{error_page_data_url, loading_page_data_url, startup_page_data_url};
 
 // ---------------------------------------------------------------------------
 // Page-load predicate
