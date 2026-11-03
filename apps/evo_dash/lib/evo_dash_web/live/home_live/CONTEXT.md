@@ -25,7 +25,7 @@ User wrappers remain `flex justify-end` around a direct bubble div; assistant/er
 Only the last assistant entry receives `chat_task_status` and `thought_process`, while every assistant entry receives its own raw-view flag.
 `UserMessage.user_message/1` is the single bubble implementation for typed and suggestion sends, with content-fit `w-fit`, responsive max-width, neutral `bg-base-200`, left-aligned escaped text, and no shadow.
 
-`AssistantMessage.assistant_message/1` prioritizes the answer over task chrome: a small sparkles avatar beside a borderless, shadowless, min-width-zero content column.
+`AssistantMessage.assistant_message/1` prioritizes the answer over task chrome: a circular brand-mark avatar beside a borderless, shadowless, min-width-zero content column whose content is preceded by a small bold `Genesis` name label placed outside `group/assistant`.
 The optional status row keeps the localized Task label as quiet sentence-case metadata plus the shared status badge, ping dots for running/cancelling, and spinner for finalizing.
 Status colors come only from `Helpers.task_status_badge/1` and `task_status_dot_class/1`, not a status-colored card frame.
 Empty streaming entries keep the three animated dots, nonempty streaming entries keep escaped raw text with `help-caret`, and neither renders action buttons or Markdown.
