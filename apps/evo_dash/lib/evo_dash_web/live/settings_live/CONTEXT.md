@@ -6,7 +6,7 @@ Support modules extracted from `EvoDashWeb.SettingsLive` to keep the main LiveVi
 
 ## Routing Table
 
-None — leaf directory (six module files: `node_data.ex`, `model_profile_helpers.ex`, `model_profile_events.ex`, `config_io.ex`, `search_events.ex`, `custom_agent_events.ex`).
+None — leaf directory (seven module files: `node_data.ex`, `model_profile_helpers.ex`, `model_profile_events.ex`, `auth_status.ex`, `config_io.ex`, `search_events.ex`, `custom_agent_events.ex`).
 
 ## API Surface
 
