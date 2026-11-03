@@ -8,6 +8,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
 
   alias EvoDash.SettingsUtils
   alias EvoGit.Config.LLMCatalog
+  alias EvoGit.Config.Schema.LLM, as: LLMSchema
 
   @doc """
   Adds a new model profile to the file_config's `[:llm, :models]` list.
@@ -15,6 +16,11 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   Generates a unique profile id and creates a profile map with default
   concurrency of 3. When `model_value` is non-nil (e.g. from a shortcut), the
   `:model` key is included; otherwise it is omitted so the user can fill it in.
+
+  A newly created profile for an OAuth-ONLY provider (e.g. `openai_codex`) is
+  stamped with `auth_mode: "oauth"` — that provider can never be used with an
+  API key, so the persisted TOML is self-describing. Providers that also accept
+  an API key get no `:auth_mode` key (API key stays the default).
   """
   def add_model_profile(file_config, model_value) do
     models = get_in(file_config, [:llm, :models]) || []
@@ -31,7 +37,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
       end
 
     id = generate_profile_id(models, base_name_from_model_value(model_value))
-    profile = %{id: id, concurrency: 3} |> maybe_put_profile_model(model_value)
+
+    profile =
+      %{id: id, concurrency: 3}
+      |> maybe_put_profile_model(model_value)
+      |> maybe_stamp_oauth_auth_mode(model_value)
+
     put_in_model_profiles(file_config, models ++ [profile])
   end
 
@@ -171,6 +182,20 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   is non-empty (absent/`[]` → key omitted); day values are trim + downcase +
   vocabulary-whitelist normalized with NO dashboard-side validation errors —
   the evo_git core owns authoritative validation.
+
+  Also parses the OAuth/subscription fields `auth_mode` and `oauth_file`, both
+  derived from the RESOLVED provider (the whitelist-resolved provider atom, else
+  `EvoGit.Config.Schema.LLM.provider_from_model/1` on the built model value):
+
+  - `:auth_mode` is written ONLY when the provider supports OAuth AND the
+    effective mode is `"oauth"` (the trimmed/downcased form value, defaulting to
+    `"oauth"` for an OAuth-only provider and `"api_key"` otherwise). The default
+    API-key mode writes NO key, so TOML stays clean.
+  - `:oauth_file` is written ONLY when the provider supports OAuth, the
+    effective mode is `"oauth"`, and the trimmed form value is non-blank.
+
+  A provider without OAuth support never gains either key, even from a stale
+  draft.
   """
   def parse_model_profile_params(params, id) do
     provider_str = String.trim(params["provider"] || "")
@@ -258,6 +283,12 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
                 final_spec
               end
 
+            # The provider the OAuth keys belong to: the whitelist-resolved
+            # atom when the form's provider field matched a catalog entry, else
+            # whatever the built model value resolves to (nil for a plain,
+            # colon-less model id). Never `String.to_atom` on user input.
+            auth_provider = provider_atom || LLMSchema.provider_from_model(model_value)
+
             profile =
               %{id: id}
               |> Map.put(:model, model_value)
@@ -274,6 +305,8 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
               # peak_fields is %{} when disabled, else carries :peak_concurrency
               # and/or :peak_hours (absent keys → TOML omits them).
               |> Map.merge(peak_fields)
+              |> maybe_put_auth_mode(auth_provider, params)
+              |> maybe_put_oauth_file(auth_provider, params)
 
             {:ok, profile}
 
@@ -440,6 +473,60 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   def maybe_put_map(map, key, map_value) when is_map(map_value), do: Map.put(map, key, map_value)
   def maybe_put_map(map, _key, _), do: map
 
+  # Writes the `:auth_mode` profile key ONLY when the provider supports OAuth
+  # AND the effective mode is "oauth". API-key (the default) writes NO key so
+  # the persisted TOML stays clean; an OAuth-only provider is stamped "oauth"
+  # even when the form sent nothing. A provider without OAuth support never
+  # gains the key, even from a stale draft.
+  defp maybe_put_auth_mode(profile, nil, _params), do: profile
+
+  defp maybe_put_auth_mode(profile, provider, params) do
+    if LLMCatalog.supports_oauth?(provider) and effective_auth_mode(provider, params) == "oauth" do
+      Map.put(profile, :auth_mode, "oauth")
+    else
+      profile
+    end
+  end
+
+  # Writes the `:oauth_file` profile key ONLY when the provider supports OAuth,
+  # the effective mode is "oauth", and the form value is non-blank.
+  defp maybe_put_oauth_file(profile, nil, _params), do: profile
+
+  defp maybe_put_oauth_file(profile, provider, params) do
+    with true <- LLMCatalog.supports_oauth?(provider),
+         "oauth" <- effective_auth_mode(provider, params),
+         path when is_binary(path) <- trimmed_param(params, "oauth_file") do
+      Map.put(profile, :oauth_file, path)
+    else
+      _other -> profile
+    end
+  end
+
+  # The effective auth mode: the trimmed/downcased form value when non-blank,
+  # else "oauth" for an OAuth-only provider, else the API-key default.
+  defp effective_auth_mode(provider, params) do
+    case trimmed_param(params, "auth_mode") do
+      nil -> if LLMCatalog.oauth_only?(provider), do: "oauth", else: "api_key"
+      mode -> String.downcase(mode)
+    end
+  end
+
+  # A form param trimmed to nil when blank/absent/non-binary.
+  defp trimmed_param(params, key) when is_map(params) do
+    case params[key] do
+      value when is_binary(value) ->
+        case String.trim(value) do
+          "" -> nil
+          trimmed -> trimmed
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp trimmed_param(_params, _key), do: nil
+
   @doc """
   Safely reads the id from a profile map whether the key is an atom or string
   (TOML-parsed profiles may arrive with string keys before normalization).
@@ -513,6 +600,25 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpers do
   defp maybe_put_profile_model(profile, nil), do: profile
   defp maybe_put_profile_model(profile, ""), do: profile
   defp maybe_put_profile_model(profile, model_value), do: Map.put(profile, :model, model_value)
+
+  # Stamps `auth_mode: "oauth"` on a NEWLY created profile whose provider is
+  # OAuth-only (e.g. `openai_codex`) — such a provider can never be used with
+  # an API key, so the persisted profile is self-describing. Providers that also
+  # accept an API key get no key (API key stays the default), and a nil/empty
+  # model value yields no key at all.
+  defp maybe_stamp_oauth_auth_mode(profile, model_value) do
+    case LLMSchema.provider_from_model(model_value) do
+      nil ->
+        profile
+
+      provider ->
+        if LLMCatalog.oauth_only?(provider) do
+          Map.put(profile, :auth_mode, "oauth")
+        else
+          profile
+        end
+    end
+  end
 
   # Swaps the elements at indices `i` and `j` in the list (both assumed in
   # bounds). Reads both original values before either replacement, so the

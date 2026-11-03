@@ -124,7 +124,7 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileEvents do
             end
 
           # The model_string from shortcut buttons is in "provider:model"
-          # format (e.g. "openai:gpt-5.5"). resolve_model_spec expects
+          # format (e.g. "openai:gpt-5.6-terra"). resolve_model_spec expects
           # just the model id portion, so we strip the provider prefix.
           model_name =
             if String.contains?(model_string, ":") do

@@ -6,6 +6,7 @@ defmodule EvoDashWeb.SettingsLive do
   use EvoDashWeb, :live_view
   alias EvoGit.Config.Schema
   alias EvoDash.SettingsUtils
+  alias EvoDashWeb.SettingsLive.AuthStatus
   alias EvoDashWeb.SettingsLive.ConfigIO
   alias EvoDashWeb.SettingsLive.CustomAgentEvents
   alias EvoDashWeb.SettingsLive.ModelProfileEvents
@@ -117,8 +118,8 @@ defmodule EvoDashWeb.SettingsLive do
                   <span class="text-xs font-bold uppercase tracking-wider text-base-content/70">{gettext(
                     "Example model names:"
                   )}</span>
-                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-4-7</span>
-                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.5</span>
+                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">anthropic:claude-opus-5-5</span>
+                  <span class="badge badge-ghost font-mono text-xs px-3 py-2 rounded-md bg-base-200 border-base-300">openai:gpt-5.6-terra</span>
                 </div>
               </div>
             </div>
@@ -829,6 +830,12 @@ defmodule EvoDashWeb.SettingsLive do
         selected_variant_id: nil,
         selected_model_string: nil,
         llm_test_status: :idle,
+        # Per-profile OAuth/subscription credential status (see
+        # EvoDashWeb.SettingsLive.AuthStatus): `%{profile_id => %{state:, expires:,
+        # account_id:, login_instructions:, oauth_file:}}`. Loaded
+        # asynchronously for the viewed node and stale-guarded by node + seq.
+        auth_statuses: %{},
+        auth_status_seq: 0,
         editing_profile_id: nil,
         profile_form_draft: nil,
         # User-authoritative open state of the profile edit form's "Advanced
@@ -883,6 +890,15 @@ defmodule EvoDashWeb.SettingsLive do
     # the result handler re-filters and re-resolves the active category.
     socket = assign(socket, :schemas_by_category, socket.assigns.all_schemas_by_category)
     socket = assign(socket, :platform_os, socket.assigns.platform_os || :unknown)
+
+    # The OAuth auth-status assigns must SURVIVE navigation (category switch,
+    # push_patch): seed them only when missing, never overwrite a loaded map.
+    socket =
+      if Map.has_key?(socket.assigns, :auth_statuses) do
+        socket
+      else
+        assign(socket, auth_statuses: %{}, auth_status_seq: 0)
+      end
 
     # Seed the active category with a flash-minimizing rule: non-gated
     # categories (`?category=agents`, `:remote_connections`, `:llm`, ...)
@@ -994,7 +1010,9 @@ defmodule EvoDashWeb.SettingsLive do
             |> assign(:config_status, saved_config_status(saved))
             |> put_flash(:info, success_msg)
 
-          {:noreply, socket}
+          # The saved config may have added/edited OAuth profiles — refresh
+          # their credential status for the viewed (remote) node.
+          {:noreply, start_auth_status_load(socket)}
 
         {:ok, {:error, reason}} ->
           # Keep the previously rendered config — nothing was persisted.
@@ -1057,6 +1075,20 @@ defmodule EvoDashWeb.SettingsLive do
       {:noreply, assign(socket, custom_tools_status: result, custom_tools_loading: false)}
     else
       {:noreply, assign(socket, :custom_tools_loading, false)}
+    end
+  end
+
+  @impl true
+  def handle_info({:settings_auth_status_loaded, requested_node, seq, statuses}, socket) do
+    # Two stale guards, no polling: the load was requested for `requested_node`
+    # at spawn time (a node switch makes it describe another node's credentials)
+    # and carries the `:auth_status_seq` it was spawned with (a newer load is
+    # already in flight and will deliver fresher values). Either mismatch drops
+    # the result — the map stays `:unknown` until the newer load lands.
+    if requested_node != socket.assigns.current_node or seq != socket.assigns.auth_status_seq do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, :auth_statuses, statuses)}
     end
   end
 
@@ -1625,6 +1657,15 @@ defmodule EvoDashWeb.SettingsLive do
     ModelProfileEvents.move_model_profile(socket, params)
   end
 
+  # Refresh button on the model-profiles editor's auth-status badges — re-reads
+  # the viewed node's OAuth credential state ASYNCHRONOUSLY (a cross-node RPC on
+  # remote nodes). Result arrives as
+  # `{:settings_auth_status_loaded, node, seq, statuses}`.
+  @impl true
+  def handle_event("refresh_auth_status", _params, socket) do
+    {:noreply, start_auth_status_load(socket)}
+  end
+
   @impl true
   def handle_event("toggle_profile_advanced", params, socket) do
     ModelProfileEvents.toggle_profile_advanced(socket, params)
@@ -2106,7 +2147,9 @@ defmodule EvoDashWeb.SettingsLive do
             socket
           end
 
-        {:noreply, socket}
+        # The saved config may have added/edited OAuth profiles — refresh their
+        # credential status for the viewed node.
+        {:noreply, start_auth_status_load(socket)}
 
       {:ok, {:error, reason}} ->
         {:noreply, save_failed_flash(socket, reason)}
@@ -2461,6 +2504,21 @@ defmodule EvoDashWeb.SettingsLive do
       script_save_error: nil,
       script_test_results: []
     )
+    |> start_auth_status_load()
+  end
+
+  # Fires the ASYNC OAuth/subscription credential-status load for the currently
+  # viewed node (see EvoDashWeb.SettingsLive.AuthStatus). Fire-and-forget: the
+  # result arrives as `{:settings_auth_status_loaded, node, seq, statuses}` and
+  # is stale-guarded by node + seq. `AuthStatus.start/2` is total — it returns
+  # `:ok` even when the task supervisor is unavailable — so `:ok =` is a
+  # deliberate assertion, not a case.
+  defp start_auth_status_load(socket) do
+    seq = socket.assigns.auth_status_seq + 1
+    socket = assign(socket, :auth_status_seq, seq)
+    profiles = EvoGit.Config.Schema.model_profiles(socket.assigns.file_config || %{})
+    :ok = AuthStatus.start(socket, profiles)
+    socket
   end
 
   # Re-resolves the active category from the captured `?category=` param
