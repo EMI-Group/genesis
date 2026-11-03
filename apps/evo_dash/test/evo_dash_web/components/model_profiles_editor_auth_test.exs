@@ -251,6 +251,144 @@ defmodule EvoDashWeb.ModelProfilesEditorAuthTest do
       refute body =~ "No subscription login found"
     end
 
+    # Pins: the "login found, managed file not writable" state is its own
+    # actionable line — a warning-toned verdict, what happened, the managed path
+    # and the writable-path remedy. The login guidance and the "we import it
+    # next run" note are WITHHELD: the login is not the problem here.
+    test "an unwritable managed file renders the actionable warning, never login guidance" do
+      html =
+        render_edit_form(
+          %{id: "p1", model: "anthropic:claude-sonnet-5-5", auth_mode: "oauth"},
+          auth_statuses: %{
+            "p1" => %{
+              state: :unwritable,
+              login_instructions: "UNWITHDRAWN-LOGIN-GUIDANCE",
+              oauth_file: "/ro/genesis/auth.json"
+            }
+          }
+        )
+
+      body = text(html)
+      assert body =~ "Login found, managed credential file not writable"
+
+      assert body =~
+               "Genesis found the vendor login but could not write its managed credential file."
+
+      assert body =~ "Managed credential file: /ro/genesis/auth.json"
+
+      assert body =~
+               "Set [llm] oauth_file (or this profile's oauth_file) to a writable location, then recheck."
+
+      # Warning styling, consistent with the other hints on the page.
+      assert find(html, "span.hero-exclamation-triangle") != []
+      assert [status_line] = find(html, "div.mt-2.space-y-1")
+      assert Floki.attribute(status_line, "class") == ["mt-2 space-y-1"]
+      # The icon AND the label carry the amber warning tone.
+      assert length(Floki.find(status_line, "span.text-warning")) == 2
+
+      # The login is NOT the problem: no login guidance, no verdict, no
+      # "imported next run" note.
+      refute body =~ "UNWITHDRAWN-LOGIN-GUIDANCE"
+      refute body =~ "claude setup-token"
+      refute body =~ "No subscription login found"
+      refute body =~ "Login detected"
+      refute body =~ "Genesis imports the vendor login automatically on the next run."
+    end
+
+    # Pins: the managed path is still shown when the status carries none — the
+    # profile's own configured `oauth_file` is the node-independent fallback
+    # (never `EvoGit.Auth.default_oauth_file/0`, which describes the dashboard
+    # machine and would be wrong for a remote node).
+    test "an unwritable status without a path falls back to the profile's oauth_file" do
+      html =
+        render_edit_form(
+          %{
+            id: "p1",
+            model: "anthropic:claude-sonnet-5-5",
+            auth_mode: "oauth",
+            oauth_file: "/configured/auth.json"
+          },
+          auth_statuses: %{"p1" => %{state: :unwritable}}
+        )
+
+      body = text(html)
+      assert body =~ "Login found, managed credential file not writable"
+      assert body =~ "Managed credential file: /configured/auth.json"
+      refute body =~ EvoGit.Auth.default_oauth_file()
+    end
+
+    # Pins: the string-keyed shape (a JSON-ish status map) normalizes to the
+    # SAME unwritable state instead of falling back to neutral guidance.
+    test "a string-keyed unwritable status normalizes identically" do
+      html =
+        render_edit_form(
+          %{id: "p1", model: "anthropic:claude-sonnet-5-5", auth_mode: "oauth"},
+          auth_statuses: %{
+            "p1" => %{"state" => "unwritable", "oauth_file" => "/ro/string.json"}
+          }
+        )
+
+      body = text(html)
+      assert body =~ "Login found, managed credential file not writable"
+      assert body =~ "Managed credential file: /ro/string.json"
+      refute body =~ "Subscription login"
+    end
+
+    # Regression pin: all four verdict states keep their own distinguishing
+    # line, and none of them bleeds into another's.
+    test "every verdict state renders its own distinct line" do
+      statuses = %{
+        "p1" => %{
+          state: :ok,
+          expires: @future_expiry_ms,
+          account_id: "acct",
+          oauth_file: "/managed/auth.json"
+        }
+      }
+
+      ok_body = render_with_status(statuses)
+
+      assert ok_body =~ "Login detected"
+      assert ok_body =~ "Managed credential file: /managed/auth.json"
+      refute ok_body =~ "No subscription login found"
+      refute ok_body =~ "Login found, managed credential file not writable"
+      refute ok_body =~ "Subscription login"
+
+      missing_body =
+        render_with_status(%{
+          "p1" => %{state: :missing, login_instructions: nil, oauth_file: "/managed/auth.json"}
+        })
+
+      assert missing_body =~ "No subscription login found"
+      assert missing_body =~ "claude setup-token"
+      assert missing_body =~ "Genesis imports the vendor login automatically on the next run."
+      refute missing_body =~ "Login detected"
+      refute missing_body =~ "Login found, managed credential file not writable"
+
+      unknown_body = render_with_status(%{"p1" => %{state: :unknown}})
+
+      assert unknown_body =~ "Subscription login"
+      refute unknown_body =~ "Login detected"
+      refute unknown_body =~ "No subscription login found"
+      refute unknown_body =~ "Login found, managed credential file not writable"
+
+      unwritable_body =
+        render_with_status(%{"p1" => %{state: :unwritable, oauth_file: "/managed/auth.json"}})
+
+      assert unwritable_body =~ "Login found, managed credential file not writable"
+      assert unwritable_body =~ "Set [llm] oauth_file"
+      refute unwritable_body =~ "Login detected"
+      refute unwritable_body =~ "No subscription login found"
+      refute unwritable_body =~ "Genesis imports the vendor login automatically on the next run."
+
+      # A malformed / non-map entry is NOT a new state: it degrades to neutral
+      # guidance exactly like before.
+      degraded_body = render_with_status(%{"p1" => "bogus"})
+
+      assert degraded_body =~ "Subscription login"
+      refute degraded_body =~ "Login found, managed credential file not writable"
+    end
+
     # Pins: the recheck affordance lives INSIDE the status line and is a plain
     # form-less button (the event is handled by SettingsLive).
     test "the Recheck control is a plain button inside the status line" do
@@ -277,6 +415,18 @@ defmodule EvoDashWeb.ModelProfilesEditorAuthTest do
   # Renders the editor with a single profile in SUMMARY (read-only row) mode.
   defp render_summary_row(profile, opts \\ []) do
     render_editor(profile, nil, opts)
+  end
+
+  # One OAuth-enabled anthropic profile in EDIT mode (so the detail lines
+  # render), with the given `auth_statuses` map.
+  defp render_with_status(auth_statuses) do
+    html =
+      render_edit_form(
+        %{id: "p1", model: "anthropic:claude-sonnet-5-5", auth_mode: "oauth"},
+        auth_statuses: auth_statuses
+      )
+
+    text(html)
   end
 
   defp render_editor(profile, editing_profile_id, opts) do

@@ -22,6 +22,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   use EvoDashWeb.ConnCase, async: true
   import Phoenix.LiveViewTest
 
+  alias EvoDashWeb.SettingsLive.AuthStatus
+
   # Seeded profile ids. `profile-1` is anthropic WITH `auth_mode = "oauth"`,
   # `profile-2` is the OAuth-only `openai_codex`, `profile-3` is a plain
   # anthropic API-key profile and `profile-4` a plain deepseek API-key profile
@@ -236,6 +238,105 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       refute row =~ "Login detected"
       refute row =~ "No subscription login found"
       refute row =~ "Subscription login"
+    end
+
+    # "The vendor login WAS found and parsed, but Genesis could not write its
+    # managed copy" is its own state: the page must show the actionable
+    # warning + managed path + writable-path remedy, and must NOT show the
+    # one-time login guidance (the login is not the problem).
+    test "an :unwritable status renders the actionable warning, never login guidance", %{
+      conn: conn,
+      config_root: dir
+    } do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
+
+      entry = %{
+        state: :unwritable,
+        expires: nil,
+        account_id: nil,
+        login_instructions: "SHOULD-NOT-RENDER-LOGIN-GUIDANCE",
+        oauth_file: "/ro/genesis/auth.json"
+      }
+
+      html = inject_statuses(view, %{@oauth_profile => entry})
+
+      assert html =~ "Login found, managed credential file not writable"
+      assert html =~ "Managed credential file: /ro/genesis/auth.json"
+
+      # The raw HTML escapes the apostrophe in "profile's", so assert the two
+      # halves of the remedy sentence instead of the literal string.
+      assert html =~ "Set [llm] oauth_file (or this profile"
+      assert html =~ "to a writable location, then recheck."
+
+      # No login guidance of any kind, and no "we import it next run" note.
+      refute html =~ "SHOULD-NOT-RENDER-LOGIN-GUIDANCE"
+      refute html =~ "claude setup-token"
+      refute html =~ "Genesis imports the vendor login automatically on the next run."
+      refute html =~ "No subscription login found"
+      refute html =~ "Login detected"
+    end
+
+    # Regression pin: the neutral state still renders neutral guidance with NO
+    # verdict — the new state must not have swallowed it.
+    test "an :unknown status keeps the neutral no-verdict line", %{
+      conn: conn,
+      config_root: dir
+    } do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = inject_statuses(view, %{@oauth_profile => %{state: :unknown}})
+
+      assert html =~ "Subscription login"
+      refute html =~ "Login detected"
+      refute html =~ "No subscription login found"
+      refute html =~ "Login found, managed credential file not writable"
+    end
+  end
+
+  # The core's credential-status result → `:auth_statuses` state mapping, pinned
+  # directly so the new outcome's shape contract cannot drift (the core end of
+  # it lands in parallel; an older remote daemon never sends this atom at all).
+  describe "credential status classification (pure)" do
+    test "an unwritable managed file is its own state, never :unknown" do
+      assert AuthStatus.classify({:error, {:managed_file_unwritable, :eacces}}, "/x/auth.json") ==
+               {:unwritable, "/x/auth.json"}
+    end
+
+    test "the remote (erpc) shape classifies identically" do
+      assert AuthStatus.classify_remote(
+               {:ok, {:error, {:managed_file_unwritable, :eacces}}},
+               {:ok, "/x/auth.json"}
+             ) == {:unwritable, "/x/auth.json"}
+
+      # A failed path lookup only drops the path; the state survives.
+      assert AuthStatus.classify_remote(
+               {:ok, {:error, {:managed_file_unwritable, :eacces}}},
+               {:error, :badrpc}
+             ) == {:unwritable, nil}
+    end
+
+    test "every other shape keeps its existing classification" do
+      assert AuthStatus.classify({:ok, %{expires: 1, account_id: "a"}}, "/x") ==
+               {:ok, %{expires: 1, account_id: "a"}, "/x"}
+
+      assert AuthStatus.classify({:error, :no_credentials}, "/x") == {:missing, "/x"}
+      assert AuthStatus.classify({:error, :invalid_credentials}, "/x") == {:missing, "/x"}
+
+      # Atom-precise: a differently-named error tuple, a non-map verdict, a bare
+      # term and a transport failure all stay neutral (neutral guidance, no
+      # verdict) exactly as before.
+      assert AuthStatus.classify({:error, {:managed_file_unwritable_reason, :x}}, "/x") ==
+               :unknown
+
+      assert AuthStatus.classify({:error, {:some_other_problem, :x}}, "/x") == :unknown
+      assert AuthStatus.classify({:ok, "bogus"}, "/x") == :unknown
+      assert AuthStatus.classify(:something_else, "/x") == :unknown
+      assert AuthStatus.classify_remote({:error, :undef}, {:ok, "/x"}) == :unknown
+      assert AuthStatus.classify_remote({:error, {:badrpc, :nodedown}}, {:ok, "/x"}) == :unknown
+      assert AuthStatus.classify_remote({:ok, {:ok, "bogus"}}, {:ok, "/x"}) == :unknown
     end
   end
 

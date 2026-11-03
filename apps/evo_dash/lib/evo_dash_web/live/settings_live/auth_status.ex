@@ -57,9 +57,13 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
   @doc """
   Computes the OAuth credential status map for `profiles` on `node`:
 
-      %{profile_id => %{state: :ok | :missing | :unknown, expires: integer | nil,
-                        account_id: binary | nil, login_instructions: binary | nil,
-                        oauth_file: binary | nil}}
+      %{profile_id => %{state: :ok | :missing | :unknown | :unwritable,
+                        expires: integer | nil, account_id: binary | nil,
+                        login_instructions: binary | nil, oauth_file: binary | nil}}
+
+  `:unwritable` is the "login found, managed file not writable" state — the
+  vendor login was read and parsed fine, but Genesis could not write its own
+  managed copy of it (read-only home, sandbox, container).
 
   Non-OAuth profiles produce NO entry. Profile maps may be atom- or
   string-keyed (the resolved config is atom-keyed).
@@ -142,6 +146,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
       {:missing, oauth_file} ->
         %{entry | state: :missing, oauth_file: oauth_file}
 
+      {:unwritable, oauth_file} ->
+        %{entry | state: :unwritable, oauth_file: oauth_file}
+
       :unknown ->
         entry
     end
@@ -178,12 +185,43 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
     end
   end
 
-  defp classify({:ok, verdict}, oauth_file) when is_map(verdict), do: {:ok, verdict, oauth_file}
-  defp classify({:error, :no_credentials}, oauth_file), do: {:missing, oauth_file}
-  defp classify({:error, :invalid_credentials}, oauth_file), do: {:missing, oauth_file}
-  defp classify(_other, _oauth_file), do: :unknown
+  # Maps ONE core credential-status result plus the managed path to the state
+  # `status_for/2` stores. `@doc false` + public only so the shape contract can
+  # be pinned by tests — `statuses/2` is the real entry point.
+  #
+  # `{:error, {:managed_file_unwritable, reason}}` is matched ATOM-PRECISELY: it
+  # means "the vendor login WAS found and parsed, but Genesis could not write
+  # its managed copy", which is a different problem from a missing login. Every
+  # other value (including an unknown future tuple, a non-map verdict, or an
+  # older remote daemon's shape) stays on the `:unknown` path, which renders
+  # neutral guidance with no verdict.
+  @doc false
+  @spec classify(term(), binary() | nil) ::
+          {:ok, map(), binary() | nil}
+          | {:missing, binary() | nil}
+          | {:unwritable, binary() | nil}
+          | :unknown
+  def classify({:ok, verdict}, oauth_file) when is_map(verdict), do: {:ok, verdict, oauth_file}
+  def classify({:error, :no_credentials}, oauth_file), do: {:missing, oauth_file}
+  def classify({:error, :invalid_credentials}, oauth_file), do: {:missing, oauth_file}
 
-  defp classify_remote(verdict, oauth_file_result) do
+  def classify({:error, {:managed_file_unwritable, _reason}}, oauth_file),
+    do: {:unwritable, oauth_file}
+
+  def classify(_other, _oauth_file), do: :unknown
+
+  @doc false
+  # The remote (`:erpc`) form of `classify/2`: the core's own verdict arrives
+  # NESTED inside the transport tuple, so unwrap the transport first and then
+  # classify exactly like a local call. Any transport error (`{:error, …}`,
+  # including `:undef` for a daemon predating a shape) is `:unknown`.
+  # `@doc false` + public only so the shape contract can be pinned by tests.
+  @spec classify_remote(term(), term()) ::
+          {:ok, map(), binary() | nil}
+          | {:missing, binary() | nil}
+          | {:unwritable, binary() | nil}
+          | :unknown
+  def classify_remote(verdict, oauth_file_result) do
     # The file path is informational: a failed path lookup never changes the
     # credential state, it just leaves `oauth_file` nil.
     oauth_file =
@@ -192,10 +230,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatus do
         _other -> nil
       end
 
+    # The core's own `{:ok, _} | {:error, _}` verdict arrives NESTED inside the
+    # transport tuple (see the header comment above).
     case verdict do
-      {:ok, {:ok, %{} = remote_verdict}} -> {:ok, remote_verdict, oauth_file}
-      {:ok, {:error, :no_credentials}} -> {:missing, oauth_file}
-      {:ok, {:error, :invalid_credentials}} -> {:missing, oauth_file}
+      {:ok, result} -> classify(result, oauth_file)
       _other -> :unknown
     end
   end

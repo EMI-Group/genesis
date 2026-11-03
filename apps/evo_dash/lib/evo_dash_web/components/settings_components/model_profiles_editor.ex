@@ -133,6 +133,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           <.auth_status_line
             status={@auth_status}
             provider={effective_provider(@profile, nil)}
+            oauth_file={profile_param(@profile, :oauth_file)}
             details={false}
           />
         <% end %>
@@ -337,7 +338,11 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               }
             />
             <%!-- zh_CN: 凭据文件可填绝对路径或以 ~ 开头的路径；留空使用默认托管文件 --%>
-            <.auth_status_line status={@auth_status} provider={auth_provider} />
+            <.auth_status_line
+              status={@auth_status}
+              provider={auth_provider}
+              oauth_file={profile_param(@profile, :oauth_file)}
+            />
           <% end %>
         </div>
       <% end %>
@@ -817,6 +822,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       "ok" -> :ok
       :missing -> :missing
       "missing" -> :missing
+      :unwritable -> :unwritable
+      "unwritable" -> :unwritable
       _other -> :unknown
     end
   end
@@ -852,6 +859,10 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
       :missing ->
         gettext("No subscription login found")
 
+      :unwritable ->
+        # zh_CN: 已找到登录凭据 但 Genesis 无法写入它自己托管的凭据文件
+        gettext("Login found, managed credential file not writable")
+
       :unknown ->
         gettext("Subscription login")
     end
@@ -861,6 +872,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     case auth_status_state(status) do
       :ok -> "hero-check-circle"
       :missing -> "hero-exclamation-triangle"
+      :unwritable -> "hero-exclamation-triangle"
       :unknown -> "hero-information-circle"
     end
   end
@@ -869,6 +881,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
     case auth_status_state(status) do
       :ok -> "text-success"
       :missing -> "text-warning"
+      :unwritable -> "text-warning"
       :unknown -> "text-base-content/70"
     end
   end
@@ -900,10 +913,29 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
 
   defp auth_oauth_file(_status), do: nil
 
+  # The managed credential path shown for the "login found, file not writable"
+  # state: the path the VIEWED node reported, else the profile's configured
+  # `oauth_file` (config data, so it is valid for a remote node too).
+  # `EvoGit.Auth.default_oauth_file/0` is deliberately NOT used as a fallback —
+  # on a remote node it would describe the dashboard machine's file.
+  defp auth_managed_path(status, configured_oauth_file) do
+    auth_oauth_file(status) || configured_path(configured_oauth_file)
+  end
+
+  defp configured_path(path) when is_binary(path) do
+    case String.trim(path) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp configured_path(_path), do: nil
+
   # Credential status / login guidance, used by BOTH the edit form
   # (details: true) and the summary row (details: false).
   attr(:status, :any, default: nil)
   attr(:provider, :any, default: nil)
+  attr(:oauth_file, :string, default: nil)
   attr(:details, :boolean, default: true)
 
   defp auth_status_line(assigns) do
@@ -929,20 +961,43 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </button>
       </div>
       <%= if @details do %>
-        <%= if guidance = auth_login_guidance(@status, @provider) do %>
-          <pre class="whitespace-pre-wrap font-sans text-xs text-base-content/70 leading-relaxed"><%= guidance %></pre>
-        <% end %>
-        <%= if path = auth_oauth_file(@status) do %>
-          <p class="text-xs text-base-content/60">
-            {gettext("Managed credential file: %{path}", path: path)}
-          </p>
-        <% end %>
-        <%= if auth_status_state(@status) == :missing do %>
-          <p class="text-xs text-base-content/60">
-            <%!-- zh_CN: 下次运行时 Genesis 会自动导入厂商登录凭据 --%>{gettext(
-              "Genesis imports the vendor login automatically on the next run."
+        <%= if auth_status_state(@status) == :unwritable do %>
+          <%!-- The login is NOT the problem here, so the one-time login
+               guidance and the "we import it next run" note are withheld --
+               and the remedy names the writable-path setting instead. --%>
+          <p class="text-xs text-base-content/70 leading-relaxed">
+            <%!-- zh_CN: Genesis 已找到厂商登录凭据 但无法写入自己托管的凭据文件 主目录只读/沙箱/容器环境 --%>
+            {gettext(
+              "Genesis found the vendor login but could not write its managed credential file."
             )}
           </p>
+          <%= if path = auth_managed_path(@status, @oauth_file) do %>
+            <p class="text-xs text-base-content/60">
+              {gettext("Managed credential file: %{path}", path: path)}
+            </p>
+          <% end %>
+          <p class="text-xs text-base-content/60 leading-relaxed">
+            <%!-- zh_CN: 解决办法 把 [llm] oauth_file 或该配置档的 oauth_file 指向可写位置 然后重新检查 --%>
+            {gettext(
+              "Set [llm] oauth_file (or this profile's oauth_file) to a writable location, then recheck."
+            )}
+          </p>
+        <% else %>
+          <%= if guidance = auth_login_guidance(@status, @provider) do %>
+            <pre class="whitespace-pre-wrap font-sans text-xs text-base-content/70 leading-relaxed"><%= guidance %></pre>
+          <% end %>
+          <%= if path = auth_oauth_file(@status) do %>
+            <p class="text-xs text-base-content/60">
+              {gettext("Managed credential file: %{path}", path: path)}
+            </p>
+          <% end %>
+          <%= if auth_status_state(@status) == :missing do %>
+            <p class="text-xs text-base-content/60">
+              <%!-- zh_CN: 下次运行时 Genesis 会自动导入厂商登录凭据 --%>{gettext(
+                "Genesis imports the vendor login automatically on the next run."
+              )}
+            </p>
+          <% end %>
         <% end %>
       <% end %>
     </div>
