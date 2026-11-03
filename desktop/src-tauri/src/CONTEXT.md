@@ -13,6 +13,17 @@ Rust source for the Genesis Tauri v2 desktop shell: `main.rs` (entry point, tray
 | `backend_watchdog.rs` | `BackendManager` — the boot sequence (`run_bootstrap(app)`: readiness wait → final `probe_http` → kill child on failure so the watchdog self-heals → the shared `load_dashboard(app)` driver → `boot_failed_fallback` routing to `show_startup_page` or handing over to the watchdog by killing the live-but-unresponsive child so the exit-driven watchdog recovers it), the ONE dashboard-load driver `load_dashboard` used by BOTH boot and recovery (`show_backend` is a thin wrapper over it), backend health (`backend_healthy()` = child alive AND `probe_http` OK), the shell-rendered pages (`error_page_data_url` / `startup_page_data_url`, sharing one CSS block via the `page_css!()` macro), child monitor/restart with backoff, quit/update intent flags, and the resettable `dashboard_loaded` latch (`reset_dashboard_loaded()` before every deliberate navigation away from the dashboard: boot/recovery via `load_dashboard`, the error page and the startup page). Shared navigation budget: `DASHBOARD_NAVIGATE_ATTEMPTS` (6) × `DASHBOARD_NAVIGATE_ATTEMPT_WAIT` (10s). |
 | `sidecar_path.rs` | `resolve_launcher` — shared candidate-dir launcher resolution (GUI + headless) |
 
+## Shell Page Presentation and Tests
+
+All three shell documents are inline HTML in `backend_watchdog.rs`, not native OS dialogs or dashboard templates.
+`page_css!()` supplies the shared dark background, centered card, typography and button rules to `ERROR_PAGE_HEAD`, `STARTUP_PAGE_HEAD` and `LOADING_PAGE_HTML`.
+The loading document adds a CSS spinner with a reduced-motion rule and an optional 15-second JavaScript status-text hint; it has no action button or backend URL.
+The error document has a red Retry now button and the healthy-but-slow startup document has a gray Open the dashboard button, both using plain top-level `window.location.href` navigation without IPC.
+Recovery reuses the error document followed by the real dashboard via `show_backend` and `load_dashboard`, rather than a separate recovery document.
+The inline `backend_watchdog.rs` tests `error_page_data_url_is_parseable_and_embeds_backend_url`, `startup_page_data_url_is_parseable_and_honest` and `loading_page_data_url_is_parseable_and_has_spinner` pin encoding, wording, distinctness and basic spinner presence, not visual rendering or screenshots.
+Related safety tests in `main.rs` cover the navigation gate, healthy/unhealthy fallback, readiness budget and quit-routing truth table, while watchdog tests cover navigation budget, backend URL matching and quit/update exit intent.
+Suggested verification from the repository root is `cargo test --manifest-path desktop/src-tauri/Cargo.toml`, with narrower filters `page_data_url`, `navigate_until_loaded`, `boot_failed_fallback` and `quit_needs_confirmation`; NixOS requires the devShell and writable CARGO_HOME described in the parent context.
+
 ## Lifetime Pipe (TCP hold)
 
 Contract with the Elixir backend (fixed on the Elixir side — do not change):
