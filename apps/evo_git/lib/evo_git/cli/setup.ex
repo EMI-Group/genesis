@@ -4,17 +4,23 @@ defmodule EvoGit.CLI.Setup do
 
   Extracted from `EvoGit.CLI` to separate the guided setup workflow
   from command dispatch.
+
+  OAuth-capable providers (see `EvoGit.Config.LLMCatalog.auth_modes/1`) get an
+  extra authentication-mode step: instead of pasting an API key the user may
+  reuse an existing vendor subscription login (`codex login` / `claude`), which
+  `EvoGit.Auth` imports into the managed OAuth credential file.
   """
+
+  alias EvoGit.Config.LLMCatalog
 
   @doc """
   Runs the interactive LLM configuration setup wizard.
 
-  Guides the user through provider selection, model choice, and API key
-  entry, then persists the results to `config.toml` and `credentials.toml`.
+  Guides the user through provider selection, model choice, and either API key
+  entry or a subscription (OAuth) login, then persists the results to
+  `config.toml` (and `credentials.toml` for the API-key branch).
   """
   def run do
-    alias EvoGit.Config.LLMCatalog
-
     IO.puts("""
 
     ╔══════════════════════════════════════════════════════╗
@@ -59,10 +65,13 @@ defmodule EvoGit.CLI.Setup do
   end
 
   defp setup_provider(provider) do
-    alias EvoGit.Config.LLMCatalog
-
     IO.puts("\nSelected: #{provider.display_name}")
-    IO.puts("API key credential key: #{provider.credential_key}\n")
+
+    if LLMCatalog.oauth_only?(provider.id) do
+      IO.puts("Authentication: subscription (OAuth) — no API key is used.\n")
+    else
+      IO.puts("API key credential key: #{provider.credential_key}\n")
+    end
 
     # Step 2: Model selection
     models = provider.models
@@ -108,8 +117,46 @@ defmodule EvoGit.CLI.Setup do
     model_spec =
       LLMCatalog.resolve_model_spec(hd(provider.provider_atoms), model_id, variant: variant)
 
-    # Step 3: API key
-    IO.puts("\nStep 3: Enter your API key.")
+    # Step 3: Authentication mode. Only OAuth-capable providers get the choice;
+    # everything else keeps the original numbering (API key = "Step 3").
+    auth_provider = model_spec.provider
+
+    if LLMCatalog.supports_oauth?(auth_provider) do
+      case prompt_auth_mode(provider, auth_provider) do
+        :oauth -> setup_oauth_credentials(provider, model_spec)
+        :api_key -> prompt_api_key(provider, model_spec, 4)
+      end
+    else
+      prompt_api_key(provider, model_spec, 3)
+    end
+  end
+
+  # Step 3, dual-mode providers: ask whether this provider should authenticate
+  # with a pasted API key or with an existing subscription (OAuth) login.
+  # An OAuth-only provider has nothing to ask — the step only announces the
+  # branch so the user is not surprised by the missing API-key prompt.
+  defp prompt_auth_mode(provider, provider_atom) do
+    if LLMCatalog.oauth_only?(provider_atom) do
+      IO.puts("\nStep 3: Subscription (OAuth) — #{provider.display_name} uses an existing login.")
+      IO.puts("  No API key is needed (or accepted) for this provider.")
+
+      :oauth
+    else
+      IO.puts("\nStep 3: Choose how to authenticate #{provider.display_name}:\n")
+      IO.puts("  1. API key (paste a key; billed per token)")
+      IO.puts("  2. Subscription (OAuth) — use an existing ChatGPT/Claude login")
+      IO.puts("")
+
+      choice = prompt_input("Enter your choice [1-2] (default: 1): ")
+
+      resolve_auth_choice(provider_atom, choice)
+    end
+  end
+
+  # The API-key branch: unchanged behaviour, just a dynamic step number (4 when
+  # the authentication-mode step was shown, 3 otherwise).
+  defp prompt_api_key(provider, model_spec, step) do
+    IO.puts("\nStep #{step}: Enter your API key.")
     IO.puts("  This will be stored in your credentials file.\n")
 
     api_key = prompt_input("Enter #{provider.credential_key}: ")
@@ -118,8 +165,77 @@ defmodule EvoGit.CLI.Setup do
       IO.puts("\nNo API key entered. API key can be set later in credentials.toml.")
     end
 
-    # Save everything
     save_setup_result(model_spec, provider.credential_key, api_key)
+  end
+
+  # The OAuth branch: reuse the vendor CLI's existing login. Nothing is ever
+  # written to credentials.toml here and no API key is ever requested — the
+  # managed OAuth file (`EvoGit.Auth.oauth_file/1`) is the only credential
+  # store involved, and ReqLLM keeps it fresh.
+  defp setup_oauth_credentials(provider, model_spec) do
+    provider_atom = model_spec.provider
+
+    IO.puts("\nStep 4: Subscription (OAuth) login")
+
+    case find_vendor_login(provider_atom) do
+      nil ->
+        IO.puts("  • No local #{login_source_label(provider_atom)} login found.")
+
+      path ->
+        IO.puts("  • Found local login: #{path}")
+    end
+
+    case EvoGit.Auth.ensure_credentials(provider_atom, []) do
+      :ok ->
+        IO.puts("  ✓ OAuth credentials ready: #{EvoGit.Auth.oauth_file([])}")
+        save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
+
+      {:error, reason} ->
+        IO.puts("  ⚠ No usable OAuth credentials yet (#{format_auth_error(reason)}).\n")
+        IO.puts(indent(EvoGit.Auth.login_instructions(provider_atom)))
+        IO.puts("")
+        IO.puts("  Re-run `evogit setup` after logging in — or save the profile now and it")
+        IO.puts("  starts working as soon as the login exists.")
+
+        if confirm("\n  Save the profile with OAuth auth mode anyway? [Y/n]: ") do
+          save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
+        else
+          IO.puts("\nSetup cancelled. Re-run `evogit setup` once you are logged in.")
+        end
+    end
+  end
+
+  # Which vendor CLI wrote the login we are about to import — used only for the
+  # human-facing "no local login found" line.
+  defp login_source_label(provider_atom) do
+    case LLMCatalog.oauth_source(provider_atom) do
+      :codex_cli -> "Codex CLI"
+      :claude_code -> "Claude Code"
+      _other -> "vendor CLI"
+    end
+  end
+
+  # Short human-readable form of an `EvoGit.Auth.ensure_credentials/2` error.
+  defp format_auth_error(:no_credentials), do: "no credentials found"
+  defp format_auth_error(:invalid_credentials), do: "the stored credential is unusable"
+  defp format_auth_error(:expired_credentials), do: "the stored credential has expired"
+  defp format_auth_error(reason), do: inspect(reason)
+
+  # Indents every line of a multi-line guidance block by two spaces so the
+  # vendor login instructions line up with the rest of the wizard output.
+  defp indent(text) when is_binary(text) do
+    text
+    |> String.split("\n")
+    |> Enum.map_join("\n", &("  " <> &1))
+  end
+
+  # Yes/no confirmation. The EMPTY answer is the documented default in the
+  # prompt text, so it maps to `true` (keep going).
+  defp confirm(prompt) do
+    case prompt_input(prompt) do
+      "" -> true
+      input -> String.downcase(input) in ["y", "yes"]
+    end
   end
 
   defp setup_custom_provider do
@@ -174,20 +290,24 @@ defmodule EvoGit.CLI.Setup do
     end
   end
 
-  defp save_setup_result(model_spec, credential_key, api_key) do
+  # `opts`:
+  #   * `:auth_mode` — `"oauth"` for the subscription branch; ABSENT means the
+  #     default API-key mode (so the API-key path writes a profile that is
+  #     byte-identical to what earlier versions wrote).
+  defp save_setup_result(model_spec, credential_key, api_key, opts \\ []) do
     # Save model to config.toml using the [[llm.models]] array format
     existing_config = EvoGit.Config.user_config()
 
     # Build atom-keyed config with the model added as a profile
-    config =
-      existing_config
-      |> atomize_config_keys()
-      |> ensure_llm_section()
-      |> add_model_profile(model_spec)
+    config = prepare_config(existing_config, model_spec, Keyword.get(opts, :auth_mode))
 
     case EvoGit.Config.save_user_config(config) do
       :ok ->
         IO.puts("\n  ✓ Model saved to config.toml: #{format_model_for_display(model_spec)}")
+
+        if Keyword.get(opts, :auth_mode) == "oauth" do
+          IO.puts("  ✓ Auth mode: subscription (OAuth) — no API key required")
+        end
 
         # Save API key to credentials.toml if provided
         if api_key != "" do
@@ -203,7 +323,13 @@ defmodule EvoGit.CLI.Setup do
         end
 
         IO.puts("\n  Config file: #{EvoGit.Config.config_path()}")
-        IO.puts("  Credentials file: #{EvoGit.Config.credentials_path()}")
+
+        if Keyword.get(opts, :auth_mode) == "oauth" do
+          IO.puts("  OAuth credentials file: #{EvoGit.Auth.oauth_file([])}")
+        else
+          IO.puts("  Credentials file: #{EvoGit.Config.credentials_path()}")
+        end
+
         IO.puts("\n✅ Setup complete! You can now run:")
         IO.puts("  evogit genesis \"your prompt here\"")
 
@@ -244,6 +370,12 @@ defmodule EvoGit.CLI.Setup do
     end)
   end
 
+  # Lists MUST recurse: `[[llm.models]]` decodes to a list of STRING-keyed
+  # profile maps, so a profile lookup would otherwise never match the existing
+  # "default" profile (and a stale `auth_mode` could never be cleared).
+  defp atomize_config_keys(list) when is_list(list),
+    do: Enum.map(list, &atomize_config_keys/1)
+
   defp atomize_config_keys(value), do: value
 
   # Returns the existing atom for `key`, or the original string if the atom
@@ -277,26 +409,35 @@ defmodule EvoGit.CLI.Setup do
   # Otherwise a new "default" profile is created/appended. This keeps the
   # setup wizard simple — it always operates on the default profile.
   # Each profile gets its own concurrency setting (defaults to 3).
-  defp add_model_profile(config, model) do
+  #
+  # `auth_mode` is `"oauth"` for the subscription branch and `nil` for the
+  # default API-key mode; `nil` also CLEARS a stale `auth_mode` left behind by
+  # an earlier OAuth run (switching back to an API key must not keep
+  # `auth_mode: "oauth"`).
+  defp add_model_profile(config, model, auth_mode \\ nil) do
     llm = Map.get(config, :llm, %{})
     models = Map.get(llm, :models, [])
+
+    new_profile = %{id: "default", model: model, concurrency: 3} |> apply_auth_mode(auth_mode)
 
     updated_models =
       case models do
         [] ->
           # No profiles yet — create the default profile
-          [%{id: "default", model: model, concurrency: 3}]
+          [new_profile]
 
         existing ->
           case Enum.find_index(existing, fn p -> Map.get(p, :id) == "default" end) do
             nil ->
               # Profiles exist but none is "default" — append a new one
-              existing ++ [%{id: "default", model: model, concurrency: 3}]
+              existing ++ [new_profile]
 
             idx ->
-              # Update the existing default profile's model
+              # Update the existing default profile's model (and auth mode)
               List.update_at(existing, idx, fn p ->
-                Map.put(p, :model, model)
+                p
+                |> Map.put(:model, model)
+                |> apply_auth_mode(auth_mode)
               end)
           end
       end
@@ -308,8 +449,84 @@ defmodule EvoGit.CLI.Setup do
   end
 
   @doc false
-  # Public test wrapper for add_model_profile/2
+  # Public test wrapper for add_model_profile/2 (API-key mode).
   def do_add_model_profile(config, model), do: add_model_profile(config, model)
+
+  @doc false
+  # Public test wrapper for add_model_profile/3 (`auth_mode` may be `nil` or
+  # `"oauth"`).
+  def do_add_model_profile(config, model, auth_mode),
+    do: add_model_profile(config, model, auth_mode)
+
+  # Pure pipeline behind `save_setup_result/4`: the user config as decoded from
+  # config.toml (string-keyed, with STRING-keyed model profiles) →
+  # atom-keyed config carrying the updated "default" profile.
+  defp prepare_config(existing_config, model_spec, auth_mode) do
+    existing_config
+    |> atomize_config_keys()
+    |> ensure_llm_section()
+    |> add_model_profile(model_spec, auth_mode)
+  end
+
+  @doc false
+  # Public test wrapper for prepare_config/3.
+  def do_prepare_config(existing_config, model_spec, auth_mode),
+    do: prepare_config(existing_config, model_spec, auth_mode)
+
+  # Applies an auth mode to a profile map: `"oauth"` sets the key, anything
+  # else (the API-key default) REMOVES it — an absent key is the documented
+  # default, and a stale `"oauth"` value must never survive a switch back.
+  @doc false
+  def apply_auth_mode(profile, "oauth") when is_map(profile),
+    do: Map.put(profile, :auth_mode, "oauth")
+
+  def apply_auth_mode(profile, _auth_mode) when is_map(profile),
+    do: Map.drop(profile, [:auth_mode, "auth_mode"])
+
+  # Resolves the Step-3 answer into an auth mode.
+  #
+  #   * an OAuth-ONLY provider always resolves to `:oauth` (there is no
+  #     question to answer — `:api_key` does not exist for it)
+  #   * a provider that does not support OAuth always resolves to `:api_key`
+  #   * a dual-mode provider takes `:oauth` only for an explicit option 2
+  #     ("2" / "oauth" / "subscription"); EMPTY and invalid input default to
+  #     `:api_key` — the wizard never defaults INTO OAuth.
+  @doc false
+  def resolve_auth_choice(provider_atom, input) when is_atom(provider_atom) do
+    cond do
+      LLMCatalog.oauth_only?(provider_atom) -> :oauth
+      not LLMCatalog.supports_oauth?(provider_atom) -> :api_key
+      normalize_auth_choice(input) == :oauth -> :oauth
+      true -> :api_key
+    end
+  end
+
+  def resolve_auth_choice(_provider_atom, _input), do: :api_key
+
+  defp normalize_auth_choice(input) when is_binary(input) do
+    case String.downcase(String.trim(input)) do
+      "2" -> :oauth
+      "oauth" -> :oauth
+      "subscription" -> :oauth
+      _other -> :api_key
+    end
+  end
+
+  defp normalize_auth_choice(_input), do: :api_key
+
+  # Returns the FIRST existing vendor login file for `provider_atom` (see
+  # `EvoGit.Auth.OAuthImport.sources/2`), or `nil` when the user has not
+  # logged in with the vendor CLI yet. Never touches the network.
+  @doc false
+  def find_vendor_login(provider_atom, opts \\ []) do
+    provider_atom
+    |> EvoGit.Auth.OAuthImport.sources(opts)
+    |> Enum.find(&File.exists?/1)
+  end
+
+  @doc false
+  def oauth_available?(provider_atom, opts \\ []),
+    do: not is_nil(find_vendor_login(provider_atom, opts))
 
   # Prompts the user to select a variant when the provider offers multiple
   # endpoint variants (e.g. Alibaba Global/CN). Returns the chosen variant id
