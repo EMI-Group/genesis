@@ -1526,7 +1526,14 @@ button, a, input, textarea, select, summary,
 
 /* Markdown content styles */
 .md-content {
+  min-width: 0;
   line-height: 1.7;
+  /* Long URLs/prose wrap without making code or tables widen their parent. */
+  overflow-wrap: anywhere;
+}
+.md-content :is(pre, table) {
+  max-width: 100%;
+  overflow-wrap: normal;
 }
 .md-content > *:first-child {
   margin-top: 0;
@@ -2485,9 +2492,8 @@ button, a, input, textarea, select, summary,
 }
 
 /* === Help Chat Page (GET /help) === */
-/* Hand-crafted ChatGPT-style composer (no DaisyUI): rounded-3xl input
-   container with a subtle border + soft shadow that gains a gentle primary
-   focus ring. Colors come exclusively from theme tokens via color-mix. */
+/* No DaisyUI control styles: keep the composer quiet beside the borderless
+   reading column. Focus uses the standalone accent (outline role). */
 .help-composer {
   /* Vertically center the round Send/Stop buttons within the input row -
      overrides the form's Tailwind `items-end` (unlayered CSS beats @layer
@@ -2496,20 +2502,85 @@ button, a, input, textarea, select, summary,
   align-items: center;
   padding: 0 0.5rem;
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
-  border-radius: 1.5rem;
-  background-color: color-mix(in oklab, var(--color-base-100) 92%, var(--color-base-200));
-  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 6%, transparent),
-    0 8px 24px -12px color-mix(in oklab, var(--color-base-content) 12%, transparent);
-  transition: border-color 200ms ease, box-shadow 200ms ease;
+  min-width: 0;
+  border-radius: 1.25rem;
+  background-color: var(--color-base-100);
+  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 5%, transparent);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 .help-composer:focus-within {
-  border-color: color-mix(in oklch, var(--color-primary) 55%, transparent);
-  box-shadow: 0 1px 2px color-mix(in oklab, var(--color-base-content) 6%, transparent),
-    0 8px 24px -12px color-mix(in oklab, var(--color-base-content) 12%, transparent),
-    0 0 0 3px color-mix(in oklch, var(--color-primary) 12%, transparent);
+  border-color: var(--color-primary-standalone);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-primary-standalone) 20%, transparent);
+}
+.help-composer textarea {
+  padding-inline: 0.75rem;
+  scrollbar-width: thin;
+  /* Avoid an invisible caret against the active accent on either theme. */
+  caret-color: var(--color-primary-standalone);
+}
+.help-composer > button:focus-visible {
+  outline: 2px solid var(--color-primary-standalone);
+  outline-offset: 3px;
+}
+
+/* /help only: no heading rules or quote panels competing with the answer.
+   Leave the shared markdown palette and the normal-flow action footer alone. */
+#chat-messages {
+  scrollbar-gutter: stable;
+}
+#chat-messages .md-content :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.35;
+  margin-block: 1.4em 0.55em;
+  padding-bottom: 0;
+  border-bottom: 0;
+  text-wrap: pretty;
+}
+#chat-messages .md-content :is(p, ul, ol, blockquote) {
+  margin-block: 0.75em;
+}
+#chat-messages .md-content :is(ul, ol) {
+  padding-inline-start: 1.5em;
+  padding-inline-end: 0;
+}
+#chat-messages .md-content li > :is(ul, ol) {
+  margin-block: 0.25em;
+}
+#chat-messages .md-content blockquote {
+  padding-block: 0.15em;
+  padding-inline: 1em 0;
+  border-left: 0;
+  border-right: 0;
+  border-inline-start: 2px solid var(--color-base-300);
+  border-radius: 0;
+  background: transparent;
+}
+#chat-messages .md-content pre {
+  margin-block: 1em;
+  border-radius: 0.5rem;
+}
+#chat-messages .md-content pre code {
+  font-size: 0.875em;
+}
+#chat-messages .md-content > :first-child {
+  margin-top: 0;
+}
+#chat-messages .md-content > :last-child {
+  margin-bottom: 0;
+}
+@media (max-width: 639px) {
+  #chat-messages .md-content pre {
+    padding: 0.75em;
+  }
+  #chat-messages .md-content :is(th, td) {
+    padding: 0.4em 0.6em;
+  }
 }
 @keyframes help-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
 .help-caret { animation: help-blink 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .help-composer { transition: none; }
+  .help-caret { animation: none; }
+}
