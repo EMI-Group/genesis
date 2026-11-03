@@ -4,7 +4,9 @@
 # transformations (those live in `settings_live/model_profile_helpers_test.exs`):
 #
 #   * the per-profile credential-status line rendered by the model-profiles
-#     editor (`EvoDashWeb.SettingsLive.AuthStatus` → `:auth_statuses`);
+#     editor (`EvoDashWeb.SettingsLive.AuthStatus` → `:auth_statuses`),
+#     including that the page actually FORWARDS the map to the editor (verdict
+#     text, login guidance and managed-file path on the rendered page);
 #   * the node + seq stale guards of `{:settings_auth_status_loaded, ...}`;
 #   * the `refresh_auth_status` event that re-requests the load;
 #   * profile persistence of `auth_mode` / `oauth_file` through the real
@@ -21,11 +23,13 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   import Phoenix.LiveViewTest
 
   # Seeded profile ids. `profile-1` is anthropic WITH `auth_mode = "oauth"`,
-  # `profile-2` is the OAuth-only `openai_codex`, and `profile-3` is a plain
-  # anthropic API-key profile (which must render NO status line).
+  # `profile-2` is the OAuth-only `openai_codex`, `profile-3` is a plain
+  # anthropic API-key profile and `profile-4` a plain deepseek API-key profile
+  # (both of the last two must render NO status line).
   @oauth_profile "profile-1"
   @oauth_only_profile "profile-2"
   @api_key_profile "profile-3"
+  @deepseek_profile "profile-4"
 
   # An injected `:ok` status. The managed path is a fixed literal so a test can
   # prove the payload was NOT applied by refuting it (nothing else in the page
@@ -57,14 +61,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
   end
 
   describe "credential status apply (injected result)" do
-    # KNOWN PRODUCTION GAP (reported, not fixed here): `settings_live.ex` never
-    # passes `auth_statuses={@auth_statuses}` to
-    # `SettingsComponents.category_section/1`, so the model-profiles editor
-    # always receives `%{}` and every credential line renders NEUTRAL
-    # ("Subscription login") even though `@auth_statuses` on the LiveView holds
-    # the real map. These tests therefore pin the LiveView-level contract (the
-    # assign the editor consumes); the verdict/guidance text is covered
-    # component-side.
+    # These tests pin the LiveView-level ASSIGN the editor consumes; the
+    # page-level RENDER of a verdict (the `auth_statuses` threading through
+    # `SettingsComponents.category_section/1` into the editor) is covered by the
+    # "credential status render" describe below.
     test "an :ok status is applied to :auth_statuses", %{conn: conn, config_root: dir} do
       seed_oauth_profiles(dir)
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -148,6 +148,94 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       html = render(view)
       assert count_status_lines(html) == 0
       refute html =~ "Recheck"
+    end
+  end
+
+  # The page must FORWARD `@auth_statuses` into the editor
+  # (`category_section/1` → `model_profiles_editor/1`); an assign that never
+  # reaches the render is a silent regression (every line falls back to the
+  # neutral "Subscription login" text).
+  describe "credential status render (injected result)" do
+    test "an :ok status renders the login-detected line, its expiry and the managed path",
+         %{conn: conn, config_root: dir} do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      # Open the profile's edit form: the summary row only carries the label,
+      # the managed-file path lives in the (details: true) form line.
+      render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
+
+      html = inject_statuses(view, %{@oauth_profile => @ok_entry})
+
+      # `@ok_entry.expires` is 2100-01-01T00:00:00Z, rendered by
+      # `EvoDashWeb.Helpers.format_datetime/1`.
+      assert html =~ "Login detected (expires 2100-01-01 00:00)"
+      assert html =~ "Managed credential file: /tmp/genesis/auth.json"
+    end
+
+    test "a :missing status renders the no-login guidance, the provider instructions and the path",
+         %{conn: conn, config_root: dir} do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+      render_hook(view, "edit_model_profile", %{"profile_id" => @oauth_profile})
+
+      # `login_instructions: nil` makes the editor resolve the provider's own
+      # guidance through `EvoGit.Auth.login_instructions/1`.
+      entry = %{
+        state: :missing,
+        expires: nil,
+        account_id: nil,
+        login_instructions: nil,
+        oauth_file: "/tmp/genesis/missing-auth.json"
+      }
+
+      html = inject_statuses(view, %{@oauth_profile => entry})
+
+      assert html =~ "No subscription login found"
+      assert html =~ EvoGit.Auth.login_instructions(:anthropic)
+      # The injected managed path is the proof the payload reached the render:
+      # the pre-injection baseline reports a different (per-test) path.
+      assert html =~ "Managed credential file: /tmp/genesis/missing-auth.json"
+      assert html =~ "Genesis imports the vendor login automatically on the next run."
+    end
+
+    test "an applied verdict replaces the profile's own baseline line", %{
+      conn: conn,
+      config_root: dir
+    } do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      # Baseline: the blocked managed file makes the OAuth profiles :missing, so
+      # the neutral "Subscription login" text is NOT what the page shows either.
+      baseline_row = profile_row(render(view), @oauth_profile)
+      assert baseline_row =~ "No subscription login found"
+      refute baseline_row =~ "Login detected"
+
+      html = inject_statuses(view, %{@oauth_profile => @ok_entry})
+      row = profile_row(html, @oauth_profile)
+      assert row =~ "Login detected"
+      refute row =~ "No subscription login found"
+    end
+
+    test "an API-key-only profile renders no credential status line on the same page", %{
+      conn: conn,
+      config_root: dir
+    } do
+      seed_oauth_profiles(dir)
+      {:ok, view, _html} = mount_settings(conn, ~p"/settings")
+
+      html = inject_statuses(view, %{@oauth_profile => @ok_entry})
+
+      # Exactly the two OAuth-enabled profiles carry a status line.
+      assert count_status_lines(html) == 2
+
+      # The deepseek API-key profile renders no status line of any kind.
+      row = profile_row(html, @deepseek_profile)
+      assert row =~ "deepseek:deepseek-v4-pro"
+      refute row =~ "Recheck"
+      refute row =~ "Login detected"
+      refute row =~ "No subscription login found"
+      refute row =~ "Subscription login"
     end
   end
 
@@ -494,6 +582,17 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     html |> String.split(~s(phx-click="refresh_auth_status")) |> length() |> Kernel.-(1)
   end
 
+  # The markup of ONE model-profile summary row (the editor wraps every profile
+  # in a `group relative flex items-start gap-4 …` div), selected by the profile
+  # id that row displays — so per-profile presence/absence can be asserted
+  # without depending on the row order.
+  defp profile_row(html, profile_id) do
+    html
+    |> String.split("group relative flex items-start gap-4")
+    |> Enum.find(fn chunk -> String.contains?(chunk, ">#{profile_id}</code>") end) ||
+      flunk("no model-profile row rendered for #{profile_id}")
+  end
+
   # The pre-injection baseline must be the REAL load's map for both seeded OAuth
   # profiles (never `%{}`): its verdict text is deterministic — see
   # `blocked_oauth_file/1` — so the stale-guard tests can refute a verdict.
@@ -501,8 +600,9 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
     assert Enum.sort(Map.keys(baseline)) == [@oauth_profile, @oauth_only_profile]
   end
 
-  # Seeds the three-profile fixture: an anthropic profile explicitly on OAuth,
-  # the OAuth-only `openai_codex` profile, and an anthropic API-key profile.
+  # Seeds the four-profile fixture: an anthropic profile explicitly on OAuth,
+  # the OAuth-only `openai_codex` profile, plus an anthropic and a deepseek
+  # API-key profile (both must stay status-line-free).
   defp seed_oauth_profiles(dir) do
     blocked = blocked_oauth_file(dir)
 
@@ -520,7 +620,8 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
         model_id: "gpt-5.6-terra",
         oauth_file: blocked
       },
-      %{id: @api_key_profile, provider: "anthropic", model_id: "claude-sonnet-5-5"}
+      %{id: @api_key_profile, provider: "anthropic", model_id: "claude-sonnet-5-5"},
+      %{id: @deepseek_profile, provider: "deepseek", model_id: "deepseek-v4-pro"}
     ])
   end
 

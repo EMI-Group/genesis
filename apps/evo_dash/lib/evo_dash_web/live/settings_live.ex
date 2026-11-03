@@ -748,6 +748,7 @@ defmodule EvoDashWeb.SettingsLive do
                     appearance_accent_draft={@appearance_accent_draft}
                     test_profile_id={@test_profile_id}
                     credentials={@credentials}
+                    auth_statuses={@auth_statuses}
                   />
                 <% end %>
               <% end %>

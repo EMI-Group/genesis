@@ -177,9 +177,10 @@ Accent swatches are distinguished ONLY by the `ring-base-content/70` fragment â€
 Nothing in this tree asserts theme-toggle markup, `dark:` variants, or generated CSS assets.
 `:cancelling` color/dot pins live in `helpers_test.exs`, `tasks_live_test.exs` and `system_live/charts_test.exs` (chart series are CSS vars, never hex literals).
 
-### Model-profile OAuth credential-status verdicts are pinned at COMPONENT level
-The editor's credential-status verdicts (`Login detected` / `No subscription login found` / the managed-file path) are pinned in `components/model_profiles_editor_auth_test.exs`, never on a mounted `/settings` page.
-`SettingsLive`'s `category_section` call site does not forward `@auth_statuses` into `EvoDashWeb.SettingsComponents.category_section`, so the page-level editor always receives an empty map and renders neutral guidance.
+### Model-profile OAuth credential-status verdicts are pinned at COMPONENT and PAGE level
+The editor's credential-status verdicts (`Login detected` / `No subscription login found` / the managed-file path) are pinned in `components/model_profiles_editor_auth_test.exs` (component) and in `live/settings_live/auth_status_test.exs` ("credential status render", page level).
+The page-level tests exist because `SettingsLive` must FORWARD `auth_statuses={@auth_statuses}` into `EvoDashWeb.SettingsComponents.category_section/1` (which passes it to the editor): dropping that attribute leaves the assign correct but renders every line neutral, so the verdict/guidance/path assertions are the only guard.
+The full guidance and managed-file path render only in the editor's edit form (`details: true`), so those tests open the profile's edit form first; `profile_row/2` scopes assertions to one profile's summary row.
 
 ### Speed â†” quality control
 The task form's segmented control is covered at component level (`task_form_components_test.exs`, `#quality-level-control` markup + exact active/inactive class strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
