@@ -5,11 +5,10 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
   alias EvoDashWeb.HomeLive.AgentStream
   alias EvoDashWeb.HomeLive.AssistantMessage
 
-  # The RENDERED card IS the contract for the private status_label/card_border/
-  # type_color helpers. A render costs ~4ms, so each test renders ONCE and
-  # asserts every fact about that HTML. Also pins the pure
-  # AgentStream.extract_failed_message/1 fallback behind HomeLive's terminal
-  # render (finalize_failed/2 is private, so the helper is pinned directly).
+  # Rendered assistant entries pin the answer-first layout, status labels,
+  # accessible copy/raw controls and optional thought disclosure.
+  # AgentStream.extract_failed_message/1 pins HomeLive's terminal fallback
+  # directly because finalize_failed/2 is private.
 
   @tool_call %ReqLLM.ToolCall{
     id: "c1",
@@ -34,7 +33,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
   defp thought(turn, type, data), do: %{turn: turn, timestamp: nil, type: type, data: data}
 
   describe "text rendering" do
-    test "finalized entries render markdown, the hover action group, and no streaming affordances" do
+    test "finalized entries render markdown, normal-flow accessible actions, and no streaming affordances" do
       html =
         render_card(entry: %{id: "2", role: :assistant, text: "**bold** text", streaming: false})
 
@@ -55,18 +54,101 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       refute html =~ "help-caret"
       refute html =~ "animate-bounce"
 
-      # Hover-reveal container at the card's bottom-right corner (opacity-0 →
-      # visible on group hover): (a) the per-message raw/markdown toggle carrying
-      # the entry id, (b) the copy-whole-text button (unique id + ClipboardCopy
-      # hook + data-content carrying the FULL entry text).
-      assert html =~ "absolute bottom-1.5 right-1.5"
-      assert html =~ "opacity-0"
-      assert html =~ "group-hover/assistant:opacity-100"
-      assert html =~ ~s(phx-click="toggle_assistant_raw")
-      assert html =~ ~s(phx-value-id="2")
-      assert html =~ ~s(id="assistant-copy-2")
-      assert html =~ ~s(phx-hook="ClipboardCopy")
-      assert html =~ ~s(data-content="**bold** text")
+      # Actions reserve their own space below the answer, not an overlay.
+      # Pin visibility on touch/mobile AND reveal on desktop hover/keyboard focus.
+      doc = Floki.parse_document!(html)
+      [footer] = Floki.find(doc, "div[class~='group/assistant'] > div:last-child")
+      classes = Floki.attribute([footer], "class") |> hd() |> String.split()
+
+      for class <- [
+            "mt-2",
+            "flex",
+            "py-1",
+            "opacity-100",
+            "sm:opacity-0",
+            "group-hover/assistant:opacity-100",
+            "group-focus-within/assistant:opacity-100",
+            "[@media(hover:none)]:opacity-100"
+          ] do
+        assert class in classes
+      end
+
+      refute "absolute" in classes
+      refute "hidden" in classes
+      assert length(Floki.find([footer], "button")) == 2
+      assert Floki.attribute(Floki.find([footer], "button[phx-click]"), "phx-value-id") == ["2"]
+
+      assert Floki.attribute(Floki.find([footer], "#assistant-copy-2"), "phx-hook") == [
+               "ClipboardCopy"
+             ]
+
+      assert Floki.attribute(Floki.find([footer], "#assistant-copy-2"), "data-content") == [
+               "**bold** text"
+             ]
+    end
+
+    test "assistant answers use a borderless reading column before collapsed thoughts and actions" do
+      doc =
+        render_card(thought_process: [thought(1, "assistant", %{content: "private steps"})])
+        |> Floki.parse_document!()
+
+      [column] = Floki.find(doc, "div[class~='group/assistant']")
+      classes = Floki.attribute([column], "class") |> hd() |> String.split()
+      assert "min-w-0" in classes
+      refute Enum.any?(classes, &String.starts_with?(&1, ["border", "rounded", "bg-"]))
+
+      assert Floki.find([column], "div[class~='group/assistant'] > div:first-child .md-content")
+             |> Floki.text() == "hi"
+
+      assert length(Floki.find([column], "div[class~='group/assistant'] > details")) == 1
+
+      assert length(Floki.find([column], "div[class~='group/assistant'] > div:last-child button")) ==
+               2
+    end
+
+    test "copy and raw controls bind to each entry and keep full source in either view" do
+      source = "**answer** <tag> & \"quoted\"\n\n" <> String.duplicate("long text ", 200)
+
+      for {id, raw?} <- [{"first", false}, {"second", true}] do
+        doc =
+          render_card(entry: %{id: id, text: source, streaming: false}, raw: raw?)
+          |> Floki.parse_document!()
+
+        [toggle] = Floki.find(doc, "button[phx-click='toggle_assistant_raw']")
+        [copy] = Floki.find(doc, "button[phx-hook='ClipboardCopy']")
+        label = if raw?, do: "Show rendered markdown", else: "Show raw text"
+        icon = if raw?, do: ".hero-document-text", else: ".hero-code-bracket"
+
+        assert Floki.attribute([toggle], "phx-value-id") == [id]
+        assert Floki.attribute([toggle], "title") == [label]
+        assert Floki.attribute([toggle], "aria-label") == [label]
+        assert length(Floki.find([toggle], icon)) == 1
+        assert Floki.attribute([copy], "id") == ["assistant-copy-" <> id]
+        assert Floki.attribute([copy], "data-content") == [source]
+        assert Floki.attribute([copy], "aria-label") == ["Copy message text"]
+        assert Floki.attribute([copy], "title") == ["Copy message text"]
+
+        for button <- [toggle, copy] do
+          assert Floki.attribute([button], "type") == ["button"]
+          classes = Floki.attribute([button], "class") |> hd() |> String.split()
+          assert "size-11" in classes
+          assert "sm:size-8" in classes
+          assert "focus-visible:outline-2" in classes
+        end
+      end
+    end
+
+    test "streaming entries ignore raw mode and never expose finalized actions" do
+      for text <- ["", "partial **markdown**"], raw? <- [false, true] do
+        doc =
+          render_card(entry: %{id: "stream", text: text, streaming: true}, raw: raw?)
+          |> Floki.parse_document!()
+
+        assert Floki.find(doc, "button") == []
+        assert Floki.find(doc, ".md-content") == []
+        assert length(Floki.find(doc, ".help-caret")) == if(text == "", do: 0, else: 1)
+        assert length(Floki.find(doc, ".animate-bounce")) == if(text == "", do: 3, else: 0)
+      end
     end
 
     test "streaming entries render plain raw text with the caret and no action group" do
@@ -181,6 +263,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessageTest do
       ]
 
       html = render_card(thought_process: tp)
+      doc = Floki.parse_document!(html)
+      [details] = Floki.find(doc, "details")
+      assert Floki.attribute([details], "open") == []
+      assert length(Floki.find([details], "summary")) == 1
+      assert Floki.find([details], "summary") |> Floki.text() =~ "Thought process"
 
       # Type labels, count, reasoning text, tool name/content, the
       # ToolCallDisplay contract, and the malformed-entry fallback.
