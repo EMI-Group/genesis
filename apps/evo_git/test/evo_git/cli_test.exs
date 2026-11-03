@@ -280,7 +280,7 @@ defmodule EvoGit.CLITest do
 
     test "adds map spec with base_url to empty config as default profile" do
       config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.5", base_url: "https://x/v1"}
+      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
       models = get_in(result, [:llm, :models])
@@ -294,7 +294,7 @@ defmodule EvoGit.CLITest do
 
     test "mirrors map spec to llm.model for backward compat" do
       config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.5", base_url: "https://x/v1"}
+      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
       assert get_in(result, [:llm, :model]) == spec
@@ -302,7 +302,7 @@ defmodule EvoGit.CLITest do
 
     test "updates existing default profile model, preserving concurrency" do
       config = %{llm: %{models: [%{id: "default", model: "old-model", concurrency: 5}]}}
-      spec = %{provider: :openai, id: "gpt-5.5", base_url: "https://x/v1"}
+      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
       models = get_in(result, [:llm, :models])
@@ -316,7 +316,7 @@ defmodule EvoGit.CLITest do
 
     test "map spec with base_url passes Schema validation" do
       config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.5", base_url: "https://x/v1"}
+      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
       assert {:ok, _} = EvoGit.Config.Schema.validate(result)
@@ -324,7 +324,7 @@ defmodule EvoGit.CLITest do
 
     test "map spec with base_url round-trips through TOML serialization" do
       config = %{llm: %{models: []}}
-      spec = %{provider: :openai, id: "gpt-5.5", base_url: "https://x/v1"}
+      spec = %{provider: :openai, id: "gpt-5.6-terra", base_url: "https://x/v1"}
       result = EvoGit.CLI.do_add_model_profile(config, spec)
 
       stringified = stringify(result)
@@ -343,7 +343,7 @@ defmodule EvoGit.CLITest do
 
       assert profile["model"] == %{
                "provider" => "openai",
-               "id" => "gpt-5.5",
+               "id" => "gpt-5.6-terra",
                "base_url" => "https://x/v1"
              }
     end
