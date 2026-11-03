@@ -334,15 +334,34 @@ defmodule EvoGit.SystemCheck do
     # previously loaded credentials).
     EvoGit.Config.credentials()
 
-    # A subscription (OAuth) model authenticates through the managed OAuth
-    # file, not an API key — make sure it exists (importing the vendor CLI login
-    # lazily) before the request, so a connection test right after boot works.
-    # `ensure_profile_credentials/1` is fault-isolated: a missing login returns
-    # an error tuple and the request then reports ReqLLM's own message.
-    if EvoGit.Config.Schema.LLM.oauth_profile?(%{model: model}) do
-      _ = EvoGit.Config.Schema.LLM.ensure_profile_credentials(%{model: model})
+    case oauth_credential_blocker(model) do
+      nil -> run_connection_test(model, opts)
+      message -> {:error, message}
     end
+  end
 
+  # A managed OAuth file that could not be written (read-only home, Nix
+  # sandbox, a bad `oauth_file` path) is reported INSTEAD of running the test:
+  # the request would only surface ReqLLM's raw "OAuth file not found", hiding
+  # the real cause and suggesting the wrong remedy.
+  defp oauth_credential_blocker(model) do
+    if EvoGit.Config.Schema.LLM.oauth_profile?(%{model: model}) do
+      case EvoGit.Config.Schema.LLM.ensure_profile_credentials(%{model: model}) do
+        {:error, {:managed_file_unwritable, _} = error} ->
+          "LLM connection test not run — " <>
+            String.trim(
+              EvoGit.Auth.managed_file_unwritable_remedy(error, EvoGit.Auth.oauth_file([]))
+            )
+
+        _other ->
+          # A missing login is not a blocker: the request then reports ReqLLM's
+          # own message, exactly as before.
+          nil
+      end
+    end
+  end
+
+  defp run_connection_test(model, opts) do
     context = ReqLLM.Context.new([ReqLLM.Context.user("Say hello in one word.")])
 
     stream_opts =

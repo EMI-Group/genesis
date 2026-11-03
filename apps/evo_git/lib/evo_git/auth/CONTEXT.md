@@ -8,6 +8,7 @@ The module is pure file I/O — no network, no subprocess, no GenServer — and 
 ## API Surface
 - `sources/2` (provider, opts) → candidate vendor login paths, highest priority first (`[]` for a provider with no OAuth source).
 - `import/2` (provider, opts) → `:imported | {:skipped, reason} | {:error, reason}`; never raises.
+- `managed_file_failure_reason/1` (`@doc false`) → the POSIX reason when the result is a WRITE-side failure of the managed file, else `nil`; it unwraps `{:error, reason}` and maps ONLY the six managed tags (`@managed_file_failure_tags`: `:config_dir_unwritable`, `:temp_file_failed`, `:write_failed`, `:chmod_failed`, `:rename_failed`, `:managed_file_unreadable`) — a missing/unreadable SOURCE, `:invalid_managed_file` and the skip shapes stay `nil`, so "no login to import" can never be mistaken for "the login exists but cannot be stored".
 - `parse_codex_auth/1` / `parse_claude_credentials/1` → `{:ok, entry} | :error | {:error, reason}`; each accepts a decoded map OR the raw JSON string.
 - `parse_env_token/1` (provider) → `{:ok, %{"type" => "oauth", "access" => token}} | :error`.
 - `env_token/1` (provider) → the provider's env OAuth token or `nil`; values are read at CALL time and blanks are ignored.
@@ -36,6 +37,9 @@ Every failure is a tuple (`{:error, {:source_unreadable | :source_invalid | :man
 Writes are atomic: a uniquely-named temp file in the SAME directory opened `[:exclusive]`, `File.chmod/2`, then `File.rename/2`.
 A NEW file gets mode `0o600`; an EXISTING file keeps its current mode.
 The managed file is the ONLY credential store this module touches — an import never writes `credentials.toml`.
+Every write step is tagged so the caller can tell a storage failure from a missing login: `{:config_dir_unwritable, reason}` (`File.mkdir_p/1`), `{:temp_file_failed, reason}` (exclusive create — this is the `:erofs` a read-only `$HOME` produces), `{:chmod_failed, reason}`, `{:write_failed, reason}` and `{:rename_failed, reason}`; a failed step deletes its temp file and logs one warning line carrying the provider, the managed path and the reason (never token contents).
+A managed PATH that cannot even be READ (a path component is a regular file → `:enotdir`, an unsearchable directory → `:eacces`) surfaces as `{:error, {:managed_file_unreadable, posix}}` from the freshness read (`read_managed/1`), so a purely environment-side failure still reaches the user as a storage problem rather than "no credential".
+`EvoGit.Auth.ensure_credentials/2` / `credential_status/2` turn any of those into `{:error, {:managed_file_unwritable, reason}}` — the ONE outcome meaning "the login was found, but Genesis could not store its managed copy" (shape detail: `../../CONTEXT.md` → OAuth / Subscription Auth).
 
 ## Environment Fallback (OAuth without refresh)
 `:anthropic` consults `CLAUDE_CODE_OAUTH_TOKEN` then `ANTHROPIC_OAUTH_TOKEN` (`claude setup-token` emits the first); `:openai_codex` has NO env fallback.

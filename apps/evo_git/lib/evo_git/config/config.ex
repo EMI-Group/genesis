@@ -642,7 +642,10 @@ defmodule EvoGit.Config do
   setup must never be reported as "missing an API key". When it does fail and
   OAuth profile(s) are configured, the warning names the vendor login step
   (`EvoGit.Auth.login_instructions/1`) and the managed credential file
-  (`EvoGit.Auth.oauth_file/1`) instead of only the generic API-key text.
+  (`EvoGit.Auth.oauth_file/1`) instead of only the generic API-key text — or,
+  when the vendor login exists but the managed file could not be written, the
+  writable-path remedy from `EvoGit.Auth.managed_file_unwritable_remedy/2`
+  (the login step needs no repeat).
   """
   @spec config_status() :: %{
           missing: [atom()],
@@ -726,15 +729,48 @@ defmodule EvoGit.Config do
         @missing_api_key_warning
 
       providers ->
-        instructions =
-          providers
-          |> Enum.map(&EvoGit.Auth.login_instructions/1)
-          |> Enum.map_join("\n", &String.trim/1)
-
         "No API key found and no usable subscription (OAuth) credential for " <>
           Enum.map_join(providers, ", ", &to_string/1) <>
-          ". " <> instructions <> "\nManaged OAuth file: #{EvoGit.Auth.oauth_file([])}"
+          ". " <>
+          oauth_failure_detail(providers, profiles) <>
+          "\nManaged OAuth file: #{EvoGit.Auth.oauth_file([])}"
     end
+  end
+
+  # The detail clause of the OAuth-aware warning. When a managed file could not
+  # be written the vendor login DOES exist, so repeating the login instructions
+  # would be wrong advice — the remedy (path + cause + writable location) takes
+  # their place.
+  defp oauth_failure_detail(providers, profiles) do
+    case managed_file_failure(profiles) do
+      nil ->
+        providers
+        |> Enum.map(&EvoGit.Auth.login_instructions/1)
+        |> Enum.map_join("\n", &String.trim/1)
+
+      remedy ->
+        remedy
+    end
+  end
+
+  # The first OAuth profile whose managed credential file could not be written,
+  # rendered as its remedy. `oauth_credential_status/1` is fault-isolated and
+  # its only side effect is the (idempotent) lazy import.
+  defp managed_file_failure(profiles) do
+    profiles
+    |> oauth_profiles()
+    |> Enum.find_value(fn profile ->
+      case EvoGit.Config.Schema.LLM.oauth_credential_status(profile) do
+        {:error, {:managed_file_unwritable, _} = error} ->
+          EvoGit.Auth.managed_file_unwritable_remedy(
+            error,
+            EvoGit.Config.Schema.LLM.oauth_file_for(profile)
+          )
+
+        _other ->
+          nil
+      end
+    end)
   end
 
   # Configured model profiles that authenticate through a subscription.

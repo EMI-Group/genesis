@@ -1099,7 +1099,7 @@ defmodule EvoGit.ConfigTest do
       isolate_xdg!("evogit-config-status-oauth")
       File.mkdir_p!(Config.config_dir())
 
-      :ok
+      %{oauth_home: empty_home}
     end
 
     # The warning that belongs to a given missing key (checks keep their order).
@@ -1110,6 +1110,39 @@ defmodule EvoGit.ConfigTest do
         nil -> nil
         index -> Enum.at(status.warnings, index)
       end
+    end
+
+    # Writes a config whose Codex profile points its managed OAuth file at an
+    # UNWRITABLE path: a regular FILE sits where the managed file's directory
+    # would be, so every access fails with :enotdir — the hermetic stand-in for
+    # a read-only home / Nix sandbox (which reports :erofs). The vendor login
+    # itself exists in the isolated `:auth_home_fun` home. Returns the path.
+    defp write_unwritable_oauth_config!(home) do
+      codex_home = Path.join(home, ".codex")
+      File.mkdir_p!(codex_home)
+
+      File.write!(
+        Path.join(codex_home, "auth.json"),
+        Jason.encode!(%{
+          "auth_mode" => "chatgpt",
+          "tokens" => %{"access_token" => "tok", "refresh_token" => "refresh"}
+        })
+      )
+
+      blocker = Path.join(Config.config_dir(), "blocked")
+      File.write!(blocker, "not a directory")
+      managed = Path.join(blocker, "auth.json")
+
+      File.write!(Config.config_path(), """
+      [llm]
+      oauth_file = "#{managed}"
+
+      [[llm.models]]
+      id = "codex"
+      model = "openai_codex:gpt-5.6-terra"
+      """)
+
+      managed
     end
 
     test "a resolvable OAuth credential satisfies the :api_key check" do
@@ -1201,6 +1234,39 @@ defmodule EvoGit.ConfigTest do
       """)
 
       refute :api_key in Config.config_status().missing
+    end
+
+    test "a managed file that cannot be written names the path, the cause and the remedy", %{
+      oauth_home: home
+    } do
+      reqllm_key_cleanup()
+      managed = write_unwritable_oauth_config!(home)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      warning = warning_for(status, :api_key)
+
+      assert warning =~ managed
+      assert warning =~ ":enotdir"
+      assert warning =~ "oauth_file"
+      assert warning =~ "writable location"
+      # The vendor login EXISTS, so repeating the login step is wrong advice.
+      refute warning =~ "codex login"
+    end
+
+    test "SystemCheck.llm_test reports the remedy instead of calling the provider", %{
+      oauth_home: home
+    } do
+      reqllm_key_cleanup()
+      write_unwritable_oauth_config!(home)
+
+      # No network: the managed-file failure short-circuits the connection test.
+      assert {:error, message} = EvoGit.SystemCheck.llm_test("openai_codex:gpt-5.6-terra")
+
+      assert message =~ ":enotdir"
+      assert message =~ "oauth_file"
+      assert message =~ "not run"
     end
 
     test "no OAuth profile keeps the generic API-key warning byte-identical" do

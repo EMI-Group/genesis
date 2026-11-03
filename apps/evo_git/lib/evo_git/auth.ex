@@ -26,6 +26,13 @@ defmodule EvoGit.Auth do
   Everything that touches the filesystem or the user config is fault-isolated:
   `ensure_credentials/2` NEVER raises, whatever the vendor files, the config
   directory or the managed JSON look like.
+
+  A vendor login that exists but cannot be persisted into the managed file (a
+  read-only home, a Nix sandbox, a bad `oauth_file` path) is reported as
+  `{:error, {:managed_file_unwritable, posix_reason}}` — never as a misleading
+  "no credentials" — and `managed_file_unwritable_remedy/2` turns it into the
+  path + cause + writable-location remedy the CLI, health checks and dashboard
+  render.
   """
 
   alias EvoGit.Auth.OAuthImport
@@ -112,9 +119,14 @@ defmodule EvoGit.Auth do
       can exchange (an expired access token WITH a refresh token is usable)
     * `:ok` — no managed entry, but a provider env token is set
       (`EvoGit.Auth.OAuthImport.env_token/1`)
-    * `{:error, :no_credentials}` — nothing available
+    * `{:error, :no_credentials}` — nothing available (no vendor login, no env
+      token, no managed entry)
+    * `{:error, {:managed_file_unwritable, reason}}` — a vendor login WAS found,
+      but the managed copy could not be written or its path is unusable;
+      `reason` is the underlying POSIX reason (e.g. `:erofs` on a read-only home,
+      `:enotdir` for a bad `oauth_file`) — see `managed_file_unwritable_remedy/2`
     * `{:error, :invalid_credentials}` / `{:error, :expired_credentials}` — the
-      managed entry cannot be used
+      managed entry itself cannot be used
 
   Fully fault-isolated: any raise/exit becomes `{:error, reason}`.
   """
@@ -127,8 +139,10 @@ defmodule EvoGit.Auth do
     # an unwritable config dir or a broken managed JSON must surface as an
     # error tuple instead of taking the calling agent down.
     try do
-      _ = OAuthImport.import(provider, opts)
-      usable_credentials(provider, opts)
+      case OAuthImport.managed_file_failure_reason(OAuthImport.import(provider, opts)) do
+        nil -> usable_credentials(provider, opts)
+        reason -> prefer_import_failure(usable_credentials(provider, opts), reason)
+      end
     rescue
       error -> {:error, {:credential_check_failed, Exception.message(error)}}
     catch
@@ -151,6 +165,13 @@ defmodule EvoGit.Auth do
   `{:error, :invalid_credentials}` covers an unreadable/broken managed file and
   entries with neither an access nor a refresh token.
 
+  `opts[:managed_file_error]` is the POSIX reason of an already-attempted
+  import that could not write the managed copy (as reported by
+  `OAuthImport.managed_file_failure_reason/1`). When the managed entry is
+  nevertheless unusable, that failure is reported as
+  `{:error, {:managed_file_unwritable, reason}}` — it is the actionable cause —
+  while a usable (`{:ok, _}`) entry keeps its own answer.
+
   `expires` is always reported in milliseconds since the Unix epoch, mirroring
   ReqLLM's own normalization (values below 10_000_000_000 are treated as
   seconds).
@@ -158,13 +179,20 @@ defmodule EvoGit.Auth do
   @spec credential_status(atom(), keyword()) ::
           {:ok, %{expires: integer() | nil, account_id: String.t() | nil}}
           | {:error, :no_credentials | :invalid_credentials}
+          | {:error, {:managed_file_unwritable, term()}}
   def credential_status(provider, opts \\ [])
 
   def credential_status(provider, opts) when is_list(opts) do
-    case managed_entry(provider, oauth_file(opts)) do
-      {:ok, entry} -> {:ok, project_entry(entry)}
-      {:error, :no_credentials} -> env_status(provider)
-      {:error, reason} -> {:error, reason}
+    status =
+      case managed_entry(provider, oauth_file(opts)) do
+        {:ok, entry} -> {:ok, project_entry(entry)}
+        {:error, :no_credentials} -> env_status(provider)
+        {:error, reason} -> {:error, reason}
+      end
+
+    case Keyword.get(opts, :managed_file_error) do
+      nil -> status
+      reason -> prefer_import_failure(status, reason)
     end
   end
 
@@ -176,9 +204,17 @@ defmodule EvoGit.Auth do
 
   Each message is short, names the exact command and file, and never contains a
   token. For an unsupported provider a neutral message is returned.
+
+  `login_instructions(provider, credential_error)` appends
+  `managed_file_unwritable_remedy/2` when the error is
+  `{:error, {:managed_file_unwritable, _}}` — i.e. when the sibling `/1` text
+  would be wrong advice (the login already exists). Every other error yields the
+  unchanged `/1` text.
   """
-  @spec login_instructions(atom()) :: String.t()
-  def login_instructions(provider) do
+  @spec login_instructions(atom(), term()) :: String.t()
+  def login_instructions(provider, credential_error \\ nil)
+
+  def login_instructions(provider, nil) do
     case normalize_provider(provider) do
       :openai_codex ->
         """
@@ -197,6 +233,47 @@ defmodule EvoGit.Auth do
         "No OAuth login instructions are available for #{inspect(provider)}."
     end
   end
+
+  def login_instructions(provider, credential_error) do
+    base = login_instructions(provider, nil)
+
+    case managed_file_unwritable_remedy(credential_error) do
+      nil -> base
+      remedy -> base <> "\n\n" <> remedy
+    end
+  end
+
+  @doc """
+  Returns the actionable remedy for a managed-OAuth-file failure: the file, the
+  cause and the configuration key that fixes it.
+
+  `{:managed_file_unwritable, reason}` (as returned by `ensure_credentials/2`,
+  `credential_status/2` and `EvoGit.Config.Schema.LLM.oauth_credential_status/1`)
+  yields a multi-line remedy naming `path` (default `oauth_file([])`) and the
+  POSIX cause; any other term yields `nil`. Never contains token contents.
+  """
+  @spec managed_file_unwritable_remedy(term(), String.t() | nil) :: String.t() | nil
+  def managed_file_unwritable_remedy(credential_error, path \\ nil)
+
+  # Accepts both the error tuple the credential functions return and the bare
+  # outcome, so callers can pass either through unchanged.
+  def managed_file_unwritable_remedy({:error, credential_error}, path) do
+    managed_file_unwritable_remedy(credential_error, path)
+  end
+
+  def managed_file_unwritable_remedy({:managed_file_unwritable, reason}, path) do
+    path = path || oauth_file([])
+
+    """
+    Genesis found the subscription login but could not write its managed OAuth file
+    (#{path}): #{describe_reason(reason)}.
+    Remedy: set [llm] oauth_file (or the profile's oauth_file) to a writable location, e.g.
+    oauth_file = "~/.config/genesis/auth.json" under a writable home — running the vendor
+    login again will not help.\
+    """
+  end
+
+  def managed_file_unwritable_remedy(_credential_error, _path), do: nil
 
   ## OAuth file resolution
 
@@ -244,6 +321,28 @@ defmodule EvoGit.Auth do
   defp expand_home(path), do: Path.expand(path)
 
   ## Credential state
+
+  # A managed-file failure outranks the residual "nothing usable" verdict,
+  # because it IS the actionable cause: the vendor login exists, Genesis just
+  # could not persist it. A usable entry (`:ok` / `{:ok, _}`) and an entry that
+  # was READ fine but has expired (`:expired_credentials`) keep their own
+  # meaning — the write failure is not what stops them from working.
+  defp prefer_import_failure(:ok, _reason), do: :ok
+  defp prefer_import_failure({:ok, _status} = status, _reason), do: status
+  defp prefer_import_failure({:error, :expired_credentials} = error, _reason), do: error
+
+  defp prefer_import_failure({:error, _other}, reason),
+    do: {:error, {:managed_file_unwritable, reason}}
+
+  # Human wording for the POSIX reasons a managed-file write actually hits on
+  # the supported platforms; anything else is shown verbatim. Never a token.
+  defp describe_reason(:erofs), do: "read-only file system (:erofs)"
+  defp describe_reason(:eacces), do: "permission denied (:eacces)"
+  defp describe_reason(:enotdir), do: "a path component is not a directory (:enotdir)"
+  defp describe_reason(:enospc), do: "no space left on device (:enospc)"
+  defp describe_reason(:eisdir), do: "the path is a directory (:eisdir)"
+  defp describe_reason(:enametoolong), do: "file name too long (:enametoolong)"
+  defp describe_reason(reason), do: inspect(reason)
 
   defp usable_credentials(provider, opts) do
     case managed_entry(provider, oauth_file(opts)) do

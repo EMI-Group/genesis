@@ -34,6 +34,14 @@ defmodule EvoGit.Auth.OAuthImport do
   preserved; the document is merged, never replaced. Token contents are never
   logged.
 
+  A write that cannot happen is reported with a tagged reason
+  (`{:config_dir_unwritable | :temp_file_failed | :write_failed | :chmod_failed | :rename_failed, posix}`),
+  and an unusable managed PATH (read-only home, Nix sandbox, a path component
+  that is not a directory) as `{:managed_file_unreadable, posix}` — the
+  distinction `EvoGit.Auth` needs to tell "credentials were found but the
+  managed copy could not be written" apart from "no vendor login exists"
+  (`managed_file_failure_reason/1`).
+
   ## Environment tokens
 
   `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_OAUTH_TOKEN` are the lowest-priority
@@ -70,6 +78,19 @@ defmodule EvoGit.Auth.OAuthImport do
     anthropic: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"],
     openai_codex: []
   }
+
+  # Import error tags that mean "the managed file/path could not be used":
+  # either it could not be written or its PATH is unusable. Source-file
+  # problems (`:source_unreadable`/`:source_invalid`) and content problems
+  # (`:invalid_managed_file`/`:encode_failed`) are deliberately NOT here.
+  @managed_file_failure_tags [
+    :config_dir_unwritable,
+    :temp_file_failed,
+    :write_failed,
+    :chmod_failed,
+    :rename_failed,
+    :managed_file_unreadable
+  ]
 
   @doc """
   Returns the candidate vendor login files for `provider`, in priority order.
@@ -263,6 +284,21 @@ defmodule EvoGit.Auth.OAuthImport do
   end
 
   def non_empty_string(_value), do: nil
+
+  @doc false
+  # Maps an `import/2` result to the underlying POSIX reason atom when the
+  # MANAGED file could not be used (written, or even reached), and to `nil`
+  # otherwise — a `{:skipped, _}` outcome, `:imported`, a source-file problem or
+  # a broken managed document all yield `nil`. `EvoGit.Auth` uses this to report
+  # `{:managed_file_unwritable, reason}` instead of collapsing the real cause
+  # into `:no_credentials`.
+  @spec managed_file_failure_reason(import_result()) :: atom() | term() | nil
+  def managed_file_failure_reason({:error, reason}), do: managed_file_failure_reason(reason)
+
+  def managed_file_failure_reason({tag, reason}) when tag in @managed_file_failure_tags,
+    do: reason
+
+  def managed_file_failure_reason(_result), do: nil
 
   ## Source paths
 
@@ -536,6 +572,15 @@ defmodule EvoGit.Auth.OAuthImport do
          :ok <- atomic_write(managed_path, contents, existing_mode(managed_path)) do
       Logger.debug(fn -> "Imported #{key} OAuth credentials into #{managed_path}" end)
       :imported
+    else
+      {:error, reason} = error ->
+        # Path + reason only — never token contents. This is the ONE trace of a
+        # managed file Genesis could not write (e.g. a read-only home).
+        Logger.warning(fn ->
+          "OAuth import for #{provider} could not write the managed file #{managed_path} (#{inspect(reason)})"
+        end)
+
+        error
     end
   end
 
@@ -565,8 +610,9 @@ defmodule EvoGit.Auth.OAuthImport do
     with :ok <- ensure_dir(dir),
          {:ok, temp} <- create_temp(dir, path, mode) do
       result =
-        with :ok <- File.write(temp, contents) do
-          File.rename(temp, path)
+        with :ok <- write_temp(temp, contents),
+             :ok <- rename_temp(temp, path) do
+          :ok
         end
 
       _ = File.rm(temp)
@@ -584,13 +630,47 @@ defmodule EvoGit.Auth.OAuthImport do
   defp create_temp(dir, path, mode) do
     temp = temp_path(dir, path)
 
-    with :ok <- File.write(temp, <<>>, [:exclusive]),
-         :ok <- File.chmod(temp, mode) do
+    with :ok <- create_temp_file(temp),
+         :ok <- chmod_temp(temp, mode) do
       {:ok, temp}
     else
-      {:error, reason} ->
+      {:error, {:temp_file_failed, _} = reason} ->
         _ = File.rm(temp)
-        {:error, {:temp_file_failed, reason}}
+        {:error, reason}
+
+      {:error, {:chmod_failed, _} = reason} ->
+        _ = File.rm(temp)
+        {:error, reason}
+    end
+  end
+
+  defp create_temp_file(temp) do
+    case File.write(temp, <<>>, [:exclusive]) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:temp_file_failed, reason}}
+    end
+  end
+
+  # A mode change can fail on its own (e.g. an ACL-restricted directory) and is
+  # reported separately from the temp-file creation.
+  defp chmod_temp(temp, mode) do
+    case File.chmod(temp, mode) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:chmod_failed, reason}}
+    end
+  end
+
+  defp write_temp(temp, contents) do
+    case File.write(temp, contents) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:write_failed, reason}}
+    end
+  end
+
+  defp rename_temp(temp, path) do
+    case File.rename(temp, path) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:rename_failed, reason}}
     end
   end
 

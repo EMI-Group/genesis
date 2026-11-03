@@ -219,7 +219,94 @@ defmodule EvoGit.AuthTest do
     end
   end
 
+  describe "managed OAuth file failures" do
+    test "a found login that cannot be written is reported instead of :no_credentials", %{
+      root: root
+    } do
+      codex_home = Path.join(root, "codex")
+      write_codex_source!(codex_home)
+
+      # A regular FILE where the managed file's directory should be: every
+      # access fails with :enotdir (the hermetic stand-in for a read-only home).
+      blocker = Path.join(root, "blocker")
+      File.write!(blocker, "not a directory")
+      managed = Path.join(blocker, "auth.json")
+
+      # No vendor login + a sane managed path: the unchanged, plain outcome.
+      assert Auth.ensure_credentials(:openai_codex,
+               oauth_file: Path.join(root, "absent-auth.json"),
+               codex_home: Path.join(root, "absent-codex")
+             ) == {:error, :no_credentials}
+
+      # Vendor login present, managed path unusable: the actionable outcome.
+      assert Auth.ensure_credentials(:openai_codex, oauth_file: managed, codex_home: codex_home) ==
+               {:error, {:managed_file_unwritable, :enotdir}}
+
+      assert Auth.credential_status(:openai_codex,
+               oauth_file: managed,
+               managed_file_error: :enotdir
+             ) == {:error, {:managed_file_unwritable, :enotdir}}
+    end
+
+    test "a usable managed entry keeps its own status", %{managed: managed, root: root} do
+      File.write!(managed, Jason.encode!(%{"openai-codex" => %{"refresh" => "r"}}))
+
+      assert Auth.credential_status(:openai_codex,
+               oauth_file: managed,
+               managed_file_error: :erofs
+             ) == {:ok, %{expires: nil, account_id: nil}}
+
+      assert Auth.ensure_credentials(:openai_codex,
+               oauth_file: managed,
+               codex_home: Path.join(root, "absent-codex")
+             ) == :ok
+    end
+  end
+
+  describe "managed_file_unwritable_remedy/2 + login_instructions/2" do
+    test "names the path, the cause and the writable-path remedy" do
+      remedy =
+        Auth.managed_file_unwritable_remedy({:managed_file_unwritable, :erofs}, "/ro/a.json")
+
+      assert remedy =~ "/ro/a.json"
+      assert remedy =~ "read-only file system (:erofs)"
+      assert remedy =~ "oauth_file"
+      assert remedy =~ "writable location"
+    end
+
+    test "is nil for every other outcome" do
+      assert Auth.managed_file_unwritable_remedy({:error, :no_credentials}, "/x/a.json") == nil
+      assert Auth.managed_file_unwritable_remedy(:ok) == nil
+    end
+
+    test "login_instructions/2 appends the remedy only for a managed-file failure" do
+      base = Auth.login_instructions(:openai_codex)
+
+      assert Auth.login_instructions(:openai_codex, nil) == base
+      assert Auth.login_instructions(:openai_codex, {:error, :no_credentials}) == base
+
+      extended =
+        Auth.login_instructions(:openai_codex, {:error, {:managed_file_unwritable, :erofs}})
+
+      assert extended =~ "codex login"
+      assert extended =~ "oauth_file"
+      assert extended =~ ":erofs"
+    end
+  end
+
   ## Helpers
+
+  defp write_codex_source!(codex_home) do
+    File.mkdir_p!(codex_home)
+
+    File.write!(
+      Path.join(codex_home, "auth.json"),
+      Jason.encode!(%{
+        "auth_mode" => "chatgpt",
+        "tokens" => %{"access_token" => "codex-access", "refresh_token" => "refresh-1"}
+      })
+    )
+  end
 
   defp tmp_dir!(prefix) do
     dir =

@@ -232,6 +232,79 @@ defmodule EvoGit.Auth.OAuthImportTest do
     end
   end
 
+  describe "import/2 — managed file failures" do
+    test "a write that cannot happen is an error, while a missing source stays a skip", %{
+      root: root,
+      codex_home: codex_home
+    } do
+      write_codex_source!(codex_home, %{"access_token" => jwt(%{"exp" => 1_800_000_000})})
+
+      # A managed file whose own name is legal but whose TEMP name (same
+      # basename + suffix) exceeds NAME_MAX: the write is forced to fail without
+      # a read-only filesystem, a chmod (which root ignores) or a real
+      # permission change. Verify the mechanism first so an exotic filesystem
+      # fails HERE instead of looking like a product bug.
+      assert {:error, :enametoolong} =
+               File.write(Path.join(root, String.duplicate("b", 300) <> ".tmp"), "")
+
+      managed = Path.join(root, String.duplicate("a", 250) <> ".json")
+      assert byte_size(Path.basename(managed)) == 255
+
+      assert {:error, {:temp_file_failed, _reason}} =
+               OAuthImport.import(:openai_codex, codex_home: codex_home, oauth_file: managed)
+
+      refute File.exists?(managed)
+
+      # Same managed path, no vendor login: a skip, never a write error.
+      assert {:skipped, :source_missing} =
+               OAuthImport.import(:openai_codex,
+                 codex_home: Path.join(root, "absent-codex-home"),
+                 oauth_file: managed
+               )
+    end
+
+    test "an unusable managed PATH is a managed-file failure", %{
+      root: root,
+      codex_home: codex_home
+    } do
+      write_codex_source!(codex_home, %{"access_token" => jwt(%{"exp" => 1_800_000_000})})
+
+      # A regular FILE where the managed file's parent directory should be.
+      blocker = Path.join(root, "not-a-directory")
+      File.write!(blocker, "not a directory")
+      managed = Path.join(blocker, "auth.json")
+
+      assert {:error, {:managed_file_unreadable, :enotdir}} =
+               OAuthImport.import(:openai_codex, codex_home: codex_home, oauth_file: managed)
+
+      assert OAuthImport.managed_file_failure_reason(
+               {:error, {:managed_file_unreadable, :enotdir}}
+             ) == :enotdir
+    end
+
+    test "managed_file_failure_reason/1 maps ONLY managed-file failures" do
+      for tag <- [
+            :config_dir_unwritable,
+            :temp_file_failed,
+            :write_failed,
+            :chmod_failed,
+            :rename_failed,
+            :managed_file_unreadable
+          ] do
+        assert OAuthImport.managed_file_failure_reason({:error, {tag, :erofs}}) == :erofs
+      end
+
+      assert OAuthImport.managed_file_failure_reason(:imported) == nil
+      assert OAuthImport.managed_file_failure_reason({:skipped, :no_usable_tokens}) == nil
+
+      assert OAuthImport.managed_file_failure_reason({:error, {:source_unreadable, :eacces}}) ==
+               nil
+
+      assert OAuthImport.managed_file_failure_reason({:error, {:invalid_managed_file, ":oops"}}) ==
+               nil
+    end
+  end
+
   describe "import/2 — malformed input" do
     test "malformed source JSON returns an error and leaves the source untouched", %{
       managed: managed,

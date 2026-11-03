@@ -191,11 +191,7 @@ defmodule EvoGit.CLI.Setup do
         save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
 
       {:error, reason} ->
-        IO.puts("  ⚠ No usable OAuth credentials yet (#{format_auth_error(reason)}).\n")
-        IO.puts(indent(EvoGit.Auth.login_instructions(provider_atom)))
-        IO.puts("")
-        IO.puts("  Re-run `evogit setup` after logging in — or save the profile now and it")
-        IO.puts("  starts working as soon as the login exists.")
+        print_auth_failure(provider_atom, reason)
 
         if confirm("\n  Save the profile with OAuth auth mode anyway? [Y/n]: ") do
           save_setup_result(model_spec, provider.credential_key, "", auth_mode: "oauth")
@@ -203,6 +199,28 @@ defmodule EvoGit.CLI.Setup do
           IO.puts("\nSetup cancelled. Re-run `evogit setup` once you are logged in.")
         end
     end
+  end
+
+  # A managed-file write failure is NOT a missing login: the vendor login was
+  # found, so printing the login instructions would send the user in circles.
+  # The writable-path remedy is printed instead, and setup can still finish.
+  defp print_auth_failure(_provider_atom, {:managed_file_unwritable, _} = error) do
+    IO.puts("  ⚠ The subscription login was found, but Genesis could not write its")
+    IO.puts("  managed OAuth copy.\n")
+
+    IO.puts(indent(EvoGit.Auth.managed_file_unwritable_remedy(error, EvoGit.Auth.oauth_file([]))))
+
+    IO.puts("")
+    IO.puts("  You can still finish setup: save the profile now and requests start")
+    IO.puts("  working once the managed file is writable.")
+  end
+
+  defp print_auth_failure(provider_atom, reason) do
+    IO.puts("  ⚠ No usable OAuth credentials yet (#{format_auth_error(reason)}).\n")
+    IO.puts(indent(EvoGit.Auth.login_instructions(provider_atom)))
+    IO.puts("")
+    IO.puts("  Re-run `evogit setup` after logging in — or save the profile now and it")
+    IO.puts("  starts working as soon as the login exists.")
   end
 
   # Which vendor CLI wrote the login we are about to import — used only for the

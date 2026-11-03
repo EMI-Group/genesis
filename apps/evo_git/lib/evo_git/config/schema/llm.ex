@@ -429,7 +429,10 @@ defmodule EvoGit.Config.Schema.LLM do
 
   Returns `{:ok, %{expires: ms_epoch | nil, account_id: String.t() | nil}}` when
   the managed entry carries an access or a refresh token (or a provider env
-  token is set), `{:error, :no_credentials}` when nothing is available, and
+  token is set), `{:error, :no_credentials}` when nothing is available,
+  `{:error, {:managed_file_unwritable, reason}}` when the vendor login exists but
+  the managed copy could not be written (`reason` is a POSIX atom — see
+  `EvoGit.Auth.managed_file_unwritable_remedy/2`), and
   `{:error, :invalid_credentials}` for an unusable/broken managed file. Never
   raises: a broken or missing auth file degrades to "not configured".
 
@@ -444,23 +447,37 @@ defmodule EvoGit.Config.Schema.LLM do
     oauth_file = oauth_file_for(profile)
 
     # Import first (the one-time vendor-CLI import), then report what the
-    # managed entry actually holds.
-    _ = ensure_credentials(provider, oauth_file)
+    # managed entry actually holds. A managed-file write failure is threaded
+    # into the status so the caller can name the real cause (and its remedy)
+    # instead of only "no credentials".
+    managed_file_error = managed_file_error(ensure_credentials(provider, oauth_file))
 
-    Auth.credential_status(provider, oauth_file: oauth_file)
+    Auth.credential_status(provider,
+      oauth_file: oauth_file,
+      managed_file_error: managed_file_error
+    )
   end
 
   def oauth_credential_status(_profile), do: {:error, :no_credentials}
+
+  # The POSIX reason of a write-side credential failure, or nil when the import
+  # did not fail that way (`EvoGit.Auth.ensure_credentials/2`).
+  defp managed_file_error({:error, {:managed_file_unwritable, reason}}), do: reason
+  defp managed_file_error(_result), do: nil
 
   # The provider a profile's subscription credential belongs to. `nil` when the
   # model spec carries no resolvable provider — `EvoGit.Auth` then reports "no
   # credentials" instead of raising.
   defp oauth_provider(profile), do: provider_from_model(profile_field(profile, :model))
 
-  # The managed OAuth file for a profile: the profile's own `oauth_file` wins,
-  # otherwise `EvoGit.Auth.oauth_file/1` falls through to the `[llm] oauth_file`
-  # config key and finally the default `<config_dir>/auth.json`.
-  defp oauth_file_for(profile) do
+  @doc """
+  Returns the managed OAuth file a profile's subscription credential uses: the
+  profile's own `oauth_file` wins, otherwise `EvoGit.Auth.oauth_file/1` falls
+  through to the `[llm] oauth_file` config key and finally the default
+  `<config_dir>/auth.json`.
+  """
+  @spec oauth_file_for(map()) :: String.t()
+  def oauth_file_for(profile) when is_map(profile) do
     Auth.oauth_file(oauth_file: profile_field(profile, :oauth_file))
   end
 
