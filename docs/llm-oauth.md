@@ -133,7 +133,7 @@ Notes:
 - A profile may also set `oauth_file` to use a different managed file for that profile alone (for example a team-shared credential file).
 - The same profile table carries everything else a normal profile does: `concurrency`, `context_window` (the context-compression window, default 200 000), the generation parameters (`temperature`, `max_tokens`, `reasoning_effort`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`), `provider_options`, and the peak/off-peak scheduling fields (`peak_concurrency`, `peak_hours`, `off_peak_days`, `timezone`). OAuth has no effect on any of them.
 - On a config that still uses the flat `[llm] model = "…"` form, `[llm] auth_mode = "oauth"` is carried into the auto-created `default` profile, so the legacy form works too.
-- In the dashboard, the LLM settings category exposes the `[llm] oauth_file` field, and profiles are managed in the model-profile editor. The editor writes the profile fields it shows; if your build's editor has no auth-mode control yet, set `auth_mode = "oauth"` on the profile in `config.toml` directly.
+- In the dashboard, the LLM settings category exposes the `[llm] oauth_file` field (its placeholder is the default managed path), and the model-profile editor carries an `auth_mode` toggle — **API key** vs **Subscription (OAuth)** — so the mode needs no hand-editing of `config.toml`. The OAuth-only `openai_codex` provider shows a static **Subscription** badge instead of the toggle and is never asked for an API key.
 
 ---
 ## 5. Setup paths
@@ -152,7 +152,10 @@ For an OAuth-capable provider the wizard offers **"API key"** vs **"Subscription
 
 ### Dashboard
 The dashboard's Settings → LLM page and the per-profile editor edit the same `config.toml`.
-A Codex profile needs only the provider `openai_codex` and a model id; a Claude subscription profile additionally needs `auth_mode = "oauth"` (see §4).
+A Codex profile needs only the provider `openai_codex` and a model id; a Claude subscription profile additionally needs `auth_mode = "oauth"` — choose **Subscription (OAuth)** in the profile's auth-mode toggle rather than editing the file (see §4).
+Next to that toggle the page reports whether a login is actually available — "Login detected (expires …)" or "No subscription login found", together with the one-time `codex login` / `claude` guidance and the managed credential file path — and a manual refresh re-checks it on demand.
+The status is resolved on the machine that owns the config, so a remote node is queried over RPC and the line degrades to "unknown" when it cannot be reached.
+Quick Setup swaps its API-key form for the same login guidance on an OAuth-capable provider.
 
 ---
 ## 6. Model catalog refresh
