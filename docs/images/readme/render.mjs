@@ -42,16 +42,39 @@ if(frames){
   await mkdir(frames,{recursive:true});
   for(let i=0;i<120;i++) await sharp(Buffer.from(tree(i/10))).png().toFile(join(frames,`frame-${String(i).padStart(3,'0')}.png`));
 }
-let a=text(40,52,'Built for long-running development.',32,white,'start',600)+text(40,87,'Three layers, each with one job.',22,muted);
-const cards=[['01','desktop','Tauri / Rust','Start and supervise the backend.'],['02','evo_dash','Phoenix LiveView','Watch agents, inspect tasks, review diffs.'],['03','evo_git','Elixir / OTP','Schedule agents and manage Git worktrees.']];
-for(let i=0;i<3;i++){
-  const y=118+i*112;
-  a+=`<rect x="40" y="${y}" width="880" height="92" rx="14" fill="#121315" stroke="#303136"/><path d="M40 ${y+20} V${y+72}" stroke="${red}" stroke-width="3"/>`;
-  a+=text(64,y+39,cards[i][0],18,red,'start',600)+text(108,y+38,cards[i][1],25,white,'start',600)+text(108,y+66,cards[i][2],19,muted)+text(385,y+53,cards[i][3],22,white);
-  if(i<2) a+=`<path d="M480 ${y+94} V${y+109} M475 ${y+104} L480 ${y+109} L485 ${y+104}" fill="none" stroke="#77787e" stroke-width="2"/>`;
+const architectureLayers=[
+  ['Desktop','desktop · Tauri / Rust','Starts and supervises','the local backend.'],
+  ['Dashboard','evo_dash · Phoenix LiveView','Tracks agents, tasks','and code changes.'],
+  ['Runtime','evo_git · Elixir / OTP','Manages agents and','Git worktrees.'],
+];
+function architectureIcon(i,x,y){
+  const icons=[
+    '<rect x="-14" y="-11" width="28" height="20" rx="3"/><path d="M-6 15 H6 M0 9 V15 M-14 -5 H14"/>',
+    '<rect x="-13" y="-12" width="10" height="10" rx="2"/><rect x="3" y="-12" width="10" height="10" rx="2"/><rect x="-13" y="4" width="10" height="10" rx="2"/><path d="M4 9 H13 M8.5 4.5 V13.5"/>',
+    '<path d="M0 -12 V0 M0 0 H-12 V12 M0 0 H12 V12"/><circle cx="0" cy="-13" r="4" fill="#181216"/><circle cx="-12" cy="13" r="4" fill="#181216"/><circle cx="12" cy="13" r="4" fill="#181216"/>',
+  ];
+  return `<g transform="translate(${x} ${y})"><circle r="27" fill="#181216" stroke="#48272d"/><g stroke="#e05a60" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none">${icons[i]}</g></g>`;
 }
-await writeFile(join(dest,'architecture.svg'),wrap(a,468));
-await sharp(Buffer.from(wrap(a,468))).png().toFile(join(dest,'architecture.png'));
+function architecture(mobile=false){
+  const w=mobile?540:960,h=mobile?520:278;
+  let b=`<rect x=".5" y=".5" width="${w-1}" height="${h-1}" rx="18" fill="#0b0d10" stroke="#292d34"/>`;
+  for(let i=0;i<3;i++){
+    const [title,stack,line1,line2]=architectureLayers[i];
+    if(mobile){
+      const y=54+i*164;
+      b+=architectureIcon(i,54,y+7)+text(110,y+2,title,30,white,'start',600)+text(110,y+34,stack,21,muted)+text(110,y+75,line1,25)+text(110,y+107,line2,25);
+      if(i<2) b+=`<path d="M54 ${y+42} V${y+131}" stroke="#3a3036" stroke-width="1.5"/><path d="M49 ${y+126} L54 ${y+132} L59 ${y+126}" stroke="#8c626a" fill="none" stroke-width="1.5"/><path d="M110 ${y+136} H504" stroke="#252930"/>`;
+    }else{
+      const x=38+i*312;
+      b+=architectureIcon(i,x+27,58)+text(x,126,title,29,white,'start',600)+text(x,158,stack,18,muted)+text(x,207,line1,23)+text(x,238,line2,23);
+      if(i<2) b+=`<path d="M${x+72} 58 H${x+270}" stroke="#393038" stroke-width="1.5"/><path d="M${x+264} 53 L${x+270} 58 L${x+264} 63" stroke="#8c626a" stroke-width="1.5" fill="none"/>`;
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"><g font-family="Arial, sans-serif">${b}</g></svg>`;
+}
+await writeFile(join(dest,'architecture.svg'),architecture());
+await writeFile(join(dest,'architecture-mobile.svg'),architecture(true));
+await sharp(Buffer.from(architecture())).png().toFile(join(dest,'architecture.png'));
 const mobileWrap = (body,h=740) => wrap(body,h).replace('width="960"','width="540"').replace('0 0 960','0 0 540').replace('width="960"','width="540"').replace('width="958"','width="538"');
 function mobileTree(t,still=false){
   const m=still?1:ease(t,1.2,2.4), w=still?1:ease(t,3,4.4), v=still?1:ease(t,6.3,7.5);
@@ -74,13 +97,27 @@ if(frames){
   await mkdir(join(frames,'mobile'),{recursive:true});
   for(let i=0;i<120;i++) await sharp(Buffer.from(mobileTree(i/10))).png().toFile(join(frames,'mobile',`frame-${String(i).padStart(3,'0')}.png`));
 }
-let mobileArch=text(30,48,'Built for long-running',30,white,'start',600)+text(30,85,'development.',30,white,'start',600)+text(30,124,'Three layers, each with one job.',23,muted);
-const roles=[['Start and supervise','the backend.'],['Watch agents, inspect tasks,','review diffs.'],['Schedule agents and manage','Git worktrees.']];
-for(let i=0;i<3;i++){
-  const y=158+i*170;
-  mobileArch+=`<rect x="30" y="${y}" width="480" height="148" rx="14" fill="#121315" stroke="#303136"/><path d="M30 ${y+20} V${y+128}" stroke="${red}" stroke-width="3"/>`;
-  mobileArch+=text(52,y+37,cards[i][0],19,red,'start',600)+text(94,y+37,cards[i][1],27,white,'start',600)+text(94,y+66,cards[i][2],21,muted)+text(52,y+103,roles[i][0],24)+text(52,y+130,roles[i][1],24);
-  if(i<2) mobileArch+=`<path d="M270 ${y+150} V${y+168} M265 ${y+163} L270 ${y+168} L275 ${y+163}" fill="none" stroke="#77787e" stroke-width="2"/>`;
-}
-await writeFile(join(dest,'architecture-mobile.svg'),mobileWrap(mobileArch,680));
 console.log('Rendered diagrams and animation frames.');
+// Compact companion for a 400px-wide floated README illustration.
+function inlineTree(t,still=false){
+  const m=still?1:ease(t,1.2,2.4),w=still?1:ease(t,3,4.4),v=still?1:ease(t,6.3,7.5);
+  const fade=still?1:1-ease(t,8.1,9.3)*.64+ease(t,10.1,11)*.64;
+  const line=(x,y,X,Y,o)=>`<path d="M${x} ${y} C${(x+X)/2} ${y},${(x+X)/2} ${Y},${X} ${Y}" stroke="${red}" stroke-width="2.3" fill="none" opacity="${o}"/>`;
+  const dot=(x,y,label,o=1,active=false)=>`<g opacity="${o}"><circle cx="${x}" cy="${y}" r="16" fill="#151518" stroke="${active?red:'#b0b0b6'}" stroke-width="2.3"/><circle cx="${x}" cy="${y}" r="4" fill="${active?red:white}"/>${text(x,y+36,label,21,white,'middle')}</g>`;
+  let b=text(28,43,'RECURSIVE WORK',19,muted,'start',600);
+  b+=`<g opacity="${fade}">`+line(91,182,234,112,m)+line(91,182,234,270,m)+line(266,112,454,90,w)+line(266,112,454,187,w)+line(266,270,454,286,w);
+  b+=dot(75,182,'Objective',1,true)+dot(250,112,'Manager',m)+dot(250,270,'Manager',m)+dot(470,90,'Build',w)+dot(470,187,'Test',w)+dot(470,286,'Implement',w)+'</g>';
+  b+='<path d="M28 348 H532" stroke="#303136"/>'+text(28,386,'ACCEPTED HISTORY',19,muted,'start',600);
+  b+=`<path d="M85 429 H300" stroke="#44454b" stroke-width="3"/><path d="M85 429 H${85+215*v}" stroke="${red}" stroke-width="3"/><circle cx="77" cy="429" r="8" fill="${white}"/>`+text(77,468,'Version 1',21,muted,'middle');
+  b+=`<g opacity="${v}"><circle cx="308" cy="429" r="10" fill="${red}"/>${text(308,468,'Version 2',21,white,'middle')}</g>`;
+  const labels=['Set an objective','Delegate local work','Implement and validate','Accepted results persist','Continue from the accepted world'];
+  b+=text(28,510,still?'Accepted results carry forward.':labels[t<1.2?0:t<3?1:t<6.3?2:t<9.3?3:4],21,muted);
+  const svg=wrap(b,536).replaceAll('width="960"','width="560"').replace('0 0 960','0 0 560').replace('width="958"','width="558"');
+  return svg.replace('width="560"','width="592"').replace('0 0 560','0 0 592').replace('role="img">','role="img"><g transform="translate(16 0)">').replace('</svg>','</g></svg>');
+}
+await writeFile(join(dest,'recursive-world-inline.svg'),inlineTree(8,true));
+await sharp(Buffer.from(inlineTree(8,true))).png().toFile(join(dest,'recursive-world-inline.png'));
+if(frames){
+  await mkdir(join(frames,'inline'),{recursive:true});
+  for(let i=0;i<120;i++) await sharp(Buffer.from(inlineTree(i/10))).png().toFile(join(frames,'inline',`frame-${String(i).padStart(3,'0')}.png`));
+}

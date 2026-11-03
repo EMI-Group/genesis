@@ -7,10 +7,14 @@ They are conceptual illustrations, not screenshots or experimental records.
 recursive-world.gif: 12-second looping sequence (960 x 580).
 recursive-world.png: static alternative for prefers-reduced-motion.
 recursive-world.svg: editable vector version of the completed diagram.
-architecture.svg: three runtime layers (960 x 468).
+architecture.svg: compact horizontal architecture diagram (960 x 278), with
+distinct desktop, dashboard and runtime icons; architecture-mobile.svg stacks
+the same layers vertically (540 x 520).
 architecture.png: raster version for previews and sharing.
 *-mobile: portrait variants for viewports at or below 600 CSS pixels.
 The mobile GIF has its own static PNG fallback for reduced-motion preferences.
+recursive-world-inline.*: compact diagram for the text/GIF layout, with transparent
+side gutters. The README floats it at 400px; narrow pages wrap the text below it.
 
 Rebuild with Node.js, sharp and Python Pillow installed:
   node render.mjs sharp /path/to/temporary-frames

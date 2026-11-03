@@ -27,23 +27,6 @@ https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
   <a href="https://genesis.evox.group/#film">Watch the film on the website →</a>
 </p>
 
-## The world persists. Agents do not.
-
-<picture>
-  <source media="(max-width: 600px) and (prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world-mobile.png">
-  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world.png">
-  <source media="(max-width: 600px)" srcset="docs/images/readme/recursive-world-mobile.gif">
-  <img src="docs/images/readme/recursive-world.gif" alt="An objective branches into managers and executors. Accepted contributions advance version history, which persists after the agent episodes end." width="960">
-</picture>
-
-Genesis develops software across many agent episodes. Managers break an objective into local tasks, delegate work, and review the results. Executors implement candidate changes in isolated Git worktrees. Accepted contributions become the starting point for subsequent work.
-
-Each local world is situated by **an accepted software version and a repository path**: the version records what has been built; the path defines context, responsibility, and scope. `CONTEXT.md` files make these local contracts explicit.
-
-The agent hierarchy unfolds as development proceeds. Software versions and project history carry the work forward from one episode to the next.
-
-[Explore the architecture →](https://genesis.evox.group/developer/architecture/high-level-design/)
-
 ## See development unfold
 
 - **Set an objective.** Start a new project or bring an existing repository. Describe the outcome and constraints; Genesis decomposes the work as needed.
@@ -69,6 +52,23 @@ Genesis redeveloped a selected **13-module MESA scope**, from **139,414 Fortran 
 [Explore the evidence →](https://genesis.evox.group/evidence/) · [Experimental details](docs/experiments.md) · [Paper](https://arxiv.org/abs/2608.10450)
 
 Source repositories: [C compiler](https://github.com/EMI-Group/genesis-demo-jcc) · [MESA redevelopment](https://github.com/EMI-Group/genesis-demo-mesa-rs)
+
+## The world persists. Agents do not.
+
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world-inline.png">
+  <img align="right" src="docs/images/readme/recursive-world-inline.gif" alt="Managers delegate work to executors. Accepted contributions persist in version history after agent episodes end." width="400">
+</picture>
+
+**An objective becomes local work.** Managers break down the goal, delegate tasks, and review the results. Executors implement and validate candidate changes in isolated Git worktrees.
+
+**Each task has a place.** An accepted software version records what has been built; a repository path defines context, responsibility, and scope. `CONTEXT.md` files make these local contracts explicit.
+
+**Accepted results carry forward.** The hierarchy unfolds as development proceeds. Agents finish their episodes; software versions and project history remain as the starting point for subsequent work.
+
+[Explore the architecture →](https://genesis.evox.group/developer/architecture/high-level-design/)
+
+<br clear="all">
 
 ## Start with an objective
 

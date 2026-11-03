@@ -21,3 +21,13 @@ frames = [Image.open(p).convert('RGB').quantize(palette=palette, dither=Image.Di
 assert len(frames) == 120
 frames[0].save(assets / 'recursive-world-mobile.gif', save_all=True, append_images=frames[1:],
                duration=100, loop=0, optimize=True, disposal=1)
+palette = Image.open(assets / 'recursive-world-inline.png').convert('RGB').quantize(colors=96)
+frames = []
+for p in sorted((frames_dir / 'inline').glob('frame-*.png')):
+    rgba = Image.open(p).convert('RGBA')
+    indexed = rgba.convert('RGB').quantize(palette=palette, dither=Image.Dither.NONE)
+    indexed.paste(255, mask=rgba.getchannel('A').point(lambda a: 255 if a == 0 else 0))
+    frames.append(indexed)
+assert len(frames) == 120
+frames[0].save(assets / 'recursive-world-inline.gif', save_all=True, append_images=frames[1:],
+               duration=100, loop=0, optimize=False, disposal=1, transparency=255)
