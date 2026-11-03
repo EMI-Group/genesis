@@ -5,6 +5,16 @@ defmodule EvoGit.Config.LLMCatalog do
   Provides shortcuts for common provider/model combinations, so users don't need
   to memorize the "provider:model" string format. Also provides guidance for
   providers not in the catalog.
+
+  ## Auth modes
+
+  Each entry's `auth_modes` / `oauth_source` describe HOW a provider can be
+  authenticated, and drive the "API key" vs "Subscription (OAuth)" choice in the
+  CLI setup wizard and the dashboard. A provider with `[:api_key]` (the default
+  when the field is absent) authenticates with an API key only; one that also
+  lists `:oauth` may instead reuse a subscription credential imported from the
+  vendor CLI named by `oauth_source` (`:codex_cli` / `:claude_code`). The
+  `:openai_codex` entry is OAuth-only — it can never be used with an API key.
   """
 
   @type variant_entry :: %{
@@ -14,6 +24,13 @@ defmodule EvoGit.Config.LLMCatalog do
           credential_key: String.t()
         }
 
+  @typedoc """
+  A catalog provider entry.
+
+  `auth_modes` lists the auth modes the provider supports (`[:api_key]` when
+  absent) and `oauth_source` names the vendor CLI login the OAuth credential is
+  imported from (`:codex_cli` or `:claude_code`; `nil` otherwise).
+  """
   @type provider_entry :: %{
           id: atom(),
           display_name: String.t(),
@@ -22,7 +39,9 @@ defmodule EvoGit.Config.LLMCatalog do
           models: [model_entry()],
           variants: [variant_entry()] | nil,
           custom_model: boolean() | nil,
-          requires_base_url: boolean() | nil
+          requires_base_url: boolean() | nil,
+          auth_modes: [atom()] | nil,
+          oauth_source: atom() | nil
         }
 
   @type model_entry :: %{
@@ -37,6 +56,8 @@ defmodule EvoGit.Config.LLMCatalog do
       provider_atoms: [:anthropic],
       credential_key: "anthropic_api_key",
       variants: nil,
+      auth_modes: [:api_key, :oauth],
+      oauth_source: :claude_code,
       models: [
         %{id: "claude-haiku-5-5", display_name: "Claude Haiku 5.5"},
         %{id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5"},
@@ -59,6 +80,25 @@ defmodule EvoGit.Config.LLMCatalog do
         %{id: "gpt-6-astra", display_name: "GPT-6 Astra"},
         %{id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol"},
         %{id: "gpt-5.6-terra", display_name: "GPT-5.6 Terra"}
+      ]
+    },
+    %{
+      id: :openai_codex,
+      display_name: "ChatGPT Codex (OAuth)",
+      provider_atoms: [:openai_codex],
+      credential_key: "openai_codex_api_key",
+      variants: nil,
+      auth_modes: [:oauth],
+      oauth_source: :codex_cli,
+      models: [
+        %{id: "gpt-6.1-sol", display_name: "GPT-6.1 Sol"},
+        %{id: "gpt-6-astra", display_name: "GPT-6 Astra"},
+        %{id: "gpt-6.1-terra", display_name: "GPT-6.1 Terra"},
+        %{id: "gpt-6-sol", display_name: "GPT-6 Sol"},
+        %{id: "gpt-6-luna", display_name: "GPT-6 Luna"},
+        %{id: "gpt-5.6-sol", display_name: "GPT-5.6 Sol"},
+        %{id: "gpt-5.6-terra", display_name: "GPT-5.6 Terra"},
+        %{id: "gpt-5.6-luna", display_name: "GPT-5.6 Luna"}
       ]
     },
     %{
@@ -372,19 +412,84 @@ defmodule EvoGit.Config.LLMCatalog do
   """
   @spec requires_base_url?(atom()) :: boolean()
   def requires_base_url?(provider_atom) when is_atom(provider_atom) do
-    # Look up by :id first (each catalog entry has a unique :id atom, e.g.
-    # :openai_compatible). This is needed because :openai_compatible shares
-    # the :openai provider atom with the regular OpenAI entry, so
-    # find_provider/1 (which matches by provider_atoms) cannot distinguish
-    # them. Falling back to find_provider/1 covers raw provider atoms.
-    provider =
-      Enum.find(@providers, fn p -> p.id == provider_atom end) ||
-        find_provider(provider_atom)
-
-    case provider do
+    case resolve_entry(provider_atom) do
       nil -> false
       provider -> provider[:requires_base_url] == true
     end
+  end
+
+  @doc """
+  Returns the auth modes the given provider supports.
+
+  Accepts a catalog entry id (e.g. `:openai_codex`) or a raw provider atom (e.g.
+  `:anthropic`). Defaults to `[:api_key]` for providers that do not declare the
+  field and for unknown providers.
+
+  ## Examples
+
+      iex> EvoGit.Config.LLMCatalog.auth_modes(:anthropic)
+      [:api_key, :oauth]
+
+      iex> EvoGit.Config.LLMCatalog.auth_modes(:openai_codex)
+      [:oauth]
+
+      iex> EvoGit.Config.LLMCatalog.auth_modes(:mistral)
+      [:api_key]
+  """
+  @spec auth_modes(atom()) :: [atom()]
+  def auth_modes(provider_atom) when is_atom(provider_atom) do
+    case resolve_entry(provider_atom) do
+      nil -> [:api_key]
+      provider -> provider[:auth_modes] || [:api_key]
+    end
+  end
+
+  @doc """
+  Returns which vendor CLI login the provider's OAuth credential is imported
+  from: `:codex_cli` or `:claude_code`. Returns `nil` for API-key-only and
+  unknown providers.
+
+  Accepts a catalog entry id or a raw provider atom.
+
+  ## Examples
+
+      iex> EvoGit.Config.LLMCatalog.oauth_source(:openai_codex)
+      :codex_cli
+
+      iex> EvoGit.Config.LLMCatalog.oauth_source(:anthropic)
+      :claude_code
+
+      iex> EvoGit.Config.LLMCatalog.oauth_source(:openai)
+      nil
+  """
+  @spec oauth_source(atom()) :: atom() | nil
+  def oauth_source(provider_atom) when is_atom(provider_atom) do
+    case resolve_entry(provider_atom) do
+      nil -> nil
+      provider -> provider[:oauth_source]
+    end
+  end
+
+  @doc """
+  Returns `true` when the provider cannot be used with an API key at all — i.e.
+  `:api_key` is NOT among its `auth_modes/1`.
+
+  The config layer uses this to auto-detect OAuth (e.g. for
+  `openai_codex:gpt-5.6-terra`) when the user did not write an `auth_mode`.
+  Unknown providers are not OAuth-only.
+  """
+  @spec oauth_only?(atom()) :: boolean()
+  def oauth_only?(provider_atom) when is_atom(provider_atom) do
+    :api_key not in auth_modes(provider_atom)
+  end
+
+  @doc """
+  Returns `true` when the provider supports a subscription OAuth credential
+  (`:oauth` is among its `auth_modes/1`). Unknown providers return `false`.
+  """
+  @spec supports_oauth?(atom()) :: boolean()
+  def supports_oauth?(provider_atom) when is_atom(provider_atom) do
+    :oauth in auth_modes(provider_atom)
   end
 
   @doc """
@@ -418,10 +523,19 @@ defmodule EvoGit.Config.LLMCatalog do
   @doc """
   Returns all unique credential key names from the catalog, including both provider
   and variant entries (since variants may use different credential keys).
+
+  A provider's `credential_key` is contributed ONLY when the provider supports
+  API-key auth (`:api_key` in its `auth_modes`); an OAuth-only provider (e.g.
+  `:openai_codex`) therefore never reports a key, so
+  `EvoGit.Config.api_key_present?/1` cannot mistake an OAuth subscription for a
+  configured API key. Variants keep contributing theirs unconditionally.
   """
   @spec known_credential_keys() :: [String.t()]
   def known_credential_keys do
-    provider_vars = Enum.map(@providers, & &1.credential_key)
+    provider_vars =
+      @providers
+      |> Enum.filter(&(:api_key in (&1[:auth_modes] || [:api_key])))
+      |> Enum.map(& &1.credential_key)
 
     variant_vars =
       @providers
@@ -437,6 +551,16 @@ defmodule EvoGit.Config.LLMCatalog do
   end
 
   # --- Private Helpers ---
+
+  # Resolves a catalog entry from either an entry id or a provider atom.
+  # Look up by :id first (each catalog entry has a unique :id atom, e.g.
+  # :openai_compatible). This is needed because :openai_compatible shares the
+  # :openai provider atom with the regular OpenAI entry, so find_provider/1
+  # (which matches by provider_atoms) cannot distinguish them. Falling back to
+  # find_provider/1 covers raw provider atoms.
+  defp resolve_entry(provider_atom) do
+    Enum.find(@providers, fn p -> p.id == provider_atom end) || find_provider(provider_atom)
+  end
 
   defp find_model_id(models, input) do
     trimmed = String.trim(input)

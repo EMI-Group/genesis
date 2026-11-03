@@ -126,6 +126,18 @@ defmodule EvoGit.Config.LLMCatalogTest do
     test "returns unique values" do
       assert LLMCatalog.known_credential_keys() == Enum.uniq(LLMCatalog.known_credential_keys())
     end
+
+    test "omits the credential key of an OAuth-only provider" do
+      vars = LLMCatalog.known_credential_keys()
+
+      # :openai_codex is OAuth-only, so its (shape-only) credential_key must
+      # never be reported — otherwise api_key_present?/1 would believe an OAuth
+      # subscription is a configured API key.
+      refute "openai_codex_api_key" in vars
+
+      assert "openai_api_key" in vars
+      assert "anthropic_api_key" in vars
+    end
   end
 
   describe "provider_models/2" do
@@ -347,6 +359,98 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
   end
 
+  describe "openai_codex (OAuth-only) entry" do
+    test "is placed immediately after :openai and carries the documented shape" do
+      providers = LLMCatalog.providers()
+      ids = Enum.map(providers, & &1.id)
+      openai_idx = Enum.find_index(ids, &(&1 == :openai))
+
+      assert Enum.at(ids, openai_idx + 1) == :openai_codex,
+             "expected :openai_codex to follow :openai, got #{inspect(Enum.at(ids, openai_idx + 1))}"
+
+      provider = Enum.find(providers, &(&1.id == :openai_codex))
+      assert provider.display_name == "ChatGPT Codex (OAuth)"
+      assert provider.provider_atoms == [:openai_codex]
+      assert provider.credential_key == "openai_codex_api_key"
+      assert provider.variants == nil
+      assert provider.auth_modes == [:oauth]
+      assert provider.oauth_source == :codex_cli
+    end
+
+    test "ships the Codex model list newest/highest-priority first" do
+      # Derived from the Codex models cache, ordered by `priority`, visible
+      # entries only (`gpt-reserve` and `codex-auto-review` are hidden).
+      expected = [
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna"
+      ]
+
+      assert Enum.map(LLMCatalog.provider_models(:openai_codex), & &1.id) == expected
+
+      for model <- LLMCatalog.provider_models(:openai_codex) do
+        assert is_binary(model.display_name)
+        assert model.display_name != ""
+      end
+    end
+  end
+
+  describe "auth metadata accessors" do
+    test "auth_modes/1 defaults to [:api_key] for API-key-only and unknown providers" do
+      for provider <- [:openai, :google, :deepseek, :zai, :minimax, :mistral_unknown] do
+        assert LLMCatalog.auth_modes(provider) == [:api_key],
+               "expected #{inspect(provider)} to default to [:api_key]"
+      end
+    end
+
+    test "auth_modes/1 accepts catalog entry ids as well as provider atoms" do
+      # :openai_codex is both an entry id and a provider atom.
+      assert LLMCatalog.auth_modes(:openai_codex) == [:oauth]
+      # :openai_compatible is an entry id whose provider atom is :openai; the
+      # entry is resolved by id first, exactly like requires_base_url?/1.
+      assert LLMCatalog.auth_modes(:openai_compatible) == [:api_key]
+      assert LLMCatalog.auth_modes(:anthropic) == [:api_key, :oauth]
+    end
+
+    test "oauth_only?/1 is true only for :openai_codex" do
+      oauth_only_ids =
+        LLMCatalog.providers()
+        |> Enum.map(& &1.id)
+        |> Enum.filter(&LLMCatalog.oauth_only?/1)
+
+      assert oauth_only_ids == [:openai_codex]
+      assert LLMCatalog.oauth_only?(:openai_codex) == true
+
+      for provider <- [:openai, :anthropic, :google, :deepseek, :openrouter, :unknown_provider] do
+        assert LLMCatalog.oauth_only?(provider) == false,
+               "expected #{inspect(provider)} not to be OAuth-only"
+      end
+    end
+
+    test "oauth_source/1 names the vendor CLI login or returns nil" do
+      assert LLMCatalog.oauth_source(:openai_codex) == :codex_cli
+      assert LLMCatalog.oauth_source(:anthropic) == :claude_code
+
+      for provider <- [:openai, :google, :deepseek, :openrouter, :unknown_provider] do
+        assert LLMCatalog.oauth_source(provider) == nil
+      end
+    end
+
+    test "supports_oauth?/1 is true for the OAuth-capable providers only" do
+      assert LLMCatalog.supports_oauth?(:openai_codex) == true
+      assert LLMCatalog.supports_oauth?(:anthropic) == true
+
+      for provider <- [:openai, :google, :deepseek, :zai, :openrouter, :unknown_provider] do
+        assert LLMCatalog.supports_oauth?(provider) == false
+      end
+    end
+  end
+
   describe "credential_key_for_atom/1" do
     test "lowercases the atom name and appends _api_key" do
       for {atom, key} <- [
@@ -365,15 +469,28 @@ defmodule EvoGit.Config.LLMCatalogTest do
     # llm_db resolver for the provider's canonical atom — otherwise the CLI
     # setup wizard and dashboard pickers would offer models that fail at
     # request time. `LLMDB.model/2` validates; `ReqLLM.model/1` does not.
+    # EXEMPT: :openai_codex — its model ids live in the Codex backend, not in
+    # LLMDB (gpt-6.1-terra is codex-only and deliberately absent from the
+    # snapshot). Every other provider stays covered by this check.
     test "every catalog model id resolves via LLMDB.model/2" do
       for provider <- LLMCatalog.providers(),
           provider.models != [],
+          LLMCatalog.oauth_only?(provider.id) == false,
           model <- provider.models do
         canonical = hd(provider.provider_atoms)
 
         assert {:ok, _} = LLMDB.model(canonical, model.id),
                "catalog model #{inspect(model.id)} does not resolve for provider #{inspect(canonical)}"
       end
+    end
+
+    test "the LLMDB exemption covers :openai_codex only" do
+      exempt =
+        LLMCatalog.providers()
+        |> Enum.filter(&(&1.models != [] and LLMCatalog.oauth_only?(&1.id)))
+        |> Enum.map(& &1.id)
+
+      assert exempt == [:openai_codex]
     end
   end
 end

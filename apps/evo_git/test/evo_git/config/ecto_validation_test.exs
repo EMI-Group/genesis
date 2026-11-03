@@ -441,6 +441,116 @@ defmodule EvoGit.Config.EctoValidationTest do
       assert error.key_path == [:llm, :models, 1, :context_window]
       assert error.rule == :integer
     end
+
+    test "auth_mode accepts \"oauth\"/\"api_key\" and their atom spellings" do
+      for auth_mode <- ["oauth", :oauth, "api_key", :api_key] do
+        assert {:ok, _} =
+                 Schema.validate(%{
+                   llm: %{
+                     models: [
+                       %{id: "x", model: "openai_codex:gpt-6.1-sol", auth_mode: auth_mode}
+                     ]
+                   }
+                 }),
+               "expected auth_mode #{inspect(auth_mode)} to be accepted"
+      end
+    end
+
+    test "an absent or nil auth_mode means the \"api_key\" default (no error)" do
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b"}]}})
+
+      assert {:ok, _} =
+               Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b", auth_mode: nil}]}})
+
+      assert {:ok, _} =
+               Schema.validate(%{
+                 llm: %{models: [%{"id" => "x", "model" => "a:b", "auth_mode" => nil}]}
+               })
+    end
+
+    test "an unknown auth_mode is a :string error at [:llm, :models, 0, :auth_mode]" do
+      for bad <- ["token", "OAuth", 1] do
+        assert {:error, [error]} =
+                 Schema.validate(%{
+                   llm: %{models: [%{id: "x", model: "a:b", auth_mode: bad}]}
+                 })
+
+        assert error.key_path == [:llm, :models, 0, :auth_mode]
+        assert error.rule == :string
+        assert error.value == bad
+        assert error.message == "auth_mode must be \"api_key\" or \"oauth\", got #{inspect(bad)}"
+      end
+    end
+
+    test "a string-keyed invalid auth_mode is reported at the same atom path" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{models: [%{"id" => "x", "model" => "a:b", "auth_mode" => "token"}]}
+               })
+
+      assert error.key_path == [:llm, :models, 0, :auth_mode]
+      assert error.rule == :string
+      assert error.value == "token"
+    end
+
+    test "auth_mode is validated at the profile's own index" do
+      assert {:error, [error]} =
+               Schema.validate(%{
+                 llm: %{
+                   models: [
+                     %{id: "ok", model: "a:b", auth_mode: "oauth"},
+                     %{id: "bad", model: "c:d", auth_mode: "token"}
+                   ]
+                 }
+               })
+
+      assert error.key_path == [:llm, :models, 1, :auth_mode]
+    end
+
+    test "a non-empty binary oauth_file passes (atom- and string-keyed)" do
+      assert {:ok, _} =
+               Schema.validate(%{
+                 llm: %{models: [%{id: "x", model: "a:b", oauth_file: "/tmp/a.json"}]}
+               })
+
+      assert {:ok, _} =
+               Schema.validate(%{
+                 llm: %{models: [%{"id" => "x", "model" => "a:b", "oauth_file" => "~/.a.json"}]}
+               })
+    end
+
+    test "an empty or non-binary oauth_file is a :string error" do
+      for bad <- ["", 42, ["/tmp/a.json"], %{}] do
+        assert {:error, [error]} =
+                 Schema.validate(%{
+                   llm: %{models: [%{id: "x", model: "a:b", oauth_file: bad}]}
+                 })
+
+        assert error.key_path == [:llm, :models, 0, :oauth_file]
+        assert error.rule == :string
+        assert error.value == bad
+        assert error.message == "oauth_file must be a non-empty string path, got #{inspect(bad)}"
+      end
+    end
+
+    test "an absent or nil oauth_file produces no error" do
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b"}]}})
+
+      assert {:ok, _} =
+               Schema.validate(%{llm: %{models: [%{id: "x", model: "a:b", oauth_file: nil}]}})
+    end
+
+    test "a fully valid OAuth profile passes end to end" do
+      profile = %{
+        id: "codex",
+        model: "openai_codex:gpt-6.1-sol",
+        concurrency: 2,
+        auth_mode: "oauth",
+        oauth_file: "~/.config/genesis/auth.json"
+      }
+
+      assert {:ok, _} = Schema.validate(%{llm: %{models: [profile]}})
+    end
   end
 
   describe "crash resilience on garbage nested structures" do

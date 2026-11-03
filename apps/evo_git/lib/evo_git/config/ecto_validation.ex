@@ -470,6 +470,26 @@ defmodule EvoGit.Config.EctoValidation do
         validate_off_peak_days(path, off_peak_days)
       end
 
+    # Optional auth mode for the profile ("api_key" | "oauth"; absent = "api_key").
+    auth_mode = profile_field(profile, :auth_mode)
+
+    auth_mode_errors =
+      if is_nil(auth_mode) do
+        []
+      else
+        validate_auth_mode(path, auth_mode)
+      end
+
+    # Optional per-profile override of the managed OAuth credential file path.
+    oauth_file = profile_field(profile, :oauth_file)
+
+    oauth_file_errors =
+      if is_nil(oauth_file) do
+        []
+      else
+        validate_oauth_file(path, oauth_file)
+      end
+
     id_errors ++
       model_errors ++
       provider_options_errors ++
@@ -477,7 +497,9 @@ defmodule EvoGit.Config.EctoValidation do
       peak_hours_errors ++
       timezone_errors ++
       context_window_errors ++
-      off_peak_days_errors
+      off_peak_days_errors ++
+      auth_mode_errors ++
+      oauth_file_errors
   end
 
   defp validate_model_profile(path, profile) do
@@ -571,6 +593,42 @@ defmodule EvoGit.Config.EctoValidation do
             :off_peak_days
           )
         ]
+    end
+  end
+
+  # Validates the optional auth_mode profile field: must be "api_key" or
+  # "oauth" when present. TOML delivers strings, but programmatic callers may
+  # pass the atom spellings (:api_key / :oauth), so both are accepted.
+  defp validate_auth_mode(path, value) do
+    if value in ["api_key", "oauth", :api_key, :oauth] do
+      []
+    else
+      [
+        error(
+          path ++ [:auth_mode],
+          "auth_mode must be \"api_key\" or \"oauth\", got #{inspect(value)}",
+          value,
+          :string
+        )
+      ]
+    end
+  end
+
+  # Validates the optional oauth_file profile field: must be a non-empty binary
+  # (a filesystem path) when present; "" is rejected because an empty path would
+  # silently fall back to the global/default credential file.
+  defp validate_oauth_file(path, value) do
+    if is_binary(value) and value != "" do
+      []
+    else
+      [
+        error(
+          path ++ [:oauth_file],
+          "oauth_file must be a non-empty string path, got #{inspect(value)}",
+          value,
+          :string
+        )
+      ]
     end
   end
 
