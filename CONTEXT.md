@@ -58,7 +58,7 @@ The full design specification is documented across the CONTEXT.md tree.
 ### CLI Interface
 
 ```bash
-# Setup — guided LLM configuration wizard
+# Setup — guided LLM configuration wizard (API key or, for OAuth-capable providers, "Subscription (OAuth)" reusing an existing `codex login` / `claude` login)
 mix run -e 'EvoGit.CLI.main(System.argv())' -- setup
 
 # Genesis — create a codebase from a prompt
