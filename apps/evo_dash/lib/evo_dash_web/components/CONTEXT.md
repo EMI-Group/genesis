@@ -109,6 +109,15 @@ Task-card-specific cap rows (`@in_card_blob_limit`, `@in_card_log_limit`, `@copy
 
 ## Design Notes
 
+### Restrained shell and core controls
+
+`Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation without a selection shadow.
+The Help link retains its translated name and `/help` route and uses `hero-chat-bubble-left-right` to identify the chat entry.
+Below `lg`, the main content uses `pt-16` to clear the fixed navigation toggle; desktop uses `lg:pt-4`, with the existing flex/min-height chain and scroll backgrounds unchanged.
+The fixed configuration notice has a viewport-minus-two-rem width capped at `max-w-sm`, wrapping warning text on an opaque base surface with a subtle shadow.
+Shell navigation, branding and toggle controls plus core default buttons, tabs, accordion summaries and notice close buttons use theme-token focus-visible outlines.
+Core notices use a single subtle ring and shadow, wrapping text, and a translated Close label; default core buttons use `rounded-lg` and form labels use `text-base-content/70`.
+
 ### Settings Quick Setup — credentials gated on model selection (`settings_components.ex` + `settings_live.ex`)
 The LLM Quick Setup is a **select-then-save** flow — provider buttons → variant buttons → model buttons (`phx-click="select_llm_model"`, sets `selected_model_string`; highlight `btn-primary shadow-md`), and only THEN do the credential inputs render:
 - **Save Model form** (`phx-submit="save_quick_setup"`, hidden `provider_id` + `variant_id` + `model_string` + `gettext("Save Model")`) renders ONLY when `@selected_model_string != nil`; its base_url input renders ONLY when `EvoGit.Config.LLMCatalog.requires_base_url?/1` is true (the `provider[:requires_base_url]` map field is DEAD). The handler defaults a missing/empty base_url to `opts = []`.
@@ -169,7 +178,7 @@ The project-settings foreign-repo editor implements the multi-repo read-write UI
 
 ### Sidebar must stay `overflow-visible` — SSH node-selector dropdown clipping
 
-The sidebar (`layouts.ex`) is a `z-50` stacking context above `#main-scroll` (`z-0`), so its overflowing dropdowns paint above the content — but it must never clip them: the `SidebarCollapse` hook adds `overflow-visible` in BOTH branches, and `<aside id="sidebar">` additionally carries `overflow-visible!` as defense-in-depth. Removing either clips the node-selector dropdown (`w-72`) at the sidebar edge (`w-60`/`w-16`). The comment above `<aside id="sidebar">` still claims the hook re-applies `overflow-hidden` on expand — stale; do not act on it.
+The sidebar (`layouts.ex`) is a `z-50` stacking context above `#main-scroll` (`z-0`), so its overflowing dropdowns paint above the content — but it must never clip them: the `SidebarCollapse` hook adds `overflow-visible` in BOTH branches, and `<aside id="sidebar">` additionally carries `overflow-visible!` as defense-in-depth. Removing either clips the node-selector dropdown (`w-72`) at the sidebar edge (`w-60`/`w-16`). The comment above `<aside id="sidebar">` documents the same visible-overflow invariant in both hook states.
 
 ### Sidebar bottom-bar dropdowns never auto-close (native `<details>`)
 

@@ -67,7 +67,7 @@ defmodule EvoDashWeb.CoreComponents do
       {@rest}
     >
       <div class={[
-        "alert alert-soft !block relative w-full overflow-hidden rounded-lg !shadow-xl p-4 !ring-2 ring-current/15",
+        "alert alert-soft !block relative w-full overflow-hidden rounded-lg !shadow-sm p-4 !ring-1 ring-current/15",
         @kind == :info && "alert-info",
         @kind == :success && "alert-success",
         @kind == :error && "alert-error",
@@ -90,11 +90,15 @@ defmodule EvoDashWeb.CoreComponents do
             name="hero-exclamation-triangle"
             class="size-5 shrink-0 text-current"
           />
-          <div class="flex-1">
+          <div class="flex-1 min-w-0 break-words">
             <p :if={@title} class="text-sm font-semibold">{@title}</p>
             <p class="text-sm">{msg}</p>
           </div>
-          <button type="button" class="opacity-60 hover:opacity-100 shrink-0" aria-label="close">
+          <button
+            type="button"
+            class="rounded-md text-current/70 hover:text-current shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+            aria-label={Gettext.gettext(EvoDashWeb.Gettext, "Close")}
+          >
             <.icon name="hero-x-mark" class="size-5" />
           </button>
         </div>
@@ -125,7 +129,10 @@ defmodule EvoDashWeb.CoreComponents do
 
     assigns =
       assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
+        [
+          "btn rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
+          Map.fetch!(variants, assigns[:variant])
+        ]
       end)
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
@@ -239,7 +246,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
         <select
           id={@id}
           name={@name}
@@ -260,7 +267,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
         <textarea
           id={@id}
           name={@name}
@@ -281,7 +288,7 @@ defmodule EvoDashWeb.CoreComponents do
     ~H"""
     <div class="fieldset mb-2">
       <label>
-        <span :if={@label} class="label mb-1">{@label}</span>
+        <span :if={@label} class="label mb-1 text-base-content/70">{@label}</span>
         <input
           type={@type}
           name={@name}
@@ -502,7 +509,7 @@ defmodule EvoDashWeb.CoreComponents do
           phx-click={@phx_click}
           phx-value-id={tab.id}
           class={[
-            "px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-all whitespace-nowrap",
+            "px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
             @active == tab.id && "bg-base-100 shadow-sm text-base-content",
             @active != tab.id && "hover:bg-base-200/80 text-base-content/70 hover:text-base-content"
           ]}
@@ -552,7 +559,7 @@ defmodule EvoDashWeb.CoreComponents do
   def collapsible_card(assigns) do
     ~H"""
     <details id={@id} open={@open} class="overflow-hidden group border-b border-base-300">
-      <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors">
+      <summary class="px-4 py-3 cursor-pointer select-none flex items-center gap-3 list-none hover:bg-base-200 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone">
         <.icon :if={@icon} name={@icon} class="size-5 shrink-0 text-base-content/70" />
         <span class="font-semibold flex-1">{@title}</span>
         <.icon
