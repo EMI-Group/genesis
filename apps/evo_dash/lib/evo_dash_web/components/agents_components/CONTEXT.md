@@ -71,7 +71,7 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 - `commit_graph_view/1` → `#commit-graph` root (`phx-hook="CommitGraph"`, rendered ONCE per page and PERSISTS across node switches) → `#commit-graph-body-<node_key>` (`space-y-4`) → `view_state/3` dispatch.
 - `view_state/3` (private clauses): `[]` + loading → `:loading`; `[]` + not loading + no error → `:empty`; `[]` + error → `:error`; otherwise `:repos`.
 - The `:repos` state renders the stale-warning strip when `@error != nil`, then one `repo_section/1` per map entry (non-map entries dropped).
-- `repo_section/1` → a wrapper `div` whose `id` IS `repo.repo_dom_id` VERBATIM (the builder already emits `commit-graph-repo-<slug>-<hash>` — add NO extra prefix) and `data-cg-repo-id` → repo header (the `hero-server-stack` icon in a `bg-primary` rounded chip + the name in a bold `truncate` span with `title`) → `commit_list/1`.
+- `repo_section/1` → a wrapper `div` whose `id` IS `repo.repo_dom_id` VERBATIM (the builder already emits `commit-graph-repo-<slug>-<hash>` — add NO extra prefix) and `data-cg-repo-id` → repo header (the `hero-server-stack` icon in a non-shrinking `size-7 bg-primary` rounded chip + the name in a `text-sm font-semibold truncate` span with `title`) → `commit_list/1`.
 - `commit_list/1` → the optional `#cg-selection-readout-<repo_dom_id>` readout line, then the scroll wrapper `#cg-scroll-<repo_dom_id>.cg-scroll` (the `.cg-scroll` rule in app.css owns `overflow: auto` on BOTH axes + a bounded `max-height` — `min(26rem, 60vh)` on mobile, `min(38rem, 70vh)` at xl+) hosting (top → bottom) the sticky `lane_header/1` bar and the relative list wrapper `#cg-list-<repo_dom_id>.cg-list.relative` (gutter svg + rows), then — when the repo model flags `truncated: true` — the dimmed truncation strip `#cg-truncated-<repo_dom_id>` (a `hero-information-circle` icon + gettext "Older commits are not shown (limit 100)") at the BOTTOM of the list, INSIDE the scroll wrapper, after the rows; a repo with NO nodes renders a `p.cg-empty-note` note inside the scroll wrapper instead (never both).
 - State blocks: `#commit-graph-error` (gettext "Could not load commit history.") and `#commit-graph-stale-warning` (gettext "Showing the last loaded commit graph — refresh failed.").
 
@@ -107,7 +107,7 @@ Attributes (all declared with `attr/3`, UNCHANGED):
 
 #### Selection readout
 
-- When `@selected_id` matches one of THIS repo's `agents`, the readout `div#cg-selection-readout-<dom>.text-primary.font-mono` renders ABOVE the scroll wrapper (a `hero-cursor-arrow-rays` icon + text): gettext `"Selected %{agent}"`, or `"Selected %{agent} · %{range}"` when start/end shas are known (`range` = `start_sha → end_sha`, short shas).
+- When `@selected_id` matches one of THIS repo's `agents`, the readout `div#cg-selection-readout-<dom>.text-primary-standalone.font-mono` renders ABOVE the scroll wrapper (a `hero-cursor-arrow-rays` icon + text): gettext `"Selected %{agent}"`, or `"Selected %{agent} · %{range}"` when start/end shas are known (`range` = `start_sha → end_sha`, short shas).
 - Selecting also accents that agent's rows (the `bg-primary/10` / ring classes above) — selection REUSES `select_agent`; there is no new event.
 
 ### FROZEN DOM contract (the JS hook `assets/js/hooks/commit_graph.js` + CSS animation target these — do NOT rename or drop them)
@@ -142,10 +142,6 @@ The `CommitGraph` hook (see `assets/js/hooks/commit_graph.js`) owns three behavi
 
 ## Known Issues — CommitGraphView (temporal view)
 
-- ~~The sticky lane header never actually sticks~~ **FIXED**: `.cg-scroll` is now the BOTH-axis scroller (`overflow: auto` + a bounded `max-height`, app.css) — the lane header pins above the rows inside it, horizontal sync preserved (gutter + rows + header stay in one wrapper).
-- ~~The gutter nodes' `<title>` tooltips are unreachable~~ **FIXED**: each row `div` carries the same `node_title/1` content as a native `title`, AND the node's `circle.cg-node-dot` re-enables pointer events so its own `<title>` is hoverable too.
-- ~~No scroll-to-selection / row↔dot hover sync~~ **FIXED**: the `CommitGraph` hook now owns the hover sync (delegated `mouseover`/`mouseout` keyed by `data-cg-sha`, toggling `cg-hovered`), the keyboard activation (Enter / Space on owned rows) and the scroll-to-selection (`updated()` + `data-cg-selected-id`, only on an actual change).
-- ~~Rows are click-only `div`s~~ **FIXED**: owned rows render `role="button"` + `tabindex="0"`; the hook's delegated keydown pushes the same `select_agent` event.
 - **Lane sprawl at high agent counts**: `column_count` counts every agent lane even when it owns no nodes, and `@col_w` is fixed 24px — with ~15+ lanes the gutter (24 + 24·n px) exceeds the left panel and the row text scrolls out of view together with the gutter.
 
 ## Notes for Agents

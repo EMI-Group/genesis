@@ -307,10 +307,10 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
       <div class="flex items-center gap-2 mb-2 pb-1 border-b border-base-300">
         <.icon
           name="hero-server-stack"
-          class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
+          class="size-7 shrink-0 text-primary-content p-1.5 rounded-lg bg-primary"
         />
         <span
-          class="font-bold text-base text-base-content truncate min-w-0"
+          class="font-semibold text-sm text-base-content truncate min-w-0"
           title={repo_name(@repo)}
         >
           {repo_name(@repo)}
@@ -346,7 +346,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
     <%= if readout do %>
       <div
         id={"cg-selection-readout-" <> dom}
-        class="flex items-center gap-1.5 text-xs text-primary font-mono py-0.5"
+        class="flex min-w-0 items-center gap-1.5 text-xs text-primary-standalone font-mono py-1"
       >
         <.icon name="hero-cursor-arrow-rays" class="size-3.5 shrink-0" />
         <span class="truncate">{readout_text(readout)}</span>
@@ -415,7 +415,7 @@ defmodule EvoDashWeb.AgentsComponents.CommitGraphView do
         <%= if repo_truncated?(@repo) do %>
           <div
             id={"cg-truncated-" <> dom}
-            class="flex items-center gap-1.5 py-1.5 text-xs text-base-content/50"
+            class="flex items-center gap-1.5 py-1.5 text-xs text-base-content/60"
           >
             <.icon name="hero-information-circle" class="size-3.5 shrink-0" />
             <%!-- 更早的提交未显示——超出条数上限 --%>
