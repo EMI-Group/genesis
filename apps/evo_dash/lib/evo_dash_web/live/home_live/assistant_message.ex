@@ -53,7 +53,9 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
         <.icon name="hero-sparkles" class="size-4 text-primary-content" />
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
-        <div class="mb-0.5 text-sm font-semibold leading-snug text-base-content">Genesis</div>
+        <div class="mb-0.5 text-sm font-semibold leading-snug text-base-content">
+          <%!-- zh_CN: 助手名称 “Genesis”（品牌短名，对应 “启元”） --%>{gettext("Genesis")}
+        </div>
         <div class="group/assistant min-w-0">
           <%= if @task_status != nil do %>
             <div class="mb-2 flex flex-wrap items-center gap-2">
