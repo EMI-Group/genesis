@@ -46,9 +46,9 @@
           </div>
         <% end %>
         <!-- Agent Tree View -->
-        <div class="agents-tree-panel card bg-base-100 shadow-md border border-base-300 rounded-xl">
+        <div class="agents-tree-panel card bg-base-100 border border-base-300 rounded-lg">
           <div class="card-body p-4">
-            <div class="flex items-center gap-2 mb-2">
+            <div class="flex flex-wrap items-center gap-2 mb-3">
               <.icon name="hero-squares-2x2" class="size-5 shrink-0" />
               <div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-base-200/60 border border-base-300">
                 <button
@@ -86,7 +86,7 @@
                 <div class="text-center py-16 bg-base-200/40 rounded-xl">
                   <.icon
                     name="hero-arrow-path"
-                    class="size-20 mx-auto mb-4 text-base-content/40 animate-spin"
+                    class="size-8 mx-auto mb-4 text-base-content/60 animate-spin"
                   />
                   <%!-- 加载中提示：智能体列表从当前节点异步拉取时的占位加载态 --%>
                   <p class="text-lg text-base-content">{gettext("Loading agents…")}</p>
@@ -96,7 +96,7 @@
                   <div class="text-center py-16">
                     <.icon
                       name="hero-server"
-                      class="size-20 mx-auto mb-4 text-base-content/40 animate-float"
+                      class="size-10 mx-auto mb-4 text-base-content/40"
                     />
                     <p class="text-lg text-base-content">
                       {gettext("No agents currently registered")}
@@ -115,7 +115,7 @@
                             name="hero-server-stack"
                             class="size-5 text-primary-content p-1.5 rounded-lg bg-primary"
                           />
-                          <span class="font-bold text-base text-base-content">{repo_name}</span>
+                          <span class="min-w-0 break-all font-semibold text-sm text-base-content">{repo_name}</span>
                           <span class="text-xs text-base-content/70">({length(tree_nodes)} {gettext(
                             "directories"
                           )})</span>
@@ -279,14 +279,14 @@
 
       <!-- Right Column: Agent Details Panel — full vertical space -->
       <div class="agents-detail-col">
-        <div class="card bg-base-100 shadow-md border border-base-300 rounded-xl">
+        <div class="card bg-base-100 border border-base-300 rounded-lg">
           <div class="card-body p-4">
             <%= if @selected_agent_id do %>
               <% agent = Enum.find(@agents, &(&1.id == @selected_agent_id)) %>
               <%= if agent do %>
                 <div id={"agent-detail-#{agent.id}"} class="agent-detail-content">
-                  <div class="flex items-center justify-between mb-2">
-                    <div class="flex items-center gap-3">
+                  <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div class="flex min-w-0 flex-wrap items-center gap-2">
                       <h3 class="card-title">
                         <.icon name="hero-identification" class="size-5" />
                         #{agent.task_local_id || agent.id}
@@ -957,7 +957,7 @@
               <div class="text-center py-16">
                 <.icon
                   name="hero-finger-pointing"
-                  class="size-20 mx-auto mb-4 text-base-content/40 animate-float"
+                  class="size-10 mx-auto mb-4 text-base-content/40"
                 />
                 <p class="text-lg text-base-content">
                   {gettext("Select an agent to view details")}
