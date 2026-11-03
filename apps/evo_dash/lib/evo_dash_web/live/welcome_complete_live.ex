@@ -44,7 +44,7 @@ defmodule EvoDashWeb.WelcomeCompleteLive do
 
         <!-- Example task — the page's sole focus -->
         <div class="flex-1 lg:overflow-y-auto lg:min-h-0 flex flex-col justify-center">
-          <div class="rounded-xl border border-base-200 bg-base-100 p-6">
+          <div class="rounded-xl border border-base-300 bg-base-100 p-6">
             <div class="flex items-center justify-between gap-2 mb-2">
               <h3 class="text-base font-bold">
                 {gettext("Try an example task")}
