@@ -236,7 +236,7 @@ defmodule EvoDashWeb.SystemLive do
               </div>
               <button
                 phx-click="rerun_checks"
-                class="btn btn-ghost btn-sm gap-2"
+                class="btn btn-ghost btn-sm rounded-md gap-2"
                 disabled={@system_checks_status == :checking}
               >
                 <.icon
@@ -498,7 +498,7 @@ defmodule EvoDashWeb.SystemLive do
                           navigate={
                             ~p"/settings?category=llm#{if @current_node_id, do: "&node=#{@current_node_id}", else: ""}"
                           }
-                          class="btn btn-primary btn-sm gap-2 shrink-0"
+                          class="btn btn-primary btn-sm rounded-md gap-2 shrink-0"
                         >
                           <.icon name="hero-sparkles" class="size-4" />
                           {gettext("Test in Settings")}
