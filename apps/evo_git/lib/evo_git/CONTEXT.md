@@ -142,6 +142,16 @@ Code that is latently Windows-broken because the Windows branch is unreachable o
 - **`SystemCheck.check_tool/1`** passes `Executable.resolve/1`'s output straight to `System.cmd/3`, so a genuinely missing tool raises `ErlangError :enoent` (a check error via the centralized rescue) instead of "unavailable".
 - **`EvoGit.Skills.Executor`'s Windows branch resolves bash only via `System.find_executable("bash")`** — bundled MinGit ships `sh`, not `bash.exe`, and is off PATH, so bash skills degrade to the "install Git for Windows" error (`./skills/`).
 
+## OAuth / Subscription Auth (`EvoGit.Auth`)
+A model profile can spend a ChatGPT/Claude **subscription login** instead of a per-token API key; the credential lives in ONE managed file and never in `credentials.toml`.
+- **Files**: `EvoGit.Auth.oauth_file/1` resolves profile `oauth_file` → global `[llm] oauth_file` → `<config_dir>/auth.json` (`default_oauth_file/0`; `~` expanded, a broken user-config read degrades to the default); the file is ReqLLM-native JSON keyed by provider OAuth id (`"openai-codex"`, `"anthropic"`) with `type`/`access`/`refresh`/`expires`(ms)/`accountId`.
+- **Never runs its own OAuth flow**: `EvoGit.Auth.oauth_import` lazily imports the vendor CLI login (`$CODEX_HOME/auth.json` or `~/.codex/auth.json` for Codex; `~/.claude/.credentials.json` for Claude Code) the first time a credential is needed, only when the managed file lacks the entry or the source mtime is newer (ReqLLM rotates and persists tokens into the managed file, so a fresher managed entry always wins).
+- **Guidance**: `EvoGit.Auth.login_instructions/1` returns the one-time vendor steps (`codex login`; `claude` login or `claude setup-token` + `CLAUDE_CODE_OAUTH_TOKEN`) and is printed by the setup wizard and by `config_status/0`'s failure message.
+- **Env fallback**: `CLAUDE_CODE_OAUTH_TOKEN` then `ANTHROPIC_OAUTH_TOKEN` for `:anthropic` when no file credential exists — OAuth without refresh, never written to disk; `:openai_codex` has no env fallback.
+- **Provider identity**: `auth_modes`/`oauth_source`/`oauth_only?`/`supports_oauth?` on `Config.LLMCatalog` decide which providers can use OAuth; an OAuth-only provider (`:openai_codex`) needs no `auth_mode` in the profile.
+- **Assembly**: `Config.Schema.LLM.profile_generation_params/1` is the choke point (`provider_options` three-level precedence; `ensure_profile_credentials/1` / `oauth_credential_status/1`) → `config/schema/CONTEXT.md`.
+- Tests are hermetic via `opts[:home]`/`opts[:codex_home]`/`opts[:oauth_file]` and the call-time app env `:auth_home_fun` → `test/CONTEXT.md`.
+
 ## Constraints
 
 - Part of an **umbrella project** — deps, artifacts and lockfile at the repo root; Elixir ~> 1.18; **Git CLI only** (no libgit2); no source at root; subdirectories follow Elixir convention (`./lib/evo_git/<subdir>/` ↔ `EvoGit.<Subdir>`).
