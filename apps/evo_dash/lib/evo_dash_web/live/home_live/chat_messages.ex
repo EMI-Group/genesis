@@ -3,7 +3,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   Renders the Home chat page's message surface (`EvoDashWeb.HomeLive`): the
   empty state (brand logo mark, greeting, suggestion chips) and the transcript
   message list (user bubbles via `EvoDashWeb.HomeLive.UserMessage`, assistant
-  mini task-cards via `EvoDashWeb.HomeLive.AssistantMessage`, error rows).
+  answer columns via `EvoDashWeb.HomeLive.AssistantMessage`, error rows).
 
   Pure presentation — extracted from `home_live.ex` to keep the LiveView under
   the ~1000-line concern threshold. All interactivity bubbles up to the
@@ -32,34 +32,29 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   )
 
   # Renders the empty state (no transcript entries yet): brand logo mark
-  # (light/dark variants), kicker + greeting, and the four suggestion chips —
+  # (light/dark variants), greeting, and the four suggestion chips —
   # OR, when the Genesis-source gate blocks chatting, a short note instead of
   # the chips (chips would only start a doomed `:reflect` task).
   def empty_state(assigns) do
     ~H"""
-    <div class="h-full min-h-0 flex flex-col items-center justify-center gap-3 text-center px-6 pb-10">
+    <div class="min-h-full flex flex-col items-center justify-center gap-4 text-center px-4 py-8 sm:px-6">
       <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
       <img
         src={~p"/images/logo.svg"}
-        class="h-14 w-auto dark:hidden"
+        class="h-10 w-auto dark:hidden"
         alt={gettext("EvoX Genesis")}
       />
       <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
       <img
         src={~p"/images/logo-alt.svg"}
-        class="h-14 w-auto hidden dark:block"
+        class="h-10 w-auto hidden dark:block"
         alt={gettext("EvoX Genesis")}
       />
-      <p class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/60">
-        <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
-      </p>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
         <%!-- zh_CN: "今天有什么可以帮你的？" --%>{gettext("How can I help you today?")}
       </h2>
-      <p class="max-w-md text-sm text-base-content/80">
-        <%!-- zh_CN: "与 Genesis 助手聊天：询问代码库、探索源码、控制任务，或获得仪表盘引导" --%>{gettext(
-          "Chat with the Genesis assistant: ask about the codebase, explore the source, control running tasks, or get guided through the dashboard."
-        )}
+      <p class="max-w-md text-sm leading-relaxed text-base-content/70">
+        <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
       </p>
       <%= if @source_gate? do %>
         <p class="mt-4 max-w-md text-sm text-base-content/70">
@@ -73,28 +68,28 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
           <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
             <.icon
               name="hero-light-bulb"
-              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+              class="size-4 mt-0.5 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
           <%!-- zh_CN: "任务取消是如何工作的？" --%>
           <.suggestion_chip message={gettext("How does task cancellation work?")}>
             <.icon
               name="hero-magnifying-glass"
-              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+              class="size-4 mt-0.5 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
           <%!-- zh_CN: "你能帮我做什么？" --%>
           <.suggestion_chip message={gettext("What can you help me with?")}>
             <.icon
               name="hero-puzzle-piece"
-              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+              class="size-4 mt-0.5 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
           <%!-- zh_CN: "引导我使用仪表盘" --%>
           <.suggestion_chip message={gettext("Guide me through the dashboard")}>
             <.icon
               name="hero-map"
-              class="size-4 mt-0.5 shrink-0 text-primary-standalone/80 group-hover:text-primary-standalone"
+              class="size-4 mt-0.5 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
         </div>
@@ -109,12 +104,12 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
   attr(:raw_entry_ids, :any, required: true)
 
   # The transcript message list, oldest first. User entries are right-aligned
-  # content-fit bubbles; assistant entries are the mini task-card; error
+  # content-fit bubbles; assistant entries are answer-first columns; error
   # entries use a soft red tint. Only the LAST assistant entry receives the
   # task badge + thought process.
   def message_list(assigns) do
     ~H"""
-    <div class="px-4 py-6 pb-8 space-y-6">
+    <div class="px-3 py-6 pb-8 space-y-8 sm:px-4 sm:space-y-10">
       <%= for {entry, index} <- Enum.with_index(@transcript) do %>
         <div id={"chat-entry-" <> entry_id(entry)} class={bubble_wrapper_class(entry)}>
           <%= case Map.get(entry, :role) do %>
@@ -185,7 +180,7 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       type="button"
       phx-click="send_message"
       phx-value-message={@message}
-      class="group flex items-start gap-2.5 rounded-xl border border-base-300 bg-base-100 px-3.5 py-3 text-left text-[13px] leading-snug text-base-content/70 hover:border-primary-standalone/40 hover:bg-base-200/70 hover:text-base-content transition-colors"
+      class="group flex items-start gap-2.5 rounded-lg border border-base-300 bg-base-100 px-3.5 py-3 text-left text-sm leading-relaxed text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
     >
       {render_slot(@inner_block)}
       {@message}

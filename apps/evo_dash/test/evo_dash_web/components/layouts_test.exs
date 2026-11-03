@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.LayoutsTest do
   @moduledoc """
-  Render-level tests for `EvoDashWeb.Layouts.app/1`, focused on the sidebar
-  "Active Tasks" grouping.
+  Render-level contracts for `EvoDashWeb.Layouts.app/1`: sidebar task grouping,
+  Help navigation, keyboard focus, and the responsive configuration warning.
 
   `group_tasks_by_project/2` is private, so the grouping is exercised through
   the public `app/1` function component. `Layouts.app/1` needs a `flash`
@@ -85,7 +85,101 @@ defmodule EvoDashWeb.LayoutsTest do
     end
   end
 
+  describe "app/1 — shell navigation" do
+    test "Help is a chat link and preserves the selected remote node" do
+      for {node_id, href} <- [{nil, "/help"}, {"remote-test", "/help?node=remote-test"}] do
+        tree = render_app(current_node_id: node_id, current_page: :help) |> parse()
+        assert [help] = Floki.find(tree, "nav a[href='#{href}']")
+        assert Floki.text(help) |> String.trim() == "Help"
+        assert [_] = Floki.find(help, ".hero-chat-bubble-left-right")
+        assert Floki.attribute(help, "data-phx-link") == ["redirect"]
+        assert Floki.attribute(help, "aria-current") == ["page"]
+      end
+    end
+
+    test "active and inactive sidebar links retain visible keyboard focus" do
+      tree = render_app(current_page: :help) |> parse()
+      paths = ~w(/projects /agents /tasks /settings /system /help)
+
+      for path <- paths do
+        assert [link] = Floki.find(tree, "nav a[href='#{path}']")
+
+        assert_classes(
+          link,
+          ~w(focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone)
+        )
+
+        if path == "/help" do
+          assert Floki.attribute(link, "aria-current") == ["page"]
+        else
+          refute Floki.attribute(link, "aria-current") == ["page"]
+        end
+      end
+    end
+  end
+
+  describe "app/1 — configuration warning" do
+    test "warning content is escaped and the configure link preserves node context" do
+      warnings = ["No model configured", "Missing <credential> & provider"]
+
+      for {node_id, href} <- [{nil, "/settings"}, {"remote-test", "/settings?node=remote-test"}] do
+        tree =
+          render_app(current_node_id: node_id, config_status: %{ok?: false, warnings: warnings})
+          |> parse()
+
+        assert [banner] = config_warning(tree)
+        assert Floki.find(banner, "p") |> Floki.text() == "Missing Configuration"
+        assert Floki.find(banner, "li") |> Enum.map(&Floki.text/1) == warnings
+        assert Floki.find(banner, "credential") == []
+        assert [link] = Floki.find(banner, "a")
+        assert Floki.attribute(link, "href") == [href]
+        assert Floki.text(link) == "Configure now →"
+        assert [_] = Floki.find(banner, "button[aria-label='Close']")
+      end
+    end
+
+    test "warning markup bounds narrow-screen width and lets long content wrap" do
+      long_warning = String.duplicate("unbroken-credential-path", 30)
+
+      tree =
+        render_app(config_status: %{ok?: false, warnings: [long_warning]})
+        |> parse()
+
+      assert [banner] = config_warning(tree)
+      # Render contracts only: actual viewport geometry belongs in browser tests.
+      assert_classes(banner, ["w-[calc(100%-2rem)]", "max-w-sm"])
+
+      assert [content] =
+               banner
+               |> Floki.find("div")
+               |> Enum.filter(fn {_, _, children} ->
+                 Enum.any?(children, &match?({"ul", _, _}, &1))
+               end)
+
+      assert_classes(content, ["flex-1", "min-w-0"])
+      assert [warning] = Floki.find(content, "li")
+      assert Floki.text(warning) == long_warning
+      assert_classes(warning, ["break-words"])
+    end
+
+    test "unavailable or healthy configuration status renders no warning" do
+      for status <- [nil, %{ok?: true, warnings: ["Should not be displayed"]}] do
+        tree = render_app(config_status: status) |> parse()
+        assert config_warning(tree) == []
+        refute Floki.text(tree) =~ "Missing Configuration"
+        refute Floki.text(tree) =~ "Should not be displayed"
+      end
+    end
+  end
+
   # --- helpers ---
+
+  defp config_warning(tree), do: Floki.find(tree, "div.fixed:has(a[href^='/settings'])")
+
+  defp assert_classes(node, expected) do
+    classes = node |> Floki.attribute("class") |> Enum.join(" ") |> String.split()
+    for class <- expected, do: assert(class in classes)
+  end
 
   # Renders the full app layout shell. `flash` + `inner_block` are the only
   # assigns a bare render needs; every other attribute is optional with a
