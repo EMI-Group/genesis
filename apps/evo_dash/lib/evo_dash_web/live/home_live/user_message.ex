@@ -19,7 +19,7 @@ defmodule EvoDashWeb.HomeLive.UserMessage do
 
   def user_message(assigns) do
     ~H"""
-    <div class="w-fit max-w-[85%] sm:max-w-[80%] rounded-3xl rounded-br-md bg-base-300 px-4 py-2.5 text-left text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+    <div class="w-fit max-w-[85%] sm:max-w-[80%] rounded-3xl rounded-br-md bg-base-200 px-4 py-2.5 text-left text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
       {Map.get(@entry, :text, "")}
     </div>
     """

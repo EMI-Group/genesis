@@ -334,7 +334,7 @@ defmodule EvoDashWeb.Layouts do
         <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div class="fixed inset-0 bg-black/50 backdrop-blur-sm" phx-click="desktop_quit_cancelled">
           </div>
-          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-200 max-w-lg w-full p-6 md:p-8">
+          <div class="relative bg-base-100 rounded-lg shadow-2xl border border-base-300 max-w-lg w-full p-6 md:p-8">
             <div class="flex items-center gap-3 mb-4">
               <.icon name="hero-exclamation-triangle" class="size-5 text-error" />
               <h3 class="text-lg font-bold">{gettext("Quit Genesis?")}</h3>

@@ -49,10 +49,11 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   def assistant_message(assigns) do
     ~H"""
     <div class="flex justify-start gap-2 sm:gap-3 w-full">
-      <div class="mt-1 flex size-6 sm:size-7 shrink-0 items-center justify-center rounded-full bg-base-200">
-        <.icon name="hero-sparkles" class="size-3.5 text-primary-standalone" />
+      <div class="mt-0.5 flex size-7 sm:size-8 shrink-0 items-center justify-center rounded-full bg-primary">
+        <.icon name="hero-sparkles" class="size-4 text-primary-content" />
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
+        <div class="mb-0.5 text-sm font-semibold leading-snug text-base-content">Genesis</div>
         <div class="group/assistant min-w-0">
           <%= if @task_status != nil do %>
             <div class="mb-2 flex flex-wrap items-center gap-2">
