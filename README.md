@@ -1,207 +1,125 @@
 <h1 align="center">
-  <img src="apps/evo_dash/priv/static/images/logo.svg" alt="" height="28" style="vertical-align: middle;"> EvoX Genesis
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/evo_dash/priv/static/images/logo-alt.svg">
+    <img src="apps/evo_dash/priv/static/images/logo.svg" alt="" height="32">
+  </picture> EvoX Genesis
 </h1>
 
+<p align="center"><strong>One objective in. A software world unfolds.</strong></p>
+
 <p align="center">
-  👉 <strong>Home &amp; docs:</strong> <a href="https://genesis.evox.group">genesis.evox.group</a>
+  Open-source AI agents for software development.<br>
+  Describe the software you want. Genesis coordinates agents to build, validate, and evolve it.
 </p>
 
 <p align="center">
-  <a href="https://github.com/EMI-Group/genesis/releases"><img src="https://img.shields.io/badge/version-0.14.0-8b5cf6" alt="Version"></a>
-  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License">
-  <a href="https://genesis.evox.group/getting-started/"><img src="https://img.shields.io/badge/docs-genesis_doc-22c55e" alt="Documentation"></a>
-  <a href="https://arxiv.org/abs/2608.10450"><img src="https://img.shields.io/badge/arXiv-2608.10450-b31b1b" alt="arXiv"></a>
+  <a href="https://genesis.evox.group/#download"><strong>Download Genesis</strong></a> ·
+  <a href="https://genesis.evox.group/">Website</a> ·
+  <a href="https://genesis.evox.group/getting-started/">Docs</a> ·
+  <a href="https://genesis.evox.group/evidence/">Evidence</a> ·
+  <a href="https://arxiv.org/abs/2608.10450">Paper</a>
 </p>
-
----
-
-<h2 align="center">Let software worlds evolve</h2>
-
-<p align="center">
-  One objective in. A persistent software world unfolds.
-</p>
-
-From an implementation-empty repository, Genesis built a **248,989-line C compiler** in a **123.4-hour** run. Different foundation models then independently continued development from the same accepted software world.
-
-**EvoX Genesis is an AI system for long-horizon autonomous software evolution.**
-
-Its key idea is not to keep one agent—or one coding session—alive. Genesis maintains a persistent recursive software world. Finite-lived agents enter where needed, develop local parts, validate proposed changes, and carry only accepted results forward for later agents to inherit and extend. The approach is described in our paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450).
-
-> **You specify what the software should become. Genesis unfolds how to build it.**
-
-> **Agents come and go. The software world keeps evolving.**
-
----
 
 https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
 
 <p align="center">
-  ▶ <a href="https://genesis.evox.group/#film"><strong>Watch the Genesis promo film</strong></a> — built with Genesis — at <a href="https://genesis.evox.group">genesis.evox.group</a>
+  <strong>Eighty seconds. One objective.</strong><br>
+  <a href="https://genesis.evox.group/#film">Watch the film on the website →</a>
 </p>
 
----
+## The world persists. Agents do not.
 
-## ✨ Key Features
+<picture>
+  <source media="(max-width: 600px) and (prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world-mobile.png">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/images/readme/recursive-world.png">
+  <source media="(max-width: 600px)" srcset="docs/images/readme/recursive-world-mobile.gif">
+  <img src="docs/images/readme/recursive-world.gif" alt="An objective branches into managers and executors. Accepted contributions advance version history, which persists after the agent episodes end." width="960">
+</picture>
 
-* 🧭 **Long-horizon autonomous software evolution** — recursive agent hierarchies advance one persistent software world across many finite-lived agent episodes, carrying validated results forward.
-* 🪶 **Transient agents, persistent world** — each agent spawns fresh for one task and disappears when done: less context, fewer tokens, more reliable results.
-* 🌳 **Git-native workflow** — the repository itself is the only state. Agents and humans share the same repo, the same `git log`, the same `git diff` — no hidden databases, no custom formats.
+Genesis develops software across many agent episodes. Managers break an objective into local tasks, delegate work, and review the results. Executors implement candidate changes in isolated Git worktrees. Accepted contributions become the starting point for subsequent work.
 
----
+Each local world is situated by **an accepted software version and a repository path**: the version records what has been built; the path defines context, responsibility, and scope. `CONTEXT.md` files make these local contracts explicit.
+
+The agent hierarchy unfolds as development proceeds. Software versions and project history carry the work forward from one episode to the next.
+
+[Explore the architecture →](https://genesis.evox.group/developer/architecture/high-level-design/)
+
+## See development unfold
+
+- **Set an objective.** Start a new project or bring an existing repository. Describe the outcome and constraints; Genesis decomposes the work as needed.
+- **Follow the work.** Watch the recursive agent tree, inspect tasks and model usage, and review diffs in the desktop dashboard.
+- **Keep developing.** Continue from accepted results, refine the objective, or move execution to a server while keeping your local dashboard.
+
+[New projects](https://genesis.evox.group/usage/new-project/) · [Existing repositories](https://genesis.evox.group/usage/existing-repo/) · [Remote development](https://genesis.evox.group/usage/remote-ssh/)
 
 ## Built with Genesis
 
-Three developmental regimes. One principle: agents come and go, the software world persists.
+### Formation — from an implementation-empty repository
 
-| Regime | From → To | Headline result |
-| ------ | --------- | --------------- |
-| 🧱 **Formation** | Implementation-empty repository → Rust-based C compiler | **248,989 lines** built in **123.4 h** · **220/220** c-testsuite |
-| 🔄 **Continuation** | The same accepted compiler world, a new foundation model | **GLM 5.2** and **DeepSeek V4 Flash** each continued development independently |
-| 🔬 **Redevelopment** | 13 MESA Fortran modules → Rust crates | **139,414 → 89,946 lines** · **1,052 tests, 0 failures** |
+Genesis developed a **248,989-line Rust-based C compiler** with DeepSeek V4 Flash in **123.4 hours**. Final validation included **220/220 c-testsuite cases**, **32/36 evaluated LLVM cases**, and **2,904 Rust tests**.
 
-The demo repositories: [genesis-demo-jcc](https://github.com/EMI-Group/genesis-demo-jcc) (formation and continuation) · [genesis-demo-mesa-rs](https://github.com/EMI-Group/genesis-demo-mesa-rs) (redevelopment).
+### Continuation — the model changed, development continued
 
-> As far as we can determine, Genesis is the first publicly known autonomous system to submit a result for the [Terminal-Bench Challenges](https://github.com/BillHuang2001/tbench-wasm) — the WASM Render challenge — for just **US$36**, far below the ~US$1K+ per-challenge expectation.
+A completed compiler world originally developed with GLM 5.2 was independently continued by GLM 5.2 and DeepSeek V4 Flash. The DeepSeek continuation reached **1,820/1,820 retained LLVM SingleSource cases**.
 
-📄 **[Full experimental results and figures →](docs/experiments.md)** · Paper: [arXiv:2608.10450](https://arxiv.org/abs/2608.10450)
+### Redevelopment — MESA to Rust
 
-<sub>
-Reported dollar amounts are foundation-model token charges only, and these are observed system-level results rather than normalized model-comparison benchmarks.
-</sub>
+Genesis redeveloped a selected **13-module MESA scope**, from **139,414 Fortran lines** into an **89,946-line Rust workspace**. It passed **1,052 tests with zero failures**; six audited workloads showed **1.55–6.87× median speedups** with numerical agreement preserved.
 
----
+[Explore the evidence →](https://genesis.evox.group/evidence/) · [Experimental details](docs/experiments.md) · [Paper](https://arxiv.org/abs/2608.10450)
 
+Source repositories: [C compiler](https://github.com/EMI-Group/genesis-demo-jcc) · [MESA redevelopment](https://github.com/EMI-Group/genesis-demo-mesa-rs)
 
-## Why Genesis is different
+## Start with an objective
 
-**One objective, not a workflow.**  
-The user specifies the goal and constraints; Genesis decides how development should recursively unfold.
+### Desktop app
 
-**Recursive organization emerges during development.**  
-Managers decompose, delegate and judge returned work. Executors implement concrete changes at the leaves.
+**[Download Genesis →](https://genesis.evox.group/#download)** for macOS, Linux, or Windows. The website selects the installer for your platform; all published builds are available in [GitHub Releases](https://github.com/EMI-Group/genesis/releases/latest).
 
-**The world persists; agents do not.**
-
-```text
-world = (accepted version, repository path)
-```
-
-What evolves is the software world—not the foundation model. Accepted development state and validated results remain available for later agents to inherit and extend.
-
-The accepted version determines **what exists and can be inherited**. The path determines **where agency is situated**.
-
-**Only accepted consequences become history.**  
-Agent outputs are proposals. Only accepted results advance the persistent version lineage.
-
-> **Agents do not persist. Their validated contributions do.**
-
----
-
-## ⚡ Start with a requirement
-
-Open Genesis and describe the software you want to build or evolve.
+1. Install and open Genesis.
+2. Choose a model provider and model, and configure your API credentials.
+3. Create a project or select an existing repository, then describe what you want to build.
 
 For example:
 
-> Build a clean-room C compiler in Rust for LLVM-centric workflows, with C11 as the primary language target, x86/x86-64 back ends, standard toolchain interoperability, and external compiler validation.
+> Add rate limiting to this API. Preserve existing endpoint behavior, make the limits configurable, and add tests for requests above and below the limit.
 
-Genesis takes it from there.
-
----
-
-## 🖥️ Product
-
-- **Native desktop app** for launching and supervising development
-- **Recursive agent tree** visible as work unfolds
-- **Scoped local workspaces** for isolated candidate changes
-- **Cross-platform** support for macOS, Linux and Windows
-- **Native sandboxing** where supported by the platform
-
----
-
-## 📦 Install
-
-Genesis ships as a native desktop app — and, for servers, as a headless release with the same dashboard (see **Headless server** below).
-
-💡 **Prefer a guided download?** Visit [genesis.evox.group/#download](https://genesis.evox.group/#download) — it detects your platform automatically and points you to the right installer.
-
-Or use the **[GitHub Releases](https://github.com/EMI-Group/genesis/releases)** page:
-
-| Platform                          | Download                          |
-| --------------------------------- | --------------------------------- |
-| **macOS** (Apple Silicon / Intel) | `.dmg`                            |
-| **Linux**                         | `.rpm`, `.AppImage`, or `.tar.gz` |
-| **Windows**                       | `.msi` or `.exe` installer        |
-| **FreeBSD**                       | From source                       |
-
-Download, install, and launch **Genesis**.
+[Installation guide](https://genesis.evox.group/getting-started/installation/) · [Model configuration](https://genesis.evox.group/config/)
 
 ### Headless server
 
-Prefer a server, VM or NAS over the desktop app? Genesis also runs **headless**: the same dashboard and agent runtime behind a plain HTTP port, with no desktop window.
+Run the dashboard and agent runtime on Linux (x86_64 or ARM64) or macOS (Apple Silicon):
 
 ```bash
-# Install the release (~/.local/share/genesis/server) and symlink ~/.local/bin/genesis:
 curl -LsSf https://genesis.evox.group/dl/install.sh | sh
-
-genesis                 # try it in the foreground → http://127.0.0.1:9999
-genesis start           # run it as a background service (systemd user unit / launchd agent)
-genesis status          # service state + GET /health probe (exit 0 only when healthy)
-genesis logs -f         # follow the server log
-genesis stop            # stop the service
+genesis start
+genesis status
 ```
 
-Configure your LLM provider and keys in the dashboard's **Settings** page on first visit — the server reads the same `~/.config/genesis/config.toml` as the desktop app and keeps its state (task database, logs) in the platform data directory (`~/.local/share/genesis` on Linux).
+Open **http://127.0.0.1:9999** and configure your model provider in **Settings**. The server listens on localhost by default and has no built-in authentication; use an SSH tunnel for remote access.
 
-To reach it from other machines on your LAN, bind an explicit interface:
+[Server installation and service management →](https://genesis.evox.group/getting-started/installation/headless-server/)
 
-```bash
-genesis start --ip 0.0.0.0 --port 9999
-```
+### Remote development
 
-The server binds `127.0.0.1` by default and has no authentication of its own — only bind a public interface on a trusted network or behind a reverse proxy.
+Keep the desktop dashboard on your laptop and run agents on a server through an encrypted SSH tunnel. Tasks continue when the connection drops, and you can manage multiple remote targets from one dashboard.
 
-If a systemd user service should survive logout, run `loginctl enable-linger $USER` once. Windows headless hosting is not supported — use the desktop app there.
+[Set up remote development →](https://genesis.evox.group/usage/remote-ssh/)
 
-### For AI agents
+## Built for long-running development
 
-#### Install the app
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/images/readme/architecture-mobile.svg">
+  <img src="docs/images/readme/architecture.svg" alt="Three layers: the Tauri desktop shell supervises the backend; the Phoenix LiveView dashboard exposes tasks, agents and diffs; the Elixir/OTP core schedules agents and manages Git worktrees." width="960">
+</picture>
 
-```bash
-# Permanent links — always the latest release:
-# macOS (Apple Silicon):
-# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg
-#
-# Linux x86_64:
-# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_x64.AppImage
-#
-# Linux ARM64:
-# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_linux_arm64.deb
-#
-# Windows x86_64:
-# https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_windows_x64.msi
+Git records software versions; SQLite stores runtime and task data. Candidate changes run in isolated worktrees, with platform-specific execution controls described in the [sandbox documentation](https://genesis.evox.group/features/sandbox/).
 
-curl -LO "https://github.com/EMI-Group/genesis/releases/latest/download/genesis_desktop_darwin_arm64.dmg"
+### Run from source
 
-# Install:
-# macOS:   open <file>.dmg
-# Linux:   sudo rpm -i <file>.rpm   OR   tar xzf <file>.tar.gz
-# Windows: msiexec /i <file>.msi
-```
-#### Run from source
+Use **Elixir 1.20.4 and Erlang/OTP 29** to match the repository's CI environment, with Git installed.
 
 ```bash
-# Prerequisites: Elixir ~> 1.18 and Erlang/OTP 29
-
-# Install Elixir and Erlang (choose one):
-#   - asdf:    https://asdf-vm.com
-#   - mise:    https://mise.jdx.dev
-#   - Official: https://elixir-lang.org/install.html
-#   - macOS:   brew install elixir
-#   - Ubuntu:  sudo apt install elixir erlang-dev
-#   - Arch:    sudo pacman -S elixir
-#   - Fedora:  sudo dnf install elixir
-
 git clone https://github.com/EMI-Group/genesis.git
 cd genesis
 mix deps.get
@@ -209,45 +127,31 @@ mix assets.setup
 mix phx.server
 ```
 
-Then open [http://localhost:4100](http://localhost:4100).
+Open **http://localhost:4100**.
 
-#### Benchmark your machine's I/O
-Genesis agents spend much of their time creating git worktrees, reading and writing files, and committing. `mix bench.io` measures that workload on your machine so you can compare filesystems, SSDs or platforms:
+[Build the desktop app or use the Nix dev shell →](https://genesis.evox.group/developer/build/)
+
+<details>
+<summary>Benchmark your machine's I/O</summary>
+
+Agents create worktrees, read and write files, and commit changes. Measure this workload on your filesystem:
+
 ```bash
-mix bench.io                                    # synthetic repo in the system temp dir
+mix bench.io
 mix bench.io --dir /mnt/nvme --iterations 10 --files 500 --writes 50
-mix bench.io --json > bench.json                # machine-readable result
+mix bench.io --json > bench.json
 ```
-The report breaks down worktree creation, random reads/writes, `git status`/`add`/`commit`, and worktree reclaim (mean/median/p95) alongside overall cycles/s and throughput. Point `--dir` at the filesystem you want to measure — `/tmp` may be RAM-backed, which the report warns about. The benchmark seeds and removes its own throwaway repo and boots no Genesis runtime.
 
----
+The benchmark creates and removes its own throwaway repository without starting the Genesis runtime. Results cover worktree creation, reads and writes, Git operations, and worktree reclamation.
 
-## 📦 Distribution via Package Managers
+</details>
 
-| Package Manager | Platform      | Status  |
-| --------------- | ------------- | ------- |
-| **AUR**         | Arch Linux    | Planned |
-| **Homebrew**    | macOS / Linux | Planned |
-| **Nix**         | NixOS / macOS | Planned |
+## Research, community, and contributions
 
-More package managers will be added over time. Contributions are welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Genesis is developed by the [EvoX Group](https://evox.group) at The Hong Kong Polytechnic University. For research and collaboration, [get in touch](https://genesis.evox.group/#contact). For bugs and feature requests, [open an issue](https://github.com/EMI-Group/genesis/issues).
 
----
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines and the contributor license agreement, which the CLA assistant handles on your first pull request.
 
-## 🙏 Acknowledgements
+Genesis grew out of [EvoGit](https://github.com/BillHuang2001/evogit) and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
 
-Genesis was born out of the [EvoGit](https://github.com/BillHuang2001/evogit) project and follows the broader [EvoX](https://github.com/EMI-Group/evox) research lineage.
-
----
-
-## 🤝 Contributing
-
-We welcome contributions. All contributors are required to sign an Individual Contributor License Agreement (CLA); our CLA assistant bot handles this automatically on your first pull request.
-
-For development setup, CLA details and contribution guidelines, see [CONTRIBUTING.md](./CONTRIBUTING.md).
-
----
-
-## 📄 License
-
-Genesis is released under the [GNU Affero General Public License v3.0](./LICENSE).
+Released under the [GNU Affero General Public License v3.0](LICENSE).

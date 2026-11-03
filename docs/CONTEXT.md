@@ -8,6 +8,7 @@ Long-form design records and reference documentation for Genesis: rationale, ver
 - `experiments.md` — results/reference document: the per-regime experimental results (formation, continuation, redevelopment, Terminal-Bench) and their figures, moved out of the top-level README; figures live under `images/experiments/`.
 - `harness-alignment.md` — comparison record: Genesis agent runtime (tools, result conventions, role prompts, compression, loop, delegation) vs the DeepSeek Harness (`dsh`), with a tiered proposal list for aligning our environment with the harness newer DeepSeek models are trained on. Carries the verified `dsh` facts (tool names/caps/footers, prompt-slot table, compaction thresholds, subagent limits) so future agents do not re-investigate `/home/bill/Source/deepseek-harness`.
 - `images/` — figures referenced by the design records and reference documents (`images/experiments/` for the experimental plots), plus the promo-film poster `promo-poster.jpg`.
+- `images/readme/` — original README diagrams in the website palette: a recursive-work GIF with a reduced-motion PNG fallback and a three-layer architecture SVG. Editable sources, render/encode scripts and rebuild notes live alongside the assets.
 
 ## Constraints
 - These are design records, not CONTEXT.md nodes: they may carry rationale and sequencing that CONTEXT.md deliberately must not.

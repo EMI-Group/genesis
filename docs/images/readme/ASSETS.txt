@@ -1,0 +1,21 @@
+README visual assets
+
+These original vector diagrams follow the Genesis website's black, grey and
+brand-red palette and its recursive-work / accepted-history narrative.
+They are conceptual illustrations, not screenshots or experimental records.
+
+recursive-world.gif: 12-second looping sequence (960 x 580).
+recursive-world.png: static alternative for prefers-reduced-motion.
+recursive-world.svg: editable vector version of the completed diagram.
+architecture.svg: three runtime layers (960 x 468).
+architecture.png: raster version for previews and sharing.
+*-mobile: portrait variants for viewports at or below 600 CSS pixels.
+The mobile GIF has its own static PNG fallback for reduced-motion preferences.
+
+Rebuild with Node.js, sharp and Python Pillow installed:
+  node render.mjs sharp /path/to/temporary-frames
+  python encode.py /path/to/temporary-frames
+
+The first render.mjs argument may also be an absolute path to the sharp module.
+The frame directory must be dedicated to this animation and contain no other PNGs.
+Only final assets and source scripts belong in the repository; do not commit frames.
