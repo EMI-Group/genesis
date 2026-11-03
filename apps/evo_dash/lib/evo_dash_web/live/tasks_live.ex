@@ -184,20 +184,32 @@ defmodule EvoDashWeb.TasksLive do
               <%= if @status_filter != "all" do %>
                 <span class="badge badge-primary gap-1 rounded-md">
                   {@status_filter}
-                  <button phx-click="clear_filter" phx-value-filter="status" class="hover:opacity-70">×</button>
+                  <button
+                    phx-click="clear_filter"
+                    phx-value-filter="status"
+                    class="cursor-pointer hover:opacity-70"
+                  >×</button>
                 </span>
               <% end %>
               <%= if @project_filter != "all" do %>
                 <span class="badge badge-secondary gap-1 rounded-md">
                   {Path.basename(@project_filter)}
-                  <button phx-click="clear_filter" phx-value-filter="project" class="hover:opacity-70">×</button>
+                  <button
+                    phx-click="clear_filter"
+                    phx-value-filter="project"
+                    class="cursor-pointer hover:opacity-70"
+                  >×</button>
                 </span>
               <% end %>
               <%= if @search_query != "" do %>
                 <span class="badge badge-accent gap-1 rounded-md">
                   "{String.slice(@search_query, 0, 20)}{if String.length(@search_query) > 20,
                     do: "..."}"
-                  <button phx-click="clear_filter" phx-value-filter="search" class="hover:opacity-70">×</button>
+                  <button
+                    phx-click="clear_filter"
+                    phx-value-filter="search"
+                    class="cursor-pointer hover:opacity-70"
+                  >×</button>
                 </span>
               <% end %>
               <%= if @review_status_filter != "all" do %>
@@ -214,7 +226,11 @@ defmodule EvoDashWeb.TasksLive do
                     <% _ -> %>
                       {@review_status_filter}
                   <% end %>
-                  <button phx-click="clear_filter" phx-value-filter="review" class="hover:opacity-70">×</button>
+                  <button
+                    phx-click="clear_filter"
+                    phx-value-filter="review"
+                    class="cursor-pointer hover:opacity-70"
+                  >×</button>
                 </span>
               <% end %>
             </div>
