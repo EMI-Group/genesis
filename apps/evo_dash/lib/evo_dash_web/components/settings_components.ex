@@ -69,6 +69,10 @@ defmodule EvoDashWeb.SettingsComponents do
   attr(:appearance_accent_draft, :string, default: nil)
   attr(:test_profile_id, :any, default: nil)
   attr(:credentials, :map, default: %{})
+  # Per-profile OAuth credential status keyed by profile-id STRING; passed
+  # straight to the model-profiles editor. Read totally at the call site, so the
+  # page renders before (and without) the live side's assign.
+  attr(:auth_statuses, :map, default: %{})
 
   def category_section(assigns) do
     ~H"""
@@ -371,48 +375,79 @@ defmodule EvoDashWeb.SettingsComponents do
                      save_custom_model form is the model-selection step). --%>
                 <% show_credentials = show_custom_input or @selected_model_string != nil %>
                 <%= if show_credentials do %>
-                  <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
-                  <form phx-submit="save_api_key" class="pt-6 pb-4">
-                    <input type="hidden" name="credential_key" value={credential_key} />
-                    <label class="label">
-                      <span class="label-text font-semibold text-sm">{credential_key}</span>
-                      <%= if key_is_set do %>
-                        <span class="label-text-alt text-success text-xs font-bold">✓ {gettext("Set")}</span>
-                      <% end %>
-                    </label>
-                    <div class="flex items-stretch gap-3">
-                      <input
-                        type="password"
-                        name="api_key"
-                        placeholder={
-                          if key_is_set,
-                            do: gettext("API key is already set"),
-                            else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
-                        }
-                        class={[
-                          "input input-bordered flex-1 rounded-xl shadow-sm bg-base-100",
-                          key_is_set && "input-success"
-                        ]}
-                      />
-                      <button type="submit" class="btn btn-primary btn-sm rounded-xl">
-                        {gettext("Save Key")}
-                      </button>
+                  <%= if provider && EvoGit.Config.LLMCatalog.oauth_only?(provider.id) do %>
+                    <%!-- OAuth-only providers never show an API-key input: the
+                         vendor login is performed once in a terminal and Genesis
+                         imports the managed credential file. --%>
+                    <div class="pt-6 pb-4 space-y-2">
+                      <div class="flex items-center gap-2">
+                        <.icon name="hero-key" class="size-4 text-base-content/70" />
+                        <span class="badge badge-secondary badge-sm">
+                          <%!-- zh_CN: Subscription (OAuth) → 订阅（OAuth） --%>{gettext(
+                            "Subscription (OAuth)"
+                          )}
+                        </span>
+                      </div>
+                      <p class="text-xs text-base-content/70">
+                        {gettext(
+                          "This provider uses a subscription login. No API key needs to be pasted here."
+                        )}
+                      </p>
+                      <pre class="whitespace-pre-wrap font-sans text-xs text-base-content/70 leading-relaxed"><%= EvoGit.Auth.login_instructions(
+                        provider.id
+                      ) %></pre>
+                      <p class="text-xs text-base-content/60">
+                        {gettext("Managed credential file: %{path}",
+                          path: EvoGit.Auth.default_oauth_file()
+                        )}
+                      </p>
                     </div>
-                    <%= if key_is_set do %>
-                      <p class="text-[11px] text-success/90 mt-1.5 font-medium">
-                        ✓ {gettext("Your API key is configured and ready to use.")}
-                      </p>
-                    <% else %>
-                      <p class="text-[11px] text-base-content/70 mt-1.5">
-                        <%= if prefix = api_key_prefix_hint(provider.id) do %>
-                          {gettext("Enter your API key. It should start with")}
-                          <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
-                        <% else %>
-                          {gettext("Enter your API key.")}
+                  <% else %>
+                    <% key_is_set = Map.get(@credentials, credential_key) not in [nil, ""] %>
+                    <form phx-submit="save_api_key" class="pt-6 pb-4">
+                      <input type="hidden" name="credential_key" value={credential_key} />
+                      <label class="label">
+                        <span class="label-text font-semibold text-sm">{credential_key}</span>
+                        <%= if key_is_set do %>
+                          <span class="label-text-alt text-success text-xs font-bold">✓ {gettext(
+                            "Set"
+                          )}</span>
                         <% end %>
-                      </p>
-                    <% end %>
-                  </form>
+                      </label>
+                      <div class="flex items-stretch gap-3">
+                        <input
+                          type="password"
+                          name="api_key"
+                          placeholder={
+                            if key_is_set,
+                              do: gettext("API key is already set"),
+                              else: api_key_prefix_hint(provider.id) || gettext("Enter your API key")
+                          }
+                          class={[
+                            "input input-bordered flex-1 rounded-xl shadow-sm bg-base-100",
+                            key_is_set && "input-success"
+                          ]}
+                        />
+                        <button type="submit" class="btn btn-primary btn-sm rounded-xl">
+                          {gettext("Save Key")}
+                        </button>
+                      </div>
+                      <%= if key_is_set do %>
+                        <p class="text-[11px] text-success/90 mt-1.5 font-medium">
+                          ✓ {gettext("Your API key is configured and ready to use.")}
+                        </p>
+                      <% else %>
+                        <p class="text-[11px] text-base-content/70 mt-1.5">
+                          <%= if prefix = api_key_prefix_hint(provider.id) do %>
+                            {gettext("Enter your API key. It should start with")}
+                            <code class="font-mono bg-base-200 px-1 py-0.5 rounded text-[10px]">{prefix}</code>
+                          <% else %>
+                            {gettext("Enter your API key.")}
+                          <% end %>
+                        </p>
+                      <% end %>
+                    </form>
+                  <% end %>
                 <% else %>
                   <p class="text-sm text-base-content/70 italic pt-6 pb-4">
                     {gettext("Select a model above to configure credentials.")}
@@ -427,6 +462,7 @@ defmodule EvoDashWeb.SettingsComponents do
               editing_profile_id={@editing_profile_id}
               profile_form_draft={@profile_form_draft}
               profile_advanced_open={@profile_advanced_open}
+              auth_statuses={Map.get(assigns, :auth_statuses, %{})}
             />
 
             <%!-- LLM Connection Test --%>

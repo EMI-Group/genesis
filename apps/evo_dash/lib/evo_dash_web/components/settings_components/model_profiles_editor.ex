@@ -27,6 +27,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   # explicit choice (set by the "toggle_profile_advanced" event). Reset to nil
   # whenever the edit session's identity changes.
   attr(:profile_advanced_open, :any, default: nil)
+  # Per-profile OAuth credential status, keyed by profile-id STRING. Only
+  # OAuth-enabled profiles have an entry, so a missing entry is NORMAL.
+  attr(:auth_statuses, :map, default: %{})
 
   def model_profiles_editor(assigns) do
     ~H"""
@@ -75,9 +78,16 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
                 profile={profile}
                 draft={@profile_form_draft}
                 advanced_open={@profile_advanced_open}
+                auth_status={auth_status_for(@auth_statuses, profile)}
               />
             <% else %>
-              <.model_profile_row profile={profile} index={index} total={total} id={id} />
+              <.model_profile_row
+                profile={profile}
+                index={index}
+                total={total}
+                id={id}
+                auth_status={auth_status_for(@auth_statuses, profile)}
+              />
             <% end %>
           <% end %>
         </div>
@@ -92,6 +102,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   attr(:index, :integer, default: 0)
   attr(:total, :integer, default: 1)
   attr(:id, :string, default: "")
+  attr(:auth_status, :any, default: nil)
 
   defp model_profile_row(assigns) do
     ~H"""
@@ -106,6 +117,9 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
               {gettext("%{n} slots", n: profile_concurrency(@profile))}
             </span>
           <% end %>
+          <%= if provider_supports_oauth?(effective_provider(@profile, nil)) do %>
+            <span class={auth_mode_badge_class(@profile)}>{auth_mode_label(@profile)}</span>
+          <% end %>
         </div>
         <div class="flex items-center gap-2 mb-1.5">
           <code class="font-mono text-xs text-primary-standalone/80 break-all">{model_display(
@@ -114,6 +128,13 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         </div>
         <%= if summary = profile_params_summary(@profile) do %>
           <p class="text-xs text-base-content/60 font-mono mt-1">{summary}</p>
+        <% end %>
+        <%= if oauth_enabled?(@profile, nil) do %>
+          <.auth_status_line
+            status={@auth_status}
+            provider={effective_provider(@profile, nil)}
+            details={false}
+          />
         <% end %>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -176,6 +197,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
   attr(:profile, :map, required: true)
   attr(:draft, :any, default: nil)
   attr(:advanced_open, :any, default: nil)
+  attr(:auth_status, :any, default: nil)
 
   defp model_profile_edit_form(assigns) do
     ~H"""
@@ -238,7 +260,7 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           type="text"
           required
           value={model_id_val}
-          placeholder={gettext("e.g. claude-sonnet-4-6")}
+          placeholder={gettext("e.g. claude-sonnet-5-5")}
           help={gettext("The model name")}
         />
         <%!-- zh_CN: provider → "服务商" --%>
@@ -251,6 +273,74 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
           help={gettext("For proxy/aggregator endpoints; leave empty for standard providers.")}
         />
       </div>
+
+      <%!-- Authentication: OAuth (subscription) vs API key. Rendered ONLY for
+           providers whose catalog entry supports OAuth; an OAuth-only provider
+           gets a static badge instead of the select so no API-key prompt can
+           ever be shown. --%>
+      <% auth_provider = effective_provider(@profile, @draft) %>
+      <%= if provider_supports_oauth?(auth_provider) do %>
+        <div class="rounded-lg border border-base-300 bg-base-200/20 p-3 space-y-3">
+          <div class="flex items-center gap-2">
+            <.icon name="hero-key" class="size-4 text-base-content/70" />
+            <h5 class="text-xs font-semibold text-base-content/80">
+              <%!-- zh_CN: Authentication → "认证" --%>{gettext("Authentication")}
+            </h5>
+          </div>
+
+          <%= if provider_oauth_only?(auth_provider) do %>
+            <div class="flex items-center gap-2">
+              <span class="badge badge-secondary badge-sm">
+                <%!-- zh_CN: Subscription (OAuth) → 订阅（OAuth） --%>{gettext(
+                  "Subscription (OAuth)"
+                )}
+              </span>
+              <span class="text-xs text-base-content/60">
+                {gettext("This provider only supports a subscription login.")}
+              </span>
+            </div>
+          <% else %>
+            <%!-- zh_CN: Auth mode → "认证方式" --%>
+            <div class="form-control">
+              <label class="label pb-1">
+                <span class="label-text font-semibold text-xs">{gettext("Auth mode")}</span>
+              </label>
+              <select
+                name="auth_mode"
+                class="select select-bordered select-sm rounded-md w-full font-mono text-sm"
+              >
+                <%!-- zh_CN: API key → API 密钥 --%>
+                <option value="api_key" selected={effective_auth_mode(@profile, @draft) == "api_key"}>
+                  {gettext("API key")}
+                </option>
+                <%!-- zh_CN: Subscription (OAuth) → 订阅（OAuth） --%>
+                <option value="oauth" selected={effective_auth_mode(@profile, @draft) == "oauth"}>
+                  {gettext("Subscription (OAuth)")}
+                </option>
+              </select>
+            </div>
+          <% end %>
+
+          <%= if oauth_enabled?(@profile, @draft) do %>
+            <.input_field
+              name="oauth_file"
+              label={gettext("Credential file (optional)")}
+              type="text"
+              value={
+                draft_or_profile(@draft, "oauth_file", profile_param(@profile, :oauth_file) || "")
+              }
+              placeholder={EvoGit.Auth.default_oauth_file()}
+              help={
+                gettext(
+                  "Absolute or ~-relative path to the vendor credential file. Leave empty to use the default managed file."
+                )
+              }
+            />
+            <%!-- zh_CN: 凭据文件可填绝对路径或以 ~ 开头的路径；留空使用默认托管文件 --%>
+            <.auth_status_line status={@auth_status} provider={auth_provider} />
+          <% end %>
+        </div>
+      <% end %>
 
       <%!-- Performance: concurrency, context window, reasoning effort ── --%>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -628,6 +718,234 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
         save_label={gettext("Save Profile")}
       />
     </form>
+    """
+  end
+
+  # ── OAuth / subscription-auth helpers (pure, total) ──
+
+  # Effective provider: the DRAFT's non-blank provider text wins (resolved
+  # through a whitelist over the catalog's provider-id strings — never
+  # String.to_atom), else the saved profile's model spec.
+  defp effective_provider(profile, draft) do
+    {saved_provider_text, _model_id, _base_url, _extra} = profile_model_fields(profile)
+    text = draft_or_profile(draft, "provider", saved_provider_text)
+    saved_provider = EvoGit.Config.Schema.LLM.provider_from_model(profile_model(profile))
+
+    case String.trim(provider_text(text)) do
+      "" -> saved_provider
+      id -> provider_atom_for_id(id) || saved_provider
+    end
+  end
+
+  defp provider_text(value) when is_binary(value), do: value
+  defp provider_text(value) when is_atom(value) and not is_nil(value), do: Atom.to_string(value)
+  defp provider_text(_value), do: ""
+
+  defp provider_atom_for_id(id) when is_binary(id) do
+    case Map.get(EvoDashWeb.SettingsLive.ConfigIO.provider_by_id_str(), id) do
+      %{provider_atoms: [atom | _]} when is_atom(atom) -> atom
+      _entry -> nil
+    end
+  end
+
+  defp provider_atom_for_id(_id), do: nil
+
+  defp profile_model(profile) when is_map(profile) do
+    Map.get(profile, :model) || Map.get(profile, "model")
+  end
+
+  defp profile_model(_profile), do: nil
+
+  defp provider_supports_oauth?(provider) when is_atom(provider) and not is_nil(provider) do
+    EvoGit.Config.LLMCatalog.supports_oauth?(provider)
+  end
+
+  defp provider_supports_oauth?(_provider), do: false
+
+  defp provider_oauth_only?(provider) when is_atom(provider) and not is_nil(provider) do
+    EvoGit.Config.LLMCatalog.oauth_only?(provider)
+  end
+
+  defp provider_oauth_only?(_provider), do: false
+
+  # Visible effective auth mode: draft value → saved profile value → "oauth"
+  # for OAuth-only providers → "api_key" otherwise.
+  defp effective_auth_mode(profile, draft) do
+    case normalize_auth_mode(
+           draft_or_profile(draft, "auth_mode", profile_param(profile, :auth_mode))
+         ) do
+      nil ->
+        if provider_oauth_only?(effective_provider(profile, draft)), do: "oauth", else: "api_key"
+
+      mode ->
+        mode
+    end
+  end
+
+  defp normalize_auth_mode("oauth"), do: "oauth"
+  defp normalize_auth_mode(:oauth), do: "oauth"
+  defp normalize_auth_mode("api_key"), do: "api_key"
+  defp normalize_auth_mode(:api_key), do: "api_key"
+  defp normalize_auth_mode(_mode), do: nil
+
+  defp oauth_enabled?(profile, draft), do: effective_auth_mode(profile, draft) == "oauth"
+
+  defp auth_mode_label(profile) do
+    if effective_auth_mode(profile, nil) == "oauth",
+      do: gettext("OAuth"),
+      else: gettext("API key")
+  end
+
+  defp auth_mode_badge_class(profile) do
+    if effective_auth_mode(profile, nil) == "oauth",
+      do: "badge badge-secondary badge-sm gap-1 text-xs",
+      else: "badge badge-ghost badge-sm gap-1 text-xs"
+  end
+
+  # Reads a profile's auth status by its SAVED id — the live side keys
+  # @auth_statuses by profile-id STRING. A non-map or a missing entry is nil,
+  # which renders as NEUTRAL guidance (never a verdict).
+  defp auth_status_for(auth_statuses, profile) when is_map(auth_statuses) do
+    Map.get(auth_statuses, profile_id_string(profile))
+  end
+
+  defp auth_status_for(_auth_statuses, _profile), do: nil
+
+  defp auth_status_state(status) when is_map(status) do
+    case Map.get(status, :state) || Map.get(status, "state") do
+      :ok -> :ok
+      "ok" -> :ok
+      :missing -> :missing
+      "missing" -> :missing
+      _other -> :unknown
+    end
+  end
+
+  defp auth_status_state(_status), do: :unknown
+
+  # Total: a non-map status simply has no expiry (single clause so the
+  # compiler cannot flag an unreachable guard clause).
+  defp auth_status_expiry(status) do
+    expires =
+      if is_map(status), do: Map.get(status, :expires) || Map.get(status, "expires"), else: nil
+
+    case expires do
+      ms when is_integer(ms) ->
+        case DateTime.from_unix(ms, :millisecond) do
+          {:ok, datetime} -> EvoDashWeb.Helpers.format_datetime(datetime)
+          _other -> nil
+        end
+
+      _other ->
+        nil
+    end
+  end
+
+  defp auth_status_label(status) do
+    case auth_status_state(status) do
+      :ok ->
+        case auth_status_expiry(status) do
+          nil -> gettext("Login detected")
+          date -> gettext("Login detected (expires %{date})", date: date)
+        end
+
+      :missing ->
+        gettext("No subscription login found")
+
+      :unknown ->
+        gettext("Subscription login")
+    end
+  end
+
+  defp auth_status_icon(status) do
+    case auth_status_state(status) do
+      :ok -> "hero-check-circle"
+      :missing -> "hero-exclamation-triangle"
+      :unknown -> "hero-information-circle"
+    end
+  end
+
+  defp auth_status_tone(status) do
+    case auth_status_state(status) do
+      :ok -> "text-success"
+      :missing -> "text-warning"
+      :unknown -> "text-base-content/70"
+    end
+  end
+
+  defp auth_login_guidance(status, provider) when is_map(status) do
+    case Map.get(status, :login_instructions) || Map.get(status, "login_instructions") do
+      text when is_binary(text) ->
+        if String.trim(text) == "", do: fallback_login_guidance(provider), else: text
+
+      _other ->
+        fallback_login_guidance(provider)
+    end
+  end
+
+  defp auth_login_guidance(_status, provider), do: fallback_login_guidance(provider)
+
+  defp fallback_login_guidance(provider) when is_atom(provider) and not is_nil(provider) do
+    EvoGit.Auth.login_instructions(provider)
+  end
+
+  defp fallback_login_guidance(_provider), do: nil
+
+  defp auth_oauth_file(status) when is_map(status) do
+    case Map.get(status, :oauth_file) || Map.get(status, "oauth_file") do
+      path when is_binary(path) and path != "" -> path
+      _other -> nil
+    end
+  end
+
+  defp auth_oauth_file(_status), do: nil
+
+  # Credential status / login guidance, used by BOTH the edit form
+  # (details: true) and the summary row (details: false).
+  attr(:status, :any, default: nil)
+  attr(:provider, :any, default: nil)
+  attr(:details, :boolean, default: true)
+
+  defp auth_status_line(assigns) do
+    ~H"""
+    <div class="mt-2 space-y-1">
+      <div class="flex items-center gap-1.5">
+        <.icon
+          name={auth_status_icon(@status)}
+          class={"size-3.5 shrink-0 " <> auth_status_tone(@status)}
+        />
+        <span class={"text-xs font-medium " <> auth_status_tone(@status)}>
+          {auth_status_label(@status)}
+        </span>
+        <button
+          type="button"
+          phx-click="refresh_auth_status"
+          class="btn btn-ghost btn-xs gap-1 ml-auto"
+          title={gettext("Recheck")}
+          aria-label={gettext("Recheck")}
+        >
+          <.icon name="hero-arrow-path" class="size-3" />
+          <%!-- zh_CN: Recheck → "重新检查" --%>{gettext("Recheck")}
+        </button>
+      </div>
+      <%= if @details do %>
+        <%= if guidance = auth_login_guidance(@status, @provider) do %>
+          <pre class="whitespace-pre-wrap font-sans text-xs text-base-content/70 leading-relaxed"><%= guidance %></pre>
+        <% end %>
+        <%= if path = auth_oauth_file(@status) do %>
+          <p class="text-xs text-base-content/60">
+            {gettext("Managed credential file: %{path}", path: path)}
+          </p>
+        <% end %>
+        <%= if auth_status_state(@status) == :missing do %>
+          <p class="text-xs text-base-content/60">
+            <%!-- zh_CN: 下次运行时 Genesis 会自动导入厂商登录凭据 --%>{gettext(
+              "Genesis imports the vendor login automatically on the next run."
+            )}
+          </p>
+        <% end %>
+      <% end %>
+    </div>
     """
   end
 

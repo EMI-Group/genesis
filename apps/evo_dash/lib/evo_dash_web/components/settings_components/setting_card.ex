@@ -254,7 +254,7 @@ defmodule EvoDashWeb.SettingsComponents.SettingCard do
                       type="text"
                       name={Enum.join(@schema.key_path, ".")}
                       value={model_display(@value)}
-                      placeholder={gettext("e.g. anthropic:claude-opus-4-7 or openai:gpt-5.5")}
+                      placeholder={gettext("e.g. anthropic:claude-opus-5-5 or openai:gpt-5.6-terra")}
                       class="input input-bordered input-sm rounded-md w-full font-mono text-base"
                     />
                     <p class="text-[11px] text-base-content/70 mt-1">
