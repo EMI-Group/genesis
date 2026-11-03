@@ -1,0 +1,20 @@
+{
+  "source": "https://genesis.evox.group/evidence/evidence.json",
+  "featured": [
+    {
+      "slug": "c-compiler",
+      "summary": "A Rust-based C compiler built from scratch",
+      "verification": "c-testsuite"
+    },
+    {
+      "slug": "mesa",
+      "summary": "13 Fortran modules redeveloped in Rust",
+      "verification": "Rust test suite"
+    },
+    {
+      "slug": "tbench-wasm",
+      "summary": "A software WebGL renderer in TypeScript",
+      "verification": "Khronos WebGL CTS"
+    }
+  ]
+}

@@ -11,6 +11,8 @@ Long-form design records and reference documentation for Genesis: rationale, ver
 - `images/readme/` — original README diagrams in the website palette: a recursive-work GIF with a reduced-motion PNG fallback and a three-layer architecture SVG. Editable sources, render/encode scripts and rebuild notes live alongside the assets.
 
 ## Constraints
+
+- README curation/update instructions live in `readme-evidence.md`; `readme-evidence.json` selects exactly three projects and result fields, and `readme-evidence.snapshot.json` stores minimal published data for deterministic offline generation.
 - These are design records, not CONTEXT.md nodes: they may carry rationale and sequencing that CONTEXT.md deliberately must not.
 - Keep external-fact claims accurate (Cloudflare worker behaviour, GitHub release redirect chains, CI mechanics) — other agents cite these instead of re-investigating.
 - Design records describe the CURRENT design; edit them in place as the design changes rather than appending change history.

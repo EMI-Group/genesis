@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "count": 5,
+  "worlds": [
+    {
+      "slug": "c-compiler",
+      "id": "GW-000001",
+      "title": "C Compiler",
+      "date": "2026-09-07",
+      "url": "https://genesis.evox.group/evidence/c-compiler",
+      "verification_results": [
+        {
+          "name": "c-testsuite",
+          "result": "220 / 220"
+        },
+        {
+          "name": "LLVM evaluated cases",
+          "result": "32 / 36"
+        },
+        {
+          "name": "Rust tests",
+          "result": "2,904 / 2,904"
+        }
+      ]
+    },
+    {
+      "slug": "compiler-continuation",
+      "id": "GW-000002",
+      "title": "Compiler Continuation",
+      "date": "2026-09-07",
+      "url": "https://genesis.evox.group/evidence/compiler-continuation",
+      "verification_results": [
+        {
+          "name": "LLVM SingleSource",
+          "result": "1,820 / 1,820"
+        }
+      ]
+    },
+    {
+      "slug": "evoxc",
+      "id": "GW-000005",
+      "title": "EvoX Compiler",
+      "date": "2026-10-28",
+      "url": "https://genesis.evox.group/evidence/evoxc",
+      "verification_results": [
+        {
+          "name": "pytest suite (IREE installed)",
+          "result": "6,789 passed · 46 skipped · 3 xfailed · 0 failed"
+        },
+        {
+          "name": "pytest suite (compiler-free)",
+          "result": "6,367 passed · 95 skipped · 3 xfailed"
+        },
+        {
+          "name": "evoxc_hf parity vs torch/transformers (9 checkpoints)",
+          "result": "1e-6 – 2e-4 relative on the numpy and IREE legs"
+        },
+        {
+          "name": "evoxc_hf on XLA/ROCm vs eager torch (14 measured cells)",
+          "result": "faster in 13 / 14"
+        }
+      ]
+    },
+    {
+      "slug": "mesa",
+      "id": "GW-000003",
+      "title": "MESA",
+      "date": "2026-09-07",
+      "url": "https://genesis.evox.group/evidence/mesa",
+      "verification_results": [
+        {
+          "name": "Rust test suite",
+          "result": "1,052 / 1,052 (0 failures)"
+        },
+        {
+          "name": "Median speedup vs. Fortran",
+          "result": "1.55–6.87×"
+        }
+      ]
+    },
+    {
+      "slug": "tbench-wasm",
+      "id": "GW-000004",
+      "title": "tbench-wasm",
+      "date": "2026-10-28",
+      "url": "https://genesis.evox.group/evidence/tbench-wasm",
+      "verification_results": [
+        {
+          "name": "Khronos WebGL CTS",
+          "result": "2,017 / 2,019 (99.90%)"
+        },
+        {
+          "name": "three.js visual regression (strict 0.1%)",
+          "result": "16 / 38"
+        },
+        {
+          "name": "Babylon.js visual regression",
+          "result": "13 / 16"
+        },
+        {
+          "name": "vitest unit tests",
+          "result": "173 / 173"
+        }
+      ]
+    }
+  ]
+}

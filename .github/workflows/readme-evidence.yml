@@ -1,0 +1,79 @@
+name: README evidence
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'
+  pull_request:
+    paths:
+      - README.md
+      - docs/readme-evidence*.json
+      - scripts/sync-readme-evidence.py
+      - scripts/test-readme-evidence.py
+      - .github/workflows/readme-evidence.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-evidence-${{ github.event.pull_request.number || 'refresh' }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/sync-readme-evidence.py --check
+      - run: python scripts/test-readme-evidence.py
+
+  refresh:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/sync-readme-evidence.py --refresh
+      - run: python scripts/sync-readme-evidence.py --check
+      - run: python scripts/test-readme-evidence.py
+      - name: Open or update the evidence PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- README.md docs/readme-evidence.snapshot.json; then
+            exit 0
+          fi
+          branch=automation/readme-evidence
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs/readme-evidence.snapshot.json
+          git commit -m 'docs: refresh README evidence from website'
+          git push --force-with-lease origin "$branch"
+          pr=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            body="$RUNNER_TEMP/readme-evidence-pr.txt"
+            cat > "$body" <<'BODY'
+          Refresh the bounded README evidence section from the published website manifest.
+
+          Keeps three curated projects and one latest-record link. Review changed metrics and case selection before merging.
+
+          Validation: snapshot consistency check passed. No automatic merge.
+          BODY
+            gh pr create --base main --head "$branch" --title 'docs: refresh README evidence' --body-file "$body"
+          fi

@@ -2,11 +2,15 @@
 
 ## Intent
 
-CI/CD workflow definitions for the Genesis project. Two pipelines: a lightweight CI gate on PRs/pushes to `main` and a comprehensive release build triggered by tag pushes (`v*`) that produces the desktop installers, the headless `genesis_remote`/`genesis_server` tarballs and the `install.sh` one-line installer.
+CI/CD workflow definitions for the Genesis project: a lightweight CI gate on PRs/pushes to `main`, a comprehensive release build triggered by tag pushes (`v*`) that produces desktop installers and headless distributions, and a bounded README Evidence update workflow.
 
 ## Routing Table
 
-None — leaf directory (two workflow files: `ci.yml`, `build-desktop.yml`).
+Leaf directory: `ci.yml`, `build-desktop.yml`, and `readme-evidence.yml`.
+
+### `readme-evidence.yml` — README Evidence updates
+
+Weekly Monday 03:00 UTC and manual dispatch refresh the website manifest, check the generated README block and open or update a PR on the dedicated `automation/readme-evidence` branch. No automatic merge. A path-filtered PR job checks against the committed snapshot without network access. Only the refresh job requests contents/PR write permissions. See `../../docs/readme-evidence.md` for setup and curation.
 
 ## API Surface
 

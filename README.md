@@ -35,23 +35,23 @@ https://github.com/user-attachments/assets/d7f3d520-e39f-45cd-a525-77e5e8d00a75
 
 [New projects](https://genesis.evox.group/usage/new-project/) · [Existing repositories](https://genesis.evox.group/usage/existing-repo/) · [Remote development](https://genesis.evox.group/usage/remote-ssh/)
 
+<!-- evidence:start -->
+
 ## Built with Genesis
 
-### Formation — from an implementation-empty repository
+Selected software worlds developed with Genesis.
 
-Genesis developed a **248,989-line Rust-based C compiler** with DeepSeek V4 Flash in **123.4 hours**. Final validation included **220/220 c-testsuite cases**, **32/36 evaluated LLVM cases**, and **2,904 Rust tests**.
+| Project | What emerged | Reported result |
+| :-- | :-- | :-- |
+| [C Compiler](https://genesis.evox.group/evidence/c-compiler) | A Rust-based C compiler built from scratch | 220 / 220 c-testsuite |
+| [MESA](https://genesis.evox.group/evidence/mesa) | 13 Fortran modules redeveloped in Rust | 1,052 / 1,052 (0 failures) Rust test suite |
+| [tbench-wasm](https://genesis.evox.group/evidence/tbench-wasm) | A software WebGL renderer in TypeScript | 2,017 / 2,019 (99.90%) Khronos WebGL CTS |
 
-### Continuation — the model changed, development continued
+Latest evidence: [EvoX Compiler](https://genesis.evox.group/evidence/evoxc) · 2026-10-28
 
-A completed compiler world originally developed with GLM 5.2 was independently continued by GLM 5.2 and DeepSeek V4 Flash. The DeepSeek continuation reached **1,820/1,820 retained LLVM SingleSource cases**.
+[Explore all evidence →](https://genesis.evox.group/evidence/)
 
-### Redevelopment — MESA to Rust
-
-Genesis redeveloped a selected **13-module MESA scope**, from **139,414 Fortran lines** into an **89,946-line Rust workspace**. It passed **1,052 tests with zero failures**; six audited workloads showed **1.55–6.87× median speedups** with numerical agreement preserved.
-
-[Explore the evidence →](https://genesis.evox.group/evidence/) · [Experimental details](docs/experiments.md) · [Paper](https://arxiv.org/abs/2608.10450)
-
-Source repositories: [C compiler](https://github.com/EMI-Group/genesis-demo-jcc) · [MESA redevelopment](https://github.com/EMI-Group/genesis-demo-mesa-rs)
+<!-- evidence:end -->
 
 ## The world persists. Agents do not.
 
