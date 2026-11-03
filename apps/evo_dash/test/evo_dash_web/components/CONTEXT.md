@@ -21,6 +21,7 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `setting_card_test.exs` | `EvoDashWeb.SettingCardTest` | 3 / 18 — `setting_card/1` `:list_of_strings` editor, `default_label/1`, appearance accent swatch picker |
 | `remote_gate_components_test.exs` | `EvoDashWeb.RemoteGateComponentsTest` | 5 / 16 — `remote_connection_gate/1` states + `gate_active?/1` truth table |
 | `model_profiles_editor_test.exs` | `EvoDashWeb.ModelProfilesEditorTest` | 2 / 32 — render-only peak/off-peak concurrency form + advanced disclosure open/closed rule and reasoning-effort placement (events belong to SettingsLive) |
+| `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 15 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
 | `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 1 / 2 — `Layouts.app/1` sidebar "Active Tasks" grouping |
@@ -138,6 +139,15 @@ The second describe covers the advanced-settings `<details id="model-profile-adv
 The advanced describe also pins the user override: `profile_advanced_open: true` opens a bare profile's disclosure, `profile_advanced_open: false` closes one that carries `temperature: 0.7`, and the `<summary>` carries the plain `phx-click="toggle_profile_advanced"` (no submit).
 The file-local `advanced_details/1` helper returns the parsed `<details>` node (Floki's `find/2` accepts a node, so containment checks need no re-parse).
 Row events (`add_peak_hours_row` / `remove_peak_hours_row`) belong to SettingsLive and are not exercised here.
+
+## `model_profiles_editor_auth_test.exs` (3 describes / 15 tests)
+
+Render-only coverage of the OAuth / subscription-auth UI, rendered through the same `render_component(&ModelProfilesEditor.model_profiles_editor/1, …)` seam: `render_edit_form/2` (profile in edit mode) and `render_summary_row/2` (`editing_profile_id: nil`), both forwarding the `auth_statuses` map (keyed by profile-id STRING).
+`auth mode control visibility (edit form)` pins the `select[name="auth_mode"]` (`api_key` then `oauth`, `api_key` selected when nothing is saved) for an OAuth-capable provider, the `oauth` selection plus the `input[name="oauth_file"]` whose placeholder is `EvoGit.Auth.default_oauth_file()`, NO auth UI at all for an API-key-only provider (no select, no file input, no "Authentication" text), and the OAuth-only provider's static `Subscription (OAuth)` badge + "This provider only supports a subscription login." instead of the select while the credential-file input still renders.
+`summary row auth badge` pins the collapsed row's effective-mode badge ("API key" / "OAuth"), its absence for API-key-only providers, and the neutral `Subscription login` line when `auth_statuses` has no entry (never a verdict).
+`auth status line` pins both render sites' status line: `:ok` → `/Login detected/` + the managed-credential path + `span.hero-check-circle`; `:missing` → "No subscription login found" + the status-supplied guidance + "Genesis imports the vendor login automatically on the next run." + `span.hero-exclamation-triangle`; `:unknown` → the neutral label plus the provider fallback guidance; string-keyed status maps normalizing identically (a custom guidance marker proves the status value is used rather than the fallback); a status keyed by a DIFFERENT profile id never leaking; a non-map entry degrading to neutral; and the `button[phx-click="refresh_auth_status"]` (`type="button"`, aria-label "Recheck") living inside the `div.mt-2.space-y-1` status line.
+Formatted expiry dates are deliberately NOT asserted (locale/timezone dependent) — only the stable label substring is.
+`refresh_auth_status` belongs to SettingsLive and is not exercised here (no `live/2` in this file).
 
 ## `layouts_test.exs` (1 describe / 2 tests)
 
