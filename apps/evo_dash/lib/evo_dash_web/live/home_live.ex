@@ -28,12 +28,11 @@ defmodule EvoDashWeb.HomeLive do
   stays in memory (its task belongs to the old node; events are node-filtered
   anyway).
 
-  The most recent assistant entry renders as a mini "task card" (task status
-  badge + streamed text + collapsible "Thought process" section) — see
+  The most recent assistant entry renders as an answer-first column (task
+  status + streamed text + collapsible "Thought process" section) — see
   `EvoDashWeb.HomeLive.AssistantMessage`. Finalized (non-streaming) assistant
   text renders as Markdown (`EvoDash.MarkdownRender`), and each assistant
-  message carries a hover-revealed raw/markdown toggle + copy-text action
-  group at its bottom-right corner. The message surface (empty state +
+  message carries a raw/markdown toggle + copy-text action row below the answer. The message surface (empty state +
   transcript list) lives in `EvoDashWeb.HomeLive.ChatMessages`; the user
   bubble lives in `EvoDashWeb.HomeLive.UserMessage`.
   """
@@ -74,14 +73,14 @@ defmodule EvoDashWeb.HomeLive do
       guide={@guide}
       accent_color={assigns[:accent_color] || "blue"}
     >
-      <div class="flex flex-col h-full min-h-0 max-w-3xl mx-auto w-full">
-        <!-- Header: slim top bar with title/subtitle left, one ghost New chat button right -->
-        <div class="shrink-0 flex items-center justify-between gap-3 px-4 pt-4 pb-2">
-          <div class="min-w-0">
+      <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
+        <!-- The header, answers and composer share one reading column. -->
+        <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pt-3 pb-3 sm:px-4 sm:pt-4">
+          <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <h1 class="text-base font-semibold truncate">
               <%!-- zh_CN: "与 Genesis 对话" --%>{gettext("Chat with Genesis")}
             </h1>
-            <p class="text-xs text-base-content/60 truncate hidden sm:block">
+            <p class="mt-1 text-xs leading-relaxed text-base-content/60 hidden sm:block [@media(max-height:600px)]:hidden">
               <%!-- zh_CN: "向 Genesis 提问、阅读源码、控制任务或获得仪表盘引导" --%>{gettext(
                 "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
               )}
@@ -92,7 +91,7 @@ defmodule EvoDashWeb.HomeLive do
               name="model_id"
               phx-change="select_chat_model"
               aria-label={gettext("Chat model")}
-              class="shrink-0 max-w-44 rounded-full border border-base-300 bg-base-100 px-3 py-1.5 text-sm font-medium text-base-content/70 hover:border-primary-standalone/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary-standalone/20"
+              class="min-w-0 flex-1 sm:flex-none sm:max-w-44 truncate rounded-lg border border-base-300 bg-base-100 px-3 py-2 text-sm font-medium text-base-content/70 hover:border-primary-standalone/40 hover:bg-base-200/70 focus:outline-none focus:ring-2 focus:ring-primary-standalone/20"
             >
               <%!-- zh_CN: 自动选择模型 — 配置了模型选择脚本时按规则/脚本自动选择，否则使用默认模型 --%>
               <option value="" selected={@selected_model_id in [nil, ""]}>
@@ -115,7 +114,7 @@ defmodule EvoDashWeb.HomeLive do
             type="button"
             phx-click="new_chat"
             disabled={@chat_status != :idle}
-            class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors disabled:opacity-40 disabled:pointer-events-none shrink-0"
+            class="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-base-content/70 hover:bg-base-200 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-primary-standalone disabled:opacity-40 disabled:pointer-events-none shrink-0"
           >
             <.icon name="hero-plus" class="size-4" />
             <%!-- zh_CN: "新对话" --%>{gettext("New chat")}
@@ -136,7 +135,7 @@ defmodule EvoDashWeb.HomeLive do
         <div
           id="chat-messages"
           phx-hook="AgentHistoryAutoScroll"
-          class="flex-1 min-h-0 overflow-y-auto scrollbar-thin"
+          class="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain scrollbar-thin"
         >
           <%= if @transcript == [] do %>
             <.empty_state source_gate?={SourceGate.blocked?(assigns)} />
@@ -157,7 +156,7 @@ defmodule EvoDashWeb.HomeLive do
              visible while the transcript scrolls. The area scrolls internally
              if several requests ever pend at once. -->
         <%= if @pending_approvals != [] do %>
-          <div class="shrink-0 max-h-44 overflow-y-auto scrollbar-thin">
+          <div class="shrink-0 max-h-[min(11rem,25dvh)] overflow-y-auto overscroll-contain scrollbar-thin">
             <%= for request <- @pending_approvals do %>
               <.approval_card request={request} />
             <% end %>
@@ -165,7 +164,7 @@ defmodule EvoDashWeb.HomeLive do
         <% end %>
 
         <!-- Composer: pinned bottom, outside the messages scroller -->
-        <div class="shrink-0 px-4 pt-2 pb-3 bg-gradient-to-t from-base-100 from-60% to-transparent">
+        <div class="shrink-0 px-3 pt-2 pb-3 sm:px-4 bg-base-100">
           <form
             id="chat-form"
             phx-submit="send_message"
@@ -180,7 +179,8 @@ defmodule EvoDashWeb.HomeLive do
               disabled={@chat_status != :idle or SourceGate.blocked?(assigns)}
               placeholder={gettext("Message Genesis…")}
               rows="1"
-              class="w-full min-h-[46px] max-h-40 resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
+              aria-label={gettext("Message Genesis…")}
+              class="w-full min-w-0 min-h-[46px] max-h-[min(10rem,25dvh)] resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
             ></textarea>
             <!-- Send → Stop morph: exactly one button is visible at a time; both
                  stay in the DOM (the hidden one disabled) so the Stop button's
