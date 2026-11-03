@@ -75,16 +75,11 @@ defmodule EvoDashWeb.HomeLive do
     >
       <div class="flex h-full min-h-0 w-full min-w-0 max-w-3xl flex-col mx-auto">
         <!-- The header, answers and composer share one reading column. -->
-        <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 pt-3 pb-3 sm:px-4 sm:pt-4">
+        <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4">
           <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <h1 class="text-base font-semibold truncate">
               <%!-- zh_CN: "与 Genesis 对话" --%>{gettext("Chat with Genesis")}
             </h1>
-            <p class="mt-1 text-xs leading-relaxed text-base-content/60 hidden sm:block [@media(max-height:600px)]:hidden">
-              <%!-- zh_CN: "向 Genesis 提问、阅读源码、控制任务或获得仪表盘引导" --%>{gettext(
-                "Ask about Genesis, inspect the source, control tasks, and get guided through the dashboard."
-              )}
-            </p>
           </div>
           <%= if @model_profiles != [] do %>
             <select
@@ -169,7 +164,7 @@ defmodule EvoDashWeb.HomeLive do
             id="chat-form"
             phx-submit="send_message"
             phx-change="chat_input"
-            class="help-composer flex items-end gap-2"
+            class="help-composer flex items-end gap-2 rounded-2xl p-1"
           >
             <textarea
               name="message"
