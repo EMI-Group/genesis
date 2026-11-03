@@ -223,10 +223,10 @@ defmodule EvoDashWeb.ProjectsLive do
                          is only updated by restore_state / task_submit. --%>
                     <div class="mx-auto w-full max-w-3xl px-4 pb-4 shrink-0">
                       <details
-                        class="group rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
+                        class="group overflow-hidden rounded-lg border border-base-300 bg-base-100/60 shadow-sm"
                         open
                       >
-                        <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+                        <summary class="flex items-center gap-2 px-4 py-3 text-sm font-medium text-base-content/80 cursor-pointer select-none list-none hover:bg-base-200 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary-standalone [&::-webkit-details-marker]:hidden">
                           <.icon
                             name="hero-sparkles"
                             class="size-4 shrink-0 text-primary-standalone/70"
