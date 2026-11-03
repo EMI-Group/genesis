@@ -270,7 +270,7 @@ defmodule EvoGit.CLI.Setup do
   # `model` may be either:
   #   * a string in "provider:model" form (legacy — normalized to a map later
   #     by Config.resolve/0), or
-  #   * a map spec like %{provider: :openai, id: "gpt-5.5", base_url: "..."}
+  #   * a map spec like %{provider: :openai, id: "gpt-6-sol", base_url: "..."}
   #     (new — stored directly).
   #
   # If a profile with the id "default" already exists, its model is updated.

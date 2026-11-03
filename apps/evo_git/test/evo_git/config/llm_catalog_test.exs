@@ -144,6 +144,123 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
   end
 
+  describe "refreshed model lists" do
+    # Per-provider model ids, newest generation first. Derived from the vendored
+    # LLMDB catalog snapshot (retired/non-chat entries and superseded
+    # generations excluded). `provider_models/1` resolves by provider atom, so
+    # every key below matches a `provider_atoms` entry.
+    @expected_models %{
+      anthropic: [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-opus-5",
+        "claude-sonnet-5"
+      ],
+      openai: [
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6-astra",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra"
+      ],
+      google: [
+        "gemini-4-argon",
+        "gemini-3.8-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite"
+      ],
+      deepseek: [
+        "deepseek-v4-flash-vision-exp",
+        "deepseek-v4-flash",
+        "deepseek-flash",
+        "deepseek-v4-pro"
+      ],
+      alibaba: [
+        "qwen3.8-omni-flash",
+        "qwen3.8-flash",
+        "qwen3.8-max",
+        "qwen3.7-flash",
+        "qwen3.7-plus",
+        "qwen3.7-max"
+      ],
+      zai: ["glm-5.3-flashx", "glm-5.3-flash", "glm-5.3", "glm-5.2", "glm-5.1"],
+      minimax: [
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3",
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed"
+      ],
+      moonshotai: [
+        "kimi-k3.1-pro",
+        "kimi-k3.1-pro-highspeed",
+        "kimi-k3",
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.7-code"
+      ],
+      xai: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1"]
+    }
+
+    # Models the refresh deliberately retired. They must never come back by
+    # appending to the existing list instead of regenerating it.
+    @retired_models %{
+      anthropic: [
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6"
+      ],
+      openai: ["gpt-5.6-luna", "gpt-5.5", "gpt-5.4"],
+      google: ["gemini-3.1-pro-preview", "gemini-flash-latest"],
+      alibaba: ["qwen3.6-plus"],
+      zai: ["glm-5-turbo", "glm-5"],
+      minimax: ["MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
+      moonshotai: ["kimi-k2.6"],
+      xai: ["grok-imagine-image", "grok-imagine-image-2.0"]
+    }
+
+    test "each provider ships exactly its refreshed model list" do
+      for {provider_atom, expected_ids} <- @expected_models do
+        assert Enum.map(LLMCatalog.provider_models(provider_atom), & &1.id) == expected_ids
+      end
+    end
+
+    test "retired model ids are gone from provider_models/1" do
+      for {provider_atom, retired_ids} <- @retired_models,
+          retired_id <- retired_ids do
+        refute retired_id in Enum.map(LLMCatalog.provider_models(provider_atom), & &1.id),
+               "retired model #{inspect(retired_id)} is still offered for #{inspect(provider_atom)}"
+      end
+    end
+
+    test "newly added models resolve and carry a readable display name" do
+      new_models = [
+        {:anthropic, "claude-haiku-5-5"},
+        {:openai, "gpt-6.1-sol"},
+        {:google, "gemini-4-argon"},
+        {:alibaba, "qwen3.8-omni-flash"},
+        {:zai, "glm-5.3-flashx"},
+        {:minimax, "MiniMax-M3.1-Flash"},
+        {:moonshotai, "kimi-k3.1-pro"},
+        {:moonshotai, "kimi-k3.1-pro-highspeed"}
+      ]
+
+      for {provider_atom, model_id} <- new_models do
+        model = Enum.find(LLMCatalog.provider_models(provider_atom), &(&1.id == model_id))
+        assert model, "#{model_id} missing from #{inspect(provider_atom)}"
+        assert is_binary(model.display_name)
+        assert model.display_name != ""
+
+        assert LLMCatalog.resolve_model(provider_atom, model_id) ==
+                 "#{hd(LLMCatalog.find_provider(provider_atom).provider_atoms)}:#{model_id}"
+      end
+    end
+  end
+
   describe "resolve_model_spec/2,3" do
     # The map-producing analog of resolve_model/2. Returns
     # %{provider: atom, id: string} (plus optional base_url/extra).
@@ -179,30 +296,28 @@ defmodule EvoGit.Config.LLMCatalogTest do
     end
 
     test "includes base_url when a non-empty value is provided" do
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "https://my.proxy/v1") ==
-               %{provider: :openai, id: "gpt-5.5", base_url: "https://my.proxy/v1"}
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6-sol", base_url: "https://my.proxy/v1") ==
+               %{provider: :openai, id: "gpt-6-sol", base_url: "https://my.proxy/v1"}
     end
 
     test "omits base_url when it is an empty string" do
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: "") ==
-               %{provider: :openai, id: "gpt-5.5"}
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6-sol", base_url: "") ==
+               %{provider: :openai, id: "gpt-6-sol"}
     end
 
     test "omits base_url when it is nil" do
-      assert LLMCatalog.resolve_model_spec(:openai, "gpt-5.5", base_url: nil) ==
-               %{provider: :openai, id: "gpt-5.5"}
+      assert LLMCatalog.resolve_model_spec(:openai, "gpt-6-sol", base_url: nil) ==
+               %{provider: :openai, id: "gpt-6-sol"}
     end
 
     test "includes extra when a non-nil value is provided" do
-      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro-preview",
-               extra: %{family: "glm"}
-             ) ==
-               %{provider: :google, id: "gemini-3.1-pro-preview", extra: %{family: "glm"}}
+      assert LLMCatalog.resolve_model_spec(:google, "gemini-3.7-flash", extra: %{family: "glm"}) ==
+               %{provider: :google, id: "gemini-3.7-flash", extra: %{family: "glm"}}
     end
 
     test "omits extra when it is nil" do
       refute Map.has_key?(
-               LLMCatalog.resolve_model_spec(:google, "gemini-3.1-pro-preview", extra: nil),
+               LLMCatalog.resolve_model_spec(:google, "gemini-3.7-flash", extra: nil),
                :extra
              )
     end
