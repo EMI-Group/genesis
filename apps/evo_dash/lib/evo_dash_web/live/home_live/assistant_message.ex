@@ -2,7 +2,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   @moduledoc """
   Assistant chat entry for the Home chat page (`EvoDashWeb.HomeLive`).
 
-  Renders the sparkles avatar plus a "mini task card" frame carrying:
+  Renders a small sparkles avatar beside an answer-first, borderless column:
 
     * the chat task's status badge (reusing
       `EvoDashWeb.Helpers.task_status_badge/1` and the pulsing-dot/spinner
@@ -14,8 +14,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       pages use; always-safe HTML — MDEx `unsafe_: true` with an
       HTML-escaped fallback), OR the plain raw text when the per-message
       `raw` flag is set,
-    * a hover-revealed action group at the card's bottom-right corner
-      (finalized entries only): a raw/markdown toggle for THAT message
+    * a normal-flow footer with touch-visible and desktop hover/focus-revealed
+      actions (finalized entries only): a raw/markdown toggle for THAT message
       (`phx-click="toggle_assistant_raw"` with `phx-value-id`) and a
       copy-whole-text button (global `ClipboardCopy` hook with
       `data-content`, pushing the `"copied"` event),
@@ -48,18 +48,15 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
 
   def assistant_message(assigns) do
     ~H"""
-    <div class="flex justify-start gap-3 w-full">
-      <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-base-200 ring-1 ring-base-300/60">
+    <div class="flex justify-start gap-2 sm:gap-3 w-full">
+      <div class="mt-1 flex size-6 sm:size-7 shrink-0 items-center justify-center rounded-full bg-base-200">
         <.icon name="hero-sparkles" class="size-3.5 text-primary-standalone" />
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
-        <div class={[
-          "relative group/assistant overflow-hidden rounded-lg border bg-base-100 shadow-sm",
-          card_border(@task_status)
-        ]}>
+        <div class="group/assistant min-w-0">
           <%= if @task_status != nil do %>
-            <div class="flex items-center justify-between gap-2 border-b border-base-300 bg-base-200/30 px-3 py-1.5">
-              <span class="text-xs font-bold uppercase tracking-widest text-base-content/70">
+            <div class="mb-2 flex flex-wrap items-center gap-2">
+              <span class="text-xs font-normal text-base-content/60">
                 <%!-- zh_CN: "任务" --%>{gettext("Task")}
               </span>
               <span class={[
@@ -91,8 +88,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
           <%= if streaming?(@entry) and entry_text(@entry) == "" do %>
             <!-- Empty + streaming: pulsing dots pill (unchanged — never
                  markdown-rendered). -->
-            <div class="px-3 py-2.5">
-              <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2.5">
+            <div class="py-2">
+              <span class="inline-flex items-center gap-1 rounded-2xl rounded-bl-md bg-base-200/70 px-3 py-2">
                 <span
                   class="size-1.5 rounded-full bg-base-content/50 animate-bounce"
                   style="animation-delay:0ms"
@@ -113,22 +110,22 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                    Streaming text is NEVER markdown-rendered (a half-rendered
                    stream would flicker) — the render switches to markdown only
                    when the entry is finalized (streaming: false). -->
-              <div class="px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+              <div class="py-2 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
                 {entry_text(@entry)}
                 <span class="help-caret ml-0.5 inline-block h-4 w-[3px] rounded-full bg-primary align-[-3px]"></span>
               </div>
             <% else %>
               <%= if @raw do %>
                 <!-- Per-message raw view: the plain (HTML-escaped) source text. -->
-                <div class="px-3 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
+                <div class="py-2 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-base-content">
                   {entry_text(@entry)}
                 </div>
               <% else %>
                 <!-- Finalized assistant text renders as Markdown — same helper
                      + call pattern as the tasks/review pages. Always-safe
                      HTML: MDEx render with an HTML-escaped fallback. -->
-                <div class="px-3 py-2.5">
-                  <div class="md-content text-[15px] leading-relaxed text-base-content">
+                <div class="py-2">
+                  <div class="md-content min-w-0 break-words text-[15px] leading-relaxed text-base-content">
                     {raw(EvoDash.MarkdownRender.render(entry_text(@entry)))}
                   </div>
                 </div>
@@ -136,8 +133,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
             <% end %>
           <% end %>
           <%= if @thought_process != [] do %>
-            <details class="group border-t border-base-300">
-              <summary class="flex cursor-pointer select-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content">
+            <details class="group mt-3 min-w-0">
+              <summary class="flex w-fit cursor-pointer select-none items-center gap-1.5 rounded-md py-2 text-xs font-medium text-base-content/60 transition-colors hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone">
                 <.icon
                   name="hero-chevron-down"
                   class="size-3.5 transition-transform group-open:rotate-180"
@@ -145,7 +142,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 <%!-- zh_CN: "思考过程" --%>{gettext("Thought process")}
                 <span class="font-mono text-xs text-base-content/70">({length(@thought_process)})</span>
               </summary>
-              <div class="space-y-1.5 px-3 pb-3">
+              <div class="mt-1 space-y-2 border-l border-base-300 pl-3">
                 <%= for tp_entry <- @thought_process do %>
                   <.thought_entry entry={tp_entry} />
                 <% end %>
@@ -153,11 +150,9 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
             </details>
           <% end %>
           <%= if not streaming?(@entry) do %>
-            <!-- Bottom-right hover-revealed action group (finalized entries
-                 only — there is nothing to toggle/copy mid-stream): a
-                 per-message raw/markdown toggle + a copy-whole-text button
-                 (global ClipboardCopy hook, pushes the "copied" event). -->
-            <div class="absolute bottom-1.5 right-1.5 z-10 flex items-center gap-0.5 rounded-md bg-base-100/95 p-0.5 opacity-0 shadow-sm ring-1 ring-base-300 transition-opacity duration-150 group-hover/assistant:opacity-100">
+            <!-- Normal-flow footer reserves its own space; touch users always
+                 see the actions, and keyboard focus reveals them on desktop. -->
+            <div class="mt-2 flex items-center gap-1 py-1 opacity-100 transition-opacity duration-150 sm:opacity-0 group-hover/assistant:opacity-100 group-focus-within/assistant:opacity-100 [@media(hover:none)]:opacity-100">
               <%!-- zh_CN: 原始视图：显示本条消息的纯文本（未渲染的 Markdown 源文） --%>
               <button
                 type="button"
@@ -167,7 +162,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 aria-label={
                   if @raw, do: gettext("Show rendered markdown"), else: gettext("Show raw text")
                 }
-                class="flex size-6 items-center justify-center rounded text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content"
+                class="flex size-11 sm:size-8 items-center justify-center rounded-md text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
               >
                 <.icon
                   name={if @raw, do: "hero-document-text", else: "hero-code-bracket"}
@@ -182,7 +177,7 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
                 data-content={entry_text(@entry)}
                 title={gettext("Copy message text")}
                 aria-label={gettext("Copy message text")}
-                class="flex size-6 items-center justify-center rounded text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content"
+                class="flex size-11 sm:size-8 items-center justify-center rounded-md text-base-content/70 transition-colors hover:bg-base-200 hover:text-base-content focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
               >
                 <.icon name="hero-clipboard" class="size-3.5" />
               </button>
@@ -317,19 +312,6 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
   defp status_label(status) when is_atom(status), do: Atom.to_string(status)
   defp status_label(_status), do: ""
 
-  # Assistant-card frame border per task status — mirrors the LOCKED semantic
-  # mapping (transitional/busy → warning amber, completed → success, failed →
-  # error, cancelled/pending/unknown → neutral gray).
-  defp card_border(:running), do: "border-warning/25"
-  defp card_border(:finalizing), do: "border-warning/25"
-  defp card_border(:cancelling), do: "border-warning/25"
-  defp card_border(:completed), do: "border-success/25"
-  defp card_border(:failed), do: "border-error/25"
-  defp card_border(_status), do: "border-base-200/60"
-
-  defp type_color("user"), do: "text-info"
-  defp type_color("assistant"), do: "text-primary-standalone"
-  defp type_color("tool"), do: "text-success"
   defp type_color(_type), do: "text-base-content/60"
 
   defp entry_type(type) when is_binary(type) and type != "", do: type
