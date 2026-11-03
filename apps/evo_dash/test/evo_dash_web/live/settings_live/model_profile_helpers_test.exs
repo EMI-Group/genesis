@@ -506,6 +506,140 @@ defmodule EvoDashWeb.SettingsLive.ModelProfileHelpersTest do
     end
   end
 
+  describe "add_model_profile/2 OAuth stamping" do
+    test "an OAuth-only provider is stamped with auth_mode: \"oauth\"" do
+      # `openai_codex` can never authenticate with an API key, so a newly added
+      # profile is self-describing (the persisted TOML carries auth_mode).
+      assert [profile] =
+               models(ModelProfileHelpers.add_model_profile(%{}, "openai_codex:gpt-5.6-terra"))
+
+      assert profile.auth_mode == "oauth"
+    end
+
+    test "providers that also accept an API key get NO auth_mode key" do
+      # API key stays the default, so the key must stay absent (clean TOML).
+      for model <- ["anthropic:claude-opus-5-5", "deepseek:deepseek-v4-pro"] do
+        assert [profile] = models(ModelProfileHelpers.add_model_profile(%{}, model))
+
+        refute Map.has_key?(profile, :auth_mode),
+               "expected #{model} to be added without an :auth_mode key"
+      end
+    end
+
+    test "an OAuth-only profile added next to an existing one keeps the stamp and a distinct id" do
+      # Seeded profiles MUST carry a :model key — draft-cleaning would drop them.
+      existing = %{id: "gpt-5-6-terra", concurrency: 3, model: "openai_codex:gpt-5.6-terra"}
+
+      result =
+        ModelProfileHelpers.add_model_profile(
+          %{llm: %{models: [existing]}},
+          "openai_codex:gpt-5.6-terra"
+        )
+
+      assert [kept, added] = models(result)
+      assert kept == existing
+      assert added.auth_mode == "oauth"
+      assert added.id == "gpt-5-6-terra-2"
+      assert added.id != kept.id
+    end
+  end
+
+  describe "parse_model_profile_params/2 auth_mode & oauth_file" do
+    # The OAuth keys are TOML-clean by construction: the API-key default and an
+    # OAuth-unsupported provider write NEITHER key, so a persisted profile never
+    # carries a redundant `auth_mode = "api_key"`.
+    defp oauth_profile(patch),
+      do: parse_params(Map.merge(@base_params, patch))
+
+    defp anthropic_oauth(patch) do
+      {:ok, profile} =
+        oauth_profile(
+          Map.merge(%{"provider" => "anthropic", "model_id" => "claude-opus-5-5"}, patch)
+        )
+
+      profile
+    end
+
+    test "an OAuth anthropic profile stores both keys, trimming the credential path" do
+      profile =
+        anthropic_oauth(%{
+          "auth_mode" => "oauth",
+          "oauth_file" => " ~/.claude/.credentials.json "
+        })
+
+      assert profile.auth_mode == "oauth"
+      assert profile.oauth_file == "~/.claude/.credentials.json"
+      assert profile.model == "anthropic:claude-opus-5-5"
+    end
+
+    test "the API-key default writes NEITHER key, even from a stale oauth_file draft" do
+      for patch <- [
+            %{"auth_mode" => "api_key", "oauth_file" => "~/.claude/.credentials.json"},
+            %{"oauth_file" => "~/.claude/.credentials.json"}
+          ] do
+        profile = anthropic_oauth(patch)
+
+        refute Map.has_key?(profile, :auth_mode),
+               "auth_mode must stay absent for #{inspect(patch)}"
+
+        refute Map.has_key?(profile, :oauth_file),
+               "oauth_file must stay absent for #{inspect(patch)}"
+      end
+    end
+
+    test "a blank oauth_file keeps auth_mode and omits only the path" do
+      for blank <- ["   ", ""] do
+        profile = anthropic_oauth(%{"auth_mode" => "oauth", "oauth_file" => blank})
+
+        assert profile.auth_mode == "oauth"
+        refute Map.has_key?(profile, :oauth_file), "blank path #{inspect(blank)} must be omitted"
+      end
+    end
+
+    test "an OAuth-unsupported provider never gains either key" do
+      {:ok, profile} =
+        oauth_profile(%{
+          "provider" => "deepseek",
+          "model_id" => "deepseek-v4-pro",
+          "auth_mode" => "oauth",
+          "oauth_file" => "/tmp/genesis/oauth.json"
+        })
+
+      refute Map.has_key?(profile, :auth_mode)
+      refute Map.has_key?(profile, :oauth_file)
+    end
+
+    test "an OAuth-only provider defaults to auth_mode \"oauth\" with no form value" do
+      {:ok, profile} =
+        oauth_profile(%{"provider" => "openai_codex", "model_id" => "gpt-5.6-terra"})
+
+      assert profile.auth_mode == "oauth"
+      refute Map.has_key?(profile, :oauth_file)
+    end
+
+    test "a blank or unknown provider never gains either key" do
+      for patch <- [
+            %{"provider" => "", "model_id" => "gpt-5.6-terra"},
+            %{
+              "provider" => "custom-provider",
+              "model_id" => "some-model",
+              "base_url" => "https://custom.example.com/v1"
+            }
+          ] do
+        {:ok, profile} =
+          oauth_profile(
+            Map.merge(patch, %{"auth_mode" => "oauth", "oauth_file" => "/tmp/a.json"})
+          )
+
+        refute Map.has_key?(profile, :auth_mode),
+               "auth_mode must stay absent for #{inspect(patch)}"
+
+        refute Map.has_key?(profile, :oauth_file),
+               "oauth_file must stay absent for #{inspect(patch)}"
+      end
+    end
+  end
+
   describe "profile id naming from model value" do
     test "derives the base id from a provider:model string, a plain model, a map spec, or a slugified value" do
       cases = [
