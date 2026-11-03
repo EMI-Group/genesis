@@ -68,6 +68,7 @@ Three trigger points: the END of `apply_node_data_results/3` (covers every navig
 The result message `{:settings_auth_status_loaded, node, seq, statuses}` is DROPPED unless BOTH `node == @current_node` and `seq == @auth_status_seq` (node + monotonic-seq stale guards) — otherwise the socket is unchanged and the newer in-flight load wins.
 No polling timers, no flash (the load is silent/neutral by design).
 The task sends the tag with a plain `send/2`, so the message tag is FLAT — a test can `send(view.pid, {:settings_auth_status_loaded, node(), seq, statuses})` to drive the handler deterministically.
+The LLM pane's `category_section` call passes `auth_statuses={@auth_statuses}`, which `category_section/1` forwards to `model_profiles_editor/1`, so an applied status reaches the rendered credential line (label, login guidance, managed-file path).
 
 ### `EvoDashWeb.SettingsLive.ConfigIO` (`config_io.ex`)
 
