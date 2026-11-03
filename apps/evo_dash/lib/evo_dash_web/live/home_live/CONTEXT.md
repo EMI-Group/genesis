@@ -23,7 +23,7 @@ The empty state uses `min-h-full` and vertical padding rather than a fixed heigh
 `ChatMessages.message_list/1` renders oldest-first transcript entries with stable `chat-entry-<id>` wrappers and responsive spacing.
 User wrappers remain `flex justify-end` around a direct bubble div; assistant/error wrappers are left-aligned.
 Only the last assistant entry receives `chat_task_status` and `thought_process`, while every assistant entry receives its own raw-view flag.
-`UserMessage.user_message/1` is the single bubble implementation for typed and suggestion sends, with content-fit `w-fit`, responsive max-width, neutral `bg-base-300`, left-aligned escaped text, and no shadow.
+`UserMessage.user_message/1` is the single bubble implementation for typed and suggestion sends, with content-fit `w-fit`, responsive max-width, neutral `bg-base-200`, left-aligned escaped text, and no shadow.
 
 `AssistantMessage.assistant_message/1` prioritizes the answer over task chrome: a small sparkles avatar beside a borderless, shadowless, min-width-zero content column.
 The optional status row keeps the localized Task label as quiet sentence-case metadata plus the shared status badge, ping dots for running/cancelling, and spinner for finalizing.
