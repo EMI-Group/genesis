@@ -757,7 +757,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -814,7 +814,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "5",
           "temperature" => "0.7",
           "max_tokens" => "4096",
@@ -824,7 +824,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert html =~ "Model profile saved."
       [profile] = current_models(view)
       assert profile.id == "default"
-      assert profile.model == "anthropic:claude-sonnet-4-6"
+      assert profile.model == "anthropic:claude-sonnet-5-5"
       assert profile.concurrency == 5
       assert profile.temperature == 0.7
       assert profile.max_tokens == 4096
@@ -841,7 +841,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "advanced-probe",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "4",
           "temperature" => "0.7",
           "max_tokens" => "4096",
@@ -872,7 +872,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # preserved VERBATIM (string keys, nested) under :extra.
       assert profile.model == %{
                provider: :anthropic,
-               id: "claude-sonnet-4-6",
+               id: "claude-sonnet-5-5",
                extra: %{"wire" => %{"protocol" => "openai_responses"}}
              }
 
@@ -901,7 +901,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7",
         "top_k" => "40",
@@ -939,7 +939,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7"
       })
@@ -960,7 +960,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "profile-1",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "5",
           "temperature" => "0.7"
         })
@@ -990,7 +990,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "profile-1",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "5"
         })
 
@@ -1010,7 +1010,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7"
       })
@@ -1021,7 +1021,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-2",
         "profile_id_new" => "profile-2",
         "provider" => "openai",
-        "model_id" => "gpt-5.5",
+        "model_id" => "gpt-5.6-terra",
         "concurrency" => "3",
         "top_k" => "40"
       })
@@ -1061,7 +1061,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1085,7 +1085,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1102,7 +1102,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "  ",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3"
         })
 
@@ -1117,7 +1117,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1128,7 +1128,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-2",
           "profile_id_new" => "default",
           "provider" => "openai",
-          "model_id" => "gpt-5.5",
+          "model_id" => "gpt-5.6-terra",
           "concurrency" => "5"
         })
 
@@ -1144,7 +1144,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "profile-1",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "5"
         })
 
@@ -1162,7 +1162,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1172,7 +1172,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-2",
         "profile_id_new" => "profile-2",
         "provider" => "openai",
-        "model_id" => "gpt-5.5",
+        "model_id" => "gpt-5.6-terra",
         "concurrency" => "3"
       })
 
@@ -1188,7 +1188,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
       html =
         render_hook(view, "select_llm_model_shortcut", %{
-          "model_string" => "anthropic:claude-sonnet-4-6"
+          "model_string" => "anthropic:claude-sonnet-5-5"
         })
 
       assert html =~ "Model selected and saved."
@@ -1196,11 +1196,11 @@ defmodule EvoDashWeb.SettingsLiveTest do
       assert length(models) == 1
       # After save + resolve, the model string is normalized: simple models
       # (no overrides) become "provider:id" strings.
-      assert hd(models).model == "anthropic:claude-sonnet-4-6"
+      assert hd(models).model == "anthropic:claude-sonnet-5-5"
       assert hd(models).concurrency == 3
       # First profile's model (also normalized to string)
       assert get_in(assigns(view).file_config, [:llm, :models]) |> hd() |> Map.get(:model) ==
-               "anthropic:claude-sonnet-4-6"
+               "anthropic:claude-sonnet-5-5"
     end
 
     test "save_custom_model adds a profile for OpenRouter", %{conn: conn} do
@@ -1344,7 +1344,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "base_url" => "https://proxy.example.com/v1",
         "concurrency" => "3"
       })
@@ -1352,7 +1352,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       # Re-open the edit form and verify the structured fields pre-fill from the map spec
       html = render_hook(view, "edit_model_profile", %{"profile_id" => "profile-1"})
 
-      assert html =~ ~s(value="claude-sonnet-4-6")
+      assert html =~ ~s(value="claude-sonnet-5-5")
       assert html =~ ~s(value="anthropic")
       assert html =~ ~s(value="https://proxy.example.com/v1")
     end
@@ -1423,8 +1423,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "move_model_profile moves a profile up", %{conn: conn} do
       seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-4-6"},
-        {"profile-2", "openai", "gpt-5.5"}
+        {"profile-1", "anthropic", "claude-sonnet-5-5"},
+        {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -1437,8 +1437,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "move_model_profile is a no-op at either boundary", %{conn: conn} do
       seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-4-6"},
-        {"profile-2", "openai", "gpt-5.5"}
+        {"profile-1", "anthropic", "claude-sonnet-5-5"},
+        {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -1458,8 +1458,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "move_model_profile persists the reordered config to disk", %{conn: conn} do
       seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-4-6"},
-        {"profile-2", "openai", "gpt-5.5"}
+        {"profile-1", "anthropic", "claude-sonnet-5-5"},
+        {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -1481,8 +1481,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
 
     test "move_model_profile move buttons respect boundary positions", %{conn: conn} do
       seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-4-6"},
-        {"profile-2", "openai", "gpt-5.5"}
+        {"profile-1", "anthropic", "claude-sonnet-5-5"},
+        {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -1526,7 +1526,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "5",
         "temperature" => "0.7",
         "peak_concurrency" => "0",
@@ -1552,7 +1552,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         # Multi-checkbox list as the browser submits it: the hidden-seed ""
         # entry rides along with the checked day chips.
@@ -1588,7 +1588,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => "weekends",
           "peak_hours" => %{
@@ -1619,7 +1619,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => [""]
         })
@@ -1652,7 +1652,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "5",
         "temperature" => "0.7",
         "peak_concurrency" => "0",
@@ -1687,7 +1687,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "off_peak_days" => ["", "mon", "fri"],
         "peak_hours" => %{
@@ -1729,7 +1729,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "peak_hours" => %{
           "0" => %{"start" => "09:00", "end" => "12:00"},
@@ -1756,7 +1756,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "off_peak_days" => ["", "weekends"],
         "peak_hours" => %{
@@ -1793,7 +1793,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7"
       })
@@ -1811,7 +1811,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7"
       })
@@ -1822,7 +1822,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1833,8 +1833,8 @@ defmodule EvoDashWeb.SettingsLiveTest do
       conn: conn
     } do
       seed_model_profiles([
-        {"profile-1", "anthropic", "claude-sonnet-4-6"},
-        {"profile-2", "openai", "gpt-5.5"}
+        {"profile-1", "anthropic", "claude-sonnet-5-5"},
+        {"profile-2", "openai", "gpt-5.6-terra"}
       ])
 
       {:ok, view, _html} = mount_settings(conn, ~p"/settings")
@@ -1845,7 +1845,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "profile-1",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3"
       })
 
@@ -1867,7 +1867,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "peak_concurrency" => "-1"
         })
@@ -1886,7 +1886,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "timezone" => "Asia/Shanghai"
         })
@@ -1902,7 +1902,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "default",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "timezone" => ""
       })
@@ -1920,7 +1920,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           # Normalization is defensive: trim + downcase + vocab whitelist +
           # order-preserving uniq. " MON " → "mon", "funday" (not in the 9-value
@@ -1959,7 +1959,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "off_peak_days" => "weekends",
           "peak_hours" => %{
@@ -1988,7 +1988,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           # All chips off → only the hidden-seed "" entry is submitted.
           "off_peak_days" => [""],
@@ -2020,7 +2020,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "profile-1",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "context_window" => "128000"
         })
@@ -2044,7 +2044,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "default",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "concurrency" => "3",
         "temperature" => "0.7",
         "context_window" => "128000"
@@ -2062,7 +2062,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "profile_id" => "default",
           "profile_id_new" => "default",
           "provider" => "anthropic",
-          "model_id" => "claude-sonnet-4-6",
+          "model_id" => "claude-sonnet-5-5",
           "concurrency" => "3",
           "temperature" => "0.7",
           "context_window" => ""
@@ -2075,7 +2075,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       file_profile = get_in(EvoGit.Config.user_config(), ["llm", "models"]) |> hd()
       refute Map.has_key?(file_profile, "context_window")
       # The other profile keys survive the re-save untouched.
-      assert file_profile["model"] == "anthropic:claude-sonnet-4-6"
+      assert file_profile["model"] == "anthropic:claude-sonnet-5-5"
       assert file_profile["concurrency"] == 3
       assert file_profile["temperature"] == 0.7
     end

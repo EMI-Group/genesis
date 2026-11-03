@@ -172,7 +172,7 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
         "profile_id" => "profile-1",
         "profile_id_new" => "renamed",
         "provider" => "anthropic",
-        "model_id" => "claude-sonnet-4-6",
+        "model_id" => "claude-sonnet-5-5",
         "base_url" => "https://proxy.example.com/v1",
         "concurrency" => "5",
         "peak_concurrency" => "0",
@@ -189,7 +189,7 @@ defmodule EvoDashWeb.ModelProfilesEditorTest do
       # Every draft value wins over the profile's saved value.
       assert attr(find(html, ~s(input[name="profile_id_new"])), 0, "value") == ["renamed"]
       assert attr(find(html, ~s(input[name="provider"])), 0, "value") == ["anthropic"]
-      assert attr(find(html, ~s(input[name="model_id"])), 0, "value") == ["claude-sonnet-4-6"]
+      assert attr(find(html, ~s(input[name="model_id"])), 0, "value") == ["claude-sonnet-5-5"]
 
       assert attr(find(html, ~s(input[name="base_url"])), 0, "value") == [
                "https://proxy.example.com/v1"
