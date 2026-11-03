@@ -81,7 +81,7 @@ defmodule EvoDashWeb.Layouts do
       <div class="lg:hidden fixed top-0 left-0 z-50 p-2">
         <button
           id="sidebar-mobile-toggle"
-          class="p-2 rounded-lg bg-base-200 shadow-md border border-base-300 text-base-content/70 hover:text-base-content transition-colors"
+          class="p-2 rounded-lg bg-base-200 border border-base-300 text-base-content/70 hover:text-base-content transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
           aria-label={gettext("Toggle navigation")}
         >
           <.icon name="hero-bars-3" class="size-5" />
@@ -102,10 +102,8 @@ defmodule EvoDashWeb.Layouts do
         (w-60 = 240px expanded / w-16 = 64px collapsed). The !important
         modifier pins overflow to visible regardless of any other class
         changes. The SidebarCollapse hook (assets/js/hooks/sidebar_collapse.js)
-        keeps overflow visible in BOTH collapsed and expanded states — it no
-        longer re-applies `overflow-hidden` on expand (since commit 37cbed215)
-        — so the pin is belt-and-braces rather than load-bearing against a
-        hook regression. The sidebar is a z-50 stacking context above the main
+        keeps overflow visible in BOTH collapsed and expanded states, so the
+        pin protects the same invariant independently of hook class changes. The sidebar is a z-50 stacking context above the main
         content (z-0), so overflowing menus paint above the main body. The
         node selector lives in the sidebar's bottom bar, leftmost, with its
         dropdown opening upward. -->
@@ -119,7 +117,7 @@ defmodule EvoDashWeb.Layouts do
         <div class="flex items-center h-14 px-4 shrink-0">
           <.link
             navigate={with_node_param(~p"/", @current_node_id)}
-            class="flex items-center gap-2 hover:opacity-80 transition-opacity min-w-0"
+            class="flex items-center gap-2 rounded-md hover:opacity-80 transition-opacity min-w-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
           >
             <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
             <img
@@ -133,7 +131,7 @@ defmodule EvoDashWeb.Layouts do
               class="h-6 w-auto hidden dark:block shrink-0"
               alt={gettext("EvoX Genesis")}
             />
-            <span class="text-lg font-extrabold tracking-tight text-base-content truncate sidebar-label">
+            <span class="text-base font-semibold tracking-tight text-base-content truncate sidebar-label">
               <%!-- zh_CN: EvoX Genesis → "天演 · 启元" (天演 · 啟元) --%>
               {gettext("EvoX Genesis")}
             </span>
@@ -172,7 +170,7 @@ defmodule EvoDashWeb.Layouts do
             <.sidebar_nav_link
               navigate={with_node_param(~p"/help", @current_node_id)}
               current={@current_page == :help}
-              icon="hero-question-mark-circle"
+              icon="hero-chat-bubble-left-right"
             ><%!-- 帮助 — 指向自省代理聊天页面的侧边栏入口 --%>{gettext("Help")}</.sidebar_nav_link>
 
             <!-- Task Indicators Section -->
@@ -249,7 +247,7 @@ defmodule EvoDashWeb.Layouts do
                 <.theme_toggle_compact drop_up={true} />
                 <button
                   id="sidebar-collapse-toggle"
-                  class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex"
+                  class="p-1.5 rounded-lg text-base-content/70 hover:text-base-content hover:bg-base-300 transition-colors hidden lg:flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
                   title={gettext("Collapse sidebar")}
                 >
                   <.icon name="hero-chevron-double-left" class="w-4 h-4" />
@@ -273,7 +271,7 @@ defmodule EvoDashWeb.Layouts do
         >
           <main
             id="main-content"
-            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 py-4 w-full bg-base-100"
+            class="flex-1 min-h-0 px-4 sm:px-5 lg:px-6 pt-16 pb-4 lg:pt-4 w-full bg-base-100"
             phx-hook="NodeSwitchFade"
             data-node-id={@current_node_id || "local"}
           >
@@ -297,8 +295,8 @@ defmodule EvoDashWeb.Layouts do
 
       <!-- Config Warning Banner -->
       <%= if @config_status && not @config_status.ok? do %>
-        <div class="fixed bottom-4 right-4 z-40 max-w-sm w-full animate-fade-in-up">
-          <div class="bg-warning/10 text-warning rounded-xl shadow-lg border border-warning/30 p-4">
+        <div class="fixed bottom-4 right-4 z-40 w-[calc(100%-2rem)] max-w-sm animate-fade-in-up">
+          <div class="bg-base-100 text-warning rounded-lg shadow-sm border border-warning/30 p-4">
             <div class="flex items-start gap-3">
               <.icon
                 name="hero-exclamation-triangle"
@@ -308,7 +306,7 @@ defmodule EvoDashWeb.Layouts do
                 <p class="font-semibold text-sm">{gettext("Missing Configuration")}</p>
                 <ul class="mt-1 space-y-0.5">
                   <%= for warning <- @config_status.warnings do %>
-                    <li class="text-xs">{warning}</li>
+                    <li class="text-xs break-words">{warning}</li>
                   <% end %>
                 </ul>
                 <.link
@@ -317,7 +315,8 @@ defmodule EvoDashWeb.Layouts do
                 >{gettext("Configure now →")}</.link>
               </div>
               <button
-                class="p-1 rounded-md hover:bg-warning/20 transition-colors"
+                class="p-1 rounded-md hover:bg-warning/20 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone"
+                aria-label={gettext("Close")}
                 onclick="this.closest('.fixed').remove()"
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
@@ -504,8 +503,8 @@ defmodule EvoDashWeb.Layouts do
     <.link
       navigate={@navigate}
       class={[
-        "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 w-full",
-        @current && "bg-primary/10 text-primary-standalone shadow-sm",
+        "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors duration-200 w-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-standalone",
+        @current && "bg-primary/10 text-primary-standalone",
         !@current &&
           "text-base-content/80 hover:bg-base-300/70 hover:text-base-content"
       ]}
