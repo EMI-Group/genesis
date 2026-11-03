@@ -46,6 +46,29 @@ Event handlers for the model-profiles editor (delegated from `settings_live.ex`)
 
 **Peak-hours row editor (in-memory only — nothing persisted until the enclosing save form submits)**: `add_peak_hours_row/2` appends `%{start: "", end: ""}` to the editing profile's `peak_hours` (creating the key if absent); `remove_peak_hours_row/2` parses the `phx-value-index` via `Integer.parse` (malformed → -1, out-of-bounds → no-op) and `List.delete_at/2`; removing the LAST row deletes the `peak_hours` key entirely (absent = disabled). Both target the profile whose id == `socket.assigns.editing_profile_id` (via `ModelProfileHelpers.profile_id/1`, atom-or-string key safe), read existing rows atom-or-string defensively, write atom keys, keep `editing_profile_id` set, and no-op (`{:noreply, socket}`) when no editing profile matches. **Wiring note**: `settings_live.ex` must route `"add_peak_hours_row"` / `"remove_peak_hours_row"` phx events to these functions (guarded on `editing_profile_id` non-nil).
 
+### `EvoDashWeb.SettingsLive.AuthStatus` (`auth_status.ex`)
+
+Async loader for the per-profile OAuth/subscription credential state of the model-profiles editor.
+Only OAuth-enabled profiles (`EvoGit.Config.Schema.LLM.oauth_profile?/1` — an explicit `auth_mode = "oauth"` or an OAuth-only provider) produce an entry, so the map's key set IS the editor's "is this a subscription profile" test; API-key profiles are absent.
+The module has no Phoenix dependency — only `EvoDash.SafeCall` and `EvoDash.NodeContext`.
+
+| Function | Purpose |
+|----------|---------|
+| `start/2` | Fire-and-forget `Task.Supervisor.start_child(EvoDash.TaskSupervisor, ...)`, capturing `parent`, the target node (`socket.assigns.current_node || node()`) and `seq` (`socket.assigns.auth_status_seq`) BEFORE spawning. Returns `:ok`, including when `start_child` itself fails. The task body runs inside `EvoDash.SafeCall.run/1` and ALWAYS `send`s `{:settings_auth_status_loaded, node, seq, statuses}`; a failure sends `unknown_statuses(profiles)` so every OAuth profile still has a neutral entry. |
+| `statuses/2` | Public: `%{profile_id => entry}` for the OAuth-enabled profiles on the given node (profile maps may be atom- or string-keyed; a non-list/nil input → `%{}`). Entry = `%{state: :ok \| :missing \| :unknown, expires: integer \| nil, account_id: binary \| nil, login_instructions: binary \| nil, oauth_file: binary \| nil}` (atom keys). Mapping: `{:ok, %{expires: e, account_id: a}}` → `:ok` (values read with `Map.get`, so a partial map cannot raise); `{:error, :no_credentials}` / `{:error, :invalid_credentials}` → `:missing`; ANY other result shape → `:unknown`. |
+| `unknown_statuses/1` | Public, pure, total: every OAuth-enabled profile → the neutral `%{state: :unknown, expires: nil, account_id: nil, login_instructions: nil, oauth_file: nil}`. |
+
+Local vs remote: a local node (`node == node()`) calls `EvoGit.Config.Schema.LLM.oauth_credential_status/1` + `EvoGit.Auth.oauth_file/1` directly; a remote node reaches the SAME two functions through `EvoDash.NodeContext.call_remote/4`, unwrapping the transport tuple first (the core's own `{:ok, _} | {:error, _}` verdict arrives nested inside it), and ANY transport `{:error, _}` — including `:undef` on a daemon that predates the function — degrades to `:unknown` with `oauth_file: nil`.
+`login_instructions` is static text and always resolves LOCALLY on both branches (`EvoGit.Auth.login_instructions(provider)` where `provider = EvoGit.Config.Schema.LLM.provider_from_model(model)`; a nil provider yields nil).
+Never raises, never logs or returns a token: there is deliberately NO per-profile rescue — the whole map is computed inside the SafeCall boundary and the core functions are fault-isolated themselves.
+
+**Auth status loading (async), LiveView wiring**: assigns `@auth_statuses` (map, default `%{}`) and `@auth_status_seq` (integer, default `0`), seeded in `mount/3` and re-seeded in `handle_params/3` ONLY when missing (`Map.has_key?` guard), so a navigation never wipes a loaded map.
+`start_auth_status_load/1` bumps `@auth_status_seq`, assigns it, and calls `AuthStatus.start/2` with `EvoGit.Config.Schema.model_profiles(@file_config || %{})`.
+Three trigger points: the END of `apply_node_data_results/3` (covers every navigation and node switch, where `@file_config` is freshly assigned), the LOCAL `persist_config_local/4` SUCCESS path, and the remote `{{:config_saved, node, msg}, result}` SUCCESS arm (a save can add or edit OAuth profiles); plus the `refresh_auth_status` EVENT (the editor's refresh control) which returns `{:noreply, start_auth_status_load(socket)}`.
+The result message `{:settings_auth_status_loaded, node, seq, statuses}` is DROPPED unless BOTH `node == @current_node` and `seq == @auth_status_seq` (node + monotonic-seq stale guards) — otherwise the socket is unchanged and the newer in-flight load wins.
+No polling timers, no flash (the load is silent/neutral by design).
+The task sends the tag with a plain `send/2`, so the message tag is FLAT — a test can `send(view.pid, {:settings_auth_status_loaded, node(), seq, statuses})` to drive the handler deterministically.
+
 ### `EvoDashWeb.SettingsLive.ConfigIO` (`config_io.ex`)
 
 Configuration I/O bridge between the Settings LiveView and the core runtime.
