@@ -513,9 +513,14 @@ defmodule EvoGit.Config.Schema.LLM do
     override on top of those OAuth defaults: its own keys win (an explicit
     `oauth_file:` inside the options is honoured, for instance) while the OAuth
     defaults it does not set survive;
-  - without a profile override the model-derived options apply
-    (`provider_options_for_model/1`);
+  - without a profile override the OAuth defaults WIN over the model-derived
+    options (`provider_options_for_model/1`), so a profile that overrides
+    `oauth_file` keeps it even for an OAuth-only provider whose model-derived
+    list carries the DEFAULT managed file;
   - an EMPTY resolved option list omits the `:provider_options` key entirely.
+
+  Precedence, highest first: the profile's explicit `provider_options` keys →
+  the profile-derived OAuth defaults → the model-derived options.
   """
   @spec profile_generation_params(map()) :: keyword()
   def profile_generation_params(profile) when is_map(profile) do
@@ -655,19 +660,23 @@ defmodule EvoGit.Config.Schema.LLM do
 
   defp existing_atom_key(_provider, _id), do: nil
 
-  # Resolves provider_options for a profile: the model-derived options (or the
-  # user's explicit override) merged OVER the OAuth defaults.
+  # Resolves provider_options for a profile. Precedence, highest first:
   #
-  # - The OAuth defaults (`auth_mode: :oauth` + the resolved managed file) are
-  #   present whenever the profile is OAuth — `oauth_profile?/1` covers both an
-  #   explicit `auth_mode = "oauth"` and auto-detection of an OAuth-only
-  #   provider, and this is also where the lazy vendor-login import runs.
-  # - A user-supplied `provider_options` map/keyword list is a PARTIAL override:
-  #   its own keys win (an explicit `oauth_file:` inside the options is honoured)
-  #   while the OAuth defaults it does not set survive.
-  # - Without a user override the model-derived defaults apply
-  #   (`provider_options_for_model/1` — store: false only for a native OpenAI
-  #   endpoint, OAuth options for an OAuth-only provider).
+  #   1. the profile's explicit `provider_options` map/keyword list — a PARTIAL
+  #      override, its own keys win (an explicit `oauth_file:` inside the
+  #      options is honoured) while the OAuth defaults it does not set survive;
+  #   2. the profile-derived OAuth defaults (`auth_mode: :oauth` + the managed
+  #      file resolved from THIS profile's `oauth_file`, else `[llm] oauth_file`,
+  #      else `<config_dir>/auth.json`) — `oauth_profile?/1` covers both an
+  #      explicit `auth_mode = "oauth"` and auto-detection of an OAuth-only
+  #      provider, and this is also where the lazy vendor-login import runs;
+  #   3. the model-derived options from `provider_options_for_model/1`
+  #      (`store: false` only for a native OpenAI endpoint, the OAuth-only
+  #      defaults for a caller holding just a model spec).
+  #
+  # Without a profile override, level 2 therefore WINS over level 3: the
+  # model-derived list's own `oauth_file` is only ever the DEFAULT managed file,
+  # so letting it win would clobber a profile's `oauth_file` override.
   #
   # An EMPTY resolved list means the caller omits the `:provider_options` key
   # entirely (a non-native-OpenAI api_key profile must NOT get store: false).
@@ -680,21 +689,15 @@ defmodule EvoGit.Config.Schema.LLM do
 
   defp resolve_provider_options(profile) do
     defaults = if oauth_profile?(profile), do: oauth_provider_options(profile), else: []
-    merge_options(defaults, user_or_model_options(profile))
-  end
 
-  defp user_or_model_options(profile) do
     case Map.get(profile, :provider_options) do
-      nil ->
-        provider_options_for_model(Map.get(profile, :model))
-
-      override when is_map(override) ->
-        Map.to_list(override)
-
-      override when is_list(override) ->
-        override
+      nil -> merge_options(provider_options_for_model(Map.get(profile, :model)), defaults)
+      override -> merge_options(defaults, options_list(override))
     end
   end
+
+  defp options_list(override) when is_map(override), do: Map.to_list(override)
+  defp options_list(override) when is_list(override), do: override
 
   # Key-wise merge where the override wins and the defaults fill the gaps. Not
   # `Keyword.merge/2`: the override comes from user config and may carry
