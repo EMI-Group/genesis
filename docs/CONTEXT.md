@@ -1,12 +1,13 @@
 # ./docs — Design Records & Reference Documentation
 
 ## Intent
-Long-form design records and reference documentation for Genesis: rationale, verified external facts, and implementation details too granular for the CONTEXT.md tree.
+Long-form design records, reference documentation and short user-facing guides for Genesis: rationale, verified external facts, and implementation details too granular for the CONTEXT.md tree.
 
 ## API Surface
 - `auto-update.md` — full design record for the desktop auto-update / push-update system (tauri-plugin-updater v2): two-phase check/download/apply model, the genesis.evox.group `/dl/` update feed, CI signing, platform matrix, and remaining blockers.
 - `experiments.md` — results/reference document: the per-regime experimental results (formation, continuation, redevelopment, Terminal-Bench) and their figures, moved out of the top-level README; figures live under `images/experiments/`.
 - `harness-alignment.md` — comparison record: Genesis agent runtime (tools, result conventions, role prompts, compression, loop, delegation) vs the DeepSeek Harness (`dsh`), with a tiered proposal list for aligning our environment with the harness newer DeepSeek models are trained on. Carries the verified `dsh` facts (tool names/caps/footers, prompt-slot table, compaction thresholds, subagent limits) so future agents do not re-investigate `/home/bill/Source/deepseek-harness`.
+- `llm-oauth.md` — user guide (not a design record): using a ChatGPT/Codex or Claude Pro-Max subscription login instead of an API key — the one-time `codex login`/`claude` step, the managed `auth.json` import, TOML profile examples, setup-wizard paths, the refreshed model-shortcut list, and a troubleshooting table.
 - `images/` — figures referenced by the design records and reference documents (`images/experiments/` for the experimental plots), plus the promo-film poster `promo-poster.jpg`.
 - `images/readme/` — original README diagrams in the website palette: a recursive-work GIF with a reduced-motion PNG fallback and a three-layer architecture SVG. Editable sources, render/encode scripts and rebuild notes live alongside the assets.
 
@@ -27,3 +28,4 @@ Long-form design records and reference documentation for Genesis: rationale, ver
 - `auto-update.md` — desktop auto-update / push-update design record.
 - `experiments.md` — experimental results and figures (regime-by-regime).
 - `harness-alignment.md` — agent-harness comparison against DeepSeek Harness + alignment proposals (read this BEFORE changing tool schemas, tool-result formatting, role prompts, or context compression).
+- `llm-oauth.md` — subscription (OAuth) LLM setup guide: ChatGPT/Codex + Claude Pro-Max logins, managed `auth.json`, profile config, troubleshooting.
