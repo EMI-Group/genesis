@@ -139,7 +139,7 @@ defmodule EvoGit.Application do
       {EvoGit.PeakHourEngine, []},
       # System sampling — broadcasts {:system_sample, node, seq, sample} on
       # PubSub topic "system" every 3s. Runs on every node (incl. the headless
-      # genesis_remote daemon) so remote dashboards get chart pushes.
+      # genesis_server daemon) so remote dashboards get chart pushes.
       {EvoGit.SystemSampler, []}
     ]
 

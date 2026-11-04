@@ -39,9 +39,7 @@ defmodule EvoGit.RemoteConnectionTest do
     # The connect worker's tunnel-readiness poll: the production cadence is
     # 100ms, which a test that only needs one extra probe (its fake ssh
     # publishes the forwarded port a few ms after the first probe fails) would
-    # otherwise pay in full. (The old `:remote_daemon_health_delay_ms` seam is
-    # gone with the Elixir-side health poll — the release CLI's `remote start`
-    # waits for readiness itself.) `async: false`, so the BEAM-global app-env
+    # otherwise pay in full. `async: false`, so the BEAM-global app-env
     # write is safe.
     test_envs = put_test_env(remote_tunnel_poll_interval_ms: 5)
 

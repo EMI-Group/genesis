@@ -16,8 +16,8 @@ defmodule EvoGit.PromptFile do
 
   .docx/.pdf conversion is a FRONTEND feature in the dashboard app
   (`EvoDash.AttachedFile`); it is deliberately not part of the core so the
-  `genesis_remote` release stays lean. Core users can bring their own
-  read/convert script and pipe the result into `-f`.
+  `genesis_server` release ships no PDF/DOCX extraction. Core users can bring
+  their own read/convert script and pipe the result into `-f`.
   """
 
   @doc """

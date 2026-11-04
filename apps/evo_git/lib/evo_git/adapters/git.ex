@@ -919,8 +919,8 @@ defmodule EvoGit.Adapters.Git do
   #
   # The OS process id is part of the name because `System.unique_integer/1` is
   # unique only WITHIN one BEAM: every fresh VM restarts the monotonic counter
-  # at 1, so two BEAMs sharing one `TMPDIR` (a `genesis_remote` daemon plus a
-  # local BEAM on the same host, or several agent VMs under one managed
+  # at 1, so two BEAMs sharing one `TMPDIR` (a headless `genesis_server` daemon
+  # plus a local BEAM on the same host, or several agent VMs under one managed
   # `EvoGit.TaskTmpdir`) both pick `genesis_git_msg_1.txt` — and the loser's
   # `after File.rm/1` deletes the winner's file while its `git commit -F` reads
   # it: "fatal: could not read log file '...'". The pid segment makes the name

@@ -661,7 +661,7 @@ defmodule EvoGit.Config.Schema.Definitions do
           category: :node,
           sub_category: nil,
           description:
-            "Enable distributed Erlang at application startup. When enabled, the node starts EPMD, sets a distributed node name, and sets the magic cookie, allowing the local dashboard to connect to remote genesis_remote daemons over SSH tunnels."
+            "Enable distributed Erlang at application startup. When enabled, the node starts EPMD, sets a distributed node name, and sets the magic cookie, allowing the local dashboard to connect to remote daemons over SSH tunnels."
         },
         %{
           key_path: [:node, :node_name],

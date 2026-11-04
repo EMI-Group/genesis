@@ -4,7 +4,7 @@ defmodule EvoGit.SystemSampler do
   broadcasts it on the `EvoGit.PubSub` topic `"system"`.
 
   Runs on EVERY node running the `:evo_git` application — including the
-  headless `genesis_remote` daemon — so the dashboard can render remote
+  headless `genesis_server` daemon — so the dashboard can render remote
   scheduler charts from these pushes (Phoenix.PubSub is already an `:evo_git`
   dependency and its PG2 adapter propagates broadcasts across nodes).
 

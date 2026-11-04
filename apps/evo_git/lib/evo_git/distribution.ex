@@ -7,7 +7,7 @@ defmodule EvoGit.Distribution do
   node via :net_kernel, and sets the magic cookie — all at application startup.
 
   This allows the local dashboard node to participate in Erlang distribution
-  and connect to remote genesis_remote nodes via SSH tunnels managed by
+  and connect to remote genesis_server nodes via SSH tunnels managed by
   EvoGit.RemoteConnection.
   """
 

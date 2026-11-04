@@ -1546,14 +1546,14 @@ defmodule EvoGit.RemoteConnection do
   # pre-flight check in do_bootstrap/2 and this launch point (another
   # bootstrap, a manual start), so the running-daemon decision is re-checked
   # here — this function is no longer the primary running-daemon decision.
-  # When the daemon IS running, its launch identity (RELEASE_NODE/RELEASE_COOKIE
-  # — fixed at launch time) is verified against the current contract before
-  # declaring success: a daemon launched by an older bootstrap (stale cookie)
-  # or started manually would otherwise silently "succeed" and then fail every
+  # When the daemon IS running, its identity is verified against the current
+  # contract before declaring success: the cookie is fixed per machine at launch
+  # time and cannot be compared, so the identity check is the node name reported
+  # by `<launcher> remote status`. A daemon launched for another target, or
+  # started manually, would otherwise silently "succeed" and then fail every
   # connect. A mismatch is NOT auto-repaired (the running daemon may serve an
-  # old session; a plain `restart` re-runs the old unit Environment without
-  # fixing the cookie) — it fails loudly with remediation. The :starting_daemon
-  # stage is broadcast only on the start path — an already-running,
+  # old session) — it fails loudly with remediation. The :starting_daemon stage
+  # is broadcast only on the start path — an already-running,
   # identity-matching daemon completes without any broadcast.
   defp maybe_start_daemon(ssh_target, launcher_path, target, cookie, state) do
     unit = daemon_unit(target)
@@ -2322,7 +2322,6 @@ defmodule EvoGit.RemoteConnection do
     * `{:scp_failed, 1, tail}` → `"scp upload failed (exit 1): <tail>"`
     * `{:staging_failed, 255, tail}` →
       `"extracting/setting permissions failed (ssh exit 255): <tail>"`
-    * `{:chmod_failed, 255, tail}` → `"setting permissions failed (ssh exit 255): <tail>"`
     * `{:daemon_launch_failed, 1, tail}` → `"daemon launch failed (exit 1): <tail>"`
     * `{:probe_failed, {:exit_status, 9, tail}}` →
       `"platform probe failed (exit 9): <tail>"`
@@ -2538,11 +2537,11 @@ defmodule EvoGit.RemoteConnection do
     Could not connect to remote Erlang node #{node_name}.
       Tunnel:       127.0.0.1:#{local_port} -> 127.0.0.1:#{remote_port}
       Local cookie: #{cookie_status}
-    The daemon's RELEASE_NODE/RELEASE_COOKIE are fixed at LAUNCH time. If they differ
-    from your local config.toml [node] cookie, the daemon is stale — compare with:
+    The daemon's node identity is whatever its unit was started with. A mismatch
+    means the daemon was launched for another target — compare with:
       #{status_hint}
       #{logs_hint}
-    Stop the stale daemon (`#{stop_hint}`) and re-run bootstrap.
+    Then stop it (`#{stop_hint}`) and re-run bootstrap.
     The daemon's dist port is fixed when its unit was started, so a target whose
     dist_port changed must be re-bootstrapped (with permission) to move the daemon.
     """
