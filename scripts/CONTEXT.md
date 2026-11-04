@@ -65,6 +65,7 @@ Printed next steps: `genesis` (foreground server), `genesis start` (service via 
 
 Self-contained smoke test for `../rel/overlays/bin/genesis`: a temp release with a stub `bin/genesis_server` and PATH-shadowed supervisors, run with `bash scripts/test-genesis-cli.sh` (no release build, no service manager).
 It also covers the `genesis start` systemd-linger offer — `GENESIS_LINGER` (`ask`/`yes`/`no`) and `--no-linger`, the non-TTY hint, the enable-success and enable-failure warnings, and the fallback-backend / foreground gating that never probes lingering.
+It also covers the `genesis remote …` remote-daemon family with per-scope supervisor stubs (contract detail: `../rel/CONTEXT.md`).
 Stub `systemd-run`/`systemctl`/`loginctl`/`curl`/`uname` binaries stand in for the real ones (the recording `loginctl` shims prove the non-systemd paths never call it), so no real service manager, `loginctl` or network is touched.
 The stub `curl` reports healthy on the first poll, so the `/health` loop returns immediately and the whole run stays sub-second.
 

@@ -98,7 +98,7 @@ The lookup is deliberately the LOCAL `TaskRegistry.get_task_lite/1` (same struct
 - `project.ex` — local TOML/FS reads; `path_suggestions/3` calls `EvoGit.PathSuggestions.suggest/1` locally and `NodeContext.list_path_suggestions/2` for remote nodes.
 - `github.ex` — all `gh` work runs through the `:github_runner`/`:github_issues_runner`/`:github_issue_markdown_runner` seams in supervised tasks (resolved at spawn time).
 - `remote_view.ex`, `assigns.ex`, `state_persistence.ex` — pure render / pure assigns; zero RPC.
-- `attach_file.ex` — local file reads only (remote reads unsupported: `genesis_remote` ships no `ex_pdf`).
+- `attach_file.ex` — local file reads only (remote reads unsupported: the read runs on the LOCAL node's filesystem, and the node dropdown does not proxy it).
 
 ## Payload-vs-consumed gaps
 

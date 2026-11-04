@@ -31,7 +31,7 @@ A remote daemon is the SAME `genesis_server` release launched with `EVOGIT_SERVE
 
 | File | Purpose |
 |------|---------|
-| `overlays/bin/genesis` | POSIX `sh` CLI copied to `<release>/bin/genesis`: `serve`/`run`, `start`, `stop`, `restart`, `status`, `logs`, `url`, `version`, `help`. |
+| `overlays/bin/genesis` | POSIX `sh` CLI copied to `<release>/bin/genesis`: `serve`/`run`, `start`, `stop`, `restart`, `status`, `logs`, `url`, `version`, `help`, plus the remote-daemon family `remote start`/`remote stop`/`remote status`/`remote logs`/`remote help` (see "Genesis Server CLI"). |
 
 ### Per-Release Directories (documentation only — NOT applied by Mix)
 

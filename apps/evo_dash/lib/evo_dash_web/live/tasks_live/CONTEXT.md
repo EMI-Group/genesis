@@ -3,7 +3,7 @@
 ## Intent
 
 Support documentation for `EvoDashWeb.TasksLive` (`tasks_live.ex`), the cross-project task list page (`GET /tasks`): filtering by status, project, and review state, search, server-side pagination, expandable task cards, and task actions (graceful cancel, force kill, delete, clear history).
-Node-aware — reads task history via `EvoDash.NodeContext` for both the local BEAM node and a remote `genesis_remote` daemon.
+Node-aware — reads task history via `EvoDash.NodeContext` for both the local BEAM node and a remote daemon (the `genesis_server` release in remote-dev mode).
 ONE page load transfers one page of the 16-key task SUMMARY projection; the heavy per-card payloads (`result`, `usage`, `logs`) are fetched lazily, per card, when the user expands it, and the agent archive arrives in bounded pages only after an explicit disclosure.
 
 ## Routing Table
