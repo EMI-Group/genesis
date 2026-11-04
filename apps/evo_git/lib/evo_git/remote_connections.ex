@@ -17,10 +17,10 @@ defmodule EvoGit.RemoteConnections do
   | `id` | string | no | auto-generated | Unique identifier (slugified from name/ssh_target, max 40 chars) |
   | `name` | string | no | `ssh_target` | Display name |
   | `ssh_target` | string | **yes** | — | The SSH host string (e.g. `gpu-server`, `user@192.168.1.10`) — just what you'd type after `ssh`. Port/keys handled by `~/.ssh/config` |
-  | `local_binary_path` | string | no | — | Path to a local `genesis_remote` tarball. When set and the file exists, bootstrap uploads it via `scp`; when absent (or set but missing), bootstrap auto-probes the remote platform and downloads the matching release from GitHub |
+  | `local_binary_path` | string | no | — | Path to a local `genesis_server` tarball. When set and the file exists, bootstrap uploads it via `scp`; when absent (or set but missing), bootstrap auto-probes the remote platform and downloads the matching release from GitHub |
   | `platform` | string | no | `nil` | Optional platform override in `<os>_<arch>` form (e.g. `linux_x64`, `darwin_arm64`, `windows_x64`). When set, bootstrap skips the SSH platform probe; when nil, the remote platform is probed automatically (`uname -s && uname -m`) |
   | `dist_port` | integer | no | `9000` | Erlang distribution port for tunneling |
-  | `remote_path` | string | no | `/tmp/genesis_remote` | Where to extract the release on the remote |
+  | `remote_path` | string | no | `/tmp/genesis_server` | Where to extract the release on the remote |
   | `last_connected` | string | no | `nil` | ISO8601 timestamp of last successful connection |
 
   Connection maps use **atom keys** internally; keys are stringified only when
@@ -32,7 +32,7 @@ defmodule EvoGit.RemoteConnections do
   @config_filename "remote_connections.toml"
 
   @default_dist_port 9000
-  @default_remote_path "/tmp/genesis_remote"
+  @default_remote_path "/tmp/genesis_server"
 
   # Maps TOML string keys to atoms for the known connection schema. Unknown
   # keys are left as strings so we never raise on unexpected data.
@@ -103,7 +103,7 @@ defmodule EvoGit.RemoteConnections do
     * auto-generates `:id` (slugified from name/ssh_target) when missing,
     * defaults `:name` to `ssh_target` when missing,
     * applies defaults for `:dist_port` (9000) and `:remote_path`
-      (`/tmp/genesis_remote`) when absent.
+      (`/tmp/genesis_server`) when absent.
 
   If an existing connection shares the same id it is updated; otherwise the
   connection is appended. Returns `{:ok, target}` on success.
