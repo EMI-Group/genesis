@@ -48,9 +48,20 @@ defmodule EvoDash.Application do
       # Auto-update state hub for the Tauri updater integration — holds the
       # update phase/versions/error state and broadcasts transitions on
       # EvoGit.PubSub's "updates" topic.
-      EvoDash.UpdateStatus,
-      EvoDashWeb.Endpoint
+      EvoDash.UpdateStatus
     ]
+
+    # Remote-daemon mode (EVOGIT_REMOTE_DAEMON=1): the `genesis_server` release
+    # launched as the SSH remote-dev daemon is driven entirely by the local
+    # dashboard over Erlang distribution, so it must NOT start the Phoenix
+    # endpoint — that would bind a second HTTP port on the remote host and wake
+    # LiveView machinery for nothing. Every other child stays.
+    children =
+      if System.get_env("EVOGIT_REMOTE_DAEMON") == "1" do
+        children
+      else
+        children ++ [EvoDashWeb.Endpoint]
+      end
 
     # Desktop-only Tauri-shell lifetime watcher: the sidecar sets BOTH
     # EVOGIT_DESKTOP=1 and EVOGIT_LIFETIME_PORT, while manually-launched

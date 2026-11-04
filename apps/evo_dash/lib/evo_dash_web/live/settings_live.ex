@@ -523,7 +523,7 @@ defmodule EvoDashWeb.SettingsLive do
                                   type="text"
                                   name="local_binary_path"
                                   value={@remote_form_target[:local_binary_path]}
-                                  placeholder="_build/prod/rel/genesis_remote.tar.xz"
+                                  placeholder="_build/prod/rel/genesis_server.tar.xz"
                                   class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
                                 <p class="text-xs text-base-content/70 mt-1">
@@ -569,7 +569,7 @@ defmodule EvoDashWeb.SettingsLive do
                                   type="text"
                                   name="remote_path"
                                   value={@remote_form_target[:remote_path]}
-                                  placeholder="/tmp/genesis_remote"
+                                  placeholder="/tmp/genesis_server"
                                   class="input input-bordered input-sm w-full rounded-lg bg-base-100 font-mono text-sm"
                                 />
                               </div>
@@ -1824,7 +1824,7 @@ defmodule EvoDashWeb.SettingsLive do
      assign(socket,
        remote_form_target: %{
          dist_port: 9000,
-         remote_path: "/tmp/genesis_remote",
+         remote_path: "/tmp/genesis_server",
          platform: nil,
          # Internal marker: while true, the Name field auto-tracks the SSH
          # Target (see remote_connections_form_change). Never persisted.
@@ -1852,7 +1852,7 @@ defmodule EvoDashWeb.SettingsLive do
         {:ok, target} ->
           target
           |> Map.put_new(:dist_port, 9000)
-          |> Map.put_new(:remote_path, "/tmp/genesis_remote")
+          |> Map.put_new(:remote_path, "/tmp/genesis_server")
           # Editing starts with the saved name shown verbatim — never
           # auto-track the SSH Target (internal marker, never persisted).
           |> Map.put(:auto_name, false)
@@ -1907,7 +1907,7 @@ defmodule EvoDashWeb.SettingsLive do
         local_binary_path: params["local_binary_path"] || "",
         platform: params["platform"] || "",
         dist_port: parse_remote_port(params["dist_port"]),
-        remote_path: params["remote_path"] || "/tmp/genesis_remote",
+        remote_path: params["remote_path"] || "/tmp/genesis_server",
         auto_name: tracking
       }
 
@@ -2785,7 +2785,7 @@ defmodule EvoDashWeb.SettingsLive do
       local_binary_path: params["local_binary_path"] || "",
       platform: params["platform"] || "",
       dist_port: parse_remote_port(params["dist_port"]),
-      remote_path: params["remote_path"] || "/tmp/genesis_remote"
+      remote_path: params["remote_path"] || "/tmp/genesis_server"
     }
   end
 
