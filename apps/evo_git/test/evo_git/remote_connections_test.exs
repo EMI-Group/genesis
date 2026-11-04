@@ -28,7 +28,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       # dots are non-alphanumeric, so slugified to underscores
       assert target.id == "example_com"
       assert target.dist_port == 9000
-      assert target.remote_path == "/tmp/genesis_remote"
+      assert target.remote_path == "/tmp/genesis_server"
       assert is_nil(target.local_binary_path)
       assert is_nil(target.last_connected)
     end
@@ -52,10 +52,10 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, target} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "example.com",
-                 local_binary_path: "_build/prod/rel/genesis_remote.tar.xz"
+                 local_binary_path: "_build/prod/rel/genesis_server.tar.xz"
                })
 
-      assert target.local_binary_path == "_build/prod/rel/genesis_remote.tar.xz"
+      assert target.local_binary_path == "_build/prod/rel/genesis_server.tar.xz"
     end
 
     test "returns {:error, :missing_ssh_target} when ssh_target is absent" do
@@ -203,7 +203,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert {:ok, _t1} =
                EvoGit.RemoteConnections.save(%{
                  ssh_target: "deploy@prod.example.com",
-                 local_binary_path: "_build/prod/rel/genesis_remote.tar.xz",
+                 local_binary_path: "_build/prod/rel/genesis_server.tar.xz",
                  dist_port: 9100
                })
 
@@ -228,7 +228,7 @@ defmodule EvoGit.RemoteConnectionsTest do
       assert prod != nil
       assert prod.ssh_target == "deploy@prod.example.com"
       assert prod.dist_port == 9100
-      assert prod.local_binary_path == "_build/prod/rel/genesis_remote.tar.xz"
+      assert prod.local_binary_path == "_build/prod/rel/genesis_server.tar.xz"
 
       staging = Enum.find(list, fn c -> c.ssh_target == "staging.example.com" end)
       assert staging != nil

@@ -29,11 +29,13 @@ defmodule EvoGit.RemoteBootstrap do
       so fish / nushell / tcsh / POSIX login shells all pass it through, and
       `/bin/sh` (not `/usr/bin/env`) because NixOS has no `/usr/bin/env`.
 
-  **Linux asset rule:** glibc is the default and ONLY published Linux variant.
-  Remote tarball names are NEVER suffixed (`genesis_remote_linux_x64.tar.xz`,
-  `genesis_remote_linux_arm64.tar.xz`); the musl build is disabled for now.
-  Non-Linux platforms are never suffixed either
-  (`genesis_remote_darwin_arm64.tar.xz`, `genesis_remote_windows_x64.tar.xz`).
+  **Linux asset rule:** the remote daemon assets are the `genesis_server`
+  headless release (both umbrella apps, `include_erts`, no `wx`), and glibc is
+  the default and ONLY published Linux variant. Remote tarball names are NEVER
+  suffixed (`genesis_server_linux_x64.tar.xz`,
+  `genesis_server_linux_arm64.tar.xz`); the musl build is disabled for now.
+  Non-Linux remote platforms are never suffixed either
+  (`genesis_server_darwin_arm64.tar.xz`), and there is no Windows remote.
   NixOS hosts are supported via on-the-fly patching during bootstrap — no new
   asset variants.
 
@@ -53,10 +55,6 @@ defmodule EvoGit.RemoteBootstrap do
   # per call from the app env `:remote_shell` (test seam).
   @default_remote_shell "/bin/sh"
 
-  # Matches a single `KEY=value` token: a run of non-whitespace, non-quote
-  # characters, OR a double-quoted section (which may contain spaces). This
-  # mirrors how systemd quotes Environment values that contain whitespace.
-  @unit_env_token_re ~r/(?:[^\s"]+|"[^"]*")+/
   @doc """
   Maps `uname -s` / `uname -m` output to a CI platform string `<os>_<arch>`.
 
@@ -94,11 +92,17 @@ defmodule EvoGit.RemoteBootstrap do
   end
 
   @doc """
-  Returns the daemon-launch OS string used by `EvoGit.RemoteConnection`'s
-  launcher functions (`"Linux"` or `"Darwin"`) for a platform string.
+  Returns the daemon-launch OS string (`"Linux"` or `"Darwin"`) for a platform
+  string.
 
-  Windows platforms resolve to `{:error, :unsupported_platform}` — the daemon
-  launcher only supports Linux (`systemd-run`) and macOS (`launchctl`).
+  The remote daemon lifecycle is delegated to the release's own `bin/genesis`
+  CLI (`bin/genesis remote start|stop|status|logs`), which supports Linux
+  (systemd user/system scope plus a setsid/nohup fallback) and macOS (launchd);
+  the Elixir side no longer builds those commands. This mapping only selects
+  the remote host's OS family.
+
+  Windows platforms resolve to `{:error, :unsupported_platform}` — there is no
+  Windows remote.
   """
   @spec daemon_os(String.t()) :: {:ok, String.t()} | {:error, :unsupported_platform}
   def daemon_os(platform) do
@@ -111,21 +115,21 @@ defmodule EvoGit.RemoteBootstrap do
 
   @doc """
   The release asset file name for a platform, e.g.
-  `"genesis_remote_linux_x64.tar.xz"`.
+  `"genesis_server_linux_x64.tar.xz"`.
 
   Names are NEVER suffixed: glibc is the default and only published Linux
   variant (the musl build is disabled for now), so Linux platforms get plain
-  `genesis_remote_linux_<arch>.tar.xz` names, and non-Linux platforms are
+  `genesis_server_linux_<arch>.tar.xz` names, and non-Linux platforms are
   never suffixed either.
   """
   @spec asset_name(String.t()) :: String.t()
   def asset_name(platform) when is_binary(platform) do
-    "genesis_remote_#{platform}.tar.xz"
+    "genesis_server_#{platform}.tar.xz"
   end
 
   @doc """
   The direct download URL for a platform's release tarball:
-  `https://genesis.evox.group/dl/genesis_remote_<platform>.tar.xz`.
+  `https://genesis.evox.group/dl/genesis_server_<platform>.tar.xz`.
 
   This Cloudflare-worker "smart download" endpoint serves the latest GitHub
   release asset, auto-detecting mainland-China users and proxying the asset
@@ -138,7 +142,7 @@ defmodule EvoGit.RemoteBootstrap do
   Resolves the download URL for a platform's release tarball.
 
   Deterministic and network-free: always returns the direct
-  `https://genesis.evox.group/dl/genesis_remote_<platform>.tar.xz`
+  `https://genesis.evox.group/dl/genesis_server_<platform>.tar.xz`
   Cloudflare-worker "smart download" URL — no API query and no asset
   listing/matching is performed (the worker proxies the GitHub release asset
   and auto-detects mainland-China users).
@@ -268,9 +272,9 @@ defmodule EvoGit.RemoteBootstrap do
   """
 
   @doc """
-  Builds the remote shell script that patches the extracted `genesis_remote`
+  Builds the remote shell script that patches the extracted `genesis_server`
   release's ELF binaries for NixOS, given the remote launcher path (e.g.
-  `/tmp/genesis_remote/bin/genesis_remote`).
+  `/tmp/genesis_server/bin/genesis_server`).
 
   The glibc-linked release tarball cannot execute on NixOS hosts (no
   `/lib64/ld-linux-x86-64.so.2`), so bootstrap patches it on the fly —
@@ -362,11 +366,12 @@ defmodule EvoGit.RemoteBootstrap do
       remote command may run before the login profile sets `PATH`.
 
   **Single-quote-free by construction:** every remote command built in this
-  codebase (and every `EvoGit.RemoteDaemon` command) contains no `'`, which is
-  what makes the plain `'<script>'` form safe: nushell single-quoted strings
-  cannot contain a single quote at all, and tcsh is equally picky. Double
-  quoting is not an alternative either (nushell rejects `\\$` and the scripts
-  contain `$`, `$(...)`, `2>/dev/null`).
+  codebase — including the remote `bin/genesis_server remote
+  start|stop|status|logs` CLI invocations built by `EvoGit.RemoteConnection` —
+  contains no `'`, which is what makes the plain `'<script>'` form safe:
+  nushell single-quoted strings cannot contain a single quote at all, and tcsh
+  is equally picky. Double quoting is not an alternative either (nushell
+  rejects `\\$` and the scripts contain `$`, `$(...)`, `2>/dev/null`).
 
   As a last-resort fallback a script that DOES contain a `'` is escaped with
   the standard POSIX close-quote / escaped-quote / reopen-quote idiom
@@ -388,47 +393,7 @@ defmodule EvoGit.RemoteBootstrap do
     end
   end
 
-  @doc """
-  Parses the output of `systemctl --user show <unit> -p Environment --value`
-  into a `%{"KEY" => "value"}` map.
-
-  systemd prints the unit's environment space-separated on one or more lines
-  (multiple `Environment=` lines), quoting values that contain whitespace:
-
-      RELEASE_NODE=genesis_remote_x@127.0.0.1 RELEASE_COOKIE=abc123
-
-  or, multi-line:
-
-      RELEASE_NODE=genesis_remote_x@127.0.0.1
-      RELEASE_COOKIE="some value with spaces"
-
-  Tokens without an `=` (stray output) are skipped; surrounding double quotes
-  are stripped from values. Empty / whitespace-only input → `%{}`.
-
-  Pure parser — performs no I/O.
-  """
-  @spec parse_unit_environment(String.t()) :: %{String.t() => String.t()}
-  def parse_unit_environment(output) when is_binary(output) do
-    Regex.scan(@unit_env_token_re, output)
-    |> List.flatten()
-    |> Enum.reduce(%{}, fn token, acc ->
-      case String.split(token, "=", parts: 2) do
-        [key, value] -> Map.put(acc, key, strip_quotes(value))
-        _ -> acc
-      end
-    end)
-  end
-
   # --- Private ---
-
-  defp strip_quotes(value) do
-    if String.starts_with?(value, "\"") and String.ends_with?(value, "\"") and
-         String.length(value) >= 2 do
-      String.slice(value, 1, String.length(value) - 2)
-    else
-      value
-    end
-  end
 
   defp os_from_uname(os) when os in ["Linux", "Darwin"], do: {:ok, String.downcase(os)}
 

@@ -2,7 +2,6 @@ defmodule EvoGit.RemoteBootstrapTest do
   use ExUnit.Case, async: true
 
   alias EvoGit.RemoteBootstrap
-  alias EvoGit.RemoteDaemon
 
   # Constructs the remote login shell may not be able to parse (the inner
   # interpreter is POSIX `sh`, and the OUTER login shell may be anything).
@@ -115,72 +114,72 @@ defmodule EvoGit.RemoteBootstrapTest do
   describe "asset_name/1" do
     test "builds the tarball name for linux_x64" do
       assert RemoteBootstrap.asset_name("linux_x64") ==
-               "genesis_remote_linux_x64.tar.xz"
+               "genesis_server_linux_x64.tar.xz"
     end
 
     test "builds the unsuffixed tarball name for linux_arm64" do
       assert RemoteBootstrap.asset_name("linux_arm64") ==
-               "genesis_remote_linux_arm64.tar.xz"
+               "genesis_server_linux_arm64.tar.xz"
     end
 
     test "builds the unsuffixed tarball name for darwin_arm64" do
       assert RemoteBootstrap.asset_name("darwin_arm64") ==
-               "genesis_remote_darwin_arm64.tar.xz"
+               "genesis_server_darwin_arm64.tar.xz"
     end
 
     test "builds the unsuffixed tarball name for windows_x64" do
       assert RemoteBootstrap.asset_name("windows_x64") ==
-               "genesis_remote_windows_x64.tar.xz"
+               "genesis_server_windows_x64.tar.xz"
     end
   end
 
   describe "direct_url/1" do
     test "builds the linux_x64 direct URL" do
       assert RemoteBootstrap.direct_url("linux_x64") ==
-               "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_server_linux_x64.tar.xz"
     end
 
     test "builds the linux_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("linux_arm64") ==
-               "https://genesis.evox.group/dl/genesis_remote_linux_arm64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_server_linux_arm64.tar.xz"
     end
 
     test "builds the darwin_arm64 direct URL" do
       assert RemoteBootstrap.direct_url("darwin_arm64") ==
-               "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_server_darwin_arm64.tar.xz"
     end
 
     test "builds the windows_x64 direct URL" do
       assert RemoteBootstrap.direct_url("windows_x64") ==
-               "https://genesis.evox.group/dl/genesis_remote_windows_x64.tar.xz"
+               "https://genesis.evox.group/dl/genesis_server_windows_x64.tar.xz"
     end
   end
 
   describe "download_url/1" do
     test "returns the direct linux_x64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("linux_x64") ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_x64.tar.xz", "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_server_linux_x64.tar.xz", "latest"}
     end
 
     test "returns the direct linux_arm64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("linux_arm64") ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_linux_arm64.tar.xz", "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_server_linux_arm64.tar.xz", "latest"}
     end
 
     test "returns the direct darwin_arm64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("darwin_arm64") ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_darwin_arm64.tar.xz", "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_server_darwin_arm64.tar.xz", "latest"}
     end
 
     test "returns the direct windows_x64 URL with the latest version (no network)" do
       assert RemoteBootstrap.download_url("windows_x64") ==
-               {:ok, "https://genesis.evox.group/dl/genesis_remote_windows_x64.tar.xz", "latest"}
+               {:ok, "https://genesis.evox.group/dl/genesis_server_windows_x64.tar.xz", "latest"}
     end
 
     test "version is always latest, keying the local download cache" do
       assert {:ok, url, "latest"} = RemoteBootstrap.download_url("linux_arm64")
 
-      assert String.ends_with?(url, "genesis_remote_linux_arm64.tar.xz")
+      assert String.ends_with?(url, "genesis_server_linux_arm64.tar.xz")
 
       assert RemoteBootstrap.cache_path("linux_arm64", "latest") ==
                Path.join([
@@ -248,7 +247,7 @@ defmodule EvoGit.RemoteBootstrapTest do
   end
 
   describe "nixos_patch_script/1" do
-    @launcher "/tmp/genesis_remote/bin/genesis_remote"
+    @launcher "/tmp/genesis_server/bin/genesis_server"
 
     test "interpolates the launcher path and derives the release root" do
       script = RemoteBootstrap.nixos_patch_script(@launcher)
@@ -422,33 +421,10 @@ defmodule EvoGit.RemoteBootstrapTest do
     test "bootstrap commands are single-quote-free and bash-ism-free" do
       commands = [
         RemoteBootstrap.nixos_detect_command(),
-        RemoteBootstrap.nixos_patch_script("/tmp/genesis_remote/bin/genesis_remote")
+        RemoteBootstrap.nixos_patch_script("/tmp/genesis_server/bin/genesis_server")
       ]
 
       for command <- commands, do: assert_login_shell_safe!(command)
-    end
-
-    test "every RemoteDaemon command builder is login-shell safe in BOTH scopes" do
-      unit = "genesis-remote-abc123"
-      node = "genesis_remote_abc123@127.0.0.1"
-      cookie = "s3cret"
-      launcher = "/tmp/genesis_remote/bin/genesis_remote"
-
-      for scope <- [:user, :system] do
-        commands = [
-          RemoteDaemon.login_user_probe_command(),
-          RemoteDaemon.is_active_command(scope, unit),
-          RemoteDaemon.show_environment_command(scope, unit),
-          RemoteDaemon.reset_failed_command(scope, unit),
-          RemoteDaemon.stop_command(scope, unit),
-          RemoteDaemon.status_command(scope, unit),
-          RemoteDaemon.start_command(scope, unit, node, cookie, launcher),
-          RemoteDaemon.show_environment_hint(scope, unit),
-          RemoteDaemon.stop_hint(scope, unit)
-        ]
-
-        for command <- commands, do: assert_login_shell_safe!(command)
-      end
     end
   end
 
@@ -475,39 +451,5 @@ defmodule EvoGit.RemoteBootstrapTest do
            "wrapper needed quote escaping: #{inspect(wrapped)}"
 
     command
-  end
-
-  describe "parse_unit_environment/1" do
-    test "parses space-separated KEY=value tokens" do
-      assert RemoteBootstrap.parse_unit_environment(
-               "RELEASE_NODE=genesis_remote_x@127.0.0.1 RELEASE_COOKIE=abc123"
-             ) == %{"RELEASE_NODE" => "genesis_remote_x@127.0.0.1", "RELEASE_COOKIE" => "abc123"}
-    end
-
-    test "parses multi-line output" do
-      assert RemoteBootstrap.parse_unit_environment(
-               "RELEASE_NODE=genesis_remote_x@127.0.0.1\nRELEASE_COOKIE=abc123\n"
-             ) == %{"RELEASE_NODE" => "genesis_remote_x@127.0.0.1", "RELEASE_COOKIE" => "abc123"}
-    end
-
-    test "strips double quotes around values containing spaces" do
-      assert RemoteBootstrap.parse_unit_environment(~s|FOO=bar BAZ="hello world" QUX=1|) ==
-               %{"FOO" => "bar", "BAZ" => "hello world", "QUX" => "1"}
-    end
-
-    test "returns empty map for empty / whitespace-only input" do
-      assert RemoteBootstrap.parse_unit_environment("") == %{}
-      assert RemoteBootstrap.parse_unit_environment("   \n  ") == %{}
-    end
-
-    test "skips tokens without an equals sign" do
-      assert RemoteBootstrap.parse_unit_environment("RELEASE_NODE=abc stray RELEASE_COOKIE=xyz") ==
-               %{"RELEASE_NODE" => "abc", "RELEASE_COOKIE" => "xyz"}
-    end
-
-    test "handles empty values" do
-      assert RemoteBootstrap.parse_unit_environment("RELEASE_NODE= RELEASE_COOKIE=") ==
-               %{"RELEASE_NODE" => "", "RELEASE_COOKIE" => ""}
-    end
   end
 end
