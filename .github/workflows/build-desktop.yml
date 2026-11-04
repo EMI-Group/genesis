@@ -48,18 +48,16 @@ permissions:
 # ── Architecture ────────────────────────────────────────────────────────────
 #
 # Native builds only (mix release --include_erts + Tauri on the host runner).
-# Desktop jobs stage installers under dist/; the dedicated build-linux-remote
-# job (Linux) plus the macOS/Windows jobs also build genesis_remote tarballs,
-# and build-linux-server plus the macOS job also build the headless
-# genesis_server tarballs (dashboard-serving distribution; genesis_remote is a
-# headless daemon with no Phoenix UI).
+# Desktop jobs stage installers under dist/; build-linux-server plus the macOS
+# job also build the headless genesis_server tarballs — the SAME tarball is both
+# the headless dashboard server and the SSH remote-development daemon (there is
+# no separate evo_git-only remote release).
 #
 # Jobs:
-#   prepare             publish flag, release tag, linux matrix JSON
+#   prepare             publish flag, release tag, linux matrix JSONs
 #   build-linux         ubuntu-24.04 (+ arm) — matrix: deb, rpm, [AppImage, tarball]
-#   build-linux-remote  ubuntu-22.04 (+ arm) — dedicated genesis_remote glibc build (default)
-#   build-linux-server  ubuntu-22.04 (+ arm) — headless genesis_server glibc build (serves the dashboard)
-#   build-macos-arm64   macos-15 — dmg, app.zip, app.tar.gz updater payload (notarized; all staged desktop artifacts minisign-signed) + genesis_remote/genesis_server tarballs
+#   build-linux-server  ubuntu-22.04 (+ arm) — headless genesis_server glibc build (dashboard + remote-dev daemon)
+#   build-macos-arm64   macos-15 — dmg, app.zip, app.tar.gz updater payload (notarized; all staged desktop artifacts minisign-signed) + genesis_server tarball
 #   build-windows-x64   windows-2022 — msi, exe (NSIS)
 #   publish-release     single writer for GitHub Release assets (incl. scripts/install.sh)
 #
@@ -71,31 +69,26 @@ permissions:
 # TAURI_SIGNING_PRIVATE_KEY_PASSWORD — when present, every staged desktop
 # distribution artifact in dist/ is minisign-signed (<artifact>.sig) and updater
 # payloads are auto-emitted; when absent, signing is skipped with a warning and
-# updater artifacts are disabled via --config. genesis_remote_* tarballs are
-# deliberately never signed (EvoGit.RemoteBootstrap does no signature check).
+# updater artifacts are disabled via --config. genesis_server_* tarballs are
+# deliberately never signed (they carry no updater/verification contract).
 # Nested ERTS/NIFs: desktop/scripts/sign-macos-nested.sh
 #
-# Artifact names: genesis_{desktop|remote|server}_{platform}_{arch}.{format}
+# Artifact names: genesis_{desktop|server}_{platform}_{arch}.{format}
 # (unversioned — permanent releases/latest/download/ links; the version comes
 # from the release tag and is baked into the app at build time, not the filename)
 #
-# genesis_remote Linux naming: glibc is now the DEFAULT with NO suffix —
-# genesis_remote_linux_x64.tar.xz and genesis_remote_linux_arm64.tar.xz (both
-# glibc, built by build-linux-remote). Musl builds are disabled for now.
-# build-linux stays on ubuntu-24.04 (desktop AppImage bundling needs the
-# wxWidgets 3.2 runtime, which only noble's default repos ship) and no longer
-# builds/stages the Linux remote tarball. Non-linux remote tarballs (darwin,
-# windows) are unchanged (genesis_remote_darwin_arm64.tar.xz,
-# genesis_remote_windows_x64.tar.xz).
-#
 # genesis_server naming: glibc only, no suffix — genesis_server_linux_x64.tar.xz
-# and genesis_server_linux_arm64.tar.xz (build-linux-server, ubuntu-22.04 for the
-# same wide glibc 2.35 host range as build-linux-remote) plus
-# genesis_server_darwin_arm64.tar.xz (build-macos-arm64). genesis_server bundles
-# BOTH apps and serves the Phoenix dashboard on http://<PHX_IP>:<PORT>, so its
-# jobs need the dashboard asset build (setup-mix runs assets.setup +
-# assets.deploy/phx.digest) — unlike genesis_remote, which has no UI. Server
-# tarballs are deliberately never minisign-signed (like genesis_remote_*).
+# and genesis_server_linux_arm64.tar.xz (build-linux-server, ubuntu-22.04 for a
+# wide glibc 2.35 host range) plus genesis_server_darwin_arm64.tar.xz
+# (build-macos-arm64). genesis_server bundles BOTH apps and serves the Phoenix
+# dashboard on http://<PHX_IP>:<PORT>, so its jobs need the dashboard asset
+# build (setup-mix runs assets.setup + assets.deploy/phx.digest). Server
+# tarballs are deliberately never minisign-signed.
+#
+# The same genesis_server tarballs are what `ssh` remote development bootstraps
+# onto a remote host, so the Linux builds stay on ubuntu-22.04 (glibc 2.35) for
+# wide host compatibility while the desktop jobs stay on ubuntu-24.04 (needed
+# for the AppImage's wxWidgets 3.2 runtime).
 #
 # The repo's one-line installer scripts/install.sh is republished as the release
 # asset `install.sh` by publish-release, so
@@ -121,7 +114,7 @@ jobs:
       release_version: ${{ steps.meta.outputs.release_version }}
       is_prerelease: ${{ steps.meta.outputs.is_prerelease }}
       linux_matrix: ${{ steps.linux.outputs.matrix }}
-      linux_remote_matrix: ${{ steps.linux-remote.outputs.matrix }}
+      linux_server_matrix: ${{ steps.linux-server.outputs.matrix }}
     steps:
       - name: Resolve build metadata
         id: meta
@@ -221,15 +214,15 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Resolve Linux remote matrix
-        id: linux-remote
+      - name: Resolve Linux server matrix
+        id: linux-server
         env:
           TARGET: ${{ steps.meta.outputs.target }}
         run: |
           set -euo pipefail
 
           # Dynamic matrix so unused linux arches never start a runner.
-          # The dedicated genesis_remote glibc build (x64 + arm64) runs on
+          # The headless genesis_server builds (x64 + arm64) run on
           # ubuntu-22.04 for a wider glibc (2.35) compatibility range.
           case "${TARGET}" in
             all|linux-x64)
@@ -244,7 +237,7 @@ jobs:
               LINUX_ARM64=0 ;;
           esac
 
-          LINUX_REMOTE_MATRIX="$(
+          LINUX_SERVER_MATRIX="$(
             LINUX_X64="${LINUX_X64}" LINUX_ARM64="${LINUX_ARM64}" python3 - <<'PY'
           import json, os
           rows = []
@@ -272,7 +265,7 @@ jobs:
 
           {
             echo "matrix<<EOF"
-            echo "${LINUX_REMOTE_MATRIX}"
+            echo "${LINUX_SERVER_MATRIX}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -423,7 +416,7 @@ jobs:
           fi
           # Minisign-sign every staged desktop artifact that lacks a .sig
           # (key-guarded — skipped with a warning when the key is absent).
-          # The dist/genesis_desktop_* glob excludes genesis_remote_* tarballs;
+          # The dist/genesis_desktop_* glob excludes genesis_server_* tarballs;
           # files whose tauri auto-emitted .sig was moved into place (the
           # AppImage.tar.gz updater payload) and .sig files themselves are
           # skipped by the guards below.
@@ -445,90 +438,25 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # ── Linux Remote (glibc, ubuntu-22.04) ──────────────────────────────────
-  # Dedicated genesis_remote glibc build producing the default Linux remote
-  # tarballs. Runs on ubuntu-22.04 for a wider glibc (2.35) compatibility
-  # range than the desktop build's ubuntu-24.04. Musl builds are disabled for
-  # now (see .github/workflows/CONTEXT.md → Known issues).
-  build-linux-remote:
-    name: Linux Remote (${{ matrix.arch }})
-    needs: prepare
-    if: needs.prepare.outputs.linux_remote_matrix != '[]'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.prepare.outputs.linux_remote_matrix) }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Fix ImageOS for ARM runner
-        if: matrix.image_os != ''
-        run: echo "ImageOS=${{ matrix.image_os }}" >> "$GITHUB_ENV"
-
-      - name: Setup Elixir and assets
-        uses: ./.github/actions/setup-mix
-        with:
-          cache-key: linux-remote-${{ matrix.arch }}
-
-      - name: Bundle vendor binaries
-        env:
-          VENDOR_PLATFORM: ${{ matrix.vendor_platform }}
-          RG_TARGET: ${{ matrix.rg_target }}
-          RG_SHA256: ${{ matrix.rg_sha256 }}
-        run: |
-          set -euo pipefail
-          VENDOR_DIR="apps/evo_git/priv/vendor/${VENDOR_PLATFORM}"
-          DOWNLOAD_DIR=".build/vendor-downloads"
-          mkdir -p "${VENDOR_DIR}"
-          mkdir -p "${DOWNLOAD_DIR}"
-          RG_ARCHIVE="ripgrep-${RIPGREP_VERSION}-${RG_TARGET}.tar.gz"
-          curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/${RG_ARCHIVE}" -o "${DOWNLOAD_DIR}/${RG_ARCHIVE}"
-          echo "${RG_SHA256}  ${DOWNLOAD_DIR}/${RG_ARCHIVE}" | sha256sum -c -
-          tar -xzf "${DOWNLOAD_DIR}/${RG_ARCHIVE}" -C "${DOWNLOAD_DIR}"
-          cp "${DOWNLOAD_DIR}/ripgrep-${RIPGREP_VERSION}-${RG_TARGET}/rg" "${VENDOR_DIR}/rg"
-          chmod +x "${VENDOR_DIR}/rg"
-          cp "$(which git)" "${VENDOR_DIR}/git"
-          chmod +x "${VENDOR_DIR}/git"
-
-      - name: Build genesis_remote release
-        run: |
-          MIX_ENV=prod mix release genesis_remote --overwrite
-
-      - name: Stage artifacts
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          tar -cJf "dist/genesis_remote_linux_${{ matrix.arch }}.tar.xz" \
-            -C _build/prod/rel genesis_remote
-
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: genesis-linux-remote-${{ matrix.arch }}
-          path: dist/
-          if-no-files-found: error
-
   # ── Linux Server (headless, glibc, ubuntu-22.04) ────────────────────────
   # Headless genesis_server distribution: BOTH apps (evo_git + evo_dash, no
   # wx), include_erts, a `bin/genesis` CLI overlay and server_release: true. It
-  # serves the Phoenix dashboard on http://<PHX_IP>:<PORT> (GET /health probe),
-  # so — unlike genesis_remote — it needs the dashboard asset build: the shared
-  # setup-mix action runs `mix deps.get` + `mix assets.setup` + `mix assets.deploy`
-  # (esbuild/tailwind + phx.digest), exactly like the Linux desktop job.
-  # It reuses the remote glibc matrix (ubuntu-22.04 / ubuntu-22.04-arm, glibc
-  # 2.35) for the same wide host compatibility range and the same vendored
-  # ripgrep/git binaries.
+  # serves the Phoenix dashboard on http://<PHX_IP>:<PORT> (GET /health probe)
+  # and is ALSO the SSH remote-development daemon, so it needs the dashboard
+  # asset build: the shared setup-mix action runs `mix deps.get` +
+  # `mix assets.setup` + `mix assets.deploy` (esbuild/tailwind + phx.digest),
+  # exactly like the Linux desktop job.
+  # It runs on ubuntu-22.04 / ubuntu-22.04-arm (glibc 2.35) for a wide host
+  # compatibility range and uses the same vendored ripgrep/git binaries.
   build-linux-server:
     name: Linux Server (${{ matrix.arch }})
     needs: prepare
-    if: needs.prepare.outputs.linux_remote_matrix != '[]'
+    if: needs.prepare.outputs.linux_server_matrix != '[]'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.prepare.outputs.linux_remote_matrix) }}
+        include: ${{ fromJSON(needs.prepare.outputs.linux_server_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -623,9 +551,9 @@ jobs:
       - name: Build Elixir releases
         run: |
           MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
           # Headless server distribution (both apps, serves the dashboard from
-          # the assets already deployed by setup-mix above).
+          # the assets already deployed by setup-mix above; also the SSH
+          # remote-development daemon).
           MIX_ENV=prod mix release genesis_server --overwrite
 
       - name: Place desktop release in Tauri resources
@@ -766,11 +694,8 @@ jobs:
           }
           mkdir -p dist
           mv "${DMG_BUNDLES[0]}" "dist/genesis_desktop_darwin_arm64.dmg"
-          tar -cJf "dist/genesis_remote_darwin_arm64.tar.xz" \
-            -C _build/prod/rel genesis_remote
-          # Headless server distribution (dashboard included). Never signed:
-          # the dist/genesis_desktop_* signing glob below excludes it, like the
-          # genesis_remote tarball.
+          # Headless server + SSH remote-development daemon. Never signed: the
+          # dist/genesis_desktop_* signing glob below excludes it.
           tar -cJf "dist/genesis_server_darwin_arm64.tar.xz" \
             -C _build/prod/rel genesis_server
           if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
@@ -782,9 +707,8 @@ jobs:
             tauri signer sign "dist/genesis_desktop_darwin_arm64.app.tar.gz"
             # Minisign-sign the remaining staged desktop artifacts that lack a
             # .sig (the .dmg and .app.zip). The .app.tar.gz just signed above
-            # is skipped by the -f .sig guard; the genesis_remote_* and
-            # genesis_server_* tarballs are excluded by the dist/genesis_desktop_*
-            # glob.
+            # is skipped by the .sig guard; the genesis_server_* tarball is
+            # excluded by the dist/genesis_desktop_* glob.
             for artifact in dist/genesis_desktop_*; do
               [[ -f "${artifact}" ]] || continue
               [[ "${artifact}" != *.sig && ! -f "${artifact}.sig" ]] || continue
@@ -864,7 +788,6 @@ jobs:
       - name: Build Elixir releases
         run: |
           MIX_ENV=prod mix release genesis_desktop --overwrite
-          MIX_ENV=prod mix release genesis_remote --overwrite
 
       - name: Place desktop release in Tauri resources
         shell: pwsh
@@ -932,13 +855,10 @@ jobs:
           if [[ "${#NSIS_SIGS[@]}" -gt 0 ]]; then
             mv "${NSIS_SIGS[0]}" "dist/genesis_desktop_windows_x64.exe.sig"
           fi
-          tar -cJf "dist/genesis_remote_windows_x64.tar.xz" \
-            -C _build/prod/rel genesis_remote
           # Minisign-sign every staged desktop artifact that lacks a .sig
           # (key-guarded — skipped with a warning when the key is absent).
           # This signs the .msi; the .exe's tauri auto-emitted .sig was moved
-          # into place above and is skipped by the -f .sig guard;
-          # genesis_remote_* tarballs are excluded by the glob.
+          # into place above and is skipped by the .sig guard.
           if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
             for artifact in dist/genesis_desktop_*; do
               [[ -f "${artifact}" ]] || continue
@@ -961,14 +881,13 @@ jobs:
   # Single writer for GitHub Release assets: uploads everything to a draft,
   # then flips it public with `gh release edit --draft=false` as the FINAL step.
   # Asset set = every artifact from the download above (genesis-* pattern:
-  # desktop installers, genesis_remote_* and genesis_server_* tarballs, .sig
-  # files, latest.json) plus scripts/install.sh staged as dist/install.sh.
+  # desktop installers, genesis_server_* tarballs, .sig files, latest.json)
+  # plus scripts/install.sh staged as dist/install.sh.
   publish-release:
     name: Publish GitHub Release
     needs:
       - prepare
       - build-linux
-      - build-linux-remote
       - build-linux-server
       - build-macos-arm64
       - build-windows-x64
@@ -977,7 +896,6 @@ jobs:
       needs.prepare.result == 'success' &&
       needs.prepare.outputs.publish == 'true' &&
       (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
-      (needs.build-linux-remote.result == 'success' || needs.build-linux-remote.result == 'skipped') &&
       (needs.build-linux-server.result == 'success' || needs.build-linux-server.result == 'skipped') &&
       (needs.build-macos-arm64.result == 'success' || needs.build-macos-arm64.result == 'skipped') &&
       (needs.build-windows-x64.result == 'success' || needs.build-windows-x64.result == 'skipped')
