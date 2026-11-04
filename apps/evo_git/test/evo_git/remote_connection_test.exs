@@ -36,23 +36,14 @@ defmodule EvoGit.RemoteConnectionTest do
     File.mkdir_p!(tmp_xdg)
     System.put_env("XDG_CONFIG_HOME", tmp_xdg)
 
-    # Speed up the post-launch daemon-health polling (`verify_daemon_healthy/3`
-    # → `wait_daemon_active/5`, whose first act is a sleep BEFORE its initial
-    # check): the production default is 1000ms, but these tests only care about
-    # the poll ordering, not the wall-clock delay. 0ms keeps every poll a
-    # distinct attempt (`Process.sleep/1` still yields, so a
-    # `:daemon_active_after` counter sees separate invocations) while costing
-    # the ~15 bootstrap tests nothing. `async: false`, so the BEAM-global
-    # app-env write is safe.
-    test_envs =
-      put_test_env(
-        remote_daemon_health_delay_ms: 0,
-        # Same rationale for the connect worker's tunnel-readiness poll: the
-        # production cadence is 100ms, which a test that only needs one extra
-        # probe (its fake ssh publishes the forwarded port a few ms after the
-        # first probe fails) would otherwise pay in full.
-        remote_tunnel_poll_interval_ms: 5
-      )
+    # The connect worker's tunnel-readiness poll: the production cadence is
+    # 100ms, which a test that only needs one extra probe (its fake ssh
+    # publishes the forwarded port a few ms after the first probe fails) would
+    # otherwise pay in full. (The old `:remote_daemon_health_delay_ms` seam is
+    # gone with the Elixir-side health poll — the release CLI's `remote start`
+    # waits for readiness itself.) `async: false`, so the BEAM-global app-env
+    # write is safe.
+    test_envs = put_test_env(remote_tunnel_poll_interval_ms: 5)
 
     on_exit(fn ->
       # Terminate any connection managers started during this test so they
@@ -1023,41 +1014,66 @@ defmodule EvoGit.RemoteConnectionTest do
 
     describe "bootstrap/1 with fake ssh" do
       # Writes a fake `ssh` + fake `scp` onto PATH and returns
-      # %{log:, marker:, tarball:}. The fake ssh receives $1 = ssh_target and
-      # $2 = the sh-wrapped remote command (ONE argv element —
-      # `/bin/sh -c '<cmd>'`; the wrapping preserves the command text
-      # verbatim, because every remote command is single-quote-free), logs
-      # every command to the log file, and dispatches on
-      # $2 via CONTAINS patterns. Daemon state is emulated via a marker
-      # file: `systemd-run` / the deploy `launchctl load` touch it, the stop
-      # commands (`systemctl [--user] stop` / pure `launchctl unload`) remove
-      # it, and `systemctl [--user] is-active` / `launchctl list` report
-      # active / non-empty only when it exists — so the post-start health
-      # check succeeds after the daemon is "started". The systemd patterns
-      # match the OPERATION WORD (`stop`, `is-active`, `show`, `reset-failed`)
-      # rather than the `--user` prefix, so a root login's SYSTEM-scope
-      # commands are served by the same fake. Options: :os (default
-      # Linux), :detect ("yes"/"no" for the NixOS detection command),
-      # :patch_exit, :patch_output, :daemon_active? (pre-create the marker),
-      # :daemon_active_after (N — the fake reports the daemon active only
-      # once the is-active / launchctl-list call count exceeds N; used to
-      # simulate the race where a daemon starts between the pre-flight check
-      # and the launch point), :remote_config_exists? (the fake reports the
-      # remote config.toml/credentials.toml as already present, so the
+      # %{log:, marker:, tarball:, scp_dir:, stop_gate:, stop_ack:}. The fake
+      # ssh receives $1 = ssh_target and $2 = the sh-wrapped remote command
+      # (ONE argv element — `/bin/sh -c '<cmd>'`; the wrapping preserves the
+      # command text verbatim, because every remote command is
+      # single-quote-free), logs every command to the log file, and dispatches
+      # on $2 via CONTAINS patterns.
+      #
+      # DAEMON EMULATION IS CLI-SHAPED — the library builds NO systemd or
+      # launchd command any more; every daemon operation is ONE call to the
+      # extracted release launcher, so the fake serves exactly three commands
+      # (matched BEFORE every generic branch):
+      #
+      #   * `.../bin/genesis_server remote status --unit genesis-remote-<id>` —
+      #     prints `running node=<node> dist_port=<port>` and exits 0 while the
+      #     marker file exists, else prints `stopped` and exits 1. The reported
+      #     node defaults to the EXPECTED `genesis_remote_<id>@127.0.0.1`,
+      #     derived by the fake from the `--unit genesis-remote-<id>` argument
+      #     the command itself carries (the harness cannot know the target id
+      #     up front — the test creates the target inside its callback);
+      #   * `remote stop --unit ...` — removes the marker;
+      #   * `remote start --node ... --cookie ... --dist-port ... --unit ...`
+      #     — touches the marker, but ONLY when it succeeds.
+      #
+      # Options: :os (default Linux), :detect ("yes"/"no" for the NixOS
+      # detection command), :patch_exit, :patch_output, :daemon_active?
+      # (pre-create the marker), :daemon_active_after (N — the fake answers
+      # `stopped` to the first N STATUS calls and `running` to every later one;
+      # simulates a daemon that appears between the pre-flight check and the
+      # launch point), :status_node (report a DIFFERENT node — the
+      # identity-mismatch race), :status_port (default 9000),
+      # :status_bad_output (exit 0 with that unparsable text from the second
+      # status call on), :status_exit (EVERY status call exits with that
+      # non-zero status and a missing-launcher diagnostic — never the word
+      # `stopped`), :stop_exit (the stop command clears the marker but exits
+      # non-zero, proving a failed stop is non-fatal), :start_exit /
+      # :start_stderr (the start command fails and does NOT touch the marker),
+      # :remote_config_exists? (the fake reports the remote
+      # config.toml/credentials.toml as already present, so the
       # :copying_config stage skips their upload), :probe_exit (the pre-flight
       # `uname -s && uname -m` probe exits non-zero, simulating an unreachable
       # remote), :scp_exit (the fake scp exits non-zero, simulating a failed
-      # upload), :login_user (the probed remote login user, which selects the
-      # systemd scope: `root` → SYSTEM, anything else → `--user`; absent = the
-      # historical two-line probe output with no user line), :staging_exit /
-      # :staging_stderr (the one-shot `tar -xJf` extract+chmod command exits
-      # :staging_exit after printing :staging_stderr to stderr) and
-      # :fail_255_once (that command exits 255 on its FIRST invocation only,
-      # so the single transport retry is observable). The fake `scp` captures
-      # every uploaded payload into the tmp dir under its DESTINATION basename
-      # (config.toml / credentials.toml / genesis_remote.tar.xz) — the tmp dir
-      # is returned as `:scp_dir` — so tests can assert what actually "landed
-      # on the remote" (e.g. the accent-variant config.toml content).
+      # upload), :staging_exit / :staging_stderr (the one-shot `tar -xJf`
+      # extract+chmod command exits :staging_exit after printing
+      # :staging_stderr to stderr) and :fail_255_once (that command exits 255
+      # on its FIRST invocation only, so the single transport retry is
+      # observable).
+      #
+      # :stop_gate? makes `remote stop` wait (bounded, 5s) for the
+      # `:stop_gate` file to exist and record its arrival in `:stop_ack`; the
+      # ordering test feeds `:stop_gate` from a dedicated stage recorder
+      # process, so "the `:stopping_daemon` broadcast was DELIVERED before the
+      # stop command ran" is enforced by the fake instead of asserted from two
+      # files whose write order races (the test process itself is blocked
+      # inside the synchronous bootstrap/1 call and cannot observe broadcasts).
+      #
+      # The fake `scp` captures every uploaded payload into the tmp dir under
+      # its DESTINATION basename (config.toml / credentials.toml /
+      # genesis_server.tar.xz) — the tmp dir is returned as `:scp_dir` — so
+      # tests can assert what actually "landed on the remote" (e.g. the
+      # accent-variant config.toml content).
       defp with_fake_ssh_tools(opts, fun) do
         tmp =
           Path.join(
@@ -1068,27 +1084,80 @@ defmodule EvoGit.RemoteConnectionTest do
         # Same-name dirs RECUR across BEAM runs and the shared temp dir is not
         # cleaned between runs, so leftovers from an earlier run would leak real
         # state into this one: `ssh.log` is APPENDED to (stale command lines),
-        # `daemon.marker` can make the fake daemon look already-active, and
-        # `is-active.count` shifts the :daemon_active_after counter — all
+        # `daemon.marker` can make the fake daemon look already-running, and
+        # `status.count` shifts the :daemon_active_after counter — all
         # environment-dependent. Wipe the dir before writing our own state.
         File.rm_rf!(tmp)
         File.mkdir_p!(tmp)
 
         log = Path.join(tmp, "ssh.log")
         marker = Path.join(tmp, "daemon.marker")
-        counter = Path.join(tmp, "is-active.count")
+        counter = Path.join(tmp, "status.count")
         staging_fail_counter = Path.join(tmp, "staging-fail.count")
+        stop_gate_file = Path.join(tmp, "stop.gate")
+        stop_ack_file = Path.join(tmp, "stop.ack")
 
         if Keyword.get(opts, :daemon_active?, false) do
           File.touch!(marker)
         end
 
-        # The `id -un` output of both probe shapes: the configured login user,
-        # or nothing at all (default = today's behavior).
-        login_user_print =
-          case Keyword.get(opts, :login_user) do
-            user when is_binary(user) and user != "" -> "printf '%s\\n' '#{user}'"
-            _ -> ":"
+        # The node the fake `remote status` reports. Default: the EXPECTED
+        # `genesis_remote_<id>@127.0.0.1`, assembled by the fake from the
+        # `--unit genesis-remote-<id>` argument it parsed (a double-quoted word
+        # so the fake's shell expands `${id}`; the id is alnum+underscore, so
+        # no further quoting is needed).
+        status_node_expr =
+          case Keyword.get(opts, :status_node) do
+            node when is_binary(node) and node != "" -> "\"#{node}\""
+            _ -> ~S["genesis_remote_${id}@127.0.0.1"]
+          end
+
+        # How many status calls answer `stopped` before the fake starts
+        # reporting a running daemon. `:daemon_active_after` states it
+        # directly; an unparsable exit-0 answer (`:status_bad_output`) is only
+        # meaningful AFTER the pre-flight, because before it the fake would
+        # look like a running daemon and bootstrap would refuse instead of
+        # reaching the launch point.
+        status_gate_after =
+          cond do
+            is_integer(Keyword.get(opts, :daemon_active_after)) ->
+              Keyword.get(opts, :daemon_active_after)
+
+            Keyword.get(opts, :status_bad_output) ->
+              1
+
+            true ->
+              nil
+          end
+
+        status_gate =
+          case status_gate_after do
+            nil -> ""
+            n -> "if [ \"$count\" -le #{n} ]; then printf 'stopped\\n'; exit 1; fi"
+          end
+
+        # :stop_gate? — the stop command refuses to finish until the test's
+        # stage recorder has SEEN the :stopping_daemon broadcast, then records
+        # that fact. This is what makes "stop runs after the broadcast" a
+        # behavioural pin instead of a reading of the code: a stop issued
+        # before the broadcast would exhaust the bounded wait and leave
+        # `stop_ack` absent.
+        stop_gate =
+          if Keyword.get(opts, :stop_gate?, false) do
+            """
+            i=0
+            while [ ! -f "#{stop_gate_file}" ] && [ "$i" -lt 500 ]; do sleep 0.01; i=$((i + 1)); done
+            if [ -f "#{stop_gate_file}" ]; then printf 'stop-after-broadcast\\n' >> "#{stop_ack_file}"; fi
+            """
+          else
+            ""
+          end
+
+        # stderr emitted by the failing `remote start`.
+        start_stderr_print =
+          case Keyword.get(opts, :start_stderr, "") do
+            "" -> ""
+            stderr -> "printf '%s\\n' '#{stderr}' >&2;"
           end
 
         # stderr emitted by the one-shot extract+chmod staging command.
@@ -1119,29 +1188,46 @@ defmodule EvoGit.RemoteConnectionTest do
           counter="__COUNTER__"
           staging_fail_counter="__STAGING_FAIL_COUNTER__"
           printf '%s\n' "$2" >> "$log"
+          # Every daemon command carries the per-target unit name as `--unit
+          # genesis-remote-<id>`; derive it (and with it the expected node
+          # name) from there, so the default status answer needs no target id
+          # from the test.
+          unit=$(printf '%s\n' "$2" | sed -e 's/.*--unit //' -e 's/[^A-Za-z0-9_-].*//')
+          id=${unit#genesis-remote-}
           case "$2" in
-            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; __LOGIN_USER_PRINT__; exit __PROBE_EXIT__ ;;
-            # A preset-`platform` target probes ONLY the login user.
-            *"id -un"*) __LOGIN_USER_PRINT__; exit 0 ;;
-            *"uname -s"*) printf '__OS__\n'; exit 0 ;;
+            # ── Release-CLI daemon commands, matched BEFORE every generic
+            # branch: they are the only daemon operations Elixir issues. ──
+            *"remote status"*)
+              count=$(cat "$counter" 2>/dev/null || echo 0)
+              count=$((count + 1)); echo "$count" > "$counter"
+              if [ "__STATUS_EXIT__" != "0" ]; then
+                printf 'sh: genesis_server launcher not found\n' >&2
+                exit __STATUS_EXIT__
+              fi
+              __STATUS_GATE__
+              if [ -n "__STATUS_BAD_OUTPUT__" ]; then
+                printf '%s\n' "__STATUS_BAD_OUTPUT__"
+                exit 0
+              fi
+              if [ -f "$marker" ] || [ -n "__STATUS_GATED__" ]; then
+                printf 'running node=%s dist_port=%s\n' __STATUS_NODE_EXPR__ __STATUS_PORT__
+                exit 0
+              fi
+              printf 'stopped\n'; exit 1 ;;
+            *"remote stop"*)
+              rm -f "$marker"
+              __STOP_GATE__
+              exit __STOP_EXIT__ ;;
+            *"remote start"*)
+              __START_STDERR__
+              if [ "__START_EXIT__" = "0" ]; then touch "$marker"; fi
+              exit __START_EXIT__ ;;
+            *"uname -s && uname -m"*) printf '__OS__\nx86_64\n'; exit __PROBE_EXIT__ ;;
             # The ONE extract+chmod staging command (it contains `mkdir`, `tar`
             # AND `chmod`), matched BEFORE the generic mkdir/tar/chmod branch so
             # the :staging_exit / :staging_stderr / :fail_255_once knobs apply
             # to it and nothing else.
             *"tar -xJf"*) __STAGING_STDERR__ __FAIL_ONCE_GUARD__exit __STAGING_EXIT__ ;;
-            # systemd: match the OPERATION WORD, never the `--user` prefix — a
-            # root login's SYSTEM-scope command (`systemctl <op> <unit>`) must be
-            # served exactly like the user-scope one.
-            *systemctl*stop*) rm -f "$marker"; exit 0 ;;
-            *systemctl*is-active*) if [ -n "__DAEMON_ACTIVE_AFTER__" ]; then count=$(cat "$counter" 2>/dev/null || echo 0); count=$((count + 1)); echo "$count" > "$counter"; if [ "$count" -gt __DAEMON_ACTIVE_AFTER__ ]; then printf 'active\n'; else printf 'inactive\n'; fi; elif [ -f "$marker" ]; then printf 'active\n'; else printf 'inactive\n'; fi; exit 0 ;;
-            *systemctl*show*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf 'RELEASE_NODE=%s RELEASE_COOKIE=%s\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
-            *systemctl*reset-failed*) exit 0 ;;
-            *"systemd-run"*) touch "$marker"; exit 0 ;;
-            *"launchctl load"*) touch "$marker"; exit 0 ;;
-            *"launchctl unload"*) rm -f "$marker"; exit 0 ;;
-            *"launchctl list"*) if [ -n "__DAEMON_ACTIVE_AFTER__" ]; then count=$(cat "$counter" 2>/dev/null || echo 0); count=$((count + 1)); echo "$count" > "$counter"; if [ "$count" -gt __DAEMON_ACTIVE_AFTER__ ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; elif [ -f "$marker" ]; then printf '1234\t0\tcom.genesis.remote.test\n'; fi; exit 0 ;;
-            *"cat ~/Library/LaunchAgents"*) if [ -n "$FAKE_UNIT_RELEASE_NODE" ] || [ -n "$FAKE_UNIT_RELEASE_COOKIE" ]; then printf '<plist><dict><key>RELEASE_NODE</key><string>%s</string><key>RELEASE_COOKIE</key><string>%s</string></dict></plist>\n' "$FAKE_UNIT_RELEASE_NODE" "$FAKE_UNIT_RELEASE_COOKIE"; fi; exit 0 ;;
-            *"launchctl"*) exit 0 ;;
             *"test -d /etc/nixos"*) printf '__DETECT__\n'; exit 0 ;;
             *nix-build*) printf '%s\n' '__PATCH_OUTPUT__'; exit __PATCH_EXIT__ ;;
             *"curl"*|*"wget"*) exit 0 ;;
@@ -1157,7 +1243,6 @@ defmodule EvoGit.RemoteConnectionTest do
           |> String.replace("__MARKER__", marker)
           |> String.replace("__COUNTER__", counter)
           |> String.replace("__STAGING_FAIL_COUNTER__", staging_fail_counter)
-          |> String.replace("__LOGIN_USER_PRINT__", login_user_print)
           |> String.replace("__STAGING_STDERR__", staging_stderr_print)
           |> String.replace("__FAIL_ONCE_GUARD__", fail_once_guard)
           |> String.replace(
@@ -1165,11 +1250,23 @@ defmodule EvoGit.RemoteConnectionTest do
             Integer.to_string(Keyword.get(opts, :staging_exit, 0))
           )
           |> String.replace(
-            "__DAEMON_ACTIVE_AFTER__",
-            case Keyword.get(opts, :daemon_active_after) do
-              nil -> ""
-              n -> Integer.to_string(n)
-            end
+            "__STATUS_EXIT__",
+            Integer.to_string(Keyword.get(opts, :status_exit, 0))
+          )
+          |> String.replace("__STATUS_GATE__", status_gate)
+          |> String.replace("__STATUS_GATED__", if(status_gate_after, do: "1", else: ""))
+          |> String.replace("__STATUS_BAD_OUTPUT__", Keyword.get(opts, :status_bad_output, ""))
+          |> String.replace("__STATUS_NODE_EXPR__", status_node_expr)
+          |> String.replace(
+            "__STATUS_PORT__",
+            Integer.to_string(Keyword.get(opts, :status_port, 9000))
+          )
+          |> String.replace("__STOP_GATE__", stop_gate)
+          |> String.replace("__STOP_EXIT__", Integer.to_string(Keyword.get(opts, :stop_exit, 0)))
+          |> String.replace("__START_STDERR__", start_stderr_print)
+          |> String.replace(
+            "__START_EXIT__",
+            Integer.to_string(Keyword.get(opts, :start_exit, 0))
           )
           |> String.replace("__OS__", Keyword.get(opts, :os, "Linux"))
           |> String.replace("__DETECT__", Keyword.get(opts, :detect, "no"))
@@ -1238,18 +1335,20 @@ defmodule EvoGit.RemoteConnectionTest do
             System.delete_env("PATH")
           end
 
-          # Clear the fake-unit env vars the daemon-identity verification reads
-          # (set directly in the race tests) so they don't leak into sibling tests.
-          System.delete_env("FAKE_UNIT_RELEASE_NODE")
-          System.delete_env("FAKE_UNIT_RELEASE_COOKIE")
-
           File.rm_rf!(tmp)
         end)
 
         tarball = Path.join(tmp, "local.tar.xz")
         File.write!(tarball, "fake tarball")
 
-        fun.(%{log: log, marker: marker, tarball: tarball, scp_dir: tmp})
+        fun.(%{
+          log: log,
+          marker: marker,
+          tarball: tarball,
+          scp_dir: tmp,
+          stop_gate: stop_gate_file,
+          stop_ack: stop_ack_file
+        })
       end
 
       # Drains all {:remote_connection_status, target_id, status} broadcasts
@@ -1265,6 +1364,43 @@ defmodule EvoGit.RemoteConnectionTest do
         after
           0 ->
             Enum.reverse(acc)
+        end
+      end
+
+      # Subscribes a DEDICATED process to the "remote_connections" topic and
+      # appends every received bootstrap stage to `path`, one per line, then
+      # returns that process pid.
+      #
+      # A separate process is required: `bootstrap/1` is a synchronous
+      # GenServer.call, so the TEST process is blocked until the whole run is
+      # over and any stage broadcast sent mid-run is only delivered afterwards.
+      # The fake `ssh`'s `remote stop` branch (with `stop_gate?: true`) waits
+      # for this file, which is what pins "the :stopping_daemon broadcast was
+      # delivered BEFORE the stop command ran".
+      defp spawn_stage_recorder(target_id, path) do
+        parent = self()
+
+        pid =
+          spawn_link(fn ->
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+            send(parent, :stage_recorder_ready)
+            record_stages_loop(target_id, path)
+          end)
+
+        assert_receive :stage_recorder_ready, 1_000
+        pid
+      end
+
+      defp record_stages_loop(target_id, path) do
+        receive do
+          {:remote_connection_status, ^target_id, %{bootstrap_stage: stage}} ->
+            File.write!(path, "#{inspect(stage)}\n", [:append])
+            record_stages_loop(target_id, path)
+
+          _other ->
+            record_stages_loop(target_id, path)
+        after
+          30_000 -> :ok
         end
       end
 
@@ -1289,6 +1425,33 @@ defmodule EvoGit.RemoteConnectionTest do
         |> File.read!()
         |> String.split("\n", trim: true)
         |> Enum.count(&String.contains?(&1, needle))
+      end
+
+      # Position of the FIRST logged ssh command whose remote payload contains
+      # `needle` (nil when none was issued) — the ordering surface for "the
+      # stop ran before the first staging command", "no start was issued", …
+      defp command_index(log, needle) do
+        log
+        |> File.read!()
+        |> String.split("\n", trim: true)
+        |> Enum.find_index(&String.contains?(&1, needle))
+      end
+
+      # The logged commands as a list (one element per ssh invocation).
+      defp logged_commands(log) do
+        log |> File.read!() |> String.split("\n", trim: true)
+      end
+
+      # The single `tar -xJf` extract+chmod staging command, asserted to have
+      # been issued EXACTLY once (one ssh round trip), returned as its text.
+      defp single_staging_command!(log) do
+        staging_lines = Enum.filter(logged_commands(log), &String.contains?(&1, "tar -xJf"))
+
+        assert length(staging_lines) == 1,
+               "expected exactly one extract+chmod command, got: #{inspect(staging_lines)}"
+
+        [line] = staging_lines
+        line
       end
 
       # Asserts a CAPTURED remote command (the ssh `$2` payload) is login-shell
@@ -1409,10 +1572,14 @@ defmodule EvoGit.RemoteConnectionTest do
           assert log_content =~ "test -d /etc/nixos"
           refute log_content =~ "nix-build"
 
-          # A non-root login user (the fake prints no user line) keeps the
-          # historical USER-manager commands — guard against scope regressions.
-          assert log_content =~ "systemctl --user is-active genesis-remote-#{target_id}"
-          assert log_content =~ "systemd-run --user --unit=genesis-remote-#{target_id}"
+          # The daemon is launched through the release CLI alone — Elixir never
+          # builds a systemd/launchd command (the CLI owns the scope decision).
+          assert log_content =~
+                   ~s("/tmp/genesis_server/bin/genesis_server" remote start --node genesis_remote_#{target_id}@127.0.0.1)
+
+          refute log_content =~ "systemctl"
+          refute log_content =~ "systemd-run"
+          refute log_content =~ "launchctl"
 
           stages = collect_stages(target_id)
           refute :patching_binaries in stages
@@ -1454,18 +1621,18 @@ defmodule EvoGit.RemoteConnectionTest do
           assert details =~ "genesis-remote-#{target_id}"
           assert details =~ "on_running: :restart"
 
-          # the pre-flight probe + is-active check are expected...
+          # the pre-flight probe + the release CLI's status call are expected...
           log_content = File.read!(log)
           assert log_content =~ "uname -s && uname -m"
-          assert log_content =~ "systemctl --user is-active"
+          assert log_content =~ "remote status --unit genesis-remote-#{target_id}"
 
           # ...but NO staging commands at all (the refusal happens before any staging)
           refute log_content =~ "tar -xJf"
           refute log_content =~ "chmod +x"
           refute log_content =~ "scp "
           refute log_content =~ "curl"
-          refute log_content =~ "systemd-run"
-          refute log_content =~ "launchctl load"
+          refute log_content =~ "remote start"
+          refute log_content =~ "remote stop"
           refute log_content =~ "test -d /etc/nixos"
           refute log_content =~ "nix-build"
 
@@ -1491,15 +1658,14 @@ defmodule EvoGit.RemoteConnectionTest do
 
           log_content = File.read!(log)
           assert log_content =~ "uname -s && uname -m"
-          assert log_content =~ "launchctl list"
+          assert log_content =~ "remote status --unit genesis-remote-#{target_id}"
 
           refute log_content =~ "tar -xJf"
           refute log_content =~ "chmod +x"
           refute log_content =~ "scp "
           refute log_content =~ "curl"
-          refute log_content =~ "systemd-run"
-          refute log_content =~ "launchctl load"
-          refute log_content =~ "launchctl unload"
+          refute log_content =~ "remote start"
+          refute log_content =~ "remote stop"
           refute log_content =~ "test -d /etc/nixos"
           refute log_content =~ "nix-build"
 
@@ -1512,39 +1678,58 @@ defmodule EvoGit.RemoteConnectionTest do
       test "daemon already running (Linux) + on_running: :restart → stops it before starting fresh" do
         ensure_registry_and_supervisor()
 
-        with_fake_ssh_tools([os: "Linux", daemon_active?: true], fn %{log: log, tarball: tarball} ->
-          target_id = save_test_target(local_binary_path: tarball)
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+        write_test_config_cookie("current-contract-cookie")
 
-          assert {:ok, :daemon_started} =
-                   EvoGit.RemoteConnection.bootstrap(target_id, on_running: :restart)
+        with_fake_ssh_tools(
+          [os: "Linux", daemon_active?: true, stop_gate?: true],
+          fn %{log: log, tarball: tarball, stop_gate: stop_gate, stop_ack: stop_ack} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          log_content = File.read!(log)
+            # A dedicated process records every stage broadcast, so the fake's
+            # stop command can prove the :stopping_daemon broadcast had already
+            # been DELIVERED when it ran (the test process is blocked inside
+            # the synchronous bootstrap call and cannot see broadcasts).
+            spawn_stage_recorder(target_id, stop_gate)
 
-          stop_idx =
-            case :binary.match(log_content, "systemctl --user stop genesis-remote-#{target_id}") do
-              {pos, _len} -> pos
-              :nomatch -> nil
-            end
+            assert {:ok, :daemon_started} =
+                     EvoGit.RemoteConnection.bootstrap(target_id, on_running: :restart)
 
-          start_idx =
-            case :binary.match(log_content, "systemd-run") do
-              {pos, _len} -> pos
-              :nomatch -> nil
-            end
+            unit = "genesis-remote-#{target_id}"
 
-          assert is_integer(stop_idx), "expected a systemctl --user stop in the log"
-          assert is_integer(start_idx), "expected a systemd-run in the log"
-          assert stop_idx < start_idx
+            stop_idx = command_index(log, "\" remote stop --unit #{unit}")
+            staging_idx = command_index(log, "tar -xJf")
+            start_idx = command_index(log, "\" remote start")
 
-          stages = collect_stages(target_id)
-          assert_stage_subsequence(stages, [:stopping_daemon, :starting_daemon])
+            assert is_integer(stop_idx), "expected a `remote stop` in the log"
+            assert is_integer(staging_idx), "expected the staging command in the log"
+            assert is_integer(start_idx), "expected a `remote start` in the log"
 
-          cleanup_connections()
-        end)
+            # stop runs BEFORE the first staging command, and the fresh daemon
+            # is started only after the tree has been staged.
+            assert stop_idx < staging_idx
+            assert staging_idx < start_idx
+
+            # ...and it ran only AFTER the :stopping_daemon broadcast had been
+            # delivered (the fake waited for the recorder's file to appear).
+            assert File.exists?(stop_ack),
+                   "expected `remote stop` to run only after the :stopping_daemon broadcast"
+
+            # The fresh start carries the CURRENT contract: the node name from
+            # the target id and the cookie from config.toml.
+            start_line = Enum.at(logged_commands(log), start_idx)
+            assert start_line =~ "--node genesis_remote_#{target_id}@127.0.0.1"
+            assert start_line =~ "--cookie current-contract-cookie"
+
+            stages = collect_stages(target_id)
+            assert_stage_subsequence(stages, [:stopping_daemon, :starting_daemon])
+
+            cleanup_connections()
+          end
+        )
       end
 
-      test "daemon already running (macOS) + on_running: :restart → stops it before starting fresh" do
+      test "daemon already running (macOS) + on_running: :restart → CLI stop, then a fresh CLI start" do
         ensure_registry_and_supervisor()
 
         with_fake_ssh_tools([os: "Darwin", daemon_active?: true], fn %{log: log, tarball: tarball} ->
@@ -1554,26 +1739,20 @@ defmodule EvoGit.RemoteConnectionTest do
           assert {:ok, :daemon_started} =
                    EvoGit.RemoteConnection.bootstrap(target_id, on_running: :restart)
 
+          unit = "genesis-remote-#{target_id}"
+
+          stop_idx = command_index(log, "\" remote stop --unit #{unit}")
+          start_idx = command_index(log, "\" remote start")
+
+          assert is_integer(stop_idx), "expected a `remote stop` in the log"
+          assert is_integer(start_idx), "expected a `remote start` in the log"
+          assert stop_idx < start_idx
+
+          # macOS gets no launchd treatment from Elixir — the release CLI owns
+          # the plist/launchctl dance.
           log_content = File.read!(log)
-
-          stop_idx =
-            case :binary.match(
-                   log_content,
-                   "launchctl unload ~/Library/LaunchAgents/com.genesis.remote.#{target_id}.plist"
-                 ) do
-              {pos, _len} -> pos
-              :nomatch -> nil
-            end
-
-          load_idx =
-            case :binary.match(log_content, "launchctl load") do
-              {pos, _len} -> pos
-              :nomatch -> nil
-            end
-
-          assert is_integer(stop_idx), "expected the stop launchctl unload in the log"
-          assert is_integer(load_idx), "expected a launchctl load in the log"
-          assert stop_idx < load_idx
+          refute log_content =~ "launchctl"
+          refute log_content =~ "LaunchAgents"
 
           stages = collect_stages(target_id)
           assert_stage_subsequence(stages, [:stopping_daemon, :starting_daemon])
@@ -1582,84 +1761,273 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
 
-      test "daemon appears after pre-flight (Linux, STALE cookie) → identity mismatch with remediation" do
+      test "a daemon started after the pre-flight (Linux, foreign node) → identity mismatch, no start" do
         ensure_registry_and_supervisor()
 
-        cookie = "current-contract-cookie"
-        write_test_config_cookie(cookie)
+        write_test_config_cookie("current-contract-cookie")
 
-        with_fake_ssh_tools([os: "Linux", daemon_active_after: 1], fn %{tarball: tarball} ->
+        # `daemon_active_after: 1` — status call #1 (pre-flight) answers
+        # `stopped`, so staging proceeds; calls #2 (NixOS check) and #3 (the
+        # launch point's race net) report a RUNNING daemon. `status_node` makes
+        # that daemon a foreign one, i.e. started by someone else's bootstrap.
+        with_fake_ssh_tools(
+          [
+            os: "Linux",
+            daemon_active_after: 1,
+            status_node: "genesis_remote_someone_else@127.0.0.1"
+          ],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:daemon_identity_mismatch, details}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            unit = "genesis-remote-#{target_id}"
+
+            # what the CLI reported vs what this contract requires...
+            assert details =~ "node=genesis_remote_someone_else@127.0.0.1"
+            assert details =~ "requires node genesis_remote_#{target_id}@127.0.0.1"
+
+            # ...and the exact remediation command, never an automatic kill.
+            assert details =~ "remote stop --unit #{unit}"
+
+            # the mismatch was detected through the CLI status call, and no
+            # daemon was launched by us (no :starting_daemon broadcast either).
+            log_content = File.read!(log)
+            assert log_content =~ "remote status --unit #{unit}"
+            refute log_content =~ "remote start"
+
+            stages = collect_stages(target_id)
+            refute :starting_daemon in stages
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "a daemon that starts after the pre-flight and answers unparsably (Linux) → identity mismatch" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("current-contract-cookie")
+
+        # Exit 0 with no `running node=… dist_port=…` line: the CLI answered,
+        # but its identity cannot be verified — which must fail loudly instead
+        # of silently trusting the daemon.
+        with_fake_ssh_tools(
+          [os: "Linux", status_bad_output: "genesis_server: ok"],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:daemon_identity_mismatch, details}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            unit = "genesis-remote-#{target_id}"
+
+            assert details =~ "no parseable node line"
+            assert details =~ "requires node genesis_remote_#{target_id}@127.0.0.1"
+            assert details =~ "remote stop --unit #{unit}"
+
+            refute File.read!(log) =~ "remote start"
+
+            stages = collect_stages(target_id)
+            refute :starting_daemon in stages
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "identity mismatch on macOS goes through `remote status` and the remediation names `remote stop`" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("macos-test-cookie")
+
+        with_fake_ssh_tools(
+          [
+            os: "Darwin",
+            daemon_active_after: 1,
+            status_node: "genesis_remote_stale@127.0.0.1"
+          ],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:error, {:daemon_identity_mismatch, details}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            unit = "genesis-remote-#{target_id}"
+
+            assert details =~ "genesis-remote-#{target_id}"
+            assert details =~ "remote stop --unit #{unit}"
+
+            # macOS is not special anymore: the release CLI owns launchd, so
+            # Elixir issues the SAME status command and never touches a plist.
+            log_content = File.read!(log)
+            assert log_content =~ "remote status --unit #{unit}"
+            refute log_content =~ "launchctl"
+            refute log_content =~ "LaunchAgents"
+            refute log_content =~ "remote start"
+
+            stages = collect_stages(target_id)
+            refute :starting_daemon in stages
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "a pre-flight status ERROR (no launcher on a first-time host) does NOT block bootstrap" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("first-run-cookie")
+
+        # The launcher does not exist yet, so the CLI cannot answer at all:
+        # non-zero and NOT the documented `stopped` answer. That must be read
+        # as "not running, install it" — never as a refusal or a hang.
+        with_fake_ssh_tools([os: "Linux", status_exit: 1], fn %{log: log, tarball: tarball} ->
           target_id = save_test_target(local_binary_path: tarball)
-          # Fake ssh echoes the CORRECT node but a STALE cookie — like a daemon
-          # launched by an older bootstrap whose cookie differs from the local
-          # config.toml [node] cookie. With daemon_active_after: 1 the pre-flight
-          # check (#1) sees the daemon inactive so staging proceeds; the
-          # maybe_patch_nixos (#2) and maybe_start_daemon (#3) checks see it
-          # active, so verify_daemon_identity runs and reports the mismatch.
-          System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
-          System.put_env("FAKE_UNIT_RELEASE_COOKIE", "old-stale-cookie")
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          assert {:error, {:daemon_identity_mismatch, details}} =
-                   EvoGit.RemoteConnection.bootstrap(target_id)
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-          assert details =~ "systemctl --user stop genesis-remote-#{target_id}"
-          assert details =~ "old-stale-cookie"
-          assert details =~ "current-contract-cookie"
+          unit = "genesis-remote-#{target_id}"
+          log_content = File.read!(log)
 
-          # the daemon was never started by us — no :starting_daemon broadcast
-          stages = collect_stages(target_id)
-          refute :starting_daemon in stages
+          # the failing probe was issued, the tree was staged anyway, and the
+          # CLI was asked to start the daemon
+          assert log_content =~ "remote status --unit #{unit}"
+          assert log_content =~ "tar -xJf"
+          assert log_content =~ "remote start --node genesis_remote_#{target_id}@127.0.0.1"
+
+          assert_stage_subsequence(collect_stages(target_id), [
+            :extracting,
+            :generating_cookie,
+            :starting_daemon
+          ])
 
           cleanup_connections()
         end)
       end
 
-      test "daemon appears after pre-flight (Linux, NO RELEASE_COOKIE) → identity mismatch" do
+      test "`remote start` failing → {:error, {:daemon_launch_failed, status, tail}} with the tail in last_error" do
         ensure_registry_and_supervisor()
 
-        cookie = "current-contract-cookie"
-        write_test_config_cookie(cookie)
+        with_fake_ssh_tools(
+          [
+            os: "Linux",
+            start_exit: 3,
+            start_stderr: "genesis_server: failed to start: address already in use"
+          ],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-        with_fake_ssh_tools([os: "Linux", daemon_active_after: 1], fn %{tarball: tarball} ->
+            assert {:error, {:daemon_launch_failed, 3, tail}} =
+                     EvoGit.RemoteConnection.bootstrap(target_id)
+
+            assert tail =~ "address already in use"
+
+            # The CLI's exit status IS the health signal — no side poll retries
+            # the launch.
+            assert count_commands(log, "remote start") == 1
+
+            message = EvoGit.RemoteConnection.format_reason({:daemon_launch_failed, 3, tail})
+            assert message =~ "daemon launch failed (exit 3)"
+            assert message =~ "address already in use"
+
+            assert %{phase: :error, last_error: ^message} =
+                     EvoGit.RemoteConnection.status(target_id)
+
+            cleanup_connections()
+          end
+        )
+      end
+
+      test "the default remote_path needs NO move: the one staging command has no rm/mv" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log, tarball: tarball} ->
           target_id = save_test_target(local_binary_path: tarball)
-          # Only RELEASE_NODE is echoed — RELEASE_COOKIE is absent, like a
-          # daemon launched before bootstrap passed --setenv=RELEASE_COOKIE.
-          System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
-          System.delete_env("FAKE_UNIT_RELEASE_COOKIE")
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          assert {:error, {:daemon_identity_mismatch, details}} =
-                   EvoGit.RemoteConnection.bootstrap(target_id)
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-          assert details =~ "RELEASE_COOKIE"
-          assert details =~ "(empty)"
-          assert details =~ "systemctl --user stop genesis-remote-#{target_id}"
+          # `/tmp/genesis_server` IS the extraction target, so the tree is
+          # already in place — a `rm -rf`/`mv` here would be destructive noise.
+          command = single_staging_command!(log)
+          assert command =~ ~s("/tmp/genesis_server/bin/genesis_server")
+          refute command =~ "rm -rf"
+          refute command =~ "mv "
 
           cleanup_connections()
         end)
       end
 
-      test "daemon appears after pre-flight (macOS, stale plist) → identity mismatch with launchctl remediation" do
+      test "a legacy remote_path moves the extracted tree into place in the SAME one staging command" do
         ensure_registry_and_supervisor()
 
-        cookie = "macos-test-cookie"
-        write_test_config_cookie(cookie)
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id =
+            save_test_target(remote_path: "/opt/genesis", local_binary_path: tarball)
 
-        with_fake_ssh_tools([os: "Darwin", daemon_active_after: 1], fn %{tarball: tarball} ->
-          target_id = save_test_target(local_binary_path: tarball)
-          # No FAKE_UNIT_RELEASE_* set — the fake ssh `cat` echoes an empty
-          # plist, so the containment check fails.
-          Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
 
-          assert {:error, {:daemon_identity_mismatch, details}} =
-                   EvoGit.RemoteConnection.bootstrap(target_id)
+          command = single_staging_command!(log)
 
-          assert details =~ "launchctl unload"
-          assert details =~ "com.genesis.remote.#{target_id}"
+          # Extract into /opt, then move /opt/genesis_server onto the requested
+          # path — in the same ssh round trip as the chmod.
+          assert command =~ ~s(rm -rf "/opt/genesis" && mv "/opt/genesis_server" "/opt/genesis")
+          assert command =~ ~s("/opt/genesis/bin/genesis_server")
+
+          # ...and the daemon commands use the launcher at that path.
+          log_content = File.read!(log)
+          assert log_content =~ ~s("/opt/genesis/bin/genesis_server" remote status --unit)
+          assert log_content =~ ~s("/opt/genesis/bin/genesis_server" remote start)
 
           cleanup_connections()
         end)
+      end
+
+      test "a failing `remote stop` is non-fatal: bootstrap still stages and starts" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("stop-failure-cookie")
+
+        # The fake clears the unit and then reports failure, so the pin is that
+        # a stop error is only a warning: the rest of the flow must not abort.
+        with_fake_ssh_tools(
+          [os: "Linux", daemon_active?: true, stop_exit: 1],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:ok, :daemon_started} =
+                     EvoGit.RemoteConnection.bootstrap(target_id, on_running: :restart)
+
+            unit = "genesis-remote-#{target_id}"
+
+            stop_idx = command_index(log, "\" remote stop --unit #{unit}")
+            staging_idx = command_index(log, "tar -xJf")
+            start_idx = command_index(log, "\" remote start")
+
+            assert is_integer(stop_idx)
+            assert is_integer(staging_idx)
+            assert is_integer(start_idx)
+            assert stop_idx < staging_idx
+            assert staging_idx < start_idx
+
+            # the launch carried the current cookie, not the stale daemon's
+            assert Enum.at(logged_commands(log), start_idx) =~ "--cookie stop-failure-cookie"
+
+            assert_stage_subsequence(collect_stages(target_id), [
+              :stopping_daemon,
+              :starting_daemon
+            ])
+
+            cleanup_connections()
+          end
+        )
       end
 
       test "patch script failure propagates {:nixos_patch_failed, details}" do
@@ -1717,6 +2085,37 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
 
+      test "a daemon that appears mid-bootstrap is NEVER patched (and needs no launch)" do
+        ensure_registry_and_supervisor()
+
+        # `daemon_active_after: 1`: the pre-flight sees `stopped`, so staging
+        # runs — but by the NixOS gate's own status call a daemon is up. A live
+        # daemon must never have its binaries rewritten underneath it, and an
+        # identity-matching one completes without a `remote start`.
+        with_fake_ssh_tools(
+          [os: "Linux", detect: "yes", daemon_active_after: 1],
+          fn %{log: log, tarball: tarball} ->
+            target_id = save_test_target(local_binary_path: tarball)
+            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
+
+            assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+            log_content = File.read!(log)
+
+            assert log_content =~ "remote status --unit genesis-remote-#{target_id}"
+            refute log_content =~ "test -d /etc/nixos"
+            refute log_content =~ "nix-build"
+            refute log_content =~ "remote start"
+
+            stages = collect_stages(target_id)
+            refute :patching_binaries in stages
+            refute :starting_daemon in stages
+
+            cleanup_connections()
+          end
+        )
+      end
+
       test "existing remote config.toml is never overwritten by bootstrap" do
         ensure_registry_and_supervisor()
 
@@ -1739,7 +2138,7 @@ defmodule EvoGit.RemoteConnectionTest do
 
             # ...but the ONLY scp payload that landed is the tarball: the
             # remote keeps its existing config file untouched.
-            assert File.exists?(Path.join(scp_dir, "genesis_remote.tar.xz"))
+            assert File.exists?(Path.join(scp_dir, "genesis_server.tar.xz"))
             refute File.exists?(Path.join(scp_dir, "config.toml"))
             refute File.exists?(Path.join(scp_dir, "credentials.toml"))
 
@@ -1887,17 +2286,79 @@ defmodule EvoGit.RemoteConnectionTest do
         end)
       end
 
-      # ── Root logins → SYSTEM systemd scope ───────────────────────────
+      # ── The daemon is the release CLI's own concern ─────────────────
+      #
+      # Elixir builds NO systemd/launchd command and probes no login user:
+      # every daemon operation is `<launcher> remote status|stop|start`, and
+      # the CLI picks the systemd scope / launchd plist / setsid fallback.
 
-      test "root login user (probed) → SYSTEM scope: systemd-run --system, plain systemctl, no --user" do
+      test "a preset `platform` target issues NO ssh probe before staging" do
         ensure_registry_and_supervisor()
 
-        with_fake_ssh_tools([os: "Linux", login_user: "root"], fn %{log: log, tarball: tarball} ->
-          target_id = save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log} ->
+          target_id = save_test_target(platform: "linux_x64")
           Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
 
-          # The ssh_target really carries `root@` — the SCOPE, however, comes
-          # from the probed login user, not from this string.
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          log_content = File.read!(log)
+
+          # Nothing to resolve — so no `uname -s && uname -m` round trip (and no
+          # legacy `id -un` login-user probe) before the tree is staged.
+          refute log_content =~ "uname -s"
+          refute log_content =~ "id -un"
+          assert log_content =~ "tar -xJf"
+
+          stages = collect_stages(target_id)
+          refute :detecting_os in stages
+          assert_stage_subsequence(stages, [:downloading, :extracting, :starting_daemon])
+
+          cleanup_connections()
+        end)
+      end
+
+      test "the daemon start is a SINGLE non-retried CLI call carrying node/cookie/dist-port/unit/wait" do
+        ensure_registry_and_supervisor()
+
+        write_test_config_cookie("single-call-cookie")
+
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id =
+            save_test_target(
+              platform: "linux_x64",
+              dist_port: 9123,
+              local_binary_path: tarball
+            )
+
+          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
+
+          unit = "genesis-remote-#{target_id}"
+          start_lines = logged_commands(log) |> Enum.filter(&String.contains?(&1, "remote start"))
+
+          # Exactly ONE launch attempt: `remote start` is not idempotent, so it
+          # is never retried — the CLI's own `--wait` is the readiness signal.
+          assert length(start_lines) == 1,
+                 "expected exactly one `remote start`, got: #{inspect(start_lines)}"
+
+          [line] = start_lines
+          assert line =~ ~s("/tmp/genesis_server/bin/genesis_server")
+          assert line =~ "--node genesis_remote_#{target_id}@127.0.0.1"
+          assert line =~ "--cookie single-call-cookie"
+          # the per-target distribution port, not a constant
+          assert line =~ "--dist-port 9123"
+          assert line =~ "--unit #{unit}"
+          assert line =~ "--wait 30"
+
+          cleanup_connections()
+        end)
+      end
+
+      test "a `root@` ssh_target is a plain ssh detail: no systemd scope is decided on this side" do
+        ensure_registry_and_supervisor()
+
+        with_fake_ssh_tools([os: "Linux"], fn %{log: log, tarball: tarball} ->
+          target_id = save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
+
           assert {:ok, %{ssh_target: "root@example.com"}} =
                    EvoGit.RemoteConnections.get(target_id)
 
@@ -1906,70 +2367,18 @@ defmodule EvoGit.RemoteConnectionTest do
           log_content = File.read!(log)
           unit = "genesis-remote-#{target_id}"
 
-          # The per-target unit name is IDENTICAL in both scopes; only the
-          # manager changes.
-          assert log_content =~ "systemd-run --system --collect --unit=#{unit}"
-          assert log_content =~ "systemctl is-active #{unit}"
-          assert log_content =~ "systemctl reset-failed #{unit}"
+          # The per-target unit name is still the handle Elixir uses...
+          assert log_content =~ "remote status --unit #{unit}"
+          assert log_content =~ "remote start"
+          assert log_content =~ "--unit #{unit}"
 
-          # No command anywhere targets the user manager.
+          # ...but the MANAGER (system vs user systemd, launchd, setsid) is the
+          # remote CLI's decision — nothing here mentions one.
           refute log_content =~ "--user"
-
-          cleanup_connections()
-        end)
-      end
-
-      test "root login user → identity read + remediation are plain systemctl (no --user)" do
-        ensure_registry_and_supervisor()
-
-        write_test_config_cookie("root-scope-cookie")
-
-        with_fake_ssh_tools(
-          [os: "Linux", login_user: "root", daemon_active_after: 1],
-          fn %{log: log, tarball: tarball} ->
-            target_id =
-              save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
-
-            # The pre-flight check (#1) sees the daemon inactive so staging
-            # proceeds; the later checks see it active, so the launch-identity
-            # verification runs — and reports a STALE cookie.
-            System.put_env("FAKE_UNIT_RELEASE_NODE", "genesis_remote_#{target_id}@127.0.0.1")
-            System.put_env("FAKE_UNIT_RELEASE_COOKIE", "old-stale-cookie")
-            Phoenix.PubSub.subscribe(EvoGit.PubSub, "remote_connections")
-
-            assert {:error, {:daemon_identity_mismatch, details}} =
-                     EvoGit.RemoteConnection.bootstrap(target_id)
-
-            unit = "genesis-remote-#{target_id}"
-
-            # The unit environment is read from the SYSTEM manager...
-            assert File.read!(log) =~ "systemctl show #{unit} -p Environment --value"
-            # ...and the remediation names the scope-correct stop command.
-            assert details =~ "systemctl stop #{unit}"
-            refute details =~ "--user"
-            refute File.read!(log) =~ "--user"
-
-            cleanup_connections()
-          end
-        )
-      end
-
-      test "a `root@` ssh_target whose PROBED login user is not root keeps the --user scope" do
-        ensure_registry_and_supervisor()
-
-        with_fake_ssh_tools([os: "Linux", login_user: "bill"], fn %{log: log, tarball: tarball} ->
-          target_id = save_test_target(ssh_target: "root@example.com", local_binary_path: tarball)
-
-          assert {:ok, :daemon_started} = EvoGit.RemoteConnection.bootstrap(target_id)
-
-          log_content = File.read!(log)
-          unit = "genesis-remote-#{target_id}"
-
-          # Scope is decided by `id -un` alone — never by the ssh_target string.
-          assert log_content =~ "systemd-run --user --unit=#{unit}"
-          assert log_content =~ "systemctl --user is-active #{unit}"
-          assert log_content =~ "systemctl --user reset-failed #{unit}"
           refute log_content =~ "--system"
+          refute log_content =~ "systemctl"
+          refute log_content =~ "systemd-run"
+          refute log_content =~ "launchctl"
 
           cleanup_connections()
         end)
@@ -2031,13 +2440,15 @@ defmodule EvoGit.RemoteConnectionTest do
             |> Enum.map(&assert_login_shell_safe_remote_command!/1)
 
           # ...and the sweep above actually covered the representative real
-          # commands: the platform/login probe, the remote download, the
-          # one-shot staging chain, the config-existence probe, and the launch.
+          # commands: the platform probe, the remote download, the one-shot
+          # staging chain, the config-existence probe, the release CLI's status
+          # call and its launch.
           assert Enum.any?(payloads, &String.contains?(&1, "uname -s && uname -m"))
           assert Enum.any?(payloads, &String.contains?(&1, "curl -fL -o"))
           assert Enum.any?(payloads, &String.contains?(&1, "tar -xJf"))
           assert Enum.any?(payloads, &String.contains?(&1, ~S|test -f "$HOME/.config/genesis/|))
-          assert Enum.any?(payloads, &String.contains?(&1, "systemd-run"))
+          assert Enum.any?(payloads, &String.contains?(&1, "remote status --unit"))
+          assert Enum.any?(payloads, &String.contains?(&1, "remote start --node"))
 
           cleanup_connections()
         end)
@@ -2117,7 +2528,7 @@ defmodule EvoGit.RemoteConnectionTest do
             assert count_commands(log, "tar -xJf") == 2
 
             # The failure stops the chain: no daemon launch attempt.
-            refute File.read!(log) =~ "systemd-run"
+            refute File.read!(log) =~ "remote start"
 
             cleanup_connections()
           end
