@@ -407,4 +407,370 @@ if [ -e "$TMP/shim/loginctl.calls" ]; then
 fi
 ok "no fallback/foreground path ever invoked loginctl"
 
+# ── remote daemons (`genesis remote …`) ─────────────────────────────────────
+# Same stub-release technique. Per-scope supervisor shims make the user arm, the
+# root (system-scope) arm and every running/stopped state provable without a
+# real service manager: `systemctl is-active` follows an `active` marker that
+# the `systemd-run` stub sets from the launched unit's --setenv contract, and
+# `systemctl show -p Environment --value` reports that same contract back, so
+# `remote status` can be checked against what was actually launched.
+
+RUSER="$TMP/remote-user"
+RROOT="$TMP/remote-root"
+RSTATE="$TMP/remote-state"
+RLOG="$TMP/remote-log"
+RDATA="$TMP/data-remote"
+RMOTE_NODE=genesis_remote_t1@127.0.0.1
+mkdir -p "$RUSER" "$RROOT" "$RSTATE" "$RLOG" "$RDATA" "$TMP/runtime"
+
+write_remote_shims() {
+  rdir=$1
+
+  cat >"$rdir/systemctl" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$RLOG/systemctl.log"
+if [ "\${1:-}" = "--user" ]; then shift; fi
+case "\${1:-}" in
+  is-active)
+    if [ -e "$RSTATE/active" ]; then exit 0; fi
+    exit 3
+    ;;
+  show)
+    if [ -e "$RSTATE/active" ]; then
+      printf 'EVOGIT_SERVER=1 RELEASE_NODE=%s RELEASE_COOKIE=stub GENESIS_REMOTE_DIST_PORT=%s\n' \
+        "\$(cat "$RSTATE/node" 2>/dev/null || printf 'live@127.0.0.1')" \
+        "\$(cat "$RSTATE/port" 2>/dev/null || printf '9000')"
+    fi
+    exit 0
+    ;;
+  stop)
+    rm -f "$RSTATE/active"
+    exit 0
+    ;;
+  show-environment) exit 0 ;;
+esac
+exit 0
+STUB
+
+  # Records the invocation and mirrors the launched contract into the marker
+  # files `systemctl is-active` / `show` answer from.
+  cat >"$rdir/systemd-run" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$RLOG/systemd-run.log"
+rnode=""
+rport=""
+for a in "\$@"; do
+  case \$a in
+    --setenv=RELEASE_NODE=*) rnode=\${a#--setenv=RELEASE_NODE=} ;;
+    --setenv=GENESIS_REMOTE_DIST_PORT=*) rport=\${a#--setenv=GENESIS_REMOTE_DIST_PORT=} ;;
+  esac
+done
+printf '%s\n' "\${rnode:-live@127.0.0.1}" >"$RSTATE/node"
+printf '%s\n' "\${rport:-9000}" >"$RSTATE/port"
+if [ ! -e "$RSTATE/no-activate" ]; then : >"$RSTATE/active"; fi
+exit 0
+STUB
+
+  cat >"$rdir/journalctl" <<STUB
+#!/bin/sh
+printf 'JOURNAL %s\n' "\$*"
+exit 0
+STUB
+
+  cat >"$rdir/uname" <<STUB
+#!/bin/sh
+printf 'Linux\n'
+STUB
+
+  cat >"$rdir/curl" <<STUB
+#!/bin/sh
+exit 0
+STUB
+
+  chmod +x "$rdir/systemctl" "$rdir/systemd-run" "$rdir/journalctl" \
+    "$rdir/uname" "$rdir/curl"
+}
+
+write_remote_shims "$RUSER"
+write_remote_shims "$RROOT"
+
+# A root login: `id -u` is 0, so the remote unit must use the system scope
+# (there is no user manager or session bus behind a root SSH login).
+cat >"$RROOT/id" <<'STUB'
+#!/bin/sh
+case ${1:-} in
+  -u) printf '0\n' ;;
+  -un) printf 'root\n' ;;
+  *) printf '0\n' ;;
+esac
+STUB
+chmod +x "$RROOT/id"
+
+# A host with neither systemd nor launchd and a non-root login (so the system
+# scope is not selected): every supervisor probe fails.
+RFB="$TMP/remote-fb"
+mkdir -p "$RFB"
+for tool in systemd-run systemctl launchctl; do
+  printf '#!/bin/sh\nexit 1\n' >"$RFB/$tool"
+done
+cat >"$RFB/uname" <<'STUB'
+#!/bin/sh
+printf 'Linux\n'
+STUB
+cat >"$RFB/id" <<'STUB'
+#!/bin/sh
+case ${1:-} in
+  -u) printf '1000\n' ;;
+  -un) printf 'someone\n' ;;
+  *) printf '1000\n' ;;
+esac
+STUB
+chmod +x "$RFB/systemd-run" "$RFB/systemctl" "$RFB/launchctl" "$RFB/uname" "$RFB/id"
+
+# reset_remote — clear the daemon marker files, invocation logs and data dir.
+reset_remote() {
+  rm -f "$RSTATE/active" "$RSTATE/no-activate" "$RSTATE/node" "$RSTATE/port"
+  : >"$RLOG/systemctl.log"
+  : >"$RLOG/systemd-run.log"
+  rm -rf "$RDATA"
+  mkdir -p "$RDATA"
+}
+
+export GENESIS_DATA_DIR="$RDATA"
+
+# (a) the family is discoverable from both help paths.
+expect_status 0 "help lists the remote family" "$GENESIS" help
+contains "$(cat "$TMP/out")" "remote" "help must list the remote family"
+expect_status 0 "remote help" "$GENESIS" remote help
+out=$(cat "$TMP/out")
+contains "$out" "remote start" "remote help must document remote start"
+contains "$out" "--node" "remote help must document --node"
+contains "$out" "--dist-port" "remote help must document --dist-port"
+ok "help and 'remote help' document the remote family"
+
+# (b) --node/--cookie are required (usage error, exit 2).
+expect_status 2 "remote start without --node" "$GENESIS" remote start --cookie cook123
+contains "$(cat "$TMP/out")" "--node is required" "a missing --node must be a usage error"
+expect_status 2 "remote start without --cookie" "$GENESIS" remote start --node "$RMOTE_NODE"
+contains "$(cat "$TMP/out")" "--cookie is required" "a missing --cookie must be a usage error"
+ok "remote start requires --node and --cookie (exit 2)"
+
+# (c) non-root: user scope, full six-variable environment contract.
+export PATH="$RUSER:$PATH"
+reset_remote
+expect_status 0 "remote start (user scope)" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --unit genesis-remote-t1 --wait 5
+out=$(cat "$TMP/out")
+[ "$out" = "Remote daemon running (node $RMOTE_NODE, dist port 9101)" ] ||
+  fail "remote start must print one running line, got: '$out'"
+runlog=$(cat "$RLOG/systemd-run.log")
+contains "$runlog" "--user" "a non-root remote unit must use the user scope"
+not_contains "$runlog" "--system" "a non-root remote unit must not use the system scope"
+contains "$runlog" "--unit=genesis-remote-t1" "the unit name must reach systemd-run"
+contains "$runlog" "$RELEASE/bin/genesis_server start" "the release launcher must be started"
+contains "$runlog" "--property=Restart=on-failure" "a crashed daemon must be restarted"
+for var in EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1 RELEASE_DISTRIBUTION=name \
+  "RELEASE_NODE=$RMOTE_NODE" RELEASE_COOKIE=cook123 GENESIS_REMOTE_DIST_PORT=9101; do
+  contains "$runlog" "--setenv=$var" "--setenv must carry $var"
+done
+contains "$runlog" "--setenv=HOME=" "--setenv must carry HOME (data-dir resolution)"
+contains "$runlog" "--setenv=GENESIS_DATA_DIR=$RDATA" "--setenv must carry an explicit GENESIS_DATA_DIR"
+ok "remote start exports the six contract vars (+HOME/GENESIS_DATA_DIR) in the user scope"
+
+grep -qx "GENESIS_NODE=$RMOTE_NODE" "$RDATA/remote/genesis-remote-t1.env" ||
+  fail "the persisted env file must hold GENESIS_NODE: $(cat "$RDATA/remote/genesis-remote-t1.env" 2>/dev/null)"
+grep -qx 'GENESIS_DIST_PORT=9101' "$RDATA/remote/genesis-remote-t1.env" ||
+  fail "the persisted env file must hold GENESIS_DIST_PORT: $(cat "$RDATA/remote/genesis-remote-t1.env" 2>/dev/null)"
+ok "remote start persists <unit>.env with GENESIS_NODE/GENESIS_DIST_PORT"
+
+# (d) already running → no restart, exit 0.
+reset_remote
+: >"$RSTATE/active"
+expect_status 0 "remote start while already running" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --unit genesis-remote-t1
+contains "$(cat "$TMP/out")" "already running" "a running daemon must be reported, not restarted"
+[ -s "$RLOG/systemd-run.log" ] &&
+  fail "an already-running daemon must not be restarted: $(cat "$RLOG/systemd-run.log")"
+ok "remote start is a no-op while the daemon is already running"
+
+# (e) --force stops first, then starts.
+reset_remote
+: >"$RSTATE/active"
+expect_status 0 "remote start --force" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --unit genesis-remote-t1 --wait 5 --force
+contains "$(cat "$TMP/out")" "Remote daemon running" "--force must end with a running daemon"
+grep -qx -- '--user stop genesis-remote-t1' "$RLOG/systemctl.log" ||
+  fail "--force must stop the running unit first: $(cat "$RLOG/systemctl.log")"
+[ -s "$RLOG/systemd-run.log" ] || fail "--force must start the unit again"
+ok "remote start --force stops then starts"
+
+# (f) status reads the LIVE unit environment, not a stale <unit>.env.
+reset_remote
+: >"$RSTATE/active"
+printf '%s\n' "$RMOTE_NODE" >"$RSTATE/node"
+printf '9101\n' >"$RSTATE/port"
+mkdir -p "$RDATA/remote"
+printf 'GENESIS_NODE=genesis_remote_stale@127.0.0.1\nGENESIS_DIST_PORT=9999\n' \
+  >"$RDATA/remote/genesis-remote-t1.env"
+expect_status 0 "remote status (running)" "$GENESIS" remote status --unit genesis-remote-t1
+out=$(cat "$TMP/out")
+[ "$out" = "running node=$RMOTE_NODE dist_port=9101" ] ||
+  fail "status must report the live node/dist port, got: '$out'"
+grep -qx -- '--user show genesis-remote-t1 -p Environment --value' "$RLOG/systemctl.log" ||
+  fail "status must read the live unit environment: $(cat "$RLOG/systemctl.log")"
+ok "status reports the live unit environment (a stale state file cannot rename a daemon)"
+
+# (g) stopped → `stopped`, exit 1.
+reset_remote
+expect_status 1 "remote status when stopped" "$GENESIS" remote status --unit genesis-remote-t1
+[ "$(cat "$TMP/out")" = "stopped" ] ||
+  fail "a stopped daemon must print exactly 'stopped', got: $(cat "$TMP/out")"
+ok "status prints 'stopped' and exits 1 when the daemon is down"
+
+# (h) stop is idempotent.
+reset_remote
+: >"$RSTATE/active"
+expect_status 0 "remote stop" "$GENESIS" remote stop --unit genesis-remote-t1
+contains "$(cat "$TMP/out")" "stopped" "stop must report the stopped unit"
+grep -qx -- '--user stop genesis-remote-t1' "$RLOG/systemctl.log" ||
+  fail "stop must call systemctl stop: $(cat "$RLOG/systemctl.log")"
+expect_status 0 "remote stop when already stopped" "$GENESIS" remote stop --unit genesis-remote-t1
+contains "$(cat "$TMP/out")" "not running" "a stopped unit must report 'not running'"
+ok "remote stop is idempotent (exit 0 both times)"
+
+# (i) root: system scope (no user manager, no session bus).
+reset_remote
+export PATH="$RROOT:$PATH"
+expect_status 0 "remote start (root, system scope)" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9102 \
+  --unit genesis-remote-root --wait 5
+runlog=$(cat "$RLOG/systemd-run.log")
+contains "$runlog" "--system" "a root login must launch the unit in the system scope"
+not_contains "$runlog" "--user" "a root login has no user manager"
+contains "$runlog" "--unit=genesis-remote-root" "the unit name must reach systemd-run"
+contains "$runlog" "--setenv=RELEASE_NODE=$RMOTE_NODE" "the contract env must reach the system unit"
+syslog=$(cat "$RLOG/systemctl.log")
+not_contains "$syslog" "--user" "root must query the system-scope manager"
+contains "$syslog" "reset-failed genesis-remote-root" "a stale failed unit must be reset first"
+expect_status 0 "remote status (root)" "$GENESIS" remote status --unit genesis-remote-root
+[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9102" ] ||
+  fail "root status must report the live unit, got: $(cat "$TMP/out")"
+ok "a root login runs and queries the remote unit in the system scope"
+
+# (j) logs read the journal in the unit's scope.
+expect_status 0 "remote logs (root)" "$GENESIS" remote logs --unit genesis-remote-root
+out=$(cat "$TMP/out")
+contains "$out" "JOURNAL" "logs must read the journal on the systemd backend"
+contains "$out" "-u genesis-remote-root" "logs must target the unit"
+not_contains "$out" "--user" "root reads the system journal"
+expect_status 2 "remote status with --follow" "$GENESIS" remote status --follow
+contains "$(cat "$TMP/out")" "only valid for 'genesis remote logs'" \
+  "--follow must be rejected outside logs"
+ok "logs tail the journal in the unit's scope and reject logs-only flags"
+
+# (k) a daemon that never comes up fails with the log tail.
+reset_remote
+: >"$RSTATE/no-activate"
+expect_status 1 "remote start --wait 1 that never comes up" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --unit genesis-remote-slow --wait 1
+out=$(cat "$TMP/out")
+contains "$out" "did not start within 1s" "an unavailable daemon must fail"
+contains "$out" "JOURNAL" "the failure must print the log tail"
+ok "a daemon that never comes up exits 1 and prints the log tail"
+
+# (l) fallback backend: detached pidfile + log file, no wait.
+reset_remote
+expect_status 0 "remote start (fallback backend, --wait 0)" \
+  env PATH="$RFB:$PATH" "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 \
+  --dist-port 9103 --unit genesis-remote-fb --wait 0
+contains "$(cat "$TMP/out")" "Remote daemon running (node $RMOTE_NODE, dist port 9103)" \
+  "--wait 0 must report success without polling"
+[ -f "$RDATA/remote/genesis-remote-fb.pid" ] ||
+  fail "the fallback backend must write <unit>.pid"
+[ -f "$RDATA/remote/genesis-remote-fb.log" ] ||
+  fail "the fallback backend must write <unit>.log"
+grep -qx "GENESIS_NODE=$RMOTE_NODE" "$RDATA/remote/genesis-remote-fb.env" ||
+  fail "the fallback backend must persist <unit>.env"
+ok "the fallback backend detaches with a pidfile, a log file and the state file"
+
+# (m) macOS/launchd: a per-unit plist with the same environment contract.
+RLD="$TMP/remote-launchd"
+rmkdir_home="$TMP/home"
+mkdir -p "$RLD" "$rmkdir_home"
+cat >"$RLD/launchctl" <<STUB
+#!/bin/sh
+printf '%s\n' "\$*" >>"$RLOG/launchctl.log"
+case "\${1:-}" in
+  print)
+    if [ -e "$RSTATE/launchd-loaded" ]; then exit 0; fi
+    exit 1
+    ;;
+  bootstrap)
+    : >"$RSTATE/launchd-loaded"
+    exit 0
+    ;;
+  bootout)
+    rm -f "$RSTATE/launchd-loaded"
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+cat >"$RLD/uname" <<'STUB'
+#!/bin/sh
+printf 'Darwin\n'
+STUB
+cat >"$RLD/id" <<'STUB'
+#!/bin/sh
+case ${1:-} in
+  -u) printf '1000\n' ;;
+  -un) printf 'someone\n' ;;
+  *) printf '1000\n' ;;
+esac
+STUB
+chmod +x "$RLD/launchctl" "$RLD/uname" "$RLD/id"
+
+reset_remote
+: >"$RLOG/launchctl.log"
+expect_status 0 "remote start (launchd)" \
+  env PATH="$RLD:$PATH" HOME="$rmkdir_home" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9104 \
+  --unit genesis-remote-mac --wait 5
+contains "$(cat "$TMP/out")" "Remote daemon running (node $RMOTE_NODE, dist port 9104)" \
+  "the launchd backend must report the running daemon"
+PLIST="$rmkdir_home/Library/LaunchAgents/com.genesis.remote.genesis-remote-mac.plist"
+[ -f "$PLIST" ] || fail "the launchd backend must write $PLIST"
+plist=$(cat "$PLIST")
+contains "$plist" "com.genesis.remote.genesis-remote-mac" "the label must carry the unit name"
+contains "$plist" "<string>$RELEASE/bin/genesis_server</string>" "ProgramArguments must launch the release"
+contains "$plist" "<key>RunAtLoad</key><true/>" "the plist must RunAtLoad"
+contains "$plist" "<key>KeepAlive</key><true/>" "the plist must KeepAlive"
+contains "$plist" "<key>RELEASE_NODE</key><string>$RMOTE_NODE</string>" \
+  "the plist must carry RELEASE_NODE"
+contains "$plist" "<key>GENESIS_REMOTE_DIST_PORT</key><string>9104</string>" \
+  "the plist must carry GENESIS_REMOTE_DIST_PORT"
+contains "$plist" "<key>EVOGIT_REMOTE_DAEMON</key><string>1</string>" \
+  "the plist must carry EVOGIT_REMOTE_DAEMON"
+contains "$plist" "<string>$RDATA/remote/genesis-remote-mac.log</string>" \
+  "StandardOutPath must be <data dir>/remote/<unit>.log"
+grep -q "^bootstrap gui/1000 " "$RLOG/launchctl.log" ||
+  fail "the plist must be bootstrapped into gui/<uid>: $(cat "$RLOG/launchctl.log")"
+expect_status 0 "remote status (launchd)" \
+  env PATH="$RLD:$PATH" HOME="$rmkdir_home" "$GENESIS" remote status --unit genesis-remote-mac
+[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9104" ] ||
+  fail "launchd status must fall back to the persisted env file, got: $(cat "$TMP/out")"
+expect_status 0 "remote stop (launchd)" \
+  env PATH="$RLD:$PATH" HOME="$rmkdir_home" "$GENESIS" remote stop --unit genesis-remote-mac
+contains "$(cat "$TMP/out")" "stopped" "a booted-out launchd unit must report stopped"
+ok "the launchd backend writes a per-unit plist with the full environment contract"
+
+# (n) usage errors.
+expect_status 2 "unknown remote command" "$GENESIS" remote bogus
+contains "$(cat "$TMP/out")" "unknown remote command" "an unknown subcommand must be reported"
+expect_status 1 "remote start with a bad --dist-port" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port nope
+ok "an unknown remote subcommand exits 2 and a bad --dist-port exits 1"
+
 printf '\nAll %d checks passed.\n' "$checks"
