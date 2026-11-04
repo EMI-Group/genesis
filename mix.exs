@@ -31,19 +31,13 @@ defmodule EvoGit.Umbrella.MixProject do
           # backend reliably detects desktop mode at runtime.
           config: [evo_dash: [desktop_release: true]]
         ],
-        genesis_remote: [
-          # Headless evo_git-only release for SSH remote development. It runs as
-          # a lightweight daemon on a remote server (no Phoenix/Tauri dashboard).
-          applications: [
-            evo_git: :permanent
-          ],
-          # Bake a compile-time flag into sys.config so the runtime can detect
-          # that it is running as a remote daemon.
-          config: [evo_git: [remote_release: true]]
-        ],
         genesis_server: [
-          # Headless server release: the full dashboard served over HTTP on a
-          # remote box, plus the `genesis` lifecycle CLI from rel/overlays.
+          # The ONLY headless distribution: the full dashboard served over HTTP
+          # on a remote box, plus the `genesis` lifecycle CLI from rel/overlays.
+          # The SAME release doubles as the SSH remote-dev daemon — launched
+          # with EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1 (no Phoenix endpoint)
+          # plus RELEASE_DISTRIBUTION/RELEASE_NODE/RELEASE_COOKIE and
+          # GENESIS_REMOTE_DIST_PORT.
           # Deliberately NO `wx` — headless hosts lack wxWidgets, and the
           # dashboard's directory picker falls back to manual path entry when
           # wx is unavailable.

@@ -32,6 +32,12 @@ server_mode =
     System.get_env("EVOGIT_SERVER") == "1" or
     System.get_env("RELEASE_NAME") == "genesis_server"
 
+# Remote-daemon mode: the SAME `genesis_server` release launched as the SSH
+# remote-dev daemon (EVOGIT_REMOTE_DAEMON=1). It runs no HTTP endpoint — the
+# local dashboard drives it entirely over Erlang distribution — so the endpoint
+# server toggle below must stay off for it.
+remote_daemon? = System.get_env("EVOGIT_REMOTE_DAEMON") == "1"
+
 # `PHX_SERVER` is PRESENCE-checked, matching Phoenix's generated runtime.exs
 # (`if System.get_env("PHX_SERVER") do`): any non-empty value enables the
 # endpoint server. It MUST be converted to a real boolean here — the raw value
@@ -40,7 +46,8 @@ server_mode =
 # PHX_SERVER=true).
 phx_server? = System.get_env("PHX_SERVER") not in [nil, ""]
 
-if phx_server? or Application.get_env(:evo_dash, :desktop_release, false) or server_mode do
+if phx_server? or Application.get_env(:evo_dash, :desktop_release, false) or
+     (server_mode and not remote_daemon?) do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
@@ -148,14 +155,7 @@ config :req_llm,
   stream_pool_strategy: {Finch.Pool.Strategy.RoundRobin, round_robin},
   stream_pool_timeout: 300_000
 
-# The genesis_remote release is a headless evo_git-only daemon for SSH remote
-# development. It has NO Phoenix/evo_dash, so SECRET_KEY_BASE and endpoint config
-# are not needed. Detection uses RELEASE_NAME env var (automatically set by the
-# release boot script) as the primary signal; the compile-time `remote_release`
-# config flag from mix.exs serves as a secondary fallback.
-if config_env() == :prod and
-     not (System.get_env("RELEASE_NAME") == "genesis_remote" or
-            Application.get_env(:evo_git, :remote_release, false)) do
+if config_env() == :prod do
   # Detect desktop mode from two independent signals so detection is robust:
   #   1. The compile-time `:desktop_release` flag baked into sys.config by the
   #      genesis_desktop release definition in mix.exs (loaded before

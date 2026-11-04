@@ -24,7 +24,7 @@ defmodule EvoDash.RuntimeConfigTest do
 
   import ExUnit.CaptureIO
 
-  @env_keys ~w(PHX_SERVER EVOGIT_DESKTOP EVOGIT_SERVER RELEASE_NAME HOME XDG_DATA_HOME APPDATA)
+  @env_keys ~w(PHX_SERVER EVOGIT_DESKTOP EVOGIT_SERVER EVOGIT_REMOTE_DAEMON RELEASE_NAME HOME XDG_DATA_HOME APPDATA)
 
   setup do
     original_env = Map.new(@env_keys, &{&1, System.get_env(&1)})
@@ -148,6 +148,27 @@ defmodule EvoDash.RuntimeConfigTest do
 
       # Server mode persists the key inside the (isolated) data dir, so cookies
       # survive restarts — and never outside it.
+      assert File.exists?(Path.join(data_dir, "secret_key_base"))
+    end
+
+    test "remote-daemon mode never enables the endpoint server but still persists its secret" do
+      # The SAME `genesis_server` release launched as the SSH remote-dev daemon:
+      # both server signals are present, yet the endpoint must stay down — the
+      # local dashboard drives the daemon entirely over Erlang distribution, so
+      # binding an HTTP port there would be a second, unused listener.
+      System.put_env("RELEASE_NAME", "genesis_server")
+      System.put_env("EVOGIT_SERVER", "1")
+      System.put_env("EVOGIT_REMOTE_DAEMON", "1")
+
+      data_dir = assert_data_dir_isolated!()
+
+      endpoint = read_prod_endpoint()
+
+      refute endpoint[:server] == true
+      # The daemon is still a server (not desktop) for secret-key purposes:
+      # each daemon persists its own key.
+      assert is_binary(endpoint[:secret_key_base])
+      assert endpoint[:secret_key_base] != ""
       assert File.exists?(Path.join(data_dir, "secret_key_base"))
     end
   end

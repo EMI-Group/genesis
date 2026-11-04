@@ -42,6 +42,8 @@ Commands:
   logs [-f]             Show recent logs (-f follows)
   url                   Print the dashboard URL
   version               Print the release version
+  remote <command>      Manage a headless remote-dev daemon
+                        (start|stop|status|logs; see `genesis remote help`)
   help, -h, --help      Show this help
 
 Options (serve/start/restart/status/url):
@@ -57,6 +59,9 @@ Environment:
   GENESIS_HOME          Release root (default: the parent of this script's dir)
   GENESIS_DATA_DIR      State and log directory override
   GENESIS_LINGER        Linger policy for start: ask|yes|no (default ask)
+
+Remote daemons (`genesis remote`): one unit/label/pidfile per `--unit`, with
+state and logs under <data dir>/remote/. See `genesis remote help`.
 EOF
 }
 
@@ -978,6 +983,665 @@ cmd_version() {
   printf 'genesis %s\n' "$_v"
 }
 
+# ── Remote daemons (SSH remote development) ──────────────────────────────────
+
+# `genesis remote` runs the SAME release as a headless remote-dev daemon for the
+# SSH remote workflow: no dashboard endpoint, but a named distribution node that
+# the local dashboard connects to through an SSH tunnel. Each target owns its own
+# systemd unit / launchd label / pidfile (`--unit`), so several remote targets can
+# share one host.
+
+REMOTE_DEFAULT_UNIT=genesis-remote
+REMOTE_DEFAULT_DIST_PORT=9000
+REMOTE_DEFAULT_WAIT=30
+
+REMOTE_NODE=""
+REMOTE_COOKIE=""
+REMOTE_DIST_PORT=$REMOTE_DEFAULT_DIST_PORT
+REMOTE_UNIT=$REMOTE_DEFAULT_UNIT
+REMOTE_WAIT=$REMOTE_DEFAULT_WAIT
+REMOTE_FORCE=0
+REMOTE_FOLLOW=0
+REMOTE_LINES=200
+
+remote_usage() {
+  cat <<'EOF'
+Usage: genesis remote <command> [options]
+
+Run the Genesis server release as a headless remote-dev daemon: no dashboard
+endpoint, just a named distribution node the local dashboard reaches over an
+SSH tunnel. Each `--unit` gets its own service, state and log.
+
+Commands:
+  remote start  --node NODE --cookie COOKIE [--dist-port 9000]
+                [--unit genesis-remote] [--wait 30] [--force]
+  remote stop   [--unit genesis-remote]
+  remote status [--unit genesis-remote]
+  remote logs   [--unit genesis-remote] [-f] [-n N]
+  remote help
+
+Options:
+  --node NODE          Distribution node name (required for start)
+  --cookie COOKIE      Erlang distribution cookie (required for start)
+  --dist-port N        Distribution listen port (default 9000)
+  --unit NAME          Unit/label name (default genesis-remote)
+  --wait N             Seconds to wait for the daemon (default 30, 0 = no wait)
+  --force              Restart a daemon that is already running
+  -f, --follow         Follow the log (logs only)
+  -n, --lines N        Log lines to show (default 200, logs only)
+
+Both `--flag value` and `--flag=value` are accepted.
+State, logs and pidfiles live under <data dir>/remote/<unit>.*.
+Exit codes: 0 = success (status: only while running), 1 = a start did not come
+up / status reports stopped, 2 = usage error.
+EOF
+}
+
+remote_usage_error() {
+  printf 'genesis: %s\n' "$*" >&2
+  printf 'Run "genesis remote help" for usage.\n' >&2
+  exit 2
+}
+
+remote_dir() { printf '%s/remote\n' "$(data_dir)"; }
+remote_env_file() { printf '%s/%s.env\n' "$(remote_dir)" "$REMOTE_UNIT"; }
+remote_log_file() { printf '%s/%s.log\n' "$(remote_dir)" "$REMOTE_UNIT"; }
+remote_pid_file() { printf '%s/%s.pid\n' "$(remote_dir)" "$REMOTE_UNIT"; }
+
+remote_launchd_label() { printf 'com.genesis.remote.%s\n' "$REMOTE_UNIT"; }
+
+remote_launchd_plist() {
+  printf '%s/Library/LaunchAgents/%s.plist\n' "${HOME:-/tmp}" "$(remote_launchd_label)"
+}
+
+# Read KEY from <unit>.env (empty when unset). Parsed, never sourced — a stray
+# line must never execute code.
+remote_state_get() {
+  _rsg_file=$(remote_env_file)
+  if [ -f "$_rsg_file" ]; then
+    sed -n "s/^$1=//p" "$_rsg_file" | tail -n 1
+  fi
+  return 0
+}
+
+remote_state_save() {
+  _rss_dir=$(remote_dir)
+  mkdir -p "$_rss_dir"
+  _rss_tmp="$_rss_dir/$REMOTE_UNIT.env.tmp.$$"
+  {
+    printf 'GENESIS_NODE=%s\n' "$REMOTE_NODE"
+    printf 'GENESIS_DIST_PORT=%s\n' "$REMOTE_DIST_PORT"
+  } >"$_rss_tmp"
+  mv -f "$_rss_tmp" "$_rss_dir/$REMOTE_UNIT.env"
+}
+
+# Emit the remote-daemon environment as KEY=VALUE lines (fixed order). The six
+# contract variables are what makes the release boot as a distributed remote
+# daemon; HOME (and an explicitly resolved GENESIS_DATA_DIR) keep the daemon's
+# data directory identical to the caller's, since a system-scope unit inherits
+# neither the caller's HOME nor its XDG variables.
+remote_env_lines() {
+  printf 'EVOGIT_SERVER=1\n'
+  printf 'EVOGIT_REMOTE_DAEMON=1\n'
+  printf 'RELEASE_DISTRIBUTION=name\n'
+  printf 'RELEASE_NODE=%s\n' "$REMOTE_NODE"
+  printf 'RELEASE_COOKIE=%s\n' "$REMOTE_COOKIE"
+  printf 'GENESIS_REMOTE_DIST_PORT=%s\n' "$REMOTE_DIST_PORT"
+  printf 'HOME=%s\n' "${HOME:-/tmp}"
+  if [ -n "${GENESIS_DATA_DIR:-}" ]; then
+    printf 'GENESIS_DATA_DIR=%s\n' "$(data_dir)"
+  fi
+}
+
+# systemd scope for the remote unit: `system` for root, `user` otherwise. A root
+# SSH login has no user manager and no session bus, so its unit MUST live in the
+# system scope — this is the load-bearing case for remote bootstrap.
+remote_systemd_scope() {
+  if [ "$(id -u 2>/dev/null || printf '1')" = 0 ]; then
+    printf 'system\n'
+  else
+    printf 'user\n'
+  fi
+}
+
+remote_systemd_usable() {
+  is_linux || return 1
+  command -v systemd-run >/dev/null 2>&1 || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+  # The system scope needs no user manager, so only the user scope probes one.
+  if [ "$(remote_systemd_scope)" = system ]; then return 0; fi
+  systemd_usable
+}
+
+remote_service_backend() {
+  if remote_systemd_usable; then
+    printf 'systemd\n'
+  elif launchd_usable; then
+    printf 'launchd\n'
+  else
+    printf 'fallback\n'
+  fi
+}
+
+# systemctl in the scope the remote unit lives in.
+remote_systemctl() {
+  if [ "$(remote_systemd_scope)" = system ]; then
+    systemctl "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+
+# journalctl in the scope the remote unit lives in.
+remote_journalctl() {
+  if [ "$(remote_systemd_scope)" = system ]; then
+    journalctl "$@"
+  else
+    journalctl --user "$@"
+  fi
+}
+
+remote_launchd_loaded() {
+  launchctl print "gui/$(id -u)/$(remote_launchd_label)" >/dev/null 2>&1
+}
+
+remote_pidfile_active() {
+  _rpa_pidfile=$(remote_pid_file)
+  if [ ! -f "$_rpa_pidfile" ]; then return 1; fi
+  _rpa_pid=$(sed -n '1p' "$_rpa_pidfile" | tr -d '[:space:]')
+  if [ -z "$_rpa_pid" ]; then return 1; fi
+  case $_rpa_pid in
+    *[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$_rpa_pid" 2>/dev/null
+}
+
+# 0 while the daemon is up, per the backend that owns it.
+remote_running() {
+  case $1 in
+    systemd) remote_systemctl is-active --quiet "$REMOTE_UNIT" >/dev/null 2>&1 ;;
+    launchd) remote_launchd_loaded ;;
+    *) remote_pidfile_active ;;
+  esac
+}
+
+# VALUE of KEY in the LIVE unit environment (empty when the backend exposes
+# none). systemd prints the environment as space-separated KEY=VALUE words,
+# which is adequate here: node names, cookies and ports carry no spaces.
+remote_live_env() {
+  _rle_key=$1
+  _rle_raw=$(remote_systemctl show "$REMOTE_UNIT" -p Environment --value 2>/dev/null || true)
+  printf '%s\n' "$_rle_raw" | tr ' ' '\n' | sed -n "s/^$_rle_key=//p" | tail -n 1
+}
+
+remote_start_systemd() {
+  # Same reasoning as the server unit: a previously failed transient unit can
+  # block re-use of the name even with --collect on older systemd versions.
+  remote_systemctl reset-failed "$REMOTE_UNIT" >/dev/null 2>&1 || true
+
+  # Accumulate --setenv=KEY=VALUE through the positional parameters (POSIX sh
+  # has no arrays); `$@` then carries the whole contract environment, so no
+  # value is ever re-split by the shell.
+  set --
+  while IFS= read -r _rss_pair; do
+    [ -n "$_rss_pair" ] || continue
+    set -- "$@" "--setenv=$_rss_pair"
+  done <<EOF
+$(remote_env_lines)
+EOF
+
+  if [ "$(remote_systemd_scope)" = system ]; then
+    _rss_scope=--system
+  else
+    _rss_scope=--user
+  fi
+
+  # --collect garbage-collects the transient unit on exit, so `stop` leaves
+  # nothing behind; Restart=on-failure keeps a crashed daemon alive.
+  if ! systemd-run "$_rss_scope" --collect --unit="$REMOTE_UNIT" \
+    --property=Restart=on-failure --property=RestartSec=5 \
+    "$@" "$LAUNCHER" start; then
+    die "systemd-run failed to start $REMOTE_UNIT"
+  fi
+  return 0
+}
+
+remote_write_launchd_plist() {
+  _rwl_plist=$(remote_launchd_plist)
+  mkdir -p "$(dirname "$_rwl_plist")"
+  _rwl_log=$(remote_log_file)
+  mkdir -p "$(dirname "$_rwl_log")"
+
+  # The same KEY=VALUE set systemd receives, as plist dict entries.
+  _rwl_env=""
+  while IFS= read -r _rwl_pair; do
+    [ -n "$_rwl_pair" ] || continue
+    _rwl_key=${_rwl_pair%%=*}
+    _rwl_val=${_rwl_pair#*=}
+    _rwl_env="$_rwl_env    <key>$(xml_escape "$_rwl_key")</key><string>$(xml_escape "$_rwl_val")</string>
+"
+  done <<EOF
+$(remote_env_lines)
+EOF
+
+  cat >"$_rwl_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(remote_launchd_label)</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_escape "$LAUNCHER")</string>
+    <string>start</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+$_rwl_env  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$(xml_escape "$_rwl_log")</string>
+  <key>StandardErrorPath</key><string>$(xml_escape "$_rwl_log")</string>
+</dict>
+</plist>
+EOF
+}
+
+remote_start_launchd() {
+  # bootstrap fails while the label is loaded; bootout first so `start` stays
+  # idempotent and picks up a refreshed node/cookie/dist port.
+  if remote_launchd_loaded; then
+    launchctl bootout "gui/$(id -u)/$(remote_launchd_label)" >/dev/null 2>&1 || true
+  fi
+
+  remote_write_launchd_plist
+
+  if ! launchctl bootstrap "gui/$(id -u)" "$(remote_launchd_plist)"; then
+    die "launchctl bootstrap failed for $(remote_launchd_label)"
+  fi
+  return 0
+}
+
+# Last-resort daemonization (no systemd, no launchd): detach with setsid/nohup
+# and track the pid so stop/status/logs still work.
+remote_start_fallback() {
+  _rsf_dir=$(remote_dir)
+  mkdir -p "$_rsf_dir"
+  _rsf_log="$_rsf_dir/$REMOTE_UNIT.log"
+  _rsf_pidfile="$_rsf_dir/$REMOTE_UNIT.pid"
+
+  while IFS= read -r _rsf_pair; do
+    [ -n "$_rsf_pair" ] || continue
+    export "$_rsf_pair"
+  done <<EOF
+$(remote_env_lines)
+EOF
+
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$LAUNCHER" start >>"$_rsf_log" 2>&1 </dev/null &
+  else
+    nohup "$LAUNCHER" start >>"$_rsf_log" 2>&1 </dev/null &
+  fi
+  printf '%s\n' "$!" >"$_rsf_pidfile"
+}
+
+do_remote_start() {
+  case $1 in
+    systemd) remote_start_systemd ;;
+    launchd) remote_start_launchd ;;
+    *) remote_start_fallback ;;
+  esac
+}
+
+do_remote_stop() {
+  case $1 in
+    systemd)
+      if ! remote_systemctl stop "$REMOTE_UNIT"; then
+        die "could not stop $REMOTE_UNIT"
+      fi
+      remote_systemctl reset-failed "$REMOTE_UNIT" >/dev/null 2>&1 || true
+      return 0
+      ;;
+    launchd)
+      launchctl bootout "gui/$(id -u)/$(remote_launchd_label)" >/dev/null 2>&1 || true
+      return 0
+      ;;
+    *)
+      _drs_pidfile=$(remote_pid_file)
+      _drs_pid=$(sed -n '1p' "$_drs_pidfile" 2>/dev/null | tr -d '[:space:]' || true)
+      if [ -n "$_drs_pid" ]; then
+        # TERM first: the VM shuts down cleanly and flushes its SQLite WAL.
+        kill -TERM "$_drs_pid" 2>/dev/null || true
+        _drs_i=0
+        while [ "$_drs_i" -lt 10 ]; do
+          kill -0 "$_drs_pid" 2>/dev/null || break
+          sleep 1
+          _drs_i=$((_drs_i + 1))
+        done
+      fi
+      rm -f "$_drs_pidfile"
+      return 0
+      ;;
+  esac
+}
+
+# Poll the backend's running state for up to $2 seconds. 0 = running.
+wait_remote_running() {
+  _wrr_backend=$1
+  _wrr_budget=$2
+  _wrr_n=0
+  while :; do
+    remote_running "$_wrr_backend" && return 0
+    [ "$_wrr_n" -lt "$_wrr_budget" ] || return 1
+    _wrr_n=$((_wrr_n + 1))
+    sleep 1
+  done
+}
+
+print_remote_logs_tail() {
+  _prl_lines=${1:-20}
+  if [ "$(remote_service_backend)" = systemd ] && command -v journalctl >/dev/null 2>&1; then
+    remote_journalctl -u "$REMOTE_UNIT" -n "$_prl_lines" 2>/dev/null || true
+    return 0
+  fi
+  _prl_log=$(remote_log_file)
+  if [ -f "$_prl_log" ]; then
+    tail -n "$_prl_lines" "$_prl_log" || true
+  else
+    printf 'No remote daemon log at %s yet.\n' "$_prl_log"
+  fi
+}
+
+# ── Remote flag parsing ──────────────────────────────────────────────────────
+
+# parse_remote_flags <mode> [options...] — `mode` is `start`, `service`
+# (stop/status) or `logs`, and gates which options are legal.
+parse_remote_flags() {
+  _prf_mode=$1
+  shift
+
+  REMOTE_NODE=""
+  REMOTE_COOKIE=""
+  REMOTE_DIST_PORT=$REMOTE_DEFAULT_DIST_PORT
+  REMOTE_UNIT=$REMOTE_DEFAULT_UNIT
+  REMOTE_WAIT=$REMOTE_DEFAULT_WAIT
+  REMOTE_FORCE=0
+  REMOTE_FOLLOW=0
+  REMOTE_LINES=200
+
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --node=*)
+        _prf_val=${1#--node=}
+        [ -n "$_prf_val" ] || remote_usage_error "--node requires a value"
+        REMOTE_NODE=$_prf_val
+        shift
+        ;;
+      --node)
+        [ $# -ge 2 ] || remote_usage_error "--node requires a value"
+        [ -n "$2" ] || remote_usage_error "--node requires a value"
+        REMOTE_NODE=$2
+        shift 2
+        ;;
+      --cookie=*)
+        _prf_val=${1#--cookie=}
+        [ -n "$_prf_val" ] || remote_usage_error "--cookie requires a value"
+        REMOTE_COOKIE=$_prf_val
+        shift
+        ;;
+      --cookie)
+        [ $# -ge 2 ] || remote_usage_error "--cookie requires a value"
+        [ -n "$2" ] || remote_usage_error "--cookie requires a value"
+        REMOTE_COOKIE=$2
+        shift 2
+        ;;
+      --dist-port=*)
+        _prf_val=${1#--dist-port=}
+        [ -n "$_prf_val" ] || remote_usage_error "--dist-port requires a value"
+        REMOTE_DIST_PORT=$_prf_val
+        shift
+        ;;
+      --dist-port)
+        [ $# -ge 2 ] || remote_usage_error "--dist-port requires a value"
+        [ -n "$2" ] || remote_usage_error "--dist-port requires a value"
+        REMOTE_DIST_PORT=$2
+        shift 2
+        ;;
+      --unit=*)
+        _prf_val=${1#--unit=}
+        [ -n "$_prf_val" ] || remote_usage_error "--unit requires a value"
+        REMOTE_UNIT=$_prf_val
+        shift
+        ;;
+      --unit)
+        [ $# -ge 2 ] || remote_usage_error "--unit requires a value"
+        [ -n "$2" ] || remote_usage_error "--unit requires a value"
+        REMOTE_UNIT=$2
+        shift 2
+        ;;
+      --wait=*)
+        _prf_val=${1#--wait=}
+        [ -n "$_prf_val" ] || remote_usage_error "--wait requires a value"
+        REMOTE_WAIT=$_prf_val
+        shift
+        ;;
+      --wait)
+        [ $# -ge 2 ] || remote_usage_error "--wait requires a value"
+        [ -n "$2" ] || remote_usage_error "--wait requires a value"
+        REMOTE_WAIT=$2
+        shift 2
+        ;;
+      --force)
+        REMOTE_FORCE=1
+        shift
+        ;;
+      -f | --follow)
+        REMOTE_FOLLOW=1
+        shift
+        ;;
+      -n | --lines)
+        [ $# -ge 2 ] || remote_usage_error "$1 requires a value"
+        REMOTE_LINES=$2
+        shift 2
+        ;;
+      --lines=*)
+        REMOTE_LINES=${1#--lines=}
+        shift
+        ;;
+      -h | --help)
+        remote_usage
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        remote_usage >&2
+        remote_usage_error "unknown option for 'genesis remote': $1"
+        ;;
+    esac
+  done
+
+  if [ "$_prf_mode" != start ]; then
+    if [ -n "$REMOTE_NODE" ] || [ -n "$REMOTE_COOKIE" ] ||
+      [ "$REMOTE_DIST_PORT" != "$REMOTE_DEFAULT_DIST_PORT" ] ||
+      [ "$REMOTE_WAIT" != "$REMOTE_DEFAULT_WAIT" ] || [ "$REMOTE_FORCE" = 1 ]; then
+      remote_usage_error "--node/--cookie/--dist-port/--wait/--force are only valid for 'genesis remote start'"
+    fi
+  fi
+  if [ "$_prf_mode" != logs ]; then
+    if [ "$REMOTE_FOLLOW" = 1 ] || [ "$REMOTE_LINES" != 200 ]; then
+      remote_usage_error "--follow/--lines are only valid for 'genesis remote logs'"
+    fi
+  fi
+
+  validate_port "$REMOTE_DIST_PORT"
+  case $REMOTE_UNIT in
+    *[!A-Za-z0-9._-]* | '')
+      remote_usage_error "invalid --unit: $REMOTE_UNIT"
+      ;;
+  esac
+  case $REMOTE_WAIT in
+    *[!0-9]*) die "invalid --wait: $REMOTE_WAIT" ;;
+  esac
+  case $REMOTE_LINES in
+    '' | *[!0-9]*) die "invalid --lines: $REMOTE_LINES" ;;
+  esac
+}
+
+# ── Remote commands ──────────────────────────────────────────────────────────
+
+cmd_remote_start() {
+  parse_remote_flags start "$@"
+
+  if [ -z "$REMOTE_NODE" ]; then
+    remote_usage_error "--node is required for 'genesis remote start'"
+  fi
+  if [ -z "$REMOTE_COOKIE" ]; then
+    remote_usage_error "--cookie is required for 'genesis remote start'"
+  fi
+
+  _backend=$(remote_service_backend)
+
+  if remote_running "$_backend"; then
+    if [ "$REMOTE_FORCE" != 1 ]; then
+      printf 'Remote daemon already running (unit %s, node %s).\n' "$REMOTE_UNIT" "$REMOTE_NODE"
+      return 0
+    fi
+    do_remote_stop "$_backend"
+    # Wait for the old daemon to disappear, so the reported state afterwards
+    # cannot belong to the outgoing process.
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+      remote_running "$_backend" || break
+      sleep 1
+      _i=$((_i + 1))
+    done
+  fi
+
+  remote_state_save
+  do_remote_start "$_backend"
+
+  if [ "$REMOTE_WAIT" -gt 0 ]; then
+    if ! wait_remote_running "$_backend" "$REMOTE_WAIT"; then
+      printf 'Remote daemon did not start within %ss (unit %s).\n' "$REMOTE_WAIT" "$REMOTE_UNIT" >&2
+      printf 'Recent logs:\n' >&2
+      print_remote_logs_tail 20 >&2
+      return 1
+    fi
+  fi
+
+  printf 'Remote daemon running (node %s, dist port %s)\n' "$REMOTE_NODE" "$REMOTE_DIST_PORT"
+  return 0
+}
+
+cmd_remote_stop() {
+  parse_remote_flags service "$@"
+
+  _backend=$(remote_service_backend)
+  if ! remote_running "$_backend"; then
+    # Idempotent: stopping a stopped daemon is not an error. A stale pidfile is
+    # cleaned up, and the persisted env file is kept for `status`/`logs`.
+    if [ "$_backend" = fallback ]; then rm -f "$(remote_pid_file)"; fi
+    printf 'Remote daemon is not running (unit %s).\n' "$REMOTE_UNIT"
+    return 0
+  fi
+
+  do_remote_stop "$_backend"
+  printf 'Remote daemon stopped (unit %s).\n' "$REMOTE_UNIT"
+  return 0
+}
+
+cmd_remote_status() {
+  parse_remote_flags service "$@"
+
+  _backend=$(remote_service_backend)
+
+  if ! remote_running "$_backend"; then
+    printf 'stopped\n'
+    return 1
+  fi
+
+  # Identity comes from the LIVE unit environment whenever the backend exposes
+  # one: a stale <unit>.env must never report a running daemon under a name it
+  # no longer has (the caller compares this node with the expected one).
+  _node=""
+  _dist_port=""
+  if [ "$_backend" = systemd ]; then
+    _node=$(remote_live_env RELEASE_NODE)
+    _dist_port=$(remote_live_env GENESIS_REMOTE_DIST_PORT)
+  fi
+  if [ -z "$_node" ]; then _node=$(remote_state_get GENESIS_NODE); fi
+  if [ -z "$_dist_port" ]; then _dist_port=$(remote_state_get GENESIS_DIST_PORT); fi
+  [ -n "$_node" ] || _node=unknown
+  [ -n "$_dist_port" ] || _dist_port=unknown
+
+  printf 'running node=%s dist_port=%s\n' "$_node" "$_dist_port"
+  return 0
+}
+
+cmd_remote_logs() {
+  parse_remote_flags logs "$@"
+
+  if [ "$(remote_service_backend)" = systemd ] && command -v journalctl >/dev/null 2>&1; then
+    if [ "$REMOTE_FOLLOW" = 1 ]; then
+      remote_journalctl -u "$REMOTE_UNIT" -n "$REMOTE_LINES" -f
+      return 0
+    fi
+    remote_journalctl -u "$REMOTE_UNIT" -n "$REMOTE_LINES"
+    return 0
+  fi
+
+  _crl_log=$(remote_log_file)
+  if [ ! -f "$_crl_log" ]; then
+    printf 'No remote daemon log at %s yet.\n' "$_crl_log"
+    return 0
+  fi
+  if [ "$REMOTE_FOLLOW" = 1 ]; then
+    exec tail -n "$REMOTE_LINES" -f "$_crl_log"
+  fi
+  tail -n "$REMOTE_LINES" "$_crl_log"
+}
+
+cmd_remote() {
+  _cr_cmd=${1:-}
+  if [ $# -gt 0 ]; then shift; fi
+
+  case $_cr_cmd in
+    start)
+      require_launcher
+      cmd_remote_start "$@"
+      ;;
+    stop)
+      require_launcher
+      cmd_remote_stop "$@"
+      ;;
+    status)
+      require_launcher
+      cmd_remote_status "$@"
+      ;;
+    logs)
+      require_launcher
+      cmd_remote_logs "$@"
+      ;;
+    help | -h | --help)
+      remote_usage
+      return 0
+      ;;
+    '')
+      remote_usage >&2
+      printf 'genesis: remote needs a command (start|stop|status|logs)\n' >&2
+      exit 2
+      ;;
+    *)
+      remote_usage >&2
+      printf 'genesis: unknown remote command: %s\n' "$_cr_cmd" >&2
+      exit 2
+      ;;
+  esac
+}
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 main() {
@@ -1022,6 +1686,9 @@ main() {
     url)
       require_launcher
       cmd_url "$@"
+      ;;
+    remote)
+      cmd_remote "$@"
       ;;
     version | --version)
       require_launcher

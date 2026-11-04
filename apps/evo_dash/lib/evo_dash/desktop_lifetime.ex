@@ -31,9 +31,11 @@ defmodule EvoDash.DesktopLifetime do
   The watcher is appended to the supervision tree only when BOTH
   `EVOGIT_DESKTOP=1` and `EVOGIT_LIFETIME_PORT` are set (see
   `EvoDash.Application.start/2`) — only the Tauri sidecar sets both, so
-  manually-launched releases and the `genesis_remote` daemon are unaffected.
-  It lives in the frontend app by design: desktop-only lifecycle code must
-  never ship in `genesis_remote`, the evo_git-only headless daemon. As
+  manually-launched releases and the headless `genesis_server` daemon are
+  unaffected.
+  It lives in the frontend app by design and is inert outside desktop mode:
+  the headless `genesis_server` release (dashboard server and SSH remote daemon
+  alike) never sets the gating env vars. As
   belt-and-suspenders, `init/1` also disables itself when
   `EVOGIT_LIFETIME_PORT` is missing, empty, or not a valid port number,
   making a direct start a safe no-op.

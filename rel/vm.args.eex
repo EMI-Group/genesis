@@ -7,23 +7,26 @@
 ## Tweak GC to run more often
 ##-env ERL_FULLSWEEP_AFTER 10
 
-<%= if @release.name == :genesis_remote do %>
-## Remote Daemon — EPMD-less distribution over pinned port (for SSH tunneling)
-## Uses a custom EPMD module (EvoGit.EpmdDist) that doesn't require an external
-## epmd process. The daemon listens on port 9000; SSH tunnels forward to it.
--start_epmd false
--epmd_module Elixir.EvoGit.EpmdDist
--dist_listen true
--kernel inet_dist_listen_min 9000 inet_dist_listen_max 9000
-<% else %>
-## Local Dashboard — EPMD-less distribution for SSH tunneling to remote nodes.
+## EPMD-less distribution, for every release.
 ## Uses a custom EPMD module (EvoGit.EpmdDist) that resolves remote node ports
-## from an ETS table populated at runtime by EvoGit.RemoteConnection when an
-## SSH tunnel is opened. Distribution is NOT started at boot — it is enabled
-## on-demand when a remote connection is initiated (via EvoGit.Distribution).
+## from a registry populated at runtime by EvoGit.RemoteConnection when an
+## SSH tunnel is opened. Local dashboard releases do NOT start distribution at
+## boot — it is enabled on-demand via EvoGit.Distribution.
 -start_epmd false
 -epmd_module Elixir.EvoGit.EpmdDist
 -dist_listen true
+
+<%= if @release.name == :genesis_server do %>
+## genesis_server deliberately sets NO inet_dist_listen_* range here.
+## As an SSH remote-dev daemon its listen port is PINNED AT LAUNCH by
+## GENESIS_REMOTE_DIST_PORT (rel/env.sh.eex → ELIXIR_ERL_OPTIONS), while a
+## plain dashboard server keeps OTP's ephemeral port. A range in this file
+## takes precedence over ELIXIR_ERL_OPTIONS (and a second -kernel flag cannot
+## override an earlier key), which would silently defeat the pin and break the
+## SSH tunnel forwarding to that port.
+<% else %>
+## Local Dashboard — fixed distribution port range for SSH tunneling to
+## remote nodes (distribution itself is enabled on demand, see above).
 -kernel inet_dist_listen_min 9100 inet_dist_listen_max 9200
 <% end %>
 

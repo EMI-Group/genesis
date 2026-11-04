@@ -3086,7 +3086,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
           "local_binary_path" => "",
           "platform" => "",
           "dist_port" => "9000",
-          "remote_path" => "/tmp/genesis_remote"
+          "remote_path" => "/tmp/genesis_server"
         },
         Map.new(overrides)
       )
