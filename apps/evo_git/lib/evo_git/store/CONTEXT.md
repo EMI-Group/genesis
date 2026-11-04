@@ -2,7 +2,7 @@
 
 ## Intent
 
-The task/project persistence layer of `:evo_git`, so the headless `genesis_remote` daemon carries full task history.
+The task/project persistence layer of `:evo_git`, so the headless `genesis_server` daemon carries full task history.
 `EvoGit.Store` (`../store.ex`) is a THIN GenServer facade over a pure-Operations Ecto layer; the on-disk bytes are owned exclusively by `EvoGit.Store.Codec` (the wire oracle).
 The public client API — names, arities, defaults, 30 s `@call_timeout`, return shapes — is a frozen contract extended ADD-ONLY; `lib/evo_git/task_registry.ex` and the `evo_dash` RPC surface call it untouched.
 
