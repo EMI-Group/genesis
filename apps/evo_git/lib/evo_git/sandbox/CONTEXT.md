@@ -39,7 +39,7 @@ Kill/timeout primitives:
 - bwrap: `kill_process_group/1` runs `kill -TERM -- -<pgid>` → 100 ms → `kill -KILL -- -<pgid>` → `kill -KILL <pid>`; the negative pgid is valid because `--new-session` makes bwrap the session leader.
 - Windows/none: `taskkill /PID <pid> /T /F`, pid from `Helpers.wait_for_os_pid/1`.
 - macOS: `Task.shutdown` only — the `sandbox-exec` child is never explicitly killed.
-- Other long-lived spawns: the SSH remote daemon (`systemd-run --user --unit=genesis-remote-<id> --setenv=RELEASE_NODE/RELEASE_COOKIE … <launcher> start`, preceded by `systemctl --user reset-failed`; macOS = launchd plist + `launchctl` — `remote_connection.ex`) and `Background`'s per-job units.
+- Other long-lived spawns: the SSH remote daemon (its systemd unit / launchd agent is created and removed by the `genesis_server` release's own `bin/genesis` CLI, so Elixir only shells out `<launcher> remote stop --unit genesis-remote-<id>` on a permitted re-bootstrap — `remote_connection.ex`) and `Background`'s per-job units.
 
 ## Behaviour Contract
 All four backends (`Linux`, `Bwrap`, `MacOS`, `None`) implement `@behaviour EvoGit.Sandbox.Behaviour`: `enabled?/0` (sandboxing available for this platform/mode), `ensure_initialized/0` (lazily initialize backend resources, e.g. the systemd slice; no-op when unneeded), `run/4` (synchronous → `{output, exit_code}`) and `run_with_partial/6` (timeout + partial output → `{:ok, output, exit_code}` | `{:timeout, partial_output}`).
