@@ -12,6 +12,12 @@
 # Stub systemd-run/systemctl/loginctl/curl binaries keep every real service
 # manager, loginctl and network call out of the run, and the stub curl makes the
 # /health poll return on the first try, so there is no 30s health wait.
+#
+# The `genesis remote …` section tests the single-instance contract (distribution
+# is a runtime toggle signalled to the ONE server instance): its stubs start a
+# real "instance" process that answers the CLI's control request, and every
+# supervisor call answers from marker files — no service manager, no launcher and
+# no network. Nothing else is left running when the run ends.
 set -euo pipefail
 
 REPO_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -59,7 +65,22 @@ sh -n "$CLI_SRC" || fail "sh -n failed for $CLI_SRC"
 ok "the CLI is executable and passes sh -n"
 
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
+
+# The remote section runs REAL "server instance" processes (the CLI signals
+# their pids), so the scratch-tree teardown must kill whatever they left behind
+# as well — a failed check mid-way must never leak a process.
+cleanup_fixtures() {
+  _cf_pids=""
+  for _cf_file in "${RSTATE:-$TMP}"/*.pid "${RDATA:-$TMP}"/server.pid "$TMP/instance-pids"; do
+    [ -f "$_cf_file" ] || continue
+    _cf_pids="$_cf_pids $(cat "$_cf_file" 2>/dev/null || true)"
+  done
+  for _cf_pid in $_cf_pids; do
+    kill -TERM "$_cf_pid" 2>/dev/null || true
+  done
+  return 0
+}
+trap 'cleanup_fixtures; rm -rf "$TMP"' EXIT
 
 RELEASE="$TMP/release"
 mkdir -p "$RELEASE/bin" "$TMP/shim" "$TMP/data" "$TMP/alias"
@@ -407,22 +428,108 @@ if [ -e "$TMP/shim/loginctl.calls" ]; then
 fi
 ok "no fallback/foreground path ever invoked loginctl"
 
-# ── remote daemons (`genesis remote …`) ─────────────────────────────────────
-# Same stub-release technique. Per-scope supervisor shims make the user arm, the
-# root (system-scope) arm and every running/stopped state provable without a
-# real service manager: `systemctl is-active` follows an `active` marker that
-# the `systemd-run` stub sets from the launched unit's --setenv contract, and
-# `systemctl show -p Environment --value` reports that same contract back, so
-# `remote status` can be checked against what was actually launched.
+# ── remote development (`genesis remote …`) ─────────────────────────────────
+# Distribution is a RUNTIME TOGGLE on the ONE server instance: the CLI writes
+# `<data dir>/remote/control.request`, SIGHUPs that instance's main pid and
+# polls `dist.env` for an answer carrying its own sequence number. No second
+# process, unit or pidfile is ever created.
+#
+# So the harness runs a real "instance" process (`instance.sh` below) and
+# shadows the supervisors, which makes every state provable without a real
+# service manager:
+#   systemd-run  starts the instance and marks the unit active
+#   systemctl    is-active / show -p MainPID / stop answer from marker files
+#   launchctl    print / bootstrap / bootout / list do the same on the launchd arm
+# `sleep` is stubbed to a few REAL milliseconds per step, so the CLI's 100 ms
+# poll budget (and the `--wait` floor) is still walked step by step, just in
+# well under a second instead of ten.
 
 RUSER="$TMP/remote-user"
 RROOT="$TMP/remote-root"
+RFB="$TMP/remote-fb"
+RLD="$TMP/remote-launchd"
 RSTATE="$TMP/remote-state"
 RLOG="$TMP/remote-log"
 RDATA="$TMP/data-remote"
+RELEASE_FB="$TMP/release-fb"
 RMOTE_NODE=genesis_remote_t1@127.0.0.1
-mkdir -p "$RUSER" "$RROOT" "$RSTATE" "$RLOG" "$RDATA" "$TMP/runtime"
+RMOTE_STALE_NODE=genesis_remote_stale@127.0.0.1
+mkdir -p "$RUSER" "$RROOT" "$RFB" "$RLD" "$RSTATE" "$RLOG" "$RDATA" \
+  "$RELEASE_FB/bin" "$TMP/home"
 
+# The harness itself must keep real time even after the stub dirs (which shadow
+# `sleep`) are put on PATH.
+REAL_SLEEP=$(command -v sleep)
+[ -n "$REAL_SLEEP" ] || fail "no sleep binary on PATH"
+: >"$TMP/instance-pids"
+
+# The ONE server instance. On SIGHUP it reads control.request and answers it in
+# dist.env exactly like EvoGit.DaemonControl does, so `remote start/stop/status`
+# can be checked against what the CLI actually sent:
+#   - `hup.count` counts every signal (proving the CLI signalled the instance)
+#   - `$RSTATE/mute-hup` makes it ignore the request (a silent daemon)
+#   - `$RSTATE/error` makes it answer RESULT=error with that file's message
+#   - `$RSTATE/quit` ends the loop
+# The harness ticks every ~5ms (the stub `sleep`), so a signal is noticed fast,
+# and the handler is armed before `instance.ready` appears — the stubs that
+# start the instance wait for that marker, so a SIGHUP can never race the arming.
+cat >"$RSTATE/instance.sh" <<'INSTANCE'
+#!/bin/sh
+RSTATE=$1
+RDATA=$2
+on_hup() {
+  printf 'hup\n' >>"$RSTATE/hup.count"
+  if [ -e "$RSTATE/mute-hup" ]; then return 0; fi
+  req=$RDATA/remote/control.request
+  [ -f "$req" ] || return 0
+  # Evidence for the assertions: the request's mode and its full body.
+  ls -l "$req" | awk '{print $1}' >"$RSTATE/request.mode"
+  cp "$req" "$RSTATE/request.body"
+  action=$(sed -n 's/^ACTION=//p' "$RSTATE/request.body" | tail -n 1)
+  node=$(sed -n 's/^NODE=//p' "$RSTATE/request.body" | tail -n 1)
+  port=$(sed -n 's/^DIST_PORT=//p' "$RSTATE/request.body" | tail -n 1)
+  seq=$(sed -n 's/^SEQ=//p' "$RSTATE/request.body" | tail -n 1)
+  enabled=0
+  if [ "$action" = enable ]; then enabled=1; fi
+  result=ok
+  message=""
+  if [ -e "$RSTATE/error" ]; then
+    result=error
+    message=$(cat "$RSTATE/error")
+  fi
+  mkdir -p "$RDATA/remote"
+  {
+    printf 'GENESIS_DIST_ENABLED=%s\n' "$enabled"
+    printf 'GENESIS_NODE=%s\n' "$node"
+    printf 'GENESIS_DIST_PORT=%s\n' "$port"
+    printf 'GENESIS_CONTROL_SEQ=%s\n' "$seq"
+    printf 'GENESIS_CONTROL_RESULT=%s\n' "$result"
+    if [ -n "$message" ]; then printf 'GENESIS_CONTROL_MESSAGE=%s\n' "$message"; fi
+  } >"$RDATA/remote/dist.env.tmp"
+  mv -f "$RDATA/remote/dist.env.tmp" "$RDATA/remote/dist.env"
+  rm -f "$req"
+}
+trap 'on_hup' HUP
+: >"$RSTATE/instance.ready"
+printf 'instance started (stub)\n'
+
+while [ ! -e "$RSTATE/quit" ]; do sleep 0.05; done
+exit 0
+INSTANCE
+chmod +x "$RSTATE/instance.sh"
+
+# write_sleep_stub <dir> — the CLI polls in 100 ms steps, so a no-op `sleep`
+# would make the budget vanish; a few real milliseconds keep the loop's shape
+# (same step count, same floor) while costing nothing.
+write_sleep_stub() {
+  cat >"$1/sleep" <<STUB
+#!/bin/sh
+exec $REAL_SLEEP 0.005
+STUB
+  chmod +x "$1/sleep"
+}
+
+# write_remote_shims <dir> — systemd/journalctl/curl/uname/sleep stubs.
 write_remote_shims() {
   rdir=$1
 
@@ -430,44 +537,82 @@ write_remote_shims() {
 #!/bin/sh
 printf '%s\n' "\$*" >>"$RLOG/systemctl.log"
 if [ "\${1:-}" = "--user" ]; then shift; fi
-case "\${1:-}" in
+cmd=\${1:-}
+if [ \$# -gt 0 ]; then shift; fi
+unit=""
+for a in "\$@"; do
+  case \$a in
+    --quiet | -q | -p | --value | MainPID) ;;
+    *) unit=\$a ;;
+  esac
+done
+case \$cmd in
+  show-environment) exit 0 ;;
   is-active)
-    if [ -e "$RSTATE/active" ]; then exit 0; fi
+    case \$unit in
+      genesis-server)
+        if [ -e "$RSTATE/active" ]; then exit 0; fi
+        ;;
+      *)
+        if [ -e "$RSTATE/legacy-active" ]; then exit 0; fi
+        ;;
+    esac
     exit 3
     ;;
   show)
-    if [ -e "$RSTATE/active" ]; then
-      printf 'EVOGIT_SERVER=1 RELEASE_NODE=%s RELEASE_COOKIE=stub GENESIS_REMOTE_DIST_PORT=%s\n' \
-        "\$(cat "$RSTATE/node" 2>/dev/null || printf 'live@127.0.0.1')" \
-        "\$(cat "$RSTATE/port" 2>/dev/null || printf '9000')"
+    # show genesis-server -p MainPID --value → the instance's main pid.
+    if [ "\$unit" = genesis-server ] && [ -e "$RSTATE/active" ] &&
+      [ -f "$RSTATE/instance.pid" ]; then
+      cat "$RSTATE/instance.pid"
     fi
     exit 0
     ;;
   stop)
-    rm -f "$RSTATE/active"
+    case \$unit in
+      genesis-server)
+        rm -f "$RSTATE/active"
+        if [ -f "$RSTATE/instance.pid" ]; then
+          kill -TERM "\$(cat "$RSTATE/instance.pid")" 2>/dev/null || true
+          rm -f "$RSTATE/instance.pid"
+        fi
+        ;;
+      *)
+        rm -f "$RSTATE/legacy-active"
+        if [ -f "$RSTATE/legacy.pid" ]; then
+          kill -TERM "\$(cat "$RSTATE/legacy.pid")" 2>/dev/null || true
+          rm -f "$RSTATE/legacy.pid"
+        fi
+        ;;
+    esac
     exit 0
     ;;
-  show-environment) exit 0 ;;
 esac
 exit 0
 STUB
 
-  # Records the invocation and mirrors the launched contract into the marker
-  # files `systemctl is-active` / `show` answer from.
+  # Records the invocation and starts the shared instance for the one unit the
+  # server may own; --collect/--property/--setenv are only ever recorded.
   cat >"$rdir/systemd-run" <<STUB
 #!/bin/sh
 printf '%s\n' "\$*" >>"$RLOG/systemd-run.log"
-rnode=""
-rport=""
+unit=""
 for a in "\$@"; do
   case \$a in
-    --setenv=RELEASE_NODE=*) rnode=\${a#--setenv=RELEASE_NODE=} ;;
-    --setenv=GENESIS_REMOTE_DIST_PORT=*) rport=\${a#--setenv=GENESIS_REMOTE_DIST_PORT=} ;;
+    --unit=*) unit=\${a#--unit=} ;;
   esac
 done
-printf '%s\n' "\${rnode:-live@127.0.0.1}" >"$RSTATE/node"
-printf '%s\n' "\${rport:-9000}" >"$RSTATE/port"
-if [ ! -e "$RSTATE/no-activate" ]; then : >"$RSTATE/active"; fi
+if [ "\$unit" = genesis-server ]; then
+  : >"$RSTATE/active"
+  "$RSTATE/instance.sh" "$RSTATE" "$RDATA" </dev/null >/dev/null 2>&1 &
+  printf '%s\n' "\$!" >"$RSTATE/instance.pid"
+  printf '%s\n' "\$!" >>"$TMP/instance-pids"
+  # Do not report the unit started before the instance can take a signal.
+  _sr_n=0
+  while [ ! -e "$RSTATE/instance.ready" ] && [ "\$_sr_n" -lt 200 ]; do
+    "$REAL_SLEEP" 0.005
+    _sr_n=\$((_sr_n + 1))
+  done
+fi
 exit 0
 STUB
 
@@ -477,25 +622,30 @@ printf 'JOURNAL %s\n' "\$*"
 exit 0
 STUB
 
-  cat >"$rdir/uname" <<STUB
+  cat >"$rdir/uname" <<'STUB'
 #!/bin/sh
 printf 'Linux\n'
 STUB
 
   cat >"$rdir/curl" <<STUB
 #!/bin/sh
+# A real /health probe takes time; this one takes just enough for the instance
+# to have armed its signal handler (the fallback arm cannot gate on ready).
+"$REAL_SLEEP" 0.05
 exit 0
 STUB
 
   chmod +x "$rdir/systemctl" "$rdir/systemd-run" "$rdir/journalctl" \
     "$rdir/uname" "$rdir/curl"
+  write_sleep_stub "$rdir"
 }
 
 write_remote_shims "$RUSER"
 write_remote_shims "$RROOT"
 
-# A root login: `id -u` is 0, so the remote unit must use the system scope
-# (there is no user manager or session bus behind a root SSH login).
+# A root login: `id -u` is 0, so the LEGACY daemon an old bootstrap launched
+# there is stopped in the SYSTEM scope (no user manager over SSH). The shared
+# instance itself is still a `--user` service.
 cat >"$RROOT/id" <<'STUB'
 #!/bin/sh
 case ${1:-} in
@@ -507,9 +657,8 @@ STUB
 chmod +x "$RROOT/id"
 
 # A host with neither systemd nor launchd and a non-root login (so the system
-# scope is not selected): every supervisor probe fails.
-RFB="$TMP/remote-fb"
-mkdir -p "$RFB"
+# scope is not selected): every supervisor probe fails. `setsid` is reduced to
+# an exec so the pidfile names the instance itself instead of a re-exec parent.
 for tool in systemd-run systemctl launchctl; do
   printf '#!/bin/sh\nexit 1\n' >"$RFB/$tool"
 done
@@ -525,195 +674,73 @@ case ${1:-} in
   *) printf '1000\n' ;;
 esac
 STUB
-chmod +x "$RFB/systemd-run" "$RFB/systemctl" "$RFB/launchctl" "$RFB/uname" "$RFB/id"
+cat >"$RFB/curl" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+cat >"$RFB/setsid" <<'STUB'
+#!/bin/sh
+exec "$@"
+STUB
+chmod +x "$RFB/systemd-run" "$RFB/systemctl" "$RFB/launchctl" "$RFB/uname" \
+  "$RFB/id" "$RFB/curl" "$RFB/setsid"
+write_sleep_stub "$RFB"
 
-# reset_remote — clear the daemon marker files, invocation logs and data dir.
-reset_remote() {
-  rm -f "$RSTATE/active" "$RSTATE/no-activate" "$RSTATE/node" "$RSTATE/port"
-  : >"$RLOG/systemctl.log"
-  : >"$RLOG/systemd-run.log"
-  rm -rf "$RDATA"
-  mkdir -p "$RDATA"
-}
+# A second, tiny release for the fallback arm: its launcher IS the instance, so
+# the pid recorded in <data dir>/server.pid stays alive.
+cp "$CLI_SRC" "$RELEASE_FB/bin/genesis"
+chmod +x "$RELEASE_FB/bin/genesis"
+cat >"$RELEASE_FB/bin/genesis_server" <<STUB
+#!/bin/sh
+case \${1:-} in
+  start) exec "$RSTATE/instance.sh" "$RSTATE" "$RDATA" ;;
+  *) printf 'STUB %s\n' "\$*" ;;
+esac
+STUB
+chmod +x "$RELEASE_FB/bin/genesis_server"
+GENESIS_FB="$RELEASE_FB/bin/genesis"
 
-export GENESIS_DATA_DIR="$RDATA"
-
-# (a) the family is discoverable from both help paths.
-expect_status 0 "help lists the remote family" "$GENESIS" help
-contains "$(cat "$TMP/out")" "remote" "help must list the remote family"
-expect_status 0 "remote help" "$GENESIS" remote help
-out=$(cat "$TMP/out")
-contains "$out" "remote start" "remote help must document remote start"
-contains "$out" "--node" "remote help must document --node"
-contains "$out" "--dist-port" "remote help must document --dist-port"
-ok "help and 'remote help' document the remote family"
-
-# (b) --node/--cookie are required (usage error, exit 2).
-expect_status 2 "remote start without --node" "$GENESIS" remote start --cookie cook123
-contains "$(cat "$TMP/out")" "--node is required" "a missing --node must be a usage error"
-expect_status 2 "remote start without --cookie" "$GENESIS" remote start --node "$RMOTE_NODE"
-contains "$(cat "$TMP/out")" "--cookie is required" "a missing --cookie must be a usage error"
-ok "remote start requires --node and --cookie (exit 2)"
-
-# (c) non-root: user scope, full six-variable environment contract.
-export PATH="$RUSER:$PATH"
-reset_remote
-expect_status 0 "remote start (user scope)" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
-  --unit genesis-remote-t1 --wait 5
-out=$(cat "$TMP/out")
-[ "$out" = "Remote daemon running (node $RMOTE_NODE, dist port 9101)" ] ||
-  fail "remote start must print one running line, got: '$out'"
-runlog=$(cat "$RLOG/systemd-run.log")
-contains "$runlog" "--user" "a non-root remote unit must use the user scope"
-not_contains "$runlog" "--system" "a non-root remote unit must not use the system scope"
-contains "$runlog" "--unit=genesis-remote-t1" "the unit name must reach systemd-run"
-contains "$runlog" "$RELEASE/bin/genesis_server start" "the release launcher must be started"
-contains "$runlog" "--property=Restart=on-failure" "a crashed daemon must be restarted"
-for var in EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1 RELEASE_DISTRIBUTION=name \
-  "RELEASE_NODE=$RMOTE_NODE" RELEASE_COOKIE=cook123 GENESIS_REMOTE_DIST_PORT=9101; do
-  contains "$runlog" "--setenv=$var" "--setenv must carry $var"
-done
-contains "$runlog" "--setenv=HOME=" "--setenv must carry HOME (data-dir resolution)"
-contains "$runlog" "--setenv=GENESIS_DATA_DIR=$RDATA" "--setenv must carry an explicit GENESIS_DATA_DIR"
-ok "remote start exports the six contract vars (+HOME/GENESIS_DATA_DIR) in the user scope"
-
-grep -qx "GENESIS_NODE=$RMOTE_NODE" "$RDATA/remote/genesis-remote-t1.env" ||
-  fail "the persisted env file must hold GENESIS_NODE: $(cat "$RDATA/remote/genesis-remote-t1.env" 2>/dev/null)"
-grep -qx 'GENESIS_DIST_PORT=9101' "$RDATA/remote/genesis-remote-t1.env" ||
-  fail "the persisted env file must hold GENESIS_DIST_PORT: $(cat "$RDATA/remote/genesis-remote-t1.env" 2>/dev/null)"
-ok "remote start persists <unit>.env with GENESIS_NODE/GENESIS_DIST_PORT"
-
-# (d) already running → no restart, exit 0.
-reset_remote
-: >"$RSTATE/active"
-expect_status 0 "remote start while already running" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --unit genesis-remote-t1
-contains "$(cat "$TMP/out")" "already running" "a running daemon must be reported, not restarted"
-[ -s "$RLOG/systemd-run.log" ] &&
-  fail "an already-running daemon must not be restarted: $(cat "$RLOG/systemd-run.log")"
-ok "remote start is a no-op while the daemon is already running"
-
-# (e) --force stops first, then starts.
-reset_remote
-: >"$RSTATE/active"
-expect_status 0 "remote start --force" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
-  --unit genesis-remote-t1 --wait 5 --force
-contains "$(cat "$TMP/out")" "Remote daemon running" "--force must end with a running daemon"
-grep -qx -- '--user stop genesis-remote-t1' "$RLOG/systemctl.log" ||
-  fail "--force must stop the running unit first: $(cat "$RLOG/systemctl.log")"
-[ -s "$RLOG/systemd-run.log" ] || fail "--force must start the unit again"
-ok "remote start --force stops then starts"
-
-# (f) status reads the LIVE unit environment, not a stale <unit>.env.
-reset_remote
-: >"$RSTATE/active"
-printf '%s\n' "$RMOTE_NODE" >"$RSTATE/node"
-printf '9101\n' >"$RSTATE/port"
-mkdir -p "$RDATA/remote"
-printf 'GENESIS_NODE=genesis_remote_stale@127.0.0.1\nGENESIS_DIST_PORT=9999\n' \
-  >"$RDATA/remote/genesis-remote-t1.env"
-expect_status 0 "remote status (running)" "$GENESIS" remote status --unit genesis-remote-t1
-out=$(cat "$TMP/out")
-[ "$out" = "running node=$RMOTE_NODE dist_port=9101" ] ||
-  fail "status must report the live node/dist port, got: '$out'"
-grep -qx -- '--user show genesis-remote-t1 -p Environment --value' "$RLOG/systemctl.log" ||
-  fail "status must read the live unit environment: $(cat "$RLOG/systemctl.log")"
-ok "status reports the live unit environment (a stale state file cannot rename a daemon)"
-
-# (g) stopped → `stopped`, exit 1.
-reset_remote
-expect_status 1 "remote status when stopped" "$GENESIS" remote status --unit genesis-remote-t1
-[ "$(cat "$TMP/out")" = "stopped" ] ||
-  fail "a stopped daemon must print exactly 'stopped', got: $(cat "$TMP/out")"
-ok "status prints 'stopped' and exits 1 when the daemon is down"
-
-# (h) stop is idempotent.
-reset_remote
-: >"$RSTATE/active"
-expect_status 0 "remote stop" "$GENESIS" remote stop --unit genesis-remote-t1
-contains "$(cat "$TMP/out")" "stopped" "stop must report the stopped unit"
-grep -qx -- '--user stop genesis-remote-t1' "$RLOG/systemctl.log" ||
-  fail "stop must call systemctl stop: $(cat "$RLOG/systemctl.log")"
-expect_status 0 "remote stop when already stopped" "$GENESIS" remote stop --unit genesis-remote-t1
-contains "$(cat "$TMP/out")" "not running" "a stopped unit must report 'not running'"
-ok "remote stop is idempotent (exit 0 both times)"
-
-# (i) root: system scope (no user manager, no session bus).
-reset_remote
-export PATH="$RROOT:$PATH"
-expect_status 0 "remote start (root, system scope)" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9102 \
-  --unit genesis-remote-root --wait 5
-runlog=$(cat "$RLOG/systemd-run.log")
-contains "$runlog" "--system" "a root login must launch the unit in the system scope"
-not_contains "$runlog" "--user" "a root login has no user manager"
-contains "$runlog" "--unit=genesis-remote-root" "the unit name must reach systemd-run"
-contains "$runlog" "--setenv=RELEASE_NODE=$RMOTE_NODE" "the contract env must reach the system unit"
-syslog=$(cat "$RLOG/systemctl.log")
-not_contains "$syslog" "--user" "root must query the system-scope manager"
-contains "$syslog" "reset-failed genesis-remote-root" "a stale failed unit must be reset first"
-expect_status 0 "remote status (root)" "$GENESIS" remote status --unit genesis-remote-root
-[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9102" ] ||
-  fail "root status must report the live unit, got: $(cat "$TMP/out")"
-ok "a root login runs and queries the remote unit in the system scope"
-
-# (j) logs read the journal in the unit's scope.
-expect_status 0 "remote logs (root)" "$GENESIS" remote logs --unit genesis-remote-root
-out=$(cat "$TMP/out")
-contains "$out" "JOURNAL" "logs must read the journal on the systemd backend"
-contains "$out" "-u genesis-remote-root" "logs must target the unit"
-not_contains "$out" "--user" "root reads the system journal"
-expect_status 2 "remote status with --follow" "$GENESIS" remote status --follow
-contains "$(cat "$TMP/out")" "only valid for 'genesis remote logs'" \
-  "--follow must be rejected outside logs"
-ok "logs tail the journal in the unit's scope and reject logs-only flags"
-
-# (k) a daemon that never comes up fails with the log tail.
-reset_remote
-: >"$RSTATE/no-activate"
-expect_status 1 "remote start --wait 1 that never comes up" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --unit genesis-remote-slow --wait 1
-out=$(cat "$TMP/out")
-contains "$out" "did not start within 1s" "an unavailable daemon must fail"
-contains "$out" "JOURNAL" "the failure must print the log tail"
-ok "a daemon that never comes up exits 1 and prints the log tail"
-
-# (l) fallback backend: detached pidfile + log file, no wait.
-reset_remote
-expect_status 0 "remote start (fallback backend, --wait 0)" \
-  env PATH="$RFB:$PATH" "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 \
-  --dist-port 9103 --unit genesis-remote-fb --wait 0
-contains "$(cat "$TMP/out")" "Remote daemon running (node $RMOTE_NODE, dist port 9103)" \
-  "--wait 0 must report success without polling"
-[ -f "$RDATA/remote/genesis-remote-fb.pid" ] ||
-  fail "the fallback backend must write <unit>.pid"
-[ -f "$RDATA/remote/genesis-remote-fb.log" ] ||
-  fail "the fallback backend must write <unit>.log"
-grep -qx "GENESIS_NODE=$RMOTE_NODE" "$RDATA/remote/genesis-remote-fb.env" ||
-  fail "the fallback backend must persist <unit>.env"
-ok "the fallback backend detaches with a pidfile, a log file and the state file"
-
-# (m) macOS/launchd: a per-unit plist with the same environment contract.
-RLD="$TMP/remote-launchd"
-rmkdir_home="$TMP/home"
-mkdir -p "$RLD" "$rmkdir_home"
+# macOS/launchd: `print` distinguishes the legacy per-target label from the one
+# server label, `bootstrap` starts the instance and `list` reports its pid.
 cat >"$RLD/launchctl" <<STUB
 #!/bin/sh
 printf '%s\n' "\$*" >>"$RLOG/launchctl.log"
 case "\${1:-}" in
   print)
-    if [ -e "$RSTATE/launchd-loaded" ]; then exit 0; fi
+    case "\${2:-}" in
+      *com.genesis.remote.*) exit 1 ;;
+      *com.genesis.server)
+        if [ -e "$RSTATE/launchd-loaded" ]; then exit 0; fi
+        ;;
+    esac
     exit 1
     ;;
   bootstrap)
     : >"$RSTATE/launchd-loaded"
+    "$RSTATE/instance.sh" "$RSTATE" "$RDATA" </dev/null >/dev/null 2>&1 &
+    printf '%s\n' "\$!" >"$RSTATE/launchd.pid"
+    printf '%s\n' "\$!" >>"$TMP/instance-pids"
+    _lc_n=0
+    while [ ! -e "$RSTATE/instance.ready" ] && [ "\$_lc_n" -lt 200 ]; do
+      "$REAL_SLEEP" 0.005
+      _lc_n=\$((_lc_n + 1))
+    done
     exit 0
     ;;
   bootout)
     rm -f "$RSTATE/launchd-loaded"
+    if [ -f "$RSTATE/launchd.pid" ]; then
+      kill -TERM "\$(cat "$RSTATE/launchd.pid")" 2>/dev/null || true
+      rm -f "$RSTATE/launchd.pid"
+    fi
     exit 0
+    ;;
+  list)
+    if [ -e "$RSTATE/launchd-loaded" ] && [ -f "$RSTATE/launchd.pid" ]; then
+      printf '"PID" = %s;\n' "\$(cat "$RSTATE/launchd.pid")"
+      exit 0
+    fi
+    exit 1
     ;;
 esac
 exit 0
@@ -730,47 +757,366 @@ case ${1:-} in
   *) printf '1000\n' ;;
 esac
 STUB
-chmod +x "$RLD/launchctl" "$RLD/uname" "$RLD/id"
+cat >"$RLD/curl" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod +x "$RLD/launchctl" "$RLD/uname" "$RLD/id" "$RLD/curl"
+write_sleep_stub "$RLD"
 
+# The PATH the arms shadow: everything the earlier sections added, so each arm
+# only has to prepend its own stub dir.
+REMOTE_BASE_PATH=$PATH
+export GENESIS_DATA_DIR="$RDATA"
+export GENESIS_LINGER=no
+
+# count_lines <file> — line count (0 when the file is absent), without the
+# padding `wc` adds on some hosts. Used for the instance's SIGHUP tally and the
+# supervisor invocation logs.
+count_lines() {
+  if [ -f "$1" ]; then wc -l <"$1" 2>/dev/null | tr -d ' '; else printf '0'; fi
+}
+
+# kill_instances <pidfile>... — TERM the pids those files name and wait (briefly,
+# real time) until they are gone, so an instance from the previous group cannot
+# answer the next group's signal.
+kill_instances() {
+  _ki_pids=""
+  for _ki_f in "$@"; do
+    if [ -f "$_ki_f" ]; then _ki_pids="$_ki_pids $(cat "$_ki_f")"; fi
+  done
+  if [ -z "$_ki_pids" ]; then return 0; fi
+  for _ki_pid in $_ki_pids; do
+    kill -TERM "$_ki_pid" 2>/dev/null || true
+  done
+  _ki_n=0
+  while [ "$_ki_n" -lt 30 ]; do
+    _ki_alive=0
+    for _ki_pid in $_ki_pids; do
+      if kill -0 "$_ki_pid" 2>/dev/null; then _ki_alive=1; fi
+    done
+    if [ "$_ki_alive" -eq 0 ]; then return 0; fi
+    "$REAL_SLEEP" 0.005
+    _ki_n=$((_ki_n + 1))
+  done
+  return 0
+}
+
+# reset_remote — stop every instance an arm started, then clear the control
+# state, the markers and the data dir.
+reset_remote() {
+  : >"$RSTATE/quit"
+  kill_instances "$RSTATE/instance.pid" "$RSTATE/legacy.pid" \
+    "$RSTATE/launchd.pid" "$RDATA/server.pid"
+  rm -f "$RSTATE/active" "$RSTATE/legacy-active" "$RSTATE/launchd-loaded" \
+    "$RSTATE/mute-hup" "$RSTATE/error" "$RSTATE/quit" "$RSTATE/hup.count" \
+    "$RSTATE/instance.ready" "$RSTATE/request.mode" "$RSTATE/request.body"
+  : >"$RLOG/systemctl.log"
+  : >"$RLOG/systemd-run.log"
+  : >"$RLOG/launchctl.log"
+  rm -rf "$RDATA"
+  mkdir -p "$RDATA"
+}
+
+# The remote arms export their own PATH and GENESIS_DATA_DIR stays $RDATA; the
+# per-arm state below is only ever read through the stub dirs prepended to PATH.
+export PATH="$RUSER:$REMOTE_BASE_PATH"
+
+# (a) the family is discoverable from both help paths, and the help states the
+# single-instance model.
+expect_status 0 "help lists the remote family" "$GENESIS" help
+contains "$(cat "$TMP/out")" "remote" "help must list the remote family"
+expect_status 0 "remote help" "$GENESIS" remote help
+out=$(cat "$TMP/out")
+contains "$out" "remote start" "remote help must document remote start"
+contains "$out" "--node" "remote help must document --node"
+contains "$out" "--dist-port" "remote help must document --dist-port"
+contains "$out" "RUNTIME TOGGLE" "remote help must state that distribution is a runtime toggle"
+contains "$out" "single instance" "remote help must document the one shared instance"
+ok "help and 'remote help' document the single-instance remote family"
+
+# (b) --node/--cookie are required (usage error, exit 2).
+expect_status 2 "remote start without --node" "$GENESIS" remote start --cookie cook123
+contains "$(cat "$TMP/out")" "--node is required" "a missing --node must be a usage error"
+expect_status 2 "remote start without --cookie" "$GENESIS" remote start --node "$RMOTE_NODE"
+contains "$(cat "$TMP/out")" "--cookie is required" "a missing --cookie must be a usage error"
+ok "remote start requires --node and --cookie (exit 2)"
+
+# (c) a cold host: the instance is brought up first (`genesis start` semantics),
+# then distribution is enabled on it at runtime.
 reset_remote
-: >"$RLOG/launchctl.log"
+expect_status 0 "remote start (user scope)" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 --wait 5
+out=$(cat "$TMP/out")
+contains "$out" "Genesis server starting (systemd backend)." \
+  "a cold host must start the shared instance first"
+contains "$out" "Dashboard: http://127.0.0.1:9999" "the instance start must print the dashboard URL"
+contains "$out" "Genesis server is healthy: http://127.0.0.1:9999" \
+  "the instance must be healthy before distribution is enabled"
+[ "$(tail -n 1 "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9101" ] ||
+  fail "the canonical running line must be the LAST line, got: $(cat "$TMP/out")"
+runlog=$(cat "$RLOG/systemd-run.log")
+contains "$runlog" "--user" "a non-root host must start the instance in the user scope"
+not_contains "$runlog" "--system" "a non-root host must not use the system scope"
+contains "$runlog" "--unit=genesis-server" "the ONE server unit must be started"
+not_contains "$runlog" "--unit=genesis-remote" "no per-target daemon unit may ever be created"
+not_contains "$runlog" "RELEASE_NODE" "distribution must not be baked into the instance launch"
+contains "$runlog" "--setenv=GENESIS_DATA_DIR=$RDATA" "the instance must share this CLI's data dir"
+contains "$runlog" "--setenv=PHX_IP=127.0.0.1" "the instance must receive the bind address"
+contains "$runlog" "--property=Restart=on-failure" "a crashed instance must be restarted"
+contains "$runlog" "$RELEASE/bin/genesis_server start" "the release launcher must be started"
+grep -qx -- '--user reset-failed genesis-server' "$RLOG/systemctl.log" ||
+  fail "a stale failed unit must be reset first: $(cat "$RLOG/systemctl.log")"
+ok "a cold host starts the ONE instance, then reports the canonical running line"
+
+# (d) the request the instance saw: 0600, complete, and atomically placed.
+[ "$(cat "$RSTATE/request.mode")" = "-rw-------" ] ||
+  fail "the control request must be 0600, got '$(cat "$RSTATE/request.mode")'"
+body=$(cat "$RSTATE/request.body")
+contains "$body" "ACTION=enable" "the request must enable distribution"
+grep -qx "NODE=$RMOTE_NODE" "$RSTATE/request.body" ||
+  fail "the request must carry NODE: $body"
+grep -qx 'COOKIE=cook123' "$RSTATE/request.body" ||
+  fail "the request must carry the cookie: $body"
+grep -qx 'DIST_PORT=9101' "$RSTATE/request.body" ||
+  fail "the request must carry DIST_PORT: $body"
+grep -q '^SEQ=[0-9][0-9]*$' "$RSTATE/request.body" ||
+  fail "the request must carry a sequence number: $body"
+if ls -d "$RDATA"/remote/.control.request.tmp.* >/dev/null 2>&1; then
+  fail "a temp request file was left behind: $(ls -d "$RDATA"/remote/.control.request.tmp.*)"
+fi
+ok "the control request is 0600, complete, sequenced and leaves no temp file"
+
+# (e) already enabled for this node → idempotent: no signal, no new instance.
+runs_before=$(count_lines "$RLOG/systemd-run.log")
+hups_before=$(count_lines "$RSTATE/hup.count")
+expect_status 0 "remote start while distribution is already enabled" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101
+[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9101" ] ||
+  fail "an enabled node must print the canonical line, got: $(cat "$TMP/out")"
+[ "$(count_lines "$RLOG/systemd-run.log")" -eq "$runs_before" ] ||
+  fail "an already-running instance must not be started again: $(cat "$RLOG/systemd-run.log")"
+[ "$(count_lines "$RSTATE/hup.count")" -eq "$hups_before" ] ||
+  fail "an already-enabled node must not be signalled again"
+ok "an already-enabled node is reported without a signal or a second instance"
+
+# (f) --force re-enables on the SAME instance.
+runs_before=$(count_lines "$RLOG/systemd-run.log")
+hups_before=$(count_lines "$RSTATE/hup.count")
+pid_before=$(cat "$RSTATE/instance.pid")
+expect_status 0 "remote start --force" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --wait 5 --force
+[ "$(tail -n 1 "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9101" ] ||
+  fail "--force must end with the canonical line, got: $(cat "$TMP/out")"
+[ "$(count_lines "$RSTATE/hup.count")" -gt "$hups_before" ] ||
+  fail "--force must signal the instance again"
+[ "$(cat "$RSTATE/instance.pid")" = "$pid_before" ] ||
+  fail "--force must keep the same instance, got $(cat "$RSTATE/instance.pid") (was $pid_before)"
+[ "$(count_lines "$RLOG/systemd-run.log")" -eq "$runs_before" ] ||
+  fail "--force must not start a second instance: $(cat "$RLOG/systemd-run.log")"
+ok "remote start --force re-enables distribution on the same instance"
+
+# (g) status reports the daemon's published state — never a stale legacy file.
+mkdir -p "$RDATA/remote"
+printf 'GENESIS_NODE=%s\nGENESIS_DIST_PORT=9999\n' "$RMOTE_STALE_NODE" \
+  >"$RDATA/remote/genesis-remote-t1.env"
+expect_status 0 "remote status (running)" "$GENESIS" remote status --unit genesis-remote-t1
+[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9101" ] ||
+  fail "status must report dist.env, not a stale legacy <unit>.env, got: $(cat "$TMP/out")"
+cp "$RSTATE/instance.pid" "$RSTATE/instance.pid.off"
+rm -f "$RSTATE/instance.pid"
+expect_status 1 "remote status when the instance is down" "$GENESIS" remote status
+[ "$(cat "$TMP/out")" = "stopped" ] ||
+  fail "a down instance must print exactly 'stopped', got: $(cat "$TMP/out")"
+mv "$RSTATE/instance.pid.off" "$RSTATE/instance.pid"
+printf 'GENESIS_DIST_ENABLED=0\nGENESIS_NODE=%s\nGENESIS_DIST_PORT=9101\n' "$RMOTE_NODE" \
+  >"$RDATA/remote/dist.env"
+expect_status 1 "remote status while distribution is disabled" "$GENESIS" remote status
+[ "$(cat "$TMP/out")" = "stopped" ] ||
+  fail "a disabled daemon must print exactly 'stopped', got: $(cat "$TMP/out")"
+ok "status reports dist.env only (legacy state cannot rename the daemon)"
+
+# (h) stop detaches distribution but keeps the HTTP instance running.
+expect_status 0 "remote stop" "$GENESIS" remote stop --unit genesis-remote-t1
+[ "$(cat "$TMP/out")" = "Remote daemon stopped (unit genesis-remote-t1)." ] ||
+  fail "stop must print the stopped unit, got: $(cat "$TMP/out")"
+grep -qx 'ACTION=disable' "$RSTATE/request.body" ||
+  fail "stop must send ACTION=disable: $(cat "$RSTATE/request.body")"
+if grep -q '^COOKIE=' "$RSTATE/request.body"; then
+  fail "a disable request must not carry the cookie: $(cat "$RSTATE/request.body")"
+fi
+grep -qx 'GENESIS_DIST_ENABLED=0' "$RDATA/remote/dist.env" ||
+  fail "the daemon must report distribution disabled: $(cat "$RDATA/remote/dist.env")"
+systemctl --user is-active --quiet genesis-server ||
+  fail "remote stop must leave the server instance active"
+kill -0 "$(cat "$RSTATE/instance.pid")" 2>/dev/null ||
+  fail "remote stop must leave the server instance alive"
+rm -f "$RSTATE/instance.pid"
+expect_status 0 "remote stop when the instance is down" "$GENESIS" remote stop
+[ "$(cat "$TMP/out")" = "Remote daemon is not running (unit genesis-remote)." ] ||
+  fail "a down instance must report 'not running', got: $(cat "$TMP/out")"
+ok "remote stop detaches distribution, keeps the instance running and is idempotent"
+
+# (i) the SEQ handshake: a stale dist.env answer is never mistaken for this
+# call's, and --wait is floored at 10s.
+reset_remote
+expect_status 0 "setup: bring the instance up" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 --wait 5
+printf 'GENESIS_DIST_ENABLED=1\nGENESIS_NODE=%s\nGENESIS_DIST_PORT=9101\nGENESIS_CONTROL_SEQ=999999\nGENESIS_CONTROL_RESULT=ok\n' \
+  "$RMOTE_STALE_NODE" >"$RDATA/remote/dist.env"
+: >"$RSTATE/mute-hup"
+hups_before=$(count_lines "$RSTATE/hup.count")
+expect_status 1 "remote start --wait 1 (the instance never answers)" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 --wait 1
+out=$(cat "$TMP/out")
+contains "$out" "did not answer within 10s." "--wait must be floored at 10s"
+contains "$out" "Recent logs:" "a timeout must print the instance log tail"
+not_contains "$out" "running node=" "a stale dist.env answer must not count as success"
+[ "$(count_lines "$RSTATE/hup.count")" -gt "$hups_before" ] ||
+  fail "the CLI must signal the instance it is waiting on"
+rm -f "$RSTATE/mute-hup"
+ok "a stale dist.env answer is rejected and --wait is floored at 10s"
+
+# (j) a daemon-side failure is surfaced verbatim.
+printf 'the distribution listener is already bound\n' >"$RSTATE/error"
+expect_status 1 "remote start with a daemon-side error" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --wait 5 --force
+out=$(cat "$TMP/out")
+contains "$out" "the distribution listener is already bound" \
+  "the daemon's message must reach the caller"
+not_contains "$out" "running node=" "a failed enable must not print the running line"
+rm -f "$RSTATE/error"
+ok "a daemon error is reported verbatim and exits 1"
+
+# (k) a legacy per-target daemon is stopped — in the scope it was launched in —
+# and only the shared instance is ever started.
+reset_remote
+: >"$RSTATE/legacy-active"
+"$REAL_SLEEP" 300 </dev/null >/dev/null 2>&1 &
+printf '%s\n' "$!" >"$RSTATE/legacy.pid"
+printf '%s\n' "$!" >>"$TMP/instance-pids"
+expect_status 0 "remote start with a legacy daemon running" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --wait 5 --unit genesis-remote-t1
+out=$(cat "$TMP/out")
+printf '%s\n' "$out" | grep -qx 'Stopped the legacy remote daemon (unit genesis-remote-t1); distribution now runs on the shared server instance.' ||
+  fail "the legacy daemon must be reported as stopped: $out"
+syslog=$(cat "$RLOG/systemctl.log")
+contains "$syslog" "stop genesis-remote-t1" "the legacy unit must be stopped"
+contains "$syslog" "reset-failed genesis-remote-t1" "the legacy unit must be reset"
+[ ! -e "$RSTATE/legacy-active" ] || fail "the legacy unit marker must be gone"
+[ "$(grep -o -- '--unit=[^ ]*' "$RLOG/systemd-run.log" | sort -u)" = "--unit=genesis-server" ] ||
+  fail "only the shared instance may be started: $(cat "$RLOG/systemd-run.log")"
+
+# The same cleanup on a root login talks to the SYSTEM scope (an old SSH
+# bootstrap launched its daemon there); the instance itself stays a user unit.
+export PATH="$RROOT:$REMOTE_BASE_PATH"
+reset_remote
+: >"$RSTATE/legacy-active"
+expect_status 0 "remote start with a legacy daemon (root login)" \
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9101 \
+  --wait 5 --unit genesis-remote-t1
+syslog=$(cat "$RLOG/systemctl.log")
+grep -qx 'stop genesis-remote-t1' "$RLOG/systemctl.log" ||
+  fail "a root login must stop the legacy unit in the system scope: $syslog"
+not_contains "$syslog" "--user stop genesis-remote-t1" "a root login has no user manager"
+contains "$(cat "$RLOG/systemd-run.log")" "--user --unit=genesis-server" \
+  "the shared instance itself is still a user service"
+export PATH="$RUSER:$REMOTE_BASE_PATH"
+ok "a legacy per-target daemon is stopped in its own scope, instance only"
+
+# (l) logs are the INSTANCE's logs, and the per-mode flags are gated.
+expect_status 0 "remote logs" "$GENESIS" remote logs
+contains "$(cat "$TMP/out")" "JOURNAL --user -u genesis-server -n 200" \
+  "remote logs must tail the instance journal"
+expect_status 0 "remote logs -n 5" "$GENESIS" remote logs -n 5
+contains "$(cat "$TMP/out")" "--user -u genesis-server -n 5" "-n must reach journalctl"
+expect_status 0 "remote logs -f" "$GENESIS" remote logs -f
+contains "$(cat "$TMP/out")" "--user -u genesis-server -n 200 -f" "-f must be forwarded"
+expect_status 2 "remote status -f" "$GENESIS" remote status -f
+contains "$(cat "$TMP/out")" "--follow/--lines are only valid for 'genesis remote logs'" \
+  "-f must be rejected outside logs"
+expect_status 2 "remote status --force" "$GENESIS" remote status --force
+contains "$(cat "$TMP/out")" \
+  "--node/--cookie/--dist-port/--wait/--force are only valid for 'genesis remote start'" \
+  "--force must be rejected outside start"
+ok "remote logs tail the instance journal; logs-only/start-only flags are gated"
+
+# (m) fallback backend: the pidfile IS the instance, and status follows it.
+export PATH="$RFB:$REMOTE_BASE_PATH"
+reset_remote
+expect_status 0 "remote start (fallback backend)" \
+  "$GENESIS_FB" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9103 --wait 5
+out=$(cat "$TMP/out")
+contains "$out" "Genesis server starting (fallback backend)." \
+  "an unusable supervisor must select the fallback backend"
+[ "$(tail -n 1 "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9103" ] ||
+  fail "the fallback backend must reach the canonical line, got: $(cat "$TMP/out")"
+[ -f "$RDATA/server.pid" ] || fail "the fallback backend must write <data>/server.pid"
+grep -q 'instance started (stub)' "$RDATA/server.log" ||
+  fail "the fallback backend must write <data>/server.log: $(cat "$RDATA/server.log" 2>/dev/null)"
+kill -0 "$(cat "$RDATA/server.pid")" 2>/dev/null ||
+  fail "the pidfile must name a live instance"
+[ ! -s "$RLOG/systemd-run.log" ] ||
+  fail "the fallback backend must never call systemd-run: $(cat "$RLOG/systemd-run.log")"
+expect_status 0 "remote status (fallback, running)" "$GENESIS_FB" remote status
+[ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9103" ] ||
+  fail "fallback status must follow the pidfile, got: $(cat "$TMP/out")"
+# A pidfile naming a process that is gone is not a running instance.
+kill_instances "$RDATA/server.pid"
+rm -f "$RDATA/server.pid"
+sh -c 'exit 0' &
+dead_pid=$!
+wait "$dead_pid" || true
+printf '%s\n' "$dead_pid" >"$RDATA/server.pid"
+expect_status 1 "remote status (fallback, dead pid)" "$GENESIS_FB" remote status
+[ "$(cat "$TMP/out")" = "stopped" ] ||
+  fail "a dead pidfile must print 'stopped', got: $(cat "$TMP/out")"
+ok "the fallback backend uses server.pid/server.log and status follows the pidfile"
+
+# (n) launchd backend: one plist for the ONE instance, pid via `launchctl list`.
+export PATH="$RLD:$REMOTE_BASE_PATH"
+SAVED_HOME=$HOME
+reset_remote
+export HOME="$TMP/home"
 expect_status 0 "remote start (launchd)" \
-  env PATH="$RLD:$PATH" HOME="$rmkdir_home" \
-  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9104 \
-  --unit genesis-remote-mac --wait 5
-contains "$(cat "$TMP/out")" "Remote daemon running (node $RMOTE_NODE, dist port 9104)" \
-  "the launchd backend must report the running daemon"
-PLIST="$rmkdir_home/Library/LaunchAgents/com.genesis.remote.genesis-remote-mac.plist"
+  "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port 9104 --wait 5
+[ "$(tail -n 1 "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9104" ] ||
+  fail "the launchd backend must reach the canonical line, got: $(cat "$TMP/out")"
+PLIST="$TMP/home/Library/LaunchAgents/com.genesis.server.plist"
 [ -f "$PLIST" ] || fail "the launchd backend must write $PLIST"
 plist=$(cat "$PLIST")
-contains "$plist" "com.genesis.remote.genesis-remote-mac" "the label must carry the unit name"
-contains "$plist" "<string>$RELEASE/bin/genesis_server</string>" "ProgramArguments must launch the release"
+contains "$plist" "<string>com.genesis.server</string>" "the plist must carry the server label"
+not_contains "$plist" "com.genesis.remote" "no per-target launchd label may be written"
+contains "$plist" "<string>$RELEASE/bin/genesis_server</string>" \
+  "ProgramArguments must launch the release"
+contains "$plist" "<key>GENESIS_DATA_DIR</key><string>$RDATA</string>" \
+  "the instance must share this CLI's data dir"
 contains "$plist" "<key>RunAtLoad</key><true/>" "the plist must RunAtLoad"
-contains "$plist" "<key>KeepAlive</key><true/>" "the plist must KeepAlive"
-contains "$plist" "<key>RELEASE_NODE</key><string>$RMOTE_NODE</string>" \
-  "the plist must carry RELEASE_NODE"
-contains "$plist" "<key>GENESIS_REMOTE_DIST_PORT</key><string>9104</string>" \
-  "the plist must carry GENESIS_REMOTE_DIST_PORT"
-contains "$plist" "<key>EVOGIT_REMOTE_DAEMON</key><string>1</string>" \
-  "the plist must carry EVOGIT_REMOTE_DAEMON"
-contains "$plist" "<string>$RDATA/remote/genesis-remote-mac.log</string>" \
-  "StandardOutPath must be <data dir>/remote/<unit>.log"
-grep -q "^bootstrap gui/1000 " "$RLOG/launchctl.log" ||
+grep -q '^bootstrap gui/1000 ' "$RLOG/launchctl.log" ||
   fail "the plist must be bootstrapped into gui/<uid>: $(cat "$RLOG/launchctl.log")"
-expect_status 0 "remote status (launchd)" \
-  env PATH="$RLD:$PATH" HOME="$rmkdir_home" "$GENESIS" remote status --unit genesis-remote-mac
+expect_status 0 "remote status (launchd)" "$GENESIS" remote status
 [ "$(cat "$TMP/out")" = "running node=$RMOTE_NODE dist_port=9104" ] ||
-  fail "launchd status must fall back to the persisted env file, got: $(cat "$TMP/out")"
-expect_status 0 "remote stop (launchd)" \
-  env PATH="$RLD:$PATH" HOME="$rmkdir_home" "$GENESIS" remote stop --unit genesis-remote-mac
-contains "$(cat "$TMP/out")" "stopped" "a booted-out launchd unit must report stopped"
-ok "the launchd backend writes a per-unit plist with the full environment contract"
+  fail "launchd status must resolve the pid through launchctl list, got: $(cat "$TMP/out")"
+grep -q '^list com.genesis.server$' "$RLOG/launchctl.log" ||
+  fail "status must ask launchctl for the instance pid: $(cat "$RLOG/launchctl.log")"
+expect_status 0 "remote stop (launchd)" "$GENESIS" remote stop
+[ "$(cat "$TMP/out")" = "Remote daemon stopped (unit genesis-remote)." ] ||
+  fail "launchd stop must print the stopped unit, got: $(cat "$TMP/out")"
+[ -e "$RSTATE/launchd-loaded" ] ||
+  fail "remote stop must leave the instance loaded (only distribution is detached)"
+export HOME="$SAVED_HOME"
+ok "the launchd backend bootstraps the one instance plist and stops via control"
 
-# (n) usage errors.
+# (o) usage errors.
+export PATH="$RUSER:$REMOTE_BASE_PATH"
 expect_status 2 "unknown remote command" "$GENESIS" remote bogus
 contains "$(cat "$TMP/out")" "unknown remote command" "an unknown subcommand must be reported"
 expect_status 1 "remote start with a bad --dist-port" \
   "$GENESIS" remote start --node "$RMOTE_NODE" --cookie cook123 --dist-port nope
+contains "$(cat "$TMP/out")" "invalid port: nope" "a non-numeric --dist-port must be rejected"
 ok "an unknown remote subcommand exits 2 and a bad --dist-port exits 1"
 
 printf '\nAll %d checks passed.\n' "$checks"
