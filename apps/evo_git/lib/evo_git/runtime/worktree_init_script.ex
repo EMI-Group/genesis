@@ -21,9 +21,16 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       `--preserve=timestamps` keeps source mtimes so build caches stay valid).
     - **macOS** — uses BSD `cp -cRp` (`-c` = `clonefile`, APFS copy-on-write;
       `-p` preserves mode/ownership/timestamps).
-      Both carry an extra step: after copying `_build`, protocol-consolidation
-      output is invalidated so Mix rebuilds it against the copied dep set.
     - **Windows** — uses PowerShell `Copy-Item -Recurse -Force`.
+
+  ## Build Cache Invalidation
+
+  The `:elixir` variants additionally delete the copied protocol-consolidation
+  output (`_build/*/consolidated`, `_build/*/lib/*/consolidated`) in the new
+  worktree after copying `_build`: the preserved mtimes make Mix reuse the
+  source checkout's consolidated beams, which omit protocol impls added by
+  newer dependency revisions. Reconsolidating on the next compile costs a few
+  seconds.
 
   ## Environment Variables
 
