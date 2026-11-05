@@ -9,7 +9,9 @@ Release configuration for the Mix releases defined in `../mix.exs`: `genesis` (f
 Every release is built from the top-level EEx templates (`vm.args.eex`, `remote.vm.args.eex`, `env.sh.eex`, `env.bat.eex`); release-specific behavior comes from EEx conditionals on `@release.name`.
 `./overlays/` is the only overlay directory an actual release applies: `genesis_server` declares `overlays: ["rel/overlays"]` in `../mix.exs`, so `rel/overlays/bin/genesis` lands in `<release>/bin/genesis` (Mix's file copy preserves the exec bit).
 The per-release directory `./genesis/` is NOT applied by Mix — it is a documentation copy of the intended per-release configuration.
-A remote daemon is the SAME `genesis_server` release launched with `EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1` (remote-daemon mode: no Phoenix endpoint) plus `RELEASE_DISTRIBUTION=name`, `RELEASE_NODE=genesis_remote_<target_id>@127.0.0.1`, `RELEASE_COOKIE=<cookie>` and `GENESIS_REMOTE_DIST_PORT=<port>` (default 9000).
+SSH remote development drives ONE shared `genesis_server` instance per host and never a second process: the existing `genesis-server` unit (HTTP dashboard always on) is the only thing `genesis remote start` may launch, and Erlang distribution is toggled on it at RUNTIME.
+The toggle is owned by `EvoGit.DaemonControl` inside that BEAM: the CLI writes `<data_dir>/remote/control.request`, sends `SIGHUP` to the instance's main pid, and accepts only an answer from `<data_dir>/remote/dist.env` whose `GENESIS_CONTROL_SEQ` matches the seq it just sent.
+`<data_dir>/remote/desired.env` (daemon-written, 0600) is the durable intent a restarted instance re-adopts at boot, so `dist.env` stays truthful across restarts.
 
 ## Routing Table
 
