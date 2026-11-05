@@ -1764,10 +1764,17 @@ defmodule EvoGit.RemoteConnection do
   # when bootstrap is called with on_running: :refuse while distribution is
   # already enabled on the host's Genesis server instance. The caller
   # (dashboard) shows a permission dialog from this tuple.
+  #
+  # Wording note: the unit string is an IDENTITY (the node name / `--unit`
+  # argument), not a process — re-bootstrapping DETACHES that distribution
+  # identity and re-enables it under this connection's node name. Nothing is
+  # killed: the host's single Genesis server instance keeps serving HTTP and its
+  # tasks keep running.
   defp daemon_running_details(target) do
-    "the remote daemon #{daemon_unit(target)} is already running; " <>
-      "re-bootstrapping would stop it and any tasks running on it — " <>
-      "call bootstrap with on_running: :restart to proceed"
+    "the remote host already has Erlang distribution enabled for " <>
+      "#{daemon_unit(target)}; re-bootstrapping would disconnect that node and " <>
+      "re-enable distribution with this connection's identity — the server and " <>
+      "its tasks keep running (pass on_running: :restart to proceed)"
   end
 
   # Plain-string details for {:daemon_identity_mismatch, details}: what
@@ -1776,6 +1783,11 @@ defmodule EvoGit.RemoteConnection do
   # NEVER auto-detached — the instance may be serving another local node's
   # session — so the message names the one command the user (or a later
   # bootstrap with permission) must run.
+  #
+  # `remote stop` only DISABLES Erlang distribution for that identity: the
+  # host's single Genesis server instance keeps serving HTTP and its tasks keep
+  # running. Stopping the instance itself is `genesis stop`, which this message
+  # mentions only so the two actions are not confused.
   defp daemon_identity_mismatch_details(
          launcher_path,
          unit,
@@ -1790,10 +1802,13 @@ defmodule EvoGit.RemoteConnection do
         {node, port} -> "node=#{node} dist_port=#{port}"
       end
 
-    "the running remote daemon #{unit} reports #{reported}, but the current " <>
-      "contract requires node #{expected_node}. The daemon was launched by an " <>
-      "older bootstrap or started manually; stop it with " <>
-      "`\"#{launcher_path}\" remote stop --unit #{unit}` and re-run bootstrap."
+    "the remote Genesis server instance reports #{reported} for #{unit}, but " <>
+      "the current contract requires node #{expected_node}. That distribution " <>
+      "identity was established by an older bootstrap or enabled manually; " <>
+      "detach it with `\"#{launcher_path}\" remote stop --unit #{unit}` (this " <>
+      "only disables Erlang distribution — the server and its tasks keep " <>
+      "running) and re-run bootstrap. Use `genesis stop` on the remote host only " <>
+      "if you actually want to stop the server instance."
   end
 
   # Detaches distribution through the release CLI:
@@ -2578,13 +2593,16 @@ defmodule EvoGit.RemoteConnection do
     Could not connect to remote Erlang node #{node_name}.
       Tunnel:       127.0.0.1:#{local_port} -> 127.0.0.1:#{remote_port}
       Local cookie: #{cookie_status}
-    The daemon's node identity is whatever its unit was started with. A mismatch
-    means the daemon was launched for another target — compare with:
+    The remote Genesis server instance has Erlang distribution enabled under
+    whatever node name its unit was started with. A mismatch means it was
+    launched for another target (or by an older bootstrap) — compare with:
       #{status_hint}
       #{logs_hint}
-    Then stop it (`#{stop_hint}`) and re-run bootstrap.
-    The daemon's dist port is fixed when its unit was started, so a target whose
-    dist_port changed must be re-bootstrapped (with permission) to move the daemon.
+    Then detach that distribution identity (`#{stop_hint}` — this only disables
+    Erlang distribution; the server and its tasks keep running) and re-run
+    bootstrap. Stopping the instance itself is `genesis stop` on the remote host.
+    The distribution port is pinned when the unit is started, so a target whose
+    dist_port changed must be re-bootstrapped (with permission) to move it.
     """
   end
 end
