@@ -56,7 +56,10 @@ Port: `PORT` env → config.toml `[:server, :listen_port]` (schema default 9999)
 `secret_key_base`: `SECRET_KEY_BASE` env wins; otherwise a key is persisted at `<EvoGit.Platform.data_dir()>/secret_key_base` — read when present, else 48 random bytes Base64-encoded, written non-raising (`File.write(path, secret, [:binary])`) followed by `File.chmod(path, 0o600)`, with the data dir created first.
 The persisted key is stable across restarts (cookies/sessions keep working); any read/write/mkdir/resolve failure warns via `IO.warn` and falls back to the generated in-memory key so boot never aborts on permissions.
 Logging: server mode keeps console (stdout/stderr) logging — journald captures it; it deliberately does NOT enter the desktop `backend.log` file-handler branch (`desktop_mode` stays false).
-Remote-daemon mode is a separate flag, not a separate release: see "Remote-Daemon Mode" below.
+
+**Exactly ONE server instance per host.** `server_mode` unconditionally sets `config :evo_dash, EvoDashWeb.Endpoint, server: true` — the `genesis_server` release is BOTH the headless dashboard server AND the SSH remote-dev target, and it always serves HTTP (loopback by default).
+Erlang distribution is toggled at RUNTIME on that same process by `<launcher> remote start|stop` through `EvoGit.DaemonControl` (a `control.request` file under `<data_dir>/remote/` plus a SIGHUP; the daemon publishes `dist.env`/`desired.env`); no second, endpoint-less process or service unit is ever launched.
+`GENESIS_REMOTE_DIST_PORT` (pinned into `ELIXIR_ERL_OPTIONS` by `rel/env.sh.eex`, never read here) only sets the listen port of a node that boots already distributed — it does not change whether HTTP is served.
 
 **How it differs from desktop mode**
 
