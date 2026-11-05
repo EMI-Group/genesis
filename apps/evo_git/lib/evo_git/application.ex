@@ -143,6 +143,20 @@ defmodule EvoGit.Application do
       {EvoGit.SystemSampler, []}
     ]
 
+    # Runtime distribution control plane (SIGHUP + <data_dir>/remote files).
+    # This is what the release CLI drives, so ONE genesis_server instance per
+    # host can keep serving HTTP and toggle Erlang distribution at runtime,
+    # instead of booting a second, distribution-only daemon unit. Skipped in the
+    # test env: it would install a PROCESS-WIDE SIGHUP handler and act on the
+    # developer's real <data_dir>/remote/ state; tests drive it directly with an
+    # isolated dir + fake dist module.
+    children =
+      if @mix_env != :test do
+        children ++ [{EvoGit.DaemonControl, []}]
+      else
+        children
+      end
+
     # SandboxSlice is only needed on Linux (systemd-run backend)
     children =
       if EvoGit.Platform.linux?() do
