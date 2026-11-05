@@ -21,6 +21,8 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       `--preserve=timestamps` keeps source mtimes so build caches stay valid).
     - **macOS** — uses BSD `cp -cRp` (`-c` = `clonefile`, APFS copy-on-write;
       `-p` preserves mode/ownership/timestamps).
+      Both carry an extra step: after copying `_build`, protocol-consolidation
+      output is invalidated so Mix rebuilds it against the copied dep set.
     - **Windows** — uses PowerShell `Copy-Item -Recurse -Force`.
 
   ## Environment Variables
@@ -45,6 +47,11 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       fi
       if [ -d "$SOURCE_REPO_PATH/_build" ]; then
         cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+        # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+        # preserved mtimes make Mix think the copies are current, so a stale
+        # consolidated beam (built before a dep added a protocol impl) would be reused
+        # silently. Drop it; the next compile rebuilds it from the copied deps.
+        rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated "$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated
       fi
       """,
       macos_script: """
@@ -55,6 +62,11 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       fi
       if [ -d "$SOURCE_REPO_PATH/_build" ]; then
         cp -cRp "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+        # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+        # preserved mtimes make Mix think the copies are current, so a stale
+        # consolidated beam (built before a dep added a protocol impl) would be reused
+        # silently. Drop it; the next compile rebuilds it from the copied deps.
+        rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated "$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated
       fi
       """,
       windows_script: """
@@ -64,6 +76,10 @@ defmodule EvoGit.Runtime.WorktreeInitScript do
       }
       if (Test-Path "$env:SOURCE_REPO_PATH/_build") {
           Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/_build" "$env:TARGET_WORKTREE_PATH/"
+          # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+          # copied beams keep their old mtimes, so Mix would reuse a stale consolidated
+          # set. Remove it; the next compile rebuilds it from the copied deps.
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:TARGET_WORKTREE_PATH\\_build\\*\\consolidated", "$env:TARGET_WORKTREE_PATH\\_build\\*\\lib\\*\\consolidated"
       }
       """
     },

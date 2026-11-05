@@ -305,6 +305,54 @@ defmodule EvoGit.Runtime.WorktreeInitScriptTest do
       assert scripts.windows =~ "vendor"
     end
 
+    test "elixir linux script invalidates copied protocol consolidation" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert scripts.linux =~ ~S(rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated)
+      assert scripts.linux =~ ~S("$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated)
+    end
+
+    test "elixir macos script invalidates copied protocol consolidation" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert scripts.macos =~ ~S(rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated)
+      assert scripts.macos =~ ~S("$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated)
+    end
+
+    test "elixir windows script invalidates copied protocol consolidation" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      assert scripts.windows =~ "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+      assert scripts.windows =~ ~S(\_build\*\consolidated)
+      assert scripts.windows =~ ~S(\_build\*\lib\*\consolidated)
+    end
+
+    test "consolidation invalidation runs after the _build copy in every elixir variant" do
+      scripts = WorktreeInitScript.scripts_for(:elixir)
+
+      for {script, invalidation} <- [
+            {scripts.linux, "rm -rf"},
+            {scripts.macos, "rm -rf"},
+            {scripts.windows, "Remove-Item -Recurse"}
+          ] do
+        # The last mention of the _build copy source is the copy line itself.
+        {copy_index, _} = List.last(:binary.matches(script, "SOURCE_REPO_PATH/_build"))
+        {invalidation_index, _} = :binary.match(script, invalidation)
+
+        assert invalidation_index > copy_index
+      end
+    end
+
+    test "only the elixir build system invalidates protocol consolidation" do
+      for bs <- WorktreeInitScript.build_systems(), bs.id != :elixir do
+        scripts = WorktreeInitScript.scripts_for(bs)
+
+        refute scripts.linux =~ "consolidated"
+        refute scripts.macos =~ "consolidated"
+        refute scripts.windows =~ "consolidated"
+      end
+    end
+
     test "none entry returns a no-op linux script" do
       scripts = WorktreeInitScript.scripts_for(:none)
 
