@@ -26,11 +26,11 @@ defmodule EvoGit.MixProject do
   defp deps do
     [
       {:req_llm, "~> 1.30"},
-      # Security floor for the transitive jsv dependency: req_llm only
-      # requires "~> 0.11", so pin the patched release explicitly
-      # (EEF-CVE-2026-117680 / CVE-2026-117680). The range mirrors
-      # req_llm's "~> 0.11" spread so this explicit dep does not narrow
-      # resolution below req_llm's own constraint.
+      # Security floor for the transitive jsv dependency: pin the patched
+      # release explicitly (EEF-CVE-2026-117680 / CVE-2026-117680). req_llm
+      # 1.30 itself requires ">= 0.26.2 and < 1.0.0-0"; this range keeps the
+      # floor visible without narrowing resolution below req_llm's own
+      # constraint.
       {:jsv, ">= 0.26.2 and < 1.0.0"},
       # llm_db is the pricing/model catalog; declared explicitly because
       # EvoGit reads pricing from it directly (it was previously
