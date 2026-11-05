@@ -79,11 +79,11 @@ end
 # boot-time allocation.
 #
 # SHARD SELECTION (RoundRobin): `size: 2` means requests must be spread across
-# shards, and finch 0.23.0 only supports RoundRobin via the PER-REQUEST
+# shards, and finch 0.24.0 only supports RoundRobin via the PER-REQUEST
 # `pool_strategy` option — there is NO `strategy:` key in the pool template
 # (NimbleOptions raises on unknown keys at boot). ReqLLM exposes it as the
 # top-level config key `stream_pool_strategy`, read at CALL time
-# (streaming/finch_client.ex:426-428) and forwarded to every stream request.
+# (streaming/finch_client.ex:569) and forwarded to every stream request.
 # It MUST be the `{Finch.Pool.Strategy.RoundRobin, counter}` tuple where
 # `counter = Finch.Pool.Strategy.RoundRobin.new()` (an `:atomics` ref) — a
 # bare module would crash (`mod.select(entries, nil)` → badarg). The strategy
@@ -106,7 +106,7 @@ end
 # `stream_pool_timeout: 300_000` (5 min) is the Finch connection CHECKOUT
 # wait — how long a request waits for a free connection before raising the
 # "excess queuing" RuntimeError. It is read at CALL time
-# (streaming/finch_client.ex:299-305), NOT part of the pool template.
+# (streaming/finch_client.ex:438), NOT part of the pool template.
 resolved = EvoGit.Config.resolve()
 
 default_llm_max_concurrency = EvoGit.Config.resolve([:scheduler, :default_llm_max_concurrency])
@@ -141,8 +141,8 @@ round_robin = Finch.Pool.Strategy.RoundRobin.new()
 # the "excess queuing" error path); without the metrics flag the pools never
 # register under `:default` and reconciliation is a silent no-op.
 # `stream_pool_timeout` and `stream_pool_strategy` stay top-level keys
-# because ReqLLM reads them at CALL time (streaming/finch_client.ex:299-305
-# and :426-428), not as part of the pool config. `size: 2` doubles the
+# because ReqLLM reads them at CALL time (streaming/finch_client.ex:438
+# and :569), not as part of the pool config. `size: 2` doubles the
 # per-origin capacity to `count × 2` connections (see comment block above).
 config :req_llm,
   finch: [
