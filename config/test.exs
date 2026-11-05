@@ -35,12 +35,23 @@ config :phoenix_live_view,
 # key must be :evo_git (the Store reads Application.get_env(:evo_git, :data_dir)).
 # This app-env override must stay ABOVE any file-config fallback (it is the test
 # isolation guard — no user/TOML `[data] dir` value may shadow it).
-config :evo_git,
-       :data_dir,
-       Path.join(
-         System.tmp_dir!(),
-         "evogit_test_data/genesis-#{System.pid()}-#{:erlang.unique_integer([:positive])}"
-       )
+test_data_dir =
+  Path.join(
+    System.tmp_dir!(),
+    "evogit_test_data/genesis-#{System.pid()}-#{:erlang.unique_integer([:positive])}"
+  )
+
+config :evo_git, :data_dir, test_data_dir
+
+# runtime.exs (evaluated BEFORE any test_helper.exs) resolves the config for the
+# ReqLLM Finch pool sizing, and that path assembles OAuth provider options —
+# which runs the vendor credential import and writes the managed
+# `<config_dir>/genesis/auth.json`. Point the config dir at this run's temp tree
+# so the import can never touch the developer's real ~/.config/genesis (a
+# read-only config dir made it log a spurious `{:temp_file_failed, :erofs}`
+# warning on every run). The import creates the parents itself.
+# test_helper.exs later installs the per-process seam, which overrides this.
+config :evo_git, :config_dir_fun, fn -> Path.join(test_data_dir, "config") end
 
 # SystemSampler tick disabled in tests (the sampler's own test suite manages its interval)
 config :evo_git, :system_sample_interval_ms, 86_400_000
