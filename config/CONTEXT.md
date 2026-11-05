@@ -72,13 +72,6 @@ Erlang distribution is toggled at RUNTIME on that same process by `<launcher> re
 | Logging | rotating `<data_dir>/logs/backend.log` | console/stdout (journald) |
 | Lifecycle | Tauri sidecar + lifetime pipe + watchdog | operator/`genesis` CLI managed process |
 
-## Remote-Daemon Mode (the same `genesis_server` release, `EVOGIT_REMOTE_DAEMON=1`)
-The SSH remote-dev daemon is the `genesis_server` release launched with `EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1`, `RELEASE_DISTRIBUTION=name`, `RELEASE_NODE=genesis_remote_<target_id>@127.0.0.1`, `RELEASE_COOKIE=<cookie>` and `GENESIS_REMOTE_DIST_PORT=<port>` (default 9000).
-`remote_daemon? = System.get_env("EVOGIT_REMOTE_DAEMON") == "1"` is computed once at the top of `runtime.exs`; the endpoint `server: true` toggle requires `server_mode and not remote_daemon?`, so a daemon never binds an HTTP port (the local dashboard drives it entirely over Erlang distribution).
-`EvoDash.Application` mirrors that decision and omits `EvoDashWeb.Endpoint` from its supervision tree in remote-daemon mode; every other child is started as usual.
-Server mode detection, the endpoint URL/bind/port config and `secret_key_base` persistence are otherwise unchanged — a daemon is still a server for secret-key purposes and persists its own `<data_dir>/secret_key_base`.
-`GENESIS_REMOTE_DIST_PORT` itself is consumed by `rel/env.sh.eex` (translated into `ELIXIR_ERL_OPTIONS`), never by this directory.
-
 ## Boot-Mode Matrix — `MIX_ENV=dev mix phx.server` vs a `genesis_server` release
 
 Everything this directory branches on at boot, and whether it can affect memory:
