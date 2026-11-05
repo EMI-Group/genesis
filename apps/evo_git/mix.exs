@@ -52,9 +52,17 @@ defmodule EvoGit.MixProject do
       # Ecto — schema-less config validation/casting/defaults (no ecto_sql,
       # no database adapter; plain :ecto only)
       {:ecto, "~> 3.14"},
-      # Ecto 3.x adapter for xqlite (GitHub-only, pre-0.1; pins xqlite
-      # ~> 0.12; brings ecto_sql + db_connection transitively)
-      {:xqlite_ecto3, github: "dimitarvp/xqlite_ecto3"}
+      # Ecto 3.x adapter for xqlite (GitHub-only, pre-0.1; this revision pins
+      # xqlite ~> 0.12; brings ecto_sql + db_connection transitively).
+      # The `ref:` pin is deliberate: it is the only thing holding the adapter
+      # to the xqlite 0.12 series. Without it a bulk `mix deps.update --all`
+      # silently advances to an adapter revision that requires xqlite
+      # ~> 0.16.0, and xqlite 0.12 -> 0.16 is a breaking migration (the busy
+      # error became a map, calls now wait for locks in the calling process
+      # instead of holding a VM thread). Bump the adapter and xqlite together,
+      # with code changes, when taking that migration.
+      {:xqlite_ecto3,
+       github: "dimitarvp/xqlite_ecto3", ref: "1767a5d3e3683a27555476d4edfd520082dda8ff"}
     ]
   end
 
