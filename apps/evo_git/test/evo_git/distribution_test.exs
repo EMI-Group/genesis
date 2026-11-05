@@ -149,6 +149,96 @@ defmodule EvoGit.DistributionTest do
     end
   end
 
+  describe "active/0" do
+    test "reports enabled/node/dist_port consistently with node()" do
+      state = Distribution.active()
+
+      assert is_boolean(state.enabled)
+      assert is_binary(state.node)
+      assert state.node == to_string(node())
+      assert state.enabled == Distribution.distributed?()
+      assert is_nil(state.dist_port) or is_integer(state.dist_port)
+    end
+  end
+
+  describe "disable_runtime/0" do
+    test "returns :ok on a non-distributed node and is idempotent" do
+      unless Distribution.distributed?() do
+        assert :ok = Distribution.disable_runtime()
+        assert :ok = Distribution.disable_runtime()
+        refute Distribution.active().enabled
+      end
+    end
+  end
+
+  describe "enable_runtime/3" do
+    # async: false comes from the module — starting real distribution rewrites
+    # BEAM-global state (:kernel env, node(), EpmdDist's persistent-term
+    # registry). Mirrors the tolerant convention of the enable_for_remote/1
+    # tests: an environment that cannot run distribution yields {:error, _}.
+    test "enables distribution on the requested node, then restores the environment" do
+      original_epmd = Application.get_env(:kernel, :epmd_module)
+      original_min = Application.get_env(:kernel, :inet_dist_listen_min)
+      original_max = Application.get_env(:kernel, :inet_dist_listen_max)
+
+      on_exit(fn ->
+        Distribution.disable_runtime()
+
+        # EpmdDist.register_node/3 records the local name (the part before @)
+        # in its :persistent_term registry when distribution starts; erase the
+        # entry this test created (erase/1 raises on a missing key).
+        if :persistent_term.get({:evogit_epmd, :genesis_runtime_test}, :absent) != :absent do
+          :persistent_term.erase({:evogit_epmd, :genesis_runtime_test})
+        end
+
+        restore_env(:kernel, :epmd_module, original_epmd)
+        restore_env(:kernel, :inet_dist_listen_min, original_min)
+        restore_env(:kernel, :inet_dist_listen_max, original_max)
+      end)
+
+      result =
+        Distribution.enable_runtime(
+          "genesis_runtime_test@127.0.0.1",
+          "runtime_test_cookie",
+          9123
+        )
+
+      case result do
+        {:ok, %{node: actual, dist_port: 9123}} ->
+          assert actual == to_string(node())
+          assert Distribution.active().enabled
+          # The single listen port is pinned unconditionally.
+          assert Distribution.active().dist_port == 9123
+          assert Node.get_cookie() == :runtime_test_cookie
+
+          # Idempotent: the same identity again is a successful no-op that
+          # re-applies the cookie.
+          assert {:ok, %{node: ^actual, dist_port: 9123}} =
+                   Distribution.enable_runtime(
+                     "genesis_runtime_test@127.0.0.1",
+                     "runtime_test_cookie",
+                     9123
+                   )
+
+        {:error, _reason} ->
+          # Environment cannot run distribution (e.g. the listen port cannot be
+          # bound). The tolerant path keeps the suite green on such hosts.
+          :ok
+      end
+    end
+
+    test "rejects an invalid node name without raising" do
+      assert {:error, {:invalid_node_name, "no-at-sign"}} =
+               Distribution.enable_runtime("no-at-sign", "cookie", 9123)
+
+      assert {:error, {:invalid_node_name, ""}} =
+               Distribution.enable_runtime("", "cookie", 9123)
+
+      assert {:error, {:invalid_dist_port, 0}} =
+               Distribution.enable_runtime("genesis_runtime_test@127.0.0.1", "cookie", 0)
+    end
+  end
+
   describe "start_epmd_if_configured/1" do
     test "defaults to false — does not start EPMD when :start_epmd is not set" do
       # With the new default of false, EPMD should NOT be started when

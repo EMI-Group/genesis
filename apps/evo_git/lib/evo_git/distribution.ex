@@ -13,6 +13,12 @@ defmodule EvoGit.Distribution do
 
   require Logger
 
+  # Shape accepted by enable_runtime/3's `node_name` argument: `name@host`, both
+  # parts restricted to the characters an Erlang node name can actually carry.
+  # Validated BEFORE any String.to_atom/1 so a malformed CLI-supplied name can
+  # never create an unbounded atom, nor reach :net_kernel.
+  @runtime_node_name ~r/\A[A-Za-z0-9][A-Za-z0-9_.\-]*@[A-Za-z0-9][A-Za-z0-9_.\-]*\z/
+
   @doc """
   Enables distributed Erlang at application startup if configured.
 
@@ -54,6 +60,120 @@ defmodule EvoGit.Distribution do
   end
 
   @doc """
+  Enables Erlang distribution **at runtime**, pinning ONE listen port.
+
+  This is the daemon-side runtime toggle: it starts distribution on an
+  already-running, non-distributed BEAM so the SAME `genesis_server` instance
+  can keep serving HTTP and additionally become reachable over distribution,
+  without a daemon restart (and therefore without a second daemon unit).
+
+  The `:kernel` distribution envs are pinned UNCONDITIONALLY (before any
+  start attempt) to `inet_dist_listen_min = inet_dist_listen_max = dist_port`,
+  and `epmd_module` is set to `EvoGit.EpmdDist` (EPMD-less), so a subsequent
+  `Node.connect/1` from a local dashboard resolves the listen port through
+  `EvoGit.EpmdDist`'s registry.
+
+  Idempotent: when the node is already distributed under exactly `node_name`
+  the cookie is re-applied and the call succeeds. When the node is already
+  distributed under a DIFFERENT name it is stopped first and restarted under
+  the requested one — deliberately: this is the "switch remote identity
+  without restarting the daemon" path, so any existing cross-node links of the
+  old identity are dropped.
+
+  Returns `{:ok, %{node: actual_node, dist_port: dist_port}}` (the ACTUAL
+  `node()`, as a string) or `{:error, reason}`. Never raises.
+  """
+  @spec enable_runtime(String.t(), String.t(), pos_integer()) ::
+          {:ok, %{node: String.t(), dist_port: integer()}} | {:error, term()}
+  def enable_runtime(node_name, cookie, dist_port) do
+    with {:ok, name} <- runtime_node_atom(node_name),
+         {:ok, port} <- runtime_dist_port(dist_port) do
+      # Centralised boundary around VM-global distribution state and an
+      # externally supplied node name: `:net_kernel`/`Node` calls exit on a
+      # malformed name or a socket that cannot be bound, and the CONTROL PLANE
+      # that calls this must report a failure, never crash on it.
+      try do
+        pin_dist_port(port)
+        ensure_epmd_module()
+
+        cond do
+          distributed?() and to_string(node()) == node_name ->
+            apply_runtime_cookie(cookie)
+            {:ok, %{node: to_string(node()), dist_port: port}}
+
+          distributed?() ->
+            # Identity takeover: drop the current distribution first (its links
+            # die with it) and come back up under the requested name.
+            Logger.info(
+              "Distribution runtime takeover: stopping #{node()} to become #{node_name}"
+            )
+
+            _ = Node.stop()
+            start_runtime_node(name, cookie, port)
+
+          true ->
+            start_runtime_node(name, cookie, port)
+        end
+      rescue
+        error ->
+          Logger.warning(
+            "Failed to enable distribution at runtime (#{node_name}): " <>
+              Exception.message(error)
+          )
+
+          {:error, {:exception, Exception.message(error)}}
+      catch
+        kind, reason ->
+          Logger.warning(
+            "Failed to enable distribution at runtime (#{node_name}): #{inspect({kind, reason})}"
+          )
+
+          {:error, {kind, reason}}
+      end
+    end
+  end
+
+  @doc """
+  Disables Erlang distribution at runtime.
+
+  `:ok` whether or not the node was distributed (idempotent). The pinned
+  `:kernel` listen port is deliberately left in place — `active/0` keeps
+  reporting it, and the next `enable_runtime/3` pins it again anyway.
+  """
+  @spec disable_runtime() :: :ok
+  def disable_runtime do
+    if distributed?() do
+      case Node.stop() do
+        :ok ->
+          :ok
+
+        other ->
+          Logger.warning("Failed to stop distribution: #{inspect(other)}")
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @doc """
+  Reports the ACTUAL current distribution state.
+
+  `enabled` is `distributed?/0`; `node` is the real `node()` as a string
+  (`"nonode@nohost"` when distribution is off); `dist_port` is the pinned
+  `:kernel` `inet_dist_listen_min` (which a release booted with
+  `RELEASE_DISTRIBUTION=name` also sets via its vm.args), or `nil`.
+  """
+  @spec active() :: %{enabled: boolean(), node: String.t(), dist_port: integer() | nil}
+  def active do
+    %{
+      enabled: distributed?(),
+      node: to_string(node()),
+      dist_port: Application.get_env(:kernel, :inet_dist_listen_min)
+    }
+  end
+
+  @doc """
   Enables distribution on-demand for SSH remote connection.
 
   Called by `EvoGit.RemoteConnection` when the local node is not yet
@@ -64,6 +184,11 @@ defmodule EvoGit.Distribution do
   """
   @spec enable_for_remote(map()) :: :ok | {:error, term()}
   def enable_for_remote(_target) do
+    # Deliberately NOT delegated to enable_runtime/3: this dashboard path uses
+    # the fixed `genesis@127.0.0.1` identity with the 9100-9200 listen RANGE
+    # and the `[node] cookie` from config, whereas enable_runtime/3 pins ONE
+    # explicit port/cookie for the daemon.
+
     if distributed?() do
       # Already-distributed nodes (booted via maybe_enable/0 or started with
       # -sname/-name) registered themselves with the REAL epmd daemon, not
@@ -90,6 +215,68 @@ defmodule EvoGit.Distribution do
   def ensure_epmd_module do
     Application.put_env(:kernel, :epmd_module, Elixir.EvoGit.EpmdDist)
   end
+
+  # Pins a SINGLE distribution listen port (as opposed to the 9100-9200 RANGE
+  # enable_for_connection/0 leaves in place) so the daemon's advertised port is
+  # exactly the one the caller asked for.
+  defp pin_dist_port(port) do
+    Application.put_env(:kernel, :inet_dist_listen_min, port)
+    Application.put_env(:kernel, :inet_dist_listen_max, port)
+    :ok
+  end
+
+  defp start_runtime_node(name, cookie, port) do
+    case start_net_kernel([name, :longnames]) do
+      {:ok, _pid} ->
+        finalize_runtime_start(name, cookie, port)
+
+      :already_started ->
+        finalize_runtime_start(name, cookie, port)
+
+      {:error, reason} ->
+        Logger.warning("Failed to start distribution at runtime: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp finalize_runtime_start(name, cookie, port) do
+    apply_runtime_cookie(cookie)
+    requested = Atom.to_string(name)
+
+    case to_string(node()) do
+      ^requested ->
+        Logger.info("Distribution enabled at runtime: #{requested}:#{port}")
+        {:ok, %{node: requested, dist_port: port}}
+
+      actual ->
+        Logger.warning("Distribution is active as #{actual}, not the requested #{requested}")
+        {:error, {:wrong_node_name, actual, requested}}
+    end
+  end
+
+  # `Node.set_cookie/1` crashes on a non-distributed node and on an empty
+  # cookie, so it only runs for a non-empty binary — after distribution started.
+  defp apply_runtime_cookie(cookie) when is_binary(cookie) and cookie != "" do
+    Node.set_cookie(String.to_atom(cookie))
+    :ok
+  end
+
+  defp apply_runtime_cookie(_cookie), do: :ok
+
+  # String.to_atom/1 is bounded here: the name must match @runtime_node_name
+  # first, so only a realistically-shaped `name@host` becomes an atom.
+  defp runtime_node_atom(node_name) when is_binary(node_name) do
+    if Regex.match?(@runtime_node_name, node_name) do
+      {:ok, String.to_atom(node_name)}
+    else
+      {:error, {:invalid_node_name, node_name}}
+    end
+  end
+
+  defp runtime_node_atom(node_name), do: {:error, {:invalid_node_name, node_name}}
+
+  defp runtime_dist_port(port) when is_integer(port) and port > 0, do: {:ok, port}
+  defp runtime_dist_port(port), do: {:error, {:invalid_dist_port, port}}
 
   defp enable(node_config) do
     cond do
