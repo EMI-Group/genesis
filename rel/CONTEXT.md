@@ -33,7 +33,7 @@ The toggle is owned by `EvoGit.DaemonControl` inside that BEAM: the CLI writes `
 
 | File | Purpose |
 |------|---------|
-| `overlays/bin/genesis` | POSIX `sh` CLI copied to `<release>/bin/genesis`: `serve`/`run`, `start`, `stop`, `restart`, `status`, `logs`, `url`, `version`, `help`, plus the remote-daemon family `remote start`/`remote stop`/`remote status`/`remote logs`/`remote help` (see "Genesis Server CLI"). |
+| `overlays/bin/genesis` | POSIX `sh` CLI copied to `<release>/bin/genesis`: `serve`/`run`, `start`, `stop`, `restart`, `status`, `logs`, `url`, `version`, `help`, plus the runtime-distribution family `remote start`/`remote stop`/`remote status`/`remote logs`/`remote help`, which toggles Erlang distribution on the shared instance (see "Genesis Server CLI"). |
 
 ### Per-Release Directories (documentation only — NOT applied by Mix)
 
