@@ -32,12 +32,16 @@ server_mode =
     System.get_env("EVOGIT_SERVER") == "1" or
     System.get_env("RELEASE_NAME") == "genesis_server"
 
-# Remote-daemon mode: the SAME `genesis_server` release launched as the SSH
-# remote-dev daemon (EVOGIT_REMOTE_DAEMON=1). It runs no HTTP endpoint — the
-# local dashboard drives it entirely over Erlang distribution — so the endpoint
-# server toggle below must stay off for it.
-remote_daemon? = System.get_env("EVOGIT_REMOTE_DAEMON") == "1"
-
+# ONE `genesis_server` instance per host (service unit `genesis-server`) is both
+# the headless dashboard server AND the SSH remote-dev target: it ALWAYS serves
+# HTTP (bound to 127.0.0.1 by default), and Erlang distribution is toggled at
+# RUNTIME by `<launcher> remote start|stop` through `EvoGit.DaemonControl` (a
+# control file under `<data_dir>/remote/` plus a SIGHUP) — no second,
+# endpoint-less process or service unit is ever launched. Server mode therefore
+# always enables the endpoint; `GENESIS_REMOTE_DIST_PORT` (pinned into
+# ELIXIR_ERL_OPTIONS by rel/env.sh.eex) only sets the listen port of a node that
+# boots already distributed.
+#
 # `PHX_SERVER` is PRESENCE-checked, matching Phoenix's generated runtime.exs
 # (`if System.get_env("PHX_SERVER") do`): any non-empty value enables the
 # endpoint server. It MUST be converted to a real boolean here — the raw value
@@ -47,7 +51,7 @@ remote_daemon? = System.get_env("EVOGIT_REMOTE_DAEMON") == "1"
 phx_server? = System.get_env("PHX_SERVER") not in [nil, ""]
 
 if phx_server? or Application.get_env(:evo_dash, :desktop_release, false) or
-     (server_mode and not remote_daemon?) do
+     server_mode do
   config :evo_dash, EvoDashWeb.Endpoint, server: true
 end
 
