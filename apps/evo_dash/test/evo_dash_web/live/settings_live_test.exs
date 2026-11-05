@@ -2996,7 +2996,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       refute html =~ "Bootstrap failed"
 
       assert assigns(view)[:bootstrap_restart_confirm] == %{id: id, details: details}
-      assert html =~ "Remote daemon already running"
+      assert html =~ "Remote node already connected"
       assert html =~ details
       assert html =~ ~s(phx-click="confirm_bootstrap_restart")
       assert html =~ ~s(phx-click="cancel_bootstrap_restart")
@@ -3030,7 +3030,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
                status: :active
              }
 
-      refute html =~ "Remote daemon already running"
+      refute html =~ "Remote node already connected"
 
       # The confirm handler re-bootstraps through the fake manager — pins the
       # on_running: :restart threading.
@@ -3065,7 +3065,7 @@ defmodule EvoDashWeb.SettingsLiveTest do
       html = render_click(view, "cancel_bootstrap_restart", %{"target_id" => id})
 
       assert assigns(view)[:bootstrap_restart_confirm] == nil
-      refute html =~ "Remote daemon already running"
+      refute html =~ "Remote node already connected"
       # progress is NOT re-activated — the card stays on the plain buttons
       refute Map.has_key?(assigns(view)[:bootstrap_progress], id)
       # and no bootstrap call was made
