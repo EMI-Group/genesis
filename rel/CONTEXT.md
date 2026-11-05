@@ -90,7 +90,7 @@ The CLI polls that file in 100ms steps and accepts an answer ONLY when `GENESIS_
 `desired.env` (daemon-written, 0600, only after a SUCCESSFUL action) is the durable intent a restarted instance re-adopts at boot, which is why `dist.env` stays truthful across `genesis restart`.
 
 Smoke test: `scripts/test-genesis-cli.sh` (bash) builds a temp release with a stub `bin/genesis_server`, shadows systemd/launchd with failing stubs, and asserts help/version/url, flag parsing, the state file, symlink discovery, status failures and exit codes — no real release or service manager needed.
-It also covers the remote family with a fake instance that traps `SIGHUP` and publishes `dist.env`: fresh-host start-then-enable ordering (the only `systemd-run` call is `--unit=genesis-server`), the canonical `running node=… dist_port=…` line versus `stopped`, an idempotent re-start that signals nothing, `--force`, a stale `dist.env` whose SEQ never matches (a timeout, never a false success), an `error` answer, legacy-unit cleanup, instance-log delegation, stop-keeps-the-instance, the launchd/pidfile backends and the usage-error exit codes.
+Its remote section still asserts the REMOVED per-unit daemon contract (`EVOGIT_REMOTE_DAEMON`/`--setenv` shapes, `<unit>.env`, remote plists) and fails against the single-instance toggle — see Known Issues for what it must assert instead.
 
 ## Known Issues / Notes for Agents
 
