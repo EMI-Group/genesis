@@ -34,10 +34,10 @@ defmodule EvoGit.Umbrella.MixProject do
         genesis_server: [
           # The ONLY headless distribution: the full dashboard served over HTTP
           # on a remote box, plus the `genesis` lifecycle CLI from rel/overlays.
-          # The SAME release doubles as the SSH remote-dev daemon — launched
-          # with EVOGIT_SERVER=1 EVOGIT_REMOTE_DAEMON=1 (no Phoenix endpoint)
-          # plus RELEASE_DISTRIBUTION/RELEASE_NODE/RELEASE_COOKIE and
-          # GENESIS_REMOTE_DIST_PORT.
+          # ONE instance per host also serves as the SSH remote-dev target:
+          # `genesis remote start` toggles Erlang distribution on the RUNNING
+          # instance at runtime (control file + SIGHUP), so HTTP and remote SSH
+          # access are selective, coexisting roles of the same BEAM.
           # Deliberately NO `wx` — headless hosts lack wxWidgets, and the
           # dashboard's directory picker falls back to manual path entry when
           # wx is unavailable.
