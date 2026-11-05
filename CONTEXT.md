@@ -46,7 +46,7 @@ The full design specification is documented across the CONTEXT.md tree.
 
 | File | Purpose |
 |------|---------|
-| `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as a Tauri resource), `genesis_server` (headless server for non-desktop hosts AND the SSH remote-dev daemon: both apps, `include_erts`, deliberately no `wx`). Reads the version from `VERSION`. |
+| `mix.exs` | Umbrella Mix project — apps_path, three releases: `genesis` (both apps), `genesis_desktop` (standard mix release with `include_erts`, bundled as a Tauri resource), `genesis_server` (headless server for non-desktop hosts AND the SSH remote-dev target — ONE instance per host serves plain HTTP plus runtime-toggled Erlang distribution: both apps, `include_erts`, deliberately no `wx`). Reads the version from `VERSION`. |
 | `VERSION` | Single source of truth for the project version; all umbrella `mix.exs` files read it, the desktop manifests are synced by `mix bump.version`. |
 | `flake.nix` | Nix flake — `devShells.default` (Erlang/OTP 29, Elixir 1.20, Rust, Tauri v2 native deps), `packages.default` via `genesis.nix` (`nix build`), `apps.default` (`nix run`). |
 | `genesis.nix` | Nix derivation — builds the Genesis Mix release with `beamPackages.mixRelease`, pre-fetched Rustler NIFs and vendored ripgrep/git. |
