@@ -27,6 +27,11 @@ if [ -d "$SOURCE_REPO_PATH/deps" ]; then
 fi
 if [ -d "$SOURCE_REPO_PATH/_build" ]; then
   cp -R --preserve=timestamps --reflink=auto "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+  # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+  # preserved mtimes make Mix think the copies are current, so a stale
+  # consolidated beam (built before a dep added a protocol impl) would be reused
+  # silently. Drop it; the next compile rebuilds it from the copied deps.
+  rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated "$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated
 fi
 '''
 script.macos = '''#!/usr/bin/env bash
@@ -37,6 +42,11 @@ if [ -d "$SOURCE_REPO_PATH/deps" ]; then
 fi
 if [ -d "$SOURCE_REPO_PATH/_build" ]; then
   cp -cRp "$SOURCE_REPO_PATH/_build" "$TARGET_WORKTREE_PATH/"
+  # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+  # preserved mtimes make Mix think the copies are current, so a stale
+  # consolidated beam (built before a dep added a protocol impl) would be reused
+  # silently. Drop it; the next compile rebuilds it from the copied deps.
+  rm -rf "$TARGET_WORKTREE_PATH"/_build/*/consolidated "$TARGET_WORKTREE_PATH"/_build/*/lib/*/consolidated
 fi
 '''
 script.windows = '''# Copy Elixir dependencies and build artifacts
@@ -45,5 +55,9 @@ if (Test-Path "$env:SOURCE_REPO_PATH/deps") {
 }
 if (Test-Path "$env:SOURCE_REPO_PATH/_build") {
     Copy-Item -Recurse -Force "$env:SOURCE_REPO_PATH/_build" "$env:TARGET_WORKTREE_PATH/"
+    # Protocol consolidation is derived from the SOURCE checkout's dep set, but the
+    # copied beams keep their old mtimes, so Mix would reuse a stale consolidated
+    # set. Remove it; the next compile rebuilds it from the copied deps.
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$env:TARGET_WORKTREE_PATH\_build\*\consolidated", "$env:TARGET_WORKTREE_PATH\_build\*\lib\*\consolidated"
 }
 '''
