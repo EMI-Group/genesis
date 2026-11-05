@@ -15,11 +15,12 @@ defmodule EvoDash.RuntimeConfigTest do
   # async: false — this module mutates OS-process-global state that a
   # concurrently running module can observe: the OS PROCESS ENVIRONMENT
   # (`System.put_env`/`delete_env` for PHX_SERVER, EVOGIT_DESKTOP, EVOGIT_SERVER,
-  # RELEASE_NAME, HOME, XDG_DATA_HOME, APPDATA — process-wide, not per-test),
-  # the `:evo_dash` `:desktop_release` app-env flag, and the `:evo_git`
-  # `:config_dir_fun` seam (installed by test_helper.exs, activated per process
-  # through `EvoDash.Test.ConfigDir`). It also evaluates the real runtime.exs,
-  # whose prod branches create `<data_dir>/logs` and persist a secret key.
+  # EVOGIT_REMOTE_DAEMON, RELEASE_NAME, HOME, XDG_DATA_HOME, APPDATA —
+  # process-wide, not per-test), the `:evo_dash` `:desktop_release` app-env
+  # flag, and the `:evo_git` `:config_dir_fun` seam (installed by
+  # test_helper.exs, activated per process through `EvoDash.Test.ConfigDir`).
+  # It also evaluates the real runtime.exs, whose prod branches create
+  # `<data_dir>/logs` and persist a secret key.
   use ExUnit.Case, async: false
 
   import ExUnit.CaptureIO
@@ -151,11 +152,13 @@ defmodule EvoDash.RuntimeConfigTest do
       assert File.exists?(Path.join(data_dir, "secret_key_base"))
     end
 
-    test "remote-daemon mode never enables the endpoint server but still persists its secret" do
-      # The SAME `genesis_server` release launched as the SSH remote-dev daemon:
-      # both server signals are present, yet the endpoint must stay down — the
-      # local dashboard drives the daemon entirely over Erlang distribution, so
-      # binding an HTTP port there would be a second, unused listener.
+    test "a legacy remote-daemon flag no longer disables the endpoint server" do
+      # One instance per host: `genesis_server` serves the Phoenix dashboard
+      # over HTTP and has Erlang distribution enabled/disabled at runtime on
+      # that same BEAM (`EvoGit.DaemonControl`, driven by
+      # `<launcher> remote start|stop`). A leftover `EVOGIT_REMOTE_DAEMON=1`
+      # from an older install therefore must NOT suppress the endpoint — the
+      # remote host's dashboard stays reachable.
       System.put_env("RELEASE_NAME", "genesis_server")
       System.put_env("EVOGIT_SERVER", "1")
       System.put_env("EVOGIT_REMOTE_DAEMON", "1")
@@ -164,12 +167,41 @@ defmodule EvoDash.RuntimeConfigTest do
 
       endpoint = read_prod_endpoint()
 
-      refute endpoint[:server] == true
-      # The daemon is still a server (not desktop) for secret-key purposes:
-      # each daemon persists its own key.
+      assert endpoint[:server] == true
+      assert endpoint[:check_origin] == false
       assert is_binary(endpoint[:secret_key_base])
       assert endpoint[:secret_key_base] != ""
+
+      # Still a server (not desktop) for secret-key purposes: the instance
+      # persists its own key inside the data dir.
       assert File.exists?(Path.join(data_dir, "secret_key_base"))
+    end
+  end
+
+  describe "supervision tree (mode-invariant endpoint)" do
+    test "the endpoint child is present with no mode signal set" do
+      assert EvoDashWeb.Endpoint in EvoDash.Application.children()
+
+      # The LIVE supervisor agrees: the endpoint child is really started (it
+      # just does not accept connections in test — `server: false`).
+      assert Enum.any?(Supervisor.which_children(EvoDash.Supervisor), fn {id, _, _, _} ->
+               id == EvoDashWeb.Endpoint
+             end)
+    end
+
+    test "a legacy remote-daemon flag cannot drop the endpoint child" do
+      # Regression pin against reintroducing an env-var branch in the child
+      # list: the endpoint is mode-INVARIANT.
+      System.put_env("EVOGIT_REMOTE_DAEMON", "1")
+      System.put_env("EVOGIT_SERVER", "1")
+
+      children = EvoDash.Application.children()
+
+      assert EvoDashWeb.Endpoint in children
+      # ... while the desktop-only lifetime watcher stays gated on the desktop
+      # env vars, which are unset here.
+      refute {EvoDash.DesktopLifetime, []} in children
+      refute EvoDash.DesktopLifetime in children
     end
   end
 

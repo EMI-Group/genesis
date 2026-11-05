@@ -35,45 +35,7 @@ defmodule EvoDash.Application do
     # handler registration; the children list is unchanged.
     _ = EvoDash.ConnectionDiagnostics.attach()
 
-    children = [
-      EvoDashWeb.Telemetry,
-      {Phoenix.PubSub, name: EvoDash.PubSub},
-      {Task.Supervisor, name: EvoDash.TaskSupervisor},
-      # In-memory (ETS-backed) chat-history store for the Home chat page —
-      # transcripts survive LiveView remounts, not BEAM restarts.
-      EvoDash.ChatHistory,
-      # Serializes native :wx directory-dialog usage (Browse buttons). Starts no
-      # wx server at boot — wx is initialized lazily on the first pick.
-      EvoDash.DirectoryPicker,
-      # Auto-update state hub for the Tauri updater integration — holds the
-      # update phase/versions/error state and broadcasts transitions on
-      # EvoGit.PubSub's "updates" topic.
-      EvoDash.UpdateStatus
-    ]
-
-    # Remote-daemon mode (EVOGIT_REMOTE_DAEMON=1): the `genesis_server` release
-    # launched as the SSH remote-dev daemon is driven entirely by the local
-    # dashboard over Erlang distribution, so it must NOT start the Phoenix
-    # endpoint — that would bind a second HTTP port on the remote host and wake
-    # LiveView machinery for nothing. Every other child stays.
-    children =
-      if System.get_env("EVOGIT_REMOTE_DAEMON") == "1" do
-        children
-      else
-        children ++ [EvoDashWeb.Endpoint]
-      end
-
-    # Desktop-only Tauri-shell lifetime watcher: the sidecar sets BOTH
-    # EVOGIT_DESKTOP=1 and EVOGIT_LIFETIME_PORT, while manually-launched
-    # releases and the remote daemon set neither. The module's own init/1
-    # self-disable logic is belt-and-suspenders.
-    children =
-      if System.get_env("EVOGIT_DESKTOP") == "1" and
-           System.get_env("EVOGIT_LIFETIME_PORT") not in [nil, ""] do
-        children ++ [{EvoDash.DesktopLifetime, []}]
-      else
-        children
-      end
+    children = children()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -87,6 +49,57 @@ defmodule EvoDash.Application do
     ]
 
     Supervisor.start_link(children, opts)
+  end
+
+  @doc """
+  The full supervision-tree child list, in start order.
+
+  Public so tests can pin that the endpoint's presence is mode-INVARIANT:
+  the `genesis_server` release runs exactly ONE instance per host, which
+  serves the Phoenix dashboard over HTTP (loopback by default) and has
+  Erlang distribution enabled/disabled at runtime on that same BEAM
+  (`EvoGit.DaemonControl`, driven by `<launcher> remote start|stop`).
+  No env var may drop `EvoDashWeb.Endpoint` — a remote-dev host exposes its
+  dashboard too.
+
+  The desktop gating env vars (`EVOGIT_DESKTOP` + `EVOGIT_LIFETIME_PORT`) are
+  read at CALL time, so the returned list reflects the current environment.
+  """
+  @spec children() :: [Supervisor.child_spec() | module() | {module(), term()}]
+  def children do
+    children = [
+      EvoDashWeb.Telemetry,
+      {Phoenix.PubSub, name: EvoDash.PubSub},
+      {Task.Supervisor, name: EvoDash.TaskSupervisor},
+      # In-memory (ETS-backed) chat-history store for the Home chat page —
+      # transcripts survive LiveView remounts, not BEAM restarts.
+      EvoDash.ChatHistory,
+      # Serializes native :wx directory-dialog usage (Browse buttons). Starts no
+      # wx server at boot — wx is initialized lazily on the first pick.
+      EvoDash.DirectoryPicker,
+      # Auto-update state hub for the Tauri updater integration — holds the
+      # update phase/versions/error state and broadcasts transitions on
+      # EvoGit.PubSub's "updates" topic.
+      EvoDash.UpdateStatus,
+      # One instance per host: the `genesis_server` release serves the Phoenix
+      # dashboard over HTTP (loopback by default) and has Erlang distribution
+      # enabled/disabled at runtime on that same BEAM (`EvoGit.DaemonControl`,
+      # driven by `<launcher> remote start|stop`), so a remote-dev host still
+      # exposes its dashboard — the endpoint is ALWAYS a child.
+      EvoDashWeb.Endpoint
+    ]
+
+    # Desktop-only Tauri-shell lifetime watcher: the sidecar sets BOTH
+    # EVOGIT_DESKTOP=1 and EVOGIT_LIFETIME_PORT, while manually-launched
+    # releases (a headless `genesis_server`, desktop or remote-dev) set
+    # neither. The module's own init/1 self-disable logic is
+    # belt-and-suspenders.
+    if System.get_env("EVOGIT_DESKTOP") == "1" and
+         System.get_env("EVOGIT_LIFETIME_PORT") not in [nil, ""] do
+      children ++ [{EvoDash.DesktopLifetime, []}]
+    else
+      children
+    end
   end
 
   # Idempotent named-table creation (mirrors EvoGit.Application's
