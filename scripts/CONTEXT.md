@@ -85,7 +85,7 @@ The "instance" those stubs launch is a real background `sh` fixture that answers
 
 - `./sync-readme-evidence.py` → Python standard-library generator for the bounded README Evidence block. `--refresh` fetches the website manifest; `--check` validates against the committed snapshot offline. Selection, snapshot and maintenance instructions live in `../docs/readme-evidence*`.
 - `./install.sh` → one-line installer for the headless `genesis_server` distribution.
-- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd and stubbed `loginctl`/`curl`/`uname`; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger coverage and shim inventory: `### test-genesis-cli.sh` above.
+- `./test-genesis-cli.sh` → smoke test for `../rel/overlays/bin/genesis` (temp release + stub `bin/genesis_server`, PATH-shadowed systemd/launchd/launchctl and stubbed `loginctl`/`journalctl`/`curl`/`uname`, plus a real stub "server instance" for the single-instance `genesis remote` control plane; run with `bash scripts/test-genesis-cli.sh`, no release build, service manager or network needed) — its CLI surface, linger coverage, remote fixture and shim inventory: `### test-genesis-cli.sh` above.
 - `../rel/overlays/` → release overlay sources; `../rel/overlays/bin/genesis` is the CLI this installer links.
 - `../.github/workflows/` → builds and uploads the `genesis_server_*` tarballs and the `install.sh` asset.
 - `../apps/evo_git/lib/evo_git/remote_bootstrap.ex` → Elixir mirror of the same `/dl/` asset-URL pattern (`direct_url/1`).
