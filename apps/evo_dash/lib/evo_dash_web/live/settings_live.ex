@@ -605,13 +605,17 @@ defmodule EvoDashWeb.SettingsLive do
                   </div>
                 </div>
 
-                <%!-- Daemon-already-running permission dialog — opened when a
-                   bootstrap attempt is refused because the remote daemon is
-                   already running ({:error, {:daemon_running, details}}).
-                   Confirming stops the daemon and re-bootstraps via
-                   EvoGit.RemoteConnection.bootstrap/2 with on_running: :restart
-                   (core broadcasts :stopping_daemon → step 3 "Configuring",
-                   then the normal stages). Driven by the @bootstrap_restart_confirm
+                <%!-- Distribution-already-enabled permission dialog — opened when
+                   a bootstrap attempt is refused because the remote host is
+                   already running with Erlang distribution enabled for another
+                   connection ({:error, {:daemon_running, details}}).
+                   Confirming re-bootstraps via
+                   EvoGit.RemoteConnection.bootstrap/2 with on_running: :restart,
+                   which only runs `remote stop` (detaching distribution) and
+                   re-enables it with this connection's identity — the remote
+                   server and its tasks keep running (core broadcasts
+                   :stopping_daemon → step 3 "Configuring", then the normal
+                   stages). Driven by the @bootstrap_restart_confirm
                    assign (nil = closed, %{id:, details:} = open). --%>
                 <%= if @bootstrap_restart_confirm do %>
                   <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -625,14 +629,13 @@ defmodule EvoDashWeb.SettingsLive do
                       <div class="flex items-center gap-3 mb-4">
                         <.icon name="hero-exclamation-triangle" class="size-5 text-warning" />
                         <h3 class="text-lg font-bold">
-                          <%!-- 远程守护进程已经在运行；重新引导会先停止它 --%>
-                          {gettext("Remote daemon already running")}
+                          {gettext("Remote node already connected")}
                         </h3>
                       </div>
 
                       <p class="text-sm text-base-content/70 mb-2 leading-relaxed">
                         {gettext(
-                          "The remote daemon is already running. Re-installing it will stop the daemon and any tasks running on the remote."
+                          "That host's Genesis server already has Erlang distribution enabled for another connection. Continuing will disconnect that node and re-enable distribution with this connection's identity. The server and its tasks keep running."
                         )}
                       </p>
                       <p class="text-xs text-base-content/70 mb-5 leading-relaxed font-mono break-all">
@@ -655,8 +658,7 @@ defmodule EvoDashWeb.SettingsLive do
                           phx-value-target_id={@bootstrap_restart_confirm.id}
                         >
                           <.icon name="hero-arrow-path" class="size-4.5" />
-                          <%!-- 停止守护进程并重新安装（Install） --%>
-                          {gettext("Stop & re-install")}
+                          {gettext("Reconnect & re-enable")}
                         </button>
                       </div>
                     </div>
@@ -1187,11 +1189,13 @@ defmodule EvoDashWeb.SettingsLive do
     socket =
       case result do
         {:error, {:daemon_running, details}} ->
-          # Daemon already running (refused bootstrap) — no staging happened.
-          # Drop the transient active entry (the bar would otherwise sit on a
+          # The remote host already serves Erlang distribution to another
+          # connection (refused bootstrap) — no staging happened. Drop the
+          # transient active entry (the bar would otherwise sit on a
           # stage-less "active" state forever) and ask the user for permission
-          # to stop it and re-bootstrap (see confirm_bootstrap_restart). No
-          # generic error flash — the dialog IS the feedback.
+          # to detach that node and re-enable distribution with this
+          # connection's identity (see confirm_bootstrap_restart). No generic
+          # error flash — the dialog IS the feedback.
           socket
           |> reload_remote_statuses()
           |> clear_bootstrap_progress(id)
@@ -2011,8 +2015,10 @@ defmodule EvoDashWeb.SettingsLive do
   @impl true
   def handle_event("confirm_bootstrap_restart", %{"target_id" => id}, socket) do
     # Permission granted — close the dialog and re-bootstrap with
-    # on_running: :restart (the core stops the running daemon — broadcasting
-    # :stopping_daemon, mapped to step 3 "Configuring" — then bootstraps fresh).
+    # on_running: :restart (the core runs `<launcher> remote stop`, which only
+    # DETACHES Erlang distribution — the remote server and its tasks keep
+    # running — broadcasting :stopping_daemon, mapped to step 3 "Configuring",
+    # then re-enables distribution with this connection's identity).
     socket = assign(socket, :bootstrap_restart_confirm, nil)
 
     bootstrap_progress =
