@@ -113,7 +113,7 @@ Its remote section still asserts the REMOVED per-unit daemon contract (`EVOGIT_R
 - Linger handling is systemd-only and best-effort: never probe or invoke `loginctl` on the `launchd`/`fallback` backends or from `serve`, never prompt when stdin is not a TTY, and never fail (or `die`/`exit`) `start` because of a declined, impossible or failed linger — the server must still start.
 - A `genesis_server` release must be built AFTER `mix assets.deploy` (in `apps/evo_dash`): the prod endpoint loads `priv/static/cache_manifest.json` and boot aborts without it, so a bare local `mix release genesis_server` produces an unstartable release (the CI server job runs the shared `setup-mix` action that deploys assets).
 - Server mode is detected at runtime from `RELEASE_NAME=genesis_server` (exported by the generated launcher), not from the release definition's `config:` — that option does not reach the generated sys.config in this umbrella project.
-- A remote daemon (`EVOGIT_REMOTE_DAEMON=1`) must never serve HTTP: `runtime.exs` keeps the endpoint `server: true` toggle off for it, and `EvoDash.Application` omits `EvoDashWeb.Endpoint` from its supervision tree.
+- Remote-daemon mode (`EVOGIT_REMOTE_DAEMON=1`) is no longer launched by the CLI; were it launched by hand it must never serve HTTP, so `runtime.exs` keeps the endpoint `server: true` toggle off for it and `EvoDash.Application` omits `EvoDashWeb.Endpoint` from its supervision tree.
 
 ## Design Decisions
 
