@@ -65,9 +65,9 @@ Printed next steps: `genesis` (foreground server), `genesis start` (service via 
 
 Self-contained smoke test for `../rel/overlays/bin/genesis`: a temp release with a stub `bin/genesis_server` and PATH-shadowed supervisors, run with `bash scripts/test-genesis-cli.sh` (no release build, no service manager).
 It also covers the `genesis start` systemd-linger offer — `GENESIS_LINGER` (`ask`/`yes`/`no`) and `--no-linger`, the non-TTY hint, the enable-success and enable-failure warnings, and the fallback-backend / foreground gating that never probes lingering.
-It also covers the `genesis remote …` remote-daemon family with per-scope supervisor stubs (contract detail: `../rel/CONTEXT.md`).
-Stub `systemd-run`/`systemctl`/`loginctl`/`curl`/`uname` binaries stand in for the real ones (the recording `loginctl` shims prove the non-systemd paths never call it), so no real service manager, `loginctl` or network is touched.
-The stub `curl` reports healthy on the first poll, so the `/health` loop returns immediately and the whole run stays sub-second.
+It also covers the `genesis remote …` family against the single-instance contract (distribution is a runtime toggle on the ONE server instance, never a second process): the control request's mode/contents/sequence number, the canonical `running node=… dist_port=…` line as the LAST line, idempotent re-start, `--force`, the stale-answer/`--wait` floor handshake, a daemon-error answer, legacy per-target unit cleanup in its own scope, `status`/`stop`/`logs`, and the fallback-pidfile and launchd backends (contract detail: `../rel/CONTEXT.md`).
+Stub `systemd-run`/`systemctl`/`launchctl`/`journalctl`/`loginctl`/`curl`/`uname`/`setsid` binaries stand in for the real ones (the recording `loginctl` shims prove the non-systemd paths never call it), so no real service manager, `loginctl` or network is touched.
+The "instance" those stubs launch is a real background `sh` fixture that answers the CLI's SIGHUP by writing its own `dist.env`, so every signal and every accepted answer is observable; stub `sleep` and `curl` keep the CLI's poll budgets and health probe cheap, keeping a whole run in the low seconds.
 
 ## Constraints
 
