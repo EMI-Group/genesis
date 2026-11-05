@@ -29,7 +29,7 @@ defmodule EvoGit.RemoteBootstrap do
       so fish / nushell / tcsh / POSIX login shells all pass it through, and
       `/bin/sh` (not `/usr/bin/env`) because NixOS has no `/usr/bin/env`.
 
-  **Linux asset rule:** the remote daemon assets are the `genesis_server`
+  **Linux asset rule:** the remote server assets are the `genesis_server`
   headless release (both umbrella apps, `include_erts`, no `wx`), and glibc is
   the default and ONLY published Linux variant. Remote tarball names are NEVER
   suffixed (`genesis_server_linux_x64.tar.xz`,
@@ -92,14 +92,16 @@ defmodule EvoGit.RemoteBootstrap do
   end
 
   @doc """
-  Returns the daemon-launch OS string (`"Linux"` or `"Darwin"`) for a platform
-  string.
+  Returns the launch OS string (`"Linux"` or `"Darwin"`) for a platform string.
 
-  The remote daemon lifecycle is delegated to the release's own `bin/genesis`
-  CLI (`bin/genesis remote start|stop|status|logs`), which supports Linux
-  (systemd user/system scope plus a setsid/nohup fallback) and macOS (launchd);
-  the Elixir side no longer builds those commands. This mapping only selects
-  the remote host's OS family.
+  Remote development runs on the host's ONE `genesis_server` instance, whose
+  lifecycle is delegated to the release's own `bin/genesis` CLI (`bin/genesis
+  remote start|stop|status|logs`): the CLI starts the instance when none is
+  running and enables/disables Erlang distribution on it at runtime, supporting
+  Linux (systemd user/system scope plus a setsid/nohup fallback) and macOS
+  (launchd); the Elixir side no longer builds those commands. This mapping only
+  selects the remote host's OS family — it is the OS the release CLI will be
+  driving, not a separate per-target process.
 
   Windows platforms resolve to `{:error, :unsupported_platform}` — there is no
   Windows remote.

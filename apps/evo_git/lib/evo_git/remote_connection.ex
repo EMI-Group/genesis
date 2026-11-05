@@ -7,12 +7,16 @@ defmodule EvoGit.RemoteConnection do
     * **Bootstrap** (`bootstrap/1`, `bootstrap/2`) — "first time setup": gets a
       `genesis_server` release tarball onto the remote host, extracts it to the
       target's `remote_path`, patches its ELF binaries when the host is NixOS,
-      and then starts it as a daemon by invoking that release's OWN CLI —
-      `<remote_path>/bin/genesis_server remote start`. The daemon then runs
-      independently and stays up even after the local side disconnects.
-      Bootstrap does NOT connect. Bootstrap NEVER stops an already-running
-      daemon without explicit user permission — see the `:on_running` option of
-      `bootstrap/2`.
+      and then invokes that release's OWN CLI —
+      `<remote_path>/bin/genesis_server remote start` — which makes the host's
+      Genesis server instance available as a remote node: the CLI starts the
+      instance when none is running (`genesis start` semantics) and enables
+      Erlang distribution on it at RUNTIME. There is exactly ONE instance per
+      host and it always serves HTTP — distribution is a toggle inside that
+      same BEAM, so the instance and every task running on it survive the local
+      side disconnecting. Bootstrap does NOT connect. Bootstrap NEVER detaches
+      or re-points distribution on an already-running instance without explicit
+      user permission — see the `:on_running` option of `bootstrap/2`.
 
       Deployment mechanics belong to the release CLI, not to this module: it
       decides the systemd scope (`--user`, or SYSTEM scope with `--collect`
@@ -55,28 +59,36 @@ defmodule EvoGit.RemoteConnection do
   `:copying_config` → `:generating_cookie` → (`:patching_binaries` only on
   NixOS) → `:starting_daemon`.
 
+  `:starting_daemon` covers both shapes of the release CLI's `remote start`: a
+  first start of the instance on a cold host, and enabling distribution at
+  runtime on an instance that is already serving HTTP.
+
   Before any staging, bootstrap performs a silent pre-flight: it resolves the
   remote OS (the target's optional `platform` field, else one
   `uname -s && uname -m` probe — no login-user probe, because the CLI owns the
-  systemd scope decision) and asks the release CLI whether the daemon is
-  already running (`<launcher> remote status --unit genesis-remote-<id>`).
-  When it is:
+  systemd scope decision) and asks the release CLI whether distribution is
+  already enabled on the host's Genesis server instance
+  (`<launcher> remote status --unit genesis-remote-<id>`; the unit string is
+  the `--unit` IDENTITY argument, not a per-target process). When it is:
 
     * with `on_running: :refuse` (the default), bootstrap refuses without
-      touching anything — no staging, no kill, no broadcast — and returns
-      `{:error, {:daemon_running, details}}`; re-bootstrapping would stop the
-      running daemon and any tasks running on it. The caller should show a
-      permission dialog from this tuple;
+      touching anything — no staging, no stop, no broadcast — and returns
+      `{:error, {:daemon_running, details}}`; going ahead would re-stage the
+      release and re-point the instance's distribution identity. The caller
+      should show a permission dialog from this tuple;
     * with `on_running: :restart`, the `:stopping_daemon` stage is broadcast
-      and the running daemon is stopped with `<launcher> remote stop --unit
-      genesis-remote-<id>` before the normal staging flow starts a fresh daemon
-      with the current contract.
+      and `<launcher> remote stop --unit genesis-remote-<id>` is run before the
+      normal staging flow re-enables distribution with the current contract.
+      `remote stop` only DETACHES distribution — the instance keeps serving
+      HTTP and its tasks keep running (`genesis stop` is what stops the
+      instance itself).
 
-  `:patching_binaries` is broadcast only when the remote is NixOS (Linux + a
-  daemon that is not already running + NixOS detected) and is skipped
+  `:patching_binaries` is broadcast only when the remote is NixOS (Linux + not
+  yet distribution-enabled for this target + NixOS detected) and is skipped
   otherwise: on NixOS hosts the extracted release's ELF binaries are patched on
   the fly with a Nix-built `patchelf` (the glibc tarball cannot execute there
-  without it). A live daemon is never patched.
+  without it). A release whose instance already has distribution enabled is
+  never patched — that live instance keeps running its already-loaded code.
 
     * **Connection** (`connect/1`) — establishes an SSH tunnel forwarding the
       remote distribution port to loopback, then performs Erlang distribution
@@ -179,10 +191,10 @@ defmodule EvoGit.RemoteConnection do
   # so an unreachable/dead host fails inside the budget instead of hanging on
   # the OS TCP timeout. The tunnel wait budget itself is the hard cap either way.
   @ssh_connect_timeout_ms 8_000
-  # Budget for the release CLI's `remote start`, which BLOCKS until the daemon
-  # answers (its own `--wait` readiness budget) and then lets the BEAM boot. The
-  # CLI's exit status IS the health signal — there is no separate health poll on
-  # this side.
+  # Budget for the release CLI's `remote start`, which BLOCKS until the
+  # instance has distribution enabled and answers (its own `--wait` readiness
+  # budget) — on a cold host that includes the BEAM boot. The CLI's exit status
+  # IS the health signal — there is no separate health poll on this side.
   @daemon_start_timeout_ms 120_000
   # The CLI's own readiness budget (seconds) passed via `--wait`.
   @daemon_start_wait_s 30
@@ -212,12 +224,13 @@ defmodule EvoGit.RemoteConnection do
   # root, so re-bootstrap nix-builds are instant).
   @patch_timeout_ms 600_000
 
-  # The remote daemon binds loopback; the SSH tunnel forwards the dist port to
-  # loopback on both sides. The daemon's port is fixed when its unit was
-  # started (the CLI receives it as `--dist-port`), so a target whose
-  # `dist_port` changed must be re-bootstrapped to move the daemon. The local
-  # end of the tunnel uses a dynamically-assigned free port to avoid conflicts
-  # with the local node's own distribution port.
+  # The remote node's distribution listener binds loopback; the SSH tunnel
+  # forwards the dist port to loopback on both sides. The port is pinned inside
+  # the running instance at ENABLE time (the CLI receives it as `--dist-port`),
+  # so a target whose `dist_port` changed must be re-bootstrapped to re-enable
+  # distribution on the new port. The local end of the tunnel uses a
+  # dynamically-assigned free port to avoid conflicts with the local node's own
+  # distribution port.
   @default_remote_dist_port 9000
 
   # ── State ──────────────────────────────────────────────────────────
@@ -291,7 +304,8 @@ defmodule EvoGit.RemoteConnection do
   end
 
   @doc """
-  Initiates a connection to the remote daemon for the given `target_id`.
+  Initiates a connection to the remote node — the host's Genesis server
+  instance with distribution enabled — for the given `target_id`.
 
   Looks up the target via `EvoGit.RemoteConnections.get/1`, finds-or-starts the
   connection manager GenServer, then requests a connection.
@@ -387,14 +401,15 @@ defmodule EvoGit.RemoteConnection do
 
   @doc """
   Executes the bootstrap process ONLY (stage the `genesis_server` release +
-  start its daemon).
+  bring the host's Genesis server instance up as a remote node).
 
   Does NOT connect. Looks up the target, finds-or-starts the manager, then
   performs the first-time setup using CLI `scp`/`ssh` and — when no usable
   `local_binary_path` is set — automatic platform probing + release download.
 
-  Delegates to `bootstrap/2` with the default `on_running: :refuse`: a daemon
-  that is already running is never stopped without explicit permission.
+  Delegates to `bootstrap/2` with the default `on_running: :refuse`:
+  distribution that is already enabled is never detached or re-pointed without
+  explicit permission.
 
   Returns `{:ok, :daemon_started}` on success or `{:error, reason}`.
   """
@@ -405,22 +420,23 @@ defmodule EvoGit.RemoteConnection do
 
   @doc """
   Executes the bootstrap process ONLY (stage the `genesis_server` release +
-  start its daemon), with options.
+  make the host's Genesis server instance a remote node), with options.
 
   Same as `bootstrap/1` plus the `:on_running` option. Before any staging a
-  silent pre-flight resolves the remote OS and asks the release CLI whether the
-  daemon is already running:
+  silent pre-flight resolves the remote OS and asks the release CLI whether
+  distribution is already enabled on the host's Genesis server instance:
 
-    * `:on_running: :refuse` (default) — when the remote daemon is already
-      running, refuse without touching anything: no staging, no kill, no
-      broadcast. Returns `{:error, {:daemon_running, details}}` where
-      `details` is a human-readable explanation. The caller should ask the
-      user for permission and, if granted, re-invoke with
-      `on_running: :restart`.
-    * `:on_running: :restart` — stop the running daemon first (broadcasting
-      the `:stopping_daemon` stage and running `<launcher> remote stop --unit
+    * `:on_running: :refuse` (default) — when distribution is already enabled,
+      refuse without touching anything: no staging, no stop, no broadcast.
+      Returns `{:error, {:daemon_running, details}}` where `details` is a
+      human-readable explanation. The caller should ask the user for
+      permission and, if granted, re-invoke with `on_running: :restart`.
+    * `:on_running: :restart` — detach distribution first (broadcasting the
+      `:stopping_daemon` stage and running `<launcher> remote stop --unit
       genesis-remote-<id>`), then proceed with the normal staging +
-      fresh-daemon flow.
+      distribution-enable flow. Detaching distribution does NOT stop the
+      instance or interrupt its tasks: the same Genesis server keeps serving
+      HTTP throughout.
     * Any other value behaves as `:refuse` (a warning is logged for unknown
       values).
 
@@ -674,7 +690,7 @@ defmodule EvoGit.RemoteConnection do
   # The blocking connect flow, run inside the connect worker: ensure the
   # outbound EpmdDist resolution, set the cookie, open the ssh tunnel, poll
   # its local port until ready, register the tunnel port with EpmdDist and
-  # Node.connect to the remote daemon.
+  # Node.connect to the remote node.
   #
   # Returns {:ok, %{port: port, local_port: local_port, node_name: node_name}}
   # (the worker STILL owns `port` at this point — the caller transfers it to
@@ -682,10 +698,11 @@ defmodule EvoGit.RemoteConnection do
   # on every failure arm, so no tunnel is left behind).
   #
   # The connect-failure diagnostics are built from the target's own contract
-  # (ssh target, launcher path, unit name) — the daemon's deployment shape lives
-  # behind the release CLI, so nothing here names a systemd or launchd command.
+  # (ssh target, launcher path, unit name) — the instance's deployment shape
+  # lives behind the release CLI, so nothing here names a systemd or launchd
+  # command.
   defp establish_tunnel_and_node(target) do
-    # Outbound tunnel connects must resolve the remote daemon's port through
+    # Outbound tunnel connects must resolve the remote node's dist port through
     # EvoGit.EpmdDist's persistent-term registry (register_target below feeds
     # exactly that registry). When the local node booted distributed via
     # Distribution.maybe_enable/0 (or -sname/-name), the kernel `epmd_module`
@@ -700,7 +717,8 @@ defmodule EvoGit.RemoteConnection do
     # outbound resolution of tunnel-registered names needs EpmdDist.
     EvoGit.Distribution.ensure_epmd_module()
 
-    # Set the distribution cookie to match the remote daemon.
+    # Set the distribution cookie to match the remote node (the host's Genesis
+    # server instance with distribution enabled).
     # Read from the persisted config; auto-generated during bootstrap.
     config = EvoGit.Config.resolve()
     node_cookie = get_in(config, [:node, :cookie])
@@ -722,7 +740,7 @@ defmodule EvoGit.RemoteConnection do
         Node.set_cookie(String.to_atom(cookie))
     end
 
-    # Remote port: the port the remote daemon actually listens on.
+    # Remote port: the dist port the remote node's listener was enabled on.
     remote_port = Map.get(target, :dist_port) || @default_remote_dist_port
 
     # Find a free local port for the SSH tunnel so we never conflict with
@@ -785,14 +803,15 @@ defmodule EvoGit.RemoteConnection do
   # ── Bootstrap ──────────────────────────────────────────────────────
 
   # Entry point for the bootstrap GenServer call. Silent pre-flight BEFORE any
-  # staging: resolve the daemon OS (target `platform` override, else one
-  # `uname -s && uname -m` probe — no broadcast yet), then check whether the
-  # daemon is already running. When it is: `on_running: :refuse` (default)
-  # refuses without touching anything (no staging, no kill, no broadcast —
-  # the caller shows a permission dialog from the {:daemon_running, details}
-  # tuple); `on_running: :restart` broadcasts the :stopping_daemon stage,
-  # stops the daemon, then proceeds with the normal staging flow (which
-  # starts a fresh daemon with the current contract).
+  # staging: resolve the launch OS (target `platform` override, else one
+  # `uname -s && uname -m` probe — no broadcast yet), then check whether
+  # distribution is already enabled on the host's Genesis server instance. When
+  # it is: `on_running: :refuse` (default) refuses without touching anything
+  # (no staging, no stop, no broadcast — the caller shows a permission dialog
+  # from the {:daemon_running, details} tuple); `on_running: :restart`
+  # broadcasts the :stopping_daemon stage, DETACHES distribution (the instance
+  # and its tasks keep running), then proceeds with the normal staging flow
+  # (which re-enables distribution with the current contract).
   defp do_bootstrap(%__MODULE__{} = state, opts) do
     on_running = normalize_on_running(Keyword.get(opts, :on_running, :refuse))
     target = state.target
@@ -803,8 +822,8 @@ defmodule EvoGit.RemoteConnection do
     case resolve_platform(target, ssh_target) do
       {:ok, daemon_os, platform} ->
         # The release CLI owns the systemd scope decision, so the pre-flight no
-        # longer probes the login user — it just asks the CLI whether the
-        # daemon is running.
+        # longer probes the login user — it just asks the CLI whether
+        # distribution is enabled on the instance.
         case remote_status(ssh_target, launcher_path, unit) do
           {:running, _node, _port} ->
             case on_running do
@@ -813,9 +832,11 @@ defmodule EvoGit.RemoteConnection do
                 {:error, {:daemon_running, daemon_running_details(target)}, state}
 
               :restart ->
-                # :stopping_daemon stage, then stop the daemon, then stage a
-                # fresh one with the current contract. A failed stop is
-                # non-fatal — the start below surfaces any real failure.
+                # :stopping_daemon stage, then detach distribution (the
+                # instance keeps serving HTTP and its tasks keep running), then
+                # stage a fresh release and re-enable distribution with the
+                # current contract. A failed stop is non-fatal — the start
+                # below surfaces any real failure.
                 state = set_stage(%{state | phase: :bootstrapping}, target, :stopping_daemon)
                 stop_daemon_via_cli(ssh_target, launcher_path, unit)
                 do_bootstrap_staging(state, target, daemon_os, platform)
@@ -1080,10 +1101,10 @@ defmodule EvoGit.RemoteConnection do
 
   # Runs the post-staging launch sequence shared by both bootstrap paths:
   # extract + chmod (ONE ssh round trip) → config copy → cookie → (NixOS patch)
-  # → daemon start (the CLI's exit status IS the health signal). `os` is the
-  # daemon OS resolved during pre-flight (probed or platform override) —
+  # → distribution enable (the CLI's exit status IS the health signal). `os` is
+  # the launch OS resolved during pre-flight (probed or platform override) —
   # `:detecting_os` no longer exists as a stage. `paths` is the
-  # `remote_paths/1` map shared with the daemon helpers.
+  # `remote_paths/1` map shared with the remote-node helpers.
   defp launch_after_staging(%__MODULE__{} = state, target, paths, os) do
     %{ssh_target: ssh_target, launcher_path: launcher_path} = paths
 
@@ -1097,8 +1118,8 @@ defmodule EvoGit.RemoteConnection do
       state = set_stage(state, target, :generating_cookie)
       cookie = ensure_cookie!()
 
-      # NixOS on-the-fly patching (Linux only; skipped when the daemon is
-      # already running or the remote is not NixOS). Broadcasts
+      # NixOS on-the-fly patching (Linux only; skipped when distribution is
+      # already enabled for this target or the remote is not NixOS). Broadcasts
       # :patching_binaries only when the patch actually runs.
       case maybe_patch_nixos(state, target, ssh_target, os, launcher_path) do
         {:ok, state} ->
@@ -1167,7 +1188,7 @@ defmodule EvoGit.RemoteConnection do
   defp target_label(%{id: id}), do: to_string(id)
   defp target_label(_target), do: "?"
 
-  # Resolves the remote paths shared by both staging paths and the daemon
+  # Resolves the remote paths shared by both staging paths and the remote-node
   # helpers. The tarball is uploaded to `<remote_path>.tar.xz`, then extracted
   # into `remote_path`'s parent: the tarball contains a top-level
   # `genesis_server/` directory.
@@ -1257,7 +1278,7 @@ defmodule EvoGit.RemoteConnection do
 
   # Copies local config.toml and credentials.toml to the remote host.
   # Best-effort: missing local files are skipped; copy errors are logged but
-  # do not fail the bootstrap (the daemon boots fine without config).
+  # do not fail the bootstrap (the instance boots fine without config).
   # Files that already exist on the remote are NOT overwritten.
   #
   # When config.toml is copied to a remote that has none, a locally-staged
@@ -1426,7 +1447,7 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # SCPs the unmodified local file, logging (but never propagating) failures —
-  # the original best-effort behavior: the daemon boots fine without config.
+  # the original best-effort behavior: the instance boots fine without config.
   defp scp_original_config(ssh_target, path, remote_file, display) do
     case scp_config_file(ssh_target, path, remote_file) do
       :ok -> :ok
@@ -1541,20 +1562,21 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Race safety net after the pre-flight gate: checks if the daemon is running
-  # and starts it only if not. A daemon may legitimately start between the
-  # pre-flight check in do_bootstrap/2 and this launch point (another
-  # bootstrap, a manual start), so the running-daemon decision is re-checked
-  # here — this function is no longer the primary running-daemon decision.
-  # When the daemon IS running, its identity is verified against the current
-  # contract before declaring success: the cookie is fixed per machine at launch
-  # time and cannot be compared, so the identity check is the node name reported
-  # by `<launcher> remote status`. A daemon launched for another target, or
-  # started manually, would otherwise silently "succeed" and then fail every
-  # connect. A mismatch is NOT auto-repaired (the running daemon may serve an
-  # old session) — it fails loudly with remediation. The :starting_daemon stage
-  # is broadcast only on the start path — an already-running,
-  # identity-matching daemon completes without any broadcast.
+  # Race safety net after the pre-flight gate: checks whether distribution is
+  # enabled for the expected node and enables it only if not. Distribution may
+  # legitimately be enabled between the pre-flight check in do_bootstrap/2 and
+  # this launch point (another bootstrap, a manual `remote start`), so the
+  # decision is re-checked here — this function is no longer the primary
+  # running/not-running decision. When distribution IS enabled, its identity is
+  # verified against the current contract before declaring success: the cookie
+  # is fixed per machine at enable time and cannot be compared, so the identity
+  # check is the node name reported by `<launcher> remote status`. Distribution
+  # enabled for another target, or enabled manually, would otherwise silently
+  # "succeed" and then fail every connect. A mismatch is NOT auto-repaired (the
+  # instance may be serving another local node's session) — it fails loudly
+  # with remediation. The :starting_daemon stage is broadcast only on the enable
+  # path — an already-enabled, identity-matching instance completes without any
+  # broadcast.
   defp maybe_start_daemon(ssh_target, launcher_path, target, cookie, state) do
     unit = daemon_unit(target)
     expected_node = remote_node_name(target)
@@ -1576,9 +1598,11 @@ defmodule EvoGit.RemoteConnection do
 
       _not_running ->
         # `:stopped`, or a status call that could not run at all (a first-time
-        # host has no launcher yet) — either way the CLI must start it. The
-        # start itself is the health signal: the CLI waits for readiness and its
-        # exit status is the outcome, so there is no poll loop here.
+        # host has no launcher yet) — either way the CLI must be asked to enable
+        # distribution (starting the instance first when none is running). The
+        # `remote start` itself is the health signal: the CLI waits for the
+        # answer and its exit status is the outcome, so there is no poll loop
+        # here.
         set_stage(state, target, :starting_daemon)
         start_daemon_via_cli(ssh_target, launcher_path, target, cookie)
     end
@@ -1586,16 +1610,17 @@ defmodule EvoGit.RemoteConnection do
 
   # On-the-fly NixOS support: the genesis_server release is a glibc-linked
   # tarball that cannot execute on NixOS hosts (no /lib64/ld-linux-x86-64.so.2).
-  # For Linux remotes whose daemon is not already running, detect NixOS (one
-  # SSH round trip) and — when detected — patch the extracted release's ELF
+  # For Linux remotes where distribution is not already enabled, detect NixOS
+  # (one SSH round trip) and — when detected — patch the extracted release's ELF
   # binaries with a Nix-built patchelf, mirroring the NixOS vscode-remote-ssh
-  # extension patch pattern. A live daemon is NEVER patched; non-Linux hosts
-  # are untouched. Returns {:ok, state} (patched or skipped) or
+  # extension patch pattern. A release whose instance already has distribution
+  # enabled is NEVER patched; non-Linux hosts are untouched. Returns
+  # {:ok, state} (patched or skipped) or
   # {:error, {:nixos_patch_failed, details}}.
   #
-  # The running check goes through the release CLI's `remote status`: on a fresh
+  # The enabled check goes through the release CLI's `remote status`: on a fresh
   # NixOS host the unpatched launcher cannot execute at all, so a status ERROR
-  # has to mean "not running, patch it".
+  # has to mean "not enabled, patch it".
   defp maybe_patch_nixos(state, target, ssh_target, "Linux", launcher_path) do
     case remote_status(ssh_target, launcher_path, daemon_unit(target)) do
       {:running, _node, _port} ->
@@ -1675,22 +1700,26 @@ defmodule EvoGit.RemoteConnection do
 
   defp output_tail(_output), do: ""
 
-  # The per-target daemon unit name — the ONE place it is formatted. The release
-  # CLI accepts it as `--unit` and derives everything else (systemd unit in the
-  # scope it picks, macOS launchd label) from it.
+  # The per-target identity token — the ONE place it is formatted. The release
+  # CLI accepts it as `--unit` and derives nothing else from it: distribution
+  # runs on the host's ONE Genesis server instance, so the unit string is an
+  # IDENTITY (and, on `remote start`, the name used to clean up a legacy
+  # per-target daemon unit left behind by an older bootstrap), never a process
+  # this module starts or stops.
   defp daemon_unit(target), do: "genesis-remote-#{target.id}"
 
-  # Asks the release CLI whether the daemon is running:
-  # `"<launcher>" remote status --unit <unit>`.
+  # Asks the release CLI whether distribution is enabled on the host's Genesis
+  # server instance: `"<launcher>" remote status --unit <unit>`.
   #
   # Returns:
   #
   #   * `{:running, node, dist_port}` — exit 0 and a parseable status line
-  #     (`running node=<node> dist_port=<port>`). Unparsable output is reported
-  #     as `{:running, nil, nil}` so the identity check fails loudly instead of
-  #     silently trusting it.
+  #     (`running node=<node> dist_port=<port>`): distribution IS enabled.
+  #     Unparsable output is reported as `{:running, nil, nil}` so the identity
+  #     check fails loudly instead of silently trusting it.
   #   * `:stopped` — a non-zero exit whose output says `stopped` (the CLI's
-  #     documented "not running" answer).
+  #     documented "not enabled" answer; the instance itself may well still be
+  #     serving HTTP).
   #   * `{:error, {:daemon_status_failed, status, tail}}` — any other non-zero
   #     exit (an absent launcher on a first-time host, a broken install, …).
   #   * `{:error, :daemon_status_timeout}` — no answer within `@cmd_timeout_ms`.
@@ -1732,9 +1761,9 @@ defmodule EvoGit.RemoteConnection do
   end
 
   # Human-readable details for the {:daemon_running, details} refusal returned
-  # when bootstrap is called with on_running: :refuse while the daemon is
-  # already running. The caller (dashboard) shows a permission dialog from
-  # this tuple.
+  # when bootstrap is called with on_running: :refuse while distribution is
+  # already enabled on the host's Genesis server instance. The caller
+  # (dashboard) shows a permission dialog from this tuple.
   defp daemon_running_details(target) do
     "the remote daemon #{daemon_unit(target)} is already running; " <>
       "re-bootstrapping would stop it and any tasks running on it — " <>
@@ -1743,9 +1772,10 @@ defmodule EvoGit.RemoteConnection do
 
   # Plain-string details for {:daemon_identity_mismatch, details}: what
   # `remote status` reported vs the node the current contract requires, plus
-  # the exact remediation. A mismatched daemon is NEVER auto-killed — it may be
-  # serving another local node's session — so the message names the one command
-  # the user (or a later bootstrap with permission) must run.
+  # the exact remediation. Distribution enabled under a mismatched node is
+  # NEVER auto-detached — the instance may be serving another local node's
+  # session — so the message names the one command the user (or a later
+  # bootstrap with permission) must run.
   defp daemon_identity_mismatch_details(
          launcher_path,
          unit,
@@ -1766,10 +1796,13 @@ defmodule EvoGit.RemoteConnection do
       "`\"#{launcher_path}\" remote stop --unit #{unit}` and re-run bootstrap."
   end
 
-  # Stops a running daemon through the release CLI:
-  # `"<launcher>" remote stop --unit <unit>`, which is idempotent.
+  # Detaches distribution through the release CLI:
+  # `"<launcher>" remote stop --unit <unit>`, which is idempotent. It only
+  # clears the runtime distribution toggle — the host's Genesis server instance
+  # keeps serving HTTP and its tasks keep running (`genesis stop` is what stops
+  # the instance itself).
   #
-  # Best-effort: only reached when the user permitted stopping the daemon
+  # Best-effort: only reached when the user permitted the re-point
   # (`on_running: :restart`). A failed stop is logged as a warning and bootstrap
   # continues — the `remote start` below surfaces any real failure.
   defp stop_daemon_via_cli(ssh_target, launcher_path, unit) do
@@ -1795,18 +1828,24 @@ defmodule EvoGit.RemoteConnection do
     end
   end
 
-  # Starts the daemon through the release CLI and waits for its readiness:
+  # Enables distribution through the release CLI and waits for its answer:
   #
   #   "<launcher>" remote start --node <node> --cookie <cookie> \
   #     --dist-port <port> --unit <unit> --wait 30
   #
-  # The CLI blocks until the daemon answers (its own `--wait` budget) and picks
-  # the systemd scope / launchd plist / setsid fallback itself, so its EXIT
-  # STATUS is the health signal — there is no separate health poll on this side.
+  # On a cold host the CLI brings the host's Genesis server instance up first
+  # (exactly like `genesis start`), then enables distribution on that same BEAM
+  # at runtime; when the instance is already serving HTTP only the toggle
+  # changes. The CLI blocks until the instance answers (its own `--wait`
+  # budget), and it picks the systemd scope / launchd plist / setsid fallback
+  # itself, so its EXIT STATUS is the health signal — there is no separate
+  # health poll on this side.
   #
-  # NOT retried: starting the daemon is not idempotent (a retry could launch a
-  # second process). `merge_stderr: true` so a failure tail carries ssh's own
-  # transport diagnostics as well as the CLI's stderr.
+  # NOT retried: this is the ONE state-changing call of the flow (start the
+  # instance when needed + enable distribution), so it does not go through the
+  # transport-retry seam `run_ssh_command_retry/4` that idempotent read/verify
+  # commands use (`remote status`, probes). `merge_stderr: true` so a failure
+  # tail carries ssh's own transport diagnostics as well as the CLI's stderr.
   defp start_daemon_via_cli(ssh_target, launcher_path, target, cookie) do
     node = remote_node_name(target)
     port = Map.get(target, :dist_port) || @default_remote_dist_port
@@ -1824,9 +1863,10 @@ defmodule EvoGit.RemoteConnection do
         {:error, {:daemon_launch_failed, status, output_tail(output)}}
 
       :timeout ->
-        # The CLI blocks for its whole `--wait` budget plus the daemon's boot, so
-        # a transport timeout can still be a successful start. ONE cheap confirm
-        # via `remote status` — never a poll loop (the CLI already waited).
+        # The CLI blocks for its whole `--wait` budget plus the instance's boot
+        # on a cold host, so a transport timeout can still be a successful
+        # enable. ONE cheap confirm via `remote status` — never a poll loop (the
+        # CLI already waited).
         case remote_status(ssh_target, launcher_path, unit) do
           {:running, ^node, _port} -> :ok
           _not_started -> {:error, {:daemon_launch_failed, :timeout}}
@@ -1977,8 +2017,9 @@ defmodule EvoGit.RemoteConnection do
   # forwarded to `run_ssh_command/4` (notably `merge_stderr: true`).
   #
   # ONLY idempotent / read-only commands go through here — never `remote start`
-  # (starting the daemon is not idempotent), `scp`, the download commands or the
-  # NixOS patch script.
+  # (the one state-changing call: it starts the instance when needed and enables
+  # distribution at runtime), `scp`, the download commands or the NixOS patch
+  # script.
   @doc false
   @spec run_ssh_command_retry(String.t(), String.t(), non_neg_integer(), keyword()) ::
           {:ok, String.t(), non_neg_integer()} | :timeout
