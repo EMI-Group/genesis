@@ -1,7 +1,7 @@
 # Auto-Update / Push-Update Design Analysis
 
-**Status:** Implemented and shipped via the official `tauri-plugin-updater` v2: the update feed is served from `https://genesis.evox.group/dl/latest.json` (with a GitHub fallback), the minisign public key is baked into `tauri.conf.json`, and apply is manual-click only, gated on task idle. Remaining outstanding items: the Windows Authenticode certificate, Linux apt/dnf repositories, the remote-daemon (the `genesis_server` release in remote-dev mode) update flow, staged rollout/beta channels, and per-platform signed updater payloads requiring the two repo secrets. Written from the state of the codebase at v0.10.5.
-**Scope:** The Genesis desktop app (Tauri shell `desktop/` + Elixir backend release `genesis_desktop`). The remote daemon — the same `genesis_server` release, launched in remote-dev mode — is covered briefly in §6.
+**Status:** Implemented and shipped via the official `tauri-plugin-updater` v2: the update feed is served from `https://genesis.evox.group/dl/latest.json` (with a GitHub fallback), the minisign public key is baked into `tauri.conf.json`, and apply is manual-click only, gated on task idle. Remaining outstanding items: the Windows Authenticode certificate, Linux apt/dnf repositories, the remote-node (the `genesis_server` release serving as a remote node) update flow, staged rollout/beta channels, and per-platform signed updater payloads requiring the two repo secrets. Written from the state of the codebase at v0.10.5.
+**Scope:** The Genesis desktop app (Tauri shell `desktop/` + Elixir backend release `genesis_desktop`). The remote node — the same `genesis_server` release, serving HTTP with Erlang distribution enabled at runtime — is covered briefly in §6.
 
 ---
 
@@ -82,7 +82,7 @@
 | **Linux** | `AppImage` (x64 only) | **In-app updater** — `tauri-plugin-updater` (the only Linux target it supports) | AppImages have no package manager; self-update is the accepted convention. Self-contained (incl. wxWidgets closure — already verified). |
 | **Linux** | `.tar.gz` portable | **Download link** (open releases page), never silent replacement | Portable archives can't be atomically replaced from inside a running app. |
 | **Linux** | (future Flatpak) | Flatpak itself handles updates | Not built today; if revived, no in-app updater needed. |
-| **Remote daemon** | `genesis_server_*.tar.xz` | Dashboard-initiated remote update (extend `RemoteBootstrap`/`RemoteConnection` with stop → swap → start) | See §6 — current flow overwrites files under a running daemon. |
+| **Remote node** | `genesis_server_*.tar.xz` | Dashboard-initiated remote update (extend `RemoteBootstrap`/`RemoteConnection` with `genesis stop` → swap → `genesis start`, then re-enable distribution) | See §6 — current flow overwrites files under a running instance. |
 
 **Design principle:** the in-app updater is the *transport*, not the *policy*. On Linux, even the AppImage channel should surface a "what's new / changelog" step before applying. On macOS/Windows the platform convention is "silent-ish install with a restart prompt".
 
@@ -178,9 +178,9 @@ Two viable options (or both — the Cloudflare worker can front either):
 
 ---
 
-## 6. The remote daemon (the `genesis_server` release in remote-dev mode) — same problem, worse today
+## 6. The remote node (the `genesis_server` release on a remote host) — same problem, worse today
 
-`RemoteBootstrap`/`RemoteConnection` update flow currently **overwrites release files under a running daemon** (old code in memory, new files on disk, new code only after a manual restart) and has no version comparison. If remote daemons are in scope, the same design applies: dashboard-initiated update gated on the remote node's task idle state (`RemoteAPI.list_task_ids/1` exists), then stop daemon → swap tarball → start daemon. This is follow-up work, not part of the desktop updater.
+`RemoteBootstrap`/`RemoteConnection` update flow currently **overwrites release files under a running daemon** (old code in memory, new files on disk, new code only after a manual restart) and has no version comparison. If remote nodes are in scope, the same design applies: dashboard-initiated update gated on the remote node's task idle state (`RemoteAPI.list_task_ids/1` exists), then `genesis stop` → swap tarball → `genesis start` (distribution is re-enabled afterwards by `genesis remote start`). This is follow-up work, not part of the desktop updater.
 
 ---
 
@@ -205,7 +205,7 @@ Two viable options (or both — the Cloudflare worker can front either):
 - **Phase 1 — Client check (read-only):** **DONE** — `tauri-plugin-updater` dep + `plugins.updater` config + `bundle.createUpdaterArtifacts`; `check_update`/`download_update`/`begin_update` commands; System page Software Update card with `:update_check_runner` seam; background check (startup 30s + ~6h + page mount) with auto-download; sidebar notification dot (amber/blue). Note: implemented on the System page (per the §11 product decision) rather than a Settings → Updates category; no `updater:default` capability was needed (custom commands).
 - **Phase 2 — Safe apply:** **DONE except `:interrupted` status** (v1 fallback = `:cancelled` + review page, §9 #7) — idle gate + graceful wind-down implemented in the dashboard (`TaskRegistry.list_task_ids` via the node-aware path, graceful-cancel all with ~35min budget + user-warned `force_kill_task/1` fallback; no `EvoGit.UpdateGate` core module — the gate lives in `SystemLive`/`EvoDash.UpdateStatus`); watchdog update-intent state (stop → install → relaunch); apply modal with Defer / "Apply & gracefully stop tasks" / force warning.
 - **Phase 3 — Linux package-manager channels:** **DEFERRED** — deb/rpm installs are notify-only today (detected via `APPIMAGE` env nil; card shows "update via your package manager", no self-install). apt/dnf repo publishing + GPG not started.
-- **Phase 4 — Polish:** **DEFERRED** — staged rollout/channels, update failure rollback verification, remote-daemon update flow (§6), optional Sparkle migration.
+- **Phase 4 — Polish:** **DEFERRED** — staged rollout/channels, update failure rollback verification, remote-node update flow (§6), optional Sparkle migration.
 
 ---
 
@@ -216,7 +216,7 @@ Two viable options (or both — the Cloudflare worker can front either):
 3. **Update cadence & auto-download policy:** — **DECIDED**: check on startup (delayed ~30s) + manual "Check now" + periodic ~6h; **auto-download in background** (download + verify is inert — the plugin verifies before writing) so the dot reaches "ready" without user action; a policy knob is deferred.
 4. **Staged rollout:** beta/stable channel split? — **DEFERRED** (manifest variants `latest.json`/`beta.json` later; the Cloudflare worker can do percentage rollout).
 5. **macOS:** official updater plugin vs Sparkle — **DECIDED: official plugin** (§1.1); Sparkle only if a native macOS update panel becomes a hard requirement.
-6. **Remote daemons:** include the remote-update flow (§6) in this effort or defer? — **DEFERRED** (separate stop→swap→start flow).
+6. **Remote nodes:** include the remote-update flow (§6) in this effort or defer? — **DEFERRED** (separate stop→swap→start flow).
 7. **`:interrupted` status vs `:cancelled` + reason metadata:** — **v1 fallback CHOSEN** (`:cancelled` + the review page, results preserved; no reason metadata written); `:interrupted` remains the recommended upgrade for later polish (codec `@known_atoms` + ~10 hardcoded lists, verified feasible).
 
 ---
@@ -251,7 +251,7 @@ Two viable options (or both — the Cloudflare worker can front either):
     ```
   - It is then uploaded automatically by `files: dist/*`. The server must NOT 204 this file (only a "no update" response may be 204); a missing platform entry means "no update for this platform".
 - **Feed URL for the app**: `https://genesis.evox.group/dl/latest.json` as the primary (mainland-China reachable) endpoint, with `https://github.com/<owner>/<repo>/releases/latest/download/latest.json` as a secondary fallback — both are configured in `tauri.conf.json` `plugins.updater.endpoints` and tried in order (the unversioned GitHub asset name stays permanent as the upstream convention). `/dl/latest/latest.json` is an accepted equivalent (the `latest` alias resolves against GitHub's latest release), but the shipped binary keeps the unversioned `/dl/latest.json` form.
-- **Excluded from the manifest**: `.msi`, `.deb`, `.rpm`, `.dmg`, portable `.tar.gz`, and all `genesis_server_*` tarballs (remote daemons have their own deferred stop→swap→start flow, §6).
+- **Excluded from the manifest**: `.msi`, `.deb`, `.rpm`, `.dmg`, portable `.tar.gz`, and all `genesis_server_*` tarballs (remote nodes have their own deferred stop→swap→start flow, §6).
 - The workflow never reads `VERSION` today (verified — version is baked at build time; the tag-derived `release_version` output is the manifest's version source; keep it that way).
 
 ---
