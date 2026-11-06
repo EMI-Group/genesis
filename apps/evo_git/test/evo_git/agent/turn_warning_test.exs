@@ -219,7 +219,8 @@ defmodule EvoGit.Agent.TurnWarningTest do
       assert msg =~ "wrapping up"
       assert msg =~ "no tool calls"
       assert msg =~ "ends the run"
-      # complete_task stays optional — never presented as THE way to end a run
+      # A reply with no tool calls is the ONLY way to end a run, so the warning
+      # names no completion tool.
       refute msg =~ "call complete_task"
     end
 

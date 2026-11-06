@@ -86,8 +86,8 @@ defmodule EvoGit.Agent.TurnLimitTest do
     test "hard stop with graceful completion: recovery sets in_grace_period" do
       # Simulate the flow: turn hits limit -> trigger_recovery sets
       # in_grace_period=true -> trigger_turn_limit_recovery? now returns false
-      # (loop falls through to do_turn) -> if LLM calls complete_task, loop
-      # terminates successfully.
+      # (loop falls through to do_turn) -> if that turn ends with a plain-text
+      # reply and no tool calls, the run finishes successfully.
       at_limit = state(turn: 128, max_turns: 128, in_grace_period: false)
 
       # The turn-limit condition fires, recovery is triggered

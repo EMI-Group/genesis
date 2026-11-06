@@ -181,9 +181,11 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
     text, and `build_completion/2` commits pending work BEFORE capturing
     `commit_sha` — the reported sha therefore CONTAINS the agent's still
     uncommitted file change (the reviewable-commit guarantee) and the worktree
-    is left clean. The agent loop does NOT continue (`loop_fn` is never called)
-    and the dirty-workspace gate of the EXPLICIT `complete_task` route never
-    applies: a dirty workspace does not turn a legitimate finish into a refusal.
+    is left clean. The agent loop does NOT continue (`loop_fn` is never called).
+    A reply with no tool calls is the ONLY way to finish a run, so there is no
+    workspace gate to skip: a dirty workspace never turns a legitimate finish
+    into a refusal — the pending work is simply committed into the report's
+    commit.
   * The same holds for a SUBAGENT (depth 1, non-nil `parent_id`) — one request,
     no nudge — and its `%Result{}` surfaces to the parent through
     `EvoGit.Agent.SubagentProcessing.format_subagent_result/1`.
@@ -219,7 +221,6 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   alias EvoGit.Agent.Result
   alias EvoGit.Agent.SubagentProcessing
   alias EvoGit.Agent.ToolDispatch
-  alias EvoGit.Agent.Tools.CompleteTask
   alias EvoGit.Adapters.Git
   alias EvoGit.AgentScheduler
   alias EvoGit.AgentScheduler.AgentState
@@ -232,7 +233,7 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   @model_id "default"
   @system_text "You are the implicit-completion test agent."
   @objective "Objective: finish the task and report what you did."
-  # The report the stub "model" writes. Deliberately free of the dirty-workspace
+  # The report the stub "model" writes. Deliberately free of workspace-state
   # wording so the context scan below cannot be satisfied by the report itself.
   @report_text "Implemented the parser and ran the suite: 42 tests, 0 failures."
   @child_report_text "Child finished: added the CONTEXT.md for the parser node."
@@ -373,8 +374,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       # Committing was part of the finish, so the worktree is clean afterwards.
       assert {:ok, ""} = Git.status(repo)
 
-      # The dirty-workspace / refusal tool-result family never appears anywhere
-      # in the agent's context: the finish was a Result, not a {:continue, ...}.
+      # No refusal / workspace-state tool result appears anywhere in the agent's
+      # context: the finish was a Result, not a {:continue, ...}.
       # (The positive half keeps the negative assertion non-vacuous: the context
       # really was synced and really does carry the model's final message.)
       live_context = context_text(agent_id)
@@ -384,25 +385,19 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   end
 
   # ---------------------------------------------------------------------------
-  # 2. The dirty-workspace boundary belongs to the EXPLICIT route only
+  # 2. More than one uncommitted file at finish time
   # ---------------------------------------------------------------------------
-  describe "dirty worktree at finish time" do
-    test "does not gate an implicit completion (the change is committed into the reported sha)",
+  describe "multiple uncommitted files at finish time" do
+    test "are ALL committed into the reported sha (no workspace gate exists)",
          %{repo: repo} do
       agent_id = new_agent_id()
       server = StubLlmServer.start!([{:text, @report_text}])
       register_agent(agent_id, stub_model(server), repo, parent_id: nil)
       {:ok, pre_sha} = Git.rev_parse(repo)
-      # Deliberately dirty BEFORE the first LLM request: `complete_task` would
-      # answer with a tool result asking the model to commit and call again.
+      # Deliberately dirty BEFORE the first LLM request, with TWO pending files:
+      # finishing must commit both, never refuse.
       File.write!(Path.join(repo, @uncommitted_file), @uncommitted_content)
       File.write!(Path.join(repo, "second.txt"), "second change\n")
-
-      # CONTROL: this exact worktree state DOES trip the EXPLICIT route's gate,
-      # so the assertions below prove the IMPLICIT route skips it — not that the
-      # repo happened to be clean.
-      assert {:dirty, refusal} = CompleteTask.check_workspace_dirty(repo)
-      assert refusal =~ "the workspace has uncommitted changes"
 
       context = initial_context()
       state = loop_state(agent_id, context, repo, depth: 0, parent_id: nil)
@@ -433,9 +428,12 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
       assert committed == String.trim_trailing(@uncommitted_content)
       assert {:ok, "second change"} = Git.show(repo, "#{result.commit_sha}:second.txt")
       assert {:ok, ""} = Git.status(repo)
-      # ... and the explicit route's gate is now satisfied as well.
-      assert {:clean, nil} = CompleteTask.check_workspace_dirty(repo)
-      refute context_text(agent_id) =~ ~r/the workspace has uncommitted changes/i
+
+      # The finish was a Result, never a refusal tool result: the live context
+      # carries the report (positive half) and no workspace-state wording.
+      live_context = context_text(agent_id)
+      assert live_context =~ @report_text
+      refute live_context =~ ~r/\bdirty\b|workspace|uncommitted changes/i
     end
   end
 
@@ -653,8 +651,8 @@ defmodule EvoGit.Agent.ImplicitCompletionTest do
   end
 
   # The agent's LIVE context as text, read back from the app-global ETS table
-  # (`process_llm_response/6` syncs it there) — used to prove the dirty-workspace
-  # / refusal tool-result family never entered the conversation.
+  # (`process_llm_response/6` syncs it there) — used to prove the finish ended
+  # the run instead of entering a tool-result/refusal conversation.
   defp context_text(agent_id) do
     {:ok, agent_state} = SchedStore.get_agent_state(agent_id)
 

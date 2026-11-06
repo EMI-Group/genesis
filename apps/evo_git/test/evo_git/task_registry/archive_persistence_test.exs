@@ -350,8 +350,9 @@ defmodule EvoGit.TaskRegistry.ArchivePersistenceTest do
                  result: nil
                })
 
-      # The agent's completion record — exactly the 22 fields `CompleteTask`
-      # builds (minus the task id, which this write adds).
+      # The agent's completion record — exactly the 22 fields
+      # `EvoGit.Agent.Completion` builds (minus the task id, which this write
+      # adds).
       completion = %{
         task_id: task_id,
         agent_id: 4242,
