@@ -61,9 +61,9 @@ defmodule EvoGit.Agent.ToolDispatch do
 
   import ReqLLM.Context, only: [user: 1, tool_result: 3]
 
-  # Extra per-call headroom (ms) granted on top of the approval window for
-  # level-2/3 `run_command` calls so the handler can execute AFTER the user
-  # approves, before the tool task is killed.
+  # Extra per-call headroom (ms) after approval for elixir_eval write/sudo:
+  # covers the engine's 5s execution cap plus bounded cleanup/authorization.
+  # Also retained for legacy level-2/3 run_command timeout compatibility.
   @approval_execution_buffer 30_000
 
   # Maximum consecutive EMPTY-response nudges before ending the turn gracefully.
@@ -1461,14 +1461,12 @@ defmodule EvoGit.Agent.ToolDispatch do
 
     tool_timeout =
       if approval_window_tool_call?(name, args) do
-        # A level-2/3 `run_command` call BLOCKS inside the command shell while
-        # the user approves/denies it in the /help chat (EvoGit.CommandApproval,
-        # app-env `[:evo_git, :command_approval_timeout]`, default 120s). The
-        # 10s default per-call timeout would kill the task mid-wait, so give
-        # approval-requiring calls a per-call timeout that covers the approval
-        # window PLUS handler execution — still capped by the scheduler's
-        # `max_tool_timeout` (30 min). Level-1 `run_command` calls keep their
-        # exact current behavior.
+        # Write/sudo elixir_eval waits for exact-code approval before evaluation.
+        # Floor even an explicit outer `timeout` to the approval window plus
+        # execution/cleanup headroom; `timeout_ms` is ONLY the inner engine cap.
+        # The configured scheduler max remains authoritative, even if shorter
+        # than the approval window. Read/invalid tiers get no approval floor.
+        # Legacy run_command timeout policy is retained despite refused dispatch.
         approval_timeout = EvoGit.CommandApproval.timeout()
         tool_timeout |> max(approval_timeout + @approval_execution_buffer) |> min(max_timeout)
       else
@@ -1715,12 +1713,14 @@ defmodule EvoGit.Agent.ToolDispatch do
     end
   end
 
-  # True when the tool call is a `run_command` whose command path has security
-  # level >= 2 (EvoGit.CommandShell.security_level/1) — i.e. the command will
-  # BLOCK awaiting interactive user approval inside the shell, so the per-call
-  # timeout must cover the approval window plus execution. Cheap peek: the
-  # command path is the first whitespace-delimited token of args["command"];
-  # unparsable/unknown paths report level 1 (they fail dispatch fast).
+  # Only exact valid write/sudo tiers can wait on evaluator approval. Missing
+  # tier means read; invalid values fail fast in the tool without this floor.
+  defp approval_window_tool_call?("elixir_eval", %{"tier" => tier})
+       when tier in ["write", "sudo"],
+       do: true
+
+  # Legacy timeout compatibility only: Tools.execute/5 refuses run_command.
+  # Command paths at level >= 2 historically waited for interactive approval.
   defp approval_window_tool_call?("run_command", %{"command" => command})
        when is_binary(command) do
     first_token = command |> String.trim() |> String.split(~r/\s+/, parts: 2) |> hd()
