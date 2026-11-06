@@ -1133,13 +1133,16 @@ defmodule EvoGit.ConfigTest do
       File.write!(blocker, "not a directory")
       managed = Path.join(blocker, "auth.json")
 
+      # The managed file is a PER-PROFILE setting (there is no global
+      # `[llm] oauth_file` key).
       File.write!(Config.config_path(), """
       [llm]
-      oauth_file = "#{managed}"
 
       [[llm.models]]
       id = "codex"
       model = "openai_codex:gpt-5.6-terra"
+      auth_mode = "oauth"
+      oauth_file = "#{managed}"
       """)
 
       managed
@@ -1157,14 +1160,15 @@ defmodule EvoGit.ConfigTest do
         })
       )
 
-      # No auth_mode: the OAuth-only provider is auto-detected.
+      # No auth_mode: the OAuth-only provider is auto-detected. The managed
+      # file is a PER-PROFILE setting.
       File.write!(Config.config_path(), """
       [llm]
-      oauth_file = "#{auth_file}"
 
       [[llm.models]]
       id = "codex"
       model = "openai_codex:gpt-5.6-terra"
+      oauth_file = "#{auth_file}"
       """)
 
       status = Config.config_status()
@@ -1180,12 +1184,12 @@ defmodule EvoGit.ConfigTest do
 
       File.write!(Config.config_path(), """
       [llm]
-      oauth_file = "#{auth_file}"
 
       [[llm.models]]
       id = "codex"
       model = "openai_codex:gpt-5.6-terra"
       auth_mode = "oauth"
+      oauth_file = "#{auth_file}"
       """)
 
       status = Config.config_status()
@@ -1194,6 +1198,8 @@ defmodule EvoGit.ConfigTest do
       warning = warning_for(status, :api_key)
       assert warning =~ "codex login"
       assert warning =~ auth_file
+      # ONE distinct managed path renders in the singular form.
+      assert warning =~ "Managed OAuth file: #{auth_file}"
       refute warning == @generic_api_key_warning
     end
 
@@ -1203,12 +1209,12 @@ defmodule EvoGit.ConfigTest do
 
       File.write!(Config.config_path(), """
       [llm]
-      oauth_file = "#{auth_file}"
 
       [[llm.models]]
       id = "claude"
       model = "anthropic:claude-opus-5-5"
       auth_mode = "oauth"
+      oauth_file = "#{auth_file}"
       """)
 
       status = Config.config_status()
@@ -1219,18 +1225,48 @@ defmodule EvoGit.ConfigTest do
       assert warning =~ auth_file
     end
 
+    test "distinct per-profile managed files are all named (plural form)" do
+      reqllm_key_cleanup()
+
+      codex_file = Path.join(Config.config_dir(), "absent-codex-auth.json")
+      claude_file = Path.join(Config.config_dir(), "absent-claude-auth.json")
+
+      File.write!(Config.config_path(), """
+      [llm]
+
+      [[llm.models]]
+      id = "codex"
+      model = "openai_codex:gpt-5.6-terra"
+      auth_mode = "oauth"
+      oauth_file = "#{codex_file}"
+
+      [[llm.models]]
+      id = "claude"
+      model = "anthropic:claude-opus-5-5"
+      auth_mode = "oauth"
+      oauth_file = "#{claude_file}"
+      """)
+
+      status = Config.config_status()
+
+      assert :api_key in status.missing
+      warning = warning_for(status, :api_key)
+      # Each profile's OWN file is resolved — never one global path.
+      assert warning =~ "Managed OAuth files: #{codex_file}, #{claude_file}"
+    end
+
     test "an API key still satisfies the check for an OAuth profile" do
       reqllm_key_cleanup()
       ReqLLM.put_key(:openai_api_key, "sk-test")
 
       File.write!(Config.config_path(), """
       [llm]
-      oauth_file = "#{Path.join(Config.config_dir(), "absent-auth.json")}"
 
       [[llm.models]]
       id = "codex"
       model = "openai_codex:gpt-5.6-terra"
       auth_mode = "oauth"
+      oauth_file = "#{Path.join(Config.config_dir(), "absent-auth.json")}"
       """)
 
       refute :api_key in Config.config_status().missing

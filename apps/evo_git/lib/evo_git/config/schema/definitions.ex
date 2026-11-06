@@ -282,16 +282,6 @@ defmodule EvoGit.Config.Schema.Definitions do
         description:
           "Array of model profiles, each defining an LLM model and its generation parameters. Each profile is a TOML table: id (required string), model (required, same format as [llm].model), concurrency (default 3), optional context_window (positive integer, default 200000 — the model's context window in tokens, used as the context-compression window), optional auth_mode (\"api_key\" or \"oauth\", default \"api_key\"; when \"oauth\" the profile authenticates through a subscription OAuth credential instead of an API key), optional oauth_file (path overriding the managed OAuth credential file for this profile), optional generation params (temperature, max_tokens, reasoning_effort, top_p, top_k, frequency_penalty, presence_penalty), and an optional provider_options map for provider-specific options (e.g. {store: false} for OpenAI). When absent, the flat [llm] fields are migrated into a single 'default' profile during resolution."
       },
-      %{
-        key_path: [:llm, :oauth_file],
-        type: :string,
-        default: nil,
-        validation: [],
-        category: :llm,
-        sub_category: nil,
-        description:
-          "Global override of the managed OAuth credential file path. Defaults to <config_dir>/auth.json — a ReqLLM-native JSON file keyed by provider OAuth id, imported automatically from `codex login` / Claude Code's login file. Set this to reuse a credential file kept elsewhere."
-      },
       # ── User ───────────────────────────────────────────────────────────
       %{
         key_path: [:user, :github_username],

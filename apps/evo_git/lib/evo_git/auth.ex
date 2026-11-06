@@ -23,9 +23,9 @@ defmodule EvoGit.Auth do
     * `credential_status/2` — report the managed entry without importing
     * `login_instructions/1` — the one-time login guidance for humans
 
-  Everything that touches the filesystem or the user config is fault-isolated:
-  `ensure_credentials/2` NEVER raises, whatever the vendor files, the config
-  directory or the managed JSON look like.
+  Everything that touches the filesystem is fault-isolated: `ensure_credentials/2`
+  NEVER raises, whatever the vendor files, the config directory or the managed
+  JSON look like.
 
   A vendor login that exists but cannot be persisted into the managed file (a
   read-only home, a Nix sandbox, a bad `oauth_file` path) is reported as
@@ -87,19 +87,21 @@ defmodule EvoGit.Auth do
   Precedence:
 
     1. `opts[:oauth_file]` when it is a non-empty binary (a leading `~` is
-       expanded against the user's home directory)
-    2. the `[llm] oauth_file` key of the user config (`config.toml`)
-    3. `default_oauth_file/0`
+       expanded against the user's home directory) — callers resolve it from
+       the `[[llm.models]]` profile they are running, via
+       `EvoGit.Config.Schema.LLM.oauth_file_for/1`
+    2. `default_oauth_file/0`
 
-  The user-config read is fault-isolated: any raise/exit degrades to
-  `default_oauth_file/0`.
+  A model profile may point at its own file through its `oauth_file` setting;
+  this function never reads the user config itself, so the path always comes
+  from the caller's explicit argument.
   """
   @spec oauth_file(keyword()) :: String.t()
   def oauth_file(opts \\ [])
 
   def oauth_file(opts) when is_list(opts) do
     case expand_path(Keyword.get(opts, :oauth_file)) do
-      nil -> configured_oauth_file() || default_oauth_file()
+      nil -> default_oauth_file()
       path -> path
     end
   end
@@ -245,7 +247,7 @@ defmodule EvoGit.Auth do
 
   @doc """
   Returns the actionable remedy for a managed-OAuth-file failure: the file, the
-  cause and the configuration key that fixes it.
+  cause and the profile setting that fixes it.
 
   `{:managed_file_unwritable, reason}` (as returned by `ensure_credentials/2`,
   `credential_status/2` and `EvoGit.Config.Schema.LLM.oauth_credential_status/1`)
@@ -267,40 +269,15 @@ defmodule EvoGit.Auth do
     """
     Genesis found the subscription login but could not write its managed OAuth file
     (#{path}): #{describe_reason(reason)}.
-    Remedy: set [llm] oauth_file (or the profile's oauth_file) to a writable location, e.g.
-    oauth_file = "~/.config/genesis/auth.json" under a writable home — running the vendor
-    login again will not help.\
+    Remedy: set the OAuth profile's oauth_file to a writable location, e.g.
+    oauth_file = "~/.config/genesis/auth.json" inside the relevant [[llm.models]] profile
+    under a writable home — running the vendor login again will not help.\
     """
   end
 
   def managed_file_unwritable_remedy(_credential_error, _path), do: nil
 
   ## OAuth file resolution
-
-  # KEPT (justified): centralized fault-isolation boundary around the user
-  # config read — the TOML decode and the :persistent_term cache live outside
-  # this module, and a malformed config must degrade to the default path rather
-  # than break every provider-option assembly.
-  defp configured_oauth_file do
-    try do
-      EvoGit.Config.resolve()
-      |> llm_oauth_file()
-      |> OAuthImport.non_empty_string()
-    rescue
-      _error -> nil
-    catch
-      :exit, _reason -> nil
-    end
-  end
-
-  defp llm_oauth_file(%{} = resolved) do
-    case Map.get(resolved, :llm) do
-      %{} = llm -> Map.get(llm, :oauth_file)
-      _other -> nil
-    end
-  end
-
-  defp llm_oauth_file(_resolved), do: nil
 
   defp expand_path(value) do
     case OAuthImport.non_empty_string(value) do

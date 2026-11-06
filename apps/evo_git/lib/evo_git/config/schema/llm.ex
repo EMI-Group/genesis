@@ -23,9 +23,9 @@ defmodule EvoGit.Config.Schema.LLM do
   `model = "openai_codex:gpt-5.6-terra"` works with no other configuration.
   Such a profile's `provider_options` always carry `auth_mode: :oauth` plus the
   managed `oauth_file`, resolved by `EvoGit.Auth.oauth_file/1` (the profile's
-  own `oauth_file` → the `[llm] oauth_file` config key →
-  `<config_dir>/auth.json`), and the credential is imported lazily from the
-  vendor CLI login at assembly time via `EvoGit.Auth.ensure_credentials/2`.
+  own `oauth_file` → `<config_dir>/auth.json`), and the credential is imported
+  lazily from the vendor CLI login at assembly time via
+  `EvoGit.Auth.ensure_credentials/2`.
   That call is fault-isolated: a missing vendor login never blocks assembly —
   the request then fails with ReqLLM's own credential message and
   `EvoGit.Config.config_status/0` reports the login step.
@@ -408,9 +408,9 @@ defmodule EvoGit.Config.Schema.LLM do
   present, importing it from the vendor CLI login when appropriate.
 
   Resolves the provider from the profile's `:model` and the managed file
-  through `EvoGit.Auth.oauth_file/1` (the profile's own `oauth_file` → the
-  `[llm] oauth_file` config key → `<config_dir>/auth.json`), then delegates to
-  the fault-isolated `EvoGit.Auth.ensure_credentials/2`. Returns `:ok` when a
+  through `EvoGit.Auth.oauth_file/1` (the profile's own `oauth_file` →
+  `<config_dir>/auth.json`), then delegates to the fault-isolated
+  `EvoGit.Auth.ensure_credentials/2`. Returns `:ok` when a
   usable credential exists (including a provider env token) and
   `{:error, reason}` otherwise — never raises and never blocks.
 
@@ -472,9 +472,7 @@ defmodule EvoGit.Config.Schema.LLM do
 
   @doc """
   Returns the managed OAuth file a profile's subscription credential uses: the
-  profile's own `oauth_file` wins, otherwise `EvoGit.Auth.oauth_file/1` falls
-  through to the `[llm] oauth_file` config key and finally the default
-  `<config_dir>/auth.json`.
+  profile's `oauth_file` wins, otherwise the default `<config_dir>/auth.json`.
   """
   @spec oauth_file_for(map()) :: String.t()
   def oauth_file_for(profile) when is_map(profile) do
@@ -683,8 +681,8 @@ defmodule EvoGit.Config.Schema.LLM do
   #      override, its own keys win (an explicit `oauth_file:` inside the
   #      options is honoured) while the OAuth defaults it does not set survive;
   #   2. the profile-derived OAuth defaults (`auth_mode: :oauth` + the managed
-  #      file resolved from THIS profile's `oauth_file`, else `[llm] oauth_file`,
-  #      else `<config_dir>/auth.json`) — `oauth_profile?/1` covers both an
+  #      file resolved from THIS profile's `oauth_file`, else
+  #      `<config_dir>/auth.json`) — `oauth_profile?/1` covers both an
   #      explicit `auth_mode = "oauth"` and auto-detection of an OAuth-only
   #      provider, and this is also where the lazy vendor-login import runs;
   #   3. the model-derived options from `provider_options_for_model/1`

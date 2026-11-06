@@ -977,10 +977,8 @@ defmodule EvoDashWeb.SettingsComponents.ModelProfilesEditor do
             </p>
           <% end %>
           <p class="text-xs text-base-content/60 leading-relaxed">
-            <%!-- zh_CN: 解决办法 把 [llm] oauth_file 或该配置档的 oauth_file 指向可写位置 然后重新检查 --%>
-            {gettext(
-              "Set [llm] oauth_file (or this profile's oauth_file) to a writable location, then recheck."
-            )}
+            <%!-- zh_CN: 解决办法 把该配置档的 oauth_file 指向可写位置 然后重新检查 --%>
+            {gettext("Set oauth_file on this profile to a writable location, then recheck.")}
           </p>
         <% else %>
           <%= if guidance = auth_login_guidance(@status, @provider) do %>

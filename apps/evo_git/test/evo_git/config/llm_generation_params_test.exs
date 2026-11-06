@@ -144,27 +144,18 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
     end
 
     test "the legacy flat path threads [llm] auth_mode into provider_options" do
-      oauth_file = tmp_oauth_file()
       EvoGit.TestSupport.ConfigDir.isolate!("evogit-legacy-oauth")
 
-      # The GLOBAL managed-file override (`[llm] oauth_file`) is what the legacy
-      # flat profile falls through to: `build_legacy_default_profile/1` carries
-      # `auth_mode` but no profile-level `oauth_file`.
-      File.mkdir_p!(EvoGit.Config.config_dir())
-
-      File.write!(EvoGit.Config.config_path(), """
-      [llm]
-      oauth_file = "#{oauth_file}"
-      """)
-
-      # Flat config: no [[llm.models]] → ONE synthesized "default" profile.
+      # Flat config: no [[llm.models]] → ONE synthesized "default" profile
+      # carrying the flat `auth_mode` and resolving the DEFAULT managed file
+      # (`<config_dir>/auth.json`); `oauth_file` has no global `[llm]` key.
       config = %{llm: %{model: "anthropic:claude-opus-5-5", auth_mode: "oauth"}}
 
       [profile] = EvoGit.Config.Schema.effective_model_profiles(config)
       assert profile.auth_mode == "oauth"
 
       assert LLM.profile_generation_params(profile)[:provider_options] ==
-               [auth_mode: :oauth, oauth_file: oauth_file]
+               [auth_mode: :oauth, oauth_file: EvoGit.Auth.default_oauth_file()]
     end
 
     test "an auth_mode-less profile auto-detects an OAuth-only provider" do
@@ -224,24 +215,32 @@ defmodule EvoGit.Config.LLMGenerationParamsTest do
       end
     end
 
-    test "a profile without an oauth_file falls through to the [llm] oauth_file key" do
+    test "a [[llm.models]] profile's own oauth_file reaches provider_options" do
       EvoGit.TestSupport.ConfigDir.isolate!("evogit-oauth-config-key")
       oauth_file = tmp_oauth_file()
 
-      File.mkdir_p!(EvoGit.Config.config_dir())
+      config = %{
+        llm: %{
+          models: [
+            %{
+              id: "codex",
+              model: "openai_codex:gpt-5.6-terra",
+              auth_mode: "oauth",
+              oauth_file: oauth_file
+            }
+          ]
+        }
+      }
 
-      File.write!(EvoGit.Config.config_path(), """
-      [llm]
-      oauth_file = "#{oauth_file}"
-      """)
+      [profile] = EvoGit.Config.Schema.effective_model_profiles(config)
 
-      for model <- ["openai_codex:gpt-5.6-terra", "anthropic:claude-opus-5-5"] do
-        profile = %{model: model, auth_mode: "oauth"}
+      # `effective_model_profiles/1` passes an explicit `[[llm.models]]` table
+      # through, so the per-profile path must reach `provider_options` verbatim
+      # and win over the model-derived default managed file.
+      assert LLM.profile_generation_params(profile)[:provider_options] ==
+               [auth_mode: :oauth, oauth_file: oauth_file]
 
-        assert LLM.profile_generation_params(profile)[:provider_options][:oauth_file] ==
-                 oauth_file,
-               "the [llm] oauth_file key did not reach #{model}"
-      end
+      refute oauth_file == EvoGit.Auth.default_oauth_file()
     end
 
     test "provider_options_for_model/1 keeps the DEFAULT file for a model-spec-only caller" do

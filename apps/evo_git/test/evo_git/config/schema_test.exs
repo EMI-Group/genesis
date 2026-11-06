@@ -43,7 +43,9 @@ defmodule EvoGit.Config.SchemaTest do
       assert [:llm, :tool_result_pruning] in paths
       assert [:llm, :tool_result_pruning_target_fraction] in paths
       assert [:llm, :models] in paths
-      assert [:llm, :oauth_file] in paths
+      # `oauth_file` is a PER-PROFILE override (`[[llm.models]] oauth_file`) —
+      # there is deliberately no global `[llm] oauth_file` schema key.
+      refute [:llm, :oauth_file] in paths
 
       # User
       assert [:user, :github_username] in paths
@@ -166,8 +168,8 @@ defmodule EvoGit.Config.SchemaTest do
       end
     end
 
-    test "has exactly 105 schemas" do
-      assert length(Schema.all_schemas()) == 105
+    test "has exactly 104 schemas" do
+      assert length(Schema.all_schemas()) == 104
     end
 
     test "search_providers/0 returns all supported providers" do
@@ -345,7 +347,7 @@ defmodule EvoGit.Config.SchemaTest do
     test "each category has expected count" do
       grouped = Schema.schemas_by_category()
       assert length(grouped[:scheduler]) == 11
-      assert length(grouped[:llm]) == 13
+      assert length(grouped[:llm]) == 12
       assert length(grouped[:user]) == 1
       assert length(grouped[:sandbox]) == 19
       assert length(grouped[:truncation]) == 4

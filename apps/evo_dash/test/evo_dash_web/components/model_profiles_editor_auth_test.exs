@@ -277,7 +277,7 @@ defmodule EvoDashWeb.ModelProfilesEditorAuthTest do
       assert body =~ "Managed credential file: /ro/genesis/auth.json"
 
       assert body =~
-               "Set [llm] oauth_file (or this profile's oauth_file) to a writable location, then recheck."
+               "Set oauth_file on this profile to a writable location, then recheck."
 
       # Warning styling, consistent with the other hints on the page.
       assert find(html, "span.hero-exclamation-triangle") != []
@@ -293,6 +293,7 @@ defmodule EvoDashWeb.ModelProfilesEditorAuthTest do
       refute body =~ "No subscription login found"
       refute body =~ "Login detected"
       refute body =~ "Genesis imports the vendor login automatically on the next run."
+      refute body =~ "[llm] oauth_file"
     end
 
     # Pins: the managed path is still shown when the status carries none — the
@@ -376,7 +377,11 @@ defmodule EvoDashWeb.ModelProfilesEditorAuthTest do
         render_with_status(%{"p1" => %{state: :unwritable, oauth_file: "/managed/auth.json"}})
 
       assert unwritable_body =~ "Login found, managed credential file not writable"
-      assert unwritable_body =~ "Set [llm] oauth_file"
+
+      assert unwritable_body =~
+               "Set oauth_file on this profile to a writable location, then recheck."
+
+      refute unwritable_body =~ "[llm] oauth_file"
       refute unwritable_body =~ "Login detected"
       refute unwritable_body =~ "No subscription login found"
       refute unwritable_body =~ "Genesis imports the vendor login automatically on the next run."

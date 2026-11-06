@@ -345,12 +345,17 @@ defmodule EvoGit.SystemCheck do
   # the request would only surface ReqLLM's raw "OAuth file not found", hiding
   # the real cause and suggesting the wrong remedy.
   defp oauth_credential_blocker(model) do
-    if EvoGit.Config.Schema.LLM.oauth_profile?(%{model: model}) do
-      case EvoGit.Config.Schema.LLM.ensure_profile_credentials(%{model: model}) do
+    profile = oauth_profile_for_model(model)
+
+    if EvoGit.Config.Schema.LLM.oauth_profile?(profile) do
+      case EvoGit.Config.Schema.LLM.ensure_profile_credentials(profile) do
         {:error, {:managed_file_unwritable, _} = error} ->
           "LLM connection test not run — " <>
             String.trim(
-              EvoGit.Auth.managed_file_unwritable_remedy(error, EvoGit.Auth.oauth_file([]))
+              EvoGit.Auth.managed_file_unwritable_remedy(
+                error,
+                EvoGit.Config.Schema.LLM.oauth_file_for(profile)
+              )
             )
 
         _other ->
@@ -358,6 +363,20 @@ defmodule EvoGit.SystemCheck do
           # own message, exactly as before.
           nil
       end
+    end
+  end
+
+  # The configured `[[llm.models]]` profile for `model`, so its own
+  # `oauth_file` setting reaches the credential path; a model with no matching
+  # profile degrades to a bare `%{model: model}` spec (and the default file).
+  # No try/rescue here: `guarded_llm_test/3` is the centralized rescue boundary
+  # for this whole path, so a bad config read surfaces as `{:error, message}`.
+  defp oauth_profile_for_model(model) do
+    profiles = EvoGit.Config.resolve() |> EvoGit.Config.Schema.model_profiles()
+
+    case Enum.find(profiles, fn profile -> Map.get(profile, :model) == model end) do
+      nil -> %{model: model}
+      profile -> profile
     end
   end
 
