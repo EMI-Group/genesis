@@ -641,8 +641,9 @@ defmodule EvoGit.Config do
   subscription (OAuth) credential that actually resolves — a subscription-only
   setup must never be reported as "missing an API key". When it does fail and
   OAuth profile(s) are configured, the warning names the vendor login step
-  (`EvoGit.Auth.login_instructions/1`) and the managed credential file
-  (`EvoGit.Auth.oauth_file/1`) instead of only the generic API-key text — or,
+  (`EvoGit.Auth.login_instructions/1`) and the per-profile managed credential
+  file resolved by `EvoGit.Config.Schema.LLM.oauth_file_for/1` instead of only
+  the generic API-key text — or,
   when the vendor login exists but the managed file could not be written, the
   writable-path remedy from `EvoGit.Auth.managed_file_unwritable_remedy/2`
   (the login step needs no repeat).
@@ -733,8 +734,28 @@ defmodule EvoGit.Config do
           Enum.map_join(providers, ", ", &to_string/1) <>
           ". " <>
           oauth_failure_detail(providers, profiles) <>
-          "\nManaged OAuth file: #{EvoGit.Auth.oauth_file([])}"
+          managed_oauth_file_line(profiles)
     end
+  end
+
+  # The managed OAuth credential file(s) named in the warning. They are resolved
+  # from the configured OAuth profiles (the file is a per-profile setting, there
+  # is no global override), falling back to the default `<config_dir>/auth.json`.
+  defp managed_oauth_file_line(profiles) do
+    case managed_oauth_files(profiles) do
+      [path] -> "\nManaged OAuth file: #{path}"
+      paths -> "\nManaged OAuth files: #{Enum.join(paths, ", ")}"
+    end
+  end
+
+  defp managed_oauth_files(profiles) do
+    paths =
+      profiles
+      |> oauth_profiles()
+      |> Enum.map(&EvoGit.Config.Schema.LLM.oauth_file_for/1)
+      |> Enum.uniq()
+
+    if paths == [], do: [EvoGit.Auth.default_oauth_file()], else: paths
   end
 
   # The detail clause of the OAuth-aware warning. When a managed file could not
