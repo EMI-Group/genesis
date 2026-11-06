@@ -726,6 +726,11 @@ defmodule EvoDashWeb.HomeLive do
   end
 
   @impl true
+  def handle_info({:approval_resolved, request_id, _decision, source_node}, socket) do
+    {:noreply, ApprovalWorkflow.resolved(socket, request_id, source_node)}
+  end
+
+  @impl true
   def handle_info({:approval_resolved, request_id, _decision}, socket) do
     {:noreply, ApprovalWorkflow.resolved(socket, request_id)}
   end
