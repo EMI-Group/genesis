@@ -53,7 +53,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
            true <- Process.alive?(owner) and Process.alive?(tool),
            true <- Ancestry.includes?(tool, owner),
            true <- is_pid(Process.whereis(EvoGit.AgentScheduler)),
-           [{^id, %SchedMeta{} = meta}] <- :ets.lookup(:evogit_sched_meta, id),
+           [{^id, %SchedMeta{id: ^id} = meta}] <- :ets.lookup(:evogit_sched_meta, id),
            true <- valid_state?(id),
            true <- valid_agent?(meta, owner, task_id),
            %{id: ^task_id, type: :reflect, status: :running} <-

@@ -9,8 +9,9 @@ Read/write use Dune interpretation; sudo is explicitly approved unrestricted nat
 There are no child directory nodes.
 `../CONTEXT.md` owns tool exposure and dispatch integration, and `../../CONTEXT.md` owns tool-task identity propagation and approval-aware outer timeouts.
 Tests belong to `apps/evo_git/test/evo_git/agent/tools/` and its parent agent suites; see their CONTEXT.md files rather than placing tests beside these modules.
-Related existing suites include `reflect_tools_test.exs` in the tools test directory and the parent tool-dispatch tests; these integration suites are not evidence of exhaustive evaluator coverage.
-No filename containing `eval` is present under `apps/evo_git/test/` in this checkout, so evaluator-specific regression coverage must be verified when adding or merging tests.
+Evaluator-specific suites in the tools test directory cover authorization, engine execution, traced engine cleanup, worker-tree lifecycle, public wrapper approval, projections, validation and rendering (`elixir_eval_*_test.exs`), with shared genuine assistant fixtures in `elixir_eval_fixture_helper.exs`.
+`elixir_eval_engine_cleanup_test.exs:26` is the cold-start fully qualified Read facade regression and must also pass alone in a fresh BEAM, without preloading the facade or generated Base allowlist.
+Related integration suites include `reflect_tools_test.exs` and the parent tool-dispatch tests; direct Engine write/sudo tests do not establish public-wrapper approval enforcement.
 
 ## API Surface
 | File / modules | Contract |
@@ -51,6 +52,8 @@ Engine accepts validated limits and an authorized context, adds only the request
 Every evaluation has fresh bindings; there is no persistent REPL state.
 The engine rejects invalid UTF-8 or code over 16,384 bytes independently of any stricter public-tool validation.
 Read/write use Dune's safe string parser for preflight and interpretation, with a 1,000-atom pool, 1,000,000-word heap budget, 5,000,000 reductions and supplied execution/parse timeouts.
+Both public allowlist wrappers load their generated Base allowlist in an `@on_load` callback, so Dune's generated alias-atom initialization runs before safe parsing, including when read or write is the first tier used in a fresh BEAM.
+Deferring Base loading until `fun_status/3` is too late: Dune 0.3.18 encodes unknown alias segments before function authorization, preventing fully qualified facades from resolving on cold first use.
 Unqualified dbg AST nodes are rejected before interpretation because sanitizer-generated debug IO can bypass normal allowlist shims; Kernel.dbg is also restricted by the allowlist.
 Default Dune pure operations remain available, but raw TaskRegistry, AgentScheduler, CommandShell, Broker and arbitrary native APIs are not added to the allowlist.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.

@@ -29,6 +29,15 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist do
   @behaviour Dune.Allowlist
   alias EvoGit.Agent.Tools.ElixirEval.{IOShim, ReadAllowlist}
 
+  # Dune loads this wrapper before parsing, but only calls fun_status afterwards.
+  # Load the generated allowlist now so its on_load initializes the facade alias
+  # atoms before Dune's safe parser encodes otherwise-unknown module names.
+  @on_load :ensure_base_loaded
+  def ensure_base_loaded do
+    Code.ensure_loaded!(ReadAllowlist.Base)
+    :ok
+  end
+
   # Default already specifies IO, so its DSL cannot replace those entries.
   # Check arities explicitly: Dune's `only` lists contain NAMES, not MFA tuples.
   @impl true
@@ -43,6 +52,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist do
   @moduledoc false
   @behaviour Dune.Allowlist
   alias EvoGit.Agent.Tools.ElixirEval.{ReadAllowlist, WriteAllowlist}
+
+  # The write spec includes both facades; initialize all its alias atoms before
+  # parsing even when write is the first tier used in a fresh BEAM.
+  @on_load :ensure_base_loaded
+  def ensure_base_loaded do
+    Code.ensure_loaded!(WriteAllowlist.Base)
+    :ok
+  end
 
   @impl true
   def fun_status(module, name, arity) when module in [IO, Kernel],
