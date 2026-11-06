@@ -36,27 +36,18 @@ defmodule EvoGit.AuthTest do
   end
 
   describe "oauth_file/1 — precedence" do
-    test "opts[:oauth_file] wins over the config key and the default", %{
+    test "opts[:oauth_file] wins over the default", %{
       config_root: config_root,
       root: root
     } do
-      write_config!(config_root, Path.join(root, "from-config.json"))
       explicit = Path.join(root, "from-opts.json")
+      default = Path.join([config_root, "genesis", "auth.json"])
 
       assert Auth.oauth_file(oauth_file: explicit) == explicit
+      refute Auth.oauth_file(oauth_file: explicit) == default
     end
 
-    test "the [llm] oauth_file config key wins over the default", %{
-      root: root,
-      config_root: config_root
-    } do
-      configured = Path.join(root, "from-config.json")
-      write_config!(config_root, configured)
-
-      assert Auth.oauth_file([]) == configured
-    end
-
-    test "falls back to the default when nothing is configured", %{config_root: config_root} do
+    test "falls back to the default when no opts are given", %{config_root: config_root} do
       assert Auth.oauth_file([]) == Path.join([config_root, "genesis", "auth.json"])
     end
 
@@ -318,11 +309,5 @@ defmodule EvoGit.AuthTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
     dir
-  end
-
-  defp write_config!(config_root, oauth_file) do
-    dir = Path.join(config_root, "genesis")
-    File.mkdir_p!(dir)
-    File.write!(Path.join(dir, "config.toml"), "[llm]\noauth_file = \"#{oauth_file}\"\n")
   end
 end
