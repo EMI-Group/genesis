@@ -65,9 +65,9 @@ defmodule EvoGit.Agents.Custom do
   the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"`) AND the
   names of user-defined custom tools loaded from `<config_dir>/tools/` by
   `EvoGit.CustomTools`. An unknown name in the whitelist simply matches nothing —
-  in particular there is no `complete_task` tool any more (a reply with no tool
-  calls is what finishes the run), so a stale `complete_task` entry in an
-  existing `agents.toml` is harmless and resolves to no schema.
+  `complete_task` is one such name and resolves to no schema at all (a reply with
+  no tool calls is what finishes the run), so a stale `complete_task` entry in an
+  existing `agents.toml` is harmless.
 
   ## Subagent name→module mapping
 
