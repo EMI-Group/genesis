@@ -140,7 +140,7 @@ Tool failure reasons are rendered through `EvoGit.Agent.Tools.Failure.format_rea
 - Consumer: `ToolDispatch.batch_execute_tools/4` runs the serial subset first, sequentially, in request order, in the parent agent process (`../CONTEXT.md` "Standard tool call execution").
 
 ### Commit Semantics
-**ONE helper: `Shared.commit_files/4`** (`(repo_path, repo_root, files, message) -> {:ok, output} | {:error, message}`).
+**ONE helper: `Shared.commit_files/4,5`** (`(repo_path, repo_root, files, message) -> {:ok, output} | {:error, message}`; `/5` adds an `opts` keyword).
 - It stages ONLY the passed paths (`EvoGit.sandbox_run(repo_path, "git", ["add" | paths], repo_root)`) — never `git add --all`.
 - It commits with `git commit -F <tmpfile>` on the same sandbox path; the co-author trailer is appended only when `[:git, :co_authored_by_enabled]` is not `false` (never a hardcoded user), and the message always rides a file, never `-m` argv.
 - `{:ok, output}` is the concatenated add+commit output; `{:error, message}` is `"Error: git add failed (exit N): …"` / `"Error: git commit failed (exit N): …"`.
@@ -155,8 +155,7 @@ Tool failure reasons are rendered through `EvoGit.Agent.Tools.Failure.format_rea
 Tools that commit their own write:
 - `create_files` stages exactly the LLM-supplied paths (a new untracked ancestor directory, or a path tracked in a parent/spatial node, is not staged).
 - `make_dir` stages only the keep-files it created (`keep_file: "none"` → no commit).
-- `write_context`/`edit_context` are the ONLY amend opt-in (`Shared.commit_files(repo_path, repo_root, [relative_path], message, amend: true)`), so consecutive same-file edits amend the previous auto context commit instead of stacking one-file commits.
-- `write_context`/`edit_context` stage their own CONTEXT.md, append `"\n\nCommitted:\n" <> output` on success (else the helper's message verbatim) and honour `commit: false` (default true).
+- `write_context`/`edit_context` are the ONLY amend opt-in (`Shared.commit_files(repo_path, repo_root, [relative_path], message, amend: true)`): they stage their own CONTEXT.md, append `"\n\nCommitted:\n" <> output` on success (else the helper's message verbatim), honour `commit: false` (default true), and consecutive same-file edits amend the previous auto context commit instead of stacking one-file commits.
 - The five skill writers use `Shared.maybe_commit_result/6` (schema `commit`, default true): one commit for the paths written/removed plus the same appended block; `:already_enabled_here`/`:already_enabled_above`/`:not_enabled` and errors commit nothing (`skill/CONTEXT.md`).
 - `create_files`, `make_dir` and the skill writers stay on plain `commit_files/4`: one commit per call, never squashed across calls.
 - `write` and `edit` NEVER commit — their bytes land only via a later commit.
