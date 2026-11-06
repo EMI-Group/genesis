@@ -379,19 +379,16 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       assert Process.whereis(registry_name) == registry
     end
 
-    test "dispatch path works while repo_less", %{tmp_dir: tmp_dir} do
+    test "legacy dispatch is refused even while repo_less", %{tmp_dir: tmp_dir} do
       Process.put(:repo_less, true)
 
       try do
-        # ListRecentProjects.list_recent_projects (the old list_recent_projects
-        # tool) is a read/control tool — it must not be blocked by the repo-less
-        # write guard. It is routed through the single run_command shell tool,
-        # which is deliberately NOT in @write_tools.
+        # Legacy commands cannot bypass the evaluator's exact-code approval path.
         assert EvoGit.Agent.Tools.execute(
                  "run_command",
                  %{"command" => "ListRecentProjects.list_recent_projects"},
                  tmp_dir
-               ) == "No recent projects found."
+               ) == "Error: use elixir_eval exact-code approval path"
       after
         Process.delete(:repo_less)
       end
@@ -415,22 +412,15 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
       assert output =~ EvoGit.Platform.data_dir()
     end
 
-    test "dispatch path works while repo_less", %{tmp_dir: tmp_dir} do
+    test "legacy dispatch is refused even while repo_less", %{tmp_dir: tmp_dir} do
       Process.put(:repo_less, true)
 
       try do
-        # SystemInfo.system_info (the old system_info tool) is a read-only,
-        # dependency-free command — it must not be blocked by the repo-less
-        # write guard. Routed through the run_command shell tool.
-        output =
-          EvoGit.Agent.Tools.execute(
-            "run_command",
-            %{"command" => "SystemInfo.system_info"},
-            tmp_dir
-          )
-
-        assert output =~ "os:"
-        assert output =~ System.version()
+        assert EvoGit.Agent.Tools.execute(
+                 "run_command",
+                 %{"command" => "SystemInfo.system_info"},
+                 tmp_dir
+               ) == "Error: use elixir_eval exact-code approval path"
       after
         Process.delete(:repo_less)
       end
@@ -475,13 +465,12 @@ defmodule EvoGit.Agent.Tools.ReflectToolsTest do
         result = EvoGit.Agent.Tools.execute("read_file", %{"file_path" => "test.txt"}, tmp_dir)
         assert result =~ "hello reflect"
 
-        # ListTasks.list_tasks (the old list_tasks tool) is read-only and must
-        # not be blocked — routed through the run_command shell tool.
+        # File reads remain available, but legacy command dispatch is refused.
         assert EvoGit.Agent.Tools.execute(
                  "run_command",
                  %{"command" => "ListTasks.list_tasks"},
                  tmp_dir
-               ) == "No tasks found."
+               ) == "Error: use elixir_eval exact-code approval path"
       after
         Process.delete(:repo_less)
       end
