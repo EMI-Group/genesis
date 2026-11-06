@@ -433,13 +433,13 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert disabled?(html, ~s(button[phx-click="stop"]))
     end
 
-    test "empty state renders the greeting and four suggestion chips", %{conn: conn} do
+    test "empty state renders the greeting and four operator suggestion chips", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/help")
 
       # ChatGPT-style empty state: greeting + 4 suggestion chips, each wired to
       # the send_message event with its message text as the phx-value (so
       # clicking a chip submits it through the existing handle_event clause).
-      assert html =~ "How can I help you today?"
+      assert html =~ "What would you like Genesis to do?"
 
       chips =
         html
@@ -448,10 +448,10 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       assert length(chips) == 4
 
-      assert html =~ ~s(phx-value-message="Explain the Genesis architecture")
-      assert html =~ ~s(phx-value-message="How does task cancellation work?")
-      assert html =~ ~s(phx-value-message="What can you help me with?")
-      assert html =~ ~s(phx-value-message="Guide me through the dashboard")
+      assert html =~ ~s(phx-value-message="Show my running tasks")
+      assert html =~ ~s(phx-value-message="Check system status and capacity")
+      assert html =~ ~s(phx-value-message="Start a task for me")
+      assert html =~ ~s(phx-value-message="Explain how tasks are scheduled")
     end
   end
 
@@ -1950,11 +1950,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       {html, _log} =
         send_and_await_terminal(fn ->
           view
-          |> element(~s(button[phx-value-message="Explain the Genesis architecture"]))
+          |> element(~s(button[phx-value-message="Show my running tasks"]))
           |> render_click()
         end)
 
-      assert html =~ "Explain the Genesis architecture"
+      assert html =~ "Show my running tasks"
 
       tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
       reflect = Enum.filter(tasks, &(&1.type == :reflect))
@@ -1966,7 +1966,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert opt(task, "model_id") == "profile-a"
       assert opt(task, "model_id_locked") == true
       assert opt(task, :mode) == "reflect"
-      assert opt(task, :objective) == "Explain the Genesis architecture"
+      assert opt(task, :objective) == "Show my running tasks"
       refute has_opt?(task, :path)
       refute has_opt?(task, "path")
 
@@ -1981,11 +1981,11 @@ defmodule EvoDashWeb.HomeLiveTest do
       {html, _log} =
         send_and_await_terminal(fn ->
           view
-          |> element(~s(button[phx-value-message="What can you help me with?"]))
+          |> element(~s(button[phx-value-message="Start a task for me"]))
           |> render_click()
         end)
 
-      assert html =~ "What can you help me with?"
+      assert html =~ "Start a task for me"
 
       tasks = EvoGit.Store.safe_select_all_tasks(EvoGit.Store)
       reflect = Enum.filter(tasks, &(&1.type == :reflect))
@@ -2000,7 +2000,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute has_opt?(task, :model_id)
       refute has_opt?(task, :model_id_locked)
       assert opt(task, :mode) == "reflect"
-      assert opt(task, :objective) == "What can you help me with?"
+      assert opt(task, :objective) == "Start a task for me"
 
       cleanup_task_on_exit(task.id)
     end
@@ -3004,7 +3004,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       # The empty state swaps the suggestion chips for the blocked note.
       assert html =~ "Download the Genesis source to start chatting."
-      refute html =~ "Explain the Genesis architecture"
+      refute html =~ "Show my running tasks"
 
       # Composer blocked: textarea + Send button disabled.
       assert disabled?(html, ~s(textarea[name="message"]))
@@ -3041,7 +3041,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       # by the canonical send test in "send message").
       refute present?(html, "#genesis-source-gate")
       refute html =~ "Download the Genesis source to start chatting."
-      assert html =~ "Explain the Genesis architecture"
+      assert html =~ "Show my running tasks"
       refute disabled?(html, ~s(textarea[name="message"]))
       refute disabled?(html, ~s(button[type="submit"]))
       assert assigns(view).source_available == true
@@ -3077,7 +3077,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute present?(html, "#genesis-source-gate")
       refute html =~ "has not been downloaded yet"
       refute disabled?(html, ~s(textarea[name="message"]))
-      assert html =~ "Explain the Genesis architecture"
+      assert html =~ "Show my running tasks"
     end
 
     test "a failing download flashes the error and keeps the gate", %{conn: conn} do
@@ -3239,7 +3239,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute present?(html, "#genesis-source-gate")
       refute html =~ "Download the Genesis source to start chatting."
       refute disabled?(html, ~s(textarea[name="message"]))
-      assert html =~ "Explain the Genesis architecture"
+      assert html =~ "Show my running tasks"
     end
   end
 end

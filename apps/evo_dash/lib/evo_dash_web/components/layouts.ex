@@ -167,11 +167,12 @@ defmodule EvoDashWeb.Layouts do
               icon="hero-server-stack"
               notification={update_status_notification(@update_status)}
             >{gettext("System")}</.sidebar_nav_link>
+            <%!-- zh_CN: "助手" — 指向 Genesis 助手（理解并操控 Genesis 的代理）聊天页面的侧边栏入口 --%>
             <.sidebar_nav_link
               navigate={with_node_param(~p"/help", @current_node_id)}
               current={@current_page == :help}
               icon="hero-chat-bubble-left-right"
-            ><%!-- 帮助 — 指向自省代理聊天页面的侧边栏入口 --%>{gettext("Help")}</.sidebar_nav_link>
+            >{gettext("Assistant")}</.sidebar_nav_link>
 
             <!-- Task Indicators Section -->
             <div :if={@running_tasks != [] or @pending_tasks != []} class="pt-5 mt-4">

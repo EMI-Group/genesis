@@ -134,14 +134,20 @@ defmodule EvoGit.Agent.ToolsTest do
       prompt = SelfReflective.system_prompt()
 
       assert prompt =~ ElixirEval.help()
-      assert prompt =~ "`elixir_eval`"
-      assert prompt =~ "`read`, `write`, or `sudo`; default `read`"
+      assert prompt =~ "`elixir_eval` is your one action tool"
+      assert prompt =~ "`tier` (`read`, `write`, or `sudo`; default `read`)"
+      assert prompt =~ "**Read tier:** Dune sandbox evaluation"
+      assert prompt =~ "**Write tier:** Dune sandbox evaluation"
       assert prompt =~ "Dune sandbox evaluation"
+      assert prompt =~ "real `CommandApproval` approval of the exact code before execution"
       assert prompt =~ "a conversational OK is not approval"
       assert prompt =~ "sudo does not mean OS root"
       assert prompt =~ "Never automatically escalate tiers"
-      assert prompt =~ "current authenticated runtime node"
-      assert prompt =~ "`read`, `read_context`, `list_dir`, `rg`, `glob`"
+      assert prompt =~ "Evaluation targets only the current authenticated runtime node"
+
+      assert prompt =~
+               "`read`, `rg`, `glob`, `list_dir`, `read_context`, `search_context` (the CONTEXT.md tree) and `search_history`"
+
       assert prompt =~ "A reply with no tool calls ends your run"
       refute prompt =~ "run_command"
     end

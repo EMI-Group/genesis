@@ -64,7 +64,7 @@ Full assigns/async/throttle contract + the frozen gutter DOM/interaction contrac
 |-------|----------|---------|
 | `GET /health` | `HealthController` (`:index`) | Unauthenticated liveness/readiness probe, OUTSIDE every pipeline (no session, no CSRF, no auth): `200` `application/json` `{"status":"ok","version":"<vsn>","uptime_ms":<integer>}` (`uptime_ms` = VM uptime). Polled by the headless server CLI (`genesis status`) and usable by the desktop/remote shell. |
 | `GET /` | `ProjectsLive` | Projects page (root) — project selector, task form, project settings, task history. URL-based project state via `?project=<path>` query param. |
-| `GET /help` | `HomeLive` | Home chat page — chatbot-style conversation interface. |
+| `GET /help` | `HomeLive` | Genesis Assistant page — chatbot-style conversation interface with the agent that understands and controls Genesis. |
 | `GET /projects` | `ProjectsLive` | Projects page — same LiveView + action as `/`, direct route, no redirect. |
 | `GET /welcome` | `WelcomeLive` | Onboarding page — stepwise first-LLM quick setup (provider → variant → model → credentials); `skip`/`get_started` redirect to `/welcome/complete`. |
 | `GET /welcome/complete` | `WelcomeCompleteLive` | Onboarding completion page — example task (copyable demo objective via the `ClipboardCopy` hook) + "Go to Dashboard" button that completes onboarding and navigates to `/projects`. |

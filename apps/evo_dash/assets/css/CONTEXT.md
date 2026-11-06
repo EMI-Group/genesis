@@ -4,13 +4,13 @@
 `app.css` is the single Tailwind CSS 4 entry point for shared dashboard styling and page-specific adjustments.
 
 ## API Surface
-The file contains DaisyUI light/dark themes, accent fill/standalone role tokens, shared component styles, Markdown, responsive input layout, and a final Help chat section.
-The Help section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles `.help-composer` plus `.help-caret` without changing layout or hook contracts.
+The file contains DaisyUI light/dark themes, accent fill/standalone role tokens, shared component styles, Markdown, responsive input layout, and a final Genesis Assistant chat section.
+The Assistant section scopes reading rhythm, quiet headings/quotes, code sizing and narrow-screen spacing to `#chat-messages .md-content`, and styles `.help-composer` plus `.help-caret` without changing layout or hook contracts.
 Shared Markdown guards wrap long prose and constrain code/table width while preserving horizontal scrolling.
 
 ## Constraints
 Use existing theme tokens and the standalone accent for focus outlines; keep fill/content roles unchanged.
-Keep Help adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
+Keep Assistant adjustments scoped, normal-flow message actions untouched, and reduced-motion overrides after the caret animation rule.
 Do not edit generated static assets or translations.
 
 ## Validation
