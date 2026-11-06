@@ -4,7 +4,7 @@
 Long-form design records, reference documentation and short user-facing guides for Genesis: rationale, verified external facts, and implementation details too granular for the CONTEXT.md tree.
 
 ## API Surface
-- `genesis-assistant.md` — practical Help (`/help`) user guide: source-backed API inspection, `elixir_eval` read/write/sudo tiers, exact-code approvals, task operations, and runtime versus saved configuration.
+- `genesis-assistant.md` — user guide (not a design record): the dashboard **Assistant** (`/help`) as a general-purpose Genesis operator — source/CONTEXT.md/git-history reading, `elixir_eval` read/write/sudo tiers with exact-code approvals, task control, the guide overlay, and runtime versus saved configuration.
 - `auto-update.md` — full design record for the desktop auto-update / push-update system (tauri-plugin-updater v2): two-phase check/download/apply model, the genesis.evox.group `/dl/` update feed, CI signing, platform matrix, and remaining blockers.
 - `experiments.md` — results/reference document: the per-regime experimental results (formation, continuation, redevelopment, Terminal-Bench) and their figures, moved out of the top-level README; figures live under `images/experiments/`.
 - `harness-alignment.md` — comparison record: Genesis agent runtime (tools, result conventions, role prompts, compression, loop, delegation) vs the DeepSeek Harness (`dsh`), with a tiered proposal list for aligning our environment with the harness newer DeepSeek models are trained on. Carries the verified `dsh` facts (tool names/caps/footers, prompt-slot table, compaction thresholds, subagent limits) so future agents do not re-investigate `/home/bill/Source/deepseek-harness`.
@@ -26,7 +26,7 @@ Long-form design records, reference documentation and short user-facing guides f
 - `images/promo-poster.jpg` is a verbatim copy of an asset owned by the `genesis-doc` repo (its video directory); copy it again rather than regenerating or resizing it.
 
 ## Routing Table
-- `genesis-assistant.md` — Genesis Assistant at Help: evaluation tiers, approval safety, and fully-qualified task/configuration API examples.
+- `genesis-assistant.md` — Genesis Assistant as the dashboard operator (sidebar **Assistant**, `/help`): capabilities, realistic operator requests, evaluation tiers, approval safety, and fully-qualified task/configuration API examples.
 - `auto-update.md` — desktop auto-update / push-update design record.
 - `experiments.md` — experimental results and figures (regime-by-regime).
 - `harness-alignment.md` — agent-harness comparison against DeepSeek Harness + alignment proposals (read this BEFORE changing tool schemas, tool-result formatting, role prompts, or context compression).
