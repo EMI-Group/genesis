@@ -65,34 +65,43 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
 
   @doc "Applies the inner tag and SafeCall result from `{tag, result}`."
   def recovered(socket, {:approval_pending_loaded, seq, captured_scope}, result) do
-    if seq == socket.assigns[:approval_recovery_seq] and captured_scope == scope(socket.assigns) do
-      socket = assign(socket, approval_recovering: false, approval_recovery_seq: nil)
+    cond do
+      seq != socket.assigns[:approval_recovery_seq] ->
+        socket
 
-      case result do
-        {:ok, requests} when is_list(requests) ->
-          removed = socket.assigns[:approval_recovery_removed] || MapSet.new()
+      captured_scope != scope(socket.assigns) ->
+        assign(socket, approval_recovering: false, approval_recovery_seq: nil)
 
-          fetched =
-            Enum.filter(requests, fn request ->
-              own_request?(socket.assigns, request) and
-                not MapSet.member?(removed, request.request_id)
-            end)
+      true ->
+        apply_recovery(socket, result)
+    end
+  end
 
-          # Live broadcasts are newer than a snapshot and win on duplicate ids.
-          live = socket.assigns[:approval_recovery_new] || []
-          entries = Enum.reduce(Enum.reverse(live), fetched, &upsert(&2, &1))
+  defp apply_recovery(socket, result) do
+    socket = assign(socket, approval_recovering: false, approval_recovery_seq: nil)
 
-          assign(socket,
-            pending_approvals: entries,
-            approval_recovery_new: [],
-            approval_error: nil
-          )
+    case result do
+      {:ok, requests} when is_list(requests) ->
+        removed = socket.assigns[:approval_recovery_removed] || MapSet.new()
 
-        other ->
-          assign(socket, approval_error: {:recovery, failure(other)})
-      end
-    else
-      socket
+        fetched =
+          Enum.filter(requests, fn request ->
+            own_request?(socket.assigns, request) and
+              not MapSet.member?(removed, request.request_id)
+          end)
+
+        # Live broadcasts are newer than a snapshot and win on duplicate ids.
+        live = socket.assigns[:approval_recovery_new] || []
+        entries = Enum.reduce(Enum.reverse(live), fetched, &upsert(&2, &1))
+
+        assign(socket,
+          pending_approvals: entries,
+          approval_recovery_new: [],
+          approval_error: nil
+        )
+
+      other ->
+        assign(socket, approval_error: {:recovery, failure(other)})
     end
   end
 
@@ -155,16 +164,21 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
   def respond(socket, _request_id, _decision), do: socket
 
   def responded(socket, {:approval_workflow_response, seq, captured_scope, id}, result) do
-    if captured_scope == scope(socket.assigns) and Map.get(responses(socket.assigns), id) == seq do
-      socket = assign(socket, approval_responses: Map.delete(responses(socket.assigns), id))
+    cond do
+      Map.get(responses(socket.assigns), id) != seq ->
+        socket
 
-      case result do
-        {:ok, :ok} -> resolved(socket, id)
-        {:ok, {:error, :not_found}} -> resolved(socket, id)
-        other -> assign(socket, approval_error: {:response, id, failure(other)})
-      end
-    else
-      socket
+      captured_scope != scope(socket.assigns) ->
+        assign(socket, approval_responses: Map.delete(responses(socket.assigns), id))
+
+      true ->
+        socket = assign(socket, approval_responses: Map.delete(responses(socket.assigns), id))
+
+        case result do
+          {:ok, :ok} -> resolved(socket, id)
+          {:ok, {:error, :not_found}} -> resolved(socket, id)
+          other -> assign(socket, approval_error: {:response, id, failure(other)})
+        end
     end
   end
 
