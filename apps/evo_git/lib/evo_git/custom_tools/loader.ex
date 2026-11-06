@@ -36,7 +36,7 @@ defmodule EvoGit.CustomTools.Loader do
 
   # Built-in tools that exist only as dispatch clauses (not as `schemas/0`
   # entries) — they still must not be shadowed by a custom tool.
-  @non_schema_builtins ["run_command", "complete_task"]
+  @non_schema_builtins ["run_command"]
 
   @type entry :: %{
           name: String.t(),
