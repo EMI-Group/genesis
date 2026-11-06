@@ -17,6 +17,7 @@ Users open a Project (a Git repository path) and the dashboard auto-detects the 
 - `./lib/evo_dash_web/live/projects_live/` → `Project`, `ProjectFlow`, `Assigns`, `StatePersistence`, `AttachFile`, `GitHub`, `RemoteView` — `live/projects_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/settings_live/` → `NodeData`, `ModelProfileHelpers`, `ModelProfileEvents`, `ConfigIO`, `SearchEvents`, `CustomAgentEvents` — `live/settings_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/home_live/` → `Transcript`, `Messages`, `AgentStream`, `AssistantMessage`, `ChatState`, `ApprovalCard` — `live/home_live/CONTEXT.md`
+- Help/chat operational-assistant design constraints (fresh reflect task per send, bounded lossy transcript preamble, no mid-run follow-up, ephemeral approvals, local-source gate and remote-target caveats) → `live/CONTEXT.md` + `live/home_live/CONTEXT.md`; transient shared chat-cache isolation and approval-routing semantics → `lib/evo_dash/CONTEXT.md`.
 - `./lib/evo_dash_web/live/review_live/` → `LoadData`, `MergeCheck`, `ArchiveLoad`, `Actions` — `live/review_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/system_live/` → `Status`, `Charts`, `UpdateCard`, `SourceCard`, `RuntimeControls` — `live/system_live/CONTEXT.md`
 - `./lib/evo_dash_web/live/tasks_live/` → `PageLoad` (async summary load), `TaskDetail` (lazy per-card detail/archive cache) — `live/tasks_live/CONTEXT.md`
