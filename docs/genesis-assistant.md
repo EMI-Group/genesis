@@ -88,7 +88,7 @@ Other admitted write operations:
 | --- | --- |
 | `EvoGit.TaskRegistry.cancel_task(id)` | Graceful cancellation; preserves the result. |
 | `EvoGit.TaskRegistry.force_kill_task(id)` | Force kill; marks the task failed and discards its result. |
-| `EvoGit.TaskRegistry.delete_task(id)` | Terminal tasks only; does **not** cancel a task. Asynchronous `:ok` is not confirmation of deletion. |
+| `EvoGit.TaskRegistry.delete_task(id)` | Use only for terminal tasks; there is **no status/liveness enforcement**, and it does **not** cancel tasks or kill their wrappers. The asynchronous cast's `:ok` is not confirmation of deletion. |
 | `EvoGit.AgentScheduler.pause()` / `resume()` | Return `:ok`; in-flight work continues. Pause is not an absolute maintenance barrier. |
 
 ## Write: runtime settings versus saved configuration
