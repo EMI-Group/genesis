@@ -7,7 +7,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
   evaluates code to infer its tier and never escalates a refused evaluation.
   """
 
-  alias EvoGit.Agent.Tools.ElixirEval.{Authorization, Engine}
+  alias EvoGit.Agent.Tools.ElixirEval.{Authorization, DirectAPI, Engine}
   alias EvoGit.Agent.Tools.Failure
 
   @max_code_bytes 16_000
@@ -23,12 +23,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
     ReqLLM.tool(
       name: "elixir_eval",
       description:
-        "Evaluate Elixir with fresh bindings. Read (default) and write use Dune and only " <>
-          "the documented Read/Write facades, never direct runtime APIs. Write requires " <>
-          "manual approval of the exact code. Sudo is dangerous, UNSANDBOXED full VM " <>
-          "Code evaluation, available only AFTER manual approval. Never auto-escalate. " <>
-          "Timeout/output caps are best effort for sudo; side effects cannot be rolled back. " <>
-          "Use the separate read/glob/rg tools for source inspection.\n\n" <> help(),
+        "Evaluate Elixir with fresh bindings. Inspect source with read/glob/rg, then call " <>
+          "explicitly admitted real APIs in Dune at read (default) or write tier; Read/Write " <>
+          "facades are optional conveniences. Write requires manual approval of the exact code. " <>
+          "Sudo is dangerous, UNSANDBOXED full VM Code evaluation, available only AFTER " <>
+          "manual approval. Never auto-escalate. Timeout/output caps are best effort for sudo; " <>
+          "side effects cannot be rolled back.\n\n" <> help(),
       parameter_schema: %{
         "type" => "object",
         "properties" => %{
@@ -78,6 +78,15 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
   def help do
     """
     Elixir evaluator capabilities (local node only):
+    Inspect source with read/glob/rg to understand real APIs, then call only the
+    explicitly admitted module/function/arities for your tier (catalog below).
+    Source visibility and public API status do not grant evaluation authority.
+    Examples (read tier):
+      EvoGit.TaskRegistry.list_tasks_page(limit: 10)
+      EvoGit.AgentScheduler.get_config(:max_turns)
+    Example (write tier, exact-code approval; runtime-only, not persisted):
+      EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8)
+    Read/Write facades are optional convenience APIs, not the sole path:
     Read facade (EvoGit.Agent.Tools.ElixirEval.Read):
       help/0 (this contract), system_info/0, list_tasks/0, list_tasks/1,
       get_task/1 (task id), list_agents/0, scheduler_status/0, model_profiles/0,
@@ -144,8 +153,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
       EvoGit.Agent.Tools.ElixirEval.Write.start_task("reflect", %{objective: "Explain task status"})
       EvoGit.Agent.Tools.ElixirEval.Write.guide("Open Tasks", %{page: "/tasks", dismissible: true})
       EvoGit.Agent.Tools.ElixirEval.Write.cancel_task("task_id")
-    Read/write run in Dune: pure Elixir plus the explicit facades only, not direct
-    TaskRegistry, AgentScheduler, CommandShell, Tools.execute or other runtime APIs.
+    Read/write run in Dune: pure Elixir plus explicitly admitted real APIs and
+    optional Read/Write facades, not arbitrary public runtime APIs.
     Write and sudo require manual approval of the EXACT submitted code every call.
     Sudo is UNSANDBOXED full VM Code evaluation: dangerous, not a sandbox escape retry.
     Fresh bindings every call; no persistent REPL state and no automatic escalation.
@@ -153,7 +162,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
     Output: positive integer bytes, default 16384, clamped to 256..65536 (errors too).
     Sudo limits are best effort; timeouts or later cancellation cannot roll back effects.
     Source inspection remains in the separate read, glob and rg tools.
-    """
+    """ <> "\n" <> DirectAPI.help()
   end
 
   @doc "Executes one authorized evaluation and always returns bounded tool prose."
