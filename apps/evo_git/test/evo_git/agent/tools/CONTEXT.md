@@ -32,6 +32,8 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `web_fetch_lsp_registration_test.exs` | the schema-registration / dispatch contract for `web_fetch` and `lsp` |
 | `reflect_tools_test.exs` | direct self-reflective task-control handlers plus three repo-less `run_command` read-command dispatch cases; no evaluator or approval tests |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
+| `elixir_eval_engine_test.exs` | Real-Dune `ElixirEval.Engine` integration/security, genuine live authority, tier separation, fresh bindings, bounded UTF-8 output and inspection |
+| `elixir_eval_fixture.exs` | Explicitly required `EvoGit.TestSupport.ElixirEvalFixture`, providing genuine owner/tool Tasks and isolated running reflect authority without an LLM |
 
 ## Async-Safety Rationale
 
@@ -62,7 +64,10 @@ There is no config-dir isolation helper in `reflect_tools_test.exs`; its SystemI
 Sibling parser/approval suites route to `test/evo_git/{command_shell,command_approval}_test.exs`, the runtime suite routes to `test/evo_git/runtime/`, and production command-handler/evaluator architecture routes to `lib/evo_git/agent/tools/` and the core runtime's CONTEXT.md.
 
 ## Evaluator Test Ownership and Fixture Constraints
-No evaluator-specific test file exists in this directory; the production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
+`elixir_eval_engine_test.exs` uses the genuine fixture and real Dune for Engine-only contracts: fully qualified Read discovery through interpreted callbacks, captured-registry projections, read/write/native separation, restricted runtime APIs, generic exception handling, fresh bindings and cumulative UTF-8 byte/output/inspection bounds.
+Its direct write/sudo calls model an already-approved tier and are explicitly not evidence that the public wrapper enforces manual approval.
+The nested Read discovery case intentionally performs no facade/allowlist warm-up and exposes a cold-BEAM alias-resolution failure: running it alone returns the generic runtime error instead of the expected system-info projection, while an earlier evaluation can hide the failure.
+The production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
 Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
 A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
 Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
