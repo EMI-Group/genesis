@@ -37,7 +37,9 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `elixir_eval_authorization_test.exs` | Genuine and forged owner/spec/task/state identities, immutable revalidation, registry failure, bounded ancestry and fixture cleanup |
 | `elixir_eval_worker_tree_test.exs` + `elixir_eval_engine_cleanup_test.exs` | Root/child/grandchild custody on success/error/timeout and abrupt guardian/owner/tool loss, including real-Dune helper cleanup |
 | `elixir_eval_projection_test.exs` + `elixir_eval_validation_test.exs` | Privacy projections, literal read/start/guide validation, scheduler-option normalization/rejection and exact caps |
-| `elixir_eval_configuration_test.exs` | Genuine-Dune configuration reads, runtime-only scheduler updates, quota boundaries and exact-code public approval |
+| `elixir_eval_configuration_test.exs` | Genuine-Dune facade configuration reads, runtime-only scheduler updates, quota boundaries and exact-code public approval |
+| `elixir_eval_direct_api_test.exs` | Genuine-Dune direct TaskInfo/page/runtime reads, exact-MFA admission and approved task lifecycle mutations |
+| `elixir_eval_direct_configuration_test.exs` | Genuine-Dune direct runtime configuration, full-config persistence, explicit reload and exact-code approval |
 | `elixir_eval_render_test.exs` | UTF-8 byte-bounded text/term rendering and native BoundedIO protocol, cap and lifecycle |
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 
@@ -53,6 +55,8 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: true` — `lsp_test.exs` (nothing global: every execute-level test spawns its own fake language server escript in a UNIQUE temp dir and every `Lsp.execute/4,5` call passes `enabled:`/`command:` explicitly, the unconfigured cases included).
 - `async: false` — `elixir_eval_wrapper_test.exs` uses the app-global `EvoGit.CommandApproval` service and mutates its shared `:command_approval_timeout` app-env key, with id-pinned approval matching and restored settings.
 - `async: false` — `elixir_eval_configuration_test.exs` mutates the app-global AgentScheduler and CommandApproval timeout/service, suspending PeakHourEngine and restoring scheduler scalars and derived model-concurrency state.
+- `async: false` — `elixir_eval_direct_api_test.exs` uses the app-global CommandApproval service, pending roster and topic, and reads the global AgentScheduler and RemoteAPI agent roster without mutating scheduler settings, approval timeout or configuration files.
+- `async: false` — `elixir_eval_direct_configuration_test.exs` mutates the global AgentScheduler, CommandApproval timeout and `:config_dir_fun` app-env seam, suspending PeakHourEngine before snapshots and resuming it only after restoring scheduler fields, model defaults, pool state and both app-env keys.
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, process-local state, or uniquely keyed evaluator ETS authority rows backed by isolated Store/TaskRegistry instances.
 
 ## Reflect / Command Dispatch Coverage and Gaps
@@ -93,7 +97,7 @@ Public-wrapper write and sudo tests must drive exact-code `CommandApproval.reque
 Use id-pinned approval responders and monitored, handshake-held descendants for lifecycle assertions, never unconditional approvers, artificial CPU-load generators or quiet-window timing races.
 Prefer async modules for pure/local fixtures; modules changing scheduler profiles, the global approval service or shared timeout settings must explicitly name that forcing global and remain synchronous.
 `elixir_eval_wrapper_test.exs` exercises actual `ElixirEval.execute/3` in descendant tools: reads open no approval, write and sudo preserve exact code and carry distinct level/warning metadata, denial/timeout leave effects absent, and held approvals revalidate original task/state/spec/owner/tool authority.
-`elixir_eval_authorization_test.exs` and the wrapper suite retain a refusal regression for mismatched embedded `SchedMeta.id`; production currently accepts any integer there instead of binding it to the captured ETS lookup id.
+`elixir_eval_authorization_test.exs` and the wrapper suite pin refusal of a mismatched embedded `SchedMeta.id`, including revalidation after held approval.
 Dependency installation belongs to the parent app; tests require genuine Dune 0.3.18 or compatible and do not stub its parser, allowlists or execution.
 The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
 Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
@@ -106,17 +110,23 @@ Configuration quota tests establish one read per invocation despite five underly
 Explicit broker request/start-quota boundary tests remain outside this configuration coverage.
 Genuine external Dune validation details live in git notes: `902ac54c4` records eager loading of every Dune beam before Mix.CLI.main, and `ba7e4558e` records `compile --no-deps-check --no-prune-code-paths` followed by `test --no-compile --no-deps-check`.
 The recorded Dune 0.3.18 ebin path is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`, historically also addressed as `$TMPDIR/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; prefer the absolute recorded path when task TMPDIR differs, and verify availability before relying on this external cache.
-## Direct Real-API Coverage Gaps and Obsolete Expectations
+
+## Direct Real-API Coverage
 The direct allowlist admits exact public EvoGit MFAs with unchanged real arguments/return values, while compatible Read/Write facades retain their projections, validators and policies; production contracts live in `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
-`elixir_eval_engine_test.exs:148` incorrectly expects direct `EvoGit.TaskRegistry.get_task/1` to be restricted, although that MFA is admitted in both interpreted tiers.
-The Engine and Configuration suites' `@restricted` constants and WrapperTest's literal restricted error still expect facade-only guidance rather than the engine's admitted-real-API guidance.
-Do not replace facade projection/privacy, option-validation or self-target refusal assertions with direct-API semantics: those remain valid compatibility contracts.
-No existing evaluator suite in this node exercises admitted direct TaskRegistry/configuration/scheduler calls through genuine Dune; independent direct-task/read/admission and synchronous direct-configuration/persistence suites are natural additions.
-Direct TaskRegistry tests should assert real TaskInfo structs, real page options/results and acknowledgements using the authenticated isolated registry, not projected facade maps or substituted facade policies.
-Direct configuration tests should distinguish nested/live scheduler values from resolved disk/default configuration, runtime-only updates, whole-file save without implicit reload and explicit reload results.
-The fixture copies ConfigDir into owner/tool processes but does not propagate it into the broker's independent runtime Task, so direct config-file tests need a synchronous isolated config-dir seam that reaches that Task and is restored afterwards.
-The existing ConfigurationTest setup asserts config-file bytes remain unchanged on teardown and is deliberately unsuitable for persistence cases without separate setup ownership.
-The genuine Dune cache at `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin` contains Dune 0.3.18 beams and `dune.app`, while this worktree has neither `deps/dune` nor `_build/test/lib/dune/ebin`.
+`elixir_eval_direct_api_test.exs` has 19 genuine-Dune tests covering actual TaskInfo structs and nil reads, unprojected page results with real keyword filters/pagination and invalid-status degradation, captured isolated-registry routing through interpreted callbacks, RemoteAPI agent summaries and real scheduler/configuration reads.
+Admission tests refuse write MFAs in read, unlisted functions and other arities in both interpreted tiers, preserving admitted-real-API guidance and no automatic escalation.
+Public exact-code write approval covers real task submission, pending cancellation, eventual deletion, held-wrapper force kill and actual missing/terminal-task errors rather than facade acknowledgements.
+Denial, late approval and stale lifecycle authority prevent effects, while approved tier-2 code gains neither native filesystem authority nor sudo escalation.
+`elixir_eval_direct_configuration_test.exs` has 8 genuine-Dune tests distinguishing nonscalar live scheduler values and per-model slot maps from resolved disk/default configuration, including nested key paths and unknown keys.
+It covers exact-approved runtime update/pause/resume acknowledgements without saving, whole-config save preserving unrelated settings without implicit reload, separate explicit reload, invalid-save errors without disk/runtime changes, and denied/read-tier mutations without effects or escalation.
+The fixture copies ConfigDir into owner/tool processes but not the broker's independent runtime Task, so the direct configuration suite temporarily replaces the global `:config_dir_fun` with a test-owned directory resolver that reaches that Task and restores the original seam on exit.
+The facade ConfigurationTest separately preserves config-file bytes on teardown; persistence cases belong to DirectConfigurationTest's isolated setup.
+Facade projection/privacy, option-validation and self-target refusal assertions remain compatibility contracts, not direct-API policies.
+The tools subtree's collective validation is 760 passing tests at seed 42 using genuine cached Dune 0.3.18.
+
+### Known Issue
+The help example in `lib/evo_git/agent/tools/elixir_eval/direct_api.ex:118` passes an atom status where the actual page API requires a string; the direct API suite pins the real invalid-atom degraded-read behavior.
+
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
