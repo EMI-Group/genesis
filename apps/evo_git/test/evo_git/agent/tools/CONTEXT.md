@@ -36,7 +36,8 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `elixir_eval_fixture_helper.exs` | Explicitly required `EvoGit.TestSupport.ElixirEvalFixture`, providing genuine owner/tool Tasks and isolated running reflect authority without an LLM |
 | `elixir_eval_authorization_test.exs` | Genuine and forged owner/spec/task/state identities, immutable revalidation, registry failure, bounded ancestry and fixture cleanup |
 | `elixir_eval_worker_tree_test.exs` + `elixir_eval_engine_cleanup_test.exs` | Root/child/grandchild custody on success/error/timeout and abrupt guardian/owner/tool loss, including real-Dune helper cleanup |
-| `elixir_eval_projection_test.exs` + `elixir_eval_validation_test.exs` | Privacy projections, literal read/start/guide validation and exact caps |
+| `elixir_eval_projection_test.exs` + `elixir_eval_validation_test.exs` | Privacy projections, literal read/start/guide validation, scheduler-option normalization/rejection and exact caps |
+| `elixir_eval_configuration_test.exs` | Genuine-Dune configuration reads, runtime-only scheduler updates, quota boundaries and exact-code public approval |
 | `elixir_eval_render_test.exs` | UTF-8 byte-bounded text/term rendering and native BoundedIO protocol, cap and lifecycle |
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 
@@ -96,12 +97,12 @@ Dependency installation belongs to the parent app; tests require genuine Dune 0.
 The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
 Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
 The real interpreted facade whitelist is exercised by EngineTest's fully qualified Read calls and read-denied/write-allowed cancel_task call, WrapperTest's approved cancellation and read refusal, and EngineCleanupTest's traced nested get_task broker request; WorkerTreeTest instead supplies a native callback to WorkerTree.run/4 and does not establish Dune whitelist behavior.
-There are no tests in this node naming `Read.configuration_status/0`, `Write.update_scheduler_config/1` or `Validation.scheduler_options/1`, and no explicit broker request/read/row/write/start-quota boundary tests.
-The source contract exposes only five scalar live scheduler settings through configuration_status, literal bounded scheduler updates through update_scheduler_config, standalone boolean pause/resume, runtime-only acknowledgements and existing read/write quota accounting.
-Pure scheduler-options cases belong in the async `elixir_eval_validation_test.exs`; actual scheduler-read/update and public approval cases need a synchronous companion suite because the fixture isolates TaskRegistry/Store but not the app-global AgentScheduler.
-New mutation integration must snapshot and restore only the changed scheduler values, coordinate PeakHourEngine when model-pool assertions are needed, and use actual Dune facade calls under Fixture authority rather than treating temporary config-dir isolation as scheduler isolation.
-The existing wrapper helpers provide exact-code held approval, id-pinned requests and joined no-approval assertions, and EngineTest's read-denied/write-allowed cancellation case is the model for a configuration tier-separation regression.
-Configuration-status accounting should establish one read and one projected row per invocation despite five underlying single-key reads, while scheduler mutations should establish the sixteen-write boundary and no seventeenth dispatch.
+`elixir_eval_validation_test.exs` covers scheduler-option inclusive boundaries, atom/string-key normalization, mixed numeric settings, standalone boolean pause/resume, invalid shapes and types, duplicate spellings and refusal to create atoms from unknown input strings.
+`elixir_eval_configuration_test.exs` uses genuine Dune under Fixture authority for the exact five-key scalar configuration projection, read-tier mutation denial and numeric/pause/resume acknowledgements containing only normalized requested settings with `scope: "runtime"` and `persisted: false`.
+The configuration suite pins unchanged config-file bytes and existing live-agent turn limits, plus approval-free public reads, exact-code mutation approval denial/acceptance, late-response rejection and stale-authority refusal.
+It is synchronous because it mutates the app-global AgentScheduler and approval timeout/service; it suspends PeakHourEngine before snapshot/mutation and restores the five scheduler scalars plus the derived model-concurrency map before resuming the engine.
+Configuration quota tests establish one read per invocation despite five underlying single-key reads, exactly one projected row per configuration result and a sixteen-write boundary with no seventeenth dispatch.
+Explicit broker request/start-quota boundary tests remain outside this configuration coverage.
 Genuine external Dune validation details live in git notes: `902ac54c4` records eager loading of every Dune beam before Mix.CLI.main, and `ba7e4558e` records `compile --no-deps-check --no-prune-code-paths` followed by `test --no-compile --no-deps-check`.
 The recorded Dune 0.3.18 ebin path is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`, historically also addressed as `$TMPDIR/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; prefer the absolute recorded path when task TMPDIR differs, and verify availability before relying on this external cache.
 ## Notes for Agents
