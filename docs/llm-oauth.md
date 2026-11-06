@@ -88,8 +88,9 @@ Genesis imports the vendor login into **one managed file, `auth.json`**, next to
 Resolution order for that path (highest first):
 
 1. the profile's own `oauth_file`
-2. the `[llm] oauth_file` config key
-3. the platform default above
+2. the managed default above, `<config_dir>/auth.json` (`EvoGit.Auth.default_oauth_file/0`)
+
+There is no global `[llm] oauth_file` key — the override lives on the model profile only.
 
 The file is written atomically (a newly created file gets mode `0600`; an existing file keeps its mode) and holds one entry per provider (`openai-codex`, `anthropic`) in the LLM client's own format — do not hand-edit it unless you know that format; let `codex login` / `claude` fill it.
 
@@ -116,24 +117,22 @@ concurrency = 2
 **Claude Pro/Max subscription**
 
 ```toml
-[llm]
-# optional: move/point the managed OAuth file elsewhere
-# oauth_file = "~/.config/genesis/auth.json"
-
 [[llm.models]]
 id = "claude"
 model = "anthropic:claude-opus-5-5"
 auth_mode = "oauth"
 concurrency = 2
+# optional: use a different managed OAuth file for this profile only
+# oauth_file = "~/.config/genesis/auth.json"
 ```
 
 Notes:
 
 - `auth_mode` accepts `"oauth"` (or `"api_key"`, the default). It is needed only for providers that also accept API keys — Claude is the one case today.
-- A profile may also set `oauth_file` to use a different managed file for that profile alone (for example a team-shared credential file).
+- `oauth_file` is a **per-profile override only** — leave it blank to use the managed default `<config_dir>/auth.json`; set it on the profile to use a different managed file for that profile alone (for example a path under a writable home, or a team-shared credential file).
 - The same profile table carries everything else a normal profile does: `concurrency`, `context_window` (the context-compression window, default 200 000), the generation parameters (`temperature`, `max_tokens`, `reasoning_effort`, `top_p`, `top_k`, `frequency_penalty`, `presence_penalty`), `provider_options`, and the peak/off-peak scheduling fields (`peak_concurrency`, `peak_hours`, `off_peak_days`, `timezone`). OAuth has no effect on any of them.
 - On a config that still uses the flat `[llm] model = "…"` form, `[llm] auth_mode = "oauth"` is carried into the auto-created `default` profile, so the legacy form works too.
-- In the dashboard, the LLM settings category exposes the `[llm] oauth_file` field (its placeholder is the default managed path), and the model-profile editor carries an `auth_mode` toggle — **API key** vs **Subscription (OAuth)** — so the mode needs no hand-editing of `config.toml`. The OAuth-only `openai_codex` provider shows a static **Subscription** badge instead of the toggle and is never asked for an API key.
+- In the dashboard, the path is set **per model profile** in the model-profile editor: an `oauth_file` field whose placeholder is the default managed path and where blank means the managed default. The global LLM settings category has no `oauth_file` field. The same editor carries an `auth_mode` toggle — **API key** vs **Subscription (OAuth)** — so neither the mode nor the path needs hand-editing of `config.toml`. The OAuth-only `openai_codex` provider shows a static **Subscription** badge instead of the toggle and is never asked for an API key.
 
 ---
 ## 5. Setup paths
@@ -170,8 +169,8 @@ Only the *shortcut list* changed. An explicit `provider:model` string keeps work
 | Symptom | What it means | Fix |
 |---|---|---|
 | Setup says "No local Codex CLI / Claude Code login found", or config health warns that no usable subscription credential resolves | The vendor login file is absent or holds no usable token | Run `codex login` (or `claude`), then re-run `genesis setup` or restart the run |
-| Provider error `OAuth file not found: <path>` | The managed file is missing at the path the profile resolved (often a wrong `oauth_file`) | Create it by logging in again; if you set `[llm] oauth_file` or a profile `oauth_file`, check that path |
-| Warning log `OAuth import for openai_codex could not write the managed file <path> ({:temp_file_failed, :erofs})`, the dashboard says "Login found, managed credential file not writable", `genesis setup` prints that remedy instead of the one-time login steps, and requests then fail with `OAuth file not found: <path>` | The vendor login was found — the login itself is fine — but Genesis could not store its managed copy, e.g. a read-only `$HOME` or a sandboxed/container filesystem, so no `auth.json` exists for the LLM client to read | Point `[llm] oauth_file` (or the profile's `oauth_file`) at a writable location, e.g. `oauth_file = "~/.config/genesis/auth.json"` under a writable home; logging in again does not help |
+| Provider error `OAuth file not found: <path>` | The managed file is missing at the path the profile resolved (often a wrong per-profile `oauth_file`) | Create it by logging in again; if the profile sets `oauth_file`, check that path |
+| Warning log `OAuth import for openai_codex could not write the managed file <path> ({:temp_file_failed, :erofs})`, the dashboard says "Login found, managed credential file not writable", `genesis setup` prints that remedy instead of the one-time login steps, and requests then fail with `OAuth file not found: <path>` | The vendor login was found — the login itself is fine — but Genesis could not store its managed copy, e.g. a read-only `$HOME` or a sandboxed/container filesystem, so no `auth.json` exists for the LLM client to read | Point the profile's `oauth_file` at a writable location, e.g. `oauth_file = "~/.config/genesis/auth.json"` under a writable home; logging in again does not help |
 | `401` / "expired credentials" mid-run | The access token expired and the refresh did not complete | Refresh is automatic when a refresh token exists (the LLM client rotates it back into the managed file); when it fails, re-run the vendor login |
 | `403`, "not entitled", "unsupported plan", or quota errors from the provider | These endpoints are the vendor's subscription backends and require the matching plan | Use a ChatGPT Plus/Pro (Codex) or Claude Pro/Max subscription, or switch the profile back to an API key |
 | Config health warns "No API key found…" even though you logged in with Claude | That Anthropic profile has no `auth_mode`, so it is treated as an API-key profile | Add `auth_mode = "oauth"` to that profile (and check the model string — Codex models need the `openai_codex:` prefix) and reload the config |
