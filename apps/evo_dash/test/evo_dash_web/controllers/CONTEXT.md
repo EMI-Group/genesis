@@ -36,7 +36,7 @@ Two describes: `GET /tasks/:task_id/export` (8 tests) and `... with ?node= param
 
 `async: false` because it writes junk shapes into the shared `EvoDash.ActiveTasks` hub (config isolation is NOT a reason: `setup` isolates the dir per process through the `:config_dir_fun` seam).
 - Setup isolates the config dir PER PROCESS (`EvoDash.Test.ConfigDir.isolate!/1`) and calls `EvoGit.Config.VersionState.complete_onboarding/0` so `/` and `/help` render instead of redirecting to `/welcome`.
-- Test 1: `GET /` renders ProjectsLive (palette + `AdaptiveInput`, no `chat-form`) and `GET /help` renders HomeLive (`#chat-form`, "Chat with Genesis").
+- Test 1: `GET /` renders ProjectsLive (palette + `AdaptiveInput`, no `chat-form`) and `GET /help` renders HomeLive (`#chat-form`, trimmed `h1` text exactly "Genesis Assistant", matching the HomeLive suite's heading-scoped convention).
 - Test 2: a whole-page render survives malformed `EvoDash.ActiveTasks` hub entries (`:junk_atom`, a bare binary) — the mount hook's `hub_snapshot/2` sanitizes them, so `Layouts.group_tasks_by_project/2` cannot `BadMapError`; the test clears the shared hub before AND after itself.
 
 ## `error_html_test.exs` / `error_json_test.exs`

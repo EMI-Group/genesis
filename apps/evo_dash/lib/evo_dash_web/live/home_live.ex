@@ -41,6 +41,7 @@ defmodule EvoDashWeb.HomeLive do
 
   alias EvoDashWeb.HomeLive.{
     AgentStream,
+    ApprovalWorkflow,
     ChatState,
     Messages,
     ModelSelect,
@@ -78,7 +79,9 @@ defmodule EvoDashWeb.HomeLive do
         <div class="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-base-300 px-3 pt-3 pb-3 sm:px-4 sm:pt-4">
           <div class="min-w-0 basis-full sm:basis-auto sm:flex-1">
             <h1 class="text-base font-semibold truncate">
-              <%!-- zh_CN: "与 Genesis 对话" --%>{gettext("Chat with Genesis")}
+              <%!-- zh_CN: Genesis Assistant 是此对话助手的名称 --%>{gettext(
+                "Genesis Assistant"
+              )}
             </h1>
           </div>
           <%= if @model_profiles != [] do %>
@@ -144,18 +147,56 @@ defmodule EvoDashWeb.HomeLive do
           <% end %>
         </div>
 
-        <!-- Pending command approvals (security levels 2 & 3): the reflect
-             agent is BLOCKED mid-turn on a run_command approval until the user
-             decides. Render one ApprovalCard per pending request, pinned
-             between the messages scroller and the composer so they stay
-             visible while the transcript scrolls. The area scrolls internally
-             if several requests ever pend at once. -->
+        <!-- Pending evaluator and legacy command approvals block the reflect
+             agent until the user decides. Cards stay visible while a response
+             is in flight and on failure, between transcript and composer. -->
         <%= if @pending_approvals != [] do %>
           <div class="shrink-0 max-h-[min(11rem,25dvh)] overflow-y-auto overscroll-contain scrollbar-thin">
             <%= for request <- @pending_approvals do %>
-              <.approval_card request={request} />
+              <.approval_card
+                request={request}
+                busy={ApprovalWorkflow.busy?(assigns, request.request_id)}
+              />
             <% end %>
           </div>
+        <% end %>
+
+        <%= case @approval_error do %>
+          <% {:recovery, reason} -> %>
+            <div
+              id="approval-recovery-error"
+              role="alert"
+              class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
+            >
+              <p>
+                {gettext("Could not load pending approvals: %{reason}", reason: inspect(reason))}
+              </p>
+              <p class="mt-1 text-base-content/70">
+                {gettext("Existing requests are kept. Retry to check for pending approvals.")}
+              </p>
+              <button
+                type="button"
+                phx-click="retry_approvals"
+                disabled={@approval_recovering}
+                class="btn btn-sm btn-outline mt-2"
+              >
+                {gettext("Retry approvals")}
+              </button>
+            </div>
+          <% {:response, request_id, reason} -> %>
+            <%= if Enum.any?(@pending_approvals, &(&1.request_id == request_id)) do %>
+              <div
+                id="approval-response-error"
+                role="alert"
+                class="shrink-0 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-base-content"
+              >
+                <p>{gettext("Failed to respond: %{reason}", reason: inspect(reason))}</p>
+                <p class="mt-1 text-base-content/70">
+                  {gettext("The request is still pending. Use its decision buttons to try again.")}
+                </p>
+              </div>
+            <% end %>
+          <% _ -> %>
         <% end %>
 
         <!-- Composer: pinned bottom, outside the messages scroller -->
@@ -172,9 +213,9 @@ defmodule EvoDashWeb.HomeLive do
               phx-keydown="chat_keydown"
               phx-keyup="chat_keyup"
               disabled={@chat_status != :idle or SourceGate.blocked?(assigns)}
-              placeholder={gettext("Message Genesis…")}
+              placeholder={gettext("Message Genesis Assistant…")}
               rows="1"
-              aria-label={gettext("Message Genesis…")}
+              aria-label={gettext("Message Genesis Assistant…")}
               class="w-full min-w-0 min-h-[46px] max-h-[min(10rem,25dvh)] resize-y bg-transparent px-4 py-3 text-base leading-relaxed placeholder:text-base-content/50 focus:outline-none disabled:opacity-50"
             ></textarea>
             <!-- Send → Stop morph: exactly one button is visible at a time; both
@@ -204,8 +245,8 @@ defmodule EvoDashWeb.HomeLive do
             )}
             <%= if @chat_status == :idle and @transcript == [] do %>
               <br />
-              <%!-- zh_CN: "Genesis 可能会出错，请核实重要信息。" --%>{gettext(
-                "Genesis can make mistakes. Verify important information."
+              <%!-- zh_CN: Genesis Assistant 可能会出错，请核实重要信息。 --%>{gettext(
+                "Genesis Assistant can make mistakes. Verify important information."
               )}
             <% end %>
           </div>
@@ -234,14 +275,15 @@ defmodule EvoDashWeb.HomeLive do
       if connected?(socket) do
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "tasks")
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "agents")
-        # Run-command approvals (security levels 2 & 3): the reflect agent is
-        # blocked mid-turn until the user decides on the request card.
+        # Evaluator and legacy command approvals both use this topic. Recovery
+        # starts only after this subscription, chat restoration and node resolution.
         Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
       end
 
       socket =
         socket
         |> assign(base_assigns())
+        |> ApprovalWorkflow.init()
         |> attach_chat()
         |> assign_model_select()
 
@@ -273,12 +315,10 @@ defmodule EvoDashWeb.HomeLive do
       # text) view instead of the markdown render. Never persisted — entries
       # are cleared with the transcript on reset_chat.
       raw_entry_ids: MapSet.new(),
-      # Ephemeral UI state: pending run-command approval requests (security
-      # levels 2 & 3) for THIS chat's task/agent, each waiting for the user's
-      # Confirm/Deny on its ApprovalCard. Never persisted — a page refresh
-      # clears them (the backend resolves stragglers with a timeout
-      # :approval_resolved broadcast); cleared on reset_chat too.
-      pending_approvals: [],
+      # The last approval scope reconciled on this connection. Recovery starts
+      # after handle_params resolves the node, never against mount's local seed.
+      # ApprovalWorkflow owns all ephemeral cards, response tokens and errors.
+      approval_context: nil,
       model_profiles: [],
       model_selection_enabled: false,
       # Monotonic stale-guard for the ASYNC remote model-profile load (a remote
@@ -374,6 +414,7 @@ defmodule EvoDashWeb.HomeLive do
   @impl true
   def handle_params(params, _url, socket) do
     prev_node = socket.assigns[:current_node]
+    prev_node_id = socket.assigns[:current_node_id]
     socket = NodeAware.assign_node(socket, params)
 
     # Node switch: the old chat's task belongs to the old node. Start a NEW
@@ -395,10 +436,17 @@ defmodule EvoDashWeb.HomeLive do
         socket.assigns[:chat_node] != socket.assigns[:current_node]
 
     socket =
-      if node_changed or chat_node_mismatch do
-        start_new_chat(socket)
-      else
-        socket
+      cond do
+        node_changed or chat_node_mismatch ->
+          start_new_chat(socket)
+
+        prev_node_id != socket.assigns[:current_node_id] ->
+          # Pending remote targets may share the local node seed. Invalidate
+          # approval work even when the existing chat reset rules keep refs.
+          ApprovalWorkflow.init(socket)
+
+        true ->
+          socket
       end
 
     # Re-load the model profiles / selection-script state for the RESOLVED
@@ -412,6 +460,9 @@ defmodule EvoDashWeb.HomeLive do
       # the page reacts to `?node=` switches). Local-node only + connected-only
       # (a dead render must not spawn a task that sends into a dying process).
       |> maybe_check_source()
+      # Subscriptions and restoration are complete, and the viewed node is
+      # resolved. This also reconciles reconnects routed here by NodeAware.
+      |> maybe_recover_approvals()
 
     {:noreply, socket}
   end
@@ -578,56 +629,20 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Command-approval decision (Confirm/Deny on an ApprovalCard — security
-  # levels 2 & 3). Validates the decision, resolves the target node from the
-  # pending request map (it may differ from the viewed node if the request
-  # raced a node switch), routes the response through the call-time
-  # :approval_responder seam, and OPTIMISTICALLY removes the card regardless
-  # of the outcome (the :approval_resolved broadcast is the backstop).
-  #
-  # The responder call runs OFF-PROCESS in an `EvoDash.SafeCall` supervised
-  # task: it may `:erpc` to a remote node, and a call to an unreachable node
-  # EXITS its caller (a `rescue` cannot catch an exit). The outcome lands in
-  # the `{{:approval_response_result, request_id, node}, result}` handle_info
-  # clause, which flashes a failed response and never crashes the page.
-  # (`EvoDash.SafeCall.start/4` always sends `{tag, run(fun)}`, so the tag —
-  # here a 3-tuple — stays nested as the message's first element.)
+  # Both evaluator and legacy command decisions use the same scoped async
+  # workflow. Keep the card busy until success; failures retain it for retry.
   @impl true
   def handle_event(
         "approval_response",
         %{"request_id" => request_id, "decision" => decision},
         socket
-      )
-      when decision in ["approve", "deny"] and is_binary(request_id) and request_id != "" do
-    pending =
-      case socket.assigns[:pending_approvals] do
-        list when is_list(list) -> list
-        _ -> []
-      end
+      ) do
+    {:noreply, ApprovalWorkflow.respond(socket, request_id, decision)}
+  end
 
-    # The request's OWN node wins when still pending; the viewed node is the
-    # fallback once the card is gone (double click / already resolved).
-    node =
-      case Enum.find(pending, &(Map.get(&1, :request_id) == request_id)) do
-        %{node: req_node} when not is_nil(req_node) -> req_node
-        _ -> socket.assigns[:current_node] || node()
-      end
-
-    # Call-time test seam (dashboard idiom — mirrors :review_merge_runner /
-    # :update_check_runner): tests inject `:approval_responder` to capture the
-    # args deterministically while the backend responder lands.
-    responder =
-      Application.get_env(
-        :evo_dash,
-        :approval_responder,
-        &EvoDash.NodeContext.approval_response/3
-      )
-
-    EvoDash.SafeCall.start(self(), {:approval_response_result, request_id, node}, fn ->
-      responder.(node, request_id, decision)
-    end)
-
-    {:noreply, assign(socket, pending_approvals: drop_approval(pending, request_id))}
+  @impl true
+  def handle_event("retry_approvals", _params, socket) do
+    {:noreply, recover_approvals(socket)}
   end
 
   # Missing params / invalid decision (or a blank request id) — no-op.
@@ -660,7 +675,7 @@ defmodule EvoDashWeb.HomeLive do
           agent_message_count: AgentStream.message_count(summary)
         )
 
-      {:noreply, socket |> persist_state() |> async_fetch_history()}
+      {:noreply, socket |> persist_state() |> async_fetch_history() |> maybe_recover_approvals()}
     else
       {:noreply, socket}
     end
@@ -703,40 +718,16 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # A run-command approval was requested by the reflect agent (security levels
-  # 2 & 3 — level 1 executes immediately and never broadcasts). Keep ONLY
-  # requests that belong to THIS chat's task/agent AND THIS node — everything
-  # else (other chats/tasks/agents, other nodes) is ignored. On match the
-  # request map is upserted into :pending_approvals (deduped by request_id — a
-  # duplicate REPLACES the earlier entry). Ephemeral UI state — never
-  # persisted.
+  # The workflow applies chat/source-node ownership and snapshot race guards
+  # for evaluator requests and legacy command approvals alike.
   @impl true
   def handle_info({:approval_requested, request}, socket) do
-    if own_request?(socket, request) do
-      pending =
-        case socket.assigns[:pending_approvals] do
-          list when is_list(list) -> list
-          _ -> []
-        end
-
-      {:noreply, assign(socket, pending_approvals: upsert_approval(pending, request))}
-    else
-      {:noreply, socket}
-    end
+    {:noreply, ApprovalWorkflow.requested(socket, request)}
   end
 
-  # An approval was resolved somewhere (approve/deny by the user, or
-  # :cancelled / :timed_out by the backend) — drop its card. Total: unknown
-  # request ids filter to a no-op.
   @impl true
   def handle_info({:approval_resolved, request_id, _decision}, socket) do
-    pending =
-      case socket.assigns[:pending_approvals] do
-        list when is_list(list) -> list
-        _ -> []
-      end
-
-    {:noreply, assign(socket, pending_approvals: drop_approval(pending, request_id))}
+    {:noreply, ApprovalWorkflow.resolved(socket, request_id)}
   end
 
   @impl true
@@ -761,7 +752,8 @@ defmodule EvoDashWeb.HomeLive do
             agent_message_count: AgentStream.message_count(agent)
           )
 
-        {:noreply, socket |> persist_state() |> async_fetch_history()}
+        {:noreply,
+         socket |> persist_state() |> async_fetch_history() |> maybe_recover_approvals()}
       else
         # Agent not registered yet — wait for agent_registered / agents_updated
         # to retrigger the lookup.
@@ -862,50 +854,16 @@ defmodule EvoDashWeb.HomeLive do
     end
   end
 
-  # Command-approval response outcome (from the supervised responder task
-  # spawned by the approval_response event). `EvoDash.SafeCall.start/4` ALWAYS
-  # sends `{tag, run(fun)}`, so the message arrives as
-  # `{{:approval_response_result, request_id, node}, result}` — the tag is ONE
-  # nested 3-tuple, never flattened into the message. The card was already
-  # removed optimistically, so this only surfaces a FAILED response:
-  #
-  #   * `{:ok, :ok}` — the backend accepted the decision → no-op.
-  #   * `{:ok, {:error, reason}}` — the responder reported a failure (e.g. the
-  #     remote approval channel is down) → error flash.
-  #   * `{:error, reason}` — the guarded call EXITED / raised (an unreachable
-  #     node, a call timeout) → the same error flash.
-  #   * anything else — quiet no-op.
-  #
-  # The request id is deliberately NOT used as a filter: the card is gone by
-  # now, so a stale/late result for an already-resolved request must still be
-  # allowed to report its failure. TOTAL: every shape keeps the LiveView alive.
+  # SafeCall preserves tuple tags as ONE nested element. The workflow rejects
+  # stale scopes/tokens and keeps cards on recovery or response failures.
   @impl true
-  def handle_info({{:approval_response_result, _request_id, _node}, result}, socket) do
-    case result do
-      {:ok, :ok} ->
-        {:noreply, socket}
+  def handle_info({{:approval_pending_loaded, _seq, _scope} = tag, result}, socket) do
+    {:noreply, ApprovalWorkflow.recovered(socket, tag, result)}
+  end
 
-      {:ok, {:error, reason}} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
-           gettext("Failed to respond: %{reason}", reason: inspect(reason))
-         )}
-
-      {:error, reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           # zh_CN: 审批响应失败（本地/远程审批通道出错；卡片已收起，超时会兜底清理）
-           gettext("Failed to respond: %{reason}", reason: inspect(reason))
-         )}
-
-      _other ->
-        {:noreply, socket}
-    end
+  @impl true
+  def handle_info({{:approval_workflow_response, _seq, _scope, _id} = tag, result}, socket) do
+    {:noreply, ApprovalWorkflow.responded(socket, tag, result)}
   end
 
   # Async model-profile load for a REMOTE node (from assign_model_select/1).
@@ -1036,6 +994,7 @@ defmodule EvoDashWeb.HomeLive do
                   |> assign(chat_task_id: id, chat_task_status: :pending)
                   |> persist_state()
                   |> async_lookup_agent()
+                  |> maybe_recover_approvals()
 
                 {:noreply, socket}
 
@@ -1286,19 +1245,22 @@ defmodule EvoDashWeb.HomeLive do
   # can match) and re-enables input, keeping the transcript AND the final
   # `:chat_task_status` badge (and thought process) visible on the card.
   defp clear_task_refs(socket) do
-    assign(socket,
+    socket
+    |> assign(
       chat_task_id: nil,
       chat_agent_id: nil,
       agent_message_count: nil,
       chat_status: :idle
     )
+    |> ApprovalWorkflow.init()
   end
 
   # Full live-chat reset (New chat / node switch): clears everything including
   # the transcript. The persisted chat (if any) is untouched —
   # `start_new_chat/1` owns creating + persisting the fresh empty chat.
   defp reset_chat(socket) do
-    assign(socket,
+    socket
+    |> assign(
       transcript: Transcript.new(),
       chat_draft: "",
       chat_status: :idle,
@@ -1318,60 +1280,37 @@ defmodule EvoDashWeb.HomeLive do
       # `raw_entry_ids` (per-entry raw-view flags) IS cleared here — the
       # transcript entries it refers to are gone with the reset.
       raw_entry_ids: MapSet.new(),
-      # Pending approval cards belong to the OLD chat's task — cleared here
-      # too (the backend resolves stragglers with a timeout broadcast).
-      pending_approvals: []
+      approval_context: nil
     )
+    |> ApprovalWorkflow.init()
   end
 
-  # Own-request filter for `{:approval_requested, request}` broadcasts. A
-  # request belongs to this chat when it carries a usable request_id AND
-  # (its task_id matches OUR chat task OR its agent_id matches OUR chat
-  # agent) AND its node matches the chat's node (the chat's own `:chat_node`,
-  # falling back to the viewed node; a nil request node matches everything —
-  # the backend always stamps it, but stay lenient). Type tolerance: agent
-  # ids may be integers in the core while the request contract says strings →
-  # compared via `to_string/1`; task ids are binaries on both sides
-  # (`chat_task_id` is normalized to a binary by `ChatState.restore/1` and
-  # `AgentStream.task_id_from_start/1` only accepts binaries). Total — the
-  # assigns may be nil/absent on fresh sockets.
-  defp own_request?(socket, request) do
-    is_map(request) and
-      is_binary(Map.get(request, :request_id)) and
-      (own_task_request?(socket, request) or own_agent_request?(socket, request)) and
-      own_node_request?(socket, request)
+  # Compare only chat/node refs, not draft/history changes. A fresh connected
+  # mount reconciles once after restoration and node resolution; root lookup,
+  # task start and reconnect/node changes reconcile only when their scope moves.
+  # The workflow performs the usable-ref and pending-remote checks itself.
+  defp maybe_recover_approvals(socket) do
+    context =
+      Map.take(socket.assigns, [
+        :chat_id,
+        :current_node_id,
+        :current_node,
+        :chat_node,
+        :chat_task_id,
+        :chat_agent_id
+      ])
+
+    if connected?(socket) and context != socket.assigns[:approval_context] do
+      socket
+      |> assign(approval_context: context)
+      |> recover_approvals()
+    else
+      socket
+    end
   end
 
-  defp own_task_request?(socket, request) do
-    req_task_id = Map.get(request, :task_id)
-    chat_task_id = socket.assigns[:chat_task_id]
-    req_task_id != nil and chat_task_id != nil and req_task_id == chat_task_id
-  end
-
-  defp own_agent_request?(socket, request) do
-    req_agent_id = Map.get(request, :agent_id)
-    chat_agent_id = socket.assigns[:chat_agent_id]
-
-    req_agent_id != nil and chat_agent_id != nil and
-      to_string(req_agent_id) == to_string(chat_agent_id)
-  end
-
-  defp own_node_request?(socket, request) do
-    req_node = Map.get(request, :node)
-    chat_node = socket.assigns[:chat_node] || socket.assigns[:current_node]
-    req_node == nil or req_node == chat_node
-  end
-
-  # Upserts a request into the pending list (newest first): any earlier entry
-  # with the same request_id is dropped (replaced) so duplicates never stack.
-  defp upsert_approval(pending, request) do
-    [request | Enum.reject(pending, &(Map.get(&1, :request_id) == Map.get(request, :request_id)))]
-  end
-
-  # Drops the pending entry with the given request_id (no-op when absent).
-  # Total — request_id may be any term.
-  defp drop_approval(pending, request_id) do
-    Enum.reject(pending, &(Map.get(&1, :request_id) == request_id))
+  defp recover_approvals(socket) do
+    if connected?(socket), do: ApprovalWorkflow.recover(socket), else: socket
   end
 
   # Starts a NEW persisted chat (old chats stay in ChatHistory — there is no
