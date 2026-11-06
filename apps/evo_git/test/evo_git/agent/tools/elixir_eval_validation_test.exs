@@ -261,6 +261,153 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ValidationTest do
     end
   end
 
+  describe "scheduler_options/1" do
+    test "accepts inclusive numeric bounds for every atom and string key" do
+      for {key, maximum} <- [
+            default_llm_max_concurrency: 256,
+            max_tool_concurrency: 256,
+            max_turns: 10_000,
+            max_turns_root: 10_000
+          ],
+          spelling <- [key, Atom.to_string(key)],
+          value <- [1, div(maximum, 2), maximum] do
+        assert Validation.scheduler_options(%{spelling => value}) == {:ok, [{key, value}]}
+      end
+    end
+
+    test "normalizes mixed numeric keys without adding defaults or losing settings" do
+      assert {:ok, opts} =
+               Validation.scheduler_options(%{
+                 "default_llm_max_concurrency" => 256,
+                 "max_turns_root" => 10_000,
+                 max_tool_concurrency: 1,
+                 max_turns: 1
+               })
+
+      assert Keyword.keyword?(opts)
+      assert length(opts) == 4
+
+      assert Map.new(opts) == %{
+               default_llm_max_concurrency: 256,
+               max_tool_concurrency: 1,
+               max_turns: 1,
+               max_turns_root: 10_000
+             }
+    end
+
+    test "rejects out-of-range integers and never coerces numeric values" do
+      for {key, maximum} <- [
+            default_llm_max_concurrency: 256,
+            max_tool_concurrency: 256,
+            max_turns: 10_000,
+            max_turns_root: 10_000
+          ],
+          spelling <- [key, Atom.to_string(key)],
+          value <- [
+            -1,
+            0,
+            maximum + 1,
+            1.0,
+            maximum / 1,
+            "1",
+            Integer.to_string(maximum),
+            nil,
+            true,
+            false,
+            :infinity,
+            [],
+            %{}
+          ] do
+        assert {:error, message} = Validation.scheduler_options(%{spelling => value})
+        assert message =~ "concurrency integers 1..256"
+        assert message =~ "turn-cap integers 1..10000"
+      end
+    end
+
+    test "paused accepts only a standalone boolean under either key spelling" do
+      for spelling <- [:paused, "paused"], value <- [true, false] do
+        assert Validation.scheduler_options(%{spelling => value}) == {:ok, [paused: value]}
+      end
+
+      for spelling <- [:paused, "paused"],
+          value <- [nil, 0, 1, 1.0, "true", "false", "1", :yes, [], %{}] do
+        assert {:error, message} = Validation.scheduler_options(%{spelling => value})
+        assert message =~ "standalone boolean paused option"
+      end
+
+      for paused_key <- [:paused, "paused"],
+          paused <- [true, false],
+          key <- [
+            :default_llm_max_concurrency,
+            :max_tool_concurrency,
+            :max_turns,
+            :max_turns_root
+          ],
+          spelling <- [key, Atom.to_string(key)] do
+        assert {:error, _} = Validation.scheduler_options(%{paused_key => paused, spelling => 1})
+      end
+    end
+
+    test "rejects duplicate normalized keys even when both values agree" do
+      for {key, value} <- [
+            default_llm_max_concurrency: 1,
+            max_tool_concurrency: 1,
+            max_turns: 1,
+            max_turns_root: 1,
+            paused: true
+          ],
+          other <- [value, if(is_boolean(value), do: false, else: 2)] do
+        assert {:error, _} =
+                 Validation.scheduler_options(%{key => value, Atom.to_string(key) => other})
+      end
+    end
+
+    test "rejects empty/non-map inputs and unknown keys alongside valid settings" do
+      for options <- [%{}, nil, [], [max_turns: 1], "max_turns=1", 1, 1.0, true, false] do
+        assert {:error, _} = Validation.scheduler_options(options)
+      end
+
+      for key <- [
+            :model_profiles,
+            :model_concurrency,
+            :api_key,
+            :node,
+            :path,
+            :default_tool_timeout,
+            :max_tool_timeout,
+            "MAX_TURNS",
+            "max_turns ",
+            "",
+            1,
+            nil,
+            {:max_turns}
+          ],
+          spelling <- if(is_atom(key), do: [key, Atom.to_string(key)], else: [key]) do
+        assert {:error, _} = Validation.scheduler_options(%{spelling => 1})
+        assert {:error, _} = Validation.scheduler_options(%{spelling => 1, :max_turns_root => 1})
+      end
+
+      assert {:error, _} =
+               Validation.scheduler_options(%{
+                 default_llm_max_concurrency: 1,
+                 max_tool_concurrency: 1,
+                 max_turns: 1,
+                 max_turns_root: 1,
+                 paused: true,
+                 extra: 1
+               })
+    end
+
+    test "unknown input strings never become atoms" do
+      key = "scheduler_option_not_an_atom_#{System.unique_integer([:positive])}"
+
+      assert_raise ArgumentError, fn -> String.to_existing_atom(key) end
+      assert {:error, _} = Validation.scheduler_options(%{key => 1})
+      assert {:error, _} = Validation.scheduler_options(%{key => true, :max_turns => 1})
+      assert_raise ArgumentError, fn -> String.to_existing_atom(key) end
+    end
+  end
+
   describe "guide/2" do
     test "returns only the four payload fields and defaults to dismissible" do
       assert Validation.guide(" Look here\n", %{}) ==
