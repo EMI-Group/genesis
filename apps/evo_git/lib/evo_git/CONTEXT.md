@@ -7,7 +7,7 @@ This file is the module-level API surface plus the cross-cutting contracts; each
 
 ## Routing Table
 - `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`).
-- `./agent/tools/elixir_eval/` → Genesis Assistant evaluator internals: Dune read/write allowlists, narrow projected runtime facades, authenticated runtime-local capability broker, bounded evaluation/output and monitored worker cleanup; the single public tool wrapper is `./agent/tools/elixir_eval.ex`.
+- `./agent/tools/elixir_eval/` → Genesis Assistant evaluator internals: explicit read/write MFA allowlists calling real runtime APIs with their actual returns, authenticated runtime-local capability broker, bounded evaluation/output and monitored worker cleanup; the single public tool wrapper is `./agent/tools/elixir_eval.ex`.
 - `./agents/` → SelfReflective exposes `elixir_eval` plus source-reading tools; evaluator tiers are explicit read/write/sudo, writes require exact-code approval, sudo additionally carries an unrestricted-privileges warning, and no tier auto-escalates.
 - `./agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees, WorktreeManager — ETS schemas, helpers, worktree lifecycle
@@ -175,7 +175,10 @@ A model profile can spend a ChatGPT/Claude **subscription login** instead of a p
 - **`EvoGit.SandboxSlice`** owns live `evogit.slice` writes (`systemctl --user set-property evogit.slice CPUWeight=… MemoryMax=… TasksMax=…`), Linux + systemd backend only; every call is bounded by `run_systemctl_bounded/4` (`@systemctl_timeout_ms` 5000, seams `:sandbox_slice_systemctl_timeout_ms` / `:sandbox_slice_systemctl_fun`; timeout → `{:error, :timeout}`, raising runner → `{:error, {:runner_crashed, reason}}`); `update_resources/1` (sync 10s call) vs `update_resources_async/1` (cast, `:ok` even when down) — `AgentScheduler` uses the ASYNC one → `sandbox/` + `agent_scheduler/`.
 - **No `try/rescue` anti-pattern**: prefer `case`/`if`/`cond`/`with` + non-crashing variants (`Regex.compile`, `:persistent_term.get/2`, `Integer.parse/1`); justified only for `terminate/2` cleanup, centralized boundaries (`safe_llm_call/2`), `SystemCheck` diagnostics, `String.to_existing_atom/1` on untrusted keys, and `try/catch` around functions with no non-crashing variant (`Path.wildcard`). **Every remaining `try/rescue` MUST have a justifying comment.**
 
-## Assistant candidate runtime APIs (top-level wrapper contracts)
+## Assistant direct runtime APIs (top-level wrapper contracts)
+The evaluator admits individual MFAs explicitly, never whole namespaces; the authoritative tier-specific lists live in `agent/tools/elixir_eval/CONTEXT.md`, and documenting neighboring APIs below does not grant access to them.
+Admitted reads return the real APIs' values without evaluator-specific projections or secret filtering, and approved writes call the real mutators.
+The read/write tiers guard against accidental self-corruption, not a malicious attacker; write requires exact-code tier-2 approval, while sudo requires separate explicit approval for unrestricted native evaluation.
 `TaskRegistry` synchronous client calls use a fixed 30_000 ms deadline and `server/0`'s CALL-TIME process-dictionary seam; no public wrapper catches an absent/restarting registry or caller timeout.
 `TaskRegistry.list_tasks_page/0,1` returns `%{rows: [summary_map], total: integer}`, while `list_tasks_paginated/0,1` returns `{[TaskInfo], total}` and `list_tasks/0` is an unbounded full-payload read; exact projection, option bounds and payload risks belong to `store/CONTEXT.md`.
 `TaskRegistry.get_task/1` reads synchronously through StoreGuard inside the registry, whereas `get_task_lite/1` uses ReadOffload and does not retain its decoded payload on the registry heap; both return full `%TaskInfo{ref: nil}` or nil, and lite is NOT a redacted or blob-free detail read.
@@ -187,7 +190,8 @@ The running-task graceful-cancel handler returns `:ok` even when scheduler notif
 `AgentScheduler.get_config/0,1`, `paused?/0`, `max_depth/0`, `get_llm_slot_status/0`, `pause/0`, `resume/0`, `update_config/1` and `send_user_message/2` use the implicit 5_000 ms GenServer deadline with no exit containment.
 `AgentScheduler.get_config/0` returns 16 keys including unredacted `llm_generation_params` and `model_profiles` but NOT `model_concurrency`; `get_config(:model_concurrency)` returns the live map, unknown atom keys return nil, and the full-map call also probes sandbox capabilities inside the scheduler.
 `AgentScheduler.task_id_for_agent/1` directly calls ETS lookup for integer ids without a missing-table guard despite its docstring; noninteger ids return nil, and current-agent/process-dictionary helpers do not identify an Assistant's owner from a fresh evaluator worker.
-Runtime APIs perform no human-approval checks themselves, so Assistant read/write capabilities must use exact MFA selection, input validation, deadlines and redacted projections rather than treating public wrappers as authorization boundaries.
+Runtime APIs perform no human-approval checks themselves; the evaluator enforces explicit MFA admission and approval at its boundary, without replacing the APIs' return values or adding rollback.
+Persistent configuration writes replace the whole user configuration and do not automatically reload it; use the resolved map as the basis for changes, preserve unrelated settings when updating/saving, and explicitly call the admitted reload API afterward (details: `config/CONTEXT.md`).
 
 ## Command approval and source-access boundaries
 `CommandShell.execute/1,2` is a literal-registry command parser, not Elixir evaluation; `approval: :auto` skips every gate while all other option values select `:chat` (`command_shell.ex:239–247,364–429`).
@@ -206,7 +210,7 @@ Neither approval nor tool timeouts roll back a handler's committed side effects,
 `SelfReflectiveSource.reference_path/0` prioritizes nonempty app-env override, then `GENESIS_SOURCE_ROOT`, then a managed directory with `.git` directory plus root CONTEXT.md, else nil; explicit overrides are not validated (`self_reflective_source.ex:171–185,216–235`).
 `SelfReflectiveSource.available?/0` uses the reference or cwd and checks only directory plus root CONTEXT.md; `status/0` does run git subprocesses for commit/branch/origin despite its pure-read wording (`self_reflective_source.ex:76–93,205–208,237–272`).
 Source clone/update are explicit mutators, and updating a shallow managed clone fetches then hard-resets to origin's default branch (`self_reflective_source.ex:104–121,285–300`).
-Repo-less runtime/persona details belong to `runtime/` and `agents/`, tool-task role propagation and execution limits to `agent/`, and exact live/API projection risks to `agent_scheduler/`.
+Repo-less runtime/persona details belong to `runtime/` and `agents/`, tool-task role propagation and execution limits to `agent/`, and exact live/API payload risks to `agent_scheduler/`.
 
 ## Managed Per-Task Tmpdir & Reclaim Lifecycle (`EvoGit.TaskTmpdir`)
 
