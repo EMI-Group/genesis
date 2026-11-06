@@ -86,7 +86,7 @@ For example:
 
 [Installation guide](https://genesis.evox.group/getting-started/installation/) · [Model configuration](https://genesis.evox.group/config/)
 
-Need help understanding or operating Genesis? Open **Help** (`/help`) to use **Genesis Assistant**, which can read Genesis source and inspect runtime state without approval, and request approval for changes or unrestricted live Elixir evaluation. See the [Genesis Assistant guide](docs/genesis-assistant.md) for capabilities and safety boundaries.
+Want to understand or operate Genesis? Open **Assistant** (`/help`) — **Genesis Assistant** understands the running system and can act on it: it reads Genesis source and inspects runtime state without approval, drives tasks and scheduler/configuration changes only after you approve the exact action, and answers in your language. See the [Genesis Assistant guide](docs/genesis-assistant.md) for capabilities and safety boundaries.
 
 ### Headless server
 
