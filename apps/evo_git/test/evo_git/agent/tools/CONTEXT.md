@@ -95,6 +95,10 @@ Prefer async modules for pure/local fixtures; modules changing scheduler profile
 Dependency installation belongs to the parent app; tests require genuine Dune 0.3.18 or compatible and do not stub its parser, allowlists or execution.
 The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
 Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
+The real interpreted facade whitelist is exercised by EngineTest's fully qualified Read calls and read-denied/write-allowed cancel_task call, WrapperTest's approved cancellation and read refusal, and EngineCleanupTest's traced nested get_task broker request; WorkerTreeTest instead supplies a native callback to WorkerTree.run/4 and does not establish Dune whitelist behavior.
+There is no tier-2 configuration-update test or update_config/save_user_config evaluator call in this node; task cancellation is the tested interpreted write capability, while configuration isolation in fixtures is not an evaluator configuration-mutation capability.
+Genuine external Dune validation details live in git notes: `902ac54c4` records eager loading of every Dune beam before Mix.CLI.main, and `ba7e4558e` records `compile --no-deps-check --no-prune-code-paths` followed by `test --no-compile --no-deps-check`.
+The recorded Dune 0.3.18 ebin path is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`, historically also addressed as `$TMPDIR/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; prefer the absolute recorded path when task TMPDIR differs, and verify availability before relying on this external cache.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
