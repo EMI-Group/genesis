@@ -182,6 +182,12 @@ The editor's credential-status verdicts (`Login detected` / `No subscription log
 The page-level tests exist because `SettingsLive` must FORWARD `auth_statuses={@auth_statuses}` into `EvoDashWeb.SettingsComponents.category_section/1` (which passes it to the editor): dropping that attribute leaves the assign correct but renders every line neutral, so the verdict/guidance/path assertions are the only guard.
 The full guidance and managed-file path render only in the editor's edit form (`details: true`), so those tests open the profile's edit form first; `profile_row/2` scopes assertions to one profile's summary row.
 
+### Genesis Assistant evaluator approvals
+The approval card's pure async render contracts live in `evo_dash_web/live/approval_card_render_test.exs`, and the async recovery/state-machine contracts live in `evo_dash_web/live/home_live/approval_workflow_test.exs`.
+Mounted approval flows live in the existing sync `home_live_test.exs` suite because it owns process-global ChatHistory, Store/TaskRegistry isolation and approval runner/responder seams.
+Coverage distinguishes exact-code write versus sudo Elixir requests and legacy cards, source-chat ownership versus evaluator target, asynchronous pending recovery, monotonic scope/result guards, snapshot races and retaining failed-response cards for retry.
+The helper test node's `CONTEXT.md` and the LiveView test context document the detailed recovery contracts.
+
 ### Speed ↔ quality control
 The task form's segmented control is covered at component level (`task_form_components_test.exs`, `#quality-level-control` markup + exact active/inactive class strings) and at page level (`projects_live_test.exs`, `select_quality_level` assign movement and `:quality_level` opt threading).
 
