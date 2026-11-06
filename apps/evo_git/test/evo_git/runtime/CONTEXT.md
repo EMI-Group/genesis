@@ -40,14 +40,21 @@ Genuinely `async: true` (verified to mutate no BEAM-global state):
 
 ## Notes for Agents
 
-- **No test-side seam for the agent LLM path** (see `../../CONTEXT.md` → "No fake-LLM harness"):
-  the custom-evolve and self-reflective `run/2` tests accept ONLY the error paths — an empty
-  `model_profiles` (→ `{:error, :llm_not_configured}`) or a scheduler-down `:noproc` exit. The
+- **No test-side seam for the agent LLM path** (see `../../CONTEXT.md` → "No fake-LLM harness"): the custom-evolve and self-reflective `run/2` tests deliberately empty `model_profiles` to exercise scheduler errors rather than successful agent execution.
+  Their intended accepted outcomes are an error tuple or a scheduler exit, but `quiet_error_result/1` also returns a truthy `{:unexpected_result, other}` for unexpected results, so `assert quiet_error_result(result)` does not actually reject any result shape. The
   `without_model_profiles/1` + `guarded_run/1` + `quiet_error_result/1` helpers are duplicated in
   `evolution_test.exs` and `self_reflective_test.exs`; a shared `test/support/` module is the
   natural home if they grow, but that directory is owned elsewhere.
 - Full-suite parallel-run flakiness is documented one level up in `../../CONTEXT.md` →
   "Known Issues & Test Env Notes". The runtime directory itself is stable across seeds.
+
+## Self-Reflective Runtime Coverage
+`self_reflective_test.exs` pins the repo-less spec (`opts[:repo_less] == true`, nil phylogenetic node, `Agents.SelfReflective` module), positional objective precedence, task/model option forwarding, and stripping `:objective`/`:source_root`/`:node_path` from forwarded opts.
+It checks the root context path `"./"`, real-source-directory loading, nonexistent explicit source fallback, and app-env → `GENESIS_SOURCE_ROOT` → cwd precedence while forcing the managed source directory to a nonexistent path.
+The only `run/2` case clears live scheduler model profiles and calls the runtime without a repository path; it does not execute a successful agent or assert a successful result's nil commit/branch/tag fields.
+This directory contains no tests for self-reflective tool-schema exposure, tool write restrictions, command approval, direct Elixir evaluation, MFA allowlisting, or sudo-style confirmation; those contracts cannot be inferred from this runtime suite.
+The source-root tests do not exercise selection of a valid managed clone, a non-root `:node_path`, or model-lock propagation in a self-reflective spec.
+The `guarded_run/2` helper catches every exit rather than specifically matching scheduler `:noproc`, and both runtime files' `quiet_error_result/1` fallback makes unexpected return values pass their truthiness assertion.
 
 ## Foreign-Repo Test Coverage (`helpers_test.exs`)
 

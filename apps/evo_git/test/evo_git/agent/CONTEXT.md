@@ -7,7 +7,8 @@ Each file mirrors its source module under `apps/evo_git/lib/evo_git/agent/`.
 
 ## Routing Table
 
-- `./tools/` → Per-tool tests (`Tools.execute/5`, individual tool modules, the command shell) — own node.
+- `./tools/` → Per-tool tests, including direct reflect task handlers and three legacy `run_command` dispatch cases in `reflect_tools_test.exs`; verified repo-less seams and evaluator/approval integration gaps live in `./tools/CONTEXT.md`.
+- CommandShell and CommandApproval suites live OUTSIDE this node at `../command_shell_test.exs` and `../command_approval_test.exs`; production dispatch and SelfReflective policy belong to `apps/evo_git/lib/evo_git/agent/` and `agents/`, not this test node.
 - `./compression/` → Pure compression-module unit suites (`Recency` boundary/tail budget + `shrink_to_budget/2`, `Checkpoint` split/build/prior-summary/oversized-tail regressions, `ToolResultPruner`, `Threshold`, `SummaryPrompt`) — detail: `./compression/CONTEXT.md`.
 
 ## Async-Safety Policy (this directory)
@@ -52,7 +53,7 @@ Also `async: true` because they only touch app-global ETS tables through per-tes
 
 ### Coverage Gaps (this node)
 
-- No integration test for the authority section's call site: `build_authority_section/1` is unit-tested only; the join site (`EvoGit.Agent.ContextBuilder.build_context_block/1`, `context_builder.ex:310-344`) is untested (the blank-filter ordering is `[context_tree, authority_section, foreign_repos_section, repo_notes_section, quality_guidance_section, background_jobs_section, clock_section]`).
+- `context_builder_test.exs` directly tests `build_context_block/1` (current CONTEXT.md chain, fresh re-read, repo notes, root quality guidance, and repo-less suppression), but its repo-less authority case passes `foreign_repos: []`, so it does not prove suppression when an authority section would otherwise be present.
 - Precedence step 2 never proves a WIN: no test passes a foreign repo with `base_sha: nil` PLUS a `foreign_repo_commits` entry and asserts the tracked sha becomes the starting commit; step 3's SUCCESS path is exercised by the roll-up tests' real-builder specs (`base_sha: nil` + empty tracked map + an existing repo) but its resolved foreign-HEAD commit is never asserted — only step 3's error branch is asserted (missing root, 624).
 - The rejection-shape tests use hand-written messages on both sides: nothing asserts the production read-only wording (`agent_scheduler/subagents.ex:284-297`) — the test named "…with real message…" (205) uses a fabricated string — and no test feeds a REAL `Subagents.validate_spatial_contract_for_spec/4` rejection tuple into `format_subagent_result/1`.
 - The `Result.foreign_repo_commits` per-repo subtree-map FIELD as a runtime carrier is untested here — the `store_sub_result/4` round-trip (854) asserts only the direct `commit_sha`/`repo_id` recording path (its `%Result{}` carries no `foreign_repo_commits`), so nothing proves a result carrying a non-empty `foreign_repo_commits` merges child-wins into the parent's map. The child-wins roll-up lives in the sibling node (`agent_scheduler/subagents_test.exs:587-826`, incl. "updates existing foreign repo commit to latest SHA" at 668-695; `Lifecycle.inject_foreign_repo_commits/2` at `agent_scheduler/lifecycle_test.exs:789-870`) — and even there the `Map.merge(parent.foreign_repo_commits, child_frc)` SUBTREE branch (`agent_scheduler/subagents.ex:456`) is uncovered (every `%Result{}` there is built without `foreign_repo_commits`, so `child_frc` is always `%{}`).
@@ -67,6 +68,19 @@ Also `async: true` because they only touch app-global ETS tables through per-tes
 - `tools_test.exs` `describe "serial_tool?/1 classification"` (121) pins the classification: `true` for the 11 file-mutating tools (`create_files`, `write_file`, `edit_file`, `make_dir`, `write_context`, `edit_context`, `skill_add`, `skill_edit`, `skill_remove`, `skill_enable`, `skill_disable`), `false` for the read-only tools (`read_file`, `read_context`, `glob`, `list_dir`, `rg`, `search_context`, `search_history`, `skill_list`, `skill_read`, `skill_where`), `false` for the shell/exec/network write tools (`run_bash`, `run_powershell`, `run_git`, `run_command`, `search_web`, `web_search`) and for the read-only network/language readers (`web_fetch`, `lsp`), `false` for an unknown name and non-binary input, and a loaded custom tool classified from its `read_only?/0` report (a write tool is serial, an explicitly read-only tool is not).
 - The custom-tool classification test writes its fixture module through the `write_isolated_custom_tool!/3` helper (tools_test.exs:1442) into the `with_isolated_config/1` XDG temp dir, so the real user `tools/` directory is never read.
 - `lsp`'s schema registration is CONFIG-GATED (`EvoGit.Config.lsp_enabled?/0`): `tools/web_fetch_lsp_registration_test.exs` pins `web_fetch` as always offered and `lsp` as offered to ordinary and read-only agents only once `[lsp] enabled = true` plus a non-empty `command` is configured, while the `Tools.execute/5` dispatch assertion stays ungated.
+
+## Repo-less Assistant Boundary Coverage and Gaps
+
+`tools_test.exs:87-121` pins `run_command` absent from ordinary/read-only schema sets, present in `SelfReflective.available_tools/0`, absent legacy per-handler names and `complete_task`, and unique SelfReflective tool names.
+`tools_test.exs:140-166` explicitly classifies `run_command` as NON-serial, so evaluator bindings or authorization state cannot safely assume batch serialization merely because all calls share one tool name.
+`tool_names_test.exs:193-230` and `tools_test.exs:1089-1101` verify repo-less rejection of internal shell names and normalized write/shell aliases through direct `Tools.execute/5` calls.
+These guard tests set `:repo_less` in the CALLING process and do not exercise its propagation through `ToolDispatch` task boundaries.
+The foreign-repo guard matrix in `tools_test.exs:1168-1233` covers filesystem and shell writes but does not include `run_command` or runtime-MFA mutations.
+`tool_dispatch_containment_test.exs` supplies reusable real-dispatch tests for malformed JSON, per-call exception containment, loop continuation, exit propagation and bounded blocking tools, but none invokes `run_command`, approval, or an evaluator.
+Its `:tool_dispatch_test_tools` app-env registry is BEAM-global and keyed by normalized names; timeout configuration uses a real `XDG_CONFIG_HOME` redirect with a resolved-value assertion, requiring `async: false`.
+`cancel_grace_test.exs` pins Runner cancel-grace entry/budget and text completion, not cancellation of an in-flight evaluator or approval request.
+No suite at this node level asserts evaluator binding/capability isolation, task/node/registry identity propagation into evaluation workers, sudo approval identity or one-shot execution, post-timeout side-effect prevention, or audit records.
+`runner_auto_commit_test.exs:73-86` separately pins repo-less commit-SHA refresh as a byte-identical no-op, even when `:repo_path` points to a real git repository.
 
 ## Known Issues (edge shapes not reachable from the live dispatch path)
 
