@@ -9,6 +9,8 @@ defmodule EvoGit.Agent.ToolsTest do
 
   use ExUnit.Case, async: false
   alias EvoGit.Agent.Tools
+  alias EvoGit.Agent.Tools.ElixirEval
+  alias EvoGit.Agents.SelfReflective
   alias EvoGit.TestSupport.ConfigDir
 
   @moduletag :tmp_dir
@@ -47,12 +49,10 @@ defmodule EvoGit.Agent.ToolsTest do
     test "does NOT include the self-reflective/task-control tools (regression)" do
       names = Enum.map(Tools.schemas(), & &1.name)
 
-      # These 8 tools belong to the repo-less SelfReflective agent's explicit
-      # available_tools/0 list only — never in the standard schemas/0 set. In
-      # particular, SpawnInvestigator's schema name "subagent_investigator"
-      # collides with the SubagentSchemas-generated tool of the same name that
-      # every agent with an Investigator subagent receives, which broke ALL
-      # normal coding agents with a provider 400 "Tool names must be unique".
+      # Legacy per-handler schemas must not leak back into coding agents.
+      # In particular, the former SpawnInvestigator schema collided with the
+      # real SubagentSchemas-generated tool and caused provider 400 errors.
+      # Assistant runtime control now goes through elixir_eval, not these names.
       for tool <- [
             "list_tasks",
             "get_task",
@@ -84,40 +84,132 @@ defmodule EvoGit.Agent.ToolsTest do
     end
   end
 
-  describe "run_command shell tool containment" do
-    test "run_command is in NEITHER schemas/0 nor read_only_schemas/0" do
-      refute "run_command" in Enum.map(Tools.schemas(), & &1.name)
-      refute "run_command" in Enum.map(Tools.read_only_schemas(), & &1.name)
+  describe "assistant-only evaluator containment" do
+    test "neither shared schema set nor ordinary coding agents expose runtime evaluation" do
+      with_isolated_config(fn ->
+        for schemas <- [
+              Tools.schemas(),
+              Tools.read_only_schemas(),
+              EvoGit.Agents.Manager.available_tools(),
+              EvoGit.Agents.Investigator.available_tools()
+            ] do
+          names = Enum.map(schemas, &EvoGit.Agent.tool_name/1)
+          refute "elixir_eval" in names
+          refute "run_command" in names
+        end
+      end)
     end
 
-    test "SelfReflective.available_tools() exposes run_command and none of the 10 old task-control tools" do
-      names =
-        EvoGit.Agents.SelfReflective.available_tools()
-        |> Enum.map(&EvoGit.Agent.tool_name/1)
+    test "SelfReflective exposes evaluation alongside separate source readers, not legacy commands" do
+      with_isolated_config(fn ->
+        schemas = SelfReflective.available_tools()
+        names = Enum.map(schemas, &EvoGit.Agent.tool_name/1)
 
-      assert "run_command" in names
-      refute "complete_task" in names
+        assert Enum.find(schemas, &(&1.name == "elixir_eval")) == ElixirEval.schema()
 
-      # The 10 former per-function task-control tools are gone — their commands
-      # are reachable only through the single run_command shell tool.
-      for old <- [
-            "list_tasks",
-            "get_task",
-            "start_task",
-            "cancel_task",
-            "force_kill_task",
-            "delete_task",
-            "guide_user",
-            "subagent_investigator",
-            "list_recent_projects",
-            "system_info"
-          ] do
-        refute old in names,
-               "expected #{inspect(old)} to NOT be in SelfReflective.available_tools()"
+        for name <- ~w(read read_context list_dir rg glob search_context search_history web_fetch) do
+          assert name in names
+        end
+
+        # No shell/file writers or legacy per-handler tools: runtime mutation
+        # must use the evaluator's separately authorized exact-code route.
+        for old <- ~w(
+              run_command complete_task list_tasks get_task start_task cancel_task
+              force_kill_task delete_task guide_user subagent_investigator
+              list_recent_projects system_info bash write edit create_files
+              make_dir write_context edit_context
+            ) do
+          refute old in names,
+                 "expected #{inspect(old)} to NOT be in SelfReflective.available_tools()"
+        end
+
+        assert length(names) == length(Enum.uniq(names))
+        assert SelfReflective.agent_type() == :read
+        assert SelfReflective.delegation_level() == :low
+        assert SelfReflective.subagent_modules() == []
+      end)
+    end
+
+    test "the persona embeds the evaluator catalog and explains the separate approval tiers" do
+      prompt = SelfReflective.system_prompt()
+
+      assert prompt =~ ElixirEval.help()
+      assert prompt =~ "`elixir_eval`"
+      assert prompt =~ "`read`, `write`, or `sudo`; default `read`"
+      assert prompt =~ "Dune sandbox evaluation"
+      assert prompt =~ "a conversational OK is not approval"
+      assert prompt =~ "sudo does not mean OS root"
+      assert prompt =~ "Never automatically escalate tiers"
+      assert prompt =~ "current authenticated runtime node"
+      assert prompt =~ "`read`, `read_context`, `list_dir`, `rg`, `glob`"
+      assert prompt =~ "A reply with no tool calls ends your run"
+      refute prompt =~ "run_command"
+    end
+
+    test "repo-less source inspection still dispatches through read, glob and rg", %{
+      tmp_dir: tmp_dir
+    } do
+      source = Path.join(tmp_dir, "example.ex")
+      content = "defmodule SeparateSourceReader do\nend\n"
+      File.write!(source, content)
+      Process.put(:repo_less, true)
+
+      assert Tools.execute("read", %{"file_path" => "example.ex"}, tmp_dir) =~
+               "defmodule SeparateSourceReader"
+
+      assert Tools.execute("glob", %{"pattern" => "*.ex"}, tmp_dir) =~ "example.ex"
+
+      result = Tools.execute("rg", %{"args" => ["SeparateSourceReader", "."]}, tmp_dir)
+      assert result =~ "example.ex"
+      assert result =~ "defmodule SeparateSourceReader"
+      assert File.read!(source) == content
+    end
+
+    test "legacy run_command is refused before argument decoding or repo-role guards", %{
+      tmp_dir: tmp_dir
+    } do
+      # Include a real legacy L1 command: forwarding it would return help rather
+      # than the refusal, even without an assistant identity or approval service.
+      args = %{"command" => "help"}
+
+      for repo_less <- [false, true] do
+        Process.put(:repo_less, repo_less)
+
+        for input <- [args, Jason.encode!(args), "not-json", nil, [], 42] do
+          assert Tools.execute("run_command", input, tmp_dir, tmp_dir, "./") ==
+                   "Error: use elixir_eval exact-code approval path"
+        end
       end
+    end
 
-      # Unique names — no "Tool names must be unique" provider-400 regressions.
-      assert length(names) == length(Enum.uniq(names))
+    test "hallucinating the evaluator name or setting repo-less flags grants no runtime authority",
+         %{
+           tmp_dir: tmp_dir
+         } do
+      marker = Path.join(tmp_dir, "must-not-execute")
+      code = "File.write!(#{inspect(marker)}, \"unauthorized\")"
+
+      for repo_less <- [false, true] do
+        Process.put(:repo_less, repo_less)
+
+        for tier <- [nil, "read", "write", "sudo"] do
+          args = %{"code" => code}
+          args = if tier, do: Map.put(args, "tier", tier), else: args
+
+          for input <- [args, Jason.encode!(args)] do
+            result = Tools.execute("elixir_eval", input, tmp_dir, tmp_dir, "./")
+            assert result =~ "Error:"
+            assert result =~ "requires a live root reflective assistant on the local node"
+            refute result =~ "Unknown tool"
+            refute File.exists?(marker)
+          end
+        end
+      end
+    end
+
+    test "the evaluator has a bounded advertised outer timeout distinct from its engine cap" do
+      assert Tools.default_timeout_ms("elixir_eval") == 30_000
+      refute Tools.timeout_arg_is_wait_budget?("elixir_eval")
     end
   end
 
@@ -147,6 +239,16 @@ defmodule EvoGit.Agent.ToolsTest do
           assert Tools.serial_tool?(tool),
                  "expected #{inspect(tool)} to be classified as a serial tool"
         end
+      end)
+    end
+
+    test "evaluation is always serial by name, independently of tier or file-write classification" do
+      # The classifier takes ONLY the name, not args. This pins serialization
+      # before tier decoding: omitted/read/write/sudo and malformed calls cannot
+      # enter the parallel batch simply because they are not file-write tools.
+      with_isolated_config(fn ->
+        assert Tools.serial_tool?("elixir_eval")
+        refute Tools.write_call?("elixir_eval", %{"tier" => "sudo"})
       end)
     end
 

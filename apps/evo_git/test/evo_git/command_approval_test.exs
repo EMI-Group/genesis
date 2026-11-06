@@ -266,7 +266,7 @@ defmodule EvoGit.CommandApproval.RequestTest do
   end
 
   describe "task-lifecycle auto-resolution" do
-    test ":cancelling and terminal task updates auto-deny the task's pending approvals" do
+    test "a local :cancelling task update auto-denies the task's pending approval" do
       Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
 
       spawn_request_caller("StartTask.start_task", "(no arguments)", 3, nil, "T123")

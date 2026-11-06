@@ -268,6 +268,24 @@ defmodule EvoGit.CLI.TaskRoutingTest do
       assert result == :ok
     end
 
+    test "run still performs real legacy mutations after assistant run_command is retired" do
+      id = "cli_legacy_#{System.unique_integer([:positive])}"
+      :ok = EvoGit.Store.put_task(store(), %TaskInfo{id: id, type: :reflect, status: :pending})
+
+      command = "CancelTask.cancel_task #{id}"
+
+      assert EvoGit.Agent.Tools.execute("run_command", %{"command" => command}, nil, nil, nil) ==
+               "Error: use elixir_eval exact-code approval path"
+
+      assert TaskRegistry.get_task(id).status == :pending
+
+      {output, result} = run_cli(["run", command])
+
+      assert result == :ok
+      assert output =~ "Task #{id} cancellation requested (graceful)."
+      assert TaskRegistry.get_task(id).status == :cancelled
+    end
+
     test "run with no command string prints a helpful error and returns :ok" do
       {output, result} = run_cli(["run"])
 

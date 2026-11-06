@@ -30,8 +30,15 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `html_to_markdown_test.exs` | `EvoGit.Agent.Tools.HtmlToMarkdown` |
 | `lsp_test.exs` | `EvoGit.Agent.Tools.Lsp` (config-gated `lsp` tool, driven with per-call `opts` overrides against the fake language server) |
 | `web_fetch_lsp_registration_test.exs` | the schema-registration / dispatch contract for `web_fetch` and `lsp` |
-| `reflect_tools_test.exs` | direct self-reflective task-control handlers plus three repo-less `run_command` read-command dispatch cases; no evaluator or approval tests |
+| `reflect_tools_test.exs` | Direct self-reflective task-control handlers, repo-less file-read/write guards and three unconditional legacy `run_command` refusals |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
+| `elixir_eval_engine_test.exs` | Real-Dune `ElixirEval.Engine` integration/security, genuine live authority, tier separation, fresh bindings, bounded UTF-8 output and inspection |
+| `elixir_eval_fixture_helper.exs` | Explicitly required `EvoGit.TestSupport.ElixirEvalFixture`, providing genuine owner/tool Tasks and isolated running reflect authority without an LLM |
+| `elixir_eval_authorization_test.exs` | Genuine and forged owner/spec/task/state identities, immutable revalidation, registry failure, bounded ancestry and fixture cleanup |
+| `elixir_eval_worker_tree_test.exs` + `elixir_eval_engine_cleanup_test.exs` | Root/child/grandchild custody on success/error/timeout and abrupt guardian/owner/tool loss, including real-Dune helper cleanup |
+| `elixir_eval_projection_test.exs` + `elixir_eval_validation_test.exs` | Privacy projections, literal read/start/guide validation and exact caps |
+| `elixir_eval_render_test.exs` | UTF-8 byte-bounded text/term rendering and native BoundedIO protocol, cap and lifecycle |
+| `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 
 ## Async-Safety Rationale
 
@@ -43,12 +50,14 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: false` — `job_tools_test.exs` (every test starts its OWN isolated `EvoGit.BackgroundJobs` registry under a unique name, reached through the `:evogit_background_jobs_server` pdict seam with `:evogit_agent_pid` as the job owner, and spawns REAL detached OS children whose `genesis_job_*.log` output files land in the SHARED `EvoGit.Sandbox.resolve_tmpdir/0` scratch dir — an isolated GenServer, real host children and a shared scratch dir all rule out concurrent modules; per-job log cleanup deletes each record's own `:output_path` and never lists that shared dir).
 - `async: true` — `web_fetch_lsp_registration_test.exs` and `commit_files_test.exs` (each isolates its config dir PER PROCESS through `EvoGit.TestSupport.ConfigDir`, so the `[lsp]` schema gate / repo template is pinned independent of the developer's real `~/.config/genesis/config.toml` without touching a process-wide env var).
 - `async: true` — `lsp_test.exs` (nothing global: every execute-level test spawns its own fake language server escript in a UNIQUE temp dir and every `Lsp.execute/4,5` call passes `enabled:`/`command:` explicitly, the unconfigured cases included).
-- `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, or process-local `Process.put` state only.
+- `async: false` — `elixir_eval_wrapper_test.exs` uses the app-global `EvoGit.CommandApproval` service and mutates its shared `:command_approval_timeout` app-env key, with id-pinned approval matching and restored settings.
+- `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, process-local state, or uniquely keyed evaluator ETS authority rows backed by isolated Store/TaskRegistry instances.
 
 ## Reflect / Command Dispatch Coverage and Gaps
 
 `reflect_tools_test.exs` calls the ten control handlers directly through `execute/3`; its only `run_command` dispatch cases are `ListRecentProjects.list_recent_projects`, `SystemInfo.system_info`, and `ListTasks.list_tasks`, all under the process-local `:repo_less` flag.
-These dispatch cases pin the `%{"command" => <legacy command string>}` argument and formatted text output, not ordinary Elixir syntax or evaluation.
+These dispatch cases pin the `%{"command" => <legacy command string>}` argument and unconditional `Error: use elixir_eval exact-code approval path` refusal, even with a forged repo-less flag.
+The direct legacy handler tests remain distinct compatibility coverage and do not prove authorization of the new evaluator facades.
 The repo-less guard cases pin blocked `write_file` / `edit_file` / `skill_add`, JSON-string write arguments, a permitted file read, and restoration of writes after deleting `:repo_less`.
 The suite has no `RunCommand` schema tests, direct `CommandShell` calls, restricted-evaluation allowlist tests, sudo/approval interactions, evaluator context/binding isolation, evaluator cancellation/timeout cleanup, or audit assertions.
 Control-handler cancellation coverage is only a pending task becoming `:cancelled`; the force-kill case asserts the seeded running task becomes `:failed`, but does not assert the wrapper pid has died.
@@ -59,6 +68,33 @@ There is no config-dir isolation helper in `reflect_tools_test.exs`; its SystemI
 `spawn_investigator_probe_test.exs` tests the deterministic read-only filesystem report over unique temp git fixtures, including nested CONTEXT.md excerpts and malformed/nonexistent inputs, not assistant evaluation-context isolation or permission enforcement.
 Sibling parser/approval suites route to `test/evo_git/{command_shell,command_approval}_test.exs`, the runtime suite routes to `test/evo_git/runtime/`, and production command-handler/evaluator architecture routes to `lib/evo_git/agent/tools/` and the core runtime's CONTEXT.md.
 
+## Evaluator Test Ownership and Fixture Constraints
+`elixir_eval_engine_test.exs` uses the genuine fixture and real Dune for Engine-only contracts: fully qualified Read discovery through interpreted callbacks, captured-registry projections, read/write/native separation, restricted runtime APIs, generic exception handling, fresh bindings and cumulative UTF-8 byte/output/inspection bounds.
+Its direct write/sudo calls model an already-approved tier and are explicitly not evidence that the public wrapper enforces manual approval.
+The nested Read discovery case intentionally performs no facade/allowlist warm-up and exposes a cold-BEAM alias-resolution failure: running it alone returns the generic runtime error instead of the expected system-info projection, while an earlier evaluation can hide the failure.
+The production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
+Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
+A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
+The fixture's private Task.Supervisor is an ExUnit-owned temporary child rather than a link of the short-lived test process, and explicit stops never restart it.
+Fixture cleanup monitors supervisor termination before removing its own records and tolerates only `:noproc`/`:normal`/`:shutdown` stop-death races in the GenServer wrapper or its nested `:sys.terminate` request; other errors still surface.
+Cleanup regressions pin ExUnit ownership, repeated stops, prior supervisor death and a real held-child shutdown race whose queued stop request is observed before the child is released.
+An unexpected structured shutdown must propagate its exact nested stop exit and leave fixture records intact until a subsequent successful cleanup.
+WorkerTree and Engine cleanup suites still assert actual descendant exits independently of fixture teardown.
+Authorization tests cover repeated cleanup of live descendants and cleanup after asynchronous private-supervisor death, including another cleanup from `on_exit`.
+Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
+The tool process must set `:evogit_agent_id`, `:evogit_task_id`, `:evogit_agent_pid` and `:evogit_task_registry_server`; Authorization captures that registry and the original tool pid at entry.
+SchedMeta must carry the actual live owner `%Task{}` in `task_ref`, status running or blocked, depth zero, nil parent, result_sent false and a SelfReflective AgentSpec with matching task_id and repo_less true.
+A held owner Task that starts a descendant tool Task supplies genuine runtime-maintained ancestry without running an LLM; install its unique ETS rows and isolated running reflect task before releasing the descendant to authorize.
+Exact-code approval broadcasts normalize integer agent ids to strings and preserve code bytes in both args and code, so responder matching must compare the normalized id plus task id, tier and exact code.
+Real-Dune tests must exercise fully qualified facade names through Dune's own nested helper ancestry, rather than mocking authorization or relying on interpreted alias declarations.
+Public-wrapper write and sudo tests must drive exact-code `CommandApproval.request_eval/5`; direct Engine execution is not evidence that approval is enforced.
+Use id-pinned approval responders and monitored, handshake-held descendants for lifecycle assertions, never unconditional approvers, artificial CPU-load generators or quiet-window timing races.
+Prefer async modules for pure/local fixtures; modules changing scheduler profiles, the global approval service or shared timeout settings must explicitly name that forcing global and remain synchronous.
+`elixir_eval_wrapper_test.exs` exercises actual `ElixirEval.execute/3` in descendant tools: reads open no approval, write and sudo preserve exact code and carry distinct level/warning metadata, denial/timeout leave effects absent, and held approvals revalidate original task/state/spec/owner/tool authority.
+`elixir_eval_authorization_test.exs` and the wrapper suite retain a refusal regression for mismatched embedded `SchedMeta.id`; production currently accepts any integer there instead of binding it to the captured ETS lookup id.
+Dependency installation belongs to the parent app; tests require genuine Dune 0.3.18 or compatible and do not stub its parser, allowlists or execution.
+The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
+Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
