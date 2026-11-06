@@ -1,6 +1,6 @@
-defmodule EvoGit.Agent.Tools.CompleteTaskTest do
+defmodule EvoGit.Agent.CompletionTest do
   @moduledoc """
-  `async: true` — the `complete/5` + archive tests seed ONE row per agent in the
+  `async: true` — the `complete/4` + archive tests seed ONE row per agent in the
   shared, app-owned named ETS tables (`:evogit_sched_meta` /
   `:evogit_agent_state`) under a per-test UNIQUE agent id (deleted on exit, and
   nothing here asserts anything about the tables as a whole), so the writes are
@@ -12,16 +12,16 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   without touching the app-global one.
 
   Repository fixtures come from ONE per-module git TEMPLATE SET built in
-  `setup_all` (a repo with no commits, one with a single commit and one with
-  two) and copied per test with `File.cp_r!` — a copy costs ~2 ms, where the
-  previous per-test `git init` + two `git config` + commit chain cost ~25-40 ms
-  of `git` subprocesses. Every assertion is unchanged.
+  `setup_all` (one repo with a single commit and one with two) and copied per
+  test with `File.cp_r!` — a copy costs ~2 ms, where the previous per-test
+  `git init` + two `git config` + commit chain cost ~25-40 ms of `git`
+  subprocesses. Every assertion is unchanged.
   """
 
   use EvoGit.TaskRegistryCase, async: true
 
   alias EvoGit.Adapters.Git
-  alias EvoGit.Agent.Tools.CompleteTask
+  alias EvoGit.Agent.Completion
   alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
   alias EvoGit.AgentSpec
   alias EvoGit.Core.{ContextNode, PhyloGraphNode}
@@ -30,148 +30,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     {:ok, repos: git_templates!()}
   end
 
-  describe "schema/0" do
-    test "returns a valid tool schema with correct name and description" do
-      schema = CompleteTask.schema()
-
-      assert schema.name == "complete_task"
-      assert is_binary(schema.description)
-      assert schema.description =~ "report your findings"
-    end
-
-    test "schema has result as required parameter" do
-      schema = CompleteTask.schema()
-      props = schema.parameter_schema["properties"]
-      required = schema.parameter_schema["required"]
-
-      assert "result" in Map.keys(props)
-      assert "check_git_status" in Map.keys(props)
-      assert "result" in required
-      # check_git_status default is in the description, not necessarily in the JSON schema
-      assert Map.has_key?(props, "check_git_status")
-    end
-  end
-
-  describe "check_workspace_dirty/1" do
-    # The template provides the repo shape each test previously built by hand:
-    # by default a repository with one commit that already tracks `test.txt`
-    # (tag `template: :empty` for the no-commit case).
-    setup %{repos: repos} = context do
-      {:ok, %{tmp_dir: copy_repo!(repos, Map.get(context, :template, :one))}}
-    end
-
-    test "returns clean when workspace has no changes", %{tmp_dir: tmp_dir} do
-      # The template's one commit left the worktree clean.
-      assert {:clean, nil} = CompleteTask.check_workspace_dirty(tmp_dir)
-    end
-
-    test "returns dirty when workspace has uncommitted modifications", %{tmp_dir: tmp_dir} do
-      # Modify the already-committed file without committing.
-      File.write!(Path.join(tmp_dir, "test.txt"), "modified content")
-
-      assert {:dirty, warning_msg} = CompleteTask.check_workspace_dirty(tmp_dir)
-      assert warning_msg =~ "uncommitted changes"
-      assert warning_msg =~ "test.txt"
-    end
-
-    test "returns dirty when workspace has untracked files", %{tmp_dir: tmp_dir} do
-      # Create an untracked file
-      File.write!(Path.join(tmp_dir, "untracked.txt"), "new file")
-
-      assert {:dirty, warning_msg} = CompleteTask.check_workspace_dirty(tmp_dir)
-      assert warning_msg =~ "uncommitted changes"
-      assert warning_msg =~ "untracked"
-      assert warning_msg =~ "untracked.txt"
-    end
-
-    test "returns dirty when workspace has staged changes", %{tmp_dir: tmp_dir} do
-      # Stage a new file
-      File.write!(Path.join(tmp_dir, "staged.txt"), "staged content")
-      {:ok, _} = Git.add(tmp_dir, "staged.txt")
-
-      assert {:dirty, warning_msg} = CompleteTask.check_workspace_dirty(tmp_dir)
-      assert warning_msg =~ "uncommitted changes"
-      assert warning_msg =~ "staged.txt"
-    end
-
-    @tag template: :empty
-    test "returns clean for an empty repo with no commits", %{tmp_dir: tmp_dir} do
-      # A freshly initialized repo with nothing staged should be clean
-      assert {:clean, nil} = CompleteTask.check_workspace_dirty(tmp_dir)
-    end
-  end
-
-  describe "format_git_status_porcelain/1" do
-    test "formats modified files" do
-      output = CompleteTask.format_git_status_porcelain(" M lib/foo.ex")
-      assert output =~ "modified  lib/foo.ex"
-    end
-
-    test "formats staged files" do
-      output = CompleteTask.format_git_status_porcelain("M  lib/bar.ex")
-      assert output =~ "staged  lib/bar.ex"
-    end
-
-    test "formats staged and modified files" do
-      output = CompleteTask.format_git_status_porcelain("MM lib/baz.ex")
-      assert output =~ "staged, modified  lib/baz.ex"
-    end
-
-    test "formats staged new files" do
-      output = CompleteTask.format_git_status_porcelain("A  new_file.ex")
-      assert output =~ "staged (new)  new_file.ex"
-    end
-
-    test "formats deleted files" do
-      output = CompleteTask.format_git_status_porcelain(" D deleted_file.ex")
-      assert output =~ "deleted  deleted_file.ex"
-    end
-
-    test "formats staged deleted files" do
-      output = CompleteTask.format_git_status_porcelain("D  staged_del.ex")
-      assert output =~ "staged (deleted)  staged_del.ex"
-    end
-
-    test "formats staged and deleted files" do
-      output = CompleteTask.format_git_status_porcelain("DD both_del.ex")
-      assert output =~ "staged, deleted  both_del.ex"
-    end
-
-    test "formats staged renamed files" do
-      output = CompleteTask.format_git_status_porcelain("R  renamed.ex")
-      assert output =~ "staged (renamed)  renamed.ex"
-    end
-
-    test "formats untracked files (single ?)" do
-      output = CompleteTask.format_git_status_porcelain("?? untracked.ex")
-      assert output =~ "untracked  untracked.ex"
-    end
-
-    test "formats multiple files on separate lines" do
-      porcelain = " M modified.ex\nA  added.ex\n?? untracked.ex"
-      output = CompleteTask.format_git_status_porcelain(porcelain)
-
-      assert output =~ "modified  modified.ex"
-      assert output =~ "staged (new)  added.ex"
-      assert output =~ "untracked  untracked.ex"
-    end
-
-    test "passes through unknown status codes as-is" do
-      output = CompleteTask.format_git_status_porcelain("XY weird.ex")
-      assert output =~ "XY  weird.ex"
-    end
-
-    test "handles empty string" do
-      assert CompleteTask.format_git_status_porcelain("") == ""
-    end
-
-    test "passes through short lines unchanged" do
-      output = CompleteTask.format_git_status_porcelain("ab")
-      assert output == "ab "
-    end
-  end
-
-  describe "complete/5" do
+  describe "complete/4" do
     setup %{repos: repos} do
       tmp_dir = copy_repo!(repos, :one)
       base_commit = repos.base_commit
@@ -193,7 +52,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       register_agent!(agent_id, "1", 1, 1)
 
       result =
-        CompleteTask.complete(agent_id, "Task done", base_commit, base_commit: base_commit)
+        Completion.complete(agent_id, "Task done", base_commit, base_commit: base_commit)
 
       assert %{result: "Task done", commit_sha: ^base_commit, branch: "evogit-agent-T1-A1"} =
                result
@@ -207,7 +66,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      CompleteTask.complete("agent_meta", "Result text", base_commit,
+      Completion.complete("agent_meta", "Result text", base_commit,
         base_commit: base_commit,
         parent_id: "parent_1",
         depth: 2,
@@ -237,7 +96,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      CompleteTask.complete("agent_no_base", "Result text", base_commit, base_commit: nil)
+      Completion.complete("agent_no_base", "Result text", base_commit, base_commit: nil)
 
       # Verify no note was created
       assert {:error, {:no_note, _}} = Git.get_note(tmp_dir, base_commit, ["--ref=evogit"])
@@ -256,7 +115,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       register_agent!(agent_id, "2", 2, 3)
 
       result =
-        CompleteTask.complete(agent_id, "My findings", base_commit, base_commit: base_commit)
+        Completion.complete(agent_id, "My findings", base_commit, base_commit: base_commit)
 
       assert is_map(result)
       assert Map.has_key?(result, :result)
@@ -275,7 +134,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     } do
       Process.put(:repo_path, tmp_dir)
 
-      CompleteTask.complete("agent_rt", "Round trip result", base_commit,
+      Completion.complete("agent_rt", "Round trip result", base_commit,
         base_commit: base_commit,
         parent_id: "root_agent",
         depth: 1,
@@ -310,7 +169,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       first_result = "First result: \"quoted\"\nline2 > done"
       first_objective = "Objective > with > chars and \"quotes\""
 
-      CompleteTask.complete(agent_id, first_result, base_commit,
+      Completion.complete(agent_id, first_result, base_commit,
         base_commit: base_commit,
         objective: first_objective
       )
@@ -323,14 +182,14 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # first completion's note would otherwise still win.
       second_result = "Second result: overwritten > \"again\"\nline3"
 
-      CompleteTask.complete(agent_id, second_result, base_commit,
+      Completion.complete(agent_id, second_result, base_commit,
         base_commit: base_commit,
         objective: first_objective
       )
 
       # Exact match — proves the force-overwrite path preserved the second
       # content byte-for-byte through pretty-JSON encode → git note → decode.
-      assert {:ok, metadata} = CompleteTask.get_agent_metadata(tmp_dir, base_commit)
+      assert {:ok, metadata} = Completion.get_agent_metadata(tmp_dir, base_commit)
       assert metadata["result"] == second_result
       assert metadata["objective"] == first_objective
 
@@ -347,7 +206,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       agent_id = unique_agent_id()
       register_agent!(agent_id, "5", 5, 7)
 
-      result = CompleteTask.complete(agent_id, "Simple result", base_commit)
+      result = Completion.complete(agent_id, "Simple result", base_commit)
 
       assert result.branch == "evogit-agent-T5-A7"
       assert result.result == "Simple result"
@@ -371,7 +230,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.put(:repo_path, tmp_dir)
 
       # First, create completion with metadata
-      CompleteTask.complete("agent_gm", "Some result", commit_sha,
+      Completion.complete("agent_gm", "Some result", commit_sha,
         base_commit: commit_sha,
         parent_id: "root",
         depth: 3,
@@ -379,7 +238,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       )
 
       # Now retrieve the metadata
-      assert {:ok, metadata} = CompleteTask.get_agent_metadata(tmp_dir, commit_sha)
+      assert {:ok, metadata} = Completion.get_agent_metadata(tmp_dir, commit_sha)
       assert metadata["agent_id"] == "agent_gm"
       assert metadata["base_commit"] == commit_sha
       assert metadata["final_commit"] == commit_sha
@@ -395,12 +254,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       commit_sha: commit_sha
     } do
       # No note was added, so it should return an error
-      assert {:error, {:no_note, _}} = CompleteTask.get_agent_metadata(tmp_dir, commit_sha)
+      assert {:error, {:no_note, _}} = Completion.get_agent_metadata(tmp_dir, commit_sha)
     end
 
     test "returns error for a commit that doesn't exist" do
       assert {:error, {:enoent, _}} =
-               CompleteTask.get_agent_metadata("/nonexistent/path", "abc123")
+               Completion.get_agent_metadata("/nonexistent/path", "abc123")
     end
   end
 
@@ -429,7 +288,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       agent_id = System.unique_integer([:positive])
       register_agent!(agent_id, task_id, 1, 1)
 
-      CompleteTask.complete(agent_id, "Archive result", final_commit,
+      Completion.complete(agent_id, "Archive result", final_commit,
         base_commit: base_commit,
         archive: true,
         objective: "Test archive",
@@ -476,7 +335,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       register_agent!(agent_id, task_id, 2, 2)
 
       # No archive: true
-      CompleteTask.complete(agent_id, "No archive result", final_commit, base_commit: base_commit)
+      Completion.complete(agent_id, "No archive result", final_commit, base_commit: base_commit)
 
       # These refs should not exist
       assert {:error, {_, _}} =
@@ -513,7 +372,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
         cache_creation_tokens: 20
       }
 
-      CompleteTask.complete(agent_id, "Usage result", final_commit,
+      Completion.complete(agent_id, "Usage result", final_commit,
         base_commit: base_commit,
         usage: usage,
         archive: true
@@ -568,7 +427,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       agent_id = System.unique_integer([:positive])
       register_agent!(agent_id, task_id, 4, 4)
 
-      CompleteTask.complete(agent_id, "Full record test", final_commit,
+      Completion.complete(agent_id, "Full record test", final_commit,
         base_commit: base_commit,
         archive: true,
         objective: "Test record shape",
@@ -649,12 +508,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # Simulate a crash-retry double-completion: the same agent completes twice
       # with the same task_id. The composite primary key makes the second write
       # an idempotent upsert — at most ONE row.
-      CompleteTask.complete(agent_id, "First", final_commit,
+      Completion.complete(agent_id, "First", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      CompleteTask.complete(agent_id, "Second", final_commit,
+      Completion.complete(agent_id, "Second", final_commit,
         base_commit: base_commit,
         archive: true
       )
@@ -680,12 +539,12 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       register_agent!(agent1, task_id, 6, 1)
       register_agent!(agent2, task_id, 6, 2)
 
-      CompleteTask.complete(agent1, "Run1 A1", final_commit,
+      Completion.complete(agent1, "Run1 A1", final_commit,
         base_commit: base_commit,
         archive: true
       )
 
-      CompleteTask.complete(agent2, "Run1 A2", final_commit,
+      Completion.complete(agent2, "Run1 A2", final_commit,
         base_commit: base_commit,
         archive: true
       )
@@ -719,7 +578,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       # misses and yields task id 0, which cannot identify an archive row.
       agent_id = System.unique_integer([:positive])
 
-      CompleteTask.complete(agent_id, "Unknown task", final_commit,
+      Completion.complete(agent_id, "Unknown task", final_commit,
         base_commit: base_commit,
         archive: true
       )
@@ -735,7 +594,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       Process.delete(:repo_path)
     end
 
-    # Registers one agent in the scheduler ETS tables so `complete/5` can derive
+    # Registers one agent in the scheduler ETS tables so `complete/4` can derive
     # the task-scoped archive ref/branch names. Agent ids are INTEGERS (the
     # scheduler's `next_agent_id`) — the archive table's `agent_id` is an
     # integer primary-key part.
@@ -746,7 +605,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     # would crash a CONCURRENT module's scan with a FunctionClauseError. Both
     # rows therefore carry their struct's real required fields.
     defp register_agent!(agent_id, task_id, task_number, task_local_id) do
-      repo = Path.join(System.tmp_dir!(), "evogit_complete_task_meta")
+      repo = Path.join(System.tmp_dir!(), "evogit_completion_meta")
       context_node = %ContextNode{path: "./", repo: repo}
 
       :ets.insert(
@@ -759,7 +618,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
              context_node: context_node,
              phylo_node: %PhyloGraphNode{repo: repo, base_commit: "abc", current_commit: "abc"},
              agent_module: nil,
-             objective: "complete_task fixture"
+             objective: "completion fixture"
            },
            task_id: task_id,
            task_number: task_number
@@ -792,7 +651,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
   # Builds the per-module repository TEMPLATE SET once (`setup_all`): every
   # `git` subprocess below is paid once per module instead of once per test.
   #
-  #   * `:empty` — an initialized repo with NO commits;
   #   * `:one`   — one commit tracking `test.txt` ("initial content") — the sha
   #                is `base_commit`;
   #   * `:two`   — `:one` plus a second commit rewriting `test.txt` ("updated
@@ -807,7 +665,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     root =
       Path.join(
         System.tmp_dir!(),
-        "evogit_complete_task_tpl_#{System.pid()}_#{System.unique_integer([:positive])}"
+        "evogit_completion_tpl_#{System.pid()}_#{System.unique_integer([:positive])}"
       )
 
     empty_template = Path.join(root, "empty_template")
@@ -829,9 +687,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
       {_, 0} = System.cmd("git", ["config", key, value], cd: repo, stderr_to_stdout: true)
     end
 
-    empty = Path.join(root, "snapshot_empty")
-    File.cp_r!(repo, empty)
-
     base_commit = commit_file!(repo, "test.txt", "initial content", "Initial commit")
     one = Path.join(root, "snapshot_one")
     File.cp_r!(repo, one)
@@ -843,7 +698,6 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     on_exit(fn -> File.rm_rf!(root) end)
 
     %{
-      empty: empty,
       one: one,
       two: two,
       base_commit: base_commit,
@@ -869,7 +723,7 @@ defmodule EvoGit.Agent.Tools.CompleteTaskTest do
     dest =
       Path.join(
         System.tmp_dir!(),
-        "complete_task_repo_#{System.pid()}_#{System.unique_integer([:positive])}"
+        "completion_repo_#{System.pid()}_#{System.unique_integer([:positive])}"
       )
 
     File.cp_r!(Map.fetch!(repos, kind), dest)

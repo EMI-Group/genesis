@@ -71,10 +71,10 @@ defmodule EvoGit.Agent.ToolsTest do
   describe "agent available_tools/0 uniqueness (regression: 'Tool names must be unique')" do
     test "Manager.available_tools() has unique names and one subagent_investigator" do
       # Manager's subagent_modules/0 includes EvoGit.Agents.Investigator, so its
-      # default available_tools/0 (Tools.schemas() ++ SubagentSchemas.schemas/1
-      # ++ [CompleteTask.schema()]) receives the real "subagent_investigator"
-      # subagent tool. This is the exact collision class that broke production
-      # when the placeholder SpawnInvestigator schema was inside Tools.schemas/0.
+      # default available_tools/0 (Tools.schemas() ++ SubagentSchemas.schemas/1)
+      # receives the real "subagent_investigator" subagent tool. This is the
+      # exact collision class that broke production when the placeholder
+      # SpawnInvestigator schema was inside Tools.schemas/0.
       names =
         EvoGit.Agents.Manager.available_tools()
         |> Enum.map(&EvoGit.Agent.tool_name/1)
@@ -96,7 +96,7 @@ defmodule EvoGit.Agent.ToolsTest do
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
       assert "run_command" in names
-      assert "complete_task" in names
+      refute "complete_task" in names
 
       # The 10 former per-function task-control tools are gone — their commands
       # are reachable only through the single run_command shell tool.
