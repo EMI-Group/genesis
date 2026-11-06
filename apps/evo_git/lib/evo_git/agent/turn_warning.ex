@@ -275,7 +275,7 @@ defmodule EvoGit.Agent.TurnWarning do
     You are approaching the end of your turn budget. Shift focus to wrapping up:
     1. Commit any uncommitted changes NOW — uncommitted changes will be LOST when your process terminates. Committing is the only way to preserve your work.
     2. If critical work remains, delegate it to subagents for parallel completion
-    3. Prepare to deliver your final status report as a plain-text reply — a reply with no tool calls ends the run and its text IS the report. complete_task remains available but is optional; use it only when you want an explicit structured result.
+    3. Prepare to deliver your final status report as a plain-text reply — a reply with no tool calls ends the run and its text IS the report.
 
     A partial completion with a clear explanation of what remains is perfectly acceptable.
     """

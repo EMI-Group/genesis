@@ -11,14 +11,17 @@ defmodule EvoGit.Agent.CancelGraceTest do
     - the budget-aware grace hard-stop checks;
     - `maybe_recovery_auto_commit` fires on cancel-grace entry (shared with
       turn-limit recovery);
-    - `complete_task` during cancel-grace succeeds with a dirty workspace
-      (the grace dirty-check skip).
+    - a plain-text reply with NO tool calls during cancel-grace finishes the
+      run (committing the pending work into the reported commit), exactly as it
+      does outside a grace period.
 
   `async: true` — the ETS-based tests seed ONE row in the app-global named
   `:evogit_agent_state` table under a per-test unique agent id from this file's
   own id range and delete exactly that row on exit; nothing is asserted about
-  the table as a whole, so the writes are concurrent-safe. Every other test is
-  pure (`LoopState` structs / a per-test temp git repo).
+  the table as a whole, so the writes are concurrent-safe. The end-to-end
+  completion test drives `EvoGit.Agent.ToolDispatch.process_llm_response/6`
+  against that own row and its own temp git repo; every other test is pure
+  (`LoopState` structs / a per-test temp git repo).
   """
   use ExUnit.Case, async: true
 
@@ -124,8 +127,8 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   # Simulates the grace continue path: a turn ran and ended with
-  # `{:continue, _}` (no complete_task). The continue call site checks
-  # `grace_period_continue_failed?/1` and, when allowed, decrements
+  # `{:continue, _}` (the turn did not finish the run). The continue call site
+  # checks `grace_period_continue_failed?/1` and, when allowed, decrements
   # `grace_turns_remaining`. Returns `{:recovery_failed, turns_completed}` —
   # the number of grace turns that ran before the hard-stop.
   defp continue_until_fail(%LoopState{} = state, turns_completed) do
@@ -149,6 +152,24 @@ defmodule EvoGit.Agent.CancelGraceTest do
     {:ok, _} = EvoGit.Adapters.Git.commit(dir, "initial")
     {:ok, sha} = EvoGit.Adapters.Git.rev_parse(dir)
     sha
+  end
+
+  # An assistant reply carrying TEXT and NO tool calls — the shape a streamed
+  # turn produces when the model finishes the run; its context already holds the
+  # assistant message, which is what `process_llm_response/6` expects.
+  defp text_response(text) do
+    message = %ReqLLM.Message{
+      role: :assistant,
+      content: [ReqLLM.Message.ContentPart.text(text)]
+    }
+
+    %ReqLLM.Response{
+      id: "cancel-grace-response",
+      model: "test:model",
+      context: ReqLLM.Context.new([message]),
+      message: message,
+      usage: %{input_tokens: 11, output_tokens: 3}
+    }
   end
 
   # ---------------------------------------------------------------------------
@@ -197,7 +218,7 @@ defmodule EvoGit.Agent.CancelGraceTest do
   describe "grace-turn budget semantics" do
     test "cancel-grace budget 3: exactly 3 grace turns then {:error, :recovery_failed}" do
       # Entering cancel-grace sets grace_turns_remaining = 3. Each turn that
-      # ends with {:continue, _} (no complete_task) decrements; the 3rd
+      # ends with {:continue, _} (the run did not finish) decrements; the 3rd
       # continue hard-stops:
       #   turn 1 ends with continue (3 > 1) → allowed, decrement to 2
       #   turn 2 ends with continue (2 > 1) → allowed, decrement to 1
@@ -226,8 +247,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
 
   describe "cancel_requested flag → cancel-grace entry" do
     test "flag set + cancel message pending → cancel-grace with budget 3, flag cleared, no extra message" do
-      cancel_message =
-        "The task is being cancelled. Please wrap up and call complete_task with your best answer."
+      # The scheduler's own cancel message (one source of truth: no wording is
+      # duplicated here — this test pins the drain/flag plumbing, not the text).
+      cancel_message = EvoGit.AgentScheduler.cancel_message()
 
       agent_id =
         put_agent_state!(
@@ -313,7 +335,9 @@ defmodule EvoGit.Agent.CancelGraceTest do
       assert text =~
                "Your priority is to FINISH now by replying with your final report as plain text"
 
-      assert text =~ "Calling `complete_task` is an OPTIONAL alternative"
+      assert text =~
+               "a text reply with no tool calls ends the run and its text IS the report, so no tool call is required."
+
       assert text =~ "Your already-committed work is safe."
       refute text =~ "Your original objective was:"
     end
@@ -376,15 +400,17 @@ defmodule EvoGit.Agent.CancelGraceTest do
   end
 
   # ---------------------------------------------------------------------------
-  # complete_task during cancel-grace (grace dirty-check skip)
+  # Plain-text completion (no tool calls) during cancel-grace
   # ---------------------------------------------------------------------------
 
-  describe "complete_task during cancel-grace" do
-    test "succeeds with a dirty workspace (grace dirty-check skip)", %{tmp_dir: tmp_dir} do
+  describe "plain-text completion during cancel-grace" do
+    test "finishes the run and commits the pending work into the reported sha", %{
+      tmp_dir: tmp_dir
+    } do
       base_sha = init_repo(tmp_dir)
-      # Dirty the workspace — normally complete_task would refuse and return
-      # {:continue, ...} with a dirty-warning tool result.
-      File.write!(Path.join(tmp_dir, "uncommitted.txt"), "dirty")
+      # Dirty the workspace: finishing must commit it — a reply with no tool
+      # calls IS the completion, so there is no workspace gate to trip.
+      File.write!(Path.join(tmp_dir, "uncommitted.txt"), "salvage me")
 
       Process.put(:repo_path, tmp_dir)
       on_exit(fn -> Process.delete(:repo_path) end)
@@ -397,46 +423,36 @@ defmodule EvoGit.Agent.CancelGraceTest do
             current_commit: base_sha
           },
           objective: "Wrap up",
-          task_local_id: 1
+          task_local_id: 1,
+          # No catalog-resolvable model: keeps this async test off the one-off
+          # LLMDB catalog decode (`Threshold.for_model/2` only needs the
+          # configured window).
+          llm_model: nil
         )
-
-      complete_call =
-        ReqLLM.ToolCall.new("call_complete", "complete_task", ~s({"result":"wrapping up"}))
 
       grace_state = state(agent_id: agent_id, in_grace_period: true, grace_turns_remaining: 3)
 
-      assert {:complete, %EvoGit.Agent.Result{result: "wrapping up"}} =
-               ToolDispatch.handle_complete_call(complete_call, grace_state, [complete_call])
-    end
+      assert {:ok, %EvoGit.Agent.Result{} = result} =
+               ToolDispatch.process_llm_response(
+                 text_response("wrapping up"),
+                 grace_state,
+                 [],
+                 fn _state -> flunk("a completion must not re-enter the loop") end,
+                 fn _state, _reason -> flunk("a completion must not trigger recovery") end,
+                 "wrapping up"
+               )
 
-    test "without grace, a dirty workspace returns {:continue, _} with the dirty warning", %{
-      tmp_dir: tmp_dir
-    } do
-      base_sha = init_repo(tmp_dir)
-      File.write!(Path.join(tmp_dir, "uncommitted.txt"), "dirty")
+      assert result.result == "wrapping up"
 
-      Process.put(:repo_path, tmp_dir)
-      on_exit(fn -> Process.delete(:repo_path) end)
+      # The finish committed the pending work and reported THAT commit.
+      assert {:ok, head} = EvoGit.Adapters.Git.rev_parse(tmp_dir)
+      assert head == result.commit_sha
+      refute result.commit_sha == base_sha
 
-      agent_id =
-        put_agent_state!(
-          phylo_node: %PhyloGraphNode{
-            repo: tmp_dir,
-            base_commit: base_sha,
-            current_commit: base_sha
-          }
-        )
+      assert {:ok, "salvage me"} =
+               EvoGit.Adapters.Git.show(tmp_dir, "#{result.commit_sha}:uncommitted.txt")
 
-      complete_call =
-        ReqLLM.ToolCall.new("call_complete", "complete_task", ~s({"result":"wrapping up"}))
-
-      non_grace_state = state(agent_id: agent_id, in_grace_period: false)
-
-      assert {:continue, tool_responses, nil} =
-               ToolDispatch.handle_complete_call(complete_call, non_grace_state, [complete_call])
-
-      combined = Enum.map_join(tool_responses, " ", &message_text/1)
-      assert combined =~ "uncommitted changes"
+      assert {:ok, ""} = EvoGit.Adapters.Git.status(tmp_dir)
     end
   end
 end

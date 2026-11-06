@@ -49,7 +49,7 @@ defmodule EvoGit.Agents.SkillExtractor do
            ```
          - `skill_edit` — enhance existing skills when the PR reveals improvements or more context.
          - `skill_enable` — enable skills at the Context Tree nodes where they matter most (e.g. a deploy skill at the deployment directory; a migrations skill at the database node).
-      4. **Commit and report**: commit with a clear message, then report the skills created (name + brief description), updated (name + what changed), and enabled (name + node path) — or why none were needed. A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      4. **Commit and report**: commit with a clear message, then report the skills created (name + brief description), updated (name + what changed), and enabled (name + node path) — or why none were needed. A reply with no tool calls ends your run, and its text is used as your report.
 
       ## Constraints
 

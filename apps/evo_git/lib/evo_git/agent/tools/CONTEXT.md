@@ -27,7 +27,6 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 | `lsp` | Language-server code intelligence — `action` ∈ `diagnostics`/`hover`/`definition`, 1-based `line`/`column`, `path` inside the repo; SCHEMA-GATED on `EvoGit.Config.lsp_enabled?/0` (`[lsp] enabled = true` + non-empty `command`), so absent by default while dispatch stays registered | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
-| `complete_task` | Agent completion (injected separately, not in the standard schemas) | Special | No |
 | `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; self-reflective agent); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
 | `job_output` | A background job's delta since the previous read + current status (optional bounded `wait`) | Control | No |
 | `job_list` | This agent's background jobs with ids and statuses | Control | No |
@@ -164,12 +163,12 @@ Every tool read/write is rooted at `repo_path`, so writes land in the tree the a
 Loss windows (no commit lands): `:brutal_kill` and VM shutdown (they skip `Runner.run/3`'s `after`), worktree reclaim/destroy, and the primary-repo boot wipe of orphaned `evogit-agent-*` branches; only `refs/genesis/archive/T<task>-A<local>-start|-final` survive.
 There is no per-turn commit; per-turn git activity is only the ETS `phylo_node.current_commit` sync.
 
-### CompleteTask attribution metadata (git notes + archive rows)
-`CompleteTask.complete/4` (from `ToolDispatch.do_complete/2` with `base_commit`/`parent_id`/`depth`/`objective`) writes two artifacts, both gated on a truthy `base_commit` (repo-less agents write neither):
-- **Git note** (`add_metadata_note/4`, `git notes --ref=evogit` on the final commit): pretty-JSON with EXACTLY `agent_id, base_commit, final_commit, parent_id, depth, objective, result, usage, completed_at, agent_type, context_node_path`, read via `get_agent_metadata/2` (`{:error, {:no_note, _}}` / `{:error, {:invalid_json, _}}` shapes). Notes attach to the commit OBJECT, so merged child commits keep them (the merge commit carries none) and in a fast-forward the child notes are the only attribution. No caller in lib and no dashboard/RPC reader.
+### Completion attribution metadata (git notes + archive rows) — `EvoGit.Agent.Completion`, NOT a tool
+`EvoGit.Agent.Completion.complete/4` (`../completion.ex`) is called by `ToolDispatch.build_completion/2,3` with the finish text and the `base_commit`/`parent_id`/`depth`/`objective` captured there, and writes two artifacts, both gated on a truthy `base_commit` (repo-less agents write neither):
+- **Git note** (`add_metadata_note/3`, `git notes --ref=evogit` on the final commit): pretty-JSON with EXACTLY `agent_id, base_commit, final_commit, parent_id, depth, objective, result, usage, completed_at, agent_type, context_node_path`, read via `get_agent_metadata/2` (`{:error, {:no_note, _}}` / `{:error, {:invalid_json, _}}` shapes). Notes attach to the commit OBJECT, so merged child commits keep them (the merge commit carries none) and in a fast-forward the child notes are the only attribution. No caller in lib and no dashboard/RPC reader.
 - **Archive rows** (`write_archive_refs/7`, additionally gated on the task opt `archive: true`, default false): protected refs `refs/genesis/archive/T<task_id>-A<task_local_id>-start|-final` at the base/final commits, plus ONE `task_agent_archives` row written STREAMING — `TaskRegistry.put_task_archive/1` → `Store.put_task_archive/2`, keyed `(task_id, agent_id)` so a repeat write upserts.
   Row columns: `agent_id, parent_id, depth, agent_type, context_node_path, objective, result, base_commit, final_commit, branch_name, archive_ref_start, archive_ref_final, repo_id, repo_root, repo_path, usage, llm_settings, agent_settings, foreign_repos, compression_count, started_at, completed_at`.
-  Nothing is buffered in memory or collected at task end, and the archive never rides `%Result{}` or the task's `result`; a persistence failure returns `{:error, term}` and the tool still completes.
+  Nothing is buffered in memory or collected at task end, and the archive never rides `%Result{}` or the task's `result`; a persistence failure logs a warning and the run still completes with its `%Result{}`.
   Reads: `Store.list_task_archives/3` (roster, `result` omitted) and `Store.get_agent_archive/3` (one agent, `result` included).
 
 These plus the live ETS summary (`RemoteAPI.list_agents/0`: `base_commit`/`current_commit`/`parent_id`/`depth`/`task_local_id`) are the only per-agent spawn/merge data sources.

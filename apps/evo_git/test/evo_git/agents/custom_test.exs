@@ -145,7 +145,7 @@ defmodule EvoGit.Agents.CustomTest do
   end
 
   describe "available_tools/0" do
-    test "without a whitelist includes standard tools, subagent tools, and complete_task" do
+    test "without a whitelist includes standard tools and subagent tools, but not complete_task" do
       id = save_definition!(%{subagents: ["executor"]})
       put_custom_agent!(id)
 
@@ -153,18 +153,22 @@ defmodule EvoGit.Agents.CustomTest do
         EvoGit.Agents.Custom.available_tools()
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
-      assert "complete_task" in names
       assert "read" in names
       assert "bash" in names
       # The subagent tool schema for the executor subagent is included too.
       assert EvoGit.Agents.Executor.subagent_tool_name() in names
+      # There is no completion tool any more — an agent finishes by replying
+      # with no tool calls, so nothing is injected into the default set.
+      refute "complete_task" in names
     end
 
     test "filters to exactly the whitelist when tools is a list (legacy spellings)" do
       # The whitelist is intentionally written with the PRE-RENAME spellings
       # (`read_file`/`write_file`): alias-aware matching must still resolve them
       # to the shipped `read`/`write` schemas — a literal comparison would
-      # resolve this whitelist to no tools at all (the P0 regression).
+      # resolve this whitelist to no tools at all (the P0 regression). The
+      # legacy `complete_task` entry no longer names any schema, so it simply
+      # matches nothing while the real entries still come through.
       id =
         save_definition!(%{
           subagents: ["executor"],
@@ -177,13 +181,14 @@ defmodule EvoGit.Agents.CustomTest do
         EvoGit.Agents.Custom.available_tools()
         |> Enum.map(&EvoGit.Agent.tool_name/1)
 
-      assert Enum.sort(names) == ["complete_task", "read", "write"]
+      assert Enum.sort(names) == ["read", "write"]
+      refute "complete_task" in names
       refute "bash" in names
       refute EvoGit.Agents.Executor.subagent_tool_name() in names
     end
 
-    test "allows filtering complete_task out" do
-      id = save_definition!(%{tools: ["read_file"]})
+    test "a whitelist naming the removed complete_task tool yields no such schema" do
+      id = save_definition!(%{tools: ["read_file", "complete_task"]})
       put_custom_agent!(id)
 
       names =

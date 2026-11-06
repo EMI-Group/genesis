@@ -241,7 +241,7 @@ defmodule EvoGit.CustomToolsDispatchTest do
       refute tool in names
       assert "read" in names
       assert "bash" in names
-      assert "complete_task" in names
+      refute "complete_task" in names
     end
 
     test "end-to-end: custom tool file + agents.toml definition ⇒ advertised AND executable" do

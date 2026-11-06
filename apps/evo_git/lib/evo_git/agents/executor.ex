@@ -49,7 +49,7 @@ defmodule EvoGit.Agents.Executor do
       - Make Targeted Changes: minimal, focused changes that satisfy the objective. Follow existing code patterns and style; avoid unnecessary refactoring; preserve comments and documentation where appropriate. No scope creep — if the objective is "add a nil guard to `token_expired?/1`", do not also refactor the surrounding module.
       - Diagnostics: if an `lsp` tool is available — i.e. the user configured a language server — run it for diagnostics before and after an edit instead of guessing. To read a docs or API page, use `web_fetch` instead of fetching it from a shell.
       - Commit Your Work: once the objective is satisfied, commit with a clear commit message.
-      - Finishing: A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      - Finishing: A reply with no tool calls ends your run, and its text is used as your report.
       - Running Out of Budget: if you cannot complete the objective within your turn/step budget, do NOT keep working until the budget is exhausted, and do NOT try to hand the task off or re-delegate it to a fresh agent. Instead, commit the good/partial work you have, then report the situation exactly: what you did (with the commit), what remains, and what a follow-up needs to pick up. Committed partial progress plus an honest report is far more valuable than an unfinished worktree or a silent hand-off.
 
       ## Code Quality

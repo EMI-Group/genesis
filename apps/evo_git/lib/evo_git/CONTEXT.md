@@ -6,7 +6,7 @@ Multi-repo: foreign repos from `genesis.toml` or CLI flags enable cross-repo sub
 This file is the module-level API surface plus the cross-cutting contracts; each section names the child CONTEXT.md owning its detail.
 
 ## Routing Table
-- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`)
+- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`)
 - `./agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees, WorktreeManager — ETS schemas, helpers, worktree lifecycle
 - `./core/` → ContextNode, PhyloGraphNode, ForeignRepo data structures
@@ -93,7 +93,7 @@ A silent pre-flight resolves the daemon OS (target `platform` preset → NO ssh 
 | Callback | Default | Purpose |
 |---|---|---|
 | `system_prompt/0` | `""` | behavior and rules (MUST NOT contain objective or context) |
-| `available_tools/0` | all standard tools + subagent schemas + `CompleteTask` | LLM tool schemas for this agent |
+| `available_tools/0` | `Tools.schemas/0` + `SubagentSchemas.schemas/1` (no completion tool) | LLM tool schemas for this agent |
 | `subagent_modules/0` | `[]` | agent modules spawnable as subagents |
 | `subagent_tool_name/0` / `subagent_tool_description/0` | `nil` / `""` | tool name/description when this agent appears as a subagent |
 | `agent_type/0` | `:read_write` | `:read` or `:read_write` — drives spatial contract validation |

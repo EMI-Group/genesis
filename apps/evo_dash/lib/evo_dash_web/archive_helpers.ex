@@ -50,7 +50,8 @@ defmodule EvoDashWeb.ArchiveHelpers do
   }
 
   # Real keys the core writes into each per-agent archive record's nested usage
-  # map (EvoGit agent/tools/complete_task.ex `format_usage_for_archive/1`).
+  # map (`EvoGit.Agent.Completion.format_usage_for_archive/1`,
+  # apps/evo_git/lib/evo_git/agent/completion.ex).
   # There is deliberately NO plain "cost" key — cost lives in
   # input_cost/output_cost/total_cost (cache_hit_rate is also written).
   @usage_keys %{

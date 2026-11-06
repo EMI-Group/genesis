@@ -8,12 +8,11 @@ defmodule EvoGit.Agent.CompletionProtocol do
   text IS the answer. `classify/1` therefore reports three outcomes:
 
     * `{:tool_calls, calls}` — the turn continues with tool execution (the model
-      may still call `complete_task` explicitly, or delegate, or read a file).
-    * `{:text_reply, text}` — ZERO tool calls with usable text: an IMPLICIT
-      COMPLETION. `EvoGit.Agent.ToolDispatch` turns that text into the same
-      `%EvoGit.Agent.Result{}` an explicit `complete_task` call would produce
-      (same post-auto-commit `commit_sha`, same usage, same git note / archive
-      refs), so every downstream consumer — scheduler result handling,
+      may delegate, or read a file).
+    * `{:text_reply, text}` — ZERO tool calls with usable text: THIS IS THE
+      COMPLETION. `EvoGit.Agent.ToolDispatch` turns that text into the run's
+      `%EvoGit.Agent.Result{}` (post-auto-commit `commit_sha`, usage, git note /
+      archive refs), so every downstream consumer — scheduler result handling,
       `Runtime.Helpers.merge_and_report/3,4`, the `genesis/agent_*` review
       branch, task persistence, the dashboard — is unchanged.
     * `:empty` — zero tool calls and no usable text (e.g. a provider returning
@@ -21,9 +20,9 @@ defmodule EvoGit.Agent.CompletionProtocol do
       exactly ONE nudge in `ToolDispatch.prompt_until_tools_or_limit/6` before
       the turn ends (`dsh` has the same `EMPTY_RESPONSE` recovery code).
 
-  `complete_task` remains a supported, fully functional, OPTIONAL tool: both
-  routes finish the same way, and the explicit route keeps its dirty-workspace
-  gate, archive refs and git note.
+  There is no completion tool: a text reply with zero tool calls IS the
+  completion, and the same dirty-workspace commit, archive refs and git note are
+  produced by `EvoGit.Agent.Completion`.
 
   Text is read through `ReqLLM.Response.text/1`, which filters `:text` content
   parts ONLY — a streamed reply whose content is `[text, thinking]` therefore

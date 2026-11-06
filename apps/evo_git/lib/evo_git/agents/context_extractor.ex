@@ -90,7 +90,7 @@ defmodule EvoGit.Agents.ContextExtractor do
       "- " <>
       PromptFragments.objective_not_in_node_prefix() <>
       " node, return immediately and report the issue.\n" <>
-      "- Finishing: A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.\n" <>
+      "- Finishing: A reply with no tool calls ends your run, and its text is used as your report.\n" <>
       ~S"""
 
       ## Workflow

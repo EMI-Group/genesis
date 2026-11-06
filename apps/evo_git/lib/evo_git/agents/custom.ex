@@ -45,8 +45,8 @@ defmodule EvoGit.Agents.Custom do
 
   When `tools` is nil or absent, the agent gets the standard tool set — the same
   base as the `EvoGit.Agent.__using__` default: `EvoGit.Agent.Tools.schemas/0` plus
-  the subagent tool schemas generated from this agent's `subagent_modules/0` plus
-  `complete_task`. User-defined custom tools (`EvoGit.CustomTools`, loaded from
+  the subagent tool schemas generated from this agent's `subagent_modules/0`.
+  User-defined custom tools (`EvoGit.CustomTools`, loaded from
   `<config_dir>/tools/`) are NOT added in this case — they are opt-in only.
 
   When `tools` is a list, only the schemas whose tool name appears in the whitelist
@@ -62,12 +62,12 @@ defmodule EvoGit.Agents.Custom do
   `"edit_file"`/`"edit"`, `"run_bash"`/`"bash"`, `"search_web"`/`"web_search"`;
   the comparison is case-insensitive by construction. The whitelist accepts both
   built-in tool names (including the subagent tool schemas — their tool names are
-  the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"` — and
-  `complete_task`, which remains an OPTIONAL tool: a reply with no tool calls
-  already finishes the run) AND the names of user-defined custom tools loaded from
-  `<config_dir>/tools/` by `EvoGit.CustomTools`. Filtering `complete_task` out is
-  allowed — that is the user's explicit choice (the agent then finishes with a
-  plain text reply). An unknown name in the whitelist simply matches nothing.
+  the spawned module's `subagent_tool_name/0`, e.g. `"subagent_executor"`) AND the
+  names of user-defined custom tools loaded from `<config_dir>/tools/` by
+  `EvoGit.CustomTools`. An unknown name in the whitelist simply matches nothing —
+  `complete_task` is one such name and resolves to no schema at all (a reply with
+  no tool calls is what finishes the run), so a stale `complete_task` entry in an
+  existing `agents.toml` is harmless.
 
   ## Subagent name→module mapping
 
@@ -122,8 +122,7 @@ defmodule EvoGit.Agents.Custom do
   def available_tools do
     base =
       EvoGit.Agent.Tools.schemas() ++
-        EvoGit.Agent.SubagentSchemas.schemas(__MODULE__) ++
-        [EvoGit.Agent.Tools.CompleteTask.schema()]
+        EvoGit.Agent.SubagentSchemas.schemas(__MODULE__)
 
     case field(definition!(), :tools) do
       nil ->

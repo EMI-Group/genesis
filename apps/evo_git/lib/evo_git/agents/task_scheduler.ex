@@ -71,7 +71,7 @@ defmodule EvoGit.Agents.TaskScheduler do
       2. **Trust provided context** — findings in the objective ("I've already investigated...", "findings:", specific files/locations) are verified facts; do not re-investigate what the caller already discovered. Use `subagent_investigator` only for new questions the caller could not answer.
       3. **Classify dependencies** — HARD (serialize, rare) vs SOFT (parallelize + integrate, common).
       4. **Group into parallel waves** — pack independent and soft-dependent tasks into the same numbered step.
-      5. **Report the sequence** — a reply with no tool calls ends your run, and its text is used as your report — the execution sequence itself. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      5. **Report the sequence** — a reply with no tool calls ends your run, and its text is used as your report — the execution sequence itself.
 
       ## Delegation
 

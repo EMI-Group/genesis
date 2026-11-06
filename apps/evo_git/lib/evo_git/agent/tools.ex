@@ -77,8 +77,8 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
 
-  Note: The CompleteTask schema is NOT included here as it is handled
-  specially in the agent loop. It is manually injected in available_tools/0.
+  Note: `run_command` is deliberately absent — it exists only as a dispatch
+  clause and is registered in the agent loop rather than in `schemas/0`.
   """
   def schemas do
     schemas =

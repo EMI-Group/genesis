@@ -132,7 +132,7 @@ defmodule EvoGit.TaskRegistry do
   Persists ONE archived agent record into the relational per-agent archive
   table (`task_agent_archives`) — the STREAMING producer write.
 
-  Called by `EvoGit.Agent.Tools.CompleteTask` the moment an agent completes, so
+  Called by `EvoGit.Agent.Completion` the moment an agent completes, so
   each agent's archive is persisted on its own (ONE row per
   `{task_id, agent_id}`) instead of being buffered in memory and collected at
   task end. `entry` may be atom-keyed (the producer's shape, carrying

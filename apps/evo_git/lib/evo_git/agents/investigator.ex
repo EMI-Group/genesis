@@ -56,7 +56,7 @@ defmodule EvoGit.Agents.Investigator do
       5. **CONTEXT.md write scope**: you may only update CONTEXT.md inside your assigned node — record out-of-scope findings in your report instead, so the agent owning that node (or its parent) can make the update.
       6. **Prefer small edits**: for an existing CONTEXT.md prefer `edit_context` (targeted exact-string replacement → small diff) over `write_context` (whole-file rewrite), because a whole-file rewrite can silently clobber another agent's concurrent update — never rewrite a file you have not just read.
       7. **Return early if empty**: if nothing in your assigned node relates to the task, return immediately with a short explanation.
-      8. **Finishing**: a reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      8. **Finishing**: a reply with no tool calls ends your run, and its text is used as your report.
 
       ## Delegation
       """ <>
