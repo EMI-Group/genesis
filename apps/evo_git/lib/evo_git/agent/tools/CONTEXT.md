@@ -6,6 +6,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 ## Routing Table
 - `./skill/` → skill tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead) — detail `skill/CONTEXT.md`
 - `./lsp/` → `EvoGit.Agent.Tools.Lsp.Protocol`, the PURE LSP wire codec (Content-Length framing, JSON-RPC encode, incremental `decode/1`, `file://` URIs, diagnostics/hover/definition normalization; no I/O, ports or processes) — detail `lsp/CONTEXT.md`
+- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, Dune allowlists, broker-backed Read/Write facades, projections, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
 
 ## API Surface
 
@@ -302,22 +303,16 @@ To add a command: a handler `execute/3` plus ONE registry entry (including its `
 
 ### Assistant Elixir evaluator (`elixir_eval`)
 `EvoGit.Agent.Tools.ElixirEval` (`elixir_eval.ex`) exposes `schema/0`, `execute/3`, persona-facing `help/0`, `authorized_assistant?/0` and `authorize/0,1`.
-`authorized_assistant?/0` delegates to `ElixirEval.Authorization.assistant_owner?/0`; `authorize/1` delegates to `.authorize/1` and returns `{:ok, context} | {:error, binary}`, where context carries `agent_id`, `task_id`, `owner_pid` and the current-node atom `target_node`.
-Authorization belongs to the owning assistant agent, not the fresh tool task's role dictionary; merely supplying an agent id or discovering the tool name does not grant access.
-Required `code` is nonblank valid UTF-8, at most 16000 BYTES, and reaches approval and the engine byte-identically (never trimmed or executed to infer a tier).
+Owner authorization, facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
+Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrapper (the internal engine ceiling is 16384), and reaches approval and the engine byte-identically.
 `tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
-`target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; remote targets, atoms, nil and unknown names are rejected without input-derived atom creation.
-`timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS (no strings/floats/nil): timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes.
-Missing output budget uses the default even on validation errors; a valid explicit output budget also caps validation/authorization/approval errors.
-`ElixirEval.Engine.run(code, tier_atom, context, %{timeout_ms: ms, max_output_bytes: bytes})` returns `{:ok, binary} | {:error, binary}` and supplies fresh bindings on every call, never persistent REPL state.
-Read/write use Dune with explicit facades, not direct runtime APIs; sudo is DANGEROUS UNSANDBOXED full VM `Code` evaluation allowed only AFTER manual approval, with best-effort resource caps and NO rollback of committed side effects.
-The wrapper calls `Authorization.revalidate/1` before approval, immediately after approval before execution, and after the engine returns (including engine failures); read performs the same pre/post lifecycle checks without approval.
-Write/sudo call `EvoGit.CommandApproval.request_eval(code, tier_atom, context.target_node, context.agent_id, context.task_id)` and execute only on `:approved`; `:denied`, `:timeout`, unavailable approval or stale/cancelling authority fail closed with ordinary `Failure.error/1` prose.
-The centralized rescue/catch boundary withholds raw exception messages, exit/throw terms and stacktraces that could contain secrets; all successful/error output is UTF-8-safe byte-capped with a truncation marker included in the cap.
-Facade module `EvoGit.Agent.Tools.ElixirEval.Read` (alias `Read`) exposes `help`, `system_info`, `list_tasks`, `get_task`, `list_agents`, `scheduler_status`, `model_profiles`.
-Facade module `EvoGit.Agent.Tools.ElixirEval.Write` (alias `Write`) exposes `start_task`, `cancel_task`, `force_kill_task`, `delete_task`, `guide`.
-`help/0` documents these names, fully qualified examples, limits, fresh bindings, explicit tiers and the prohibition on direct `TaskRegistry`, `AgentScheduler`, `CommandShell` or `Tools.execute` calls in read/write.
-There is NO source-access facade: source investigation remains in the separate `read`, `glob` and `rg` tools.
+`target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; explicit nil, atoms and remote targets are rejected.
+`timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS: timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes, including errors and truncation markers.
+Read/write use Dune and fully qualified `EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` calls; interpreted `alias/1` declarations are unsupported.
+`EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()` uses defaults and `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(map)` accepts pagination/filter options; `help/0` provides fully qualified examples.
+Each call has fresh bindings; direct runtime APIs are unavailable in read/write, and source inspection remains in the separate `read`, `glob` and `rg` tools.
+Write/sudo require exact-code approval through `EvoGit.CommandApproval.request_eval/5`, execute only on `:approved`, and revalidate authority before approval, immediately before execution and after any engine result.
+Sudo is DANGEROUS UNSANDBOXED full VM evaluation with best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
 The evaluator's approval wait is separate from its execution budget; dispatch must allow the approval window instead of imposing the generic short tool timeout.
 
 ### StartTask opt-forwarding surface (shell task-start data plane)
