@@ -60,6 +60,11 @@ This explicit list does not inherit `ReadOnlyTools.available_tools/1` and includ
 The prompt describes `code` as a string, `tier` as `read` (default), `write`, or `sudo`, and optional bounded `timeout_ms` and `max_output_bytes`.
 Evaluation targets the current authenticated runtime node, never the source `repo_path` or arbitrary nodes.
 Read-tier evaluation uses Dune's explicit redacted Genesis read API whitelist without approval, while write-tier evaluation uses known Dune write APIs with real exact-code `CommandApproval` approval.
+When live runtime behavior or arguments need investigation, the persona recommends reading the raw source with `read`/`rg` and then calling the explicitly admitted actual module/function through `elixir_eval`, using fully qualified module names rather than translating every call into a convenience facade.
+Its source-then-API example reads `apps/evo_git/lib/evo_git/task_registry.ex` and then evaluates `EvoGit.TaskRegistry.list_tasks_page()` at the read tier.
+Only exact module/function/arity entries admitted for the chosen tier are callable; discovering a public function in source does not authorize another function or arity, expand the allowlist, or bypass exact-code write approval.
+The authoritative API catalog remains the embedded `ElixirEval.help/0`, not a duplicate catalog in this persona or context, and its convenience `Read`/`Write` facades remain optional.
+`EvoGit.AgentScheduler.update_config/1` changes runtime settings only and does not persist config.toml or guarantee survival across restart; persistent changes use Settings unless the embedded help explicitly admits an appropriate persistence API.
 Sudo is unrestricted normal Elixir with the Genesis process's privileges, not OS root, and requires a separate explicit privileges warning and exact-code confirmation through the tool's approval flow.
 The prompt defaults to read-only source inspection while acknowledging gated mutations and the privileged sudo path, forbids automatic escalation or higher-tier retry, and leaves human approval to the blocking tool rather than asking for a conversational OK before calling it.
 The `:read` agent metadata and repo-less behavior remain unchanged; neither implies that explicitly approved evaluation is side-effect-free.
