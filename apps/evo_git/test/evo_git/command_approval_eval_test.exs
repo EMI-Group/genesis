@@ -74,17 +74,7 @@ defmodule EvoGit.CommandApproval.EvalTest do
         assert request.target_node == node()
         assert request.node == node()
 
-        case tier do
-          :write ->
-            assert request.command == "elixir_eval"
-            assert request.level == 2
-            assert request.warning == nil
-
-          :sudo ->
-            assert request.command == "elixir_eval sudo"
-            assert request.level == 3
-            assert request.warning == @sudo_warning
-        end
+        assert_tier_metadata(request, tier)
 
         assert request in CommandApproval.pending()
         assert CommandApproval.respond(request_id, :approve) == :ok
@@ -294,6 +284,20 @@ defmodule EvoGit.CommandApproval.EvalTest do
       result!(caller, :approved)
       assert_receive {:approval_resolved, ^request_id, :approve}, @receive_timeout
       closed!(request_id)
+    end
+  end
+
+  defp assert_tier_metadata(request, tier) do
+    case tier do
+      :write ->
+        assert request.command == "elixir_eval"
+        assert request.level == 2
+        assert request.warning == nil
+
+      :sudo ->
+        assert request.command == "elixir_eval sudo"
+        assert request.level == 3
+        assert request.warning == @sudo_warning
     end
   end
 
