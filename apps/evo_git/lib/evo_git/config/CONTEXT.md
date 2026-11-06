@@ -253,6 +253,23 @@ The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDA
 
 **Deliberate exclusions (NOT Ecto-validated)**: `LLMCatalog` (static catalog), `VersionState` (self-validating TOML file), `credentials.toml` (free-form keys), `ProjectConfig`/`genesis.toml` (per-repo, lenient by design), `CustomAgents`/`agents.toml` (own CRUD validation), `RuntimeOpts` (task-opts contract, raises `ArgumentError`). Only the `config.toml` DSL (the 102 `Definitions.schemas/0` entries) is Ecto-validated.
 
+## Direct API Admission and Persistence Boundaries
+`EvoGit.Config` lives in this directory's `config.ex`, not in the parent directory.
+`Schema.all_schemas/0`, `schemas_by_category/0`, `defaults/0`, and `validate/1` are real public APIs in `schema.ex`; `Schema.effective_model_profiles/1` supplies the runtime's legacy-profile fallback.
+`Config.resolve/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys, so unrestricted read-tier admission is not credential-safe.
+`Config.config_status/0` returns `missing`, `warnings`, `ok?`, and `validation_errors`, but loads credentials into ReqLLM and may lazily import OAuth credentials into a managed file; its validation errors include original values and messages with inspected values.
+`Config.resolve/0` also logs invalid values verbatim, and neither its logging nor `Schema.ValidationError` provides redaction.
+`Config.read_toml_file/2,3` is public despite `@doc false` and reads any supplied file path, so it must not become a generic read capability accidentally.
+`Config.credential_key_to_reqllm_key/1` calls `String.to_atom/1` for arbitrary suffixed input and is not suitable for unrestricted interpreter admission.
+`Config.save_user_config/1` validates the supplied map then REPLACES the entire config file; it is not a patch or merge API and performs no scheduler reload or PubSub broadcast.
+That save uses plain `File.write/2` with no atomic rename, lock, rollback or chmod, drops nil map entries and mirrored flat LLM fields, and invalidates only its parsed-file cache after a successful write.
+`Schema.validate/1` walks atom-keyed schema paths, skips missing/nil/non-map intermediates and preserves unknown keys, so string-keyed top-level maps and malformed intermediate sections can bypass validation.
+Model-profile validation checks id/model, atom-keyed provider-options container and optional peak/context/auth fields, but does not validate per-profile concurrency or generation-parameter ranges.
+`Config.save_credentials/1` merges new credentials into existing data without schema validation, mutates ReqLLM's key store BEFORE the filesystem write, and does not clear previously loaded keys when given empty/nil replacements.
+`Config.credentials/0` returns raw secrets and mutates the ReqLLM key store on cache misses; exposing it is materially different from a credential-presence boolean.
+Interpreter policies must distinguish permission to persist config, permission to change runtime scheduler settings, and permission to access or mutate secrets rather than relying on schema validation as authorization.
+Leaf-specific OAuth assembly, atom creation and catalog side effects are documented in `schema/CONTEXT.md`.
+
 ## Config Caching
 
 `user_config/0` and `credentials/0` cache **parsed TOML maps** in `:persistent_term` keyed by file path, storing `{mtime, size, parsed_map}` (private `cached_file_read/2`).
