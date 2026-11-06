@@ -1,7 +1,7 @@
 defmodule EvoDashWeb.LayoutsTest do
   @moduledoc """
   Render-level contracts for `EvoDashWeb.Layouts.app/1`: sidebar task grouping,
-  Help navigation, keyboard focus, and the responsive configuration warning.
+  Assistant navigation, keyboard focus, and the responsive configuration warning.
 
   `group_tasks_by_project/2` is private, so the grouping is exercised through
   the public `app/1` function component. `Layouts.app/1` needs a `flash`
@@ -86,14 +86,14 @@ defmodule EvoDashWeb.LayoutsTest do
   end
 
   describe "app/1 — shell navigation" do
-    test "Help is a chat link and preserves the selected remote node" do
+    test "Assistant is a chat link and preserves the selected remote node" do
       for {node_id, href} <- [{nil, "/help"}, {"remote-test", "/help?node=remote-test"}] do
         tree = render_app(current_node_id: node_id, current_page: :help) |> parse()
-        assert [help] = Floki.find(tree, "nav a[href='#{href}']")
-        assert Floki.text(help) |> String.trim() == "Help"
-        assert [_] = Floki.find(help, ".hero-chat-bubble-left-right")
-        assert Floki.attribute(help, "data-phx-link") == ["redirect"]
-        assert Floki.attribute(help, "aria-current") == ["page"]
+        assert [assistant_link] = Floki.find(tree, "nav a[href='#{href}']")
+        assert Floki.text(assistant_link) |> String.trim() == "Assistant"
+        assert [_] = Floki.find(assistant_link, ".hero-chat-bubble-left-right")
+        assert Floki.attribute(assistant_link, "data-phx-link") == ["redirect"]
+        assert Floki.attribute(assistant_link, "aria-current") == ["page"]
       end
     end
 

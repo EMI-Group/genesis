@@ -1,8 +1,9 @@
-# HomeLive — Help Chat Support
+# HomeLive — Genesis Assistant Chat
 
 ## Intent
 
 This directory contains the presentation and support modules for `EvoDashWeb.HomeLive` at `GET /help`.
+The page is the Genesis Assistant: a general-purpose agent that understands Genesis and operates it (answering questions, inspecting runtime state, starting and controlling tasks, guiding the user through the dashboard), reachable from the sidebar **Assistant** entry.
 The parent `home_live.ex` owns LiveView wiring, socket mutations, task execution, persistence, and async stale guards.
 The chat starts repo-less `:reflect` tasks through `EvoDash.NodeContext`, streams agent history, and finalizes from the task's terminal result.
 
@@ -16,9 +17,9 @@ Shared tool rendering belongs to `../agents_live/tool_call_display.ex`, shared s
 
 ### Presentation
 
-`ChatMessages.empty_state/1` renders a sparkles icon, the greeting "How can I help you today?", the subtitle "Start a conversation", and four neutral suggestion buttons in a responsive one/two-column grid.
-The exact English suggestion labels and submitted prompts are "Explain the Genesis architecture", "How does task cancellation work?", "What can you help me with?", and "Guide me through the dashboard", all translated with Gettext.
-No suggestion explicitly asks to inspect current tasks or live runtime state.
+`ChatMessages.empty_state/1` renders a sparkles icon, the greeting "What would you like Genesis to do?", the subtitle "Start a conversation", and four neutral suggestion buttons in a responsive one/two-column grid.
+The exact English suggestion labels and submitted prompts are "Show my running tasks", "Check system status and capacity", "Start a task for me", and "Explain how tasks are scheduled", all translated with Gettext.
+Every suggestion reads as a natural operator request, so two of them explicitly ask to inspect live runtime state or to start work.
 The buttons retain `phx-click="send_message"` and translated `phx-value-message` values, dispatching through the exact same send path as typed input.
 Its `source_gate?` attr defaults to false and replaces all suggestion buttons with download guidance when true.
 The empty state uses `min-h-full` and vertical padding rather than a fixed height so short screens can scroll.

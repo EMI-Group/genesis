@@ -24,7 +24,7 @@ There is **no `live(...)` call anywhere in this directory**: every component is 
 | `model_profiles_editor_auth_test.exs` | `EvoDashWeb.ModelProfilesEditorAuthTest` | 3 / 15 — render-only OAuth/subscription auth UI: edit-form auth-mode select vs OAuth-only badge, credential-file input, summary-row auth badge, credential-status line |
 | `custom_agents_editor_test.exs` | `EvoDashWeb.SettingsComponents.CustomAgentsEditorTest` | 2 / 7 — the editor's extra "Custom tools" chip group + alias-aware comparisons |
 | `custom_tools_panel_test.exs` | `EvoDashWeb.CustomToolsPanelTest` | 2 / 22 — `custom_tools_panel/1` render contract + pure `custom_tool_names/1` |
-| `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Help navigation, keyboard focus, and responsive configuration warning |
+| `layouts_test.exs` | `EvoDashWeb.LayoutsTest` | 3 / 7 — `Layouts.app/1` sidebar task grouping, Assistant navigation, keyboard focus, and responsive configuration warning |
 | `category_metadata_test.exs` | `EvoDashWeb.CategoryMetadataTest` | 2 / 4 — pure `SettingsComponents.CategoryMetadata` units |
 
 ## Coverage Boundary — review-page components
@@ -154,7 +154,7 @@ Formatted expiry dates are deliberately NOT asserted (locale/timezone dependent)
 `app/1 — sidebar task grouping` — the ONLY suite here that renders the full app shell: `render_component(&Layouts.app/1, ...)` with just `flash: %{}` plus a stubbed `inner_block` slot (every other attr takes its declared default; the embedded `NodeSelectorComponent` `live_component` renders fine outside a LiveView).
 Group headers come from `Floki.find("span.sidebar-label:has(.hero-folder)")` (the folder icon makes group headers the only such spans); task links via `[data-sidebar-task-link]`, labels via the inner `span.truncate`.
 Coverage: non-map `running_tasks`/`pending_tasks` entries (`:junk_atom`, a binary) are silently OMITTED while a valid task still renders under `Path.basename(project_path)`; well-formed entries keep the `nil` path → `"Other"` group FIRST, then case-insensitive alphabetical group order with running-before-pending inside a group.
-Shell navigation coverage pins Help's `/help` link, chat-bubble icon, LiveView navigation and active-page semantics for local and remote node contexts, plus visible keyboard-focus outline tokens on active and inactive sidebar navigation links.
+Shell navigation coverage pins the **Assistant** label on the unchanged `/help` link, the chat-bubble icon, LiveView navigation and active-page semantics for local and remote node contexts, plus visible keyboard-focus outline tokens on active and inactive sidebar navigation links.
 Configuration-warning coverage pins escaped warning text, node-aware Settings link, accessible Close control, absent/healthy status gating, and narrow-screen width/shrink/wrap markup with an unbroken long warning.
 These are render contracts, not browser viewport or keyboard-interaction tests, and do not snapshot full class strings.
 Helpers: `render_app/1`, `sidebar_group_names/1`, `sidebar_task_links/1`, `sidebar_task_labels/1`, `task/1`, `config_warning/1`, `assert_classes/2`.

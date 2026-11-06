@@ -41,8 +41,9 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
       <div class="flex size-12 items-center justify-center rounded-full bg-base-200">
         <.icon name="hero-sparkles" class="size-6 text-primary-standalone" />
       </div>
+      <%!-- zh_CN: "你想让 Genesis 做什么？" --%>
       <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight text-base-content">
-        <%!-- zh_CN: "今天有什么可以帮你的？" --%>{gettext("How can I help you today?")}
+        {gettext("What would you like Genesis to do?")}
       </h2>
       <p class="max-w-md text-sm leading-relaxed text-base-content/70">
         <%!-- zh_CN: "开始对话" --%>{gettext("Start a conversation")}
@@ -55,29 +56,29 @@ defmodule EvoDashWeb.HomeLive.ChatMessages do
         </p>
       <% else %>
         <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
-          <%!-- zh_CN: "解释 Genesis 的架构" --%>
-          <.suggestion_chip message={gettext("Explain the Genesis architecture")}>
+          <%!-- zh_CN: "显示我的运行中任务" --%>
+          <.suggestion_chip message={gettext("Show my running tasks")}>
             <.icon
               name="hero-light-bulb"
               class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
-          <%!-- zh_CN: "任务取消是如何工作的？" --%>
-          <.suggestion_chip message={gettext("How does task cancellation work?")}>
+          <%!-- zh_CN: "检查系统状态与容量" --%>
+          <.suggestion_chip message={gettext("Check system status and capacity")}>
             <.icon
               name="hero-magnifying-glass"
               class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
-          <%!-- zh_CN: "你能帮我做什么？" --%>
-          <.suggestion_chip message={gettext("What can you help me with?")}>
+          <%!-- zh_CN: "帮我启动一个任务" --%>
+          <.suggestion_chip message={gettext("Start a task for me")}>
             <.icon
               name="hero-puzzle-piece"
               class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"
             />
           </.suggestion_chip>
-          <%!-- zh_CN: "引导我使用仪表盘" --%>
-          <.suggestion_chip message={gettext("Guide me through the dashboard")}>
+          <%!-- zh_CN: "解释任务是如何被调度的" --%>
+          <.suggestion_chip message={gettext("Explain how tasks are scheduled")}>
             <.icon
               name="hero-map"
               class="size-4 shrink-0 text-base-content/60 group-hover:text-base-content"

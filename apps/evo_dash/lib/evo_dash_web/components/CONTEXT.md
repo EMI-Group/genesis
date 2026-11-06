@@ -112,10 +112,10 @@ Task-card-specific cap rows (`@in_card_blob_limit`, `@in_card_log_limit`, `@copy
 ### Restrained shell and core controls
 
 `Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation without a selection shadow.
-The Help link retains its translated name and `/help` route and uses `hero-chat-bubble-left-right` to identify the chat entry.
+The Assistant link keeps the unchanged `/help` route and the Gettext-wrapped `gettext("Assistant")` label, and uses `hero-chat-bubble-left-right` to identify the Genesis Assistant chat entry.
 It is the last main navigation item after System, uses `current_page == :help`, and threads the current node through `with_node_param/2`.
-The shared `sidebar_nav_link/1` has no explanatory tooltip or capability badge, so the Help entry itself does not advertise runtime querying or task control.
-The component-level chat rename surface is the single `gettext("Help")` sidebar label in `layouts.ex`; changing that display name does not require changing `/help`, `current_page == :help`, `current_page(:help)`, the chat icon, or node-query threading.
+The shared `sidebar_nav_link/1` has no explanatory tooltip or capability badge, so the Assistant entry relies on its name to advertise the general-purpose agent that understands Genesis and can inspect runtime state and control tasks.
+The label is the single rename surface; changing it never touches `/help`, `current_page == :help`, `current_page(:help)`, the chat icon, or node-query threading.
 No approval card or raw-Elixir approval presentation lives at this component node; the chat approval surface belongs to the sibling `live/home_live/approval_card.ex` module.
 The `project_components.ex` Dev Commands button's `phx-click="run_command"` is a project shortcut event, not the assistant's command-approval UI.
 The shared guide panel in `layouts.ex` renders only when `@guide` exists, is titled "Genesis Guide", displays plain message text, conditionally offers Dismiss when `dismissible`, and offers a node-aware "Go" navigation link when `page` is a binary.

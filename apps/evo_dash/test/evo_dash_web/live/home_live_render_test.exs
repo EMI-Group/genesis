@@ -43,7 +43,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     dom = page()
 
     assert text(dom, "h1") == "Genesis Assistant"
-    assert text(dom, "#chat-messages h2") == "How can I help you today?"
+    assert text(dom, "#chat-messages h2") == "What would you like Genesis to do?"
     prompts = Floki.find(dom, "#chat-messages button[phx-click='send_message']")
     assert length(prompts) == 4
 
