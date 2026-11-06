@@ -33,7 +33,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `reflect_tools_test.exs` | Direct self-reflective task-control handlers, repo-less file-read/write guards and three unconditional legacy `run_command` refusals |
 | `spawn_investigator_probe_test.exs` | `Tools.SpawnInvestigatorProbe.investigate/2` |
 | `elixir_eval_engine_test.exs` | Real-Dune `ElixirEval.Engine` integration/security, genuine live authority, tier separation, fresh bindings, bounded UTF-8 output and inspection |
-| `elixir_eval_fixture.ex` | Explicitly required `EvoGit.TestSupport.ElixirEvalFixture`, providing genuine owner/tool Tasks and isolated running reflect authority without an LLM |
+| `elixir_eval_fixture_helper.exs` | Explicitly required `EvoGit.TestSupport.ElixirEvalFixture`, providing genuine owner/tool Tasks and isolated running reflect authority without an LLM |
 | `elixir_eval_authorization_test.exs` | Genuine and forged owner/spec/task/state identities, immutable revalidation, registry failure, bounded ancestry and fixture cleanup |
 | `elixir_eval_worker_tree_test.exs` + `elixir_eval_engine_cleanup_test.exs` | Root/child/grandchild custody on success/error/timeout and abrupt guardian/owner/tool loss, including real-Dune helper cleanup |
 | `elixir_eval_projection_test.exs` + `elixir_eval_validation_test.exs` | Privacy projections, literal read/start/guide validation and exact caps |
@@ -93,7 +93,7 @@ Prefer async modules for pure/local fixtures; modules changing scheduler profile
 `elixir_eval_wrapper_test.exs` exercises actual `ElixirEval.execute/3` in descendant tools: reads open no approval, write and sudo preserve exact code and carry distinct level/warning metadata, denial/timeout leave effects absent, and held approvals revalidate original task/state/spec/owner/tool authority.
 `elixir_eval_authorization_test.exs` and the wrapper suite retain a refusal regression for mismatched embedded `SchedMeta.id`; production currently accepts any integer there instead of binding it to the captured ETS lookup id.
 Dependency installation belongs to the parent app; tests require genuine Dune 0.3.18 or compatible and do not stub its parser, allowlists or execution.
-Directory-targeted Mix runs may warn about the explicitly required non-test fixture filename; app-level test-ignore configuration is outside this node.
+The explicitly required fixture uses the standard ignored `*_helper.exs` suffix so directory-targeted Mix runs do not treat it as an unmatched test file.
 Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
 ## Notes for Agents
 

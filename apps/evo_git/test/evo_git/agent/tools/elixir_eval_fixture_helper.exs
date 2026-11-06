@@ -4,7 +4,7 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
 
   Require this file before defining the test module:
 
-      Code.require_file("elixir_eval_fixture.ex", __DIR__)
+      Code.require_file("elixir_eval_fixture_helper.exs", __DIR__)
 
       # Inside a test using EvoGit.TaskRegistryCase:
       fixture = ElixirEvalFixture.start!(self(), store, registry)

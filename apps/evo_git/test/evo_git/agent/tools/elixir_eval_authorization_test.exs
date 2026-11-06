@@ -1,4 +1,4 @@
-Code.require_file("elixir_eval_fixture.ex", __DIR__)
+Code.require_file("elixir_eval_fixture_helper.exs", __DIR__)
 
 defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
   @moduledoc """
