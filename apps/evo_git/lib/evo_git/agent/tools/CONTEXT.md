@@ -6,7 +6,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 ## Routing Table
 - `./skill/` → skill tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead) — detail `skill/CONTEXT.md`
 - `./lsp/` → `EvoGit.Agent.Tools.Lsp.Protocol`, the PURE LSP wire codec (Content-Length framing, JSON-RPC encode, incremental `decode/1`, `file://` URIs, diagnostics/hover/definition normalization; no I/O, ports or processes) — detail `lsp/CONTEXT.md`
-- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, Dune allowlists, broker-backed Read/Write facades, projections, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
+- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, Dune admission of real APIs and optional broker-backed Read/Write facades, projections, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
 
 ## API Surface
 
@@ -28,7 +28,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 | `lsp` | Language-server code intelligence — `action` ∈ `diagnostics`/`hover`/`definition`, 1-based `line`/`column`, `path` inside the repo; SCHEMA-GATED on `EvoGit.Config.lsp_enabled?/0` (`[lsp] enabled = true` + non-empty `command`), so absent by default while dispatch stays registered | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
-| `elixir_eval` | Assistant-only explicit read/write/sudo Elixir evaluation; read/write use Dune facades, write/sudo require exact-code approval | Special | Read/write Dune; sudo NO |
+| `elixir_eval` | Assistant-only explicit read/write/sudo Elixir evaluation; read/write use Dune with admitted real APIs or optional facades, write/sudo require exact-code approval | Special | Read/write Dune; sudo NO |
 | `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (legacy command shell; blocked for SelfReflective in favor of `elixir_eval`); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
 | `job_output` | A background job's delta since the previous read + current status (optional bounded `wait`) | Control | No |
 | `job_list` | This agent's background jobs with ids and statuses | Control | No |
@@ -303,15 +303,16 @@ To add a command: a handler `execute/3` plus ONE registry entry (including its `
 
 ### Assistant Elixir evaluator (`elixir_eval`)
 `EvoGit.Agent.Tools.ElixirEval` (`elixir_eval.ex`) exposes `schema/0`, `execute/3`, persona-facing `help/0`, `authorized_assistant?/0` and `authorize/0,1`.
-`help/0` includes fully qualified `Read.configuration_status/0` and approval-gated `Write.update_scheduler_config/1` examples; the projected status and runtime-only update contracts live in `elixir_eval/CONTEXT.md`.
-Owner authorization, facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
+`help/0` teaches source inspection with `read`/`glob`/`rg` followed by explicitly admitted real calls, with fully qualified `EvoGit.TaskRegistry.list_tasks_page(limit: 10)`, `EvoGit.AgentScheduler.get_config(:max_turns)` and approval-gated, runtime-only `EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8)` examples.
+Public help incorporates `DirectAPI.help/0` exactly once; that function owns the detailed direct catalog, whose admitted set grants authority rather than all public APIs.
+Owner authorization, direct/facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
 Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrapper (the internal engine ceiling is 16384), and reaches approval and the engine byte-identically.
 `tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
 `target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; explicit nil, atoms and remote targets are rejected.
 `timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS: timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes, including errors and truncation markers.
-Read/write use Dune and fully qualified `EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` calls; interpreted `alias/1` declarations are unsupported.
+Read/write use Dune with fully qualified admitted real APIs; `EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` are optional conveniences, not the sole path, and interpreted `alias/1` declarations are unsupported.
 `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()` uses defaults and `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(map)` accepts pagination/filter options; `help/0` provides fully qualified examples.
-Each call has fresh bindings; direct runtime APIs are unavailable in read/write, and source inspection remains in the separate `read`, `glob` and `rg` tools.
+Each call has fresh bindings; reading source or finding a public API does not admit it, and persistence support is governed by the direct admission catalog rather than a blanket config-API exclusion.
 Write/sudo require exact-code approval through `EvoGit.CommandApproval.request_eval/5`, execute only on `:approved`, and revalidate authority before approval, immediately before execution and after any engine result.
 Sudo is DANGEROUS UNSANDBOXED full VM evaluation with best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
 The evaluator's approval wait is separate from its execution budget; dispatch must allow the approval window instead of imposing the generic short tool timeout.
