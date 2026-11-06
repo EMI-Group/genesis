@@ -78,17 +78,19 @@ defmodule EvoGit.Agent.Tools.ElixirEval do
   def help do
     """
     Elixir evaluator capabilities (local node only):
-    Read = EvoGit.Agent.Tools.ElixirEval.Read:
+    Read facade (EvoGit.Agent.Tools.ElixirEval.Read):
       help, system_info, list_tasks, get_task, list_agents, scheduler_status, model_profiles.
-    Write = EvoGit.Agent.Tools.ElixirEval.Write:
+    Write facade (EvoGit.Agent.Tools.ElixirEval.Write):
       start_task, cancel_task, force_kill_task, delete_task, guide.
-    Use these fully qualified modules, or Elixir aliases Read and Write for them.
-    Read.help() documents facade signatures; there is no source-access facade.
+    Use fully qualified module names; Dune does not support alias declarations.
+    EvoGit.Agent.Tools.ElixirEval.Read.help() documents facade signatures;
+    list_tasks() uses defaults and list_tasks(map) accepts pagination/filter options.
+    There is no source-access facade.
     Examples (read tier):
       EvoGit.Agent.Tools.ElixirEval.Read.help()
       EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()
-      alias EvoGit.Agent.Tools.ElixirEval.Read
-      Read.system_info()
+      EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(%{limit: 10})
+      EvoGit.Agent.Tools.ElixirEval.Read.system_info()
     Example (write tier, requires approval):
       EvoGit.Agent.Tools.ElixirEval.Write.cancel_task("task_id")
     Read/write run in Dune: pure Elixir plus the explicit facades only, not direct
