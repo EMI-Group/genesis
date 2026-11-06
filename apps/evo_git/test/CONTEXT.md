@@ -7,7 +7,8 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 
 ## Routing Table
 - `./evo_git/` → the whole `lib/evo_git/`-mirroring subtree (top-level suites + async-safety map) → `./evo_git/CONTEXT.md`
-- Assistant/SelfReflective command execution and confirmation coverage → `./evo_git/CONTEXT.md` (CommandShell/CommandApproval/CLI), `./evo_git/agent/` + `agent/tools/` (tool dispatch and repo-less guards), `./evo_git/runtime/` + `task_registry/` (reflect execution), and `./evo_git/agent_scheduler/` (repo-less lifecycle); the current tests cover a literal command registry, not restricted Elixir evaluation or cross-worker authority propagation.
+- Assistant/SelfReflective evaluation and confirmation coverage → `./evo_git/CONTEXT.md` (exact-code CommandApproval, direct CommandShell/CLI compatibility and persona contracts), `./evo_git/agent/` (tool-task owner propagation, serial evaluator dispatch and approval-aware outer deadlines), and `./evo_git/agent/tools/` (genuine-Dune tier separation, authorization, public wrapper approval, privacy projections, quotas, output bounds and descendant cleanup).
+- Reflect execution and repo-less lifecycle coverage → `./evo_git/runtime/`, `./evo_git/task_registry/` and `./evo_git/agent_scheduler/`.
 - `./evo_git/agent/` → agent loop, context builder/compression, tool dispatch, subagent processing → `./evo_git/agent/CONTEXT.md`
 - `./evo_git/agent/tools/` → per-tool tests → `./evo_git/agent/tools/CONTEXT.md`
 - `./evo_git/agent_scheduler/` → scheduler dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI → `./evo_git/agent_scheduler/CONTEXT.md`
