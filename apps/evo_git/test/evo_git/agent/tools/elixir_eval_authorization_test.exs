@@ -23,6 +23,88 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
   end
 
   describe "fixture cleanup" do
+    test "the test supervisor owns the temporary fixture tree", %{fixture: fixture} do
+      {:links, links} = Process.info(self(), :links)
+      refute fixture.supervisor in links
+
+      {:dictionary, dictionary} = Process.info(fixture.supervisor, :dictionary)
+      [parent | _] = Keyword.fetch!(dictionary, :"$ancestors")
+      refute parent == self()
+
+      assert Enum.any?(Supervisor.which_children(parent), fn
+               {{Fixture, id}, pid, :supervisor, _} ->
+                 id == fixture.agent_id and pid == fixture.supervisor
+
+               _ ->
+                 false
+             end)
+    end
+
+    for shutdown_reason <- [:shutdown, {:shutdown, :unexpected_fixture_failure}] do
+      @shutdown_reason shutdown_reason
+      test "cleanup during held-child supervisor termination: #{inspect(shutdown_reason)}", %{
+        fixture: fixture
+      } do
+        test_pid = self()
+        tag = make_ref()
+
+        {:ok, child} =
+          Task.Supervisor.start_child(
+            fixture.supervisor,
+            fn ->
+              Process.flag(:trap_exit, true)
+              send(test_pid, {tag, :ready})
+
+              receive do
+                {:EXIT, _, :shutdown} ->
+                  send(test_pid, {tag, :stopping})
+                  receive do: ({^tag, :release} -> :ok)
+              end
+            end,
+            shutdown: 30_000
+          )
+
+        assert_receive {^tag, :ready}, 15_000
+        child_monitor = Process.monitor(child)
+        owner_monitor = Process.monitor(fixture.owner_pid)
+        supervisor_monitor = Process.monitor(fixture.supervisor)
+        shutdown_reason = @shutdown_reason
+        shutdown = Task.async(fn -> Supervisor.stop(fixture.supervisor, shutdown_reason) end)
+
+        try do
+          assert_receive {^tag, :stopping}, 15_000
+
+          cleanup =
+            Task.async(fn ->
+              # Capture the exact exit for the negative case; it must not become :ok.
+              try do
+                Fixture.stop(fixture)
+              catch
+                :exit, reason -> {:exit, reason}
+              end
+            end)
+
+          await_stop_request(fixture.supervisor, System.monotonic_time(:millisecond) + 15_000)
+          assert Process.alive?(cleanup.pid)
+          send(child, {tag, :release})
+
+          assert Task.await(shutdown, 15_000) == :ok
+          result = Task.await(cleanup, 15_000)
+
+          assert_cleanup_result(result, shutdown_reason, fixture)
+
+          assert_receive {:DOWN, ^child_monitor, :process, ^child, :normal}, 15_000
+          assert_receive {:DOWN, ^owner_monitor, :process, _, _}, 15_000
+          assert_receive {:DOWN, ^supervisor_monitor, :process, _, ^shutdown_reason}, 15_000
+          assert :ets.lookup(:evogit_agent_state, fixture.agent_id) == []
+          assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) == []
+          assert Store.get_task(fixture.store, fixture.task_id) == nil
+        after
+          send(child, {tag, :release})
+        end
+      end
+    end
+
     test "repeated cleanup stops live descendants and removes the fixture records", %{
       fixture: fixture
     } do
@@ -47,9 +129,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
     } do
       supervisor = fixture.supervisor
       monitor = Process.monitor(supervisor)
-      Process.unlink(supervisor)
-      Process.exit(supervisor, :shutdown)
+      shutdown = Task.async(fn -> Supervisor.stop(supervisor, :shutdown) end)
       assert_receive {:DOWN, ^monitor, :process, ^supervisor, :shutdown}, 15_000
+      assert Task.await(shutdown) == :ok
 
       assert :ok = Fixture.stop(fixture)
       assert :ok = Fixture.stop(fixture)
@@ -524,6 +606,39 @@ defmodule EvoGit.Agent.Tools.ElixirEval.AuthorizationTest do
       :ok = :sys.resume(registry)
       assert Authorization.revalidate(context) == :ok
       release(handle)
+    end
+  end
+
+  defp assert_cleanup_result(result, :shutdown, _fixture), do: assert(result == :ok)
+
+  defp assert_cleanup_result(result, shutdown_reason, fixture) do
+    supervisor = fixture.supervisor
+
+    assert {:exit,
+            {{^shutdown_reason, {:sys, :terminate, [^supervisor, :normal, :infinity]}},
+             {GenServer, :stop, [^supervisor, :normal, :infinity]}}} = result
+
+    # A failed stop must not pretend teardown succeeded or erase evidence.
+    assert :ets.lookup(:evogit_agent_state, fixture.agent_id) != []
+    assert :ets.lookup(:evogit_sched_meta, fixture.agent_id) != []
+    assert Store.get_task(fixture.store, fixture.task_id) != nil
+    assert Fixture.stop(fixture) == :ok
+  end
+
+  defp await_stop_request(supervisor, deadline) do
+    {:messages, messages} = Process.info(supervisor, :messages)
+
+    if Enum.any?(messages, fn
+         {:system, _, {:terminate, :normal}} -> true
+         _ -> false
+       end) do
+      :ok
+    else
+      assert System.monotonic_time(:millisecond) < deadline,
+             "fixture cleanup did not enqueue its supervisor stop request"
+
+      Process.sleep(1)
+      await_stop_request(supervisor, deadline)
     end
   end
 

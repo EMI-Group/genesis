@@ -36,11 +36,13 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   IDs are also exposed for tests requiring deletion or deliberately bad rows.
   Transforms must preserve their struct type and own row ID.
 
-  Always call `stop/1` from `on_exit` (capture the fixture explicitly). It stops
-  all fixture Tasks, removes only its own ETS rows and deletes its task if the
-  isolated Store is still alive. It is safe after owner/tool death or repeated
-  cleanup. This fixture needs no global mutations and supports async tests;
-  suites changing approval/scheduler globals still need their own sync policy.
+  Always call `stop/1` from `on_exit` (capture the fixture explicitly). The private
+  supervisor is a temporary child of ExUnit's test supervisor, not linked to the
+  test process. Cleanup monitors its termination before removing only its own
+  ETS rows and deleting its task if the isolated Store is still alive. It is safe
+  after owner/tool death, ExUnit shutdown or repeated cleanup; unexpected stop
+  errors still fail. This fixture needs no global mutations and supports async
+  tests; suites changing approval/scheduler globals need their own sync policy.
   """
 
   alias EvoGit.AgentScheduler.{AgentState, SchedMeta}
@@ -72,7 +74,13 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
     }
 
     :ok = Store.put_task(store, task)
-    {:ok, supervisor} = Task.Supervisor.start_link()
+    # The ExUnit supervisor, not the short-lived test process, owns this tree.
+    # Temporary children stay stopped after an explicit cleanup or death test.
+    supervisor =
+      ExUnit.Callbacks.start_supervised!({Task.Supervisor, []},
+        id: {__MODULE__, agent_id},
+        restart: :temporary
+      )
 
     identity = %{
       test_pid: test_pid,
@@ -195,14 +203,29 @@ defmodule EvoGit.TestSupport.ElixirEvalFixture do
   end
 
   defp stop_supervisor(supervisor) do
-    # The private supervisor can die with its linked test owner before or during
-    # on_exit cleanup; an alive? check cannot make the stop atomic.
+    monitor = Process.monitor(supervisor)
+
+    # ExUnit shuts supervised children down before on_exit. A concurrent shutdown
+    # can end either the GenServer wrapper or its underlying :sys request; accept
+    # only those expected death races, and still require the actual DOWN below.
     try do
       Supervisor.stop(supervisor)
     catch
       :exit, {reason, {GenServer, :stop, [^supervisor, :normal, :infinity]}}
-      when reason in [:noproc, :normal] ->
+      when reason in [:noproc, :normal, :shutdown] ->
         :ok
+
+      :exit,
+      {{reason, {:sys, :terminate, [^supervisor, :normal, :infinity]}},
+       {GenServer, :stop, [^supervisor, :normal, :infinity]}}
+      when reason in [:noproc, :normal, :shutdown] ->
+        :ok
+    end
+
+    receive do
+      {:DOWN, ^monitor, :process, ^supervisor, _reason} -> :ok
+    after
+      @timeout -> raise "evaluator fixture supervisor did not terminate"
     end
   end
 
