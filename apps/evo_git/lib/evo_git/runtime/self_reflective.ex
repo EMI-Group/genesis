@@ -1,5 +1,5 @@
 defmodule EvoGit.Runtime.SelfReflective do
-  @moduledoc "Self-reflective (repo-less) agent runtime — chatbot-style system introspection"
+  @moduledoc "Self-reflective (repo-less) agent runtime — a Genesis operator that understands and operates the running Genesis system"
 
   alias EvoGit.Agent.Result
   alias EvoGit.AgentScheduler
