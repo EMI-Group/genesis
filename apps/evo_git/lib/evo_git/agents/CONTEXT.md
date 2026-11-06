@@ -51,6 +51,15 @@ The only prompt-builder that returns `""` in a no-op case is `EvoGit.Agent.Conte
 | **Foreign repositories** | `foreign_repo_absolute_path_clause/0`, `foreign_repo_spawn_right_level/0`, `writable_foreign_repo_clause/0` (Architect, ContextExtractor) |
 | **Objective scope** | `objective_not_in_node_prefix/0` (Executor, ContextExtractor) |
 
+### SelfReflective — Local Prompt and Tool Contract
+`self_reflective.ex` defines `EvoGit.Agents.SelfReflective` with `agent_type/0 = :read`, `delegation_level/0 = :low`, and `subagent_modules/0 = []` (lines 22–24).
+Its persona is "You are Genesis — the system the user is chatting with", not "Genesis Assistant", and it instructs first-person answers in the user's language (line 48).
+`available_tools/0` explicitly assembles nine schemas (`FileRead`, `Ripgrep`, `Glob`, `WebFetch`, `ListDirectory`, `Context.read_schema`, `SearchContext`, `SearchHistory`, `RunCommand`) and appends only `WebSearch` when `Config.tools_search_enabled?/0` (lines 26–44).
+This explicit list does not inherit `ReadOnlyTools.available_tools/1`, does not include LSP or an OS shell, and declares no ordinary Elixir eval or sudo-eval schema.
+`system_prompt/0` concatenates two local raw-string literals around `EvoGit.CommandShell.help/0`, so the detailed command catalog is runtime-generated even though the capability bullets and examples are manually maintained here (lines 46–102).
+The local prompt says `run_command` accepts the task-control command language, describes confirmation for task mutations and guides, and forbids file modification and OS-shell access (lines 62–94).
+The source-analysis prohibition concerns modifying Genesis itself, while task-control commands are explicitly allowed side effects, so `:read` here is not a promise that every available command is side-effect-free.
+
 ### ReadOnlyTools — Shared Read-Only Tool Set
 
 `EvoGit.Agents.ReadOnlyTools` (`read_only_tools.ex`) exposes `available_tools/1` — the shared read-only tool set used by read-only agent implementations (currently `Investigator` and `ContextExtractor`), composing `read_only_schemas/0` + the agent's own subagent schemas. Read-only agents that need the standard read-only tool list should reuse `ReadOnlyTools.available_tools/1` instead of re-listing tools locally.

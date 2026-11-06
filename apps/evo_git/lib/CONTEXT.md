@@ -6,6 +6,7 @@ Top-level source directory for the `:evo_git` OTP application. Contains the appl
 ## Routing Table
 - `./evo_git/` → All application source modules: Agent behaviour, AgentSpec, AgentScheduler, Task orchestration, Core types, Git adapter, Runtime, ProjectConfig, plus agent/ and tools/ subdirectories
 - `./mix/tasks/` → Release-time Mix tasks (`Mix.Tasks.Changelog`, `Mix.Tasks.Bump.Version`, `Mix.Tasks.Migrate.Store`) — detail in `./mix/tasks/CONTEXT.md`
+- `./evo_git/` → Repo-less Genesis assistant and its fixed-command shell/approval service (`agents/`, `runtime/`, `agent/tools/`, `command_shell.ex`, `command_approval.ex`); approval lifecycle, safe runtime-read boundaries and tool-task authority propagation caveats are documented in those nodes.
 
 ## API Surface
 | File | Module | Description |
