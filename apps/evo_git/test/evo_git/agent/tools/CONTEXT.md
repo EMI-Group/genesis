@@ -41,6 +41,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `elixir_eval_direct_api_test.exs` | Genuine-Dune direct TaskInfo/page/runtime reads, exact-MFA admission and approved task lifecycle mutations |
 | `elixir_eval_direct_configuration_test.exs` | Genuine-Dune direct runtime configuration, full-config persistence, explicit reload and exact-code approval |
 | `elixir_eval_render_test.exs` | UTF-8 byte-bounded text/term rendering and native BoundedIO protocol, cap and lifecycle |
+| `elixir_eval_output_truncation_test.exs` | Real-Dune stdout-budget integration: oversized prints truncate to the cap (valid UTF-8 prefix + marker, inside the cap) and the evaluation still succeeds, the per-item render cap at a wide budget, and untruncated baselines |
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 
 ## Async-Safety Rationale
@@ -103,6 +104,8 @@ The explicitly required fixture uses the standard ignored `*_helper.exs` suffix 
 Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
 The real interpreted facade whitelist is exercised by EngineTest's fully qualified Read calls and read-denied/write-allowed cancel_task call, WrapperTest's approved cancellation and read refusal, and EngineCleanupTest's traced nested get_task broker request; WorkerTreeTest instead supplies a native callback to WorkerTree.run/4 and does not establish Dune whitelist behavior.
 `elixir_eval_validation_test.exs` covers scheduler-option inclusive boundaries, atom/string-key normalization, mixed numeric settings, standalone boolean pause/resume, invalid shapes and types, duplicate spellings and refusal to create atoms from unknown input strings.
+`elixir_eval_output_truncation_test.exs` owns the real-Dune stdout-budget contract end-to-end: output volume never fails an evaluation (the broker truncates to the remaining budget with the marker inside the cap and a fully spent budget makes later writes bounded no-ops), the per-item 16_384-byte render cap still lets the run finish with its `Result:` text, and only the native sudo arm keeps its separate BoundedIO failure.
+Its exact byte expectations follow `Render.text/2` (payload = `cap - 19` bytes, 19-byte marker inside the cap) and the final `output <> result` cap, which replaces the broker's own marker with a fresh one when stdout already filled the budget.
 `elixir_eval_configuration_test.exs` uses genuine Dune under Fixture authority for the exact five-key scalar configuration projection, read-tier mutation denial and numeric/pause/resume acknowledgements containing only normalized requested settings with `scope: "runtime"` and `persisted: false`.
 The configuration suite pins unchanged config-file bytes and existing live-agent turn limits, plus approval-free public reads, exact-code mutation approval denial/acceptance, late-response rejection and stale-authority refusal.
 It is synchronous because it mutates the app-global AgentScheduler and approval timeout/service; it suspends PeakHourEngine before snapshot/mutation and restores the five scheduler scalars plus the derived model-concurrency map before resuming the engine.
