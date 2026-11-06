@@ -1,0 +1,159 @@
+defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
+  @moduledoc false
+
+  alias EvoGit.Agent.Tools.ElixirEval.Projection
+
+  @start_keys [:path, :mode, :objective, :prompt, :model_id]
+  @types %{
+    "genesis" => :genesis,
+    "evolve" => :evolve,
+    "reflect" => :reflect,
+    "extract_skills" => :extract_skills
+  }
+  @pages [nil, "/", "/help", "/projects", "/tasks", "/agents", "/settings", "/system"]
+
+  def start_options(type, options) when is_binary(type) and is_map(options) do
+    task_type = Map.get(@types, type)
+
+    with true <- task_type != nil,
+         {:ok, opts} <- normalize(options, @start_keys),
+         true <- Enum.all?(opts, fn {_key, value} -> valid_string?(value, 8_000) end),
+         {:ok, opts} <- validate_mode(task_type, opts),
+         {:ok, opts} <- validate_path(task_type, opts),
+         {:ok, opts} <- validate_text(task_type, opts),
+         {:ok, opts} <- validate_model(opts) do
+      {:ok, task_type, opts}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, "Invalid task type or task options."}
+    end
+  end
+
+  def start_options(_, _), do: {:error, "Expected a task type string and options map."}
+
+  def guide(message, options) do
+    with true <- valid_string?(message, 2_000),
+         {:ok, opts} <- normalize(options, [:page, :selector, :dismissible]),
+         page <- Keyword.get(opts, :page),
+         selector <- Keyword.get(opts, :selector),
+         dismissible <- Keyword.get(opts, :dismissible, true),
+         true <- page in @pages,
+         true <- is_boolean(dismissible),
+         true <- valid_selector?(selector) do
+      {:ok, %{message: message, page: page, selector: selector, dismissible: dismissible}}
+    else
+      _ ->
+        {:error,
+         "Guide requires a short message, a known local page and an optional simple #id selector."}
+    end
+  end
+
+  defp validate_path(:reflect, opts) do
+    if Keyword.has_key?(opts, :path),
+      do: {:error, "Reflect tasks do not accept a source path."},
+      else: {:ok, opts}
+  end
+
+  defp validate_path(type, opts) do
+    path = Keyword.get(opts, :path)
+    new_repo? = type == :genesis and Keyword.get(opts, :mode) == "new"
+
+    if valid_string?(path, 1_024) and Path.type(path) == :absolute and
+         (new_repo? or File.dir?(path)) do
+      {:ok, Keyword.put(opts, :path, Path.expand(path))}
+    else
+      {:error, "This task type requires an absolute path (at most 1024 bytes)."}
+    end
+  end
+
+  defp validate_mode(type, opts) do
+    {default, allowed} =
+      case type do
+        :genesis -> {"new", ["new", "existing"]}
+        :evolve -> {"simple", ["simple"]}
+        :reflect -> {"reflect", ["reflect"]}
+        :extract_skills -> {nil, [nil]}
+      end
+
+    mode = Keyword.get(opts, :mode, default)
+
+    cond do
+      mode not in allowed ->
+        {:error, "Unsupported mode; custom and merge/resume modes are not exposed."}
+
+      mode == nil ->
+        {:ok, opts}
+
+      true ->
+        {:ok, Keyword.put(opts, :mode, mode)}
+    end
+  end
+
+  defp validate_text(:extract_skills, opts) do
+    if Keyword.has_key?(opts, :objective) or Keyword.has_key?(opts, :prompt),
+      do: {:error, "Skill extraction accepts only path and model options."},
+      else: {:ok, opts}
+  end
+
+  defp validate_text(type, opts) do
+    objective = Keyword.get(opts, :objective)
+    prompt = Keyword.get(opts, :prompt)
+
+    cond do
+      type == :genesis and (prompt != nil or objective != nil) ->
+        text = prompt || objective
+        {:ok, opts |> Keyword.put(:prompt, text) |> Keyword.put(:objective, text)}
+
+      type != :genesis and prompt != nil ->
+        {:error, "Only genesis tasks accept prompt."}
+
+      objective != nil ->
+        {:ok, opts}
+
+      true ->
+        {:error, "Provide a nonblank objective (or a genesis prompt)."}
+    end
+  end
+
+  defp validate_model(opts) do
+    case Keyword.get(opts, :model_id) do
+      nil ->
+        {:ok, opts}
+
+      id ->
+        profiles = Projection.model_profiles()
+
+        if is_list(profiles) and Enum.any?(profiles, &(&1.id == id)),
+          do: {:ok, Keyword.put(opts, :model_id_locked, true)},
+          else: {:error, "Unknown model profile id."}
+    end
+  end
+
+  # Literal key mapping, never atomize input, and reject duplicate atom/string
+  # spellings so there is only one interpretation of each capability argument.
+  defp normalize(map, keys) when is_map(map) and map_size(map) <= 5 do
+    Enum.reduce_while(map, {:ok, []}, fn {input, value}, {:ok, acc} ->
+      key = Enum.find(keys, fn key -> input == key or input == Atom.to_string(key) end)
+
+      if key != nil and not Keyword.has_key?(acc, key),
+        do: {:cont, {:ok, [{key, value} | acc]}},
+        else: {:halt, {:error, "Unsupported or duplicate option."}}
+    end)
+  end
+
+  defp normalize(_, _), do: {:error, "Expected a small options map."}
+
+  defp valid_selector?(nil), do: true
+
+  defp valid_selector?(selector) when is_binary(selector) and byte_size(selector) <= 80,
+    do: Regex.match?(~r/\A#[a-zA-Z][a-zA-Z0-9_-]*\z/, selector)
+
+  defp valid_selector?(_), do: false
+
+  defp valid_string?(value, max) when is_binary(value) and byte_size(value) <= max do
+    String.valid?(value) and String.trim(value) != "" and
+      not String.contains?(value, <<0>>)
+  end
+
+  defp valid_string?(_, _), do: false
+end
