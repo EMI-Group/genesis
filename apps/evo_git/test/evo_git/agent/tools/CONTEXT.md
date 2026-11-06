@@ -66,6 +66,10 @@ No evaluator-specific test file exists in this directory; the production contrac
 Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
 A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
 Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
+The tool process must set `:evogit_agent_id`, `:evogit_task_id`, `:evogit_agent_pid` and `:evogit_task_registry_server`; Authorization captures that registry and the original tool pid at entry.
+SchedMeta must carry the actual live owner `%Task{}` in `task_ref`, status running or blocked, depth zero, nil parent, result_sent false and a SelfReflective AgentSpec with matching task_id and repo_less true.
+A held owner Task that starts a descendant tool Task supplies genuine runtime-maintained ancestry without running an LLM; install its unique ETS rows and isolated running reflect task before releasing the descendant to authorize.
+Exact-code approval broadcasts normalize integer agent ids to strings and preserve code bytes in both args and code, so responder matching must compare the normalized id plus task id, tier and exact code.
 Real-Dune tests must exercise fully qualified facade names through Dune's own nested helper ancestry, rather than mocking authorization or relying on interpreted alias declarations.
 Public-wrapper write and sudo tests must drive exact-code `CommandApproval.request_eval/5`; direct Engine execution is not evidence that approval is enforced.
 Use id-pinned approval responders and monitored, handshake-held descendants for lifecycle assertions, never unconditional approvers, artificial CPU-load generators or quiet-window timing races.
