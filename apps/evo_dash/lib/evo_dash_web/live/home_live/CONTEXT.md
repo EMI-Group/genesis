@@ -27,7 +27,7 @@ User wrappers remain `flex justify-end` around a direct bubble div; assistant/er
 Only the last assistant entry receives `chat_task_status` and `thought_process`, while every assistant entry receives its own raw-view flag.
 `UserMessage.user_message/1` is the single bubble implementation for typed and suggestion sends, with content-fit `w-fit`, responsive max-width, neutral `bg-base-200`, left-aligned escaped text, and no shadow.
 
-`AssistantMessage.assistant_message/1` prioritizes the answer over task chrome: a circular primary-colored sparkles avatar beside a borderless, shadowless, min-width-zero content column whose content is preceded by a small bold `Genesis` name label placed outside `group/assistant`.
+`AssistantMessage.assistant_message/1` prioritizes the answer over task chrome: a circular primary-colored sparkles avatar beside a borderless, shadowless, min-width-zero content column whose content is preceded by a small bold Gettext-wrapped `Genesis Assistant` name label placed outside `group/assistant`.
 The optional status row keeps the localized Task label as quiet sentence-case metadata plus the shared status badge, ping dots for running/cancelling, and spinner for finalizing.
 Status colors come only from `Helpers.task_status_badge/1` and `task_status_dot_class/1`, not a status-colored card frame.
 Empty streaming entries keep the three animated dots, nonempty streaming entries keep escaped raw text with `help-caret`, and neither renders action buttons or Markdown.
@@ -50,11 +50,11 @@ Sudo cards have prominent error styling and unrestricted ordinary Elixir wording
 Legacy requests preserve the informational level-2 and task-side-effect danger level-3 wording, badge classes, escaped command/args, and Confirm/Deny labels.
 Payload access is total even for nil/nonmap requests; string-keyed fields are not read and nonbinary text becomes empty text.
 Both decisions retain `approval_response`, `request_id`, and `decision` (`approve` or `deny`); no code, tier, execution mode, or session consent is returned from the browser.
-The parent currently owns composer/Stop behavior and legacy optimistic removal; retaining cards on response failure requires using `ApprovalWorkflow` rather than the parent's legacy response handler.
+The parent owns composer/Stop behavior and delegates approval recovery and responses to `ApprovalWorkflow`, retaining cards on response failure.
 
 ### Approval recovery and response workflow
 
-`ApprovalWorkflow` is an opt-in socket state machine for the parent, with `init/1`, `recover/1`, `requested/2`, `resolved/2`, `respond/3`, `recovered/3`, `responded/3`, `busy?/2`, and the shared total `own_request?/2` predicate.
+`ApprovalWorkflow` is the socket state machine integrated by the parent page, with `init/1`, `recover/1`, `requested/2`, `resolved/2`, `respond/3`, `recovered/3`, `responded/3`, `busy?/2`, and the shared total `own_request?/2` predicate.
 `init/1` clears cards, recovery state, response tokens and errors on mount or chat/node reset, invalidating outstanding work without resetting any global sequence.
 `recover/1` starts a one-shot supervised snapshot read for a chat with usable task/agent refs and a resolved node; the parent invokes it only on connected sockets after subscribing/restoring refs, after root lookup changes the scope, and on an explicit retry or reconnect, never on a timer.
 The actual core API is `EvoGit.CommandApproval.pending/0`, returning public request maps with `request_id`, source `node`, task/agent ids and evaluator metadata, or `[]` when the service is unavailable.
@@ -70,7 +70,7 @@ SafeCall messages are nested: `{{:approval_pending_loaded, seq, scope}, result}`
 Scope includes chat id, viewed node id/node, chat node, task id and agent id; unique monotonic tokens plus scope equality reject late results after resets, node switches, newer loads or newer responses.
 Task-supervisor startup failures are sent through the same result path, so loading/busy state cannot wedge.
 Runners are captured at spawn time through `:approval_pending_runner` (one node argument, list or error result) and existing `:approval_responder` (node/id/decision), allowing bounded deterministic tests without real SSH or evaluation.
-The parent must delegate both approval broadcasts and response events to this workflow, pass `busy={ApprovalWorkflow.busy?(assigns, request.request_id)}` to each card, and render `approval_error` with Gettext-wrapped recovery/response retry guidance.
+The parent delegates both approval broadcasts and response events to this workflow, passes `busy={ApprovalWorkflow.busy?(assigns, request.request_id)}` to each card, and renders `approval_error` with Gettext-wrapped recovery/response retry guidance.
 No approval state or sequence belongs in persisted `ChatState`; recovery reconstructs cards from the live core service.
 
 `SourceGate.source_gate/1` renders the local-only source-download banner with stable ids `genesis-source-gate` and `genesis-source-download`, `download_source`, a disabled/busy cloning state, and a node-aware System link.
@@ -124,6 +124,6 @@ Chat persistence is local-node-only and in-memory; remount reconciliation is one
 Run `mix test apps/evo_dash/test/evo_dash_web/live/home_live apps/evo_dash/test/evo_dash_web/live/home_live_test.exs` for scoped coverage.
 Sibling test changes require the parent agent; approval feature coverage belongs in new async component/workflow modules, with synchronous tests only where an app-env runner or the singleton CommandApproval service is mutated.
 Approval tests should pin write/sudo wording, full escaped code and target, nil warning, explicit sudo warning, legacy presentation, busy buttons, pending recovery via the actual public API, task/agent/source-node filters, disconnected remote guards, stale seq/scope rejection, snapshot/broadcast races, absent-card submission rejection and retained cards on responder failure.
-Existing parent tests that expect optimistic removal or accept a response for a nonpending id must be updated when the parent delegates to ApprovalWorkflow.
+Parent integration tests must assert retained cards while responding and reject responses for nonpending ids, rather than expecting optimistic removal.
 Existing scoped coverage passes with 104 tests; ephemeral validation also exercises evaluator rendering, recovery races, empty snapshot removal, stale resets, response failures and terminal response outcomes without changing sibling test files.
 Keep business assertions for four suggestion sends, source gate, direct user bubble shape, raw/copy attributes, safe Markdown and streaming markers intact.
