@@ -16,7 +16,9 @@ The module is pure file I/O — no network, no subprocess, no GenServer — and 
 - `entry_field/2` / `non_empty_string/1` (both `@doc false`) → first-present-key lookup and trim-to-nil helpers shared with `EvoGit.Auth`.
 
 ## Managed File (target)
-`EvoGit.Auth.oauth_file/1` decides the path; the document is ReqLLM-native JSON keyed by OAuth provider id.
+`EvoGit.Auth.oauth_file/1` decides the path: an explicit `opts[:oauth_file]` (leading `~` expanded), else `EvoGit.Auth.default_oauth_file/0` (`<config_dir>/auth.json`); it never reads the user config.
+A `[[llm.models]]` profile points at its own file through its `oauth_file` setting, threaded in as `opts[:oauth_file]` by `EvoGit.Config.Schema.LLM.oauth_file_for/1`.
+The document is ReqLLM-native JSON keyed by OAuth provider id.
 Shape: `{"openai-codex": {"type": "oauth", "access": "…", "refresh": "…", "expires": 1800000000000, "accountId": "…"}, "anthropic": {…}}` — `expires` is MILLISECONDS since the Unix epoch.
 `type: "oauth"` plus `access` are the minimum; nil fields are dropped from the written entry.
 Entries for OTHER providers are preserved — the document is merged key-wise, never replaced.
