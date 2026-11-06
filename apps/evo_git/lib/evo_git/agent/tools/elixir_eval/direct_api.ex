@@ -115,7 +115,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.DirectAPI do
     Read: #{signatures(:read)}.
     Write (exact-code approval required): #{signatures(:write)}.
     These invoke the actual named functions with unchanged arguments and return values, not projected facade substitutes. Inspect the source for options and errors; only these exact MFAs are admitted, never an entire module or another arity. A refusal does not auto-escalate.
-    Example: EvoGit.TaskRegistry.list_tasks_page(limit: 10, status: :running)
+    Example: EvoGit.TaskRegistry.list_tasks_page(limit: 10, status: "running")
     Example: EvoGit.AgentScheduler.get_config(:model_profiles)
     Example: EvoGit.Config.resolve(:scheduler)
     Task pages return the real %{rows: rows, total: count}; get_task/get_task_lite return TaskInfo structs or nil, not redacted maps. list_agents returns the real full list of agent summaries, and get_llm_slot_status returns the real per-model map. These reads are not facade-row-bounded or secret-redacted; select only needed data before printing.
