@@ -9,13 +9,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   descend from the attached worker via Task/proc_lib ancestry, seeded by the
   trusted worker entry, never by evaluated code. The broker is not allowlisted.
   Caps: 128 requests (including IO), 32 reads, 500 accounting rows, 16 writes,
-  four task starts, requested stdout bytes (at most 65,536). Facades use 1s
+  four task starts, requested stdout bytes (at most 65,536). The stdout cap is
+  enforced by truncation to the remaining budget (valid UTF-8 prefix, marker
+  inside the cap), never by failing the evaluation; a write with no budget left
+  is a bounded no-op. Facades use 1s
   registry deadlines; direct calls retain the actual public API deadlines.
   Engine applies its own timeout and final output limit as well.
   """
   use GenServer
 
-  alias EvoGit.Agent.Tools.ElixirEval.{Ancestry, Authorization, DirectAPI, Projection}
+  alias EvoGit.Agent.Tools.ElixirEval.{
+    Ancestry,
+    Authorization,
+    DirectAPI,
+    Projection,
+    Render
+  }
+
   alias EvoGit.TaskRegistry.TaskExecutor
 
   @reads [
@@ -251,18 +261,39 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     GenServer.reply(from, @unavailable)
   end
 
-  defp append_stdio([binary], state)
-       when is_binary(binary) and byte_size(binary) <= state.output_cap do
-    with :ok <- Authorization.revalidate(state.context),
-         true <- String.valid?(binary),
-         true <- byte_size(state.output) + byte_size(binary) <= state.output_cap do
-      {:reply, :ok, %{state | output: state.output <> binary}}
-    else
-      _ -> {:reply, {:error, "Evaluation stdout limit reached or authority expired."}, state}
+  # The broker is the SINGLE enforcement point for the captured-stdout budget.
+  # Output volume never fails an evaluation: an item larger than the remaining
+  # budget is truncated to it, and a write with no budget left is a bounded
+  # no-op. Only expired authority or a malformed item is refused.
+  defp append_stdio([binary], state) when is_binary(binary) do
+    cond do
+      Authorization.revalidate(state.context) != :ok ->
+        {:reply, {:error, "Evaluation stdout rejected or authority expired."}, state}
+
+      byte_size(state.output) >= state.output_cap ->
+        {:reply, :ok, state}
+
+      String.valid?(binary) ->
+        {:reply, :ok, append_to_budget(state, binary)}
+
+      true ->
+        {:reply, {:error, "Invalid stdout."}, state}
     end
   end
 
-  defp append_stdio(_, state), do: {:reply, {:error, "Invalid or oversized stdout."}, state}
+  defp append_stdio(_, state), do: {:reply, {:error, "Invalid stdout."}, state}
+
+  # Total captured stdout never exceeds output_cap: keep the longest valid UTF-8
+  # prefix that fits the remaining budget, with Render.text/2's truncation marker
+  # inside the cap when bytes were dropped. An exhausted budget appends nothing.
+  defp append_to_budget(state, binary) do
+    remaining = max(state.output_cap - byte_size(state.output), 0)
+
+    case Render.text(binary, remaining) do
+      "" -> state
+      chunk -> %{state | output: state.output <> chunk}
+    end
+  end
 
   # Native facade boundary: unexpected runtime failures must not leak inspected
   # errors or secrets to Dune's value/stdout channel. Known errors stay explicit.
