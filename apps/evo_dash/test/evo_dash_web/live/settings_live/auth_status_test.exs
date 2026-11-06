@@ -265,10 +265,10 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert html =~ "Login found, managed credential file not writable"
       assert html =~ "Managed credential file: /ro/genesis/auth.json"
 
-      # The raw HTML escapes the apostrophe in "profile's", so assert the two
-      # halves of the remedy sentence instead of the literal string.
-      assert html =~ "Set [llm] oauth_file (or this profile"
-      assert html =~ "to a writable location, then recheck."
+      assert html =~
+               "Set oauth_file on this profile to a writable location, then recheck."
+
+      refute html =~ "[llm] oauth_file"
 
       # No login guidance of any kind, and no "we import it next run" note.
       refute html =~ "SHOULD-NOT-RENDER-LOGIN-GUIDANCE"
