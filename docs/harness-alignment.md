@@ -545,6 +545,10 @@ authoritative comparison.
 - One canonical finish sentence replaces the "you must call `complete_task`" mandate in every role that has a
   loop (Architect, Manager, Executor, ContextExtractor, TaskScheduler, GenesisPlanner, Investigator, SkillExtractor,
   SelfReflective) — the read-only Investigator previously had no finish statement at all.
+- The turn-budget and recovery messages now teach that same contract: `TurnWarning`'s `:end`/`:critical` warnings,
+  `Runner.recovery_warning_message/2`, the scheduler's `@cancel_message` and the Genesis implementation-phase
+  objective all ask for a plain-text final report (committing uncommitted work first) and mention `complete_task`
+  only as an optional way to pass an explicit structured result.
 - All prompt-side tool references were repointed to the model-facing names; `web_fetch` / `lsp` are mentioned
   where they solve a role's problem (docs lookup, Elixir diagnostics) and omitted where they would be
   catalogue padding.
