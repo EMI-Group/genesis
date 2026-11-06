@@ -299,6 +299,18 @@ A real Investigator agent run stays blocked by the level-1 ~10 s tool timeout (a
 **Security constraints**: compile-time literal registry (no `Code.eval_string`, no input-derived module/function names), no `String.to_atom/1` on input (enums/bools/statuses validated against literal lists and passed as strings), whitelist-only dispatch, and guardrails `@max_command_length` 4000 / `@max_tokens` 40 / `@max_token_length` 2000.
 To add a command: a handler `execute/3` plus ONE registry entry (including its `level:`) — no schema, no dispatch clause.
 
+### Sandboxed Elixir evaluator integration constraints
+Dune is not declared in `apps/evo_git/mix.exs` or `mix.lock`, and there is no local `deps/dune` directory.
+The published Dune release is `0.3.18` (`{:dune, "~> 0.3.18"}`), with Elixir requirement `>= 1.14.0 and < 1.21.0`, no runtime package dependencies, and experimental custom-allowlist APIs.
+Upstream references are `https://dune.hexdocs.pm/Dune.html`, `Dune.Opts.html`, `Dune.Allowlist.html`, and tag-pinned source at `https://github.com/functional-rewire/dune/tree/v0.3.18`.
+`Dune.eval_string/2` accepts an `allowlist` module and parser/runtime bounds and returns `%Dune.Success{value:, inspected:, stdio:}` or `%Dune.Failure{type:, message:, stdio:}`; use its safe string parser rather than parsing untrusted source with normal `Code.string_to_quoted` first.
+Dune's actual `max_heap_size` default is 50_000 words in `Opts.defstruct`, despite prose claiming 30_000, and its default runtime timeout is only 50 ms with a separate parser budget.
+`use Dune.Allowlist, extend: Dune.Allowlist.Default` can add previously unspecified modules, but cannot amend an existing module entry, and `only: [:function_name]` covers every arity of that name.
+The upstream allowlist also supports `shims: [function_name: {ShimModule, :shim_function}]`, which requires an exported shim with an additional leading `%Dune.Eval.Env{}` argument for every original arity.
+A shim is trusted native Elixir, not recursively sandboxed code, so exposed APIs must enforce their own argument, secret-projection, target, lifecycle and resource constraints instead of broadly allowing `TaskRegistry`, `AgentScheduler`, `CommandShell` or `Tools.execute`.
+Dune exposes no evaluation binding/context option, and its evaluator executes in fresh child processes with no inherited application process dictionary, so an evaluator integration must explicitly solve owner/capability propagation rather than assuming the current tool's identity survives.
+The existing command handlers are local-node-only and approval-free when called directly, while a new evaluator tool name does not inherit `run_command`'s hardcoded approval-aware dispatcher timeout.
+
 ### StartTask opt-forwarding surface (shell task-start data plane)
 `StartTask.start_task` forwards `:objective` (positional 2, default `""`), `:path`, `:mode`, `:resume_from`, `:starting_commit` and `:model_id` (raw strings via `maybe_put`, nil/`""` dropped) plus, for `:genesis` only, the same positional text under `:prompt` (the key the genesis executor reads).
 It calls `EvoGit.TaskRegistry.start_task/2` on the LOCAL node, which validates nothing and forwards to `TaskExecutor.execute_task/3` — the entry point the CLI and dashboard also use; undeclared `key=value` tokens fall through as positionals.
