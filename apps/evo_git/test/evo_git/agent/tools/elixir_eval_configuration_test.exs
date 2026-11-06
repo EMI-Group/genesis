@@ -38,7 +38,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ConfigurationTest do
     max_turns_root: 151,
     paused: false
   }
-  @restricted "Evaluation rejected a restricted operation. Use the Read/Write facade APIs."
+  @restricted "Evaluation rejected a restricted operation. Use admitted APIs such as EvoGit.TaskRegistry.list_tasks_page/0,1 or EvoGit.AgentScheduler.get_config/1; Read/Write facade APIs remain available. Call EvoGit.Agent.Tools.ElixirEval.Read.help() for exact MFAs and limits. Writes require the write tier and exact-code approval; no automatic escalation."
   @denied "Error: Elixir evaluation requires a live root reflective assistant on the local node."
 
   setup %{store: store, registry: registry} do

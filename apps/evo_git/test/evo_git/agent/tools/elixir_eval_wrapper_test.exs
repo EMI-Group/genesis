@@ -90,7 +90,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WrapperTest do
       handle = start_eval(ctx.fixture, %{"code" => code})
 
       assert Fixture.await(handle) ==
-               "Error: Evaluation rejected a restricted operation. Use the Read/Write facade APIs."
+               "Error: Evaluation rejected a restricted operation. Use admitted APIs such as EvoGit.TaskRegistry.list_tasks_page/0,1 or EvoGit.AgentScheduler.get_config/1; Read/Write facade APIs remain available. Call EvoGit.Agent.Tools.ElixirEval.Read.help() for exact MFAs and limits. Writes require the write tier and exact-code approval; no automatic escalation."
 
       assert Store.get_task(ctx.store, target.id).status == :pending
       assert_no_approval(ctx.fixture)
