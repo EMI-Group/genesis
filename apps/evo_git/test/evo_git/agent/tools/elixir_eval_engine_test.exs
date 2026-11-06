@@ -292,11 +292,23 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
     test "multiple individually small prints cannot exceed the cumulative cap", ctx do
       code = "Enum.each(1..20, fn _ -> IO.puts(#{inspect(String.duplicate("界", 12))}) end)"
 
+      # The broker truncates to the remaining budget instead of failing: six full
+      # 37-byte lines (222 bytes) plus the five whole "界" codepoints (15 bytes)
+      # that still fit exhaust the 256-byte cap, so the evaluation still succeeds
+      # and the final cap replaces the Result text with the marker.
+      expected =
+        String.duplicate(String.duplicate("界", 12) <> "\n", 6) <>
+          String.duplicate("界", 5) <> "\n[output truncated]"
+
       for tier <- [:read, :write] do
-        assert {:error, output} = evaluate(ctx.fixture, code, tier, %{max_output_bytes: 256})
+        assert {:ok, output} = evaluate(ctx.fixture, code, tier, %{max_output_bytes: 256})
         assert_bounded(output, 256)
-        # Interpreted stdout is already in the broker when overflow is refused.
+        assert byte_size(output) == 256
         assert String.starts_with?(output, String.duplicate("界", 12) <> "\n")
+        assert String.ends_with?(output, "\n[output truncated]")
+        # Interpreted stdout filled the whole budget, so nothing else survived.
+        refute output =~ "Result:"
+        assert output == expected
       end
 
       # Native IO raises on enospc before Engine can transfer its group-leader
