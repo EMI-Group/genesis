@@ -6,7 +6,9 @@ Multi-repo: foreign repos from `genesis.toml` or CLI flags enable cross-repo sub
 This file is the module-level API surface plus the cross-cutting contracts; each section names the child CONTEXT.md owning its detail.
 
 ## Routing Table
-- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`)
+- `./agent/` → Agent behaviour, tool library, context compression, subagent processing, LLM error classification + retry/backoff policy, tool-name alias spine (`tool_names.ex`), completion protocol (`completion_protocol.ex`) + the completion side-effect writer (`completion.ex`).
+- `./agent/tools/elixir_eval/` → Genesis Assistant evaluator internals: Dune read/write allowlists, narrow projected runtime facades, authenticated runtime-local capability broker, bounded evaluation/output and monitored worker cleanup; the single public tool wrapper is `./agent/tools/elixir_eval.ex`.
+- `./agents/` → SelfReflective exposes `elixir_eval` plus source-reading tools; evaluator tiers are explicit read/write/sudo, writes require exact-code approval, sudo additionally carries an unrestricted-privileges warning, and no tier auto-escalates.
 - `./agents/` → Agent implementations (Manager, Executor, TaskScheduler, Investigator, Architect, ContextExtractor, SkillExtractor, GenesisPlanner)
 - `./agent_scheduler/` → AgentState, SchedMeta, Slots, Worktrees, WorktreeManager — ETS schemas, helpers, worktree lifecycle
 - `./core/` → ContextNode, PhyloGraphNode, ForeignRepo data structures
@@ -40,7 +42,8 @@ Per-function detail (signatures, arities, return shapes) lives in the child CONT
 | `EvoGit.AgentScheduler` | scheduling only (lifecycle, spawn, ETS state, slot pools, `get_llm_slot_status/0`) → `agent_scheduler/` |
 | `EvoGit.TaskRegistry` | task lifecycle (persistence, lease, PubSub, cancel/kill, reconciliation); `server/0` seam resolved at CALL time → `task_registry/` |
 | `EvoGit.Runtime` / `Runtime.Helpers` / `Runtime.SelfReflective` | `merge_and_report/3,4`, `load_foreign_repos/2`, `resolve_root_agent/2`, `notify_finalizing/1`; repo-less runtime → `runtime/` |
-| `EvoGit.CommandShell` / `CommandApproval` / `Agent.Tools.RunCommand` | literal command registry + blocking human approval (not Elixir evaluation); protocol and lifecycle caveats → § Command approval and source-access boundaries; handler/tool details → `agent/tools/` |
+| `EvoGit.CommandShell` / `CommandApproval` | CLI-compatible literal command registry plus human approval service; `request_eval/5` adds exact-code write/sudo metadata and `pending/0` exposes public pending maps → § Command approval and source-access boundaries. |
+| `EvoGit.Agent.Tools.ElixirEval` | Assistant-only dispatch-authorized read/write/sudo evaluator, fresh bindings, current-node targeting, bounded code/output/time and no automatic escalation → `agent/tools/elixir_eval/`. |
 | `EvoGit.QualityLevel` | `values/0`, `default/0` `"balanced"`, `normalize/1`, `guidance/1`; key added only when ≠ balanced → `task_registry/` |
 | `EvoGit.TaskTmpdir` | per-task scratch dir + event-driven reclaim → § Managed Per-Task Tmpdir |
 | `EvoGit.BackgroundJobs` | detached jobs (`start_job/1`, `read/2`, `list/1`, `snapshot/1`, `claim_finished_notices/1`, `kill/3`, `reap_under/1`); 10 LIVE/owner, 100 finished; `Process.monitor/1` on the owning AGENT pid → § Background Job Completion Notices |
