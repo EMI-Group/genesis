@@ -97,4 +97,10 @@ Keep authorization, approval and execution boundaries distinct, and never infer 
 Do not replace original tool/owner identities with guardian or Dune child identities, use links as ancestry proof, expose broker controls to Dune or add Process dictionary access to its allowlist.
 Do not expose raw runtime structs, nested configuration, full histories or unbounded task collections through facades; add explicit projected fields and quota accounting instead.
 Generic failure rendering is a confidentiality boundary, while truncation and resource sampling alone are not.
-Tests/builds are not run by documentation-only investigation; use the owning test nodes for authorized execution and integration verification.
+
+## Test Strategy
+Persistent tests belong to the sibling test subtree and require parent coordination; do not modify tests from this node.
+Real-Dune integration requires genuine scheduler owner/spec/ETS identities plus an isolated TaskRegistry/Store, not mocked authorization or stubbed Dune.
+Cover nested Dune proc_lib/Task facade discovery, direct capability denial, requested cumulative IO caps, stale/cancelled authority, owner/tool death and descendant cleanup.
+Direct Engine write/sudo execution does not validate the public wrapper's manual approval gate; exercise that separately through `CommandApproval.request_eval/5`.
+Fully qualified facade calls are supported; Dune's default allowlist rejects `alias/1`, so short-alias examples must not rely on interpreted alias declarations.
