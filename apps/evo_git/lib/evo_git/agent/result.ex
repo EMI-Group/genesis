@@ -2,9 +2,8 @@ defmodule EvoGit.Agent.Result do
   @moduledoc """
   Structured result of a completed agent run.
 
-  When an agent finishes its work — either by replying with no tool calls
-  (implicit completion, whose text IS the report) or via the `complete_task`
-  tool — it produces
+  When an agent finishes its work — by replying with no tool calls, whose text
+  IS the report — it produces
   a `%Result{}` struct capturing the outcome — including the human-readable
   result string, the commit SHA of any changes made, and optional metadata
   such as tag, branch, base commit, `repo_id` (string identifying which

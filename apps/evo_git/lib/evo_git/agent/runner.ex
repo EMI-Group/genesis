@@ -16,13 +16,10 @@ defmodule EvoGit.Agent.Runner do
   alias EvoGit.Agent.LoopState
   import ReqLLM.Context, only: [user: 1]
 
-  @complete_tool "complete_task"
-
   # Grace-turn budget for a user-requested graceful cancellation (cancel-grace).
   # The agent may wrap up and finish (a plain-text reply with no tool calls ends
-  # the run and its text is the report, or an optional `complete_task` call) for
-  # up to this many turns before the run hard-stops with
-  # `{:error, :recovery_failed}`.
+  # the run and its text is the report) for up to this many turns before the run
+  # hard-stops with `{:error, :recovery_failed}`.
   @cancel_grace_turns 3
 
   # Grace-turn budget for turn-limit recovery — exactly 1, preserving the
@@ -61,7 +58,7 @@ defmodule EvoGit.Agent.Runner do
       end
 
     # The `after` fallback above may have created the ONLY commit of this run,
-    # while `Result.commit_sha` was captured earlier (inside `do_complete/2`,
+    # while `Result.commit_sha` was captured earlier (on the completion path,
     # before the fallback committed) — i.e. it may still point at the
     # pre-fallback worktree HEAD. `Runtime.Helpers.merge_and_report/3,4`
     # compares that sha against the live HEAD of the repo root and treats a
@@ -708,7 +705,7 @@ defmodule EvoGit.Agent.Runner do
     if objective do
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to FINISH now by replying with your final report as plain text — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required. Calling `#{@complete_tool}` is an OPTIONAL alternative when you want an explicit structured result.
+      Your priority is to FINISH now by replying with your final report as plain text — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required.
 
       If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
 
@@ -720,7 +717,7 @@ defmodule EvoGit.Agent.Runner do
     else
       """
       You have exceeded the execution limit (#{reason}).
-      Your priority is to FINISH now by replying with your final report as plain text explaining the situation — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required. Calling `#{@complete_tool}` is an OPTIONAL alternative when you want an explicit structured result.
+      Your priority is to FINISH now by replying with your final report as plain text explaining the situation — a text reply with no tool calls ends the run and its text IS the report, so no tool call is required.
 
       If you have critical uncommitted changes, commit them first, then finish immediately. Your already-committed work is safe.
       """

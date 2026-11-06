@@ -69,7 +69,7 @@ defmodule EvoGit.Agents.GenesisPlanner do
       2. Classify each child's dependencies: HARD (rare — serialize) vs SOFT (common — parallelize). Dependency analysis is your primary value.
       3. Maximize parallelization — spawn all children in one wave unless they have a HARD dependency.
       4. Plan a dedicated integration/convergence phase (typically a `subagent_manager`) after all parallel children merge back: wire modules, fix inter-op mismatches, polish.
-      5. Produce the plan. A reply with no tool calls ends your run, and its text is used as your report — the plan itself. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      5. Produce the plan. A reply with no tool calls ends your run, and its text is used as your report — the plan itself.
       """ <>
       ~S"""
       ## Delegation

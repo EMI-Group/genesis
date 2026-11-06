@@ -57,7 +57,7 @@ defmodule EvoGit.Agent.Usage do
   @doc """
   Canonical usage-map keys carried by per-agent archive records.
 
-  `CompleteTask`'s private `format_usage_for_archive/1` (the single writer)
+  `EvoGit.Agent.Completion`'s private `format_usage_for_archive/1` (the single writer)
   stores per-agent usage in archive records as a PLAIN MAP with exactly these
   atom keys; after the Store JSON round-trip the same keys are strings.
   `cache_hit_rate` is a derived value (not a `%Usage{}` struct field — see

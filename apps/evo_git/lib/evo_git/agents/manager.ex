@@ -108,7 +108,7 @@ defmodule EvoGit.Agents.Manager do
       2. **Delegate in parallel batches**: spawn subagents for all independent tasks simultaneously — one agent per independent bug, all running at once; never sequentially.
       3. **Validate collectively**: when all parallel agents complete, re-run the tests for your scope (full suite only at the root; subtree tests at a deeper node), check regressions and code quality — high-level checks on their reports, not re-reviews of their code.
       4. **Iterate in parallel again**: if issues remain, group them and spawn another parallel batch; each round should fix as many independent issues as possible.
-      5. **Complete**: when the objective is met, end the run with your final summary. A reply with no tool calls ends your run, and its text is used as your report. `complete_task` is optional — call it only when you want to pass an explicit structured result.
+      5. **Complete**: when the objective is met, end the run with your final summary. A reply with no tool calls ends your run, and its text is used as your report.
 
       **Genesis implementation mode** (root agent completing a newly architected codebase): architecture, directory structure, and routing tables already exist (created by an Architect agent), possibly with partial implementations, stubs, or TODOs. Review what exists, find what remains unimplemented via the existing routing tables, and delegate — `subagent_executor` at child paths for specific changes, `subagent_manager` for complex subtrees. Write actual functional code, never stubs or placeholders.
 
