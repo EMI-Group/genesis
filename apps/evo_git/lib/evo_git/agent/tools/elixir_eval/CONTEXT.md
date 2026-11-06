@@ -1,7 +1,7 @@
 # Assistant Elixir Evaluation Internals
 
 ## Intent
-This directory implements fresh, local, tiered assistant evaluation with fail-closed runtime authority, narrow capability facades, bounded output and monitored BEAM-process cleanup.
+This directory implements fresh, local, tiered assistant evaluation with fail-closed runtime authority, exact-MFA direct API admission and compatible narrow facades, bounded output and monitored BEAM-process cleanup.
 The public tool wrapper, schema, argument validation and manual approval integration live in the sibling `../elixir_eval.ex`, not here.
 Read/write use Dune interpretation; sudo is explicitly approved unrestricted native evaluation, not a security sandbox.
 
@@ -22,7 +22,8 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 | `worker_tree.ex` / `WorkerTree` | `run(context, tier, limits, fun)` creates a guardian, authorized broker and independently owned traced evaluation subtree, with bounded execution, cleanup and caller waits. |
 | `custodian.ex` / `Custodian` | Internal independent trace owner; `start/4`, `finish/2` and `cleanup_ms/0` support bounded reaping even after abrupt guardian/tool death. |
 | `broker.ex` / `Broker` | `start/2,3,4`, `attach/2,3`, `call/2`, `output/1,2`, `stop/1,2` implement one unregistered capability broker per evaluation, with optional lifecycle-call timeout overrides. |
-| `allowlist.ex` | `ReadAllowlist` extends Dune defaults with Read; `WriteAllowlist` additionally admits Write, with explicit IO shims and dbg rejection. |
+| `allowlist.ex` | Read/write wrappers enforce exact EvoGit MFA/tier admission before Dune default fallback, with explicit IO shims and dbg rejection. |
+| `direct_api.ex` / `DirectAPI` | Literal real-API registry, fixed broker shims, bounded read adapters and shared direct-API help. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
 | `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
 | `validation.ex` / `Validation` | `start_options/2`, `guide/2` and `scheduler_options/1` validate mutation arguments using literal keys and enums. |
@@ -55,10 +56,11 @@ Read/write use Dune's safe string parser for preflight and interpretation, with 
 Both public allowlist wrappers load their generated Base allowlist in an `@on_load` callback, so Dune's generated alias-atom initialization runs before safe parsing, including when read or write is the first tier used in a fresh BEAM.
 Deferring Base loading until `fun_status/3` is too late: Dune 0.3.18 encodes unknown alias segments before function authorization, preventing fully qualified facades from resolving on cold first use.
 Unqualified dbg AST nodes are rejected before interpretation because sanitizer-generated debug IO can bypass normal allowlist shims; Kernel.dbg is also restricted by the allowlist.
-Default Dune pure operations remain available, but raw TaskRegistry, AgentScheduler, CommandShell, Broker and arbitrary native APIs are not added to the allowlist.
-Dune's generated `allow(..., only: [...])` entries select function names rather than exact MFAs; the outer `fun_status/3` wrappers already demonstrate explicit arity checks and `{:shimmed, module, function}` interception for IO.
-A native allowlist entry alone would bypass broker authorization, quotas, projection and one-second operation deadlines; real runtime API admission must preserve those boundaries independently of its public module spelling.
-The restricted-operation engine error explicitly directs callers to Read/Write facades, so it is a separate guidance site from the public tool help/schema.
+Default Dune pure operations remain available, but every EvoGit module is intercepted before Base fallback and denied unless its exact MFA and tier appear in `DirectAPI`'s literal registry or compatible facade list.
+Dune's generated `allow(..., only: [...])` entries select names rather than arities and initialize aliases only; the outer `fun_status/3` wrappers enforce exact arities and route admitted real APIs to fixed broker-backed shims, never arbitrary apply or namespace grants.
+Both tiers initialize all admitted module aliases at Base load time, but write MFAs remain restricted in read tier.
+`DirectAPI.help/0` generates the exact admitted signature lists plus examples, limits and deviations for parent help integration, and broker `Read.help/0` appends it to the public wrapper's help.
+The restricted-operation hint names admitted TaskRegistry/AgentScheduler APIs and directs callers to `Read.help/0`, while retaining facade compatibility and explicit write approval without automatic escalation.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.
 WorkerTree uses an unlinked monitored guardian, monitors caller and optional owner/agent pids, and monitors the broker separately.
 An independent unlinked Custodian owns inherited spawn tracing, installed on the waiting guardian before it may spawn the root, and monitors both guardian and caller.
@@ -80,6 +82,21 @@ Unexpected custodian exceptions also kill the guardian and all pids in its last 
 The broker independently monitors original owner, tool, controller and attached worker; trusted runtime operations run in a separate pending Task so lifecycle messages remain serviceable.
 Worker loss cancels a pending operation, and broker termination cancels its pending Task and kills its attached worker; committed side effects cannot be rolled back.
 
+## Exact Direct API Admission
+`DirectAPI` is the shared literal MFA/tier registry, trusted shim adapter and help source; both allowlists consult it before any EvoGit fallback.
+Read and write tiers admit exactly `EvoGit.TaskRegistry.list_tasks_page/0,1`, `get_task_lite/1`, `get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0`, `EvoGit.AgentScheduler.get_config/1`, `paused?/0`, `get_llm_slot_status/0` and `EvoGit.Config.resolve/1` in addition to the compatible facades.
+Only write tier additionally admits `EvoGit.TaskRegistry.start_task/2`, `cancel_task/1`, `force_kill_task/1`, `delete_task/1`, `EvoGit.AgentScheduler.update_config/1`, `pause/0` and `resume/0`.
+Unlisted functions and wrong arities on listed modules are denied in both tiers, as are arbitrary EvoGit modules and direct access to broker/adapter internals.
+Direct page/start/update options must be atom-keyed keyword lists with at most five distinct keys, never maps or duplicate keys, and reuse the existing projection/mutation validators after normalization.
+Direct start requires an atom task type; existing facade start retains its string type and map options.
+Direct `get_config/1` accepts only `default_llm_max_concurrency`, `max_tool_concurrency`, `max_turns`, `max_turns_root` and `paused` atom keys, while `Config.resolve/1` accepts only `[:scheduler, key]` for the four numeric keys.
+Resolved configuration combines defaults/user/session values and is NOT necessarily the live scheduler state; resolving it runs in a bounded one-second trusted task.
+Direct `update_config/1` accepts only the four numeric keys with existing integer bounds; paused is intentionally excluded because actual scheduler pause/resume semantics require their separate APIs.
+Direct updates, pause/resume and cancel/force-kill preserve `:ok` acknowledgements; start preserves `{:ok, projected_task}` and delete returns `:ok` for the queued cast ONLY, not persisted deletion.
+Direct and facade mutations share authorization, lifecycle/self-target checks, quotas and one-second trusted operation deadlines, without duplicate dispatch or validation logic.
+`Config.save_user_config/1` and `RemoteAPI.save_user_config/1` remain excluded: the existing save replaces whole configuration non-atomically, does not reliably acknowledge reload and must never be silently reinterpreted as a patch.
+No persistent configuration mutation, raw configuration/schema/defaults collection or additional namespace is admitted.
+
 ## Capabilities, Quotas and Mutations
 Read exposes `help/0`, `system_info/0`, `list_tasks/0,1`, `get_task/1`, `list_agents/0`, `scheduler_status/0`, `model_profiles/0` and `configuration_status/0` through the broker.
 Write exposes `start_task/2`, `cancel_task/1`, `force_kill_task/1`, `delete_task/1`, `guide/1,2` and `update_scheduler_config/1`, and requires a write- or sudo-tier broker.
@@ -93,7 +110,7 @@ An acknowledged update returns `%{status: :updated, scope: :runtime, persisted: 
 Changes never write config files, survive only until restart/reload or another runtime update, preserve scheduler concurrency floors and explicit peak hard-pause behavior, and turn caps apply to future agent registrations rather than rewriting live AgentState values.
 Timeout or lost authority can occur after an effect committed, so errors do not imply rollback and a scheduler-call exit explicitly recommends inspecting configuration status before retrying.
 Each evaluation permits at most 128 broker requests including IO, 32 reads, 500 charged projected rows, 16 writes and four task starts, with at most one pending runtime operation.
-Row charging uses requested task-page limit, 100 for agent/model-profile reads and one for other reads, rather than counting actual returned rows.
+Row charging uses requested task-page limit, 100 for agent/model-profile/direct slot reads and one for other reads, rather than counting actual returned rows.
 Runtime operations revalidate original authority before and after execution, and mutations revalidate again immediately before dispatch; registry calls use one-second deadlines and broker IPC uses five seconds.
 Task start accepts only literal genesis/evolve/reflect/extract_skills types and at most five distinct supported atom/string keys: path, mode, objective, prompt and model_id.
 Start strings are nonblank valid UTF-8 without NUL and at most 8,000 bytes; non-reflect tasks require an absolute path of at most 1,024 bytes, existing except for genesis-new, while reflect rejects path.
@@ -103,9 +120,12 @@ Deletion returns an explicit queued-cast acknowledgement, never a persisted-dele
 Guides require a message of at most 2,000 bytes, an allowlisted local page, optional simple `#id` selector of at most 80 bytes and boolean dismissible flag.
 
 ## Projection and Output Contracts
-Task reads use page/lite APIs and expose only id, type, status, review_status, timestamps and agent_count, never objective, opts, result, errors, usage, histories or credentials.
+Facade task reads and direct task pages retain only id, type, status, review_status, timestamps and agent_count.
+Direct get_task/get_task_lite and start acknowledgements additionally project objective (falling back to prompt) and selected successful report text, each capped at 8,000 UTF-8 bytes with explicit truncation flags, returning maps rather than TaskInfo structs.
+Error/exit terms and failed/nonterminal binary crash fallbacks are omitted, and opts, attachments, errors, usage, histories and credential fields are never returned.
+Intentionally supplied objective/report text is readable and is not secret-redacted.
 Task pages default to limit 25/offset 0/status all, accept limit 1..50 and offset 0..10,000, and validate status against literal enums; task ids are 1..128 bytes of ASCII letters, digits, underscore or hyphen.
-Agent listing projects five fields inside ETS, takes one unsorted page of at most 100 and reports whether a continuation exists, without copying agent contexts.
+Agent listing projects five fields inside ETS without copying agent contexts; the facade returns one unsorted page of at most 100 plus a continuation flag, while direct RemoteAPI.list_agents/0 returns only that bounded list to preserve its list shape.
 Scheduler status totals used/waiting/capacity across at most 100 model-slot entries and separately reads only paused, never the full scheduler configuration.
 Model profiles return at most 100 id/model/concurrency projections; the underlying scheduler call still retrieves the profile list before projection.
 System info exposes only OS enum, Elixir/OTP versions, UTC time and online scheduler count; unknown scalars normalize to nil and counts require nonnegative integers.

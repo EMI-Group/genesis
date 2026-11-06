@@ -144,7 +144,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Engine do
     text =
       case type do
         :restricted ->
-          "Evaluation rejected a restricted operation. Use the Read/Write facade APIs."
+          "Evaluation rejected a restricted operation. Use admitted APIs such as EvoGit.TaskRegistry.list_tasks_page/0,1 or EvoGit.AgentScheduler.get_config/1 (safe scalar keys only); Read/Write facade APIs remain available. Call EvoGit.Agent.Tools.ElixirEval.Read.help() for exact MFAs and limits. Writes require the write tier and exact-code approval; no automatic escalation."
 
         :parsing ->
           "Evaluation could not parse the code."

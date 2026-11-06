@@ -2,6 +2,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist.Base do
   @moduledoc false
   use Dune.Allowlist, extend: Dune.Allowlist.Default
 
+  for {module, entries} <-
+        EvoGit.Agent.Tools.ElixirEval.DirectAPI.entries()
+        |> Enum.group_by(&elem(&1, 0)) do
+    allow(module, only: Enum.map(entries, &elem(&1, 1)) |> Enum.uniq())
+  end
+
   allow(EvoGit.Agent.Tools.ElixirEval.Read,
     only: [
       :help,
@@ -53,7 +59,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist do
   def fun_status(IO, :inspect, arity) when arity in [1, 2, 3], do: {:shimmed, IOShim, :inspect}
   def fun_status(IO, name, _arity) when name in [:puts, :inspect], do: :restricted
   def fun_status(Kernel, :dbg, _arity), do: :restricted
-  def fun_status(module, name, arity), do: ReadAllowlist.Base.fun_status(module, name, arity)
+
+  def fun_status(module, name, arity) do
+    if EvoGit.Agent.Tools.ElixirEval.DirectAPI.runtime_module?(module),
+      do: EvoGit.Agent.Tools.ElixirEval.DirectAPI.status(module, name, arity, :read),
+      else: ReadAllowlist.Base.fun_status(module, name, arity)
+  end
 end
 
 defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist do
@@ -73,5 +84,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist do
   def fun_status(module, name, arity) when module in [IO, Kernel],
     do: ReadAllowlist.fun_status(module, name, arity)
 
-  def fun_status(module, name, arity), do: WriteAllowlist.Base.fun_status(module, name, arity)
+  def fun_status(module, name, arity) do
+    if EvoGit.Agent.Tools.ElixirEval.DirectAPI.runtime_module?(module),
+      do: EvoGit.Agent.Tools.ElixirEval.DirectAPI.status(module, name, arity, :write),
+      else: WriteAllowlist.Base.fun_status(module, name, arity)
+  end
 end

@@ -20,6 +20,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
     :paused
   ]
 
+  # Real runtime APIs accept keywords; reject duplicates before Map.new can
+  # erase them. Existing facade validation remains the single policy source.
+  def keyword_map(options) when is_list(options) do
+    if length(options) <= 5 and Keyword.keyword?(options) and
+         length(Keyword.keys(options) |> Enum.uniq()) == length(options),
+       do: {:ok, Map.new(options)},
+       else: {:error, "Expected at most five distinct atom-keyed keyword options."}
+  end
+
+  def keyword_map(_), do: {:error, "Expected keyword options, not a map."}
+
   # Scheduler.update_config trusts its callers. Validate here before dispatch;
   # literal keys/ranges exclude credentials, model/provider options and paths.
   def scheduler_options(options) do

@@ -14,19 +14,20 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   """
   use GenServer
 
-  alias EvoGit.Agent.Tools.ElixirEval.{Ancestry, Authorization, Projection}
+  alias EvoGit.Agent.Tools.ElixirEval.{Ancestry, Authorization, DirectAPI, Projection}
   alias EvoGit.TaskRegistry.TaskExecutor
 
   @reads [
-    :help,
-    :system_info,
-    :list_tasks,
-    :get_task,
-    :list_agents,
-    :scheduler_status,
-    :model_profiles,
-    :configuration_status
-  ]
+           :help,
+           :system_info,
+           :list_tasks,
+           :get_task,
+           :list_agents,
+           :scheduler_status,
+           :model_profiles,
+           :configuration_status
+         ] ++ DirectAPI.read_operations()
+  @direct_reads DirectAPI.read_operations()
   @writes [
     :start_task,
     :cancel_task,
@@ -151,7 +152,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   def handle_call(_, _, state), do: {:reply, @unavailable, state}
 
-  defp process_operation(operation, args, from, state) do
+  defp process_operation({:direct, operation}, args, from, state) do
+    case DirectAPI.prepare(operation, args) do
+      {:ok, canonical, validated} -> process_validated(canonical, validated, from, state, :direct)
+      error -> {:reply, error, state}
+    end
+  end
+
+  defp process_operation(operation, args, from, state),
+    do: process_validated(operation, args, from, state, :facade)
+
+  defp process_validated(operation, args, from, state, mode) do
     cost = read_cost(operation, args)
 
     cond do
@@ -170,7 +181,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
         context = state.context
         # A separate trusted task keeps the broker responsive to owner/tool/
         # evaluator DOWN while bounded runtime calls are in progress.
-        task = Task.async(fn -> execute_safely(operation, args, context) end)
+        task = Task.async(fn -> execute_safely(operation, args, context, mode) end)
 
         {:noreply,
          %{
@@ -254,10 +265,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   # Native facade boundary: unexpected runtime failures must not leak inspected
   # errors or secrets to Dune's value/stdout channel. Known errors stay explicit.
-  defp execute_safely(operation, args, context) do
+  defp execute_safely(operation, args, context, mode) do
     try do
       with :ok <- Authorization.revalidate(context) do
-        result = execute(operation, args, context)
+        result = execute(operation, args, context, mode)
         with :ok <- Authorization.revalidate(context), do: result
       end
     rescue
@@ -272,7 +283,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     end
   end
 
-  defp execute(:help, [], _), do: EvoGit.Agent.Tools.ElixirEval.help()
+  defp execute(:help, [], _),
+    do: EvoGit.Agent.Tools.ElixirEval.help() <> "\n" <> DirectAPI.help()
+
   defp execute(:system_info, [], _), do: Projection.system_info()
   defp execute(:list_tasks, [options], context), do: Projection.tasks(context, options)
   defp execute(:get_task, [id], context), do: Projection.get_task(context, id)
@@ -281,81 +294,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   defp execute(:model_profiles, [], _), do: Projection.model_profiles()
   defp execute(:configuration_status, [], _), do: Projection.configuration_status()
 
-  defp execute(:update_scheduler_config, [options], context) do
-    with {:ok, opts} <-
-           EvoGit.Agent.Tools.ElixirEval.Validation.scheduler_options(options),
-         :ok <- Authorization.revalidate(context) do
-      # Pause/resume must use their own scheduler transitions: update_config
-      # intentionally ignores :paused, and resume also dispatches queued agents.
-      # Require paused alone so each facade call sends exactly one mutation.
-      request =
-        case opts do
-          [paused: true] -> :pause
-          [paused: false] -> :resume
-          _ -> {:update_config, opts}
-        end
-
-      case GenServer.call(EvoGit.AgentScheduler, request, 1_000) do
-        :ok ->
-          %{status: :updated, scope: :runtime, persisted: false, settings: Map.new(opts)}
-
-        _ ->
-          {:error,
-           "Scheduler update not acknowledged; inspect configuration_status before retrying."}
-      end
-    end
-  end
-
-  defp execute(:start_task, [type, options], context) do
-    with {:ok, task_type, opts} <-
-           EvoGit.Agent.Tools.ElixirEval.Validation.start_options(type, options),
-         :ok <- Authorization.revalidate(context) do
-      id = TaskExecutor.generate_id()
-
-      case GenServer.call(context.registry, {:start_task, id, task_type, opts}, 1_000) do
-        {:ok, task} when is_map(task) ->
-          %{task_id: Projection.text(Map.get(task, :id), 128), status: :submitted}
-
-        _ ->
-          {:error, "Task submission failed; inspect tasks before retrying."}
-      end
-    end
-  end
-
-  defp execute(operation, [id], context)
-       when operation in [:cancel_task, :force_kill_task, :delete_task] do
-    allowed =
-      case operation do
-        :cancel_task -> [:pending, :running]
-        :force_kill_task -> [:running, :cancelling]
-        :delete_task -> [:completed, :failed, :cancelled]
-      end
-
-    with :ok <- Projection.task_id(id),
-         false <- id == context.task_id,
-         %{status: status} <- Projection.get_task(context, id),
-         true <- status in allowed,
-         :ok <- Authorization.revalidate(context) do
-      case operation do
-        :delete_task ->
-          GenServer.cast(context.registry, {:delete_task, id})
-
-          %{
-            task_id: id,
-            status: :queued,
-            acknowledgement: "Deletion queued; persistence is not acknowledged."
-          }
-
-        _ ->
-          case GenServer.call(context.registry, {operation, id}, 1_000) do
-            :ok -> %{task_id: id, status: :requested}
-            _ -> {:error, "Task action refused; refresh its current state."}
-          end
-      end
-    else
-      _ -> {:error, "Task action requires a different, existing task in an allowed state."}
-    end
-  end
+  defp execute(operation, args, context) when operation in @direct_reads,
+    do: DirectAPI.execute_read(operation, args, context)
 
   defp execute(:guide, [message, options], context) do
     with {:ok, payload} <- EvoGit.Agent.Tools.ElixirEval.Validation.guide(message, options),
@@ -375,14 +315,106 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   defp execute(_, _, _), do: {:error, "Invalid operation arguments."}
 
-  defp read_cost(:list_tasks, [options]) when is_map(options) do
+  defp execute(:update_scheduler_config, [options], context, mode) do
+    with {:ok, opts} <-
+           EvoGit.Agent.Tools.ElixirEval.Validation.scheduler_options(options),
+         :ok <- Authorization.revalidate(context) do
+      # Pause/resume must use their own scheduler transitions: update_config
+      # intentionally ignores :paused, and resume also dispatches queued agents.
+      # Require paused alone so each facade call sends exactly one mutation.
+      request =
+        case opts do
+          [paused: true] -> :pause
+          [paused: false] -> :resume
+          _ -> {:update_config, opts}
+        end
+
+      case GenServer.call(EvoGit.AgentScheduler, request, 1_000) do
+        :ok when mode == :direct ->
+          :ok
+
+        :ok ->
+          %{status: :updated, scope: :runtime, persisted: false, settings: Map.new(opts)}
+
+        _ ->
+          {:error,
+           "Scheduler update not acknowledged; inspect configuration_status before retrying."}
+      end
+    end
+  end
+
+  defp execute(:start_task, [type, options], context, mode) do
+    with {:ok, task_type, opts} <-
+           EvoGit.Agent.Tools.ElixirEval.Validation.start_options(type, options),
+         :ok <- Authorization.revalidate(context) do
+      id = TaskExecutor.generate_id()
+
+      case GenServer.call(context.registry, {:start_task, id, task_type, opts}, 1_000) do
+        {:ok, task} when is_map(task) and mode == :direct ->
+          {:ok, Projection.task_detail(task)}
+
+        {:ok, task} when is_map(task) ->
+          %{task_id: Projection.text(Map.get(task, :id), 128), status: :submitted}
+
+        _ ->
+          {:error, "Task submission failed; inspect tasks before retrying."}
+      end
+    end
+  end
+
+  defp execute(operation, [id], context, mode)
+       when operation in [:cancel_task, :force_kill_task, :delete_task] do
+    allowed =
+      case operation do
+        :cancel_task -> [:pending, :running]
+        :force_kill_task -> [:running, :cancelling]
+        :delete_task -> [:completed, :failed, :cancelled]
+      end
+
+    with :ok <- Projection.task_id(id),
+         false <- id == context.task_id,
+         %{status: status} <- Projection.get_task(context, id),
+         true <- status in allowed,
+         :ok <- Authorization.revalidate(context) do
+      case operation do
+        :delete_task ->
+          GenServer.cast(context.registry, {:delete_task, id})
+
+          if mode == :direct do
+            :ok
+          else
+            %{
+              task_id: id,
+              status: :queued,
+              acknowledgement: "Deletion queued; persistence is not acknowledged."
+            }
+          end
+
+        _ ->
+          case GenServer.call(context.registry, {operation, id}, 1_000) do
+            :ok when mode == :direct -> :ok
+            :ok -> %{task_id: id, status: :requested}
+            _ -> {:error, "Task action refused; refresh its current state."}
+          end
+      end
+    else
+      _ -> {:error, "Task action requires a different, existing task in an allowed state."}
+    end
+  end
+
+  defp execute(operation, args, context, _mode), do: execute(operation, args, context)
+
+  defp read_cost(operation, [options])
+       when operation in [:list_tasks, :task_page] and is_map(options) do
     case Projection.page_options(options) do
       {:ok, opts} -> opts[:limit]
       _ -> 0
     end
   end
 
-  defp read_cost(operation, _) when operation in [:list_agents, :model_profiles], do: 100
+  defp read_cost(operation, _)
+       when operation in [:list_agents, :agent_page, :slots, :model_profiles], do: 100
+
   defp read_cost(operation, _) when operation in @reads, do: 1
   defp read_cost(_, _), do: 0
 end
