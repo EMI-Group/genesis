@@ -117,6 +117,8 @@ The explicitly required `evo_git/agent/tools/elixir_eval_fixture_helper.exs` own
 Cold-facade tests must run without preloading evaluator allowlists because lazy initialization failures are part of the tested production boundary.
 The evaluator regressions intentionally require embedded scheduler IDs to match their ETS lookup key, including revalidation after a held sudo approval.
 Ordinary Mix execution requires the declared Dune dependency; temporary validation against externally compiled genuine Dune can eagerly load only its dependency beams before invoking `Mix.CLI.main` with `--no-deps-check`, never substitute evaluator production beams.
+The genuine Dune 0.3.18 cache recorded in `refs/notes/evogit` on `ba7e4558e` and `902ac54c4` is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; use the absolute path because background jobs may change `$TMPDIR`.
+The recorded alternative is `MIX_ENV=test elixir -pa <dune-ebin> -S mix do compile --no-deps-check --no-prune-code-paths + test --no-compile --no-deps-check <test-paths> --seed 42`, which needs no source, dependency-declaration or lockfile changes but still writes ordinary build/test artifacts.
 
 ## Known Issues
 **`EvoGit.SystemSampler` interval can only be changed via restart**: the sampler starts before `test_helper.exs`, so setting `:system_sample_interval_ms` there is too late; a test needing a fast tick sets the env then calls `Supervisor.terminate_child/2` + `Supervisor.restart_child/2` so `init/1` re-reads it (`terminate_child/2` alone leaves a permanent child `:undefined`).
