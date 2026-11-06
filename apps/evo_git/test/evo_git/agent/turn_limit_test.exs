@@ -121,7 +121,8 @@ defmodule EvoGit.Agent.TurnLimitTest do
     test "grace period is bounded to one turn" do
       # After entering grace period, a continue outcome fails recovery
       # immediately. This means the agent gets exactly one grace turn —
-      # it must call complete_task, not other tools.
+      # it must FINISH (a plain-text reply with no tool calls completes the
+      # run), not keep calling other tools.
       in_grace = state(in_grace_period: true)
 
       # A {:continue, _} outcome during grace period fails recovery
