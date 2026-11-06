@@ -49,8 +49,6 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 
 `reflect_tools_test.exs` calls the ten control handlers directly through `execute/3`; its only `run_command` dispatch cases are `ListRecentProjects.list_recent_projects`, `SystemInfo.system_info`, and `ListTasks.list_tasks`, all under the process-local `:repo_less` flag.
 These dispatch cases pin the `%{"command" => <legacy command string>}` argument and formatted text output, not ordinary Elixir syntax or evaluation.
-Production `Tools.execute/5` unconditionally refuses `run_command` with `Error: use elixir_eval exact-code approval path`, so the three success assertions at reflect_tools_test.exs:382-398, :418-437 and :478-484 are stale and should become legacy-refusal regressions rather than being mechanically translated to evaluator success under a forged repo-less flag.
-The direct legacy handler tests remain distinct compatibility coverage and do not prove authorization of the new evaluator facades.
 The repo-less guard cases pin blocked `write_file` / `edit_file` / `skill_add`, JSON-string write arguments, a permitted file read, and restoration of writes after deleting `:repo_less`.
 The suite has no `RunCommand` schema tests, direct `CommandShell` calls, restricted-evaluation allowlist tests, sudo/approval interactions, evaluator context/binding isolation, evaluator cancellation/timeout cleanup, or audit assertions.
 Control-handler cancellation coverage is only a pending task becoming `:cancelled`; the force-kill case asserts the seeded running task becomes `:failed`, but does not assert the wrapper pid has died.
@@ -61,16 +59,6 @@ There is no config-dir isolation helper in `reflect_tools_test.exs`; its SystemI
 `spawn_investigator_probe_test.exs` tests the deterministic read-only filesystem report over unique temp git fixtures, including nested CONTEXT.md excerpts and malformed/nonexistent inputs, not assistant evaluation-context isolation or permission enforcement.
 Sibling parser/approval suites route to `test/evo_git/{command_shell,command_approval}_test.exs`, the runtime suite routes to `test/evo_git/runtime/`, and production command-handler/evaluator architecture routes to `lib/evo_git/agent/tools/` and the core runtime's CONTEXT.md.
 
-## Evaluator Test Ownership and Fixture Constraints
-No evaluator-specific test file exists in this directory; the production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
-Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
-A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
-Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
-Real-Dune tests must exercise fully qualified facade names through Dune's own nested helper ancestry, rather than mocking authorization or relying on interpreted alias declarations.
-Public-wrapper write and sudo tests must drive exact-code `CommandApproval.request_eval/5`; direct Engine execution is not evidence that approval is enforced.
-Use id-pinned approval responders and monitored, handshake-held descendants for lifecycle assertions, never unconditional approvers, artificial CPU-load generators or quiet-window timing races.
-Prefer async modules for pure/local fixtures; modules changing scheduler profiles, the global approval service or shared timeout settings must explicitly name that forcing global and remain synchronous.
-Parent-owned ToolDispatch tests should establish identity handoff, serial evaluator batches and approval-aware outer timeout rather than duplicating those concerns here.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
