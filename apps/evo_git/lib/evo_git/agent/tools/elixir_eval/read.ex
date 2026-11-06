@@ -17,7 +17,7 @@ end
 
 defmodule EvoGit.Agent.Tools.ElixirEval.Write do
   @moduledoc """
-  Fixed local mutations, available only to the write-tier broker.
+  Fixed local mutations, available only to a write- or sudo-tier broker.
   Self-targeting is forbidden; delete_task acknowledges a queued cast, not a
   persisted deletion. These calls do not roll back effects on evaluator timeout.
   """

@@ -2,11 +2,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   @moduledoc """
   One short-lived, unregistered capability broker per evaluation.
 
-  Only the creating tool may attach a worker, collect output or stop it.
-  Sandboxed requests must descend from that worker via real Task/proc_lib
-  ancestry. The broker is not itself an allowlisted sandbox module.
+  Only the original authorized tool may create a broker and nominate its trusted
+  guardian as controller. Only that controller may attach one worker or collect
+  output; the tool retains stop authority for failed handoffs. The broker monitors
+  the original tool, owner and controller independently. Sandboxed requests must
+  descend from the attached worker via Task/proc_lib ancestry, seeded by the
+  trusted worker entry, never by evaluated code. The broker is not allowlisted.
   Caps: 128 requests (including IO), 32 reads, 500 projected rows, 16 writes,
-  four task starts, 65,536 stdout bytes; registry calls have a 1s deadline.
+  four task starts, requested stdout bytes (at most 65,536); registry calls have a 1s deadline.
   Engine applies its own timeout and final output limit as well.
   """
   use GenServer
@@ -25,18 +28,26 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   ]
   @writes [:start_task, :cancel_task, :force_kill_task, :delete_task, :guide]
   @unavailable {:error, "Evaluation capability unavailable or expired."}
-  @output_cap 65_536
+  @max_output_cap 65_536
 
-  def start(context, tier) when tier in [:read, :write, "read", "write"] do
+  # This is an explicit handoff by the ORIGINAL tool, not re-authorization of
+  # an unlinked guardian as if it were a tool. Keep context.tool_pid unchanged.
+  def start(context, tier, controller \\ self())
+
+  def start(context, tier, controller)
+      when tier in [:read, :write, :sudo, "read", "write", "sudo"] and is_pid(controller) do
     with :ok <- Authorization.revalidate(context),
-         true <- context.tool_pid == self() do
-      GenServer.start(__MODULE__, {context, tier, self()})
+         true <- context.tool_pid == self(),
+         true <- node(controller) == node() and Process.alive?(controller),
+         cap when is_integer(cap) and cap > 0 and cap <= @max_output_cap <-
+           Map.get(context, :max_output_bytes, 16_384) do
+      GenServer.start(__MODULE__, {context, tier, self(), controller, cap})
     else
       _ -> @unavailable
     end
   end
 
-  def start(_, _), do: @unavailable
+  def start(_, _, _), do: @unavailable
   def attach(pid, worker_pid), do: safe_call(pid, {:attach, worker_pid})
   def stop(pid), do: safe_call(pid, :stop)
 
@@ -65,14 +76,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   @impl true
-  def init({context, tier, creator}) do
+  def init({context, tier, creator, controller, cap}) do
     {:ok,
      %{
        context: context,
        tier: tier,
        creator: creator,
+       controller: controller,
+       output_cap: cap,
        owner_monitor: Process.monitor(context.owner_pid),
        creator_monitor: Process.monitor(creator),
+       controller_monitor: Process.monitor(controller),
        worker: nil,
        worker_monitor: nil,
        attached: false,
@@ -88,7 +102,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
 
   @impl true
   def handle_call({:attach, worker}, {caller, _}, state) do
-    if caller == state.creator and not state.attached and is_pid(worker) and
+    if caller == state.controller and not state.attached and is_pid(worker) and
          worker != caller and worker_child?(worker, caller) and
          Authorization.revalidate(state.context) == :ok do
       {:reply, :ok,
@@ -99,10 +113,16 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   def handle_call(:output, {caller, _}, state) do
-    {:reply, if(caller == state.creator, do: state.output, else: ""), state}
+    output =
+      if caller == state.controller and Authorization.revalidate(state.context) == :ok,
+        do: state.output,
+        else: ""
+
+    {:reply, output, state}
   end
 
-  def handle_call(:stop, {caller, _}, state) when caller == state.creator do
+  def handle_call(:stop, {caller, _}, state)
+      when caller == state.creator or caller == state.controller do
     {:stop, :normal, :ok, state}
   end
 
@@ -128,7 +148,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
         {:reply, {:error, "Evaluation read limit reached."}, state}
 
       operation in @writes and
-          (state.tier not in [:write, "write"] or state.writes >= 16 or
+          (state.tier not in [:write, :sudo, "write", "sudo"] or state.writes >= 16 or
              (operation == :start_task and state.starts >= 4)) ->
         {:reply, {:error, "Write capability unavailable or write limit reached."}, state}
 
@@ -164,7 +184,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   def handle_info({:DOWN, ref, :process, _, _}, state)
-      when ref == state.owner_monitor or ref == state.creator_monitor do
+      when ref == state.owner_monitor or ref == state.creator_monitor or
+             ref == state.controller_monitor do
     {:stop, :normal, state}
   end
 
@@ -190,15 +211,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     :ok
   end
 
-  # Task.async returns before its child installs $callers. A native link
-  # proves the trusted immediate Task relationship during that startup window;
-  # every subsequent sandbox request must still pass the ancestry check.
-  defp worker_child?(worker, caller) do
-    Ancestry.includes?(worker, caller) or
-      case Process.info(worker, :links) do
-        {:links, links} -> caller in links
-        _ -> false
-      end
+  # The trusted worker entry installs precisely this immediate ancestor BEFORE
+  # announcing readiness. A transitive ancestor or native link is not sufficient:
+  # links are mutable and would admit unrelated processes during startup.
+  defp worker_child?(worker, controller) do
+    case Process.info(worker, :dictionary) do
+      {:dictionary, dictionary} -> Keyword.get(dictionary, :"$ancestors") == [controller]
+      _ -> false
+    end
   end
 
   defp cancel_pending(nil), do: :ok
@@ -209,10 +229,10 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   end
 
   defp append_stdio([binary], state)
-       when is_binary(binary) and byte_size(binary) <= @output_cap do
+       when is_binary(binary) and byte_size(binary) <= state.output_cap do
     with :ok <- Authorization.revalidate(state.context),
          true <- String.valid?(binary),
-         true <- byte_size(state.output) + byte_size(binary) <= @output_cap do
+         true <- byte_size(state.output) + byte_size(binary) <= state.output_cap do
       {:reply, :ok, %{state | output: state.output <> binary}}
     else
       _ -> {:reply, {:error, "Evaluation stdout limit reached or authority expired."}, state}

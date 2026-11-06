@@ -3,6 +3,9 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Authorization do
   Fail-closed authorization for the local, built-in reflective assistant.
   Role flags in a fresh tool task are deliberately not consulted.
   Registry calls use a one-second deadline and never fetch full task history.
+  The context always names the ORIGINAL tool and assistant owner. Trusted broker
+  and guardian processes may revalidate that context, but must never replace its
+  identities with their own; Broker.start requires the original tool as caller.
   """
 
   alias EvoGit.Agent.Tools.ElixirEval.Ancestry

@@ -23,47 +23,66 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
     ref = make_ref()
 
     {pid, monitor} =
-      spawn_monitor(fn -> guard(caller, ref, context, tier, limits, fun) end)
+      spawn_monitor(fn -> guard(caller, ref, limits, fun, context) end)
 
-    receive do
-      {^ref, result} ->
-        Process.demonitor(monitor, [:flush])
-        result
+    # Only the original authorized tool creates the broker. It explicitly hands
+    # control to this waiting guardian without replacing tool_pid/owner_pid or
+    # pretending the unlinked guardian is a Task descendant of the tool.
+    try do
+      case Broker.start(context, tier, pid) do
+        {:ok, broker} ->
+          try do
+            send(pid, {ref, :broker, broker})
 
-      {:DOWN, ^monitor, :process, ^pid, _} ->
-        {:error, "Evaluation guardian failed."}
+            receive do
+              {^ref, result} -> result
+              {:DOWN, ^monitor, :process, ^pid, _} -> {:error, "Evaluation guardian failed."}
+            end
+          after
+            Broker.stop(broker)
+          end
+
+        _ ->
+          {:error, "Evaluation broker unavailable."}
+      end
+    rescue
+      # Trusted lifecycle failures must not expose context, exceptions or exits.
+      _ -> {:error, "Evaluation infrastructure failed."}
+    catch
+      _, _ -> {:error, "Evaluation infrastructure failed."}
+    after
+      Process.exit(pid, :kill)
+      Process.demonitor(monitor, [:flush])
     end
   end
 
-  defp guard(caller, ref, context, tier, limits, fun) do
+  defp guard(caller, ref, limits, fun, context) do
     owners =
       [caller, Map.get(context, :owner_pid), Map.get(context, :agent_pid)]
       |> Enum.filter(&is_pid/1)
       |> Enum.uniq()
       |> Map.new(&{Process.monitor(&1), &1})
 
-    # This is the central boundary for trusted broker lifecycle failures: never
-    # inspect an exception, exit reason, context or stacktrace into a tool reply.
-    result =
-      try do
-        case Broker.start(context, tier) do
-          {:ok, broker} ->
-            try do
-              execute(broker, owners, limits, fun)
-            after
-              Broker.stop(broker)
-            end
+    receive do
+      {^ref, :broker, broker} when is_pid(broker) ->
+        # Central boundary for trusted broker/worker lifecycle failures. Never
+        # inspect an exception, exit reason, context or stacktrace into a reply.
+        result =
+          try do
+            execute(broker, owners, limits, fun)
+          rescue
+            _ -> {:error, "Evaluation infrastructure failed."}
+          catch
+            _, _ -> {:error, "Evaluation infrastructure failed."}
+          after
+            Broker.stop(broker)
+          end
 
-          _ ->
-            {:error, "Evaluation broker unavailable."}
-        end
-      rescue
-        _ -> {:error, "Evaluation infrastructure failed."}
-      catch
-        _, _ -> {:error, "Evaluation infrastructure failed."}
-      end
+        send(caller, {ref, result})
 
-    send(caller, {ref, result})
+      {:DOWN, monitor, :process, _, _} when is_map_key(owners, monitor) ->
+        :ok
+    end
   end
 
   defp execute(broker, owners, limits, fun) do
@@ -74,9 +93,16 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
     {worker, monitor} =
       :erlang.spawn_opt(
         fn ->
+          # Raw spawn_opt deliberately creates NO links. Seed ancestry only here,
+          # in trusted code, before any evaluated code or Dune process can run.
+          # Dune's nested proc_lib/Task children discover this root via their own
+          # runtime-maintained ancestry; no broker token is copied into user code.
+          Process.put(:"$ancestors", [guardian])
+          Process.put(:evogit_eval_broker, broker)
+          send(guardian, {:worker_ready, token, self()})
+
           receive do
             {:execute, ^token} ->
-              Process.put(:evogit_eval_broker, broker)
               result = safe_evaluate(fn -> fun.(broker) end)
               send(guardian, {:evaluated, token, self(), result})
           end
@@ -110,17 +136,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
       try do
         :erlang.trace(worker, true, [:procs, :set_on_spawn, {:tracer, self()}])
 
-        case Broker.attach(broker, worker) do
-          :ok ->
-            send(worker, {:execute, token})
-            watch(state)
-
-          {:ok, _} ->
-            send(worker, {:execute, token})
-            watch(state)
-
-          _ ->
-            {:error, "Evaluation worker authorization failed."}
+        with :ok <- await_ready(state),
+             :ok <- Broker.attach(broker, worker) do
+          send(worker, {:execute, token})
+          watch(state)
+        else
+          _ -> {:error, "Evaluation worker authorization failed."}
         end
       after
         cleanup(state.workers)
@@ -132,6 +153,20 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WorkerTree do
     case result do
       {:ok, text} -> {:ok, Render.text(output <> text, limits.max_output_bytes)}
       {:error, text} -> {:error, Render.text(output <> text, limits.max_output_bytes)}
+    end
+  end
+
+  # Wait for the trusted dictionary seed, not a Task.async startup race or link.
+  # No user function runs until this handshake AND Broker.attach have succeeded.
+  defp await_ready(state) do
+    receive do
+      {:worker_ready, token, worker} when token == state.token and worker == state.worker ->
+        :ok
+
+      {:DOWN, _, :process, _, _} ->
+        :error
+    after
+      max(state.deadline - now(), 0) -> :error
     end
   end
 
