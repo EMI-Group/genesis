@@ -6,7 +6,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 ## Routing Table
 - `./skill/` → skill tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead) — detail `skill/CONTEXT.md`
 - `./lsp/` → `EvoGit.Agent.Tools.Lsp.Protocol`, the PURE LSP wire codec (Content-Length framing, JSON-RPC encode, incremental `decode/1`, `file://` URIs, diagnostics/hover/definition normalization; no I/O, ports or processes) — detail `lsp/CONTEXT.md`
-- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, Dune admission of real APIs and optional broker-backed Read/Write facades, projections, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
+- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, literal MFA/tier admissions of unchanged real APIs through broker-backed Dune shims, optional narrow Read/Write facades, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
 
 ## API Surface
 
@@ -310,11 +310,20 @@ Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrap
 `tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
 `target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; explicit nil, atoms and remote targets are rejected.
 `timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS: timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes, including errors and truncation markers.
-Read/write use Dune with fully qualified admitted real APIs; `EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` are optional conveniences, not the sole path, and interpreted `alias/1` declarations are unsupported.
+Read/write use literal module/function/arity/tier admissions that invoke the actual public APIs unchanged through broker-backed Dune shims, not facade projections, redaction or added argument validation; no admission grants an entire namespace.
+Read admissions are available in both read and write tiers; examples include `EvoGit.TaskRegistry.get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0` and `EvoGit.Config.resolve/0,1`, with the exact catalog owned by the child context and `DirectAPI`.
+Direct reads are NOT projected or secret-safe and are not necessarily collection-bounded; execution/output limits bound resource use, not disclosure, and truncation is not redaction.
+`EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` remain optional narrow facades, not the sole path, and interpreted `alias/1` declarations are unsupported.
 `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()` uses defaults and `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(map)` accepts pagination/filter options; `help/0` provides fully qualified examples.
-Each call has fresh bindings; reading source or finding a public API does not admit it, and persistence support is governed by the direct admission catalog rather than a blanket config-API exclusion.
+Each call has fresh bindings; reading source or finding a public API does not admit it.
+The threat model is accidental self-corruption, not a malicious attacker: write requires exact-code approval for bounded admitted capabilities, distinct from separately approved unrestricted native sudo.
 Write/sudo require exact-code approval through `EvoGit.CommandApproval.request_eval/5`, execute only on `:approved`, and revalidate authority before approval, immediately before execution and after any engine result.
-Sudo is DANGEROUS UNSANDBOXED full VM evaluation with best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
+Persistence IS admitted in write tier via `EvoGit.Config.save_user_config/1`, alongside explicit writes such as `EvoGit.TaskRegistry.start_task/2` and `EvoGit.AgentScheduler.update_config/1`; there is no blanket config-persistence exclusion.
+`EvoGit.Config.resolve/0,1` reads defaults plus user configuration, NOT live runtime overrides; `EvoGit.AgentScheduler.update_config/1` changes runtime state only.
+`EvoGit.Config.save_user_config/1` validates and replaces the WHOLE config file and invalidates its cache but does not reload the scheduler: read/modify/save the full map to preserve unrelated settings, then explicitly call `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and inspect its result.
+Saving a resolved map materializes defaults in the file, and concurrent saves can lose edits.
+Sudo is DANGEROUS UNSANDBOXED full VM evaluation with server permissions, not OS root elevation, best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
+Neither write nor sudo can roll back committed effects.
 The evaluator's approval wait is separate from its execution budget; dispatch must allow the approval window instead of imposing the generic short tool timeout.
 
 ### StartTask opt-forwarding surface (shell task-start data plane)

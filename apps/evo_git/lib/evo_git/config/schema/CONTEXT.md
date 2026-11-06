@@ -57,17 +57,19 @@ Callers (all of them): boot — `EvoGit.CatalogWarmup.warm_up/1` (a throwaway pr
 
 Tests inject stub metadata through the seam, so no catalog is needed.
 
-## Dune / Read-API Admission Boundaries
-`Definitions.schemas/0`, `search_providers/0` and `accent_palette/0` return real public metadata APIs; schema maps have exactly `key_path`, `type`, `default`, `validation`, `category`, `sub_category`, `description`, with no secret/redaction annotation or user values.
-`Definitions.schemas/0` derives CPU defaults through `Platform.cpu_threads/0`; credential defaults contain credential-key NAMES only, and `[:node, :cookie]` defaults to nil rather than the live distribution cookie.
-`all_schemas`, defaults and validation belong to parent `EvoGit.Config.Schema`, not `Definitions`; the parent validation engine is `EvoGit.Config.EctoValidation`, so no `Definitions.validate` or `LLM.validate` API exists here.
-`LLM.model_profiles/1`, `get_model_profile/2` and `default_model_profile/1` only inspect their supplied map and return original profiles without redacting model `extra`, endpoint overrides, arbitrary fields or `provider_options`.
-`LLM.provider_from_model/1` uses `String.to_atom/1` for arbitrary binary provider names; `oauth_profile?/1`, generation assembly, `LLMConstraints.constraints_for/1` and keyword-input `filter/3` reach it indirectly, so an unrestricted argument broker can grow the VM atom table despite Dune isolation.
-`LLM.ensure_profile_credentials/1` and `oauth_credential_status/1` do not require `oauth_profile?/1` to be true and delegate to Auth with the caller-supplied profile's resolved `oauth_file`; status therefore is not a side-effect-free health read.
-`LLM.profile_generation_params/1`, `llm_generation_params/1` and OAuth-only `provider_options_for_model/1` can import vendor credentials at assembly time, and profile assembly preserves explicit arbitrary provider options rather than projecting credential-safe data.
-`LLM.oauth_file_for/1` resolves profile/global/default paths through Auth and can consult user config; `model_metadata/1` invokes a runtime app-env function or ReqLLM catalog lookup, neither an inert schema-data operation.
-`LLMConstraints.constraints_for/1` returns raw constraint maps containing Regex structs, and `filter/3` logs omitted values plus the entire model spec, potentially including caller-supplied model `extra` secrets.
-`context_window_for/2` can raise on a model-list entry that is not a map despite its never-raises doc, because it calls `get_model_profile/2` whose search uses unguarded `Map.get/2` on each entry.
+## Assistant Evaluation / Configuration Boundaries
+The evaluator's explicit MFA/tier lists, not namespace grants or an API's public visibility, determine admission; the authoritative policy and full inventory live in `../../agent/tools/elixir_eval/CONTEXT.md`.
+`EvoGit.Config.resolve/0,1` are admitted direct reads in read/write tiers, while `EvoGit.Config.save_user_config/1`, `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and `EvoGit.AgentScheduler.update_config/1` are admitted only in write tier.
+Write tier requires exact-code tier-2 manual approval; unrestricted native sudo requires its separate explicit approval and is not a security sandbox, and denied operations never auto-escalate.
+These boundaries guard against accidental Assistant self-corruption, not a malicious attacker with unrestricted sudo authority.
+Direct reads retain actual nested values, potentially including secrets, and are neither facade projections nor secret-safe; output caps are not redaction.
+`Config.resolve/0,1` reads normalized defaults plus user configuration, not live scheduler overrides; direct `AgentScheduler.update_config/1` changes runtime settings without persisting them.
+`Config.save_user_config/1` replaces the whole file rather than patching and does not automatically reload the scheduler.
+For persistent changes, resolve the full configuration, update only intended keys and save the full map in the same approved evaluation, then explicitly call `RemoteAPI.reload_config/0` after save success and inspect its result.
+This preserves unrelated keys but materializes resolved defaults, and read-modify-save is not atomic, so avoid concurrent edits; boot-only settings still require restart.
+Schema/defaults APIs and this node's `Definitions`, `LLM` and `LLMConstraints` functions remain unlisted, not implicitly admitted through Config reads or writes.
+`Definitions` describes metadata without user values, whereas `LLM` helpers can return unredacted supplied profiles, create provider atoms, import OAuth credentials or load catalog metadata, and constraint filtering can log model specs containing secrets.
+`context_window_for/2` can raise on a non-map model-list entry through `get_model_profile/2`; schema validation and helper purity claims are not evaluator authorization or redaction guarantees.
 
 ## Constraints
 - `Definitions` describes defaults without reading user configuration, but `LLM` is not a pure read boundary: OAuth option assembly/status can import credentials into a caller-selected managed file, metadata resolution can load the catalog, and provider parsing can create atoms.

@@ -256,18 +256,26 @@ The scalar/rule validator beneath the DSL is **Ecto-backed, but Ecto is a VALIDA
 ## Direct API Admission and Persistence Boundaries
 `EvoGit.Config` lives in this directory's `config.ex`, not in the parent directory.
 `Schema.all_schemas/0`, `schemas_by_category/0`, `defaults/0`, and `validate/1` are real public APIs in `schema.ex`; `Schema.effective_model_profiles/1` supplies the runtime's legacy-profile fallback.
-`Config.resolve/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys, so unrestricted read-tier admission is not credential-safe.
+The Assistant evaluator admits direct `Config.resolve/0,1` reads and, only in approved tier-2 write calls, `Config.save_user_config/1`, `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and `EvoGit.AgentScheduler.update_config/1` through explicit exact-MFA lists, never namespace grants.
+These calls retain actual arguments and return values rather than facade projections; the full admission and execution contract belongs to `../agent/tools/elixir_eval/CONTEXT.md`.
+The permission model protects against accidental self-corruption rather than malicious attackers: read/write remain Dune-interpreted with bounded execution and authorization checks, while separately and explicitly approved sudo is unrestricted native evaluation with full VM authority, not an automatic escalation from write.
+`Config.resolve/0,1` and `user_config/0` return unredacted data, including node cookies, model `extra`/`provider_options`, endpoint credentials and arbitrary unknown TOML keys; admitted direct reads are not required to be projected or secret-safe, and output caps do not redact secrets.
+`Config.resolve/0,1` reads defaults plus user configuration, not live scheduler runtime overrides.
 `Config.config_status/0` returns `missing`, `warnings`, `ok?`, and `validation_errors`, but loads credentials into ReqLLM and may lazily import OAuth credentials into a managed file; its validation errors include original values and messages with inspected values.
 `Config.resolve/0` also logs invalid values verbatim, and neither its logging nor `Schema.ValidationError` provides redaction.
-`Config.read_toml_file/2,3` is public despite `@doc false` and reads any supplied file path, so it must not become a generic read capability accidentally.
-`Config.credential_key_to_reqllm_key/1` calls `String.to_atom/1` for arbitrary suffixed input and is not suitable for unrestricted interpreter admission.
+Public visibility alone does not grant evaluator access: `user_config/0`, `config_status/0`, `read_toml_file/2,3`, credential helpers and schema APIs remain unlisted.
+`Config.read_toml_file/2,3` reads any supplied file path despite `@doc false`, and `Config.credential_key_to_reqllm_key/1` calls `String.to_atom/1` for arbitrary suffixed input.
 `Config.save_user_config/1` validates the supplied map then REPLACES the entire config file; it is not a patch or merge API and performs no scheduler reload or PubSub broadcast.
+For a targeted persistent change, resolve the full map, update only intended fields and save it in the same approved write call, preserving unrelated keys; saving a resolved map also materializes defaults.
 That save uses plain `File.write/2` with no atomic rename, lock, rollback or chmod, drops nil map entries and mirrored flat LLM fields, and invalidates only its parsed-file cache after a successful write.
+Avoid concurrent edits because read-modify-save is not atomic and can overwrite another writer's changes.
+After a successful save, explicitly call `RemoteAPI.reload_config/0` and inspect its result to apply reloadable scheduler settings; save success does not imply reload success, and boot-only settings still require restart.
+`AgentScheduler.update_config/1` is a separate runtime-only mutation, not config persistence; it can be overwritten by a reload or restart.
 `Schema.validate/1` walks atom-keyed schema paths, skips missing/nil/non-map intermediates and preserves unknown keys, so string-keyed top-level maps and malformed intermediate sections can bypass validation.
 Model-profile validation checks id/model, atom-keyed provider-options container and optional peak/context/auth fields, but does not validate per-profile concurrency or generation-parameter ranges.
 `Config.save_credentials/1` merges new credentials into existing data without schema validation, mutates ReqLLM's key store BEFORE the filesystem write, and does not clear previously loaded keys when given empty/nil replacements.
-`Config.credentials/0` returns raw secrets and mutates the ReqLLM key store on cache misses; exposing it is materially different from a credential-presence boolean.
-Interpreter policies must distinguish permission to persist config, permission to change runtime scheduler settings, and permission to access or mutate secrets rather than relying on schema validation as authorization.
+`Config.credentials/0` returns raw secrets and mutates the ReqLLM key store on cache misses; this differs from a credential-presence boolean, and neither credential API is admitted directly.
+Schema validation is not authorization, and neither approval nor evaluation timeouts roll back committed side effects.
 Leaf-specific OAuth assembly, atom creation and catalog side effects are documented in `schema/CONTEXT.md`.
 
 ## Config Caching
