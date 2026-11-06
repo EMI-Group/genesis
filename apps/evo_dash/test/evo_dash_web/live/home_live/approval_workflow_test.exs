@@ -152,6 +152,51 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest do
     end
   end
 
+  describe "source-stamped resolutions" do
+    test "only the chat source can settle a busy card, not the viewed or evaluator node" do
+      expected = request()
+      other = request(%{request_id: "other"})
+
+      {socket, response_tag} =
+        socket(%{current_node: :viewed@host})
+        |> ApprovalWorkflow.requested(other)
+        |> ApprovalWorkflow.requested(expected)
+        |> response()
+
+      for foreign <- [:viewed@host, expected.target_node, :foreign@host, nil] do
+        assert ApprovalWorkflow.resolved(socket, expected.request_id, foreign) == socket
+      end
+
+      resolved = ApprovalWorkflow.resolved(socket, expected.request_id, expected.node)
+      assert resolved.assigns.pending_approvals == [other]
+      refute ApprovalWorkflow.busy?(resolved.assigns, expected.request_id)
+      assert ApprovalWorkflow.responded(resolved, response_tag, {:error, :timeout}) == resolved
+    end
+
+    test "viewed-node fallback requires a usable chat scope and rejects pending remote contexts" do
+      expected = request()
+
+      socket =
+        socket(%{chat_node: nil, current_node: expected.node})
+        |> ApprovalWorkflow.requested(expected)
+
+      assert ApprovalWorkflow.resolved(socket, expected.request_id, expected.node).assigns.pending_approvals ==
+               []
+
+      for overrides <- [
+            %{chat_task_id: nil, chat_agent_id: nil},
+            %{chat_task_id: " ", chat_agent_id: []},
+            %{chat_node: "not-an-atom"},
+            %{chat_node: nil, current_node: nil},
+            %{current_node_id: "pending", current_node: node()}
+          ] do
+        changed = assign(socket, Map.to_list(overrides))
+        source = changed.assigns.chat_node || changed.assigns.current_node
+        assert ApprovalWorkflow.resolved(changed, expected.request_id, source) == changed
+      end
+    end
+  end
+
   describe "snapshot and broadcast reconciliation" do
     test "snapshot replaces old cards, filters ownership, and deduplicated live arrival wins" do
       old = request(%{request_id: "stale"})
@@ -205,12 +250,85 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowTest do
       assert MapSet.member?(socket.assigns.approval_recovery_removed, "request-1")
       assert ApprovalWorkflow.responded(socket, response_tag, {:ok, :ok}) == socket
 
-      # The parent filters resolution broadcasts by source; resolved/2 takes only an id.
+      # Legacy unstamped resolutions still take only an id.
       socket = ApprovalWorkflow.resolved(socket, "not-yet-seen")
       fetched = [request(), request(%{request_id: "not-yet-seen"})]
 
       assert ApprovalWorkflow.recovered(socket, tag, {:ok, fetched}).assigns.pending_approvals ==
                []
+    end
+
+    test "only source resolutions tombstone seen and unseen cards during recovery" do
+      expected = request()
+      unseen = request(%{request_id: "unseen"})
+      foreign_resolution = request(%{request_id: "foreign-resolution"})
+      {socket, tag} = recovery(socket())
+      socket = ApprovalWorkflow.requested(socket, expected)
+      {socket, response_tag} = response(socket)
+
+      socket =
+        socket
+        |> ApprovalWorkflow.resolved(expected.request_id, expected.node)
+        |> ApprovalWorkflow.resolved(unseen.request_id, unseen.node)
+
+      assert socket.assigns.pending_approvals == []
+      assert socket.assigns.approval_recovery_new == []
+      assert socket.assigns.approval_responses == %{}
+      assert socket.assigns.approval_recovery_removed == MapSet.new(["request-1", "unseen"])
+
+      assert ApprovalWorkflow.resolved(socket, foreign_resolution.request_id, :evaluator@host) ==
+               socket
+
+      assert ApprovalWorkflow.responded(socket, response_tag, {:error, :timeout}) == socket
+
+      socket =
+        ApprovalWorkflow.recovered(socket, tag, {:ok, [expected, unseen, foreign_resolution]})
+
+      assert socket.assigns.pending_approvals == [foreign_resolution]
+      refute socket.assigns.approval_recovering
+      assert socket.assigns.approval_error == nil
+    end
+
+    test "authoritative snapshots preserve busy cards until acknowledgement or source resolution" do
+      expected = request()
+      stale = request(%{request_id: "stale"})
+      fetched = request(%{request_id: "fetched"})
+
+      # An omitted row and an older version of the same row are both possible
+      # while the backend has consumed the decision but its reply is in flight.
+      for snapshot <- [[], [request(%{code: "older()"}), fetched]] do
+        {socket, response_tag} =
+          socket()
+          |> ApprovalWorkflow.requested(stale)
+          |> ApprovalWorkflow.requested(expected)
+          |> response()
+
+        {socket, recovery_tag} = recovery(socket)
+        socket = ApprovalWorkflow.recovered(socket, recovery_tag, {:ok, snapshot})
+        others = Enum.reject(snapshot, &(&1.request_id == expected.request_id))
+
+        assert socket.assigns.pending_approvals == [expected | others]
+        assert ApprovalWorkflow.busy?(socket.assigns, expected.request_id)
+        assert socket.assigns.approval_responses == %{"request-1" => elem(response_tag, 1)}
+        refute socket.assigns.approval_recovering
+        assert ApprovalWorkflow.respond(socket, expected.request_id, "deny") == socket
+
+        for acknowledgement <- [{:ok, :ok}, {:ok, {:error, :not_found}}] do
+          settled = ApprovalWorkflow.responded(socket, response_tag, acknowledgement)
+          assert settled.assigns.pending_approvals == others
+          refute ApprovalWorkflow.busy?(settled.assigns, expected.request_id)
+        end
+
+        settled = ApprovalWorkflow.resolved(socket, expected.request_id, expected.node)
+        assert settled.assigns.pending_approvals == others
+        refute ApprovalWorkflow.busy?(settled.assigns, expected.request_id)
+        assert ApprovalWorkflow.responded(settled, response_tag, {:error, :timeout}) == settled
+
+        failed = ApprovalWorkflow.responded(socket, response_tag, {:error, :timeout})
+        assert failed.assigns.pending_approvals == [expected | others]
+        assert failed.assigns.approval_error == {:response, "request-1", :timeout}
+        refute ApprovalWorkflow.busy?(failed.assigns, expected.request_id)
+      end
     end
 
     test "recovery errors and malformed replies finish loading without losing cards" do
@@ -518,6 +636,20 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflowRunnersTest do
     assert_receive {{:approval_workflow_response, ^first_seq, _, "request-1"} = old_tag,
                     {:ok, {:error, :offline}} = result},
                    2_000
+
+    # The authoritative pending API can omit a consumed request before the
+    # responder's failure is applied; that must not destroy its retry card.
+    Application.put_env(:evo_dash, :approval_pending_runner, fn _ -> [] end)
+    socket = ApprovalWorkflow.recover(socket)
+    recovery_seq = socket.assigns.approval_recovery_seq
+
+    assert_receive {{:approval_pending_loaded, ^recovery_seq, _} = recovery_tag,
+                    {:ok, []} = recovery_result},
+                   2_000
+
+    socket = ApprovalWorkflow.recovered(socket, recovery_tag, recovery_result)
+    assert socket.assigns.pending_approvals == [request()]
+    assert ApprovalWorkflow.busy?(socket.assigns, "request-1")
 
     socket = ApprovalWorkflow.responded(socket, old_tag, result)
     assert socket.assigns.approval_error == {:response, "request-1", :offline}

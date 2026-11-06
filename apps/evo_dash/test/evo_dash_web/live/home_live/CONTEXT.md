@@ -3,7 +3,7 @@
 ## Intent
 
 This directory tests the pure support modules and assistant component used by the `/help` reading-first chat page.
-All suites use `async: true` and avoid mounting HomeLive or modifying process-global state.
+All suites use `async: true` and avoid mounting HomeLive; only the single runner suite owns the app-env seams documented below.
 
 ## API Surface
 
@@ -23,15 +23,19 @@ No production files or translation catalogs are maintained here.
 
 ## ApprovalWorkflow Coverage
 
-`approval_workflow_test.exs` contains a shared fixture helper, 17 pure async workflow tests and five async runner tests against `apps/evo_dash/lib/evo_dash_web/live/home_live/approval_workflow.ex`.
+`approval_workflow_test.exs` contains a shared fixture helper, 21 pure async workflow tests and five async runner tests against `apps/evo_dash/lib/evo_dash_web/live/home_live/approval_workflow.ex`.
 Both suites drive hand-built `%Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, ...}}` sockets without mounting `/help`, touching ChatHistory, invoking a live approval service or evaluating code.
 Ownership is source-node plus task OR string/integer-normalized agent identity; the source is `chat_node || current_node`, never evaluator `target_node`, and only legacy requests may omit the source node stamp.
 Malformed requests, blank ids, unusable refs and pending remote contexts are rejected, including recovery and response attempts that must not fall back to the local service.
 Pure tests pin every captured scope field (chat id, viewed node id/node, chat node, task and agent ids), stale tokens, resets, snapshot replacement and filtering, newer live-arrival precedence, and resolution tombstones for seen and unseen cards.
-Resolution is deliberately id-only in the helper, so source-node filtering of resolution broadcasts remains the parent's responsibility.
+Source-stamped `resolved/3` accepts only the scoped chat source, rejecting the viewed node and evaluator target when distinct, and rejects unusable scopes and pending remote contexts even when the stamp matches.
+Legacy `resolved/2` remains id-only; both paths clear busy/live entries and tombstone seen or unseen cards during recovery, while rejected source stamps cannot poison the snapshot.
+Authoritative empty or stale snapshots preserve an owned responding card and its original payload until success, not-found or a source resolution, while removing unrelated stale non-busy cards.
+A response failure after such a snapshot retains the card with retry guidance and clears only its busy state.
 Response tests pin absent/invalid/unowned/duplicate submission no-ops, retained cards on backend or transport failure, cleared busy state, successful retry, stale response rejection, and removal only on success, not-found or resolution.
 Runner tests exercise real supervised SafeCall execution with bare list/backend return values and nested envelopes `{{:approval_pending_loaded, seq, scope}, {:ok, requests}}` and `{{:approval_workflow_response, seq, scope, id}, {:ok, :ok}}`.
 The runner suite pins off-process source routing, captured runners despite later seam replacement, strictly increasing tokens across newer loads/reset/retry, pending-runner exits, and recovery retry.
+Its responder retry flow applies a real supervised empty pending snapshot before a failed response, proving the preserved card can submit a fresh decision and settle only on the new acknowledgement.
 All waits are bounded mailbox handshakes with no sleeps, and blocked runners are released and monitored through normal exit.
 `ApprovalWorkflowRunnersTest` is the sole async owner of the BEAM-global `:approval_pending_runner` and `:approval_responder` seams, restoring their previous values after each test.
 The sibling `home_live_test.exs` responder writer is synchronous and runs only after this async cohort; any future async seam writer must coordinate ownership rather than assume per-socket isolation.
