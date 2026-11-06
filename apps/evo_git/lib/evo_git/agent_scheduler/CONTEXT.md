@@ -31,6 +31,17 @@ Surface: `get_file_content/3`, `list_commits/2`, `load_review_data/2`, `load_rev
 `set_review_status/2` + `set_review_metadata/3` key on `task_id` ONLY — one status + one SHA pair per task; per-repo outcomes live in dashboard assigns; `get_foreign_repo_commits/1` is NOT exposed over RPC.
 `RemoteNode` mirrors `list_tasks_page/2` (deliberate asymmetry vs `select_tasks_page/1`), `get_task_lite/2`, `list_task_archives/3`, `get_agent_archive/3`, `list_commit_graph/4`, `list_task_commit_graph/5`, returning the Store's degraded shape on transport failure (`./store/CONTEXT.md`); guards exist only on `send_agent_message/2`, `get_recent_system_samples/0`, `respond_approval/2`.
 
+## Direct-Eval / Assistant API Safety
+
+`RemoteAPI` is a mixed read/write RPC facade, not an authorization boundary, so a read-only evaluator must allow exact module/function/arity tuples rather than the entire module or `get_*`/`list_*` name patterns.
+Useful bounded task reads are `select_tasks_page/0,1`, `get_task_lite/1`, and `list_task_archives/1,2`; `list_task_ids/0,1` is minimal but unpaged, while `list_agents/0` returns task ownership through `task_id` and ancestry through `parent_id`/`depth`.
+`RemoteAPI.get_agent_state/1` removes ONLY `context`, leaving `llm_generation_params` and pending messages untouched, while `get_agent_history/1` exposes full native message content, so neither is a redacted assistant-safe projection.
+`RemoteAPI.get_config/0` delegates directly to scheduler config with no redaction here, and `get_config_status/0` delegates to `Config.config_status/0`, whose credential/import behavior must be audited at the config/auth boundary before treating it as inert.
+`RemoteAPI.list_custom_agents/0` calls `CustomAgents.ModelSelector.status/0` and `custom_tools_status/0` calls the custom-tools loader, so their read-like names do not guarantee absence of compilation or user-code loading.
+`RemoteAPI` control wrappers (`start_task`, `cancel_task`, `force_kill_task`, `send_agent_message`, config/custom-agent saves, review mutations and `respond_approval`) do not ask for approval themselves, and exposing `respond_approval/2` to an assistant would let it answer the human approval gate.
+`Store.get_task_info/1` returns `{:ok, task_id, task_number, task_local_id}` and `SchedMeta.task_ref.pid` identifies the live agent process, but raw metadata/state reads are internal and unredacted rather than safe user-facing capabilities.
+`Lifecycle.cancel_agent/2` is an internal destructive state-transformer requiring the scheduler to remove refs first, not a stand-alone public cancellation API; killing an agent process externally can trigger crash retry instead of cancelling its task.
+
 ## Throttled PubSub
 
 - The `:agent_registered` `summary` has EXACTLY `status, depth, parent_id, task_id, task_number, objective` — NOT `message_count`/`agent_module` (only `list_agents/0` has those); `message_count` arrives via `:agent_updated` deltas.
