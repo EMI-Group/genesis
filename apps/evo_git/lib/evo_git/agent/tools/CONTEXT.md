@@ -6,6 +6,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 ## Routing Table
 - `./skill/` → skill tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead) — detail `skill/CONTEXT.md`
 - `./lsp/` → `EvoGit.Agent.Tools.Lsp.Protocol`, the PURE LSP wire codec (Content-Length framing, JSON-RPC encode, incremental `decode/1`, `file://` URIs, diagnostics/hover/definition normalization; no I/O, ports or processes) — detail `lsp/CONTEXT.md`
+- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, Dune allowlists, broker-backed Read/Write facades, projections, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
 
 ## API Surface
 
@@ -27,7 +28,8 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 | `lsp` | Language-server code intelligence — `action` ∈ `diagnostics`/`hover`/`definition`, 1-based `line`/`column`, `path` inside the repo; SCHEMA-GATED on `EvoGit.Config.lsp_enabled?/0` (`[lsp] enabled = true` + non-empty `command`), so absent by default while dispatch stays registered | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
-| `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; self-reflective agent); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
+| `elixir_eval` | Assistant-only explicit read/write/sudo Elixir evaluation; read/write use Dune facades, write/sudo require exact-code approval | Special | Read/write Dune; sudo NO |
+| `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (legacy command shell; blocked for SelfReflective in favor of `elixir_eval`); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
 | `job_output` | A background job's delta since the previous read + current status (optional bounded `wait`) | Control | No |
 | `job_list` | This agent's background jobs with ids and statuses | Control | No |
 | `job_kill` | Request cancellation of a running background job | Control | No |
@@ -299,17 +301,19 @@ A real Investigator agent run stays blocked by the level-1 ~10 s tool timeout (a
 **Security constraints**: compile-time literal registry (no `Code.eval_string`, no input-derived module/function names), no `String.to_atom/1` on input (enums/bools/statuses validated against literal lists and passed as strings), whitelist-only dispatch, and guardrails `@max_command_length` 4000 / `@max_tokens` 40 / `@max_token_length` 2000.
 To add a command: a handler `execute/3` plus ONE registry entry (including its `level:`) — no schema, no dispatch clause.
 
-### Sandboxed Elixir evaluator integration constraints
-Dune is not declared in `apps/evo_git/mix.exs` or `mix.lock`, and there is no local `deps/dune` directory.
-The published Dune release is `0.3.18` (`{:dune, "~> 0.3.18"}`), with Elixir requirement `>= 1.14.0 and < 1.21.0`, no runtime package dependencies, and experimental custom-allowlist APIs.
-Upstream references are `https://dune.hexdocs.pm/Dune.html`, `Dune.Opts.html`, `Dune.Allowlist.html`, and tag-pinned source at `https://github.com/functional-rewire/dune/tree/v0.3.18`.
-`Dune.eval_string/2` accepts an `allowlist` module and parser/runtime bounds and returns `%Dune.Success{value:, inspected:, stdio:}` or `%Dune.Failure{type:, message:, stdio:}`; use its safe string parser rather than parsing untrusted source with normal `Code.string_to_quoted` first.
-Dune's actual `max_heap_size` default is 50_000 words in `Opts.defstruct`, despite prose claiming 30_000, and its default runtime timeout is only 50 ms with a separate parser budget.
-`use Dune.Allowlist, extend: Dune.Allowlist.Default` can add previously unspecified modules, but cannot amend an existing module entry, and `only: [:function_name]` covers every arity of that name.
-The upstream allowlist also supports `shims: [function_name: {ShimModule, :shim_function}]`, which requires an exported shim with an additional leading `%Dune.Eval.Env{}` argument for every original arity.
-A shim is trusted native Elixir, not recursively sandboxed code, so exposed APIs must enforce their own argument, secret-projection, target, lifecycle and resource constraints instead of broadly allowing `TaskRegistry`, `AgentScheduler`, `CommandShell` or `Tools.execute`.
-Dune exposes no evaluation binding/context option, and its evaluator executes in fresh child processes with no inherited application process dictionary, so an evaluator integration must explicitly solve owner/capability propagation rather than assuming the current tool's identity survives.
-The existing command handlers are local-node-only and approval-free when called directly, while a new evaluator tool name does not inherit `run_command`'s hardcoded approval-aware dispatcher timeout.
+### Assistant Elixir evaluator (`elixir_eval`)
+`EvoGit.Agent.Tools.ElixirEval` (`elixir_eval.ex`) exposes `schema/0`, `execute/3`, persona-facing `help/0`, `authorized_assistant?/0` and `authorize/0,1`.
+Owner authorization, facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
+Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrapper (the internal engine ceiling is 16384), and reaches approval and the engine byte-identically.
+`tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
+`target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; explicit nil, atoms and remote targets are rejected.
+`timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS: timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes, including errors and truncation markers.
+Read/write use Dune and fully qualified `EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` calls; interpreted `alias/1` declarations are unsupported.
+`EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()` uses defaults and `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(map)` accepts pagination/filter options; `help/0` provides fully qualified examples.
+Each call has fresh bindings; direct runtime APIs are unavailable in read/write, and source inspection remains in the separate `read`, `glob` and `rg` tools.
+Write/sudo require exact-code approval through `EvoGit.CommandApproval.request_eval/5`, execute only on `:approved`, and revalidate authority before approval, immediately before execution and after any engine result.
+Sudo is DANGEROUS UNSANDBOXED full VM evaluation with best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
+The evaluator's approval wait is separate from its execution budget; dispatch must allow the approval window instead of imposing the generic short tool timeout.
 
 ### StartTask opt-forwarding surface (shell task-start data plane)
 `StartTask.start_task` forwards `:objective` (positional 2, default `""`), `:path`, `:mode`, `:resume_from`, `:starting_commit` and `:model_id` (raw strings via `maybe_put`, nil/`""` dropped) plus, for `:genesis` only, the same positional text under `:prompt` (the key the genesis executor reads).
