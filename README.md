@@ -86,6 +86,8 @@ For example:
 
 [Installation guide](https://genesis.evox.group/getting-started/installation/) · [Model configuration](https://genesis.evox.group/config/)
 
+Need help understanding or operating Genesis? Open **Help** (`/help`) to use **Genesis Assistant**, which can read Genesis source and inspect runtime state without approval, and request approval for changes or unrestricted live Elixir evaluation. See the [Genesis Assistant guide](docs/genesis-assistant.md) for capabilities and safety boundaries.
+
 ### Headless server
 
 Run the dashboard and agent runtime on Linux (x86_64 or ARM64) or macOS (Apple Silicon):
