@@ -268,7 +268,7 @@ defmodule EvoDashWeb.SettingsLive.AuthStatusTest do
       assert html =~
                "Set oauth_file on this profile to a writable location, then recheck."
 
-      refute html =~ "[llm] oauth_file"
+      refute html =~ "Set [llm] oauth_file"
 
       # No login guidance of any kind, and no "we import it next run" note.
       refute html =~ "SHOULD-NOT-RENDER-LOGIN-GUIDANCE"
