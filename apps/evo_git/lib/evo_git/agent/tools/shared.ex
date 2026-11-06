@@ -648,9 +648,24 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   Returns `{:ok, output}` with the concatenated `git add` + `git commit` output,
   or `{:error, message}` with a descriptive message.
+
+  ## Amend (squash) opt-in — `commit_files/5`
+
+  `commit_files/5` takes a keyword `opts`; the only recognised key is
+  `amend: true` (default `[]`, i.e. this arity's plain per-call commit).
+  With `amend: true` AND exactly ONE path in `files`, HEAD is AMENDED instead of
+  a new commit being created — but only when `amendable_context_head/3` proves
+  HEAD is this tool's own auto CONTEXT.md commit for that exact file (see
+  `@context_commit_subject_prefix`) and is PRIVATE to the current branch.
+  Any failed check falls back to the plain commit; the return contract is
+  identical (`{:ok, add+amend output} | {:error, message}`).
   """
   def commit_files(repo_path, repo_root, files, message)
-      when is_binary(repo_path) and is_list(files) and is_binary(message) do
+      when is_binary(repo_path) and is_list(files) and is_binary(message),
+      do: commit_files(repo_path, repo_root, files, message, [])
+
+  def commit_files(repo_path, repo_root, files, message, opts)
+      when is_binary(repo_path) and is_list(files) and is_binary(message) and is_list(opts) do
     paths = Enum.filter(files, &(is_binary(&1) and &1 != ""))
 
     if paths == [] do
@@ -658,7 +673,7 @@ defmodule EvoGit.Agent.Tools.Shared do
     else
       case run_sandboxed_git(repo_path, repo_root, ["add" | paths]) do
         {add_output, 0} ->
-          commit_staged(repo_path, repo_root, message, add_output)
+          commit_staged(repo_path, repo_root, paths, message, add_output, opts)
 
         {add_output, code} ->
           {:error, "Error: git add failed (exit #{code}):\n#{add_output}"}
@@ -691,7 +706,28 @@ defmodule EvoGit.Agent.Tools.Shared do
 
   # Commits whatever `git add` staged, with the message read from a temp file.
   # A commit that turns out to have nothing staged is a graceful no-op.
-  defp commit_staged(repo_path, repo_root, message, add_output) do
+  #
+  # `amend: true` + exactly ONE path + an amendable HEAD squashes into HEAD
+  # instead (a batch of same-file CONTEXT.md edits stays ONE commit).
+  defp commit_staged(repo_path, repo_root, paths, message, add_output, opts) do
+    case amend_target(repo_path, repo_root, paths, opts) do
+      {:ok, relative_path} ->
+        amend_staged(repo_path, repo_root, relative_path, message, add_output)
+
+      :error ->
+        do_commit(repo_path, repo_root, message, add_output)
+    end
+  end
+
+  defp amend_target(repo_path, repo_root, [path], opts) do
+    if amend_requested?(opts),
+      do: amendable_context_head(repo_path, repo_root, path),
+      else: :error
+  end
+
+  defp amend_target(_repo_path, _repo_root, _paths, _opts), do: :error
+
+  defp do_commit(repo_path, repo_root, message, add_output) do
     case commit_with_message_file(repo_path, repo_root, message) do
       {commit_output, 0} ->
         {:ok, add_output <> commit_output}
@@ -705,22 +741,144 @@ defmodule EvoGit.Agent.Tools.Shared do
     end
   end
 
+  # `--only` keeps a dirty index out of the amended commit (an unrelated staged
+  # file stays staged), and a repo-relative path never reaches git in absolute
+  # form (MSYS2 mangles backslashes). An amend with identical content is a
+  # graceful exit-0 no-op in git, so no extra pre-check is needed; any other
+  # amend failure falls back to the plain commit so the caller's write still
+  # lands as a commit (amending is only a history-shape optimization).
+  defp amend_staged(repo_path, repo_root, relative_path, message, add_output) do
+    case commit_with_message_file(
+           repo_path,
+           repo_root,
+           message,
+           ["--amend", "--only", "--", relative_path]
+         ) do
+      {commit_output, 0} ->
+        {:ok, add_output <> commit_output}
+
+      {_amend_output, _code} ->
+        do_commit(repo_path, repo_root, message, add_output)
+    end
+  end
+
+  # --- Amend (squash) eligibility -------------------------------------------
+
+  # Exactly the subject `Context.maybe_commit_context/5` writes, so an unrelated
+  # commit that happens to touch a CONTEXT.md is never amended.
+  @context_commit_subject_prefix "Update CONTEXT.md for "
+
+  defp amend_requested?(opts), do: Keyword.get(opts, :amend, false) == true
+
+  # `{:ok, repo_relative_path}` when HEAD may be amended for this one file, else
+  # `:error` (the caller falls back to a plain commit).
+  #
+  # These are the four conditions, all load-bearing:
+  #   1. HEAD has exactly ONE parent (never amend a merge commit).
+  #   2. HEAD changed EXACTLY this file (nothing unrelated folded in).
+  #   3. HEAD's subject is this tool's own auto context commit for the dir.
+  #   4. HEAD is PRIVATE to the current branch — a subagent worktree branches off
+  #      its parent's HEAD, so amending a commit still contained in the parent's
+  #      branch (or `main`/a remote-tracking ref) would rewrite the base the
+  #      ContextMerge octopus merge and the review flow depend on. A fresh
+  #      worktree's HEAD sits at that base and is contained in ≥2 refs → no
+  #      amend; only the agent's own later private commit qualifies.
+  #
+  # Every git failure, non-zero exit or unparsable output is a plain `:error`:
+  # a failed check must never surface an error for what is only an optimization.
+  defp amendable_context_head(repo_path, repo_root, path) do
+    with {:ok, relative_path} <- repo_relative_path(path, repo_path),
+         {:ok, parents} <-
+           git_output(repo_path, repo_root, ["rev-list", "--parents", "-n", "1", "HEAD"]),
+         {:ok, true} <- {:ok, single_parent?(parents)},
+         {:ok, changed} <-
+           git_lines(repo_path, repo_root, [
+             "diff-tree",
+             "--no-commit-id",
+             "--name-only",
+             "-r",
+             "HEAD"
+           ]),
+         {:ok, true} <- {:ok, changed == [relative_path]},
+         {:ok, subject} <- git_output(repo_path, repo_root, ["log", "-1", "--pretty=%s"]),
+         {:ok, true} <- {:ok, String.starts_with?(subject, @context_commit_subject_prefix)},
+         {:ok, refs} <-
+           git_lines(repo_path, repo_root, [
+             "for-each-ref",
+             "--contains",
+             "HEAD",
+             "--format=%(refname)"
+           ]),
+         {:ok, head_ref} <- git_output(repo_path, repo_root, ["symbolic-ref", "HEAD"]),
+         {:ok, true} <- {:ok, refs == [head_ref]} do
+      {:ok, relative_path}
+    else
+      _ -> :error
+    end
+  end
+
+  # `git rev-list --parents` prints every sha of one commit on ONE line, so the
+  # fields are whitespace-separated, not one per line.
+  defp single_parent?(parents) when is_binary(parents) do
+    parents |> String.split(~r/\s+/, trim: true) |> length() == 2
+  end
+
+  defp single_parent?(_parents), do: false
+
+  # Repo-relative, forward-slash form of a tool-supplied path — the tool arg may
+  # be `"./rel"` or `"rel"` while git reports `"rel/CONTEXT.md"`. `:error` when
+  # the path does not resolve inside `repo_path`.
+  defp repo_relative_path(path, repo_path) do
+    relative =
+      path
+      |> expand_path(repo_path)
+      |> Path.relative_to(Platform.safe_expand(repo_path))
+      |> Platform.normalize_separators()
+
+    if relative in ["", ".", ".."] or String.starts_with?(relative, "../") or
+         Path.type(relative) == :absolute do
+      :error
+    else
+      {:ok, relative}
+    end
+  end
+
+  # Trimmed stdout of a successful git invocation; `:error` for a non-zero exit
+  # or non-binary output.
+  defp git_output(repo_path, repo_root, args) do
+    case run_sandboxed_git(repo_path, repo_root, args) do
+      {output, 0} when is_binary(output) -> {:ok, String.trim(output)}
+      _ -> :error
+    end
+  end
+
+  defp git_lines(repo_path, repo_root, args) do
+    case git_output(repo_path, repo_root, args) do
+      {:ok, output} -> {:ok, String.split(output, "\n", trim: true)}
+      :error -> :error
+    end
+  end
+
   defp nothing_to_commit?(1, output) when is_binary(output),
     do: Enum.any?(@nothing_to_commit_markers, &String.contains?(output, &1))
 
   defp nothing_to_commit?(_code, _output), do: false
 
-  defp commit_with_message_file(repo_path, repo_root, message) do
+  # `extra_args` are appended AFTER the `-F <tmpfile>` pair — the amend path
+  # passes `--amend --only -- <repo-relative path>`, so the tempfile naming, the
+  # co-author trailer, the Windows path normalization and the `try/after`
+  # cleanup stay in ONE place.
+  defp commit_with_message_file(repo_path, repo_root, message, extra_args \\ []) do
     temp_path = commit_message_file_path()
 
     try do
       case File.write(temp_path, message <> co_author_trailer()) do
         :ok ->
-          run_sandboxed_git(repo_path, repo_root, [
-            "commit",
-            "-F",
-            normalize_temp_path(temp_path)
-          ])
+          run_sandboxed_git(
+            repo_path,
+            repo_root,
+            ["commit", "-F", normalize_temp_path(temp_path)] ++ extra_args
+          )
 
         {:error, reason} ->
           {"Error: could not write temporary commit message file: #{:file.format_error(reason)}",

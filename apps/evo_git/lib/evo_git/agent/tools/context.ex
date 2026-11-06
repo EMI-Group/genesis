@@ -295,13 +295,18 @@ defmodule EvoGit.Agent.Tools.Context do
   # file was not modified), returns `result_msg` unchanged. The actual staging +
   # `git commit -F <tmpfile>` work (incl. the co-author trailer) lives in the
   # single shared helper `Shared.commit_files/4`.
+  #
+  # `amend: true` opts into squashing: consecutive same-file CONTEXT.md edits
+  # amend the previous auto context commit instead of stacking one-file commits
+  # (`Shared` decides — HEAD must be this tool's own commit for this exact file
+  # and private to the current branch, else it falls back to a new commit).
   defp maybe_commit_context(result_msg, _dir_path, false, _repo_path, _repo_root), do: result_msg
 
   defp maybe_commit_context(result_msg, dir_path, true, repo_path, repo_root) do
     relative_path = Path.join(dir_path, "CONTEXT.md")
     message = "Update CONTEXT.md for #{dir_path}"
 
-    case Shared.commit_files(repo_path, repo_root, [relative_path], message) do
+    case Shared.commit_files(repo_path, repo_root, [relative_path], message, amend: true) do
       {:ok, output} -> result_msg <> "\n\nCommitted:\n" <> output
       {:error, reason} -> reason
     end
