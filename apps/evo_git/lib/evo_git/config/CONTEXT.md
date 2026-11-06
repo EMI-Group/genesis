@@ -288,7 +288,7 @@ Leaf-specific OAuth assembly, atom creation and catalog side effects are documen
 - **External-edit freshness**: the mtime+size check picks up external edits on the next call — this is what lets `RemoteAPI.reload_config/0` → `Config.resolve/0` observe fresh disk content, including remote/SSH reloads.
 - **Parse-failure edge**: on read/decode failure `read_toml_file/3` logs a warning and returns the default, which IS cached with the current stat — the warning isn't re-emitted until the file changes.
 - **`credentials/0` shares the mechanism** (separate path key): the cache stores the post-`put_key` result, so `ReqLLM.put_key` side effects run only on an actual file read; `save_credentials/1` also sets them explicitly.
-- **Documented limitation**: a same-second + same-size external rewrite on coarse-mtime filesystems may be missed (theoretical — ext4/APFS/NTFS have ns granularity).
+- **External-edit limitation**: the cache compares only `File.stat/1`'s default `mtime` datetime and byte size (`config.ex:1107–1117`), so same-second same-size external rewrites can be missed even on filesystems supporting subsecond timestamps; successful `save_user_config/1` explicitly erases the cache and avoids this edge.
 
 **NOT cached:**
 - **The `resolve/0` pipeline** (deep_merge → atomize_enum_values → migrate_llm_models → Schema.validate) runs on EVERY call — its side effect `Process.put(:evo_git_config_validation_errors, ...)` is read by `config_status/0` from the **calling process's** dict; caching would break validation-error propagation.
