@@ -41,7 +41,15 @@ defmodule EvoDashWeb.PageControllerTest do
     # The Home chat page is the other entry point (HomeLive at /help).
     chat_html = html_response(get(conn, ~p"/help"), 200)
     assert chat_html =~ ~s(id="chat-form")
-    assert chat_html =~ "Chat with Genesis"
+
+    heading =
+      chat_html
+      |> Floki.parse_document!()
+      |> Floki.find("h1")
+      |> Floki.text()
+      |> String.trim()
+
+    assert heading == "Genesis Assistant"
   end
 
   # Regression: the sidebar "Active Tasks" hub (`EvoDash.ActiveTasks`) is a
