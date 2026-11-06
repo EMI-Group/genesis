@@ -75,7 +75,11 @@ The nested Read discovery case intentionally performs no facade/allowlist warm-u
 The production contract is documented at `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
 Keep pure projection/validation/render/ancestry tests separate from real-Dune engine, authorization/broker, process-cleanup and public-wrapper approval integration suites.
 A valid evaluator fixture needs production-shaped AgentState/SchedMeta rows with unique integer ids, an isolated running reflect task, a live SelfReflective owner Task/spec and an actual descendant tool process; `Process.put(:repo_less, true)` alone must never authorize it.
-Fixture cleanup stops its private supervisor directly and tolerates only the expected `:noproc`/`:normal` GenServer-stop exit races before removing its own records.
+The fixture's private Task.Supervisor is an ExUnit-owned temporary child rather than a link of the short-lived test process, and explicit stops never restart it.
+Fixture cleanup monitors supervisor termination before removing its own records and tolerates only `:noproc`/`:normal`/`:shutdown` stop-death races in the GenServer wrapper or its nested `:sys.terminate` request; other errors still surface.
+Cleanup regressions pin ExUnit ownership, repeated stops, prior supervisor death and a real held-child shutdown race whose queued stop request is observed before the child is released.
+An unexpected structured shutdown must propagate its exact nested stop exit and leave fixture records intact until a subsequent successful cleanup.
+WorkerTree and Engine cleanup suites still assert actual descendant exits independently of fixture teardown.
 Authorization tests cover repeated cleanup of live descendants and cleanup after asynchronous private-supervisor death, including another cleanup from `on_exit`.
 Capture the isolated registry identity explicitly when entering independently spawned processes, because TaskRegistryCase's test-process dictionary is not inherited by raw spawn or ExUnit on_exit.
 The tool process must set `:evogit_agent_id`, `:evogit_task_id`, `:evogit_agent_pid` and `:evogit_task_registry_server`; Authorization captures that registry and the original tool pid at entry.
