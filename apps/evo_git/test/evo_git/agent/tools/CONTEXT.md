@@ -42,6 +42,7 @@ Tests use real git repos and ExUnit `:tmp_dir` fixtures — no mocking libraries
 | `elixir_eval_direct_configuration_test.exs` | Genuine-Dune direct runtime configuration, full-config persistence, explicit reload and exact-code approval |
 | `elixir_eval_render_test.exs` | UTF-8 byte-bounded text/term rendering and native BoundedIO protocol, cap and lifecycle |
 | `elixir_eval_output_truncation_test.exs` | Real-Dune stdout-budget integration: oversized prints truncate to the cap (valid UTF-8 prefix + marker, inside the cap) and the evaluation still succeeds, the per-item render cap at a wide budget, and untruncated baselines |
+| `elixir_eval_broker_output_test.exs` | Broker-level stdout truncation without Dune: genuine fixture plus controller/worker handshake, over-budget and one-megabyte items, exact-fit and exact-fill boundaries, exhausted-budget no-ops and codepoint-safe cuts |
 | `elixir_eval_wrapper_test.exs` | Actual public wrapper exact-code read/write/sudo approval, no-effect denial/timeout, lifecycle revalidation and argument validation |
 
 ## Async-Safety Rationale
