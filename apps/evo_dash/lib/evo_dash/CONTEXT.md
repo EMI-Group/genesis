@@ -83,6 +83,7 @@ Thin client for the dashboard's SSH remote-development feature. Wraps three `:ev
 #### Approval routing and control-result caveats
 
 `approval_response/3` accepts only `"approve"`, `"deny"`, `:approve` and `:deny`, rejecting other values before dispatch, but adds no request-id, task, agent, user or session ownership validation of its own.
+The approval response transports only the BEAM node, request id and decision, never the displayed command or its arguments, so exact invocation binding must be enforced by the core's pending-request/execution association rather than by this wrapper or the chat cache.
 Approval routing compares the supplied BEAM node atom with `node()`; local dispatch dynamically calls `EvoGit.CommandApproval.respond/2` through the lifecycle guard, while remote dispatch calls `EvoGit.AgentScheduler.RemoteAPI.respond_approval/2` directly with a hardcoded 15,000 ms `:erpc` timeout rather than using `RemoteNode`'s generic RPC timeout.
 The local guard catches exits and missing modules only, so a local responder exception or missing function can still raise despite the approval function's totality documentation; the remote approval branch catches every exception/exit/throw into an error tuple.
 `restart_remote/1` and `stop_remote/1` discard the generic RPC result and return `:ok`, so their success value alone cannot prove that an unreachable target received the command.

@@ -40,10 +40,15 @@ The copy button retains stable `assistant-copy-<id>`, `ClipboardCopy`, escaped `
 The named `group/assistant` stays separate from the nested thought disclosure's `group` so its chevron responds only to its own open state.
 Thought process is a closed-by-default native `details` with a quiet, keyboard-focusable summary and count, no heavy top divider, and an inset left rule when opened.
 Thought-entry headers use neutral metadata text; shared tool-result palettes and tool-call rendering remain intact.
-Thought entries retain type/turn/time, reasoning details, content/tool result panels and `AgentsLive.ToolCallDisplay.display/1`, with bounded scrolling of large content.
+Thought entries retain type/turn/time, reasoning details, content/tool result panels and `AgentsLive.ToolCallDisplay.display/1`, with `max-h-32 overflow-y-auto` visual scrolling rather than payload truncation for reasoning/content/results.
+Structured tool-call values render full escaped prewrapped text, but nonstructured calls use a single-line CSS `truncate` summary with no expansion control in this component.
 
-`ApprovalCard.approval_card/1` renders transient pending run-command approvals with atom-key-tolerant accessors and escaped command/args.
-Level 3 uses an error-colored warning about real side effects, while other levels use informational styling; Confirm/Deny retain `approval_response`, request id, and whitelisted decision values.
+`ApprovalCard.approval_card/1` consumes an atom-keyed request map with binary `:request_id`, `:command`, and optional `:args`, plus integer `:level` in `[1, 2, 3]`; every other key is ignored by this presentation component.
+String-keyed fields are not read, nonbinary text fields become empty strings, and an invalid level omits the badge and selects informational styling.
+Despite its totality claim, the component assumes a map and its private `Map.get/2` accessors raise on nil/nonmap requests.
+Only integer level 3 selects danger styling and the exact task-specific warning about starting, cancelling, force-killing, or deleting a task; every other level uses informational wording.
+Both Confirm and Deny send `approval_response` with string event params `request_id` and `decision` (`approve` or `deny`), without any session-consent or execution-mode field.
+The command is escaped monospace text without whitespace preservation, while args are escaped `whitespace-pre-wrap` text with neither a length cap nor code-specific formatting.
 Approvals do not disable the composer or Stop, are not persisted, and are removed optimistically with backend resolution broadcasts as a backstop.
 
 `SourceGate.source_gate/1` renders the local-only source-download banner with stable ids `genesis-source-gate` and `genesis-source-download`, `download_source`, a disabled/busy cloning state, and a node-aware System link.
