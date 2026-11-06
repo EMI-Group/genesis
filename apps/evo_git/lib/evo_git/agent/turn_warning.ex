@@ -16,7 +16,7 @@ defmodule EvoGit.Agent.TurnWarning do
   |-------|---------|---------|
   | `:beginning` | Early-stage delegation guidance (suppressed in a merge conflict) | ~25% of budget (min 6 turns) |
   | `:end` | Wrap up and prepare to deliver your final report as a plain-text reply | ≤ N turns remaining (adaptive) |
-  | `:critical` | Stop and reply with your final report — no more tool calls | ≤ M turns remaining (adaptive) |
+  | `:critical` | Commit outstanding work, then reply with your final report as plain text | ≤ M turns remaining (adaptive) |
 
   ### Periodic (fires repeatedly)
 
@@ -286,7 +286,7 @@ defmodule EvoGit.Agent.TurnWarning do
     [URGENT] Turn #{w.turn}/#{w.max_turns} — only #{w.turns_remaining} #{turn_word(w.turns_remaining)} remaining!
 
     You are about to hit the turn limit. Do not start any new work.
-    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. Then STOP and reply with your final report as plain text: a reply with no tool calls ends the run, and that text IS the report. Make no further tool calls.
+    Commit any uncommitted changes IMMEDIATELY — uncommitted work will be LOST when your process terminates. That commit is the one permitted tool call: after it, STOP and reply with your final report as plain text — a reply with no tool calls ends the run, and that text IS the report. Do not begin anything else.
     """
   end
 
