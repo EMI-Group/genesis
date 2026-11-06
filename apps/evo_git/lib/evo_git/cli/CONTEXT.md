@@ -55,7 +55,7 @@ Test gap: `test/evo_git/cli_test.exs` only feeds ATOM-keyed configs (`%{llm: %{m
 
 ### Windows-facing help text is POSIX-shell shaped
 `cli.ex:645-659` teaches `mkdir -p`, `echo 'KEY = "..."' > credentials.toml` and `>>` appends — none of which work in `cmd.exe` (single quotes are not quoting), and the `echo` lines write into the CURRENT directory although the config file is read from `config_dir()`.
-`cli.ex:596-598` and the root/`evo_git` CONTEXT examples use the same single-quoted `evogit run '<command>'` form, which under `cmd.exe` degenerates to a literal-quote argument.
+`cli.ex:596-598` and the root/`evo_git` CONTEXT examples use the same single-quoted `genesis run '<command>'` form, which under `cmd.exe` degenerates to a literal-quote argument.
 The repo contains no `evogit` shim: the CLI is invoked as `mix run -e 'EvoGit.CLI.main(System.argv())' -- <cmd>` (dev only, not reachable from the desktop release).
 
 ### UTF-16LE config/credentials files are silently ignored
