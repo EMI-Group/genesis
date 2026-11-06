@@ -52,6 +52,7 @@ Every module carries an `@moduledoc` naming why it is `async: true` / `async: fa
 - `async: true` — `web_fetch_lsp_registration_test.exs` and `commit_files_test.exs` (each isolates its config dir PER PROCESS through `EvoGit.TestSupport.ConfigDir`, so the `[lsp]` schema gate / repo template is pinned independent of the developer's real `~/.config/genesis/config.toml` without touching a process-wide env var).
 - `async: true` — `lsp_test.exs` (nothing global: every execute-level test spawns its own fake language server escript in a UNIQUE temp dir and every `Lsp.execute/4,5` call passes `enabled:`/`command:` explicitly, the unconfigured cases included).
 - `async: false` — `elixir_eval_wrapper_test.exs` uses the app-global `EvoGit.CommandApproval` service and mutates its shared `:command_approval_timeout` app-env key, with id-pinned approval matching and restored settings.
+- `async: false` — `elixir_eval_configuration_test.exs` mutates the app-global AgentScheduler and CommandApproval timeout/service, suspending PeakHourEngine and restoring scheduler scalars and derived model-concurrency state.
 - `async: true` — every other file: pure helpers, per-test `:tmp_dir` fixtures, process-local state, or uniquely keyed evaluator ETS authority rows backed by isolated Store/TaskRegistry instances.
 
 ## Reflect / Command Dispatch Coverage and Gaps
@@ -105,6 +106,17 @@ Configuration quota tests establish one read per invocation despite five underly
 Explicit broker request/start-quota boundary tests remain outside this configuration coverage.
 Genuine external Dune validation details live in git notes: `902ac54c4` records eager loading of every Dune beam before Mix.CLI.main, and `ba7e4558e` records `compile --no-deps-check --no-prune-code-paths` followed by `test --no-compile --no-deps-check`.
 The recorded Dune 0.3.18 ebin path is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`, historically also addressed as `$TMPDIR/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; prefer the absolute recorded path when task TMPDIR differs, and verify availability before relying on this external cache.
+## Direct Real-API Coverage Gaps and Obsolete Expectations
+The direct allowlist admits exact public EvoGit MFAs with unchanged real arguments/return values, while compatible Read/Write facades retain their projections, validators and policies; production contracts live in `apps/evo_git/lib/evo_git/agent/tools/elixir_eval/CONTEXT.md`.
+`elixir_eval_engine_test.exs:148` incorrectly expects direct `EvoGit.TaskRegistry.get_task/1` to be restricted, although that MFA is admitted in both interpreted tiers.
+The Engine and Configuration suites' `@restricted` constants and WrapperTest's literal restricted error still expect facade-only guidance rather than the engine's admitted-real-API guidance.
+Do not replace facade projection/privacy, option-validation or self-target refusal assertions with direct-API semantics: those remain valid compatibility contracts.
+No existing evaluator suite in this node exercises admitted direct TaskRegistry/configuration/scheduler calls through genuine Dune; independent direct-task/read/admission and synchronous direct-configuration/persistence suites are natural additions.
+Direct TaskRegistry tests should assert real TaskInfo structs, real page options/results and acknowledgements using the authenticated isolated registry, not projected facade maps or substituted facade policies.
+Direct configuration tests should distinguish nested/live scheduler values from resolved disk/default configuration, runtime-only updates, whole-file save without implicit reload and explicit reload results.
+The fixture copies ConfigDir into owner/tool processes but does not propagate it into the broker's independent runtime Task, so direct config-file tests need a synchronous isolated config-dir seam that reaches that Task and is restored afterwards.
+The existing ConfigurationTest setup asserts config-file bytes remain unchanged on teardown and is deliberately unsuitable for persistence cases without separate setup ownership.
+The genuine Dune cache at `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin` contains Dune 0.3.18 beams and `dune.app`, while this worktree has neither `deps/dune` nor `_build/test/lib/dune/ebin`.
 ## Notes for Agents
 
 - `reflect_tools_test.exs` spawns a live `Process.sleep(:infinity)` "wrapper" process on purpose — it is NOT a wait to reduce.
