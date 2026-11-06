@@ -36,7 +36,7 @@
 #   3. The boot-global `EvoGit.AgentScheduler` config is forced to the fail-fast
 #      `model_profiles: []` for every test (the documented seam that keeps a
 #      real send from reaching an LLM endpoint), then restored in `on_exit`.
-#   4. Per-test app-env seams (`:approval_responder`,
+#   4. Per-test app-env seams (`:approval_responder`, `:approval_pending_runner`,
 #      `:source_availability_runner`, `:source_clone_runner`) are written and
 #      restored by the tests that use them.
 defmodule EvoDashWeb.HomeLiveTest do
@@ -258,6 +258,16 @@ defmodule EvoDashWeb.HomeLiveTest do
     |> Floki.find(selector) != []
   end
 
+  # Scope the page-alive/name pin to its heading: assistant entries and the
+  # composer also carry the assistant's name, but cannot replace the page title.
+  defp page_heading(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("h1")
+    |> Floki.text()
+    |> String.trim()
+  end
+
   # Polls `fun` until it returns truthy (or the timeout elapses) — the
   # tasks_live_test.exs pattern for observing async results (the real
   # supervised fetches, the PubSub debounce) without fixed sleeps. The poll
@@ -405,7 +415,7 @@ defmodule EvoDashWeb.HomeLiveTest do
     test "renders the idle chat page", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/help")
 
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       assert html =~ "Start a conversation"
 
       # The message input and Send button are present and ENABLED on idle
@@ -967,7 +977,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       send(view.pid, {:agent_removed, 1, node()})
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
     end
 
     test "real AgentState ETS row flows through the real get_agent_history path", %{conn: conn} do
@@ -2099,10 +2109,10 @@ defmodule EvoDashWeb.HomeLiveTest do
       # The exact production event sequence, rendering after each step.
       send(view.pid, {:task_updated, "t_crash", :running, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       send(view.pid, {:agent_updated, agent_id, [message_count: 2], node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
 
       send(
         view.pid,
@@ -2118,7 +2128,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       )
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       # The real history fetch lands: 6 messages (5 real + the empty-content
       # assistant) — nil metadata, thinking parts, tool_calls and all.
       wait_until(fn -> assigns(view)[:agent_message_count] == 6 end)
@@ -2143,7 +2153,7 @@ defmodule EvoDashWeb.HomeLiveTest do
 
       send(view.pid, {:task_updated, "t_crash", :completed, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       wait_until(fn -> assigns(view).chat_status == :idle end)
       html = render(view)
       assert html =~ "final reflect answer"
@@ -2260,7 +2270,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       wait_until(fn -> assigns(view)[:tasks_reload_pending] == false end)
 
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
     end
 
     test "nil-status (review-mutation) broadcast is a no-op", %{conn: conn} do
@@ -2268,7 +2278,7 @@ defmodule EvoDashWeb.HomeLiveTest do
       seed_running_chat(view)
       send(view.pid, {:task_updated, "t1", nil, node()})
       html = render(view)
-      assert html =~ "Chat with Genesis"
+      assert page_heading(html) == "Genesis Assistant"
       assert assigns(view).chat_status == :running
       assert assigns(view).chat_task_id == "t1"
       assert assigns(view).chat_task_status == nil
@@ -2370,7 +2380,94 @@ defmodule EvoDashWeb.HomeLiveTest do
     )
   end
 
+  # The evaluator runs on target_node, but the pending request and its
+  # response belong to the SOURCE chat node (`node`), which may differ.
+  defp eval_request(overrides \\ %{}) do
+    Map.merge(
+      %{
+        request_id: "eval-1",
+        kind: :elixir_eval,
+        tier: :write,
+        code: "value = \"<exact>& code\"\n  value <> \"  preserved\"\n",
+        warning: nil,
+        target_node: :target@runtime,
+        agent_id: nil,
+        task_id: "t1",
+        node: node()
+      },
+      Map.new(overrides)
+    )
+  end
+
+  defp approval_button(id, decision) do
+    ~s(button[phx-click="approval_response"][phx-value-request_id="#{id}"][phx-value-decision="#{decision}"])
+  end
+
+  defp install_blocking_approval_responder do
+    test_pid = self()
+
+    Application.put_env(:evo_dash, :approval_responder, fn source, id, decision ->
+      send(test_pid, {:approval_response_called, self(), source, id, decision})
+
+      receive do
+        {:respond, result} -> result
+      after
+        5000 -> exit(:approval_test_timeout)
+      end
+    end)
+  end
+
+  defp seed_restorable_approval_chat do
+    insert_task_fixture!(
+      id: "t1",
+      type: :reflect,
+      status: :running,
+      opts: [mode: "reflect", objective: "approval recovery"],
+      project_path: nil
+    )
+
+    chat_id = EvoDash.ChatHistory.new_chat()
+
+    EvoDash.ChatHistory.put_state(
+      chat_id,
+      EvoDashWeb.HomeLive.ChatState.build(%{
+        chat_status: :running,
+        chat_task_status: :running,
+        chat_task_id: "t1",
+        chat_agent_id: 1001,
+        chat_node: node()
+      })
+    )
+
+    chat_id
+  end
+
+  defp approval_scope(view) do
+    a = assigns(view)
+
+    {a[:chat_id], a[:current_node_id], a[:current_node], a[:chat_node] || a[:current_node],
+     a[:chat_task_id], a[:chat_agent_id]}
+  end
+
   describe "command approvals (security levels 2 & 3)" do
+    setup do
+      keys = [:approval_responder, :approval_pending_runner]
+      originals = Map.new(keys, &{&1, Application.fetch_env(:evo_dash, &1)})
+
+      # A restored chat must never query an ambient singleton's pending list.
+      # Recovery tests below override this list-returning runner explicitly.
+      Application.put_env(:evo_dash, :approval_pending_runner, fn _source -> [] end)
+
+      on_exit(fn ->
+        Enum.each(originals, fn
+          {key, {:ok, value}} -> Application.put_env(:evo_dash, key, value)
+          {key, :error} -> Application.delete_env(:evo_dash, key)
+        end)
+      end)
+
+      :ok
+    end
+
     test "level-2 request renders an informational card with both buttons", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/help")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
@@ -2457,47 +2554,43 @@ defmodule EvoDashWeb.HomeLiveTest do
       refute html =~ "The assistant wants your attention"
     end
 
-    test "confirm/deny clicks route through the responder and remove the card", %{conn: conn} do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :approval_responder, fn node, id, decision ->
-        send(test_pid, {:approval_response_called, node, id, decision})
-        :ok
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
-
+    test "confirm/deny retain a busy card until the asynchronous responder succeeds", %{
+      conn: conn
+    } do
+      install_blocking_approval_responder()
       {:ok, view, _html} = live(conn, "/help")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
-      send(view.pid, {:approval_requested, l2_request()})
-      render(view)
+      for {id, decision} <- [{"req-1", "approve"}, {"req-2", "deny"}] do
+        send(view.pid, {:approval_requested, l2_request(request_id: id)})
+        render(view)
 
-      # Confirm (approve): responder gets the request's node + the binary
-      # decision; the card is removed optimistically; no error flash.
-      html =
-        render_click(view, "approval_response", %{
-          "request_id" => "req-1",
-          "decision" => "approve"
-        })
+        html =
+          view
+          |> element(approval_button(id, decision))
+          |> render_click()
 
-      assert_receive {:approval_response_called, req_node, "req-1", "approve"}
-      assert req_node == node()
-      assert assigns(view)[:pending_approvals] == []
-      refute html =~ "Failed to respond"
+        assert_receive {:approval_response_called, worker, source, ^id, ^decision}, 2000
+        assert source == node()
+        refute worker == view.pid
+        assert [%{request_id: ^id}] = assigns(view)[:pending_approvals]
+        assert disabled?(html, approval_button(id, "approve"))
+        assert disabled?(html, approval_button(id, "deny"))
+        seq = assigns(view).approval_responses[id]
+        assert is_integer(seq)
 
-      # Deny on a SECOND request (fresh id — the upsert would replace "req-1").
-      send(view.pid, {:approval_requested, l2_request(request_id: "req-2")})
-      render(view)
+        # Even a forged repeat event cannot submit a busy request twice.
+        render_click(view, "approval_response", %{"request_id" => id, "decision" => decision})
+        assert assigns(view).approval_responses[id] == seq
+        refute_receive {:approval_response_called, _, _, _, _}, 50
 
-      render_click(view, "approval_response", %{
-        "request_id" => "req-2",
-        "decision" => "deny"
-      })
-
-      assert_receive {:approval_response_called, req_node_2, "req-2", "deny"}
-      assert req_node_2 == node()
-      assert assigns(view)[:pending_approvals] == []
+        send(worker, {:respond, :ok})
+        wait_until(fn -> assigns(view)[:pending_approvals] == [] end)
+        html = render(view)
+        assert assigns(view).approval_responses == %{}
+        assert assigns(view).approval_error == nil
+        refute present?(html, approval_button(id, decision))
+      end
     end
 
     test "invalid decision never reaches the responder and keeps the card", %{conn: conn} do
@@ -2507,8 +2600,6 @@ defmodule EvoDashWeb.HomeLiveTest do
         send(test_pid, {:approval_response_called, node, id, decision})
         :ok
       end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
 
       {:ok, view, _html} = live(conn, "/help")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
@@ -2521,52 +2612,343 @@ defmodule EvoDashWeb.HomeLiveTest do
       assert length(assigns(view)[:pending_approvals]) == 1
     end
 
-    test "responder error flashes while the card is still removed", %{conn: conn} do
-      test_pid = self()
-
-      Application.put_env(:evo_dash, :approval_responder, fn node, id, decision ->
-        send(test_pid, {:approval_response_called, node, id, decision})
-        {:error, :nodedown}
-      end)
-
-      on_exit(fn -> Application.delete_env(:evo_dash, :approval_responder) end)
-
+    test "responder failure retains a visible card and error, then permits retry", %{conn: conn} do
+      install_blocking_approval_responder()
       {:ok, view, _html} = live(conn, "/help")
       seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
       send(view.pid, {:approval_requested, l2_request()})
       render(view)
+      view |> element(approval_button("req-1", "approve")) |> render_click()
+      assert_receive {:approval_response_called, worker, source, "req-1", "approve"}, 2000
+      assert source == node()
+      assert [%{request_id: "req-1"}] = assigns(view).pending_approvals
+
+      # Exercise the REAL SafeCall envelope, not an obsolete synthetic
+      # :approval_response_result tag: {:ok, {:error, :nodedown}}.
+      send(worker, {:respond, {:error, :nodedown}})
+      wait_until(fn -> assigns(view).approval_error == {:response, "req-1", :nodedown} end)
+      html = render(view)
+      assert html =~ "nodedown"
+      assert html =~ "The assistant wants your attention"
+      assert [%{request_id: "req-1"}] = assigns(view).pending_approvals
+      assert assigns(view).approval_responses == %{}
+      refute disabled?(html, approval_button("req-1", "approve"))
+      refute disabled?(html, approval_button("req-1", "deny"))
+
+      view |> element(approval_button("req-1", "deny")) |> render_click()
+      assert_receive {:approval_response_called, retry_worker, ^source, "req-1", "deny"}, 2000
+      assert assigns(view).approval_error == nil
+      send(retry_worker, {:respond, :ok})
+      wait_until(fn -> assigns(view).pending_approvals == [] end)
+      html = render(view)
+      assert assigns(view).approval_error == nil
+      refute html =~ "nodedown"
+      refute html =~ "The assistant wants your attention"
+    end
+
+    test "nonpending and no-longer-owned responses cannot invoke the responder", %{conn: conn} do
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_responder, fn source, id, decision ->
+        send(test_pid, {:unexpected_approval_response, source, id, decision})
+        :ok
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
 
       render_click(view, "approval_response", %{
-        "request_id" => "req-1",
+        "request_id" => "missing",
         "decision" => "approve"
       })
 
-      assert_receive {:approval_response_called, req_node, "req-1", "approve"}
-      assert req_node == node()
+      assert assigns(view).approval_responses == %{}
 
-      # The card is removed OPTIMISTICALLY by the handler, before the responder
-      # outcome lands — that is the whole point of this test.
-      assert assigns(view)[:pending_approvals] == []
+      send(view.pid, {:approval_requested, l2_request()})
+      render(view)
+      send(view.pid, {:approval_resolved, "req-1", :deny})
+      render(view)
+      render_click(view, "approval_response", %{"request_id" => "req-1", "decision" => "approve"})
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_responses == %{}
 
-      # The outcome is applied ASYNCHRONOUSLY from the responder result (the
-      # responder runs in a `EvoDash.SafeCall` TaskSupervisor child), which
-      # lands as `{{:approval_response_result, request_id, node}, result}`:
-      # `EvoDash.SafeCall.start/4` sends `{tag, run(fun)}` with the tag VERBATIM
-      # as the message's first element, so a 3-element tuple tag stays ONE
-      # nested tuple and is never flattened. Deliver that exact shape (the same
-      # one the real task sends, and the same nesting SettingsLive/SystemLive
-      # match) so the handler contract — flash + card gone — is what is pinned.
-      send(view.pid, {{:approval_response_result, "req-1", node()}, {:ok, {:error, :nodedown}}})
+      # Defend against a late click even if an old card survives a scope change.
+      send(view.pid, {:approval_requested, l2_request(request_id: "old-scope")})
+      render(view)
+      seed_chat_state(view, %{chat_task_id: "t2", chat_agent_id: 1002})
 
-      # Bounded poll instead of a fixed sleep: the flash appears once the
-      # result message is processed.
-      wait_until(fn -> to_string(assigns(view)[:flash]["error"] || "") =~ "Failed to respond" end)
+      render_click(view, "approval_response", %{
+        "request_id" => "old-scope",
+        "decision" => "deny"
+      })
 
+      assert assigns(view).approval_responses == %{}
+      refute_receive {:unexpected_approval_response, _, _, _}, 50
+    end
+
+    test "evaluator write and sudo cards show the exact code, target and distinct authority", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+      request = eval_request()
+      send(view.pid, {:approval_requested, request})
       html = render(view)
-      assert assigns(view)[:flash]["error"] =~ "Failed to respond: :nodedown"
-      assert assigns(view)[:pending_approvals] == []
-      refute html =~ "The assistant wants your attention"
+
+      assert html =~ "Allow this Elixir code once?"
+      assert html =~ "not permission for future evaluations"
+      assert html =~ "Target runtime: target@runtime"
+      assert html =~ "Allow once"
+      assert html =~ "border-info/30"
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               request.code
+
+      refute html =~ "Danger — unrestricted Elixir execution"
+      refute html =~ "Level 2"
+      # The literal '<exact>' is escaped, never treated as markup.
+      refute present?(html, "pre exact")
+
+      # Same id: replace write with sudo rather than displaying both grants.
+      sudo = eval_request(tier: :sudo, warning: "Custom warning: <no rollback>")
+      send(view.pid, {:approval_requested, sudo})
+      html = render(view)
+      assert html =~ "Danger — unrestricted Elixir execution"
+      assert html =~ "unrestricted ordinary Elixir"
+      assert html =~ "There is no rollback."
+      assert html =~ "This is not OS root access."
+      assert html =~ "Allow unrestricted execution once"
+      assert html =~ "border-error/40"
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               sudo.code
+
+      assert html |> Floki.parse_document!() |> Floki.text() =~ sudo.warning
+      refute html =~ "Allow this Elixir code once?"
+      refute present?(html, "p no")
+      assert length(assigns(view).pending_approvals) == 1
+    end
+
+    test "evaluator ownership and resolutions use the source node, never the target runtime", %{
+      conn: conn
+    } do
+      install_blocking_approval_responder()
+      {:ok, view, _html} = live(conn, "/help")
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+
+      # Neither a matching target nor a matching task can authenticate another
+      # source node; evaluator requests without a source stamp are rejected too.
+      for request <- [
+            eval_request(node: :foreign@source, target_node: node()),
+            eval_request(node: nil),
+            eval_request(task_id: "other-task", agent_id: nil)
+          ] do
+        send(view.pid, {:approval_requested, request})
+      end
+
+      render(view)
+      assert assigns(view).pending_approvals == []
+
+      # String/integer agent refs match even without the task ref. The target
+      # is deliberately remote; the response must still go to LOCAL source.
+      request = eval_request(task_id: nil, agent_id: "1001")
+      send(view.pid, {:approval_requested, request})
+      html = render(view)
+      assert html =~ "Target runtime: target@runtime"
+      assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
+
+      send(view.pid, {:approval_resolved, "eval-1", :approve, :foreign@source})
+      render(view)
+      assert [%{request_id: "eval-1"}] = assigns(view).pending_approvals
+
+      view |> element(approval_button("eval-1", "approve")) |> render_click()
+      assert_receive {:approval_response_called, worker, source, "eval-1", "approve"}, 2000
+      assert source == node()
+      refute source == request.target_node
+
+      send(view.pid, {:approval_resolved, "eval-1", :approve, node()})
+      html = render(view)
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_responses == %{}
+      refute present?(html, approval_button("eval-1", "approve"))
+
+      # A late error from the now-resolved response cannot resurrect its card
+      # or show an error. Monitor the worker before draining the page mailbox.
+      monitor = Process.monitor(worker)
+      send(worker, {:respond, {:error, :nodedown}})
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      render(view)
+      assert assigns(view).approval_error == nil
+      assert assigns(view).pending_approvals == []
+    end
+
+    test "new chat clears the workflow and rejects an old asynchronous response", %{conn: conn} do
+      install_blocking_approval_responder()
+      {:ok, view, _html} = live(conn, "/help")
+      old_chat = assigns(view).chat_id
+      seed_chat_state(view, %{chat_status: :running, chat_task_id: "t1", chat_agent_id: 1001})
+      send(view.pid, {:approval_requested, eval_request()})
+      render(view)
+      view |> element(approval_button("eval-1", "approve")) |> render_click()
+      assert_receive {:approval_response_called, worker, _, "eval-1", "approve"}, 2000
+      assert map_size(assigns(view).approval_responses) == 1
+
+      # A completed conversation permits New chat. Drive the REAL reset event
+      # (not a forged workflow result) before releasing the old responder.
+      seed_chat_state(view, %{chat_status: :idle})
+      render_click(view, "new_chat", %{})
+      assert assigns(view).chat_id != old_chat
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_responses == %{}
+      assert assigns(view).approval_error == nil
+
+      monitor = Process.monitor(worker)
+      send(worker, {:respond, {:error, :old_scope_failure}})
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      html = render(view)
+      assert assigns(view).approval_error == nil
+      assert assigns(view).pending_approvals == []
+      refute html =~ "old_scope_failure"
+      refute present?(html, approval_button("eval-1", "approve"))
+    end
+
+    test "restored chats recover a real list-returning pending snapshot off-process", %{
+      conn: conn
+    } do
+      chat_id = seed_restorable_approval_chat()
+      test_pid = self()
+      owned = eval_request()
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn source ->
+        send(test_pid, {:approval_snapshot_called, self(), source})
+
+        # Return the backend API's LIST, not {:ok, list}: SafeCall supplies
+        # the outer {:ok, list} consumed by ApprovalWorkflow.recovered/3.
+        [
+          owned,
+          l2_request(request_id: "legacy-agent", task_id: nil, agent_id: "1001"),
+          eval_request(request_id: "other-task", task_id: "t2"),
+          eval_request(request_id: "wrong-source", node: :foreign@source, target_node: node()),
+          eval_request(request_id: "unstamped", node: nil)
+        ]
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      assert_receive {:approval_snapshot_called, worker, source}, 2000
+      refute worker == view.pid
+      assert source == node()
+      assert assigns(view).chat_id == chat_id
+      wait_until(fn -> length(assigns(view).pending_approvals) == 2 end)
+      html = render(view)
+      assert assigns(view).approval_recovering == false
+      assert assigns(view).approval_error == nil
+
+      assert Enum.sort(Enum.map(assigns(view).pending_approvals, & &1.request_id)) ==
+               ["eval-1", "legacy-agent"]
+
+      assert present?(html, approval_button("eval-1", "approve"))
+      assert present?(html, approval_button("legacy-agent", "deny"))
+      refute present?(html, approval_button("wrong-source", "approve"))
+
+      assert html |> Floki.parse_document!() |> Floki.find("pre code") |> Floki.text() ==
+               owned.code
+    end
+
+    test "an in-flight recovery keeps live requests and cannot resurrect a resolved card", %{
+      conn: conn
+    } do
+      seed_restorable_approval_chat()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn source ->
+        send(test_pid, {:approval_snapshot_waiting, self(), source})
+
+        receive do
+          {:snapshot, requests} -> requests
+        after
+          5000 -> exit(:approval_test_timeout)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      assert_receive {:approval_snapshot_waiting, worker, source}, 2000
+      assert source == node()
+      assert assigns(view).approval_recovering
+      scope = approval_scope(view)
+      seq = assigns(view).approval_recovery_seq
+
+      # Wrong generation is ignored by the PAGE's nested-message route too.
+      send(view.pid, {{:approval_pending_loaded, seq - 1, scope}, {:ok, [eval_request()]}})
+      render(view)
+      assert assigns(view).approval_recovering
+      assert assigns(view).pending_approvals == []
+
+      send(view.pid, {:approval_requested, eval_request(request_id: "resolved")})
+      send(view.pid, {:approval_resolved, "resolved", :deny, node()})
+      live_request = eval_request(request_id: "newer", code: "newer exact code")
+      send(view.pid, {:approval_requested, live_request})
+      render(view)
+
+      send(
+        worker,
+        {:snapshot,
+         [
+           eval_request(request_id: "resolved"),
+           eval_request(request_id: "newer", code: "old snapshot code"),
+           l2_request()
+         ]}
+      )
+
+      wait_until(fn -> assigns(view).approval_recovering == false end)
+      html = render(view)
+
+      assert Enum.sort(Enum.map(assigns(view).pending_approvals, & &1.request_id)) ==
+               ["newer", "req-1"]
+
+      assert html =~ "newer exact code"
+      refute html =~ "old snapshot code"
+      refute present?(html, approval_button("resolved", "approve"))
+    end
+
+    test "a recovery result captured for the previous chat scope is discarded", %{conn: conn} do
+      seed_restorable_approval_chat()
+      test_pid = self()
+
+      Application.put_env(:evo_dash, :approval_pending_runner, fn _source ->
+        send(test_pid, {:approval_snapshot_waiting, self()})
+
+        receive do
+          :release_snapshot -> [eval_request()]
+        after
+          5000 -> exit(:approval_test_timeout)
+        end
+      end)
+
+      {:ok, view, _html} = live(conn, "/help")
+      assert_receive {:approval_snapshot_waiting, worker}, 2000
+      old_scope = approval_scope(view)
+      seq = assigns(view).approval_recovery_seq
+      assert is_integer(seq)
+
+      # Model a scope moving before its old asynchronous result can land.
+      # Use the SAME task refs to ensure the full chat scope, not only the
+      # own-request predicate, is checked by the page's forwarding handler.
+      seed_chat_state(view, %{chat_id: "different-chat"})
+      send(view.pid, {{:approval_pending_loaded, seq, old_scope}, {:ok, [eval_request()]}})
+      render(view)
+      assert assigns(view).pending_approvals == []
+      assert assigns(view).approval_recovering == false
+      assert assigns(view).approval_recovery_seq == nil
+      assert assigns(view).approval_error == nil
+
+      # The real, late SafeCall reply is equally stale after that rejection.
+      monitor = Process.monitor(worker)
+      send(worker, :release_snapshot)
+      assert_receive {:DOWN, ^monitor, :process, ^worker, :normal}, 2000
+      html = render(view)
+      assert assigns(view).pending_approvals == []
+      refute present?(html, approval_button("eval-1", "approve"))
     end
 
     test "duplicate approval_requested upserts instead of stacking", %{conn: conn} do

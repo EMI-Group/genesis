@@ -28,6 +28,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
       thought_process: [],
       raw_entry_ids: MapSet.new(),
       pending_approvals: [],
+      approval_error: nil,
       chat_draft: ""
     ]
 
@@ -41,6 +42,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
   test "empty chat offers actionable prompts inside the message scroller, not the composer" do
     dom = page()
 
+    assert text(dom, "h1") == "Genesis Assistant"
     assert text(dom, "#chat-messages h2") == "How can I help you today?"
     prompts = Floki.find(dom, "#chat-messages button[phx-click='send_message']")
     assert length(prompts) == 4
@@ -54,7 +56,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-messages #chat-form") == []
     assert attr(dom, "#chat-messages", "phx-hook") == ["AgentHistoryAutoScroll"]
     assert text(dom, "#chat-form button[type='submit']") == "Send"
-    assert Floki.text(dom) =~ "Genesis can make mistakes. Verify important information."
+    assert Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
   end
 
   test "idle composer preserves the draft and exposes keyboard and accessible send controls" do
@@ -64,7 +66,8 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert attr(dom, "#chat-form", "phx-change") == ["chat_input"]
     assert attr(dom, "#chat-form textarea", "value") == ["Explain <this> & that"]
     assert attr(dom, "#chat-form textarea", "name") == ["message"]
-    assert attr(dom, "#chat-form textarea", "aria-label") == ["Message Genesis…"]
+    assert attr(dom, "#chat-form textarea", "aria-label") == ["Message Genesis Assistant…"]
+    assert attr(dom, "#chat-form textarea", "placeholder") == ["Message Genesis Assistant…"]
     assert attr(dom, "#chat-form textarea", "phx-keydown") == ["chat_keydown"]
     assert attr(dom, "#chat-form textarea", "phx-keyup") == ["chat_keyup"]
 
@@ -86,7 +89,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-form button[phx-click='stop'][disabled]") == []
     assert Floki.find(dom, "#chat-form button[phx-click='stop'].hidden") == []
     assert Floki.find(dom, "button[phx-click='new_chat'][disabled]") != []
-    refute Floki.text(dom) =~ "Genesis can make mistakes. Verify important information."
+    refute Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
   end
 
   test "a restored conversation replaces the greeting and prompts while keeping the composer available" do
@@ -98,7 +101,7 @@ defmodule EvoDashWeb.HomeLiveRenderTest do
     assert Floki.find(dom, "#chat-form textarea[disabled]") == []
     assert text(dom, "#chat-form button[type='submit']") == "Send"
     assert Floki.text(dom) =~ "Enter to send · Shift+Enter for a new line"
-    refute Floki.text(dom) =~ "Genesis can make mistakes. Verify important information."
+    refute Floki.text(dom) =~ "Genesis Assistant can make mistakes. Verify important information."
   end
 
   test "known missing local source replaces suggestion actions with guidance and disables send" do

@@ -14,6 +14,11 @@ defmodule EvoGit.CommandApproval do
   or denies via `respond/2` (locally, or from another node through
   `EvoGit.RemoteNode.respond_approval/3` → `EvoGit.AgentScheduler.RemoteAPI.respond_approval/2`).
 
+  `request_eval/5` uses the same registration, monitor, timeout and resolution
+  machinery for exact-code evaluation approvals (`:write`/`:sudo`), adding
+  evaluation metadata without changing legacy shell request maps. `pending/0`
+  returns only public request maps for dashboard refresh.
+
   ## PubSub contract (topic `"approvals"`)
 
   - `{:approval_requested, request}` — a request opened. `request` is a map:
@@ -71,6 +76,11 @@ defmodule EvoGit.CommandApproval do
   # The default approval window (ms). Overridable via app env
   # `[:evo_git, :command_approval_timeout]`, read per request.
   @default_approval_timeout 120_000
+  @max_eval_code_bytes 16_384
+
+  @sudo_warning "Unrestricted live-BEAM privileges: this code can access the OS, files, " <>
+                  "network and processes with the Genesis server's permissions. " <>
+                  "This is not OS root elevation. Side effects have no rollback."
 
   # Task statuses that make a task's pending approvals moot (auto-deny).
   # `:cancelling` is included so a graceful cancel never stalls on approvals;
@@ -105,23 +115,68 @@ defmodule EvoGit.CommandApproval do
           :approved | :denied | :timeout
   def request(command, args_human, level, agent_id, task_id)
       when is_binary(command) and is_binary(args_human) and level in [2, 3] do
-    case Process.whereis(__MODULE__) do
-      nil ->
-        Logger.warning(
-          "EvoGit.CommandApproval: approval requested for #{command} but the service is " <>
-            "not running — failing closed without executing."
-        )
+    command
+    |> request_fields(args_human, level, agent_id, task_id)
+    |> request_approval()
+  end
 
-        :timeout
+  @doc """
+  Requests approval for EXACT evaluation code, without executing it.
 
-      pid ->
-        GenServer.call(
-          pid,
-          {:request, command, args_human, level, normalize_id(agent_id), normalize_id(task_id)},
-          :infinity
-        )
+  `tier` is `:write` or `:sudo`; `target_node` must already be an atom (use
+  `node()` for the runtime-local node). Code must be a nonempty binary of at
+  most 16_384 bytes; it is never trimmed, rewritten or truncated. Invalid
+  calls return `:denied`, and an unavailable service returns `:timeout`.
+
+  Evaluation requests retain all shell request fields and add `kind`, `tier`,
+  `code`, `target_node` and `warning`. `args` and `code` both contain the exact
+  original binary. Write requests use command `"elixir_eval"`, level 2 and a
+  nil warning; sudo requests use `"elixir_eval sudo"`, level 3 and an explicit
+  unrestricted live-BEAM privilege warning (not OS root, no rollback).
+
+  When `task_id` is known, a bounded task read runs in the CALLER before
+  registration, denying cancelling/terminal or unavailable tasks. Lifecycle
+  broadcasts still deny pending requests, but checking and registration are
+  not atomic: the evaluator MUST recheck lifecycle before executing code.
+  Approval is authorization only, not execution isolation or rollback.
+  """
+  @spec request_eval(binary(), :write | :sudo, node(), String.t() | nil, String.t() | nil) ::
+          :approved | :denied | :timeout
+  def request_eval(code, tier, target_node, agent_id, task_id)
+      when is_binary(code) and byte_size(code) > 0 and byte_size(code) <= @max_eval_code_bytes and
+             tier in [:write, :sudo] and is_atom(target_node) do
+    task_id = normalize_id(task_id)
+
+    if eval_task_active?(task_id) do
+      {command, level, warning} =
+        case tier do
+          :write -> {"elixir_eval", 2, nil}
+          :sudo -> {"elixir_eval sudo", 3, @sudo_warning}
+        end
+
+      command
+      |> request_fields(code, level, agent_id, task_id)
+      |> Map.merge(%{
+        kind: :elixir_eval,
+        tier: tier,
+        code: code,
+        target_node: target_node,
+        warning: warning
+      })
+      |> request_approval()
+    else
+      :denied
     end
   end
+
+  def request_eval(_code, _tier, _target_node, _agent_id, _task_id), do: :denied
+
+  @doc """
+  Returns pending public request maps for dashboard refresh, without caller,
+  monitor or timer internals. Returns `[]` when the service is unavailable.
+  """
+  @spec pending() :: [map()]
+  def pending, do: service_call(:pending, [])
 
   @doc """
   Resolves a pending approval request. `decision` is `:approve` (the command
@@ -134,10 +189,7 @@ defmodule EvoGit.CommandApproval do
   @spec respond(String.t(), :approve | :deny) :: :ok | {:error, :not_found}
   def respond(request_id, decision)
       when is_binary(request_id) and decision in [:approve, :deny] do
-    case Process.whereis(__MODULE__) do
-      nil -> {:error, :not_found}
-      pid -> GenServer.call(pid, {:respond, request_id, decision})
-    end
+    service_call({:respond, request_id, decision}, {:error, :not_found})
   end
 
   @doc """
@@ -151,7 +203,10 @@ defmodule EvoGit.CommandApproval do
   # ToolDispatch to size the per-call timeout of approval-requiring tools).
   @spec timeout() :: non_neg_integer()
   def timeout do
-    Application.get_env(:evo_git, :command_approval_timeout, @default_approval_timeout)
+    case Application.get_env(:evo_git, :command_approval_timeout, @default_approval_timeout) do
+      value when is_integer(value) and value >= 0 -> value
+      _invalid -> @default_approval_timeout
+    end
   end
 
   # --- GenServer callbacks ---------------------------------------------------
@@ -168,19 +223,15 @@ defmodule EvoGit.CommandApproval do
   end
 
   @impl true
-  def handle_call({:request, command, args_human, level, agent_id, task_id}, from, state) do
+  def handle_call(:pending, _from, state) do
+    {:reply, Enum.map(state.pending, fn {_id, entry} -> entry.request end), state}
+  end
+
+  @impl true
+  def handle_call({:request, fields}, from, state) do
     request_id = new_request_id()
     {caller_pid, _tag} = from
-
-    request = %{
-      request_id: request_id,
-      command: command,
-      args: args_human,
-      level: level,
-      agent_id: agent_id,
-      task_id: task_id,
-      node: node()
-    }
+    request = Map.merge(fields, %{request_id: request_id, node: node()})
 
     entry = %{
       request: request,
@@ -293,6 +344,57 @@ defmodule EvoGit.CommandApproval do
   def handle_info(_other, state), do: {:noreply, state}
 
   # --- Helpers ---------------------------------------------------------------
+
+  defp request_fields(command, args, level, agent_id, task_id) do
+    %{
+      command: command,
+      args: args,
+      level: level,
+      agent_id: normalize_id(agent_id),
+      task_id: normalize_id(task_id)
+    }
+  end
+
+  defp request_approval(fields) do
+    if Process.whereis(__MODULE__) == nil do
+      Logger.warning(
+        "EvoGit.CommandApproval: approval requested for #{fields.command} but the service is " <>
+          "not running — failing closed without executing."
+      )
+    end
+
+    service_call({:request, fields}, :timeout, :infinity)
+  end
+
+  defp service_call(message, fallback, call_timeout \\ 5_000) do
+    # GenServer.call exits if the service dies between lookup and call (or
+    # during the approval wait). This API boundary must fail closed, not crash
+    # its caller; request code is deliberately never included in diagnostics.
+    try do
+      case Process.whereis(__MODULE__) do
+        nil -> fallback
+        pid -> GenServer.call(pid, message, call_timeout)
+      end
+    catch
+      :exit, _reason -> fallback
+    end
+  end
+
+  defp eval_task_active?(nil), do: true
+
+  defp eval_task_active?(task_id) do
+    # The existing public read has a bounded 30s call and degrades to nil on
+    # store failure. Keep it OUTSIDE the approval GenServer so it cannot block
+    # responses, lifecycle handling or timers. Registry races fail closed too.
+    try do
+      case EvoGit.TaskRegistry.get_task_lite(task_id) do
+        %{status: status} when status in [:pending, :running, :finalizing] -> true
+        _missing_terminal_or_unavailable -> false
+      end
+    catch
+      :exit, _reason -> false
+    end
+  end
 
   # Maps a respond decision to the caller reply: :approve -> :approved,
   # :deny -> :denied.

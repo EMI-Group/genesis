@@ -26,6 +26,7 @@ defmodule EvoGit.MixProject do
   defp deps do
     [
       {:req_llm, "~> 1.30"},
+      {:dune, "~> 0.3.18"},
       # Security floor for the transitive jsv dependency: pin the patched
       # release explicitly (EEF-CVE-2026-117680 / CVE-2026-117680). req_llm
       # 1.30 itself requires ">= 0.26.2 and < 1.0.0-0"; this range keeps the

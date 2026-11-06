@@ -30,7 +30,7 @@ defmodule EvoGit.Agent.Tools do
   alias EvoGit.Agent.Tools.SkillEnable
   alias EvoGit.Agent.Tools.SkillDisable
   alias EvoGit.Agent.Tools.SkillWhere
-  alias EvoGit.Agent.Tools.RunCommand
+  alias EvoGit.Agent.Tools.ElixirEval
   alias EvoGit.Agent.Tools.JobOutput
   alias EvoGit.Agent.Tools.JobList
   alias EvoGit.Agent.Tools.JobKill
@@ -40,10 +40,10 @@ defmodule EvoGit.Agent.Tools do
   # (chatbot-style, no worktree) must never touch git or write files, and
   # agents operating inside a READ-ONLY foreign repo must not modify anything —
   # `execute/5` blocks these for such agents as defense-in-depth.
-  # NOTE: `run_command` (the task-control shell tool) is deliberately NOT here —
-  # it is a control tool, not a write tool, and must NOT be blocked by the
-  # repo-less guard: the self-reflective agent IS the repo-less agent that
-  # needs it to control tasks. The three background-job control tools
+  # `elixir_eval` has its OWN owner/lifecycle authorization boundary rather than
+  # these pd-based file-write guards; its write/sudo tiers require exact-code
+  # approval. Legacy `run_command` is unconditionally refused by `execute/5`.
+  # The three background-job control tools
   # (`job_output`, `job_list`, `job_kill`) are control tools for the same
   # reason — see `write_call?/2` below for the ONE write capability that is an
   # ARGUMENT rather than a tool name.
@@ -77,8 +77,8 @@ defmodule EvoGit.Agent.Tools do
   @doc """
   Returns a list of all available tool schemas for ReqLLM.
 
-  Note: `run_command` is deliberately absent — it exists only as a dispatch
-  clause and is registered in the agent loop rather than in `schemas/0`.
+  Note: `elixir_eval` is dispatch-only and exposed by the reflective assistant's
+  own schema list, NEVER by either shared schema set. `run_command` is refused.
   """
   def schemas do
     schemas =
@@ -122,7 +122,7 @@ defmodule EvoGit.Agent.Tools do
         SkillWhere.schema(),
         # Background-job CONTROL tools (output / list / kill for detached shell
         # jobs started with the shell tool's `run_in_background` argument).
-        # Control tools like `run_command` — NOT write tools, NOT serial tools
+        # Control tools — NOT write tools, NOT serial tools
         # (they never read-modify-write a file). Every agent that can run a
         # command in its own worktree may legitimately start and manage jobs
         # there, so they belong in BOTH the full and the read-only sets.
@@ -131,13 +131,10 @@ defmodule EvoGit.Agent.Tools do
         JobKill.schema()
         # Git.schema()
         #
-        # NOTE: `run_command` (the task-control shell tool) is deliberately
-        # NOT listed here — it is dispatch-registered only (execute_tool/5)
-        # and exposed to agents via the SelfReflective agent's own explicit
-        # available_tools/0 list. It MUST NOT be added to schemas/0 or
-        # read_only_schemas/0: giving every coding agent task-control access
-        # would be a scope/security violation (mirrors the old dispatch-only
-        # contract of the per-function task-control tools).
+        # NOTE: `elixir_eval` is deliberately NOT listed in either shared set.
+        # Only the reflective assistant advertises it, and execute/5 routes it
+        # through its own runtime authorization, not schema membership or pd roles.
+        # Legacy `run_command` is refused even for that assistant.
       ]
 
     schemas
@@ -289,8 +286,14 @@ defmodule EvoGit.Agent.Tools do
   # before the dispatcher would kill the call. The headroom covers the completing
   # read plus registry latency: each poll of a `:unit`-handled job runs a
   # synchronous `systemctl --user show` in the single GLOBAL registry.
+  # Never let stale assistants or hallucinated calls bypass exact-code approval.
+  # CLI compatibility is independent: it calls CommandShell directly.
+  def execute("run_command", _args, _repo_path, _repo_root, _node_path) do
+    "Error: use elixir_eval exact-code approval path"
+  end
+
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_map(args) do
-    maybe_block_repo_less(
+    dispatch_tool_call(
       ToolNames.normalize(tool_name),
       args,
       repo_path,
@@ -305,7 +308,7 @@ defmodule EvoGit.Agent.Tools do
   def execute(tool_name, args, repo_path, repo_root, node_path) when is_binary(args) do
     case Jason.decode(args) do
       {:ok, decoded} when is_map(decoded) ->
-        maybe_block_repo_less(
+        dispatch_tool_call(
           ToolNames.normalize(tool_name),
           decoded,
           repo_path,
@@ -318,6 +321,18 @@ defmodule EvoGit.Agent.Tools do
           "Pass the arguments as a real JSON object, " <>
           "e.g. {\"args\": [\"-n\", \"pattern\"]}, not a string."
     end
+  end
+
+  # Reserved built-in route BEFORE pd-based write guards and custom fallback.
+  # ElixirEval.execute/3 fully authorizes against the actual scheduler owner and
+  # task lifecycle, including target_node, even if the name was hallucinated.
+  # Schema membership and missing tool-task role flags NEVER grant this capability.
+  defp dispatch_tool_call("elixir_eval", args, repo_path, repo_root, _node_path) do
+    ElixirEval.execute(args, repo_path, repo_root)
+  end
+
+  defp dispatch_tool_call(name, args, repo_path, repo_root, node_path) do
+    maybe_block_repo_less(name, args, repo_path, repo_root, node_path)
   end
 
   # Tool-name aliasing lives ENTIRELY in `EvoGit.Agent.ToolNames` (the alias
@@ -453,11 +468,18 @@ defmodule EvoGit.Agent.Tools do
   background-job control tools (`job_output`, `job_list`, `job_kill`) and any
   unknown name return `false`.
 
+  The evaluator is also serial at EVERY tier, independently of this file-write
+  set, to serialize approval and effects.
+
   The incoming name is normalised through `EvoGit.Agent.ToolNames.normalize/1`
   first, because the dispatcher passes the RAW model-facing name (`write`,
   `edit`, `bash`, `Read`, …) straight from the LLM response: `serial_tool?("write")`
   and `serial_tool?("edit")` are `true`, `serial_tool?("bash")` is `false`.
   """
+  # Evaluations are ALWAYS serial, including read tier: one approval/effect
+  # sequence at a time, independent of file-write classification or custom tools.
+  def serial_tool?("elixir_eval"), do: true
+
   def serial_tool?(tool_name) when is_binary(tool_name) do
     normalized = ToolNames.normalize(tool_name)
     normalized in @serial_tools or EvoGit.CustomTools.write_tool?(normalized)
@@ -485,9 +507,13 @@ defmodule EvoGit.Agent.Tools do
   explicitly: `120_000` for the platform shell tool (any accepted spelling of it
   — `bash`, `shell`, `run_bash`, `run_powershell`, …), the scheduler's tool
   ceiling (`[:scheduler, :max_tool_timeout]`, `1_800_000` ms by default) for
-  `job_output`, and `nil` for every other tool (meaning "no per-tool default —
-  the dispatcher's generic default applies"). `job_list` / `job_kill` are fast
-  registry calls and deliberately keep the generic default.
+  `job_output`, `30_000` for `elixir_eval` (5s engine cap plus bounded
+  authorization/cleanup headroom), and `nil` for every other tool (meaning
+  "no per-tool default — the dispatcher's generic default applies").
+  The evaluator's numeric `timeout_ms` is ONLY its inner engine cap;
+  ToolDispatch separately floors write/sudo to the approval window plus 30s,
+  even against an explicit outer `timeout`, still capped by max_tool_timeout.
+  `job_list` / `job_kill` are fast registry calls and keep the generic default.
 
   The `job_output` ceiling is DERIVED on every call, never a compile-time
   attribute: `EvoGit.BackgroundJobs.wait_max_ms/0` (itself derived at call time
@@ -508,6 +534,7 @@ defmodule EvoGit.Agent.Tools do
     case ToolNames.normalize(tool_name) do
       @shell_tool_name -> @shell_tool_default_timeout_ms
       "job_output" -> job_output_default_timeout_ms()
+      "elixir_eval" -> 30_000
       _other -> nil
     end
   end
@@ -545,8 +572,9 @@ defmodule EvoGit.Agent.Tools do
   # must never touch git or write files. Block write CALLS for them before
   # dispatching (`write_call?/2`: the name-based write set PLUS the shell's
   # `run_in_background` start argument — a detached job is a write capability
-  # even though it is not a tool name); every execution path in `execute/5`
-  # routes through here so there is no bypass. The repo-less guard runs FIRST
+  # even though it is not a tool name); ordinary tools route through here.
+  # The reserved evaluator instead enforces its own owner/lifecycle boundary.
+  # The repo-less guard runs FIRST
   # (ordered before the foreign-repo gate), then the foreign-repo gate, then
   # `execute_tool`.
   defp maybe_block_repo_less(tool_name, args, repo_path, repo_root, node_path) do
@@ -768,20 +796,9 @@ defmodule EvoGit.Agent.Tools do
     SkillWhere.execute(args, repo_path, repo_root)
   end
 
-  # `run_command` is the single task-control shell tool: the self-reflective
-  # agent dispatches command strings (list_tasks, get_task, start_task,
-  # cancel_task, force_kill_task, delete_task, guide_user,
-  # subagent_investigator, list_recent_projects, system_info) through it via
-  # the EvoGit.CommandShell registry. It is a control tool, NOT a write tool —
-  # see the @write_tools note above (it must not be blocked by the repo-less
-  # guard; the self-reflective agent is the repo-less agent that needs it).
-  defp execute_tool("run_command", args, repo_path, repo_root, _node_path) when is_map(args) do
-    RunCommand.execute(args, repo_path, repo_root)
-  end
-
   # Background-job CONTROL tools (`job_output` / `job_list` / `job_kill`) —
-  # control tools exactly like `run_command`, dispatched with the same
-  # `(args, repo_path, repo_root)` shape. They manage the detached shell jobs
+  # dispatched with the same `(args, repo_path, repo_root)` shape. They manage
+  # the detached shell jobs
   # started with the shell tool's `run_in_background` argument; their owner
   # identity comes from the process dictionary the dispatcher installs in every
   # tool task (`:evogit_agent_pid` / `:evogit_agent_id` / `:evogit_task_id` —

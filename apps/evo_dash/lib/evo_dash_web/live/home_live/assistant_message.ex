@@ -54,8 +54,8 @@ defmodule EvoDashWeb.HomeLive.AssistantMessage do
       </div>
       <div class="min-w-0 flex-1 pt-0.5">
         <div class="mb-0.5 text-sm font-semibold leading-snug text-base-content">
-          <%!-- zh_CN: 助手名称 “Genesis”（品牌短名，对应 “启元”） --%>{gettext(
-            "Genesis"
+          <%!-- zh_CN: 助手名称“启元助手”，区别于 Genesis 产品名称 --%>{gettext(
+            "Genesis Assistant"
           )}
         </div>
         <div class="group/assistant min-w-0">

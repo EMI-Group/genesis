@@ -7,6 +7,8 @@ Full per-file history lives in git (`git log -p -- apps/evo_git/test/CONTEXT.md`
 
 ## Routing Table
 - `./evo_git/` → the whole `lib/evo_git/`-mirroring subtree (top-level suites + async-safety map) → `./evo_git/CONTEXT.md`
+- Assistant/SelfReflective evaluation and confirmation coverage → `./evo_git/CONTEXT.md` (exact-code CommandApproval, direct CommandShell/CLI compatibility and persona contracts), `./evo_git/agent/` (tool-task owner propagation, serial evaluator dispatch and approval-aware outer deadlines), and `./evo_git/agent/tools/` (genuine-Dune tier separation, authorization, public wrapper approval, privacy projections, quotas, output bounds and descendant cleanup).
+- Reflect execution and repo-less lifecycle coverage → `./evo_git/runtime/`, `./evo_git/task_registry/` and `./evo_git/agent_scheduler/`.
 - `./evo_git/agent/` → agent loop, context builder/compression, tool dispatch, subagent processing → `./evo_git/agent/CONTEXT.md`
 - `./evo_git/agent/tools/` → per-tool tests → `./evo_git/agent/tools/CONTEXT.md`
 - `./evo_git/agent_scheduler/` → scheduler dispatch, slots, lifecycle, worktrees, store, subagents, RemoteAPI → `./evo_git/agent_scheduler/CONTEXT.md`
@@ -108,6 +110,15 @@ It is adopted by `EvoGit.TaskRegistryCase` (per-BEAM `setup_all` in its `using` 
 `TaskRegistry.server/0` resolves the registry name from the `:evogit_task_registry_server` pdict at CALL time (falling back to the `EvoGit.TaskRegistry` singleton), so in-test `EvoGit.TaskRegistry.*` calls hit the isolated instance; `EvoGit.Store` needs no seam because every client function takes the store name as its first arg — the case exposes the isolated name via `store/0`.
 Helpers: `store/0`, `trigger_cleanup!/0` (direct `Cleanup.cleanup_expired_tasks/1` against the isolated store), `cleanup_process/1`, `old_age_days/0`, `within_age_days/0`.
 No `EvoGit.Supervisor` child is ever terminated or restarted.
+
+## Evaluator Test Strategy
+Evaluator suites use genuine Dune plus production-shaped owner/spec/ETS authority and isolated running reflective tasks rather than mocked authorization or interpreter stubs.
+The explicitly required `evo_git/agent/tools/elixir_eval_fixture_helper.exs` owns its private supervisor through ExUnit and monitors teardown without accepting unexpected shutdown failures.
+Cold-facade tests must run without preloading evaluator allowlists because lazy initialization failures are part of the tested production boundary.
+The evaluator regressions intentionally require embedded scheduler IDs to match their ETS lookup key, including revalidation after a held sudo approval.
+Ordinary Mix execution requires the declared Dune dependency; temporary validation against externally compiled genuine Dune can eagerly load only its dependency beams before invoking `Mix.CLI.main` with `--no-deps-check`, never substitute evaluator production beams.
+The genuine Dune 0.3.18 cache recorded in `refs/notes/evogit` on `ba7e4558e` and `902ac54c4` is `/tmp/genesis/task_95e2e89117239607/genesis-eval-worker-tree-dune-T1-A41/_build/prod/lib/dune/ebin`; use the absolute path because background jobs may change `$TMPDIR`.
+The recorded alternative is `MIX_ENV=test elixir -pa <dune-ebin> -S mix do compile --no-deps-check --no-prune-code-paths + test --no-compile --no-deps-check <test-paths> --seed 42`, which needs no source, dependency-declaration or lockfile changes but still writes ordinary build/test artifacts.
 
 ## Known Issues
 **`EvoGit.SystemSampler` interval can only be changed via restart**: the sampler starts before `test_helper.exs`, so setting `:system_sample_interval_ms` there is too late; a test needing a fast tick sets the env then calls `Supervisor.terminate_child/2` + `Supervisor.restart_child/2` so `init/1` re-reads it (`terminate_child/2` alone leaves a permanent child `:undefined`).

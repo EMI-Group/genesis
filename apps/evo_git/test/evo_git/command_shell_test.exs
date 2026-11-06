@@ -1,7 +1,7 @@
 defmodule EvoGit.CommandShellTest do
   @moduledoc """
   Tests for the `EvoGit.CommandShell` command-shell dispatcher — the single
-  entry point behind the self-reflective agent's `run_command` tool.
+  compatibility entry point for direct callers and the CLI (not assistant tools).
 
   This module owns the DISPATCH tests: they exercise every registered command
   against the real TaskRegistry (isolated via `EvoGit.TaskRegistryCase`),
@@ -37,6 +37,48 @@ defmodule EvoGit.CommandShellTest do
     Application.put_env(:evo_git, :command_approval_timeout, 5_000)
     on_exit(fn -> Application.delete_env(:evo_git, :command_approval_timeout) end)
     :ok
+  end
+
+  describe "legacy assistant dispatch versus direct shell compatibility" do
+    test "run_command always refuses before parsing or side effects, regardless of role flags" do
+      task = seed_task!()
+      command = "CancelTask.cancel_task #{task.id}"
+      Phoenix.PubSub.subscribe(EvoGit.PubSub, "approvals")
+
+      for repo_less <- [nil, false, true] do
+        Process.put(:repo_less, repo_less)
+        Process.put(:agent_type, :read_write)
+
+        for args <- [
+              %{"command" => command},
+              Jason.encode!(%{"command" => command}),
+              %{"command" => "ListTasks.list_tasks"},
+              %{"command" => "help"},
+              %{},
+              %{"command" => nil},
+              "not JSON",
+              nil,
+              []
+            ] do
+          assert EvoGit.Agent.Tools.execute("run_command", args, nil, nil, nil) ==
+                   "Error: use elixir_eval exact-code approval path"
+
+          assert TaskRegistry.get_task(task.id).status == :pending
+        end
+      end
+
+      # The synchronous dispatch never opens even a legacy approval request.
+      refute_receive {:approval_requested, _}, 0
+      Process.delete(:repo_less)
+      Process.delete(:agent_type)
+
+      # Only assistant tool dispatch is retired: the same command remains usable
+      # by trusted direct callers, and really mutates the isolated task row.
+      assert CommandShell.execute(command, approval: :auto) ==
+               {:ok, "Task #{task.id} cancellation requested (graceful)."}
+
+      assert TaskRegistry.get_task(task.id).status == :cancelled
+    end
   end
 
   describe "execute/1 - parsing" do

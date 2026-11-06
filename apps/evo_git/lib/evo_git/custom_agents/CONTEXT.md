@@ -29,7 +29,8 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 ### `EvoGit.CustomAgents.ModelSelector` (script evaluator)
 
 - `compile_script/1` (body string) → `{:ok, fun} | {:error, {:compile_error, msg}}`. The body is wrapped as `fn agent -> <body> end` (`agent` variable in scope; last expression is the result).
-- `select_model/1` (agent map) → `{:ok, model_id | nil} | {:error, {:script_raised | {:invalid_result | {:compile_error, msg}}}`. `nil`/`""`/`false` → default model. NEVER raises (called from the scheduler GenServer).
+- `select_model/1` (agent map) → `{:ok, model_id | nil} | {:error, {:script_raised | {:invalid_result | {:compile_error, msg}}}`.
+`nil`/`""`/`false` → default model, and ordinary script exceptions are rescued, but throws/exits are not caught (called inline from the scheduler GenServer).
 - `status/0` → `:ok | {:error, {:compile_error, msg}}` (dashboard surfacing of broken scripts).
 - `enabled?/0` → `boolean()`.
 - `describe_contract/0` → human-readable contract text (UI help).
@@ -42,7 +43,11 @@ Pure functions, NO GenServer — every call reads/writes the TOML file directly 
 - **Both modules live in this directory** — the store is `../custom_agents.ex` (one level up, sibling of this dir); do not relocate it.
 - **`tools`/`subagents` entries are STRINGS in the TOML.** `save/1` rejects atom entries (`:invalid_tools` / `:invalid_subagents`) via `valid_string_list?/1`; custom tool names are ordinary non-empty strings, so they already pass this validation unchanged (the store does not resolve them — resolution is a runtime concern owned by `EvoGit.CustomTools`). `EvoGit.Agents.Custom` tolerates atom entries defensively at runtime, but the store is the contract owner — do not weaken validation to accept atoms.
 - **ModelSelector caching**: compiled script cached in `:persistent_term` keyed `{__MODULE__, :cache, path}` storing `{mtime, size, entry}` — one `File.stat` + one `:persistent_term.get` per spawn after first compile; external edits picked up when mtime/size change. Lazy compile (never at boot) so a broken script cannot block scheduler startup.
-- **try/rescue boundaries are justified**: the script body is USER-provided code — compile errors (`compile_script/1`) and runtime raises (`evaluate_script/2`) must surface as error tuples, never crash the scheduler GenServer that calls `select_model/1`.
+- **Evaluation trust boundary**: `compile_script/1` concatenates the body into `fn agent -> ... end` and calls unrestricted `Code.eval_string/1`; `evaluate_script/2` invokes the returned value inline in the caller (normally the scheduler GenServer), with no worker process, timeout, sandbox, AST allowlist, resource limit or side-effect rollback.
+Both boundaries use `rescue` only, not `catch`, so ordinary exceptions become error tuples but throws/exits, blocking code and VM-global side effects are not contained.
+The string wrapper is not syntactic confinement: supplied source can close the anonymous function and add top-level expressions, and macro expansion can execute code during compilation, including from `status/0` or `enabled?/0` on a cache miss.
+This mechanism is for trusted user configuration, not a safe evaluator for agent-generated expressions.
+`normalize_result/1` accepts any binary as a model id without checking profile existence, maps nil/empty-string/false to default, and inspects other values without a byte/time budget.
 - Consumers: `EvoGit.AgentScheduler.Dispatch.register_agent/7` (calls `select_model/1` per spawn, BEFORE `resolve_model_for_agent/2`; skipped when `spec.opts[:model_id_locked]`) and the `:evo_dash` settings UI (CRUD + script editor + `status/0` surfacing). Tests: `test/evo_git/custom_agents_test.exs`, `test/evo_git/agents/custom_test.exs`.
 
 ## See Also

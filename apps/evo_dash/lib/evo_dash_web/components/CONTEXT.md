@@ -113,6 +113,13 @@ Task-card-specific cap rows (`@in_card_blob_limit`, `@in_card_log_limit`, `@copy
 
 `Layouts.app/1` keeps a semibold base-size wordmark and flat tinted active navigation without a selection shadow.
 The Help link retains its translated name and `/help` route and uses `hero-chat-bubble-left-right` to identify the chat entry.
+It is the last main navigation item after System, uses `current_page == :help`, and threads the current node through `with_node_param/2`.
+The shared `sidebar_nav_link/1` has no explanatory tooltip or capability badge, so the Help entry itself does not advertise runtime querying or task control.
+The component-level chat rename surface is the single `gettext("Help")` sidebar label in `layouts.ex`; changing that display name does not require changing `/help`, `current_page == :help`, `current_page(:help)`, the chat icon, or node-query threading.
+No approval card or raw-Elixir approval presentation lives at this component node; the chat approval surface belongs to the sibling `live/home_live/approval_card.ex` module.
+The `project_components.ex` Dev Commands button's `phx-click="run_command"` is a project shortcut event, not the assistant's command-approval UI.
+The shared guide panel in `layouts.ex` renders only when `@guide` exists, is titled "Genesis Guide", displays plain message text, conditionally offers Dismiss when `dismissible`, and offers a node-aware "Go" navigation link when `page` is a binary.
+The guide panel has no read-only/state-changing action classification or approval UI; it is guidance/navigation presentation, not the chat command-approval surface.
 Below `lg`, the main content uses `pt-16` to clear the fixed navigation toggle; desktop uses `lg:pt-4`, with the existing flex/min-height chain and scroll backgrounds unchanged.
 The fixed configuration notice has a viewport-minus-two-rem width capped at `max-w-sm`, wrapping warning text on an opaque base surface with a subtle shadow.
 Shell navigation, branding and toggle controls plus core default buttons, tabs, accordion summaries and notice close buttons use theme-token focus-visible outlines.

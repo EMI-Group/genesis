@@ -6,6 +6,7 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 ## Routing Table
 - `./skill/` → skill tool modules (SkillAdd, SkillEdit, SkillRemove, SkillList, SkillRead) — detail `skill/CONTEXT.md`
 - `./lsp/` → `EvoGit.Agent.Tools.Lsp.Protocol`, the PURE LSP wire codec (Content-Length framing, JSON-RPC encode, incremental `decode/1`, `file://` URIs, diagnostics/hover/definition normalization; no I/O, ports or processes) — detail `lsp/CONTEXT.md`
+- `./elixir_eval/` → Evaluator security and implementation detail: owner authorization, literal MFA/tier admissions of unchanged real APIs through broker-backed Dune shims, optional narrow Read/Write facades, quotas, worker cleanup and rendering — detail `elixir_eval/CONTEXT.md`; the public wrapper/schema remains in `./elixir_eval.ex`.
 
 ## API Surface
 
@@ -27,7 +28,8 @@ LLM tool definitions and implementations for EvoGit agents: each module declares
 | `lsp` | Language-server code intelligence — `action` ∈ `diagnostics`/`hover`/`definition`, 1-based `line`/`column`, `path` inside the repo; SCHEMA-GATED on `EvoGit.Config.lsp_enabled?/0` (`[lsp] enabled = true` + non-empty `command`), so absent by default while dispatch stays registered | Read | No |
 | `search_context` | Search patterns in CONTEXT.md files | Read | Yes |
 | `search_history` | Search git commit history | Read | Yes |
-| `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (dispatch-registered ONLY; self-reflective agent); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
+| `elixir_eval` | Assistant-only explicit read/write/sudo Elixir evaluation; read/write use Dune with admitted real APIs or optional facades, write/sudo require exact-code approval | Special | Read/write Dune; sudo NO |
+| `run_command` | Command STRING through `EvoGit.CommandShell` — task control, user guides, system info (legacy command shell; blocked for SelfReflective in favor of `elixir_eval`); level-2/3 commands approval-gated via `EvoGit.CommandApproval` | Special | No |
 | `job_output` | A background job's delta since the previous read + current status (optional bounded `wait`) | Control | No |
 | `job_list` | This agent's background jobs with ids and statuses | Control | No |
 | `job_kill` | Request cancellation of a running background job | Control | No |
@@ -53,7 +55,7 @@ MODEL-FACING names differ from the INTERNAL dispatch keys `execute_tool/5` match
 - Batches split on `Tools.serial_tool?/1`: the file-mutating subset runs SEQUENTIALLY in the parent agent process, the rest in parallel (`Task.async_stream`, bounded by `max_tool_concurrency`); concurrent shell/git calls can still contend on git's `index.lock`.
 - Write tools get 4 args (incl. `node_path`), read tools 3.
 - `run_git`'s schema is commented out of `schemas/0`; agents use `bash` for git.
-- New tool = module (schema + execute) + alias + dispatch clause + `schemas/0` entry.
+- New identity-named tool needs a module (`schema/0` + `execute`), a dispatcher clause and an explicit schema exposure site; an alias is needed only when its model-facing and dispatch names differ.
 - Exceptions: `run_command` and user-defined custom tools dispatch through their own clause / the `execute_tool/5` catch-all only, never in `schemas/0` or `read_only_schemas/0`, and are opt-in per agent `available_tools/0`.
 
 ## Execution Flow
@@ -263,7 +265,13 @@ Every tools-node commit uses `git commit -F <tempfile>`, never `-m <message>` ar
 - Approval gate: registry entries carry `level:`; level-2/3 commands pause at the dispatch choke point awaiting `EvoGit.CommandApproval.request/5` (blocking; PubSub `"approvals"`; default 120 s via `[:evo_git, :command_approval_timeout]`), run ONLY on `:approved` and fail closed on deny/timeout; level-1 commands run immediately.
 - The 10 command handlers keep `execute/3` and are called as `apply(module, :execute, [string_keyed_args, nil, nil])` (no schema, no dispatch clause): `ListTasks`, `GetTask`, `StartTask`, `CancelTask`, `ForceKillTask`, `DeleteTask`, `SpawnInvestigator`, `GuideUser`, `ListRecentProjects`, `SystemInfo`.
 - Handler output is a binary or `{:error, message}`: binary → `{:ok, output}`; `{:error, binary}` → propagated as a shell error; anything else → `{:error, "Unexpected handler output: #{inspect(output)}"}`.
-- Handlers never raise (task-system calls wrap `rescue`/`catch :exit` for `:noproc` and 30 s call timeouts, returning `"task system unavailable: ..."`).
+- `RunCommand.safe_execute/1` is the outer rescue/`:exit` boundary; `ListTasks`, `GetTask`, `StartTask` and `ListRecentProjects` also rescue/catch their registry calls, while `CancelTask`, `ForceKillTask` and `DeleteTask` catch ONLY `:exit` and rely on the outer boundary for exceptions.
+- Handler `execute/3` functions contain NO approval check and NO owning-task/self-target check; direct calls bypass the command-shell confirmation policy entirely.
+- Every task-control handler uses the LOCAL `EvoGit.TaskRegistry`, ignores both repository-path arguments and has no node selector, so switching a dashboard's selected remote node does not retarget these handlers.
+- `CancelTask`/`ForceKillTask`/`DeleteTask` accept any nonblank task id, including the calling agent's own task id; a self-force-kill can destroy the caller before its result is returned, and a self-cancel requests the ordinary grace path rather than synchronously finishing it.
+- `DeleteTask.execute/3` reports success for the fire-and-forget registry cast without checking existence, status or completed deletion; its string is not an acknowledgement of persisted removal.
+- `ListTasks` reads the entire `list_tasks_summary(statuses)` collection without a limit and `ListRecentProjects` formats the entire returned collection; `GetTask` fetches the FULL task before trimming objective/result to 2,000 characters, so these are useful inspection APIs but not bounded read primitives.
+- Approval, cancellation and generic execution deadlines live OUTSIDE these handlers in `EvoGit.CommandShell`, `EvoGit.CommandApproval` and `EvoGit.Agent.ToolDispatch`; none of the task-control handlers polls cancellation, installs a timeout or rolls back a mutation after the caller times out.
 - `GuideUser` uses `with` without `else`, so its validation failures return `{:error, message}` tuples on direct `execute/3` calls (test-pinned), while through the shell `parse_args` rejects missing args first.
 - `SpawnInvestigator` normalizes EVERY failure through `Failure.error/1`, so it always returns a plain single-`Error:` string (never a tuple).
 
@@ -292,6 +300,31 @@ A real Investigator agent run stays blocked by the level-1 ~10 s tool timeout (a
 
 **Security constraints**: compile-time literal registry (no `Code.eval_string`, no input-derived module/function names), no `String.to_atom/1` on input (enums/bools/statuses validated against literal lists and passed as strings), whitelist-only dispatch, and guardrails `@max_command_length` 4000 / `@max_tokens` 40 / `@max_token_length` 2000.
 To add a command: a handler `execute/3` plus ONE registry entry (including its `level:`) — no schema, no dispatch clause.
+
+### Assistant Elixir evaluator (`elixir_eval`)
+`EvoGit.Agent.Tools.ElixirEval` (`elixir_eval.ex`) exposes `schema/0`, `execute/3`, persona-facing `help/0`, `authorized_assistant?/0` and `authorize/0,1`.
+`help/0` teaches source inspection with `read`/`glob`/`rg` followed by explicitly admitted real calls, with fully qualified `EvoGit.TaskRegistry.list_tasks_page(limit: 10)`, `EvoGit.AgentScheduler.get_config(:max_turns)` and approval-gated, runtime-only `EvoGit.AgentScheduler.update_config(max_tool_concurrency: 8)` examples.
+Public help incorporates `DirectAPI.help/0` exactly once; that function owns the detailed direct catalog, whose admitted set grants authority rather than all public APIs.
+Owner authorization, direct/facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
+Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrapper (the internal engine ceiling is 16384), and reaches approval and the engine byte-identically.
+`tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
+`target_node`, when supplied, must be a STRING equal to `current`, `local` or the exact current node name; explicit nil, atoms and remote targets are rejected.
+`timeout_ms` and `max_output_bytes` accept only POSITIVE INTEGERS: timeout defaults to 2000 ms and clamps to 5000 ms, output defaults to 16384 bytes and clamps to 256..65536 bytes, including errors and truncation markers.
+Read/write use literal module/function/arity/tier admissions that invoke the actual public APIs unchanged through broker-backed Dune shims, not facade projections, redaction or added argument validation; no admission grants an entire namespace.
+Read admissions are available in both read and write tiers; examples include `EvoGit.TaskRegistry.get_task/1`, `EvoGit.AgentScheduler.RemoteAPI.list_agents/0` and `EvoGit.Config.resolve/0,1`, with the exact catalog owned by the child context and `DirectAPI`.
+Direct reads are NOT projected or secret-safe and are not necessarily collection-bounded; execution/output limits bound resource use, not disclosure, and truncation is not redaction.
+`EvoGit.Agent.Tools.ElixirEval.Read` / `EvoGit.Agent.Tools.ElixirEval.Write` remain optional narrow facades, not the sole path, and interpreted `alias/1` declarations are unsupported.
+`EvoGit.Agent.Tools.ElixirEval.Read.list_tasks()` uses defaults and `EvoGit.Agent.Tools.ElixirEval.Read.list_tasks(map)` accepts pagination/filter options; `help/0` provides fully qualified examples.
+Each call has fresh bindings; reading source or finding a public API does not admit it.
+The threat model is accidental self-corruption, not a malicious attacker: write requires exact-code approval for bounded admitted capabilities, distinct from separately approved unrestricted native sudo.
+Write/sudo require exact-code approval through `EvoGit.CommandApproval.request_eval/5`, execute only on `:approved`, and revalidate authority before approval, immediately before execution and after any engine result.
+Persistence IS admitted in write tier via `EvoGit.Config.save_user_config/1`, alongside explicit writes such as `EvoGit.TaskRegistry.start_task/2` and `EvoGit.AgentScheduler.update_config/1`; there is no blanket config-persistence exclusion.
+`EvoGit.Config.resolve/0,1` reads defaults plus user configuration, NOT live runtime overrides; `EvoGit.AgentScheduler.update_config/1` changes runtime state only.
+`EvoGit.Config.save_user_config/1` validates and replaces the WHOLE config file and invalidates its cache but does not reload the scheduler: read/modify/save the full map to preserve unrelated settings, then explicitly call `EvoGit.AgentScheduler.RemoteAPI.reload_config/0` and inspect its result.
+Saving a resolved map materializes defaults in the file, and concurrent saves can lose edits.
+Sudo is DANGEROUS UNSANDBOXED full VM evaluation with server permissions, not OS root elevation, best-effort caps and no rollback; unexpected failures withhold raw exception/exit/throw details.
+Neither write nor sudo can roll back committed effects.
+The evaluator's approval wait is separate from its execution budget; dispatch must allow the approval window instead of imposing the generic short tool timeout.
 
 ### StartTask opt-forwarding surface (shell task-start data plane)
 `StartTask.start_task` forwards `:objective` (positional 2, default `""`), `:path`, `:mode`, `:resume_from`, `:starting_commit` and `:model_id` (raw strings via `maybe_put`, nil/`""` dropped) plus, for `:genesis` only, the same positional text under `:prompt` (the key the genesis executor reads).
