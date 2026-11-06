@@ -4583,7 +4583,14 @@ defmodule EvoDashWeb.ProjectsLiveSyncTest do
     test "mounts HomeLive at /help", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/help")
 
-      assert html =~ "Chat with Genesis"
+      heading =
+        html
+        |> Floki.parse_document!()
+        |> Floki.find("h1")
+        |> Floki.text()
+        |> String.trim()
+
+      assert heading == "Genesis Assistant"
       assert html =~ ~s(id="chat-form")
     end
   end
