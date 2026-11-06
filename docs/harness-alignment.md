@@ -422,14 +422,18 @@ authoritative comparison.
   `ReqLLM.Response.text/1`, so only `:text` content parts count — for a streamed/reasoned reply whose assembled
   content is `[text, thinking]`, the reasoning text can never be promoted into the report.
 - **A reply with no tool calls ends the run, and its text is the report** — exactly `dsh`'s rule. The text is
-  wrapped into the same `%Result{}` the explicit route builds, so the scheduler, `merge_and_report`, archive
-  refs, usage accounting, persistence and the dashboard all stay unchanged.
-- Two completion routes share one builder. The implicit route **commits the worktree before capturing
-  `commit_sha`** (`AgentScheduler.Dispatch.commit_pending_in_worktree/0` first) — otherwise `merge_and_report`
-  takes the no-changes path and the work dies with the worktree. The dirty-workspace gate deliberately does NOT
-  apply to the implicit route: the model has already finished, and a legitimate finish must never be turned
-  into a refusal.
-- `complete_task` remains supported and optional.
+  handed to `EvoGit.Agent.Completion`, which writes the git note, the archive refs and the
+  `%EvoGit.Agent.Result{}`; the scheduler, `merge_and_report`, usage accounting, persistence and the dashboard
+  all stay unchanged.
+- There is exactly ONE finish route, and it **commits the worktree before capturing `commit_sha`**
+  (`AgentScheduler.Dispatch.commit_pending_in_worktree/0` first) — otherwise `merge_and_report` takes the
+  no-changes path and the work dies with the worktree. There is no dirty-workspace gate on finishing: the model
+  has already finished, and a legitimate finish must never be turned into a refusal.
+- **The explicit completion tool was removed entirely** — no `complete_task` schema, no dispatch branch, no
+  whitelist entry, no prompt text — so the finish contract now matches `dsh` in full: a reply with no tool calls
+  finishes the run and IS the report. The tool's side-effect machinery (git note, archive refs, `%Result{}`
+  construction) survives, re-hosted as that implicit route's completion step in `EvoGit.Agent.Completion`
+  (renamed from `EvoGit.Agent.Tools.CompleteTask`).
 - The no-tool-call nudge budget dropped from 3 to 1 and now fires only for `:empty` (a genuinely empty
   response); a response with usable text is not a protocol violation.
 
@@ -547,8 +551,9 @@ authoritative comparison.
   SelfReflective) — the read-only Investigator previously had no finish statement at all.
 - The turn-budget and recovery messages now teach that same contract: `TurnWarning`'s `:end`/`:critical` warnings,
   `Runner.recovery_warning_message/2`, the scheduler's `@cancel_message` and the Genesis implementation-phase
-  objective all ask for a plain-text final report (committing uncommitted work first) and mention `complete_task`
-  only as an optional way to pass an explicit structured result.
+  objective all ask for one thing — a plain-text final report and no tool calls (committing uncommitted work
+  first). No completion tool is offered or named, because none exists: a reply with no tool calls is the only
+  way to finish.
 - All prompt-side tool references were repointed to the model-facing names; `web_fetch` / `lsp` are mentioned
   where they solve a role's problem (docs lookup, Elixir diagnostics) and omitted where they would be
   catalogue padding.
