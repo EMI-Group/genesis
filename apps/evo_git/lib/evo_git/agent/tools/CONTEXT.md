@@ -303,6 +303,7 @@ To add a command: a handler `execute/3` plus ONE registry entry (including its `
 
 ### Assistant Elixir evaluator (`elixir_eval`)
 `EvoGit.Agent.Tools.ElixirEval` (`elixir_eval.ex`) exposes `schema/0`, `execute/3`, persona-facing `help/0`, `authorized_assistant?/0` and `authorize/0,1`.
+`help/0` includes fully qualified `Read.configuration_status/0` and approval-gated `Write.update_scheduler_config/1` examples; the projected status and runtime-only update contracts live in `elixir_eval/CONTEXT.md`.
 Owner authorization, facade signatures, security boundaries, quotas and cleanup are owned by `elixir_eval/CONTEXT.md`, not duplicated here.
 Required `code` is nonblank valid UTF-8, at most 16000 BYTES at this public wrapper (the internal engine ceiling is 16384), and reaches approval and the engine byte-identically.
 `tier` is an explicit string enum `read` (default), `write` or `sudo`; refusal never triggers automatic escalation.
