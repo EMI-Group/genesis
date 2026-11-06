@@ -57,6 +57,9 @@ Processes NOT descending from the wrapper (self-reflective `agent/tools/*`, `cli
 
 ## TaskExecutor Dispatch & Task Start
 
+`execute_task/3` defaults `server` to its own module `EvoGit.TaskRegistry.TaskExecutor`, NOT the production registry name despite its doc comment; normal wrapper callers must supply the explicit fourth argument.
+The `:reflect` clause passes `opts ++ [task_id: task_id]` verbatim, so a caller-provided earlier `:task_id` wins ordinary `Keyword.get/2` lookup; this helper neither removes duplicate keys nor validates reflect options.
+No helper in this directory calls `CommandApproval` or implements approval denial on cancellation; those lifecycle hooks must be checked in the parent registry and command-approval owner.
 `execute_task/4` stores `server` in the `:evogit_task_registry_server` process dictionary FIRST, then `ensure_task_tmpdir/2`, then private `do_execute_task/3`: `:genesis` → `Runtime.Genesis.run(prompt, runtime_opts)`; `:evolve` → merge-context step, then resume-context-or-plain, then `Runtime.Evolution.run(objective, runtime_opts)`; `:extract_skills` → `Runtime.SkillExtraction.run(runtime_opts)`; `:reflect` → `Runtime.SelfReflective.run(opts ++ [task_id: task_id])`.
 `:reflect` bypasses `RuntimeOpts.build_common_runtime_opts` (whose `Keyword.fetch!(:path)` would `KeyError`) and returns `{:ok, %{result: ..., commit_sha: nil, branch_name: nil, tag: nil}}`, leaving `commit_sha`/`branch_name`/`project_path` nil.
 NO catch-all clause: an unknown type raises `FunctionClauseError` in the spawned task → `{ref, {:exit, ...}}` → `:failed`.
@@ -216,8 +219,9 @@ The trailing `node()` is the emitting node; subscribers ignore other nodes for n
 
 ## Store Access, SQL Lowering & Fault Isolation
 
-- **Store containment**: EVERY synchronous Store call routes through `StoreGuard.read/3` / `write/2`, so a dead/restarting store (an exit) or an unexpected raise degrades to the operation's own empty value (reads) or `{:error, :store_unavailable}` (writes) instead of killing the registry — the GenServer every dashboard LiveView subscribes to.
-- **Disk-full consequence**: all TaskRegistry/Cleanup write call sites degrade gracefully (`{:error, :disk_full}` from `force_kill_task`/`cancel_task`/`clear_finished_tasks`; log-and-continue for casts/heartbeat), and `{:error, :store_unavailable}` takes the SAME branch; the in-memory terminal cleanup always runs.
+- **Store containment**: registry read offloads use `StoreGuard.read/3`, but `Cleanup.cleanup_expired_tasks/1` calls `Store.select_cleanup_info/3` and `Store.delete_tasks/2` directly with no guard, so this helper does not isolate a Store exit or unexpected write result.
+- **Cleanup failure handling**: `cleanup.ex:39-51` matches only `:ok` and `{:error, :disk_full}` from deletion; another error tuple raises `CaseClauseError`, and the helper emits no PubSub event or command-approval cancellation.
+- **Disk-full consequence**: registry write paths distinguish disk-full/store-unavailable from successful persistence and perform their in-memory terminal cleanup separately, while `Cleanup.cleanup_expired_tasks/1` handles only the explicit disk-full tuple and is not protected by `StoreGuard`.
 - **Store callers in `apps/evo_git/lib`**: only `task_registry.ex` and `task_registry/cleanup.ex` (the `agent_scheduler/*` `Store.` references are `EvoGit.AgentScheduler.Store`, a DIFFERENT ETS module); none in `lease.ex` (ETS-only; `sched_meta_has_active_agents?/1` scans via `:ets.tab2list`), `diagnostics.ex`, `runtime_opts.ex`, `task_executor.ex` (Store only transitively via ResumeContext), `store_guard.ex`.
 - **`Store.get_task_status/2` is TRI-STATE and every consumer here honours it**: `nil` = NO row (the only "absent" answer), a known status atom, or `{:unknown, raw}` = the row EXISTS with unreadable status text (already logged by `Codec.decode_status/1`).
   The heartbeat renews via `Lease.lease_renewable?/1` (which renews `{:unknown, _}`), the `:lease_sweep` decides via `Lease.leaked?/3` (which never leaks `{:unknown, _}`; `select_running_lease_info/1`'s SQL `IN ('running','finalizing','cancelling')` filter means such a row cannot even reach the sweep — the classifier stays the single source of truth, defence-in-depth rather than a duplicate rule).
