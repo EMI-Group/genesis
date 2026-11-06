@@ -59,9 +59,9 @@ Unqualified dbg AST nodes are rejected before interpretation because sanitizer-g
 Default Dune pure operations remain available, but every EvoGit module is intercepted before Base fallback and denied unless its exact MFA and tier appear in `DirectAPI`'s literal registry or compatible facade list.
 Dune's generated `allow(..., only: [...])` entries select names rather than arities and initialize aliases only; the outer `fun_status/3` wrappers enforce exact arities and route admitted real APIs to fixed broker-backed shims, never arbitrary apply or namespace grants.
 Both tiers initialize all admitted module aliases at Base load time, but write MFAs remain restricted in read tier.
-`DirectAPI.help/0` generates the exact admitted signature lists plus examples, limits and deviations for parent help integration.
-`Read.help/0` delegates to `Broker.call(:help, [])`, whose `execute(:help, [], _)` currently concatenates public `ElixirEval.help/0` with `DirectAPI.help/0`; the public wrapper itself does not include the direct-API section.
-The broker append is the sole current composition site, so integrating `DirectAPI.help/0` into public `ElixirEval.help/0` also requires removing that broker append to avoid repeating the direct-API section in `Read.help/0`.
+`DirectAPI.help/0` generates the exact admitted signature lists plus examples, limits and deviations.
+Public `ElixirEval.help/0` includes `DirectAPI.help/0` exactly once.
+`Read.help/0` delegates to `Broker.call(:help, [])`, whose `execute(:help, [], _)` returns public `ElixirEval.help/0` without appending another direct-API section.
 The restricted-operation hint names admitted TaskRegistry/AgentScheduler APIs and directs callers to `Read.help/0`, while retaining facade compatibility and explicit write approval without automatic escalation.
 Sudo runs `Code.eval_string(code, [])` with full VM authority only after the external approval gate; it can access secrets, mutate the VM, spawn OS children or interfere with tracing.
 WorkerTree uses an unlinked monitored guardian, monitors caller and optional owner/agent pids, and monitors the broker separately.

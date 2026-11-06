@@ -283,8 +283,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     end
   end
 
-  defp execute(:help, [], _),
-    do: EvoGit.Agent.Tools.ElixirEval.help() <> "\n" <> DirectAPI.help()
+  defp execute(:help, [], _), do: EvoGit.Agent.Tools.ElixirEval.help()
 
   defp execute(:system_info, [], _), do: Projection.system_info()
   defp execute(:list_tasks, [options], context), do: Projection.tasks(context, options)
