@@ -94,6 +94,18 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Projection do
     end
   end
 
+  def configuration_status do
+    # Fetch only individual scalar keys, never :get_config (which includes
+    # generation parameters/credentials) or persisted user configuration.
+    Map.new(
+      [:default_llm_max_concurrency, :max_tool_concurrency, :max_turns, :max_turns_root, :paused],
+      fn key ->
+        value = GenServer.call(EvoGit.AgentScheduler, {:get_config, key}, @timeout)
+        {key, if(key == :paused, do: enum(value, [true, false]), else: count(value))}
+      end
+    )
+  end
+
   def model_profiles do
     case GenServer.call(EvoGit.AgentScheduler, {:get_config, :model_profiles}, @timeout) do
       profiles when is_list(profiles) ->

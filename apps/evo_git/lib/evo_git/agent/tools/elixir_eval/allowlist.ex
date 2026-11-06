@@ -10,7 +10,8 @@ defmodule EvoGit.Agent.Tools.ElixirEval.ReadAllowlist.Base do
       :get_task,
       :list_agents,
       :scheduler_status,
-      :model_profiles
+      :model_profiles,
+      :configuration_status
     ]
   )
 end
@@ -20,7 +21,14 @@ defmodule EvoGit.Agent.Tools.ElixirEval.WriteAllowlist.Base do
   use Dune.Allowlist, extend: EvoGit.Agent.Tools.ElixirEval.ReadAllowlist.Base
 
   allow(EvoGit.Agent.Tools.ElixirEval.Write,
-    only: [:start_task, :cancel_task, :force_kill_task, :delete_task, :guide]
+    only: [
+      :start_task,
+      :cancel_task,
+      :force_kill_task,
+      :delete_task,
+      :guide,
+      :update_scheduler_config
+    ]
   )
 end
 

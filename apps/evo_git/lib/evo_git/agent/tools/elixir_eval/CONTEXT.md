@@ -25,7 +25,7 @@ Related integration suites include `reflect_tools_test.exs` and the parent tool-
 | `allowlist.ex` | `ReadAllowlist` extends Dune defaults with Read; `WriteAllowlist` additionally admits Write, with explicit IO shims and dbg rejection. |
 | `read.ex` / `Read`, `Write` | Fixed broker-backed runtime inspection and mutation APIs, not direct access to runtime structs or configuration. |
 | `projection.ex` / `Projection` | Scalar runtime projections, paginated task options, task-id validation and scalar normalization. |
-| `validation.ex` / `Validation` | `start_options/2` and `guide/2` validate mutation arguments using literal keys and enums. |
+| `validation.ex` / `Validation` | `start_options/2`, `guide/2` and `scheduler_options/1` validate mutation arguments using literal keys and enums. |
 | `render.ex` / `Render`, `IOShim` | UTF-8-safe byte-capped rendering and Dune stdout shims. |
 | `bounded_io.ex` / `BoundedIO` | `start/1`, `output/1`, `stop/1` supply a bounded monitored group leader for native character output. |
 
@@ -78,8 +78,17 @@ The broker independently monitors original owner, tool, controller and attached 
 Worker loss cancels a pending operation, and broker termination cancels its pending Task and kills its attached worker; committed side effects cannot be rolled back.
 
 ## Capabilities, Quotas and Mutations
-Read exposes `help/0`, `system_info/0`, `list_tasks/0,1`, `get_task/1`, `list_agents/0`, `scheduler_status/0` and `model_profiles/0` through the broker.
-Write exposes `start_task/2`, `cancel_task/1`, `force_kill_task/1`, `delete_task/1` and `guide/1,2`, and requires a write- or sudo-tier broker.
+Read exposes `help/0`, `system_info/0`, `list_tasks/0,1`, `get_task/1`, `list_agents/0`, `scheduler_status/0`, `model_profiles/0` and `configuration_status/0` through the broker.
+Write exposes `start_task/2`, `cancel_task/1`, `force_kill_task/1`, `delete_task/1`, `guide/1,2` and `update_scheduler_config/1`, and requires a write- or sudo-tier broker.
+`Read.configuration_status/0` returns exactly the live scheduler's `default_llm_max_concurrency`, `max_tool_concurrency`, `max_turns`, `max_turns_root` and `paused` scalars, using individual one-second single-key scheduler reads rather than fetching raw configuration, generation parameters or credentials.
+Its five reads are not an atomic snapshot; malformed scalar values normalize to nil, and one invocation charges one read and one projected row.
+`Validation.scheduler_options/1` accepts only a nonempty map of literal atom/string scheduler keys, rejects duplicate spellings and unknown keys without atom creation, and returns a normalized keyword list.
+`Write.update_scheduler_config/1` accepts concurrency integers in 1..256 and turn-cap integers in 1..10000, or a standalone boolean `paused` option; numeric strings, floats, nil, empty maps and mixed paused/numeric updates are refused before mutation.
+Numeric updates use the scheduler's existing `{:update_config, opts}` API, while standalone paused uses `:pause` or `:resume` so queued slot/agent transitions retain scheduler semantics.
+Each call sends one mutation under a one-second deadline and revalidates original authority immediately before dispatch and after completion, charging one write from the existing sixteen-write budget.
+An acknowledged update returns `%{status: :updated, scope: :runtime, persisted: false, settings: requested_settings}`; settings are the acknowledged requested values, not a per-model effective-capacity projection.
+Changes never write config files, survive only until restart/reload or another runtime update, preserve scheduler concurrency floors and explicit peak hard-pause behavior, and turn caps apply to future agent registrations rather than rewriting live AgentState values.
+Timeout or lost authority can occur after an effect committed, so errors do not imply rollback and a scheduler-call exit explicitly recommends inspecting configuration status before retrying.
 Each evaluation permits at most 128 broker requests including IO, 32 reads, 500 charged projected rows, 16 writes and four task starts, with at most one pending runtime operation.
 Row charging uses requested task-page limit, 100 for agent/model-profile reads and one for other reads, rather than counting actual returned rows.
 Runtime operations revalidate original authority before and after execution, and mutations revalidate again immediately before dispatch; registry calls use one-second deadlines and broker IPC uses five seconds.

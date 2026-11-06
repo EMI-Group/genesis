@@ -12,6 +12,38 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Validation do
   }
   @pages [nil, "/", "/help", "/projects", "/tasks", "/agents", "/settings", "/system"]
 
+  @scheduler_keys [
+    :default_llm_max_concurrency,
+    :max_tool_concurrency,
+    :max_turns,
+    :max_turns_root,
+    :paused
+  ]
+
+  # Scheduler.update_config trusts its callers. Validate here before dispatch;
+  # literal keys/ranges exclude credentials, model/provider options and paths.
+  def scheduler_options(options) do
+    with {:ok, opts} <- normalize(options, @scheduler_keys),
+         true <- opts != [],
+         true <- Enum.all?(opts, &valid_scheduler_option?/1),
+         true <- not Keyword.has_key?(opts, :paused) or length(opts) == 1 do
+      {:ok, opts}
+    else
+      _ ->
+        {:error,
+         "Expected concurrency integers 1..256, turn-cap integers 1..10000, or a standalone boolean paused option; unknown, duplicate and empty options are refused."}
+    end
+  end
+
+  defp valid_scheduler_option?({:paused, value}), do: is_boolean(value)
+
+  defp valid_scheduler_option?({key, value})
+       when key in [:default_llm_max_concurrency, :max_tool_concurrency],
+       do: is_integer(value) and value in 1..256
+
+  defp valid_scheduler_option?({key, value}) when key in [:max_turns, :max_turns_root],
+    do: is_integer(value) and value in 1..10_000
+
   def start_options(type, options) when is_binary(type) and is_map(options) do
     task_type = Map.get(@types, type)
 

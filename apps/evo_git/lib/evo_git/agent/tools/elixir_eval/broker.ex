@@ -24,9 +24,17 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     :get_task,
     :list_agents,
     :scheduler_status,
-    :model_profiles
+    :model_profiles,
+    :configuration_status
   ]
-  @writes [:start_task, :cancel_task, :force_kill_task, :delete_task, :guide]
+  @writes [
+    :start_task,
+    :cancel_task,
+    :force_kill_task,
+    :delete_task,
+    :guide,
+    :update_scheduler_config
+  ]
   @unavailable {:error, "Evaluation capability unavailable or expired."}
   @max_output_cap 65_536
 
@@ -255,7 +263,12 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
     rescue
       _ -> {:error, "Runtime operation failed."}
     catch
-      _, _ -> {:error, "Runtime operation unavailable."}
+      :exit, _ when operation == :update_scheduler_config ->
+        {:error,
+         "Scheduler update outcome unknown; inspect configuration_status before retrying. A timeout does not roll back effects."}
+
+      _, _ ->
+        {:error, "Runtime operation unavailable."}
     end
   end
 
@@ -266,6 +279,32 @@ defmodule EvoGit.Agent.Tools.ElixirEval.Broker do
   defp execute(:list_agents, [], _), do: Projection.agents()
   defp execute(:scheduler_status, [], _), do: Projection.scheduler_status()
   defp execute(:model_profiles, [], _), do: Projection.model_profiles()
+  defp execute(:configuration_status, [], _), do: Projection.configuration_status()
+
+  defp execute(:update_scheduler_config, [options], context) do
+    with {:ok, opts} <-
+           EvoGit.Agent.Tools.ElixirEval.Validation.scheduler_options(options),
+         :ok <- Authorization.revalidate(context) do
+      # Pause/resume must use their own scheduler transitions: update_config
+      # intentionally ignores :paused, and resume also dispatches queued agents.
+      # Require paused alone so each facade call sends exactly one mutation.
+      request =
+        case opts do
+          [paused: true] -> :pause
+          [paused: false] -> :resume
+          _ -> {:update_config, opts}
+        end
+
+      case GenServer.call(EvoGit.AgentScheduler, request, 1_000) do
+        :ok ->
+          %{status: :updated, scope: :runtime, persisted: false, settings: Map.new(opts)}
+
+        _ ->
+          {:error,
+           "Scheduler update not acknowledged; inspect configuration_status before retrying."}
+      end
+    end
+  end
 
   defp execute(:start_task, [type, options], context) do
     with {:ok, task_type, opts} <-
