@@ -57,8 +57,20 @@ Callers (all of them): boot — `EvoGit.CatalogWarmup.warm_up/1` (a throwaway pr
 
 Tests inject stub metadata through the seam, so no catalog is needed.
 
+## Dune / Read-API Admission Boundaries
+`Definitions.schemas/0`, `search_providers/0` and `accent_palette/0` return real public metadata APIs; schema maps have exactly `key_path`, `type`, `default`, `validation`, `category`, `sub_category`, `description`, with no secret/redaction annotation or user values.
+`Definitions.schemas/0` derives CPU defaults through `Platform.cpu_threads/0`; credential defaults contain credential-key NAMES only, and `[:node, :cookie]` defaults to nil rather than the live distribution cookie.
+`all_schemas`, defaults and validation belong to parent `EvoGit.Config.Schema`, not `Definitions`; the parent validation engine is `EvoGit.Config.EctoValidation`, so no `Definitions.validate` or `LLM.validate` API exists here.
+`LLM.model_profiles/1`, `get_model_profile/2` and `default_model_profile/1` only inspect their supplied map and return original profiles without redacting model `extra`, endpoint overrides, arbitrary fields or `provider_options`.
+`LLM.provider_from_model/1` uses `String.to_atom/1` for arbitrary binary provider names; `oauth_profile?/1`, generation assembly, `LLMConstraints.constraints_for/1` and keyword-input `filter/3` reach it indirectly, so an unrestricted argument broker can grow the VM atom table despite Dune isolation.
+`LLM.ensure_profile_credentials/1` and `oauth_credential_status/1` do not require `oauth_profile?/1` to be true and delegate to Auth with the caller-supplied profile's resolved `oauth_file`; status therefore is not a side-effect-free health read.
+`LLM.profile_generation_params/1`, `llm_generation_params/1` and OAuth-only `provider_options_for_model/1` can import vendor credentials at assembly time, and profile assembly preserves explicit arbitrary provider options rather than projecting credential-safe data.
+`LLM.oauth_file_for/1` resolves profile/global/default paths through Auth and can consult user config; `model_metadata/1` invokes a runtime app-env function or ReqLLM catalog lookup, neither an inert schema-data operation.
+`LLMConstraints.constraints_for/1` returns raw constraint maps containing Regex structs, and `filter/3` logs omitted values plus the entire model spec, potentially including caller-supplied model `extra` secrets.
+`context_window_for/2` can raise on a model-list entry that is not a map despite its never-raises doc, because it calls `get_model_profile/2` whose search uses unguarded `Map.get/2` on each entry.
+
 ## Constraints
-- Schema modules must be pure functions with no side effects — no I/O, GenServer, or process logic.
+- `Definitions` describes defaults without reading user configuration, but `LLM` is not a pure read boundary: OAuth option assembly/status can import credentials into a caller-selected managed file, metadata resolution can load the catalog, and provider parsing can create atoms.
 - Schema definitions are the single source of truth for all config keys.
 - The parameter filter never raises on user config and never guesses: a constraint is only applied where there is documented provenance or actual model metadata.
 
