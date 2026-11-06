@@ -5,7 +5,8 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
   Call `init/1` on mount and chat/node reset; it invalidates outstanding work.
   After subscribing to approvals and restoring chat refs (and after root-agent
   lookup), call `recover/1` on a CONNECTED socket. No polling is needed.
-  Forward broadcasts to `requested/2` and `resolved/2`; forward the nested
+  Forward requests to `requested/2`, source-stamped resolutions to `resolved/3`,
+  and legacy resolutions to `resolved/2`; forward the nested
   SafeCall messages to `recovered/3` and `responded/3` respectively.
 
   `respond/3` requires a currently pending, chat-owned id and whitelisted
@@ -90,9 +91,20 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
               not MapSet.member?(removed, request.request_id)
           end)
 
+        # An absent snapshot row is not an acknowledgement of our response:
+        # the backend may have consumed it before the responder returns. Keep
+        # busy cards until that response or a resolution broadcast settles them.
+        busy =
+          Enum.filter(pending_list(socket), fn request ->
+            own_request?(socket.assigns, request) and
+              busy?(socket.assigns, request.request_id) and
+              not MapSet.member?(removed, request.request_id)
+          end)
+
         # Live broadcasts are newer than a snapshot and win on duplicate ids.
         live = socket.assigns[:approval_recovery_new] || []
-        entries = Enum.reduce(Enum.reverse(live), fetched, &upsert(&2, &1))
+        entries = Enum.reduce(Enum.reverse(busy), fetched, &upsert(&2, &1))
+        entries = Enum.reduce(Enum.reverse(live), entries, &upsert(&2, &1))
 
         assign(socket,
           pending_approvals: entries,
@@ -119,6 +131,16 @@ defmodule EvoDashWeb.HomeLive.ApprovalWorkflow do
     end
   end
 
+  @doc "Applies a resolution only from the chat's source node, never its evaluator target."
+  def resolved(socket, request_id, source_node) do
+    if scoped?(socket.assigns) and source_node == chat_node(socket.assigns) do
+      resolved(socket, request_id)
+    else
+      socket
+    end
+  end
+
+  @doc "Applies a legacy unstamped resolution or an acknowledged response."
   def resolved(socket, request_id) do
     removed = socket.assigns[:approval_recovery_removed] || MapSet.new()
 

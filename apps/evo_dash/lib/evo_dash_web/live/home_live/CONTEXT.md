@@ -54,7 +54,7 @@ The parent owns composer/Stop behavior and delegates approval recovery and respo
 
 ### Approval recovery and response workflow
 
-`ApprovalWorkflow` is the socket state machine integrated by the parent page, with `init/1`, `recover/1`, `requested/2`, `resolved/2`, `respond/3`, `recovered/3`, `responded/3`, `busy?/2`, and the shared total `own_request?/2` predicate.
+`ApprovalWorkflow` is the socket state machine integrated by the parent page, with `init/1`, `recover/1`, `requested/2`, `resolved/2,3`, `respond/3`, `recovered/3`, `responded/3`, `busy?/2`, and the shared total `own_request?/2` predicate.
 `init/1` clears cards, recovery state, response tokens and errors on mount or chat/node reset, invalidating outstanding work without resetting any global sequence.
 `recover/1` starts a one-shot supervised snapshot read for a chat with usable task/agent refs and a resolved node; the parent invokes it only on connected sockets after subscribing/restoring refs, after root lookup changes the scope, and on an explicit retry or reconnect, never on a timer.
 The actual core API is `EvoGit.CommandApproval.pending/0`, returning public request maps with `request_id`, source `node`, task/agent ids and evaluator metadata, or `[]` when the service is unavailable.
@@ -64,8 +64,11 @@ Recovery routes by source/chat node, not the evaluator's `target_node`, and tran
 A pending remote context whose viewed node has fallen back to local cannot recover or respond against the local approval service.
 `respond/3` accepts only a currently pending, owned request id and a string decision in `approve`/`deny`, routes through the existing `NodeContext.approval_response/3`, and leaves the card visible while marking that id busy.
 Response success and backend `{:error, :not_found}` remove the card; response failure clears busy state, retains the card, and assigns `approval_error: {:response, request_id, reason}` for a translated parent retry/error surface.
-`resolved/2` drops the card and its in-flight response token and records an in-flight-recovery tombstone, preventing a late snapshot from resurrecting it.
-A successful snapshot replaces pre-existing cards, removes stale entries absent from the backend, and merges only newer requests received while the snapshot was loading.
+`resolved/3` accepts a stamped source node only when the chat scope is usable and that node matches the chat's source, never the evaluator target, then delegates to `resolved/2`.
+`resolved/2` handles legacy unstamped resolutions and acknowledged responses by dropping the card and its in-flight response token and recording an in-flight-recovery tombstone, preventing a late snapshot from resurrecting it.
+A successful snapshot replaces pre-existing idle cards, removes stale idle entries absent from the backend, and merges newer requests received while the snapshot was loading.
+Cards with in-flight responses survive snapshot omission until the responder acknowledgement or an explicit resolution settles them, so a backend-consumed request cannot disappear before a response failure is reported.
+The parent currently routes only three-element `{:approval_resolved, id, decision}` messages; source-stamped four-element messages must be forwarded to `resolved(socket, id, source_node)` to apply source ownership and recovery tombstones.
 SafeCall messages are nested: `{{:approval_pending_loaded, seq, scope}, result}` goes to `recovered(socket, tag, result)`, and `{{:approval_workflow_response, seq, scope, request_id}, result}` goes to `responded(socket, tag, result)`.
 Scope includes chat id, viewed node id/node, chat node, task id and agent id; unique monotonic tokens plus scope equality reject late results after resets, node switches, newer loads or newer responses.
 Task-supervisor startup failures are sent through the same result path, so loading/busy state cannot wedge.
@@ -125,5 +128,6 @@ Run `mix test apps/evo_dash/test/evo_dash_web/live/home_live apps/evo_dash/test/
 Sibling test changes require the parent agent; approval feature coverage belongs in new async component/workflow modules, with synchronous tests only where an app-env runner or the singleton CommandApproval service is mutated.
 Approval tests should pin write/sudo wording, full escaped code and target, nil warning, explicit sudo warning, legacy presentation, busy buttons, pending recovery via the actual public API, task/agent/source-node filters, disconnected remote guards, stale seq/scope rejection, snapshot/broadcast races, absent-card submission rejection and retained cards on responder failure.
 Parent integration tests must assert retained cards while responding and reject responses for nonpending ids, rather than expecting optimistic removal.
-Existing scoped coverage passes with 104 tests; ephemeral validation also exercises evaluator rendering, recovery races, empty snapshot removal, stale resets, response failures and terminal response outcomes without changing sibling test files.
+The scoped mounted/support suite contains 133 tests, with two mounted resolution tests blocked by the parent's missing source-stamped four-element message route.
+Support coverage and ephemeral real-application regression checks exercise evaluator rendering, recovery races, empty snapshot removal, stale resets, source-stamped ownership, response failures, busy-card retention across snapshots and terminal response outcomes without changing sibling test files.
 Keep business assertions for four suggestion sends, source gate, direct user bubble shape, raw/copy attributes, safe Markdown and streaming markers intact.
