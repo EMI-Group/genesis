@@ -18,7 +18,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
   @limits %{timeout_ms: 5_000, max_output_bytes: 16_384}
   @read "EvoGit.Agent.Tools.ElixirEval.Read"
   @write "EvoGit.Agent.Tools.ElixirEval.Write"
-  @restricted "Evaluation rejected a restricted operation. Use the Read/Write facade APIs."
+  @restricted "Evaluation rejected a restricted operation. Use admitted APIs such as EvoGit.TaskRegistry.list_tasks_page/0,1 or EvoGit.AgentScheduler.get_config/1; Read/Write facade APIs remain available. Call EvoGit.Agent.Tools.ElixirEval.Read.help() for exact MFAs and limits. Writes require the write tier and exact-code approval; no automatic escalation."
 
   setup_all do
     # Denial must concern real native modules, not an unavailable alias. Besides
@@ -145,7 +145,7 @@ defmodule EvoGit.Agent.Tools.ElixirEval.EngineTest do
         {"native process inspection", "Process.info(self(), :dictionary)"},
         {"native evaluator", ~s|Code.eval_string("1 + 2")|},
         {"native AST evaluation", "Code.eval_quoted({:+, [], [1, 2]})"},
-        {"task registry", ~s|EvoGit.TaskRegistry.get_task("unknown_eval_task")|},
+        {"task registry wrong arity", "EvoGit.TaskRegistry.get_task()"},
         {"scheduler internals", "EvoGit.AgentScheduler.get_config()"},
         {"ETS internals", ":ets.tab2list(:evogit_agent_state)"},
         {"broker operation", "EvoGit.Agent.Tools.ElixirEval.Broker.call(:system_info, [])"},
