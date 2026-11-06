@@ -21,6 +21,16 @@ Action buttons retain touch-sized mobile targets, smaller desktop targets, butto
 These component tests pin rendered bindings and classes, not browser clipboard execution or LiveView event-handler behavior, which belong outside this node.
 No production files or translation catalogs are maintained here.
 
+## ApprovalWorkflow Coverage Gap
+
+No committed suite in this directory exercises `ApprovalWorkflow`; the existing files cover assistant presentation, stream failure extraction, persisted chat normalization, message conversion and transcript normalization.
+The production helper is `apps/evo_dash/lib/evo_dash_web/live/home_live/approval_workflow.ex`, with full integration contracts in that production directory's CONTEXT.md.
+Workflow unit tests can drive hand-built `%Phoenix.LiveView.Socket{assigns: %{__changed__: %{}, ...}}` sockets without mounting `/help` or touching ChatHistory.
+Pure tests should pin source-node and task-or-agent ownership, scope/token stale rejection, snapshot/live-broadcast reconciliation, resolution tombstones, retained cards on response failure and removal on success or not-found.
+Async runner tests must account for SafeCall's nested `{tag, result}` messages and outer `{:ok, value}` wrapping, capture the runners at spawn time, and use bounded mailbox handshakes instead of sleeps.
+The `:approval_pending_runner` and `:approval_responder` seams are BEAM-global app-env keys, so any tests mutating them must coordinate ownership with other async test modules rather than assuming per-socket isolation.
+Approval recovery counters, pending cards, response tokens and errors are runtime-only and should remain absent from `ChatState.build/1` output.
+
 ## Routing Table
 
 This node has no child directories.
